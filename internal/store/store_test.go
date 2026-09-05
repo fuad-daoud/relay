@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func newBinding(name, cwd string) Binding {
@@ -143,13 +144,13 @@ func TestWithLockSerializesLoadModifySave(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			err := s.WithLock(func() error {
-				b, err := s.Load("counter")
+			err := s.WithLock(func(tx *Tx) error {
+				b, err := tx.Load("counter")
 				if err != nil {
 					return err
 				}
 				b.Round++
-				return s.save(b)
+				return tx.Save(b)
 			})
 			if err != nil {
 				t.Errorf("WithLock: %v", err)
@@ -166,6 +167,49 @@ func TestWithLockSerializesLoadModifySave(t *testing.T) {
 	}
 	if final.Round != n+1 { // started at 1, incremented n times
 		t.Errorf("Round = %d, want %d (lost updates detected)", final.Round, n+1)
+	}
+}
+
+func TestNestedAccessDoesNotDeadlock(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("nested", "/repo")
+	if err := s.Save(b); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+
+	// Run nested access in a goroutine with timeout guard
+	done := make(chan error, 1)
+	go func() {
+		err := s.WithLock(func(tx *Tx) error {
+			// Load inside the lock
+			loaded, err := tx.Load("nested")
+			if err != nil {
+				return err
+			}
+			// Modify
+			loaded.Round++
+			// Save inside the lock (this would deadlock with the old design)
+			return tx.Save(loaded)
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("nested access failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("nested access deadlocked (timeout after 5s)")
+	}
+
+	// Verify the round-trip
+	final, err := s.Load("nested")
+	if err != nil {
+		t.Fatalf("final Load: %v", err)
+	}
+	if final.Round != 2 {
+		t.Errorf("Round = %d, want 2", final.Round)
 	}
 }
 

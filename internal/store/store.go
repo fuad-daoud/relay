@@ -34,8 +34,14 @@ const (
 type Store struct {
 	root string
 
-	mu   sync.Mutex // guards held and serializes WithLock calls
-	held bool       // true while this Store holds the state lock
+	mu sync.Mutex // serialises WithLock within this process
+}
+
+// Tx is a locked view of the store. Every method on it assumes the state lock
+// is already held, which is why the lock can never be taken twice: code inside
+// WithLock reaches the store only through Tx, and Tx never re-locks.
+type Tx struct {
+	s *Store
 }
 
 // New returns a Store rooted at root.
@@ -109,11 +115,83 @@ func (s *Store) bindingPath(name string) string {
 }
 
 // Save writes a binding atomically, refusing a second active binding on the
-// same working tree. It takes the state lock unless the caller already holds
-// it, so a bare Save is safe and a Save inside WithLock does not deadlock.
+// same working tree. It acquires the state lock for the operation.
 func (s *Store) Save(b Binding) error {
-	return s.WithLock(func() error { return s.save(b) })
+	return s.WithLock(func(tx *Tx) error { return tx.Save(b) })
 }
+
+// Load reads one binding, acquiring the state lock for the operation.
+func (s *Store) Load(name string) (Binding, error) {
+	var b Binding
+	err := s.WithLock(func(tx *Tx) error {
+		var err error
+		b, err = tx.Load(name)
+		return err
+	})
+	return b, err
+}
+
+// List reads every binding, acquiring the state lock for the operation.
+func (s *Store) List() ([]Binding, error) {
+	var bindings []Binding
+	err := s.WithLock(func(tx *Tx) error {
+		var err error
+		bindings, err = tx.List()
+		return err
+	})
+	return bindings, err
+}
+
+// Delete removes a binding and everything under it, acquiring the state lock.
+func (s *Store) Delete(name string) error {
+	return s.WithLock(func(tx *Tx) error { return tx.Delete(name) })
+}
+
+// FindByCWD returns the binding driving cwd, if any.
+func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
+	var found bool
+	var b Binding
+	err := s.WithLock(func(tx *Tx) error {
+		bindings, err := tx.List()
+		if err != nil {
+			return err
+		}
+		for _, binding := range bindings {
+			if binding.CWD == cwd {
+				b = binding
+				found = true
+				return nil
+			}
+		}
+		return nil
+	})
+	return b, found, err
+}
+
+// Tx methods provide locked access to the store. All assume the lock is held.
+
+// Save writes a binding under the held lock, refusing a second active binding
+// on the same working tree.
+func (t *Tx) Save(b Binding) error {
+	return t.s.save(b)
+}
+
+// Load reads one binding under the held lock.
+func (t *Tx) Load(name string) (Binding, error) {
+	return t.s.load(name)
+}
+
+// List reads every binding under the held lock.
+func (t *Tx) List() ([]Binding, error) {
+	return t.s.list()
+}
+
+// Delete removes a binding under the held lock.
+func (t *Tx) Delete(name string) error {
+	return t.s.remove(name)
+}
+
+// Unexported methods implement the actual logic, assuming lock is held via Tx.
 
 func (s *Store) save(b Binding) error {
 	if err := ValidName(b.Name); err != nil {
@@ -152,19 +230,20 @@ func (s *Store) save(b Binding) error {
 }
 
 func (s *Store) assertCWDFree(b Binding) error {
-	other, found, err := s.FindByCWD(b.CWD)
+	bindings, err := s.list()
 	if err != nil {
 		return err
 	}
-	if found && other.Name != b.Name && other.State != StateDone {
-		return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			b.CWD, other.Name, other.Builder.PaneID, other.Round, ErrCWDTaken)
+	for _, other := range bindings {
+		if other.CWD == b.CWD && other.Name != b.Name && other.State != StateDone {
+			return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+				b.CWD, other.Name, other.Builder.PaneID, other.Round, ErrCWDTaken)
+		}
 	}
 	return nil
 }
 
-// Load reads one binding.
-func (s *Store) Load(name string) (Binding, error) {
+func (s *Store) load(name string) (Binding, error) {
 	raw, err := os.ReadFile(s.bindingPath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
@@ -181,8 +260,7 @@ func (s *Store) Load(name string) (Binding, error) {
 	return b, nil
 }
 
-// List reads every binding, skipping directories without a bind.json.
-func (s *Store) List() ([]Binding, error) {
+func (s *Store) list() ([]Binding, error) {
 	entries, err := os.ReadDir(s.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -196,7 +274,7 @@ func (s *Store) List() ([]Binding, error) {
 		if !e.IsDir() {
 			continue
 		}
-		b, err := s.Load(e.Name())
+		b, err := s.load(e.Name())
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -209,24 +287,7 @@ func (s *Store) List() ([]Binding, error) {
 	return bindings, nil
 }
 
-// FindByCWD returns the binding driving cwd, if any.
-func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
-	bindings, err := s.List()
-	if err != nil {
-		return Binding{}, false, err
-	}
-
-	for _, b := range bindings {
-		if b.CWD == cwd {
-			return b, true, nil
-		}
-	}
-
-	return Binding{}, false, nil
-}
-
-// Delete removes a binding and everything under it.
-func (s *Store) Delete(name string) error {
+func (s *Store) remove(name string) error {
 	if err := ValidName(name); err != nil {
 		return err
 	}
@@ -236,24 +297,19 @@ func (s *Store) Delete(name string) error {
 	return nil
 }
 
-// WithLock runs fn while holding an exclusive advisory lock on the state root.
+// WithLock runs fn while holding an exclusive advisory lock on the state root,
+// passing it the only handle that can touch state while the lock is held.
 // Every load-modify-save sequence must run inside it.
 //
 // The lock is an flock, so the kernel drops it if a holder is killed and there
 // is no stale lock file to reap. Acquisition is bounded, so a wedged holder
-// surfaces as an error instead of hanging the caller forever.
-func (s *Store) WithLock(fn func() error) (err error) {
+// surfaces as an error instead of hanging the caller forever. The in-process
+// mutex is held for the same span, so goroutines sharing one Store serialise
+// too -- flock alone would not stop them, since it excludes per file
+// descriptor rather than per process.
+func (s *Store) WithLock(fn func(tx *Tx) error) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.held {
-		// Already holding lock in this goroutine, call fn directly to avoid deadlock
-		return fn()
-	}
-	s.held = true
-	defer func() {
-		s.held = false
-	}()
 
 	if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
 		return fmt.Errorf("create state root: %w", err)
@@ -263,13 +319,20 @@ func (s *Store) WithLock(fn func() error) (err error) {
 	if err != nil {
 		return fmt.Errorf("open state lock: %w", err)
 	}
-	defer f.Close()
+
+	// Closing the descriptor releases the flock, so this defer is both the
+	// unlock and the cleanup.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close state lock: %w", cerr)
+		}
+	}()
 
 	if err := acquireFlock(f, lockAcquireLimit); err != nil {
 		return err
 	}
 
-	return fn()
+	return fn(&Tx{s: s})
 }
 
 // acquireFlock polls for the exclusive lock until limit elapses.
