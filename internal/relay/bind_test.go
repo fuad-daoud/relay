@@ -54,6 +54,30 @@ func TestBindSpawnsBuilderPane(t *testing.T) {
 	}
 }
 
+func TestBindSpawnRecordsBuilderSessionID(t *testing.T) {
+	f := &fakeHerdr{
+		agents: []herdr.Agent{
+			plannerAgent(),
+			// The started agent, as it will appear the moment relay lists
+			// agents again right after StartAgent returns.
+			{Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: "builder-sess"}},
+		},
+		newPane: "w2:p4",
+	}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	if b.Builder.SessionID != "builder-sess" {
+		t.Errorf("Builder.SessionID = %q, want the started agent's session id", b.Builder.SessionID)
+	}
+}
+
 func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	existing := herdr.Agent{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w2:p8", CWD: "/repo"}
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), existing}}

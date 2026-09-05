@@ -160,7 +160,22 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		return store.Endpoint{}, fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 
-	return store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: spec.Kind}, nil
+	ep := store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: spec.Kind}
+
+	// Record the new agent's session id. It is what lets a later
+	// disappearance be told apart from a different agent taking over the same
+	// pane, so a binding can recover from a detection flicker without ever
+	// resuming into a stranger. Harnesses with no herdr integration report no
+	// session; leaving it empty simply means such a binding never self-heals.
+	agents, err := rt.Herdr.ListAgents(ctx)
+	if err != nil {
+		return store.Endpoint{}, fmt.Errorf("list agents after starting %q: %w", agentName, err)
+	}
+	if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
+		ep.SessionID = started.Session.Value
+	}
+
+	return ep, nil
 }
 
 // endpointOf projects a live herdr agent onto the store's durable endpoint

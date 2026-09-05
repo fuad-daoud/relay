@@ -21,12 +21,12 @@ Write it to %s now, then reply with only that path.`
 
 // Reconcile advances one binding against the agent list the daemon already
 // fetched, so a tick costs exactly one herdr call no matter how many bindings
-// exist. It returns the binding to persist.
+// exist.
 //
-// The caller holds the state lock across the whole call and passes tx in:
-// Queue and DeliverPending must run in the same critical section as the round
-// advance that follows them, or a concurrent `relay send` could lose
-// RoundStartedAt and silently break timeout detection for that round.
+// Reconcile does NOT persist anything: it returns the binding and the caller
+// must `tx.Save` it before releasing the lock. Everything it calls takes the
+// same tx rather than locking itself, which is what lets the caller hold one
+// critical section across the whole read-reconcile-write.
 func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
 	if b.State == store.StateDone {
 		return b, nil
@@ -36,6 +36,17 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	if !ok {
 		b.State = store.StateBroken
 		return b, nil
+	}
+
+	// A broken binding recovers only when the SAME agent session is back.
+	// Matching on pane alone would resume relaying into whatever now occupies
+	// that pane, which for a closed builder could be an unrelated agent.
+	if b.State == store.StateBroken {
+		if b.Builder.SessionID == "" || builder.Session.Value != b.Builder.SessionID {
+			return b, nil
+		}
+
+		b.State = store.StateActive
 	}
 
 	entries, err := tx.ReadLog(b.Name)

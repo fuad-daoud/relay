@@ -32,6 +32,35 @@ func sentBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	return rt, b
 }
 
+// sentBindingWithBuilderSession is sentBinding but the builder pane is
+// spawned with a known session id recorded on the binding, which the
+// broken-recovery tests need to exercise the session-id match.
+func sentBindingWithBuilderSession(t *testing.T, f *fakeHerdr, sessionID string) (Runtime, store.Binding) {
+	t.Helper()
+	f.agents = []herdr.Agent{
+		plannerAgent(),
+		{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: sessionID}},
+	}
+	f.newPane = "w2:p4"
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err = rt.Store.Load("upjo")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f.prompts = nil
+	return rt, b
+}
+
 // reconcile wraps Reconcile with the state lock a daemon would hold across
 // the whole read-reconcile-write, since Reconcile itself takes a *store.Tx
 // rather than locking on its own.
@@ -169,5 +198,98 @@ func TestReconcileNeverTreatsUnknownAsDone(t *testing.T) {
 	}
 	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
 		t.Error("nothing may be queued off an unknown status")
+	}
+}
+
+func TestReconcileRecoversFromBrokenOnSessionMatch(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "builder-sess")
+	b.State = store.StateBroken
+
+	// The builder is genuinely working, not idle: this isolates the
+	// session-match recovery from queueReport, which would set Active on its
+	// own and mask a missing (or wrong) recovery check.
+	agents := []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: "builder-sess"}},
+	}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active: a matching session id must clear broken", got.State)
+	}
+}
+
+func TestReconcileRecoveredBindingProceedsNormally(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "builder-sess")
+	if err := os.WriteFile(rt.Store.ReportPath("upjo", 1), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	b.State = store.StateBroken
+
+	agents := []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w2:p4", Session: herdr.Session{Value: "builder-sess"}},
+	}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want a recovered binding to queue the ready report normally", got.Round)
+	}
+}
+
+func TestReconcileStaysBrokenOnPaneOnlyMatch(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "builder-sess")
+	b.State = store.StateBroken
+
+	// A different agent now occupies the same pane: relaying into it would
+	// hand plans to a stranger.
+	agents := []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w2:p4", Session: herdr.Session{Value: "impostor-sess"}},
+	}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateBroken {
+		t.Errorf("state = %s, want still broken: pane match alone must not clear it", got.State)
+	}
+	if len(f.prompts) != 0 {
+		t.Error("nothing may be relayed into a pane that might hold a different agent")
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+		t.Error("nothing may be queued while still broken")
+	}
+}
+
+func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f) // seedBound's agents carry no builder pane entry, so no session was ever recorded
+	if b.Builder.SessionID != "" {
+		t.Fatalf("test setup: want no recorded session, got %q", b.Builder.SessionID)
+	}
+	b.State = store.StateBroken
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateBroken {
+		t.Errorf("state = %s, want still broken: there is no session id to trust", got.State)
+	}
+	if len(f.prompts) != 0 {
+		t.Error("nothing may be relayed without a recorded session id")
 	}
 }
