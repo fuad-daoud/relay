@@ -6,9 +6,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
@@ -40,6 +43,8 @@ func run(args []string) error {
 		return cmdPull(args[1:])
 	case "answer":
 		return cmdAnswer(args[1:])
+	case "daemon":
+		return cmdDaemon(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -213,6 +218,25 @@ func cmdAnswer(args []string) error {
 
 	fmt.Printf("answered %s's builder\n", target)
 	return nil
+}
+
+func cmdDaemon(args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	interval := fs.Duration("interval", 2*time.Second, "poll interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	slog.Info("relay daemon starting", "interval", *interval)
+	return relay.NewDaemon(rt, *interval).Run(ctx)
 }
 
 // resolveBinding falls back to the binding that owns the current directory, so
