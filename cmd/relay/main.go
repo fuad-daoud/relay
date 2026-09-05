@@ -36,6 +36,10 @@ func run(args []string) error {
 		return cmdUnbind(args[1:])
 	case "send":
 		return cmdSend(args[1:])
+	case "pull":
+		return cmdPull(args[1:])
+	case "answer":
+		return cmdAnswer(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -151,6 +155,63 @@ func cmdSend(args []string) error {
 	}
 
 	fmt.Printf("sent round %d to %s's builder\n", round, target)
+	return nil
+}
+
+func cmdPull(args []string) error {
+	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	target, err := resolveBinding(rt, *name)
+	if err != nil {
+		return err
+	}
+
+	payload, found, err := relay.Pull(context.Background(), rt, target)
+	if err != nil {
+		return err
+	}
+	if !found {
+		fmt.Println("nothing pending")
+		return nil
+	}
+
+	fmt.Println(payload)
+	return nil
+}
+
+func cmdAnswer(args []string) error {
+	fs := flag.NewFlagSet("answer", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
+	text := fs.String("text", "", "literal text to send")
+	choice := fs.Int("choice", 0, "numbered dialog option to pick")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	target, err := resolveBinding(rt, *name)
+	if err != nil {
+		return err
+	}
+
+	if err := relay.Answer(context.Background(), rt, target,
+		relay.AnswerInput{Keys: *keys, Text: *text, Choice: *choice}); err != nil {
+		return err
+	}
+
+	fmt.Printf("answered %s's builder\n", target)
 	return nil
 }
 
