@@ -10,8 +10,11 @@ import (
 	"time"
 )
 
-// maxLogEntries bounds a single ReadLog, so a long-lived binding can never
-// make the daemon's tick unbounded.
+// maxLogEntries is a corruption guard, not a rotation policy: a log growing
+// past it means something has gone wrong (a runaway loop, a corrupted
+// file), so ReadLog refuses to read further rather than silently returning
+// a truncated log that would make PendingForPlanner and ConfirmLatest miss
+// the newest entries.
 const maxLogEntries = 10000
 
 // Direction is which way a message travelled.
@@ -145,7 +148,10 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	return nil
 }
 
-// readLog returns every entry in order, capped at maxLogEntries.
+// readLog returns every entry in order, refusing to read past
+// maxLogEntries rather than silently truncating: since the log is
+// append-only, truncating would drop the newest entries, which is exactly
+// what pendingForPlanner and confirmLatest need.
 func (s *Store) readLog(name string) ([]LogEntry, error) {
 	f, err := os.Open(s.logPath(name))
 	if errors.Is(err, os.ErrNotExist) {
@@ -160,16 +166,21 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	for scanner.Scan() && len(entries) < maxLogEntries {
+	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
+
 		var e LogEntry
 		if err := json.Unmarshal(line, &e); err != nil {
 			return nil, fmt.Errorf("decode log entry for %q: %w", name, err)
 		}
+
 		entries = append(entries, e)
+		if len(entries) > maxLogEntries {
+			return nil, fmt.Errorf("log for %q exceeds %d entries", name, maxLogEntries)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan log for %q: %w", name, err)
