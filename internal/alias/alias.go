@@ -93,7 +93,7 @@ func LoadTable(path string) (*Table, error) {
 func (t *Table) Lookup(name string) (Spec, error) {
 	s, ok := t.specs[name]
 	if !ok {
-		return Spec{}, fmt.Errorf("%w: %q (known: %v)", ErrUnknownAlias, name, t.Names())
+		return Spec{}, fmt.Errorf("alias %q not found (known: %v): %w", name, t.Names(), ErrUnknownAlias)
 	}
 	return s, nil
 }
