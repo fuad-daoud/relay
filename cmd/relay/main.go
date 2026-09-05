@@ -34,6 +34,8 @@ func run(args []string) error {
 		return cmdBind(args[1:])
 	case "unbind":
 		return cmdUnbind(args[1:])
+	case "send":
+		return cmdSend(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
@@ -120,4 +122,57 @@ func cmdUnbind(args []string) error {
 
 	fmt.Printf("unbound %s (panes left untouched)\n", args[0])
 	return nil
+}
+
+func cmdSend(args []string) error {
+	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+	file := fs.String("file", "", "path to the plan file to hand the builder")
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return fmt.Errorf("relay send requires --file")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	target, err := resolveBinding(rt, *name)
+	if err != nil {
+		return err
+	}
+
+	round, err := relay.Send(context.Background(), rt, target, *file)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("sent round %d to %s's builder\n", round, target)
+	return nil
+}
+
+// resolveBinding falls back to the binding that owns the current directory, so
+// the planner rarely has to name it.
+func resolveBinding(rt relay.Runtime, name string) (string, error) {
+	if name != "" {
+		return name, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	b, found, err := rt.Store.FindByCWD(cwd)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("no binding for %s; run relay bind first", cwd)
+	}
+
+	return b.Name, nil
 }
