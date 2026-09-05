@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -15,22 +16,38 @@ const agentGone = "gone"
 
 // BindingStatus is one row of relay status: stored binding plus live herdr state.
 type BindingStatus struct {
-	Name          string `json:"name"`
-	CWD           string `json:"cwd"`
-	Workspace     string `json:"workspace"`
-	Round         int    `json:"round"`
-	State         string `json:"state"`
-	Display       string `json:"display"`
-	BuilderAlias  string `json:"builder_alias"`
-	PlannerPane   string `json:"planner_pane"`
-	PlannerKind   string `json:"planner_kind"`
-	PlannerStatus string `json:"planner_status"`
-	PlannerFocus  bool   `json:"planner_focused"`
-	BuilderPane   string `json:"builder_pane"`
-	BuilderKind   string `json:"builder_kind"`
-	BuilderStatus string `json:"builder_status"`
-	Last          string `json:"last,omitempty"`
-	Pending       string `json:"pending,omitempty"`
+	Name          string       `json:"name"`
+	CWD           string       `json:"cwd"`
+	Workspace     string       `json:"workspace"`
+	Round         int          `json:"round"`
+	State         string       `json:"state"`
+	Display       string       `json:"display"`
+	BuilderAlias  string       `json:"builder_alias"`
+	PlannerPane   string       `json:"planner_pane"`
+	PlannerKind   string       `json:"planner_kind"`
+	PlannerStatus string       `json:"planner_status"`
+	PlannerFocus  bool         `json:"planner_focused"`
+	BuilderPane   string       `json:"builder_pane"`
+	BuilderKind   string       `json:"builder_kind"`
+	BuilderStatus string       `json:"builder_status"`
+	Last          *LastEvent   `json:"last,omitempty"`
+	Pending       *PendingInfo `json:"pending,omitempty"`
+}
+
+// LastEvent is the most recent relayed message, carried as data rather than
+// prose. RenderStatus formats it for a human; a statusline consumer reads the
+// fields directly instead of parsing a sentence apart.
+type LastEvent struct {
+	TS        time.Time       `json:"ts"`
+	Round     int             `json:"round"`
+	Direction store.Direction `json:"direction"`
+	Kind      store.Kind      `json:"kind"`
+}
+
+// PendingInfo describes a payload waiting on the planner.
+type PendingInfo struct {
+	Round int        `json:"round"`
+	Kind  store.Kind `json:"kind"`
 }
 
 // Report is the whole status surface.
@@ -93,8 +110,10 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus
 	}
 	if n := len(entries); n > 0 {
 		last := entries[n-1]
-		row.Last = fmt.Sprintf("%s %s %s round %d",
-			last.TS.Format("15:04:05"), last.Kind, last.Direction, last.Round)
+		row.Last = &LastEvent{
+			TS: last.TS, Round: last.Round,
+			Direction: last.Direction, Kind: last.Kind,
+		}
 	}
 
 	pending, found, err := rt.Store.PendingForPlanner(b.Name)
@@ -102,7 +121,7 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus
 		return BindingStatus{}, err
 	}
 	if found {
-		row.Pending = fmt.Sprintf("%s round %d -> planner", pending.Kind, pending.Round)
+		row.Pending = &PendingInfo{Round: pending.Round, Kind: pending.Kind}
 	}
 
 	return row, nil
@@ -141,14 +160,15 @@ func RenderStatus(r Report) string {
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
 		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`\n",
 			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderAlias)
-		if b.Last != "" {
-			fmt.Fprintf(&sb, "  last     %s\n", b.Last)
+		if b.Last != nil {
+			fmt.Fprintf(&sb, "  last     %s %s %s round %d\n",
+				b.Last.TS.Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
 		}
-		pending := b.Pending
-		if pending == "" {
-			pending = "--"
+		if b.Pending != nil {
+			fmt.Fprintf(&sb, "  pending  %s round %d -> planner\n\n", b.Pending.Kind, b.Pending.Round)
+		} else {
+			fmt.Fprint(&sb, "  pending  --\n\n")
 		}
-		fmt.Fprintf(&sb, "  pending  %s\n\n", pending)
 	}
 
 	return sb.String()

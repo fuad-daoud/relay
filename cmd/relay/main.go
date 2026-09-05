@@ -297,6 +297,9 @@ func cmdWatch(args []string) error {
 	for {
 		rep, err := relay.Status(ctx, rt)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil // Ctrl-C landed mid-query; that is a clean exit
+			}
 			return err
 		}
 		fmt.Print("\033[H\033[2J", relay.RenderStatus(rep))
