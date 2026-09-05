@@ -33,8 +33,8 @@ human, whether the work is done, is a decision that stays with the planner
   panes' live herdr status, the last relayed event, and anything pending.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
-- `relay done NAME` — mark a binding done; relaying stops.
-- `relay unbind NAME [--archive]` — forget a binding, deleting its directory or
+- `relay done NAME|--name N` — mark a binding done; relaying stops.
+- `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first.
 - `relay gc [--dry-run] [--archive]` — clear every binding the planner marked
   `DONE`, in one pass.
