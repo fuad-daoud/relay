@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -23,11 +25,18 @@ const (
 	bindingDirMode    = 0o755
 	defaultRoundCap   = 20
 	defaultRoundMSecs = 1800000
+	lockFileName      = ".lock"
+	lockRetryDelay    = 50 * time.Millisecond
+	lockAcquireLimit  = 5 * time.Second
 )
 
 // Store is the state directory. All writes are atomic within it.
 type Store struct {
 	root string
+
+	mu       sync.Mutex // guards held and serializes lock acquisition within process
+	held     bool       // true while this Store holds the state lock
+	lockOnce sync.Mutex // serializes WithLock calls within the same process
 }
 
 // New returns a Store rooted at root.
@@ -101,8 +110,16 @@ func (s *Store) bindingPath(name string) string {
 }
 
 // Save writes a binding atomically, refusing a second active binding on the
-// same working tree.
+// same working tree. It takes the state lock unless the caller already holds
+// it, so a bare Save is safe and a Save inside WithLock does not deadlock.
 func (s *Store) Save(b Binding) error {
+	if !s.holdingLock() {
+		return s.WithLock(func() error { return s.save(b) })
+	}
+	return s.save(b)
+}
+
+func (s *Store) save(b Binding) error {
 	if err := ValidName(b.Name); err != nil {
 		return err
 	}
@@ -144,8 +161,8 @@ func (s *Store) assertCWDFree(b Binding) error {
 		return err
 	}
 	if found && other.Name != b.Name && other.State != StateDone {
-		return fmt.Errorf("%w: %s is driven by binding %q (builder %s, round %d)",
-			ErrCWDTaken, b.CWD, other.Name, other.Builder.PaneID, other.Round)
+		return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+			b.CWD, other.Name, other.Builder.PaneID, other.Round, ErrCWDTaken)
 	}
 	return nil
 }
@@ -154,7 +171,7 @@ func (s *Store) assertCWDFree(b Binding) error {
 func (s *Store) Load(name string) (Binding, error) {
 	raw, err := os.ReadFile(s.bindingPath(name))
 	if errors.Is(err, os.ErrNotExist) {
-		return Binding{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
 	if err != nil {
 		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
@@ -221,6 +238,77 @@ func (s *Store) Delete(name string) error {
 		return fmt.Errorf("delete binding %q: %w", name, err)
 	}
 	return nil
+}
+
+// WithLock runs fn while holding an exclusive advisory lock on the state root.
+// Every load-modify-save sequence must run inside it.
+//
+// The lock is an flock, so the kernel drops it if a holder is killed and there
+// is no stale lock file to reap. Acquisition is bounded, so a wedged holder
+// surfaces as an error instead of hanging the caller forever.
+func (s *Store) WithLock(fn func() error) (err error) {
+	// Serialize lock acquisition within this process to prevent race conditions
+	// between goroutines. The flock handles inter-process coordination.
+	s.lockOnce.Lock()
+	defer s.lockOnce.Unlock()
+
+	if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
+		return fmt.Errorf("create state root: %w", err)
+	}
+
+	f, err := os.OpenFile(filepath.Join(s.root, lockFileName), os.O_CREATE|os.O_RDWR, bindingFileMode)
+	if err != nil {
+		return fmt.Errorf("open state lock: %w", err)
+	}
+
+	// Closing the descriptor releases the flock, so this defer is both the
+	// unlock and the cleanup.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close state lock: %w", cerr)
+		}
+	}()
+
+	if err := acquireFlock(f, lockAcquireLimit); err != nil {
+		return err
+	}
+
+	s.setHeld(true)
+	defer s.setHeld(false)
+
+	return fn()
+}
+
+// acquireFlock polls for the exclusive lock until limit elapses.
+func acquireFlock(f *os.File, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("lock state root: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("state lock still held after %s", limit)
+		}
+
+		time.Sleep(lockRetryDelay)
+	}
+}
+
+func (s *Store) setHeld(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.held = v
+}
+
+func (s *Store) holdingLock() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.held
 }
 
 // writeFileAtomic writes via a temp file in the same directory then renames, so

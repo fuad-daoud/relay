@@ -2,7 +2,10 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -91,5 +94,99 @@ func TestValidName(t *testing.T) {
 		if err := ValidName(bad); err == nil {
 			t.Errorf("ValidName(%q) = nil, want error", bad)
 		}
+	}
+}
+
+func TestConcurrentSaveRaceRefusesDuplicateCWD(t *testing.T) {
+	s := New(t.TempDir())
+	cwd := "/repo"
+
+	var successCount int32
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// First goroutine tries to save binding "b1"
+	go func() {
+		defer wg.Done()
+		if err := s.Save(newBinding("b1", cwd)); err == nil {
+			atomic.AddInt32(&successCount, 1)
+		}
+	}()
+
+	// Second goroutine tries to save binding "b2" with same CWD
+	go func() {
+		defer wg.Done()
+		if err := s.Save(newBinding("b2", cwd)); err == nil {
+			atomic.AddInt32(&successCount, 1)
+		}
+	}()
+
+	wg.Wait()
+
+	if atomic.LoadInt32(&successCount) != 1 {
+		t.Errorf("expected exactly 1 Save to succeed, got %d", atomic.LoadInt32(&successCount))
+	}
+}
+
+func TestWithLockSerializesLoadModifySave(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("counter", "/repo")
+	if err := s.Save(b); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+
+	// N goroutines each doing load-modify-save of the same binding
+	n := 10
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			err := s.WithLock(func() error {
+				b, err := s.Load("counter")
+				if err != nil {
+					return err
+				}
+				b.Round++
+				return s.save(b)
+			})
+			if err != nil {
+				t.Errorf("WithLock: %v", err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Final Round should be exactly n (no lost updates)
+	final, err := s.Load("counter")
+	if err != nil {
+		t.Fatalf("final Load: %v", err)
+	}
+	if final.Round != n+1 { // started at 1, incremented n times
+		t.Errorf("Round = %d, want %d (lost updates detected)", final.Round, n+1)
+	}
+}
+
+func TestAtomicWriteCleanupTempFile(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("cleanup", "/repo")
+
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Check that binding dir contains only bind.json, no temp files
+	entries, err := os.ReadDir(s.Dir("cleanup"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Errorf("binding dir has %d entries, want 1", len(entries))
+	}
+	if entries[0].Name() != "bind.json" {
+		t.Errorf("expected bind.json, got %q", entries[0].Name())
 	}
 }
