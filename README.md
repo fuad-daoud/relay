@@ -12,13 +12,13 @@ human, whether the work is done, is a decision that stays with the planner
 
 ## Command surface
 
-- `relay bind [--name N] [--builder ALIAS|PANE_ID] [--resume]` — start a
-  binding between the calling planner pane (read from `$HERDR_PANE_ID`) and a
-  builder. `--builder` is looked up as an alias unless it contains `:`, in
-  which case it is treated as a herdr pane id and that pane is **adopted**
-  instead of spawned. A name that already exists is refused rather than
-  reused: only `bind.json` would be rewritten, so a fresh round 1 would
-  collide with the previous session's round log. `--resume --name N`
+- `relay bind [--name N] [--builder ALIAS|PANE_ID] [--resume] [--tab] [--timeout D]`
+  — start a binding between the calling planner pane (read from
+  `$HERDR_PANE_ID`) and a builder. `--builder` is looked up as an alias unless
+  it contains `:`, in which case it is treated as a herdr pane id and that pane
+  is **adopted** instead of spawned. A name that already exists is refused
+  rather than reused: only `bind.json` would be rewritten, so a fresh round 1
+  would collide with the previous session's round log. `--resume --name N`
   re-points that existing binding's planner side at the calling pane without
   touching the builder; `relay unbind N` is the other way out.
 - `relay send --file PATH [--name N]` — stage the file as the current round's
@@ -26,21 +26,37 @@ human, whether the work is done, is a decision that stays with the planner
 - `relay pull [--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
-- `relay answer --name N (--keys K | --choice N | --text S)` — answer a
+- `relay answer [--name N] (--keys K | --choice N | --text S)` — answer a
   builder that's blocked at a dialog, via `send-keys` rather than a typed
   prompt (herdr refuses `agent prompt` against a blocked agent).
 - `relay status [--json]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, and anything pending.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
-- `relay done [NAME]` — mark a binding done; relaying stops (panes are left
-  alone).
-- `relay unbind NAME` — forget a binding. Never touches the panes.
+- `relay done NAME` — mark a binding done; relaying stops.
+- `relay unbind NAME [--archive]` — forget a binding, deleting its directory or
+  packing it into `.archive/` first.
+- `relay gc [--dry-run] [--archive]` — clear every binding the planner marked
+  `DONE`, in one pass.
 - `relay daemon [--interval D]` — the long-running reconciler; this is what
   `relay.service` runs.
 
-`--name` is optional almost everywhere: it defaults to whichever binding owns
-the current working directory.
+`--name` defaults to whichever binding owns the current working directory for
+`send`, `pull`, `answer` and `status`. It is **required** for `done` and
+`unbind`: those are the destructive verbs and they refuse to guess (see below).
+
+### Panes are yours, always
+
+relay never opens, closes or kills a pane except the one builder pane it spawns
+for you at `bind`. In particular:
+
+- `done` and `unbind` leave the builder running. Its terminal is often the only
+  record of *why* a round went wrong, and throwing that away automatically is
+  worse than leaving a process up.
+- a `BROKEN`, `ORPHANED` or timed-out binding is flagged and reported, never
+  cleaned up. relay stops relaying and waits for you.
+- closing builder panes when you are finished with them is a manual step, and
+  worth remembering: an idle opencode builder holds roughly 800 MB.
 
 ### Where the builder appears
 
@@ -174,14 +190,36 @@ skip it entirely, `~/.config/opencode/opencode.jsonc` carries:
 Claude builders (`cbuilder`) have their own permission model and are not covered
 by that entry.
 
-## Prerequisite: agy has no herdr integration yet
+## herdr integrations
 
-herdr integrations are currently installed for **opencode** and **claude**
-only on this machine. Until `herdr integration install antigravity-cli` is
-run, an `abuilder` (agy) pane reports `unknown` lifecycle state instead of
-real status. Relay never treats `unknown` as done — so an `abuilder` binding
-will stall rather than misbehave, but it *will* stall until that integration
-is installed.
+relay reads lifecycle state (`idle` / `working` / `blocked` / `done` /
+`unknown`) from herdr, which learns it from a hook each harness installs.
+All three builders are covered on this machine:
+
+```
+opencode   ~/.config/opencode/plugins/herdr-agent-state.js
+claude     ~/.claude/hooks/herdr-agent-state.sh
+agy        ~/.gemini/config/hooks/herdr-agent-state.sh   (herdr integration install antigravity-cli)
+```
+
+Without a harness's integration, herdr falls back to heuristic screen
+detection and reports `unknown`. relay never treats `unknown` as done, so such
+a binding stalls rather than misbehaving — but it does stall. A binding whose
+builder reports no session id also never self-heals from `BROKEN`, since
+recovery requires matching the same herdr session (see below).
+
+## Recovering a broken binding
+
+If relay cannot find the builder — a detection flicker, a restarted agent — the
+binding goes `BROKEN` and relaying stops. It clears itself only when the **same
+herdr session id** reappears, never on a pane-id match alone: a pane you closed
+and reused for something else must never start receiving plans meant for a
+builder. Spawned builders record their session id at `bind` on a best-effort
+basis, so a harness reporting none simply never self-heals, which is the safe
+direction.
+
+If it stays broken, `relay bind --resume --name N` re-points it, or
+`relay unbind N` and bind fresh.
 
 ## Design
 
