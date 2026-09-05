@@ -230,13 +230,23 @@ func builderPane(ctx context.Context, rt Runtime, opts BindOptions, agentName, p
 	return paneID, nil
 }
 
-// Unbind forgets a binding. It never touches the panes, so the builder's output
-// stays on screen for the human to read.
-func Unbind(_ context.Context, rt Runtime, name string) error {
+// Unbind forgets a binding. It never touches the panes, so the builder's
+// output stays on screen for the human to read.
+//
+// When archive is set the binding's directory is moved aside rather than
+// deleted, which frees the name for a fresh bind while keeping log.jsonl and
+// every round file — the record of what the planner actually told the builder.
+// It returns the archive path, or "" when the binding was deleted.
+func Unbind(_ context.Context, rt Runtime, name string, archive bool) (string, error) {
 	if _, err := rt.Store.Load(name); err != nil {
-		return err
+		return "", err
 	}
-	return rt.Store.Delete(name)
+
+	if archive {
+		return rt.Store.Archive(name)
+	}
+
+	return "", rt.Store.Delete(name)
 }
 
 // SanitizeName coerces a directory name into herdr's agent-name rule.

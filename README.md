@@ -48,10 +48,31 @@ By default `relay bind` splits the planner's pane, so you can watch the builder
 work beside you. `relay bind --tab` opens it in its own herdr tab instead —
 the planner keeps full width, at the cost of not seeing the builder live.
 
+### Cleaning up finished bindings
+
+A binding leaves `~/.local/state/relay/<name>/` behind: `bind.json`, `log.jsonl`,
+and every round's plan, report and captured dialog. `relay done` stops relaying
+but removes nothing — the log is the record of what the planner actually told
+the builder.
+
+```
+relay unbind ai              # delete the binding and its whole directory
+relay unbind ai --archive    # move it to .archive/ai-<date>/ instead, keeping the log
+relay gc --dry-run           # list every DONE binding that would be cleared
+relay gc --archive           # archive them all in one go
+```
+
+`gc` only touches bindings the planner marked `DONE`. A `BROKEN` or `ORPHANED`
+one is left alone: it still needs a human, and clearing it would throw away the
+state that explains why it stopped.
+
+Neither command closes a pane — the builder's terminal stays where it is, for
+you to read and close yourself.
+
 ### done and unbind are the destructive verbs
 
-`relay done` requires a binding name (`relay done ai`, or `--name ai`). It will
-not resolve the current directory for you: a bare `relay done` once ended a live
+`relay done` and `relay unbind` both require a binding name (`relay done ai`, or
+`--name ai`). Neither resolves the current directory for you: a bare `relay done` once ended a live
 loop by accident, and the recovery is `relay bind --resume --name <name>`.
 
 ## Builder aliases

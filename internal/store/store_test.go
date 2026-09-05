@@ -281,3 +281,56 @@ func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
 		t.Fatalf("got %v, want ErrCWDTaken from the still-active binding", err)
 	}
 }
+
+func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.AppendLog("upjo", LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	dest, err := s.Archive("upjo")
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	// The round log survives the archive -- that is the whole point.
+	if _, err := os.Stat(filepath.Join(dest, "log.jsonl")); err != nil {
+		t.Errorf("archived log missing: %v", err)
+	}
+	if _, err := s.Load("upjo"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("archived binding must be gone from the live set, got %v", err)
+	}
+
+	// And the name is free for a fresh bind on the same tree.
+	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+		t.Errorf("archiving must free the name and the working tree: %v", err)
+	}
+}
+
+func TestListSkipsTheArchiveDirectory(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := s.Archive("upjo"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	got, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("List must not see archived bindings, got %+v", got)
+	}
+}
+
+func TestArchiveRefusesAnUnknownBinding(t *testing.T) {
+	s := New(t.TempDir())
+	if _, err := s.Archive("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}

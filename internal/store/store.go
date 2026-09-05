@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,6 +26,7 @@ const (
 	bindingDirMode    = 0o755
 	defaultRoundCap   = 20
 	defaultRoundMSecs = 1800000
+	archiveDirName    = ".archive"
 	lockFileName      = ".lock"
 	lockRetryDelay    = 50 * time.Millisecond
 
@@ -149,6 +151,23 @@ func (s *Store) List() ([]Binding, error) {
 	return bindings, err
 }
 
+// Archive moves a binding aside under the state lock, returning its new path.
+func (s *Store) Archive(name string) (string, error) {
+	var dest string
+
+	err := s.WithLock(func(tx *Tx) error {
+		var err error
+		dest, err = tx.Archive(name)
+
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return dest, nil
+}
+
 // Delete removes a binding and everything under it, acquiring the state lock.
 func (s *Store) Delete(name string) error {
 	return s.WithLock(func(tx *Tx) error { return tx.Delete(name) })
@@ -200,6 +219,11 @@ func (t *Tx) List() ([]Binding, error) {
 // Delete removes a binding under the held lock.
 func (t *Tx) Delete(name string) error {
 	return t.s.remove(name)
+}
+
+// Archive moves a binding aside under the held lock, returning its new path.
+func (t *Tx) Archive(name string) (string, error) {
+	return t.s.archive(name)
 }
 
 // Unexported methods implement the actual logic, assuming lock is held via Tx.
@@ -282,7 +306,7 @@ func (s *Store) list() ([]Binding, error) {
 
 	bindings := make([]Binding, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		b, err := s.load(e.Name())
@@ -296,6 +320,34 @@ func (s *Store) list() ([]Binding, error) {
 	}
 
 	return bindings, nil
+}
+
+// ArchiveDir is where archived bindings are kept. It lives inside the state
+// root but List skips it, since it holds no live bindings.
+func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
+
+// archive moves a binding's directory aside instead of deleting it, so the
+// name frees for a fresh bind while log.jsonl and every round file survive.
+// It returns the directory it moved to.
+func (s *Store) archive(name string) (string, error) {
+	if err := ValidName(name); err != nil {
+		return "", err
+	}
+	if _, err := s.load(name); err != nil {
+		return "", err
+	}
+
+	if err := os.MkdirAll(s.ArchiveDir(), bindingDirMode); err != nil {
+		return "", fmt.Errorf("create archive dir: %w", err)
+	}
+
+	dest := filepath.Join(s.ArchiveDir(),
+		fmt.Sprintf("%s-%s", name, time.Now().UTC().Format("20060102-150405")))
+	if err := os.Rename(s.Dir(name), dest); err != nil {
+		return "", fmt.Errorf("archive binding %q: %w", name, err)
+	}
+
+	return dest, nil
 }
 
 func (s *Store) remove(name string) error {

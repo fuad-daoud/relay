@@ -30,7 +30,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: relay <bind|send|answer|pull|status|log|watch|done|unbind|daemon>")
+		return fmt.Errorf("usage: relay <bind|send|answer|pull|status|log|watch|done|unbind|gc|daemon>")
 	}
 
 	switch args[0] {
@@ -38,6 +38,8 @@ func run(args []string) error {
 		return cmdBind(args[1:])
 	case "unbind":
 		return cmdUnbind(args[1:])
+	case "gc":
+		return cmdGC(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "pull":
@@ -134,19 +136,79 @@ func cmdBind(args []string) error {
 }
 
 func cmdUnbind(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: relay unbind <name>")
+	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
+	name := fs.String("name", "", "binding to unbind")
+	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay unbind <name> [--archive]  (or --name <name>)%s\n"+
+			"unbind removes a binding; it will not guess which one you meant", bindingHint("unbind"))
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	if err := relay.Unbind(context.Background(), rt, args[0]); err != nil {
+
+	dest, err := relay.Unbind(context.Background(), rt, target, *archive)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("unbound %s (panes left untouched)\n", args[0])
+	if dest != "" {
+		fmt.Printf("archived %s to %s (panes left untouched)\n", target, dest)
+		return nil
+	}
+
+	fmt.Printf("unbound %s (panes left untouched)\n", target)
+	return nil
+}
+
+func cmdGC(args []string) error {
+	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
+	archive := fs.Bool("archive", false, "archive each finished binding instead of deleting it")
+	dryRun := fs.Bool("dry-run", false, "list what would be cleared, change nothing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	done, err := relay.GC(context.Background(), rt, relay.GCOptions{
+		Archive: *archive,
+		DryRun:  *dryRun,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(done) == 0 {
+		fmt.Println("no finished bindings to clear")
+		return nil
+	}
+
+	for _, r := range done {
+		switch {
+		case *dryRun:
+			fmt.Printf("would clear %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
+		case r.ArchivedTo != "":
+			fmt.Printf("archived    %-10s -> %s\n", r.Name, r.ArchivedTo)
+		default:
+			fmt.Printf("deleted     %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
+		}
+	}
+
+	if *dryRun {
+		fmt.Printf("\n%d binding(s) would be cleared; re-run without --dry-run\n", len(done))
+	}
+
 	return nil
 }
 
@@ -331,7 +393,7 @@ func cmdDone(args []string) error {
 	if !ok {
 		return fmt.Errorf("usage: relay done <name>  (or --name <name>)%s\n"+
 			"done stops relaying for a binding; it will not guess which one you meant",
-			doneHint())
+			bindingHint("done"))
 	}
 
 	rt, err := newRuntime()
@@ -361,9 +423,10 @@ func explicitBinding(nameFlag string, positional []string) (string, bool) {
 	}
 }
 
-// doneHint names the binding for the current directory, if there is one, so
-// the usage line can say what the caller probably meant.
-func doneHint() string {
+// bindingHint names the binding for the current directory, if there is one, so
+// a usage line can say what the caller probably meant. verb is the command
+// being refused, so the suggestion is the one they actually wanted.
+func bindingHint(verb string) string {
 	rt, err := newRuntime()
 	if err != nil {
 		return ""
@@ -377,7 +440,7 @@ func doneHint() string {
 		return ""
 	}
 
-	return fmt.Sprintf("\nthis directory is bound as %q, so you probably want: relay done %s", b.Name, b.Name)
+	return fmt.Sprintf("\nthis directory is bound as %q, so you probably want: relay %s %s", b.Name, verb, b.Name)
 }
 
 func cmdDaemon(args []string) error {
