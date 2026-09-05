@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/store"
@@ -98,7 +99,10 @@ func TestGCArchiveKeepsTheRoundLog(t *testing.T) {
 	if len(got) != 1 || got[0].ArchivedTo == "" || got[0].Deleted {
 		t.Fatalf("gc result = %+v, want an archive not a delete", got)
 	}
-	if _, err := os.Stat(got[0].ArchivedTo + "/log.jsonl"); err != nil {
-		t.Errorf("archived log missing: %v", err)
+	if !strings.HasSuffix(got[0].ArchivedTo, ".tar.gz") {
+		t.Errorf("archive path = %q, want a .tar.gz", got[0].ArchivedTo)
+	}
+	if _, err := os.Stat(got[0].ArchivedTo); err != nil {
+		t.Errorf("archive missing: %v", err)
 	}
 }

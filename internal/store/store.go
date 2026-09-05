@@ -1,9 +1,12 @@
 package store
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,8 +30,13 @@ const (
 	defaultRoundCap   = 20
 	defaultRoundMSecs = 1800000
 	archiveDirName    = ".archive"
-	lockFileName      = ".lock"
-	lockRetryDelay    = 50 * time.Millisecond
+
+	// maxArchiveFileBytes bounds a single file going into an archive. Relay's
+	// own state files are small; anything past this means something has gone
+	// wrong, and a runaway file should fail the archive rather than balloon it.
+	maxArchiveFileBytes = 64 << 20
+	lockFileName        = ".lock"
+	lockRetryDelay      = 50 * time.Millisecond
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow herdr
 	// turns every other caller's wait into a failure. The longest hold is
@@ -326,9 +334,12 @@ func (s *Store) list() ([]Binding, error) {
 // root but List skips it, since it holds no live bindings.
 func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
 
-// archive moves a binding's directory aside instead of deleting it, so the
-// name frees for a fresh bind while log.jsonl and every round file survive.
-// It returns the directory it moved to.
+// archive packs a binding's directory into a gzipped tarball and removes the
+// directory, so the name frees for a fresh bind while log.jsonl and every
+// round file survive. Relay's state is small text, which gzips well enough
+// that a long history of archived bindings stays negligible on disk.
+//
+// It returns the path of the tarball it wrote.
 func (s *Store) archive(name string) (string, error) {
 	if err := ValidName(name); err != nil {
 		return "", err
@@ -342,12 +353,101 @@ func (s *Store) archive(name string) (string, error) {
 	}
 
 	dest := filepath.Join(s.ArchiveDir(),
-		fmt.Sprintf("%s-%s", name, time.Now().UTC().Format("20060102-150405")))
-	if err := os.Rename(s.Dir(name), dest); err != nil {
-		return "", fmt.Errorf("archive binding %q: %w", name, err)
+		fmt.Sprintf("%s-%s.tar.gz", name, time.Now().UTC().Format("20060102-150405")))
+
+	if err := tarGzDir(s.Dir(name), name, dest); err != nil {
+		return "", err
+	}
+
+	// Only once the archive is safely on disk: losing the directory to a
+	// half-written tarball would destroy the record this exists to keep.
+	if err := os.RemoveAll(s.Dir(name)); err != nil {
+		return "", fmt.Errorf("remove archived binding %q: %w", name, err)
 	}
 
 	return dest, nil
+}
+
+// tarGzDir writes the flat contents of dir into a gzipped tar at dest, under
+// the given prefix. It streams to a temp file in the destination directory and
+// renames only after a clean close, so a crash cannot leave a truncated
+// archive that looks complete.
+func tarGzDir(dir, prefix, dest string) (err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read binding dir %s: %w", dir, err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".tmp-archive-*")
+	if err != nil {
+		return fmt.Errorf("create temp archive: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}()
+
+	gz := gzip.NewWriter(tmp)
+	tw := tar.NewWriter(gz)
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue // binding directories are flat
+		}
+		if err = addArchiveFile(tw, dir, prefix, e); err != nil {
+			return err
+		}
+	}
+
+	if err = tw.Close(); err != nil {
+		return fmt.Errorf("close tar writer: %w", err)
+	}
+	if err = gz.Close(); err != nil {
+		return fmt.Errorf("close gzip writer: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("close archive: %w", err)
+	}
+	if err = os.Rename(tmp.Name(), dest); err != nil {
+		return fmt.Errorf("rename archive into place: %w", err)
+	}
+
+	return nil
+}
+
+func addArchiveFile(tw *tar.Writer, dir, prefix string, e os.DirEntry) error {
+	info, err := e.Info()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", e.Name(), err)
+	}
+	if info.Size() > maxArchiveFileBytes {
+		return fmt.Errorf("%s is %d bytes, over the %d byte archive limit",
+			e.Name(), info.Size(), maxArchiveFileBytes)
+	}
+
+	hdr, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("tar header for %s: %w", e.Name(), err)
+	}
+	hdr.Name = filepath.Join(prefix, e.Name())
+
+	if err := tw.WriteHeader(hdr); err != nil {
+		return fmt.Errorf("write tar header for %s: %w", e.Name(), err)
+	}
+
+	f, err := os.Open(filepath.Join(dir, e.Name()))
+	if err != nil {
+		return fmt.Errorf("open %s: %w", e.Name(), err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(tw, f); err != nil {
+		return fmt.Errorf("copy %s into archive: %w", e.Name(), err)
+	}
+
+	return nil
 }
 
 func (s *Store) remove(name string) error {

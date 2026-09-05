@@ -57,9 +57,17 @@ the builder.
 
 ```
 relay unbind ai              # delete the binding and its whole directory
-relay unbind ai --archive    # move it to .archive/ai-<date>/ instead, keeping the log
+relay unbind ai --archive    # pack it into .archive/ai-<date>.tar.gz, keeping the log
 relay gc --dry-run           # list every DONE binding that would be cleared
 relay gc --archive           # archive them all in one go
+```
+
+Archives are gzipped tarballs under `~/.local/state/relay/.archive/`. A typical
+eight-round binding compresses about 60x — a thousand of them is under 2 MB — so
+archiving is effectively free. To read one back:
+
+```
+tar -xzf ~/.local/state/relay/.archive/ai-20260905-121500.tar.gz -O ai/log.jsonl
 ```
 
 `gc` only touches bindings the planner marked `DONE`. A `BROKEN` or `ORPHANED`

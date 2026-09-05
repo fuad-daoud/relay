@@ -1,9 +1,14 @@
 package store
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -297,8 +302,11 @@ func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
 	}
 
 	// The round log survives the archive -- that is the whole point.
-	if _, err := os.Stat(filepath.Join(dest, "log.jsonl")); err != nil {
-		t.Errorf("archived log missing: %v", err)
+	if !filepath.IsAbs(dest) || !strings.HasSuffix(dest, ".tar.gz") {
+		t.Errorf("archive path = %q, want an absolute .tar.gz", dest)
+	}
+	if got := archiveEntries(t, dest); !slices.Contains(got, "upjo/log.jsonl") {
+		t.Errorf("archived tarball entries = %v, want it to contain upjo/log.jsonl", got)
 	}
 	if _, err := s.Load("upjo"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("archived binding must be gone from the live set, got %v", err)
@@ -332,5 +340,64 @@ func TestArchiveRefusesAnUnknownBinding(t *testing.T) {
 	s := New(t.TempDir())
 	if _, err := s.Archive("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
+// archiveEntries lists the paths inside a gzipped tar, so tests can assert on
+// what an archive preserved without shelling out.
+func archiveEntries(t *testing.T, path string) []string {
+	t.Helper()
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gunzip archive: %v", err)
+	}
+	defer gz.Close()
+
+	var names []string
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar: %v", err)
+		}
+		names = append(names, hdr.Name)
+	}
+
+	return names
+}
+
+func TestArchiveIsCompressed(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Highly compressible content, as relay's own state files are.
+	big := strings.Repeat("the planner told the builder to read the plan file\n", 2000)
+	if err := os.WriteFile(s.PlanPath("upjo", 1), []byte(big), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	dest, err := s.Archive("upjo")
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatalf("stat archive: %v", err)
+	}
+	if info.Size() >= int64(len(big)) {
+		t.Errorf("archive is %d bytes for %d bytes of input; compression is not happening",
+			info.Size(), len(big))
 	}
 }
