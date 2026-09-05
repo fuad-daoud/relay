@@ -88,6 +88,7 @@ func cmdBind(args []string) error {
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
 	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
+	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -112,6 +113,8 @@ func cmdBind(args []string) error {
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		CWD:         cwd,
 		Resume:      *resume,
+		NewTab:      *newTab,
+		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 	}
 	// A value containing ':' is a herdr pane id, not an alias.
 	if strings.Contains(*builderAlias, ":") {
@@ -318,16 +321,20 @@ func cmdWatch(args []string) error {
 }
 
 func cmdDone(args []string) error {
-	rt, err := newRuntime()
-	if err != nil {
+	fs := flag.NewFlagSet("done", flag.ContinueOnError)
+	name := fs.String("name", "", "binding to mark done")
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	name := ""
-	if len(args) == 1 {
-		name = args[0]
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay done <name>  (or --name <name>)%s\n"+
+			"done stops relaying for a binding; it will not guess which one you meant",
+			doneHint())
 	}
-	target, err := resolveBinding(rt, name)
+
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
@@ -337,6 +344,40 @@ func cmdDone(args []string) error {
 
 	fmt.Printf("%s marked done; relaying stopped\n", target)
 	return nil
+}
+
+// explicitBinding takes the binding from --name or a single positional, and
+// never from the current directory. done is destructive and not undoable
+// except through `relay bind --resume`, so a bare invocation must fail rather
+// than guess -- guessing has already ended one live loop by accident.
+func explicitBinding(nameFlag string, positional []string) (string, bool) {
+	switch {
+	case nameFlag != "" && len(positional) == 0:
+		return nameFlag, true
+	case nameFlag == "" && len(positional) == 1:
+		return positional[0], true
+	default:
+		return "", false
+	}
+}
+
+// doneHint names the binding for the current directory, if there is one, so
+// the usage line can say what the caller probably meant.
+func doneHint() string {
+	rt, err := newRuntime()
+	if err != nil {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	b, found, err := rt.Store.FindByCWD(cwd)
+	if err != nil || !found {
+		return ""
+	}
+
+	return fmt.Sprintf("\nthis directory is bound as %q, so you probably want: relay done %s", b.Name, b.Name)
 }
 
 func cmdDaemon(args []string) error {

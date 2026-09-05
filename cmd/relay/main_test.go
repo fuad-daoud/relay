@@ -21,3 +21,29 @@ func TestBindResumeWithoutNameIsRejected(t *testing.T) {
 		t.Errorf("error must point at --name, got %q", err)
 	}
 }
+
+func TestExplicitBindingNeverGuesses(t *testing.T) {
+	cases := []struct {
+		name       string
+		flag       string
+		positional []string
+		want       string
+		ok         bool
+	}{
+		{"flag only", "ai", nil, "ai", true},
+		{"positional only", "", []string{"ai"}, "ai", true},
+		{"bare invocation is refused", "", nil, "", false},
+		{"both at once is refused", "ai", []string{"ai"}, "", false},
+		{"two positionals refused", "", []string{"ai", "upjo"}, "", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := explicitBinding(c.flag, c.positional)
+			if ok != c.ok || got != c.want {
+				t.Errorf("explicitBinding(%q, %v) = (%q, %v), want (%q, %v)",
+					c.flag, c.positional, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}

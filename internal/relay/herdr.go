@@ -21,6 +21,7 @@ type Herdr interface {
 	ReadAgent(ctx context.Context, target string, lines int) (string, error)
 	ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error)
 	SplitPane(ctx context.Context, paneID, direction, cwd string) (string, error)
+	CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error)
 	StartAgent(ctx context.Context, name, kind, paneID string, args []string) error
 	Notify(ctx context.Context, message string) error
 }

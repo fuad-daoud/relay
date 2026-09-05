@@ -15,6 +15,10 @@ type readCall struct {
 	Target, Source string
 	Lines          int
 }
+type tabCall struct {
+	WorkspaceID, CWD, Label string
+}
+
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
@@ -30,6 +34,8 @@ type fakeHerdr struct {
 	notices   []string
 	readOut   string
 	newPane   string
+	newTab    string
+	tabs      []tabCall
 	splits    int
 	promptErr error
 	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
@@ -87,6 +93,14 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 
 func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
 	f.splits++
+	return f.newPane, nil
+}
+
+func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string) (string, error) {
+	f.tabs = append(f.tabs, tabCall{WorkspaceID: workspaceID, CWD: cwd, Label: label})
+	if f.newTab != "" {
+		return f.newTab, nil
+	}
 	return f.newPane, nil
 }
 

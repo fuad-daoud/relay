@@ -42,6 +42,18 @@ human, whether the work is done, is a decision that stays with the planner
 `--name` is optional almost everywhere: it defaults to whichever binding owns
 the current working directory.
 
+### Where the builder appears
+
+By default `relay bind` splits the planner's pane, so you can watch the builder
+work beside you. `relay bind --tab` opens it in its own herdr tab instead —
+the planner keeps full width, at the cost of not seeing the builder live.
+
+### done and unbind are the destructive verbs
+
+`relay done` requires a binding name (`relay done ai`, or `--name ai`). It will
+not resolve the current directory for you: a bare `relay done` once ended a live
+loop by accident, and the recovery is `relay bind --resume --name <name>`.
+
 ## Builder aliases
 
 | alias      | kind     | model                              | role selection |
@@ -105,6 +117,26 @@ it manages. The cheap way to confirm this is fine before trusting the
 service: if `relay status` works from a plain terminal (not inside a herdr
 pane), the daemon will work there too, since both resolve the running herdr
 session the same way.
+
+## opencode permission allowlist
+
+relay stages plans and reports under `~/.local/state/relay/<binding>/`, outside
+the repo the builder is working in, so a fresh opencode builder blocks on an
+"Access external directory" dialog on its first round. relay handles it — the
+daemon captures the dialog and the planner answers with `relay answer` — but to
+skip it entirely, `~/.config/opencode/opencode.jsonc` carries:
+
+```jsonc
+"permission": {
+  "external_directory": {
+    "/home/fuad/.local/state/relay/*": "allow",
+    "/home/fuad/.local/state/relay/**": "allow"
+  }
+}
+```
+
+Claude builders (`cbuilder`) have their own permission model and are not covered
+by that entry.
 
 ## Prerequisite: agy has no herdr integration yet
 

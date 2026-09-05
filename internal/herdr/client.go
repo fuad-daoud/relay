@@ -183,6 +183,42 @@ func (c *Client) SplitPane(ctx context.Context, paneID, direction, cwd string) (
 	return env.Result.Pane.PaneID, nil
 }
 
+type tabEnvelope struct {
+	Result struct {
+		RootPane struct {
+			PaneID string `json:"pane_id"`
+		} `json:"root_pane"`
+	} `json:"result"`
+}
+
+// CreateTab opens a tab and returns its root pane, leaving focus where it is.
+// A builder in its own tab keeps the planner pane full width, at the cost of
+// not being able to watch the builder work side by side.
+func (c *Client) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
+	args := []string{"tab", "create", "--cwd", cwd, "--no-focus"}
+	if workspaceID != "" {
+		args = append(args, "--workspace", workspaceID)
+	}
+	if label != "" {
+		args = append(args, "--label", label)
+	}
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	var env tabEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", fmt.Errorf("decode tab create: %w", err)
+	}
+	if env.Result.RootPane.PaneID == "" {
+		return "", errors.New("tab create returned no root pane id")
+	}
+
+	return env.Result.RootPane.PaneID, nil
+}
+
 // StartAgent launches a supported agent kind in an existing shell pane. Native
 // agent arguments are passed after a bare --, as herdr requires.
 func (c *Client) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {

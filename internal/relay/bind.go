@@ -22,6 +22,11 @@ type BindOptions struct {
 	PlannerPane string
 	CWD         string
 	Resume      bool
+
+	// NewTab opens the builder in its own herdr tab instead of splitting the
+	// planner's pane. WorkspaceID scopes that tab to the planner's workspace.
+	NewTab      bool
+	WorkspaceID string
 }
 
 // Bind ties the calling planner pane to a builder over one working tree.
@@ -163,12 +168,13 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		return store.Endpoint{}, err
 	}
 
-	paneID, err := rt.Herdr.SplitPane(ctx, plannerPane, splitDirection, opts.CWD)
+	agentName := name + "-builder"
+
+	paneID, err := builderPane(ctx, rt, opts, agentName, plannerPane)
 	if err != nil {
-		return store.Endpoint{}, fmt.Errorf("split pane for builder: %w", err)
+		return store.Endpoint{}, err
 	}
 
-	agentName := name + "-builder"
 	if err := rt.Herdr.StartAgent(ctx, agentName, spec.Kind, paneID, spec.Args); err != nil {
 		return store.Endpoint{}, fmt.Errorf("start builder %q: %w", agentName, err)
 	}
@@ -201,6 +207,27 @@ func endpointOf(a herdr.Agent) store.Endpoint {
 		SessionID: a.Session.Value,
 		Kind:      a.Kind,
 	}
+}
+
+// builderPane makes somewhere for the builder to live: its own tab when asked,
+// otherwise a sibling pane beside the planner. Focus stays with the planner
+// either way.
+func builderPane(ctx context.Context, rt Runtime, opts BindOptions, agentName, plannerPane string) (string, error) {
+	if opts.NewTab {
+		paneID, err := rt.Herdr.CreateTab(ctx, opts.WorkspaceID, opts.CWD, agentName)
+		if err != nil {
+			return "", fmt.Errorf("create tab for builder: %w", err)
+		}
+
+		return paneID, nil
+	}
+
+	paneID, err := rt.Herdr.SplitPane(ctx, plannerPane, splitDirection, opts.CWD)
+	if err != nil {
+		return "", fmt.Errorf("split pane for builder: %w", err)
+	}
+
+	return paneID, nil
 }
 
 // Unbind forgets a binding. It never touches the panes, so the builder's output

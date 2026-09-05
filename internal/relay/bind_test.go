@@ -294,3 +294,48 @@ func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
 		t.Errorf("resume must not start an agent, got %+v", f.starts)
 	}
 }
+
+func TestBindOpensBuilderInItsOwnTabWhenAsked(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newTab: "w2:pT"}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		NewTab: true, WorkspaceID: "w2",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	if len(f.tabs) != 1 {
+		t.Fatalf("got %d tab creations, want 1", len(f.tabs))
+	}
+	if got := f.tabs[0]; got.WorkspaceID != "w2" || got.CWD != "/repo" || got.Label != "upjo-builder" {
+		t.Errorf("tab call = %+v", got)
+	}
+	if b.Builder.PaneID != "w2:pT" {
+		t.Errorf("builder pane = %q, want the tab's root pane", b.Builder.PaneID)
+	}
+	if len(f.starts) != 1 || f.starts[0].Pane != "w2:pT" {
+		t.Errorf("agent must start in the tab's root pane, got %+v", f.starts)
+	}
+}
+
+func TestBindSplitsThePlannerPaneByDefault(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", newTab: "w2:pT"}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	if len(f.tabs) != 0 {
+		t.Errorf("no tab may be created without --tab, got %+v", f.tabs)
+	}
+	if b.Builder.PaneID != "w2:p4" {
+		t.Errorf("builder pane = %q, want the split pane", b.Builder.PaneID)
+	}
+}
