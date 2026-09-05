@@ -73,6 +73,15 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	if len(f.notices) == 0 {
 		t.Error("a timeout must notify")
 	}
+
+	// A second tick against the same already-halted binding must not notify
+	// again: haltBinding's guard is per-transition, not per-tick.
+	if _, err := reconcile(t, rt, got, agents); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(f.notices) != 1 {
+		t.Errorf("got %d notices, want 1; a still-timed-out binding must not renotify", len(f.notices))
+	}
 }
 
 func TestReconcileStopsAtRoundCap(t *testing.T) {
@@ -90,5 +99,8 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 	}
 	if len(f.prompts) != 0 {
 		t.Error("nothing may be relayed past the round cap")
+	}
+	if len(f.notices) == 0 {
+		t.Error("hitting the round cap must notify")
 	}
 }

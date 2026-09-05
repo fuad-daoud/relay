@@ -50,6 +50,11 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		b.State = store.StateActive
 	}
 
+	// Halt paths return without calling deliverAndSettle, unlike every branch
+	// below. That is deliberate: entering Held would overwrite the NeedsYou
+	// state that `relay status` reports, and DeliverPending's notify dedup keys
+	// on Held, so a capped binding would resume notifying every tick. A payload
+	// queued before the halt is not lost -- `relay pull` still retrieves it.
 	if b.Round > b.RoundCap {
 		return haltBinding(ctx, rt, b,
 			fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
