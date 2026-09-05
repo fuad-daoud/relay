@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -49,20 +50,97 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		b.State = store.StateActive
 	}
 
+	if b.Round > b.RoundCap {
+		return haltBinding(ctx, rt, b,
+			fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
+	}
+
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {
 		return b, err
 	}
 
+	var next store.Binding
 	switch builder.Status {
 	case herdr.StatusIdle, herdr.StatusDone:
-		b, err = handleIdleBuilder(ctx, rt, tx, b, entries)
-		if err != nil {
-			return b, err
-		}
+		next, err = handleIdleBuilder(ctx, rt, tx, b, entries)
+	case herdr.StatusBlocked:
+		next, err = handleBlockedBuilder(ctx, rt, tx, b, entries)
+	default:
+		next, err = checkRoundTimeout(ctx, rt, b)
+	}
+	if err != nil {
+		return b, err
 	}
 
-	return deliverAndSettle(ctx, rt, tx, b, agents)
+	return deliverAndSettle(ctx, rt, tx, next, agents)
+}
+
+// haltBinding stops relaying and asks for a human, exactly once per transition.
+func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
+	if b.State == store.StateNeedsYou {
+		return b, nil
+	}
+	if err := rt.Herdr.Notify(ctx, message); err != nil {
+		return b, fmt.Errorf("notify halt: %w", err)
+	}
+
+	b.State = store.StateNeedsYou
+
+	return b, nil
+}
+
+// handleBlockedBuilder captures the dialog and hands it to the planner. herdr
+// refuses agent prompt against a blocked agent, so the planner answers with
+// relay answer, which uses send-keys.
+func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, error) {
+	if HasEntry(entries, b.Round, store.DirToPlanner, store.KindQuestion) {
+		return b, nil
+	}
+
+	dialog, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
+	if err != nil {
+		return b, fmt.Errorf("read blocking dialog: %w", err)
+	}
+
+	path := rt.Store.QuestionPath(b.Name, b.Round)
+	if err := os.WriteFile(path, []byte(dialog), 0o644); err != nil {
+		return b, fmt.Errorf("write question %s: %w", path, err)
+	}
+
+	payload := fmt.Sprintf(
+		"Builder is blocked at a dialog in round %d. Question: %s\n"+
+			"Read it, then answer with: relay answer --name %s (--keys <key> | --choice <n> | --text <s>)",
+		b.Round, path, b.Name)
+
+	entry := store.LogEntry{
+		TS: rt.Now().UTC(), Round: b.Round,
+		Direction: store.DirToPlanner, Kind: store.KindQuestion,
+		Path: path, Payload: payload,
+	}
+	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
+		return b, err
+	}
+
+	b.State = store.StateNeedsYou
+
+	return b, nil
+}
+
+// checkRoundTimeout flags a builder that has been working past its budget. It
+// never kills anything -- the human decides whether to nudge, reset or switch.
+func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.Binding, error) {
+	if b.RoundStartedAt.IsZero() || b.RoundTimeoutMS <= 0 {
+		return b, nil
+	}
+
+	budget := time.Duration(b.RoundTimeoutMS) * time.Millisecond
+	if rt.Now().UTC().Sub(b.RoundStartedAt) < budget {
+		return b, nil
+	}
+
+	return haltBinding(ctx, rt, b,
+		fmt.Sprintf("%s: round %d has run past %s", b.Name, b.Round, budget))
 }
 
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
