@@ -1,0 +1,15 @@
+[Unit]
+Description=relay - planner/builder handoff for herdr agent panes
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/relay daemon --interval 2s
+Restart=on-failure
+RestartSec=5
+# The daemon holds no long-lived state of its own; it rebuilds from
+# ~/.local/state/relay and a live herdr query on every start.
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target
