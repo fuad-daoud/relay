@@ -58,7 +58,7 @@ Aliases can be overridden or extended via `~/.config/relay/aliases.json`.
 
 ## Display states
 
-`relay status` collapses the binding's internal state into three:
+`relay status` collapses the binding's internal state into four:
 
 - **ACTIVE** — someone is working (planner or builder), nothing needs a human
   yet.
@@ -67,6 +67,12 @@ Aliases can be overridden or extended via `~/.config/relay/aliases.json`.
   round that ran past its timeout, and a binding that hit its round cap.
 - **HELD** — a payload is ready for the planner, but the planner pane is
   focused, so relay is holding it rather than typing into it.
+- **DONE** — the planner declared the work verified via `relay done`, and
+  relaying has stopped deliberately, not because anything went wrong: unlike
+  NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
+  a done binding — no reports are queued, no dialogs captured, no timeouts
+  flagged. The binding and its round log stay on disk (`relay log <name>`
+  still works as an audit trail) until `relay unbind` removes them.
 
 ## The anti-clobber rule
 
@@ -89,6 +95,13 @@ make service   # installs dist/relay.service and starts it as a user unit
 `make check` runs `gofmt -l .`, `go vet ./...`, and `go test -count=1 ./...`.
 `make uninstall` stops the unit and removes both the binary and the unit
 file.
+
+The unit runs `relay daemon` outside any herdr-managed pane, so it starts
+with none of the `HERDR_*` environment variables herdr injects into a pane
+it manages. The cheap way to confirm this is fine before trusting the
+service: if `relay status` works from a plain terminal (not inside a herdr
+pane), the daemon will work there too, since both resolve the running herdr
+session the same way.
 
 ## Prerequisite: agy has no herdr integration yet
 
