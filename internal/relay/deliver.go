@@ -69,10 +69,17 @@ func DeliverPending(ctx context.Context, rt Runtime, b store.Binding, agents []h
 		}
 
 		if planner.Focused {
-			msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
-			if err := rt.Herdr.Notify(ctx, msg); err != nil {
-				return fmt.Errorf("notify held delivery: %w", err)
+			// Notify only on the transition into held. The daemon reconciles
+			// every couple of seconds and a payload stays held for as long as
+			// the human sits in the planner pane, so notifying per tick would
+			// fire indefinitely instead of nudging once.
+			if b.State != store.StateHeld {
+				msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
+				if err := rt.Herdr.Notify(ctx, msg); err != nil {
+					return fmt.Errorf("notify held delivery: %w", err)
+				}
 			}
+
 			out = Delivery{Held: true, Reason: "planner pane is focused"}
 
 			return nil
