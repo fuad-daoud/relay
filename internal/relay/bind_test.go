@@ -59,8 +59,11 @@ func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), existing}}
 	rt := newRuntime(t, f)
 
+	// No Alias: the CLI's flag handling is mutually exclusive, so an adopt
+	// never carries one. Setting both here would test a state main.go cannot
+	// produce, and would hide a lookup of the empty alias.
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "upjo", Alias: "cbuilder", BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "upjo", BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -71,6 +74,24 @@ func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	}
 	if b.Builder.PaneID != "w2:p8" {
 		t.Errorf("builder pane = %q, want w2:p8", b.Builder.PaneID)
+	}
+	if b.BuilderAlias != "" {
+		t.Errorf("BuilderAlias = %q, want empty for an adopted pane", b.BuilderAlias)
+	}
+}
+
+func TestBindSpawnUnknownAliasFails(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "nope", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, alias.ErrUnknownAlias) {
+		t.Fatalf("got %v, want ErrUnknownAlias", err)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("an unknown alias must not start an agent, got %+v", f.starts)
 	}
 }
 

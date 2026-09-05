@@ -61,11 +61,7 @@ func resume(rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, e
 			return err
 		}
 
-		b.Planner = store.Endpoint{
-			PaneID:    planner.PaneID,
-			SessionID: planner.Session.Value,
-			Kind:      planner.Kind,
-		}
+		b.Planner = endpointOf(planner)
 		b.State = store.StateActive
 
 		if err := tx.Save(b); err != nil {
@@ -92,11 +88,6 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		return store.Binding{}, err
 	}
 
-	spec, err := rt.Aliases.Lookup(opts.Alias)
-	if err != nil {
-		return store.Binding{}, err
-	}
-
 	// Check the working tree before spawning anything. Save re-checks under the
 	// lock and stays authoritative, but without this a refused bind would leave
 	// a started builder pane stranded with nothing pointing at it.
@@ -109,19 +100,15 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
 	}
 
-	builder, err := resolveBuilder(ctx, rt, opts, name, spec.Kind, spec.Args, planner.PaneID)
+	builder, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
 	if err != nil {
 		return store.Binding{}, err
 	}
 
 	b := store.Binding{
-		Name: name,
-		CWD:  opts.CWD,
-		Planner: store.Endpoint{
-			PaneID:    planner.PaneID,
-			SessionID: planner.Session.Value,
-			Kind:      planner.Kind,
-		},
+		Name:         name,
+		CWD:          opts.CWD,
+		Planner:      endpointOf(planner),
 		Builder:      builder,
 		BuilderAlias: opts.Alias,
 		Round:        1,
@@ -140,7 +127,12 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 
 // resolveBuilder adopts an existing builder pane, or splits a sibling pane and
 // starts the aliased agent in it. Focus stays with the planner either way.
-func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, kind string, args []string, plannerPane string) (store.Endpoint, error) {
+//
+// The alias is looked up only on the spawn path. Adopting a pane needs no
+// alias: the human launched that agent themselves, so relay has no kind or
+// args to supply -- and for agy, their fish function already activated the
+// plan-executor role in that session.
+func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, error) {
 	if opts.BuilderPane != "" {
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
@@ -150,11 +142,12 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, kin
 		if !ok {
 			return store.Endpoint{}, fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
 		}
-		return store.Endpoint{
-			PaneID:    found.PaneID,
-			SessionID: found.Session.Value,
-			Kind:      found.Kind,
-		}, nil
+		return endpointOf(found), nil
+	}
+
+	spec, err := rt.Aliases.Lookup(opts.Alias)
+	if err != nil {
+		return store.Endpoint{}, err
 	}
 
 	paneID, err := rt.Herdr.SplitPane(ctx, plannerPane, splitDirection, opts.CWD)
@@ -163,11 +156,21 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, kin
 	}
 
 	agentName := name + "-builder"
-	if err := rt.Herdr.StartAgent(ctx, agentName, kind, paneID, args); err != nil {
+	if err := rt.Herdr.StartAgent(ctx, agentName, spec.Kind, paneID, spec.Args); err != nil {
 		return store.Endpoint{}, fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 
-	return store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: kind}, nil
+	return store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: spec.Kind}, nil
+}
+
+// endpointOf projects a live herdr agent onto the store's durable endpoint
+// shape, used for both a binding's planner and an adopted builder.
+func endpointOf(a herdr.Agent) store.Endpoint {
+	return store.Endpoint{
+		PaneID:    a.PaneID,
+		SessionID: a.Session.Value,
+		Kind:      a.Kind,
+	}
 }
 
 // Unbind forgets a binding. It never touches the panes, so the builder's output
