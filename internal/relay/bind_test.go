@@ -78,6 +78,33 @@ func TestBindSpawnRecordsBuilderSessionID(t *testing.T) {
 	}
 }
 
+func TestBindSpawnToleratesPostStartListAgentsFailure(t *testing.T) {
+	f := &fakeHerdr{
+		agents:  []herdr.Agent{plannerAgent()},
+		newPane: "w2:p4",
+		listErr: errors.New("herdr unavailable"),
+	}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind must not fail over a best-effort session lookup: %v", err)
+	}
+	if b.Builder.SessionID != "" {
+		t.Errorf("Builder.SessionID = %q, want empty when the post-start lookup fails", b.Builder.SessionID)
+	}
+
+	loaded, err := rt.Store.Load("upjo")
+	if err != nil {
+		t.Fatalf("binding must exist despite the lookup failure: %v", err)
+	}
+	if loaded.Builder.PaneID != "w2:p4" {
+		t.Errorf("builder pane = %q, want w2:p4 -- the already-running pane must not be stranded", loaded.Builder.PaneID)
+	}
+}
+
 func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	existing := herdr.Agent{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w2:p8", CWD: "/repo"}
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), existing}}

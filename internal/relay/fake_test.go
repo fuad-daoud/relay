@@ -27,10 +27,17 @@ type fakeHerdr struct {
 	promptErr error
 	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
 	listCalls int
+	listErr   error // when set, every ListAgents call after the first fails
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
 	f.listCalls++
+	// The first call always succeeds: it is Bind's own planner lookup, which
+	// is what gets a test flow to the spawn path at all. listErr targets a
+	// later, incidental lookup (the post-spawn session-id read), not that one.
+	if f.listErr != nil && f.listCalls > 1 {
+		return nil, f.listErr
+	}
 	return f.agents, nil
 }
 

@@ -167,12 +167,14 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	// pane, so a binding can recover from a detection flicker without ever
 	// resuming into a stranger. Harnesses with no herdr integration report no
 	// session; leaving it empty simply means such a binding never self-heals.
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return store.Endpoint{}, fmt.Errorf("list agents after starting %q: %w", agentName, err)
-	}
-	if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
-		ep.SessionID = started.Session.Value
+	//
+	// Best effort only. The agent is already running, so failing the bind here
+	// would strand a live pane over a lookup relay can do without: an empty
+	// SessionID costs this binding self-healing, nothing more.
+	if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
+		if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
+			ep.SessionID = started.Session.Value
+		}
 	}
 
 	return ep, nil
