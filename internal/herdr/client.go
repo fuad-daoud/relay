@@ -70,7 +70,10 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 			if msg == "" {
 				msg = env.Error.Code
 			}
-			return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), msg, err)
+			if err != nil {
+				return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), msg, err)
+			}
+			return nil, fmt.Errorf("herdr %s: %s", strings.Join(args, " "), msg)
 		}
 	}
 

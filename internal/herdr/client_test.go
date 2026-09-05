@@ -75,3 +75,24 @@ func TestClientReadAgentReturnsTextWithoutFalsePositive(t *testing.T) {
 		t.Fatalf("got %q, want %q", text, body)
 	}
 }
+
+func TestClientUnknownErrorCodeWithExitZero(t *testing.T) {
+	// Stub returns exit 0 with an error envelope carrying an unknown code.
+	// This tests the default branch when err == nil. The error message should
+	// contain the error message text and not contain %!w or <nil>.
+	body := `{"id":"x","error":{"code":"some_other_code","message":"something went wrong"}}`
+	c := NewClient(stubHerdr(t, body, 0), 5*time.Second)
+
+	err := c.Prompt(context.Background(), "target", "text")
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "something went wrong") {
+		t.Fatalf("error message missing expected text: %q", errMsg)
+	}
+	if strings.Contains(errMsg, "%!w") || strings.Contains(errMsg, "<nil>") {
+		t.Fatalf("error message contains nil wrapping artifact: %q", errMsg)
+	}
+}
