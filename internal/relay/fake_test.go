@@ -28,6 +28,7 @@ type fakeHerdr struct {
 	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
 	listCalls int
 	listErr   error // when set, every ListAgents call after the first fails
+	readErr   error // when set, ReadAgent fails instead of returning readOut
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
@@ -58,7 +59,12 @@ func (f *fakeHerdr) SendKeys(_ context.Context, target, keys string) error {
 	return nil
 }
 
-func (f *fakeHerdr) ReadAgent(context.Context, string, int) (string, error) { return f.readOut, nil }
+func (f *fakeHerdr) ReadAgent(context.Context, string, int) (string, error) {
+	if f.readErr != nil {
+		return "", f.readErr
+	}
+	return f.readOut, nil
+}
 
 func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
 	return f.newPane, nil

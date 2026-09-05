@@ -55,7 +55,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) Tick(ctx context.Context) error {
 	bindings, err := d.rt.Store.List()
 	if err != nil {
-		return err
+		return fmt.Errorf("list bindings: %w", err)
 	}
 	if len(bindings) == 0 {
 		return nil
