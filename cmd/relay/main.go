@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -43,6 +44,14 @@ func run(args []string) error {
 		return cmdPull(args[1:])
 	case "answer":
 		return cmdAnswer(args[1:])
+	case "status":
+		return cmdStatus(args[1:])
+	case "log":
+		return cmdLog(args[1:])
+	case "watch":
+		return cmdWatch(args[1:])
+	case "done":
+		return cmdDone(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	default:
@@ -217,6 +226,108 @@ func cmdAnswer(args []string) error {
 	}
 
 	fmt.Printf("answered %s's builder\n", target)
+	return nil
+}
+
+func cmdStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	rep, err := relay.Status(context.Background(), rt)
+	if err != nil {
+		return err
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+
+	fmt.Print(relay.RenderStatus(rep))
+	return nil
+}
+
+func cmdLog(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: relay log <name>")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	entries, err := rt.Store.ReadLog(args[0])
+	if err != nil {
+		return err
+	}
+
+	for _, e := range entries {
+		fmt.Printf("%s  round %-3d %-10s %-9s %s %s\n",
+			e.TS.Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
+	}
+	return nil
+}
+
+func cmdWatch(args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+
+	for {
+		rep, err := relay.Status(ctx, rt)
+		if err != nil {
+			return err
+		}
+		fmt.Print("\033[H\033[2J", relay.RenderStatus(rep))
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func cmdDone(args []string) error {
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	name := ""
+	if len(args) == 1 {
+		name = args[0]
+	}
+	target, err := resolveBinding(rt, name)
+	if err != nil {
+		return err
+	}
+	if err := relay.Done(context.Background(), rt, target); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s marked done; relaying stopped\n", target)
 	return nil
 }
 
