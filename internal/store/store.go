@@ -304,9 +304,9 @@ func (s *Store) remove(name string) error {
 // The lock is an flock, so the kernel drops it if a holder is killed and there
 // is no stale lock file to reap. Acquisition is bounded, so a wedged holder
 // surfaces as an error instead of hanging the caller forever. The in-process
-// mutex is held for the same span, so goroutines sharing one Store serialise
-// too -- flock alone would not stop them, since it excludes per file
-// descriptor rather than per process.
+// mutex is held for the same span too, not because flock would let same-process
+// callers corrupt state -- it would still serialise them correctly -- but so
+// they block on a cheap mutex instead of busy-polling the flock.
 func (s *Store) WithLock(fn func(tx *Tx) error) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
