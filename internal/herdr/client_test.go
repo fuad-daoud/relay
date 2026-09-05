@@ -40,7 +40,7 @@ func TestClientListAgents(t *testing.T) {
 }
 
 func TestClientPromptDetectsBlocked(t *testing.T) {
-	c := NewClient(stubHerdr(t, `{"error":{"code":"agent_blocked"}}`, 1), 5*time.Second)
+	c := NewClient(stubHerdr(t, `{"id":"x","error":{"code":"agent_blocked","message":"agent is blocked"}}`, 1), 5*time.Second)
 
 	err := c.Prompt(context.Background(), "builder", "hello")
 	if !errors.Is(err, ErrAgentBlocked) {
@@ -57,5 +57,21 @@ func TestClientSplitPaneReturnsPaneID(t *testing.T) {
 	}
 	if id != "w2:p9" {
 		t.Fatalf("pane id = %q, want w2:p9", id)
+	}
+}
+
+func TestClientReadAgentReturnsTextWithoutFalsePositive(t *testing.T) {
+	// Stub returns exit 0 with body text containing "agent_blocked" but not
+	// in error envelope format. ReadAgent should return this text successfully,
+	// not error with ErrAgentBlocked.
+	body := "some terminal text mentioning agent_blocked in output"
+	c := NewClient(stubHerdr(t, body, 0), 5*time.Second)
+
+	text, err := c.ReadAgent(context.Background(), "w2:p7", 10)
+	if err != nil {
+		t.Fatalf("ReadAgent: %v", err)
+	}
+	if text != body {
+		t.Fatalf("got %q, want %q", text, body)
 	}
 }

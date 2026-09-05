@@ -48,18 +48,39 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	combined := stdout.String() + stderr.String()
+	stdoutBytes := stdout.Bytes()
 
-	switch {
-	case strings.Contains(combined, "agent_blocked"):
-		return nil, ErrAgentBlocked
-	case strings.Contains(combined, "agent_prompt_stalled"):
-		return nil, ErrPromptStalled
-	case err != nil:
-		return nil, fmt.Errorf("herdr %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(combined))
+	// Try to decode as error envelope to detect structured errors.
+	type errorEnvelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 
-	return stdout.Bytes(), nil
+	var env errorEnvelope
+	if json.Unmarshal(stdoutBytes, &env) == nil && env.Error.Code != "" {
+		switch env.Error.Code {
+		case "agent_blocked":
+			return nil, ErrAgentBlocked
+		case "agent_prompt_stalled":
+			return nil, ErrPromptStalled
+		default:
+			msg := env.Error.Message
+			if msg == "" {
+				msg = env.Error.Code
+			}
+			return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), msg, err)
+		}
+	}
+
+	// If no error envelope and command failed, return exec error.
+	if err != nil {
+		combined := stdout.String() + stderr.String()
+		return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(combined), err)
+	}
+
+	return stdoutBytes, nil
 }
 
 // ListAgents returns every agent-occupied pane in the live herdr session.
