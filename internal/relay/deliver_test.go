@@ -16,10 +16,27 @@ func queuedBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
 		Payload: "Builder finished round 1. Report: /x/001-report.md",
 	}
-	if err := Queue(context.Background(), rt, b.Name, entry); err != nil {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return Queue(context.Background(), rt, tx, b.Name, entry)
+	})
+	if err != nil {
 		t.Fatalf("Queue: %v", err)
 	}
 	return rt, b
+}
+
+// deliverPending wraps DeliverPending with the state lock a real caller
+// (the daemon or `relay pull`) would already be holding, since DeliverPending
+// itself takes the tx rather than locking.
+func deliverPending(t *testing.T, rt Runtime, b store.Binding, agents []herdr.Agent) (Delivery, error) {
+	t.Helper()
+	var out Delivery
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		out, err = DeliverPending(context.Background(), rt, tx, b, agents)
+		return err
+	})
+	return out, err
 }
 
 func plannerWith(status string, focused bool) herdr.Agent {
@@ -35,7 +52,7 @@ func TestDeliverInjectsWhenIdleAndUnfocused(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -57,7 +74,7 @@ func TestDeliverHoldsWhilePlannerPaneFocused(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, true)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -82,7 +99,7 @@ func TestDeliverNotifiesOnlyOnceWhileHeld(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, true)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -97,7 +114,7 @@ func TestDeliverNotifiesOnlyOnceWhileHeld(t *testing.T) {
 	// second tick of the same hold by passing a binding already marked held.
 	b.State = store.StateHeld
 
-	got, err = DeliverPending(context.Background(), rt, b, f.agents)
+	got, err = deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -122,7 +139,7 @@ func TestDeliverInjectsWhenPlannerDone(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusDone, false)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -144,7 +161,7 @@ func TestDeliverWaitsWhilePlannerWorking(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -161,7 +178,7 @@ func TestDeliverReportsPlannerGone(t *testing.T) {
 	rt, b := queuedBinding(t, f)
 	f.agents = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
@@ -176,7 +193,7 @@ func TestDeliverWithNothingPendingIsNoop(t *testing.T) {
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
 	f.prompts = nil
 
-	got, err := DeliverPending(context.Background(), rt, b, f.agents)
+	got, err := deliverPending(t, rt, b, f.agents)
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
 	}
