@@ -4,9 +4,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
+// TestDefaultsMatchFishFunctions pins the exact argv of each default alias,
+// not just its kind: these are transcriptions of the user's fish functions,
+// and a wrong model string would start the wrong (or a nonexistent) model with
+// no error relay could see.
 func TestDefaultsMatchFishFunctions(t *testing.T) {
 	tbl := DefaultTable()
 
@@ -16,6 +21,10 @@ func TestDefaultsMatchFishFunctions(t *testing.T) {
 	}
 	if b.Kind != "opencode" {
 		t.Errorf("builder kind = %q, want opencode", b.Kind)
+	}
+	wantBuilder := []string{"--agent", "plan-executor", "-m", "openrouter/z-ai/glm-5.3-flash"}
+	if !slices.Equal(b.Args, wantBuilder) {
+		t.Errorf("builder args = %v, want %v", b.Args, wantBuilder)
 	}
 	if b.Preamble != "" {
 		t.Errorf("builder needs no preamble, got %q", b.Preamble)
@@ -28,6 +37,10 @@ func TestDefaultsMatchFishFunctions(t *testing.T) {
 	if c.Kind != "claude" {
 		t.Errorf("cbuilder kind = %q, want claude", c.Kind)
 	}
+	wantCbuilder := []string{"--agent", "plan-executor", "--model", "sonnet"}
+	if !slices.Equal(c.Args, wantCbuilder) {
+		t.Errorf("cbuilder args = %v, want %v", c.Args, wantCbuilder)
+	}
 
 	a, err := tbl.Lookup("abuilder")
 	if err != nil {
@@ -35,6 +48,10 @@ func TestDefaultsMatchFishFunctions(t *testing.T) {
 	}
 	if a.Kind != "agy" {
 		t.Errorf("abuilder kind = %q, want agy", a.Kind)
+	}
+	wantAbuilder := []string{"--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions"}
+	if !slices.Equal(a.Args, wantAbuilder) {
+		t.Errorf("abuilder args = %v, want %v", a.Args, wantAbuilder)
 	}
 	if a.Preamble == "" {
 		t.Error("abuilder must carry a plan-executor preamble; agy has no --agent flag")

@@ -153,3 +153,41 @@ func TestSendSurfacesBlockedBuilder(t *testing.T) {
 		t.Fatalf("got %v, want ErrBuilderBlocked", err)
 	}
 }
+
+// TestPromptRetryReportsANonStallFailureAsItself keeps the second failure
+// honest: the retry can fail for an unrelated reason -- the builder became
+// blocked between the two attempts, say -- and calling that a stall sends the
+// human looking at the wrong thing.
+func TestPromptRetryReportsANonStallFailureAsItself(t *testing.T) {
+	f := &fakeHerdr{stalls: 1, promptErr: herdr.ErrAgentBlocked}
+	rt, _ := seedBound(t, f)
+
+	err := promptWithRetry(context.Background(), rt, "upjo-builder", "text")
+	if err == nil {
+		t.Fatal("a failing retry must surface an error")
+	}
+	if !errors.Is(err, herdr.ErrAgentBlocked) {
+		t.Errorf("the real cause must survive the wrap, got %v", err)
+	}
+	if strings.Contains(err.Error(), "stalled twice") {
+		t.Errorf("a non-stall retry failure must not be reported as a stall: %v", err)
+	}
+	if !strings.Contains(err.Error(), "failed on retry") {
+		t.Errorf("error = %v, want it to name the retry", err)
+	}
+}
+
+// TestPromptRetryReportsASecondStallAsAStall is the other branch: two genuine
+// stalls stay labelled as such, and relay never fires a third time.
+func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
+	f := &fakeHerdr{stalls: 2}
+	rt, _ := seedBound(t, f)
+
+	err := promptWithRetry(context.Background(), rt, "upjo-builder", "text")
+	if err == nil || !strings.Contains(err.Error(), "stalled twice") {
+		t.Fatalf("err = %v, want a stalled-twice error", err)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("neither attempt was accepted, so nothing may be recorded: %+v", f.prompts)
+	}
+}

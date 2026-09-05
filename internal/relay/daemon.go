@@ -74,6 +74,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		// and the save.
 		err := d.rt.Store.WithLock(func(tx *store.Tx) error {
 			fresh, err := tx.Load(b.Name)
+			if errors.Is(err, store.ErrNotFound) {
+				// A `relay unbind` landed between List and here. That is
+				// normal use, not a failure worth logging.
+				return nil
+			}
 			if err != nil {
 				return err
 			}

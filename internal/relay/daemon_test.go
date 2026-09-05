@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,5 +202,31 @@ func TestNewDaemonFloorsInterval(t *testing.T) {
 	}
 	if d := NewDaemon(rt, time.Minute); d.interval != time.Minute {
 		t.Errorf("an interval already above the floor must pass through unchanged, got %s", d.interval)
+	}
+}
+
+// TestTickIgnoresBindingUnboundMidTick covers the window between Tick's
+// binding list and its per-binding load: a `relay unbind` landing in it is
+// normal use, not a failure, and must not be logged as one.
+func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+	f.onList = func() {
+		if err := rt.Store.Delete("upjo"); err != nil {
+			t.Errorf("unbind mid-tick: %v", err)
+		}
+	}
+
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	defer slog.SetDefault(previous)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if strings.Contains(logged.String(), "reconcile failed") {
+		t.Errorf("an unbind mid-tick must not be logged as a failure: %s", logged.String())
 	}
 }

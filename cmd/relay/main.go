@@ -91,6 +91,11 @@ func cmdBind(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// --resume takes the name from --name, so a positional one is dropped on
+	// the floor and the binding lookup then fails on the empty name.
+	if *resume && *name == "" {
+		return fmt.Errorf("relay bind --resume needs --name NAME (a positional name is ignored)")
+	}
 
 	rt, err := newRuntime()
 	if err != nil {

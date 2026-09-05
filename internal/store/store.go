@@ -164,7 +164,11 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 			return err
 		}
 		for _, binding := range bindings {
-			if binding.CWD == cwd {
+			// A done binding no longer drives its tree: resolving `relay send`
+			// onto one would hand a plan to a finished session. assertCWDFree
+			// scans separately, so this does not relax the two-builders-in-one
+			// -tree refusal.
+			if binding.CWD == cwd && binding.State != StateDone {
 				b = binding
 				found = true
 				return nil

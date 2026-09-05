@@ -14,6 +14,7 @@ type Delivery struct {
 	Delivered   bool
 	Held        bool
 	PlannerGone bool
+	Empty       bool // the planner was reachable and nothing was waiting
 	Reason      string
 }
 
@@ -67,7 +68,7 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return Delivery{}, err
 	}
 	if !found {
-		return Delivery{Reason: "nothing pending"}, nil
+		return Delivery{Empty: true, Reason: "nothing pending"}, nil
 	}
 
 	if planner.Focused {

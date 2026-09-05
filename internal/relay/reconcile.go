@@ -288,6 +288,11 @@ func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		b.State = store.StateHeld
 	case got.Delivered && b.State == store.StateHeld:
 		b.State = store.StateActive
+	case got.Empty && b.State == store.StateHeld:
+		// Nothing is waiting any more, so the hold is over. This is the path a
+		// `relay pull` leaves behind: it claims the payload without delivering
+		// it, so nothing else ever clears Held.
+		b.State = store.StateActive
 	}
 
 	return b, nil

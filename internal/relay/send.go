@@ -109,7 +109,14 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error
 	}
 
 	if retryErr := rt.Herdr.Prompt(ctx, target, text); retryErr != nil {
-		return fmt.Errorf("prompt %s stalled twice: %w", target, retryErr)
+		// Only a second stall is a stall. The retry can fail for an unrelated
+		// reason -- the builder became blocked between the two attempts, say --
+		// and reporting that as a stall sends the human looking at the wrong
+		// thing.
+		if errors.Is(retryErr, herdr.ErrPromptStalled) {
+			return fmt.Errorf("prompt %s stalled twice: %w", target, retryErr)
+		}
+		return fmt.Errorf("prompt %s failed on retry: %w", target, retryErr)
 	}
 
 	return nil

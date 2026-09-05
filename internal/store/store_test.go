@@ -234,3 +234,50 @@ func TestAtomicWriteCleanupTempFile(t *testing.T) {
 		t.Errorf("expected bind.json, got %q", entries[0].Name())
 	}
 }
+
+// TestFindByCWDSkipsDoneBindings guards the cwd fallback the CLI resolves
+// almost every command through: a done binding no longer drives its tree, and
+// resolving onto one would point `relay send` at a finished session.
+func TestFindByCWDSkipsDoneBindings(t *testing.T) {
+	s := New(t.TempDir())
+	done := newBinding("upjo", "/repo")
+	done.State = StateDone
+	if err := s.Save(done); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, found, err := s.FindByCWD("/repo"); err != nil || found {
+		t.Fatalf("found=%v err=%v, want a done binding to be invisible here", found, err)
+	}
+
+	// The live binding that replaces it is still found.
+	if err := s.Save(newBinding("upjo2", "/repo")); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	got, found, err := s.FindByCWD("/repo")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v, want the active binding", found, err)
+	}
+	if got.Name != "upjo2" {
+		t.Errorf("name = %q, want upjo2", got.Name)
+	}
+}
+
+// TestSaveStillRefusesASecondActiveBindingBesideADoneOne pins the other half:
+// assertCWDFree scans on its own, so skipping done bindings in FindByCWD must
+// not relax the two-builders-in-one-tree refusal.
+func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
+	s := New(t.TempDir())
+	done := newBinding("upjo", "/repo")
+	done.State = StateDone
+	if err := s.Save(done); err != nil {
+		t.Fatalf("Save done: %v", err)
+	}
+	if err := s.Save(newBinding("upjo2", "/repo")); err != nil {
+		t.Fatalf("Save active beside done: %v", err)
+	}
+
+	if err := s.Save(newBinding("upjo3", "/repo")); !errors.Is(err, ErrCWDTaken) {
+		t.Fatalf("got %v, want ErrCWDTaken from the still-active binding", err)
+	}
+}
