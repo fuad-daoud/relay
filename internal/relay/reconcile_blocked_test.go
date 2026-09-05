@@ -68,6 +68,9 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
+	// Pin the budget explicitly: this exercises the timeout mechanism, not
+	// whatever the store's default happens to be.
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = time.Unix(1757000000, 0).UTC().Add(-31 * time.Minute)
 	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
 
@@ -120,6 +123,7 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 func timedOutBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := sentBinding(t, f)
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
 
 	entry := store.LogEntry{
@@ -186,6 +190,7 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 	b.Round++
 	b.HaltNotifiedRound = 0
 	b.State = store.StateActive
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
 
 	if _, err := reconcile(t, rt, b, agents); err != nil {

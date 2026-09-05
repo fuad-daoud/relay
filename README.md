@@ -48,6 +48,13 @@ By default `relay bind` splits the planner's pane, so you can watch the builder
 work beside you. `relay bind --tab` opens it in its own herdr tab instead —
 the planner keeps full width, at the cost of not seeing the builder live.
 
+### Round budget
+
+Each round carries a budget; past it, relay flags the binding `NEEDS YOU` and
+notifies once. It never kills anything — a builder working a real stage of a
+plan runs for hours, so the budget is a runaway guard, not a progress estimate.
+The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
+
 ### Cleaning up finished bindings
 
 A binding leaves `~/.local/state/relay/<name>/` behind: `bind.json`, `log.jsonl`,

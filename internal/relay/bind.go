@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -27,6 +28,10 @@ type BindOptions struct {
 	// planner's pane. WorkspaceID scopes that tab to the planner's workspace.
 	NewTab      bool
 	WorkspaceID string
+
+	// RoundTimeout overrides the binding's round budget. Zero keeps the
+	// store's default.
+	RoundTimeout time.Duration
 }
 
 // Bind ties the calling planner pane to a builder over one working tree.
@@ -132,6 +137,9 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		Round:        1,
 		State:        store.StateActive,
 	}
+	if opts.RoundTimeout > 0 {
+		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
+	}
 
 	if err := rt.Store.Save(b); err != nil {
 		// The pre-check passed but the lock disagreed, so a builder pane is now
@@ -140,7 +148,15 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			builder.PaneID, err)
 	}
 
-	return b, nil
+	// Save fills in the defaults it owns -- round cap, round budget -- on its
+	// own copy, so read back what was actually stored rather than returning
+	// the pre-Save value and letting the two drift.
+	stored, err := rt.Store.Load(b.Name)
+	if err != nil {
+		return store.Binding{}, err
+	}
+
+	return stored, nil
 }
 
 // resolveBuilder adopts an existing builder pane, or splits a sibling pane and

@@ -339,3 +339,38 @@ func TestBindSplitsThePlannerPaneByDefault(t *testing.T) {
 		t.Errorf("builder pane = %q, want the split pane", b.Builder.PaneID)
 	}
 }
+
+func TestBindTimeoutOverrideAndDefault(t *testing.T) {
+	t.Run("override is stored", func(t *testing.T) {
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+
+		b, err := Bind(context.Background(), rt, BindOptions{
+			Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			RoundTimeout: 90 * time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("Bind: %v", err)
+		}
+		if got, want := b.RoundTimeoutMS, int((90 * time.Minute).Milliseconds()); got != want {
+			t.Errorf("RoundTimeoutMS = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("default is a day, not half an hour", func(t *testing.T) {
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+
+		b, err := Bind(context.Background(), rt, BindOptions{
+			Name: "kobe", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo2",
+		})
+		if err != nil {
+			t.Fatalf("Bind: %v", err)
+		}
+		// A builder working a real stage runs for hours; 30m flagged healthy
+		// work as needing a human on the first live run.
+		if got, want := b.RoundTimeoutMS, int((24 * time.Hour).Milliseconds()); got != want {
+			t.Errorf("default RoundTimeoutMS = %d, want %d (24h)", got, want)
+		}
+	})
+}

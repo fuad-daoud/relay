@@ -91,6 +91,7 @@ func cmdBind(args []string) error {
 	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
+	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -111,12 +112,13 @@ func cmdBind(args []string) error {
 	}
 
 	opts := relay.BindOptions{
-		Name:        *name,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		CWD:         cwd,
-		Resume:      *resume,
-		NewTab:      *newTab,
-		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
+		Name:         *name,
+		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
+		CWD:          cwd,
+		Resume:       *resume,
+		NewTab:       *newTab,
+		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
+		RoundTimeout: *timeout,
 	}
 	// A value containing ':' is a herdr pane id, not an alias.
 	if strings.Contains(*builderAlias, ":") {
@@ -341,7 +343,7 @@ func cmdLog(args []string) error {
 
 	for _, e := range entries {
 		fmt.Printf("%s  round %-3d %-10s %-9s %s %s\n",
-			e.TS.Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
+			e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
 	}
 	return nil
 }

@@ -162,7 +162,7 @@ func RenderStatus(r Report) string {
 			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderAlias)
 		if b.Last != nil {
 			fmt.Fprintf(&sb, "  last     %s %s %s round %d\n",
-				b.Last.TS.Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
+				b.Last.TS.Local().Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
 		}
 		if b.Pending != nil {
 			fmt.Fprintf(&sb, "  pending  %s round %d -> planner\n\n", b.Pending.Kind, b.Pending.Round)

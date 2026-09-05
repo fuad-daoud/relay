@@ -24,11 +24,16 @@ var ErrNotFound = errors.New("binding not found")
 var ErrCWDTaken = errors.New("working tree already bound")
 
 const (
-	maxNameLen        = 32
-	bindingFileMode   = 0o644
-	bindingDirMode    = 0o755
-	defaultRoundCap   = 20
-	defaultRoundMSecs = 1800000
+	maxNameLen      = 32
+	bindingFileMode = 0o644
+	bindingDirMode  = 0o755
+	defaultRoundCap = 20
+	// defaultRoundMSecs is the round budget: 24 hours. A builder working a real
+	// stage of a plan runs for hours, so a short budget flags healthy work as
+	// needing a human and trains the reader to ignore the one state that means
+	// act. This is a runaway guard, not a progress estimate; per-binding
+	// overrides come from `relay bind --timeout`.
+	defaultRoundMSecs = 86400000
 	archiveDirName    = ".archive"
 
 	// maxArchiveFileBytes bounds a single file going into an archive. Relay's
