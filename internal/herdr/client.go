@@ -50,26 +50,22 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	err := cmd.Run()
 	stdoutBytes := stdout.Bytes()
 
-	// Try to decode as error envelope to detect structured errors.
-	type errorEnvelope struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	var env errorEnvelope
-	if json.Unmarshal(stdoutBytes, &env) == nil && env.Error.Code != "" {
-		switch env.Error.Code {
+	// herdr writes its structured error envelope to STDERR, not stdout --
+	// verified against herdr 0.8.2:
+	//   $ herdr agent get nope 2>/dev/null        # (nothing)
+	//   $ herdr agent get nope 2>&1 1>/dev/null
+	//   {"error":{"code":"agent_not_found",...},"id":"cli:agent:get"}
+	// Checking stdout alone left ErrAgentBlocked and ErrPromptStalled
+	// permanently unreachable. Check stdout first anyway: `agent read`
+	// returns raw transcript text there and must never be misread as an
+	// envelope, and a raw transcript will not decode as one.
+	if code, msg, ok := decodeErrorEnvelope(stdoutBytes, stderr.Bytes()); ok {
+		switch code {
 		case "agent_blocked":
 			return nil, ErrAgentBlocked
 		case "agent_prompt_stalled":
 			return nil, ErrPromptStalled
 		default:
-			msg := env.Error.Message
-			if msg == "" {
-				msg = env.Error.Code
-			}
 			if err != nil {
 				return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), msg, err)
 			}
@@ -84,6 +80,37 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	}
 
 	return stdoutBytes, nil
+}
+
+// decodeErrorEnvelope looks for herdr's `{"error":{"code","message"}}` envelope
+// in the given streams, in order, returning the first one that carries a code.
+func decodeErrorEnvelope(streams ...[]byte) (code, message string, ok bool) {
+	type envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	for _, raw := range streams {
+		if len(raw) == 0 {
+			continue
+		}
+
+		var env envelope
+		if json.Unmarshal(raw, &env) != nil || env.Error.Code == "" {
+			continue
+		}
+
+		msg := env.Error.Message
+		if msg == "" {
+			msg = env.Error.Code
+		}
+
+		return env.Error.Code, msg, true
+	}
+
+	return "", "", false
 }
 
 // ListAgents returns every agent-occupied pane in the live herdr session.

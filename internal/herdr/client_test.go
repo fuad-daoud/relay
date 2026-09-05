@@ -96,3 +96,59 @@ func TestClientUnknownErrorCodeWithExitZero(t *testing.T) {
 		t.Fatalf("error message contains nil wrapping artifact: %q", errMsg)
 	}
 }
+
+// stubHerdrStderr writes an executable that emits body on STDERR and exits
+// with code -- the shape herdr 0.8.2 actually uses for its error envelope.
+func stubHerdrStderr(t *testing.T, body string, code int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "herdr")
+	script := "#!/bin/sh\nprintf '%s' " + shellQuote(body) + " >&2\nexit " + strconv.Itoa(code) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	return path
+}
+
+func TestClientDetectsBlockedOnStderr(t *testing.T) {
+	body := `{"id":"x","error":{"code":"agent_blocked","message":"agent is blocked"}}`
+	c := NewClient(stubHerdrStderr(t, body, 1), 5*time.Second)
+
+	if err := c.Prompt(context.Background(), "builder", "hi"); !errors.Is(err, ErrAgentBlocked) {
+		t.Fatalf("got %v, want ErrAgentBlocked -- herdr writes the envelope to stderr", err)
+	}
+}
+
+func TestClientDetectsStallOnStderr(t *testing.T) {
+	body := `{"id":"x","error":{"code":"agent_prompt_stalled","message":"no lifecycle change"}}`
+	c := NewClient(stubHerdrStderr(t, body, 1), 5*time.Second)
+
+	if err := c.Prompt(context.Background(), "builder", "hi"); !errors.Is(err, ErrPromptStalled) {
+		t.Fatalf("got %v, want ErrPromptStalled", err)
+	}
+}
+
+func TestClientStderrEnvelopeUnknownCodeKeepsMessage(t *testing.T) {
+	body := `{"id":"x","error":{"code":"agent_not_found","message":"agent target nope not found"}}`
+	c := NewClient(stubHerdrStderr(t, body, 1), 5*time.Second)
+
+	_, err := c.ListAgents(context.Background())
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "agent target nope not found") {
+		t.Errorf("error must carry herdr's message, got %v", err)
+	}
+}
+
+func TestClientStdoutTranscriptIsNotMisreadAsEnvelope(t *testing.T) {
+	// A real `agent read` transcript that merely mentions the code.
+	c := NewClient(stubHerdr(t, "the agent said agent_blocked in passing", 0), 5*time.Second)
+
+	out, err := c.ReadAgent(context.Background(), "builder", 20)
+	if err != nil {
+		t.Fatalf("a transcript must not be misread as an error: %v", err)
+	}
+	if !strings.Contains(out, "agent_blocked in passing") {
+		t.Errorf("out = %q", out)
+	}
+}
