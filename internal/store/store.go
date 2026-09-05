@@ -27,7 +27,14 @@ const (
 	defaultRoundMSecs = 1800000
 	lockFileName      = ".lock"
 	lockRetryDelay    = 50 * time.Millisecond
-	lockAcquireLimit  = 5 * time.Second
+
+	// lockAcquireLimit must exceed the longest possible hold, or a slow herdr
+	// turns every other caller's wait into a failure. The longest hold is
+	// relay.Send's critical section, which can make two `herdr agent prompt`
+	// calls (the stall retry), each bounded by the herdr client timeout of 30s
+	// in cmd/relay. 70s is that worst case plus headroom; if the client
+	// timeout changes, this must change with it.
+	lockAcquireLimit = 70 * time.Second
 )
 
 // Store is the state directory. All writes are atomic within it.

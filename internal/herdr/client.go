@@ -109,10 +109,19 @@ func (c *Client) SendKeys(ctx context.Context, target, keys string) error {
 }
 
 // ReadAgent snapshots recent terminal output with soft wraps joined. Alternate
-// screen rows are unrecoverable, so callers must treat this as best effort.
+// screen rows are unrecoverable through this source, so callers must treat it
+// as best effort -- a dialog drawn there needs ReadAgentSource("detection").
 func (c *Client) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
+	return c.ReadAgentSource(ctx, target, "recent-unwrapped", lines)
+}
+
+// ReadAgentSource snapshots terminal output from a named herdr read source.
+// The source decides what is visible: recent-unwrapped is scrollback, while
+// detection is what herdr itself matched against, which is the only place a
+// full-screen approval dialog can be read from.
+func (c *Client) ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error) {
 	raw, err := c.run(ctx, "agent", "read", target,
-		"--source", "recent-unwrapped", "--lines", strconv.Itoa(lines), "--format", "text")
+		"--source", source, "--lines", strconv.Itoa(lines), "--format", "text")
 	if err != nil {
 		return "", err
 	}

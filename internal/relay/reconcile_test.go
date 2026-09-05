@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -131,12 +132,19 @@ func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 	f := &fakeHerdr{readOut: "I implemented the guard clause but could not write the file."}
 	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	b, err := reconcile(t, rt, b, agents) // nudge
 	if err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
+
+	// The scrape is only reachable once the builder has had its grace period
+	// to answer the nudge; see TestReconcileWaitsOutNudgeGraceBeforeScraping.
+	clock.Advance(nudgeGrace + time.Second)
+
 	got, err := reconcile(t, rt, b, agents) // scrape
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
@@ -159,6 +167,67 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "guard clause") {
 		t.Errorf("scrape body = %q", body)
+	}
+
+	// A report is prose the builder printed, so it comes from the scrollback.
+	// The blocked-dialog path is the one that needs --source detection.
+	if len(f.reads) != 1 || f.reads[0].Source != "recent-unwrapped" {
+		t.Errorf("scrape reads = %+v, want one recent-unwrapped read", f.reads)
+	}
+}
+
+// TestReconcileWaitsOutNudgeGraceBeforeScraping is the regression test for a
+// scrape that raced the builder: relay nudged on one tick and scraped on the
+// next, two seconds later, then advanced the round -- so the builder's real
+// report was written to an abandoned round's path and never relayed.
+func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
+	f := &fakeHerdr{readOut: "half a screen of output"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+
+	// The very next poll, before the builder could plausibly have answered.
+	clock.Advance(2 * time.Second)
+	b, err = reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("in-grace Reconcile: %v", err)
+	}
+	if b.Round != 1 {
+		t.Errorf("round = %d, want 1: the round must not be abandoned inside the grace", b.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+		t.Error("nothing may be queued inside the nudge grace")
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("the terminal must not be scraped inside the grace, got %+v", f.reads)
+	}
+
+	// Still nothing one second short of the grace.
+	clock.Advance(nudgeGrace - 3*time.Second)
+	b, err = reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("edge Reconcile: %v", err)
+	}
+	if b.Round != 1 {
+		t.Errorf("round = %d, want 1 one second short of the grace", b.Round)
+	}
+
+	clock.Advance(2 * time.Second)
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("post-grace Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: past the grace the scrape is the fallback", got.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); !pending {
+		t.Error("the scraped report must be queued once the grace has elapsed")
 	}
 }
 

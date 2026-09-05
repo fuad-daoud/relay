@@ -31,6 +31,14 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 		t.Errorf("question body = %q", body)
 	}
 
+	// An approval dialog is drawn on the alternate screen, which never reaches
+	// the scrollback recent-unwrapped reads. Reading the wrong source would
+	// capture empty or unrelated text, and the planner's whole answer decision
+	// rests on this file.
+	if len(f.reads) != 1 || f.reads[0].Source != dialogSource {
+		t.Fatalf("dialog reads = %+v, want one %q read", f.reads, dialogSource)
+	}
+
 	pending, found, err := rt.Store.PendingForPlanner("upjo")
 	if err != nil || !found {
 		t.Fatalf("question must be queued for the planner: found=%v err=%v", found, err)

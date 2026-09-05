@@ -4,7 +4,7 @@ UNIT := $(HOME)/.config/systemd/user/relay.service
 .PHONY: check build install service uninstall
 
 check:
-	gofmt -l .
+	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 	go vet ./...
 	go test -count=1 ./...
 

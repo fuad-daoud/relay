@@ -17,6 +17,17 @@ const scrapeLines = 200
 // writing its report file.
 const nudgeNote = "nudge"
 
+// nudgeGrace is how long the builder gets to answer that reminder before relay
+// gives up and scrapes its terminal. It is far longer than a poll interval on
+// purpose: scraping abandons the round, so it must never race a report that is
+// simply still being written.
+const nudgeGrace = 60 * time.Second
+
+// dialogSource is the herdr read source for a blocking dialog. A TUI approval
+// prompt is drawn on the alternate screen, which never reaches the scrollback
+// recent-unwrapped reads, so the dialog has to come from detection instead.
+const dialogSource = "detection"
+
 const nudgePrompt = `You went idle without writing your report.
 Write it to %s now, then reply with only that path.`
 
@@ -115,7 +126,7 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		return b, nil
 	}
 
-	dialog, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
+	dialog, err := rt.Herdr.ReadAgentSource(ctx, Target(b.Builder), dialogSource, scrapeLines)
 	if err != nil {
 		return b, fmt.Errorf("read blocking dialog: %w", err)
 	}
@@ -183,8 +194,17 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return queueReport(ctx, rt, tx, b, reportPath, payload, "")
 	}
 
-	if !nudged(entries, b.Round) {
+	nudgedAt, ok := nudgeTime(entries, b.Round)
+	if !ok {
 		return nudgeBuilder(ctx, rt, tx, b, reportPath)
+	}
+
+	// Give the builder a chance to answer the nudge. Without this the next
+	// poll -- two seconds later, before herdr's status has necessarily even
+	// moved -- would scrape the terminal, label the round done and advance
+	// past it, so the real report lands on an abandoned round's path.
+	if rt.Now().UTC().Sub(nudgedAt) < nudgeGrace {
+		return b, nil
 	}
 
 	return scrapeReport(ctx, rt, tx, b, reportPath)
@@ -204,9 +224,11 @@ func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	return b, tx.AppendLog(b.Name, entry)
 }
 
-// scrapeReport is the last resort. herdr documents that alternate-screen rows
-// never reach its scrollback, so this may be truncated -- the payload says so
-// explicitly rather than letting the planner trust it.
+// scrapeReport is the last resort. It reads the scrollback (ReadAgent's
+// recent-unwrapped) on purpose: a report is prose the builder printed, not a
+// dialog. herdr documents that alternate-screen rows never reach that
+// scrollback, so this may be truncated -- the payload says so explicitly
+// rather than letting the planner trust it.
 func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
 	text, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
 	if err != nil {
@@ -281,11 +303,12 @@ func HasEntry(entries []store.LogEntry, round int, dir store.Direction, kind sto
 	return false
 }
 
-func nudged(entries []store.LogEntry, round int) bool {
+// nudgeTime reports when this round was nudged, if it was.
+func nudgeTime(entries []store.LogEntry, round int) (time.Time, bool) {
 	for _, e := range entries {
 		if e.Round == round && e.Note == nudgeNote {
-			return true
+			return e.TS, true
 		}
 	}
-	return false
+	return time.Time{}, false
 }
