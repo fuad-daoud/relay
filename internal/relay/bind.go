@@ -88,6 +88,19 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		return store.Binding{}, err
 	}
 
+	// Refuse a name that is already taken, before anything is spawned. Save
+	// would overwrite only bind.json: the round log and the NNN-*.md files
+	// survive, so a fresh round 1 would collide with the previous session's
+	// round 1 and Reconcile would read that old report entry as "already
+	// handled" -- silently, with no error and no notification.
+	if _, err := rt.Store.Load(name); err == nil {
+		return store.Binding{}, fmt.Errorf(
+			"binding %q already exists: `relay unbind %s` to start fresh, or `relay bind --resume --name %s` to adopt it",
+			name, name, name)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return store.Binding{}, err
+	}
+
 	// Check the working tree before spawning anything. Save re-checks under the
 	// lock and stays authoritative, but without this a refused bind would leave
 	// a started builder pane stranded with nothing pointing at it.

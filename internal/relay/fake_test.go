@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -10,6 +11,10 @@ import (
 
 type promptCall struct{ Target, Text string }
 type keyCall struct{ Target, Keys string }
+type readCall struct {
+	Target, Source string
+	Lines          int
+}
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
@@ -21,18 +26,27 @@ type fakeHerdr struct {
 	prompts   []promptCall
 	keys      []keyCall
 	starts    []startCall
+	reads     []readCall
 	notices   []string
 	readOut   string
 	newPane   string
+	splits    int
 	promptErr error
 	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
 	listCalls int
 	listErr   error // when set, every ListAgents call after the first fails
-	readErr   error // when set, ReadAgent fails instead of returning readOut
+	// onList runs at the top of every ListAgents call. Tick makes that call
+	// after it has listed bindings and before it reconciles them, which is
+	// the one window a concurrent `relay unbind` has to land in.
+	onList  func()
+	readErr error // when set, ReadAgent fails instead of returning readOut
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
 	f.listCalls++
+	if f.onList != nil {
+		f.onList()
+	}
 	// The first call always succeeds: it is Bind's own planner lookup, which
 	// is what gets a test flow to the spawn path at all. listErr targets a
 	// later, incidental lookup (the post-spawn session-id read), not that one.
@@ -59,7 +73,12 @@ func (f *fakeHerdr) SendKeys(_ context.Context, target, keys string) error {
 	return nil
 }
 
-func (f *fakeHerdr) ReadAgent(context.Context, string, int) (string, error) {
+func (f *fakeHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
+	return f.ReadAgentSource(ctx, target, "recent-unwrapped", lines)
+}
+
+func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, lines int) (string, error) {
+	f.reads = append(f.reads, readCall{Target: target, Source: source, Lines: lines})
 	if f.readErr != nil {
 		return "", f.readErr
 	}
@@ -67,6 +86,7 @@ func (f *fakeHerdr) ReadAgent(context.Context, string, int) (string, error) {
 }
 
 func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
+	f.splits++
 	return f.newPane, nil
 }
 
@@ -82,6 +102,22 @@ func (f *fakeHerdr) Notify(_ context.Context, msg string) error {
 
 func TestFakeSatisfiesHerdr(t *testing.T) {
 	var _ Herdr = (*fakeHerdr)(nil)
+}
+
+// fakeClock is a movable Now for the tests that need time to pass. newRuntime's
+// clock is fixed, which is what most tests want; withClock swaps it out on an
+// already-built runtime rather than duplicating every seed helper.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+
+// withClock returns rt with its clock replaced. Runtime is a value with a
+// *store.Store inside, so the copy shares the same state directory.
+func withClock(rt Runtime, c *fakeClock) Runtime {
+	rt.Now = c.Now
+	return rt
 }
 
 func TestFindAgentPrefersSessionOverPane(t *testing.T) {

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,5 +213,84 @@ func TestSanitizeName(t *testing.T) {
 		if got := SanitizeName(in); got != want {
 			t.Errorf("SanitizeName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestBindRefusesExistingName is the regression test for a silently broken
+// second session: Save only rewrites bind.json, so the previous session's
+// log.jsonl and NNN-*.md files survive and a fresh round 1 collides with the
+// old round 1. Reconcile then reads the old report entry as "already handled"
+// and the binding stalls with no error and no notification.
+func TestBindRefusesExistingName(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name: "upjo", CWD: "/repo", Round: 4, State: store.StateDone,
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{PaneID: "w1:p2"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err == nil {
+		t.Fatal("binding an existing name must be refused")
+	}
+
+	// The refusal has to happen before anything is spawned, or it strands a
+	// live builder pane with nothing pointing at it.
+	if len(f.starts) != 0 {
+		t.Errorf("no agent may be started, got %+v", f.starts)
+	}
+	if f.splits != 0 {
+		t.Errorf("no pane may be split, got %d", f.splits)
+	}
+
+	if !strings.Contains(err.Error(), "relay unbind upjo") {
+		t.Errorf("error must name the unbind exit, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "--resume") {
+		t.Errorf("error must name the resume exit, got %q", err)
+	}
+
+	// The existing binding must be untouched by the refusal.
+	got, err := rt.Store.Load("upjo")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Round != 4 || got.Builder.PaneID != "w1:p2" {
+		t.Errorf("refused bind must not rewrite the binding, got %+v", got)
+	}
+}
+
+// TestBindResumeStillAdoptsAnExistingName guards the exit the refusal offers.
+func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name: "upjo", CWD: "/repo", Round: 4, State: store.StateOrphaned,
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{PaneID: "w1:p2"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "upjo", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("resume must still adopt an existing binding: %v", err)
+	}
+	if got.Round != 4 || got.Planner.PaneID != "w2:p3" || got.State != store.StateActive {
+		t.Errorf("resume = %+v", got)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("resume must not start an agent, got %+v", f.starts)
 	}
 }

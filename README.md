@@ -16,8 +16,11 @@ human, whether the work is done, is a decision that stays with the planner
   binding between the calling planner pane (read from `$HERDR_PANE_ID`) and a
   builder. `--builder` is looked up as an alias unless it contains `:`, in
   which case it is treated as a herdr pane id and that pane is **adopted**
-  instead of spawned. `--resume` re-points an existing (orphaned) binding's
-  planner side at the calling pane, without touching the builder.
+  instead of spawned. A name that already exists is refused rather than
+  reused: only `bind.json` would be rewritten, so a fresh round 1 would
+  collide with the previous session's round log. `--resume --name N`
+  re-points that existing binding's planner side at the calling pane without
+  touching the builder; `relay unbind N` is the other way out.
 - `relay send --file PATH [--name N]` — stage the file as the current round's
   plan and prompt the builder with it.
 - `relay pull [--name N]` — print the newest pending payload to stdout and
