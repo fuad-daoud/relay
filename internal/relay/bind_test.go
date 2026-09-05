@@ -11,13 +11,16 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// baseTime is the instant newRuntime's fixed clock reports.
+var baseTime = time.Unix(1757000000, 0).UTC()
+
 func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 	t.Helper()
 	return Runtime{
 		Herdr:   f,
 		Store:   store.New(t.TempDir()),
 		Aliases: alias.DefaultTable(),
-		Now:     func() time.Time { return time.Unix(1757000000, 0).UTC() },
+		Now:     func() time.Time { return baseTime },
 	}
 }
 

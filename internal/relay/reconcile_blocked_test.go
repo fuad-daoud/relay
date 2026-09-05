@@ -104,3 +104,106 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 		t.Error("hitting the round cap must notify")
 	}
 }
+
+// timedOutBinding is a binding whose round is well past its budget, with a
+// payload already waiting on the planner. The waiting payload is what made the
+// halt and the held-payload notice overwrite each other's state and each
+// re-notify on every poll.
+func timedOutBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
+	t.Helper()
+	rt, b := sentBinding(t, f)
+	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
+
+	entry := store.LogEntry{
+		TS: baseTime, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Payload: "Builder finished round 1. Report: /x/001-report.md",
+	}
+	if err := rt.Store.AppendLog(b.Name, entry); err != nil {
+		t.Fatalf("seed pending payload: %v", err)
+	}
+	return rt, b
+}
+
+// TestReconcileTimeoutNotifiesOnceInEveryPlannerState is the regression test
+// for the notification storm: at a 2s poll, a halt that renotifies is a herdr
+// notification every couple of seconds, forever, on a live desktop. Two of
+// these three planner states used to storm, because the halt's dedup and the
+// held-payload dedup each keyed on a State the other one overwrote.
+func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
+	cases := map[string][]herdr.Agent{
+		"planner gone":      {builderAgent(herdr.StatusWorking)},
+		"planner focused":   {plannerWith(herdr.StatusIdle, true), builderAgent(herdr.StatusWorking)},
+		"planner unfocused": {plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)},
+	}
+
+	for name, agents := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeHerdr{}
+			rt, b := timedOutBinding(t, f)
+
+			for i := 0; i < 5; i++ {
+				var err error
+				b, err = reconcile(t, rt, b, agents)
+				if err != nil {
+					t.Fatalf("tick %d: %v", i+1, err)
+				}
+			}
+
+			if len(f.notices) != 1 {
+				t.Errorf("got %d notices over 5 ticks, want 1: %v", len(f.notices), f.notices)
+			}
+			if b.State != store.StateNeedsYou {
+				t.Errorf("state = %s, want needs_you to survive every tick", b.State)
+			}
+			if b.HaltNotifiedRound != b.Round {
+				t.Errorf("HaltNotifiedRound = %d, want %d", b.HaltNotifiedRound, b.Round)
+			}
+		})
+	}
+}
+
+// TestReconcileTimeoutNotifiesAgainInALaterRound is the other half of the
+// dedup: one notification per round that goes wrong, not one per binding.
+func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := timedOutBinding(t, f)
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+
+	b, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// The next round is sent, runs long too, and must get its own notice.
+	b.Round++
+	b.HaltNotifiedRound = 0
+	b.State = store.StateActive
+	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
+
+	if _, err := reconcile(t, rt, b, agents); err != nil {
+		t.Fatalf("second round Reconcile: %v", err)
+	}
+	if len(f.notices) != 2 {
+		t.Errorf("got %d notices, want one per timed-out round: %v", len(f.notices), f.notices)
+	}
+}
+
+// TestReconcileRoundCapNotifiesOnce guards the same dedup on the other halt.
+func TestReconcileRoundCapNotifiesOnce(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.Round = b.RoundCap + 1
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, true), builderAgent(herdr.StatusIdle)}
+
+	for i := 0; i < 5; i++ {
+		var err error
+		b, err = reconcile(t, rt, b, agents)
+		if err != nil {
+			t.Fatalf("tick %d: %v", i+1, err)
+		}
+	}
+
+	if len(f.notices) != 1 {
+		t.Errorf("got %d notices over 5 ticks at the cap, want 1: %v", len(f.notices), f.notices)
+	}
+}

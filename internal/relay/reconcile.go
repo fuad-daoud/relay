@@ -51,10 +51,11 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	}
 
 	// Halt paths return without calling deliverAndSettle, unlike every branch
-	// below. That is deliberate: entering Held would overwrite the NeedsYou
-	// state that `relay status` reports, and DeliverPending's notify dedup keys
-	// on Held, so a capped binding would resume notifying every tick. A payload
-	// queued before the halt is not lost -- `relay pull` still retrieves it.
+	// below. That is deliberate: entering Held or Orphaned would overwrite the
+	// NeedsYou state `relay status` reports, and DeliverPending's held-payload
+	// notice keys on Held, so a halted binding would resume notifying every
+	// tick. A payload queued before the halt is not lost -- `relay pull` still
+	// retrieves it. haltBinding's own dedup does not depend on either rule.
 	if b.Round > b.RoundCap {
 		return haltBinding(ctx, rt, b,
 			fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
@@ -72,7 +73,11 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	case herdr.StatusBlocked:
 		next, err = handleBlockedBuilder(ctx, rt, tx, b, entries)
 	default:
-		next, err = checkRoundTimeout(ctx, rt, b)
+		var halted bool
+		next, halted, err = checkRoundTimeout(ctx, rt, b)
+		if halted {
+			return next, err // a halt does not deliver; see the comment above
+		}
 	}
 	if err != nil {
 		return b, err
@@ -81,13 +86,20 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	return deliverAndSettle(ctx, rt, tx, next, agents)
 }
 
-// haltBinding stops relaying and asks for a human, exactly once per transition.
+// haltBinding stops relaying and asks for a human, exactly once per round.
+//
+// The dedup keys on HaltNotifiedRound rather than on State because State is
+// rewritten by other steps of the same tick (deliverAndSettle can turn NeedsYou
+// into Held or Orphaned), which is what made every earlier State-keyed guard
+// notify once per poll instead of once. Per round is also the behaviour a human
+// wants: one notification per round that goes wrong.
 func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
-	if b.State == store.StateNeedsYou {
-		return b, nil
-	}
-	if err := rt.Herdr.Notify(ctx, message); err != nil {
-		return b, fmt.Errorf("notify halt: %w", err)
+	if b.HaltNotifiedRound != b.Round {
+		if err := rt.Herdr.Notify(ctx, message); err != nil {
+			return b, fmt.Errorf("notify halt: %w", err)
+		}
+
+		b.HaltNotifiedRound = b.Round
 	}
 
 	b.State = store.StateNeedsYou
@@ -134,18 +146,25 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 
 // checkRoundTimeout flags a builder that has been working past its budget. It
 // never kills anything -- the human decides whether to nudge, reset or switch.
-func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.Binding, error) {
+//
+// The bool reports whether it halted, so the caller can skip delivery the way
+// the round cap does. It is returned rather than inferred from the state,
+// because a binding can arrive here already NeedsYou for an unrelated reason
+// and must still have its pending payload delivered.
+func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.Binding, bool, error) {
 	if b.RoundStartedAt.IsZero() || b.RoundTimeoutMS <= 0 {
-		return b, nil
+		return b, false, nil
 	}
 
 	budget := time.Duration(b.RoundTimeoutMS) * time.Millisecond
 	if rt.Now().UTC().Sub(b.RoundStartedAt) < budget {
-		return b, nil
+		return b, false, nil
 	}
 
-	return haltBinding(ctx, rt, b,
+	next, err := haltBinding(ctx, rt, b,
 		fmt.Sprintf("%s: round %d has run past %s", b.Name, b.Round, budget))
+
+	return next, true, err
 }
 
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
@@ -218,6 +237,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	b.Round++
 	b.State = store.StateActive
+
+	// The new round has not been sent yet, so it has no deadline: leaving the
+	// old round's start in place would time the next round out against a clock
+	// that started before the planner had even seen this report. Send stamps a
+	// fresh RoundStartedAt when it hands the round over.
+	b.RoundStartedAt = time.Time{}
+
+	// A halt notified for the old round says nothing about the new one, so the
+	// next round that goes wrong gets its own single notification.
+	b.HaltNotifiedRound = 0
 
 	return b, nil
 }

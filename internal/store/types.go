@@ -37,6 +37,11 @@ type Binding struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	RoundStartedAt time.Time `json:"round_started_at"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// HaltNotifiedRound is the round a halt notification has already been sent
+	// for. It is deliberately NOT derived from State: every earlier attempt to
+	// dedupe halt notices on State was defeated by a later step in the same
+	// tick rewriting State, which turned one notice into one per poll.
+	HaltNotifiedRound int       `json:"halt_notified_round,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }

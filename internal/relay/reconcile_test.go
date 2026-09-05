@@ -90,6 +90,14 @@ func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
 	}
+	// The new round has not been sent, so it carries no deadline of its own
+	// and no memory of an earlier round's halt notification.
+	if !got.RoundStartedAt.IsZero() {
+		t.Errorf("RoundStartedAt = %s, want zero until Send stamps the new round", got.RoundStartedAt)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0 on a fresh round", got.HaltNotifiedRound)
+	}
 
 	pending, found, err := rt.Store.PendingForPlanner("upjo")
 	if err != nil || !found {
