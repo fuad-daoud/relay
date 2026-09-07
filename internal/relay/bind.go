@@ -179,6 +179,15 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		return endpointOf(found), nil
 	}
 
+	// There is no default builder: which agent, model and role to spawn is a
+	// choice only the human can make, and guessing one would silently start
+	// the wrong (and possibly expensive) agent.
+	if opts.Alias == "" {
+		return store.Endpoint{}, fmt.Errorf(
+			"relay bind needs --builder: an alias to spawn (known: %v), or a herdr pane id to adopt",
+			rt.Aliases.Names())
+	}
+
 	spec, err := rt.Aliases.Lookup(opts.Alias)
 	if err != nil {
 		return store.Endpoint{}, err

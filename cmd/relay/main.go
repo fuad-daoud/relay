@@ -5,35 +5,116 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// version is stamped at build time with -ldflags "-X main.version=v1.2.3".
+// A `go install`ed binary carries no such stamp, so buildVersion falls back to
+// the module version the toolchain records in the build info.
+var version = ""
+
+const usage = `relay automates the plan/report handoff between two AI coding agent
+panes running under herdr: a planner hands work to a builder, and relay moves
+the files between them.
+
+Usage:
+  relay <command> [flags]
+
+Commands:
+  bind      bind this planner pane to a builder over the current working tree
+  send      stage a plan file as the current round and prompt the builder
+  pull      print the newest pending payload to stdout, without typing anywhere
+  answer    answer a builder that is blocked at a dialog
+  status    one row per binding: round, state, live pane status, what is pending
+  log       print a binding's append-only round log
+  watch     status, redrawn on a timer
+  done      mark a binding done; relaying stops
+  unbind    forget a binding, deleting or archiving its directory
+  gc        clear every binding the planner marked DONE
+  daemon    run the long-running reconciler
+  help      print this message
+  version   print the relay version
+
+Run "relay <command> -h" for that command's flags.
+
+relay drives herdr, which must be on PATH: https://github.com/herdrdev/herdr
+State lives in $XDG_STATE_HOME/relay (default ~/.local/state/relay).
+`
+
+// errHelpShown reports that help was printed on request, so main exits 0
+// without adding an error line. errUsagePrinted is its failure twin: usage is
+// already on stderr and main should exit 1 silently.
+var (
+	errHelpShown    = errors.New("help shown")
+	errUsagePrinted = errors.New("usage printed")
+)
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	err := run(os.Args[1:])
+	switch {
+	case err == nil, errors.Is(err, errHelpShown):
+		return
+	case errors.Is(err, errUsagePrinted):
+		os.Exit(1)
+	default:
 		fmt.Fprintf(os.Stderr, "relay: %v\n", err)
 		os.Exit(1)
 	}
 }
 
+// buildVersion prefers the ldflags stamp a release build carries, then the
+// module version `go install` records, and admits to being an untagged build
+// rather than inventing a number.
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
+}
+
+// parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
+// the flag package has already printed the usage, and asking for help is a
+// request that succeeded, not a command that failed.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return errHelpShown
+	}
+	return err
+}
+
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: relay <bind|send|answer|pull|status|log|watch|done|unbind|gc|daemon>")
+		fmt.Fprint(os.Stderr, usage)
+		return errUsagePrinted
 	}
 
 	switch args[0] {
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+		return nil
+	case "version", "-v", "--version":
+		fmt.Printf("relay %s\n", buildVersion())
+		return nil
 	case "bind":
 		return cmdBind(args[1:])
 	case "unbind":
@@ -57,8 +138,33 @@ func run(args []string) error {
 	case "daemon":
 		return cmdDaemon(args[1:])
 	default:
-		return fmt.Errorf("unknown subcommand %q", args[0])
+		return fmt.Errorf("unknown subcommand %q; run \"relay help\" for the command list", args[0])
 	}
+}
+
+func resolveHooksConfig() (hooks.Config, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil || configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return hooks.Config{}, fmt.Errorf("resolve user home directory: %w", err)
+		}
+		configDir = filepath.Join(home, ".config")
+	}
+
+	stateDir := os.Getenv("XDG_STATE_HOME")
+	if stateDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return hooks.Config{}, fmt.Errorf("resolve user home directory: %w", err)
+		}
+		stateDir = filepath.Join(home, ".local", "state")
+	}
+
+	return hooks.Config{
+		HooksDir: filepath.Join(configDir, "relay", "hooks"),
+		LogPath:  filepath.Join(stateDir, "relay", "hooks.log"),
+	}, nil
 }
 
 func newRuntime() (relay.Runtime, error) {
@@ -77,11 +183,18 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	hooksCfg, err := resolveHooksConfig()
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
+
 	return relay.Runtime{
 		Herdr:   herdr.NewClient("herdr", 30*time.Second),
 		Store:   store.New(root),
 		Aliases: aliases,
 		Now:     time.Now,
+		Hooks:   dispatcher,
 	}, nil
 }
 
@@ -92,7 +205,7 @@ func cmdBind(args []string) error {
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	// --resume takes the name from --name, so a positional one is dropped on
@@ -141,7 +254,7 @@ func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding to unbind")
 	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -174,7 +287,7 @@ func cmdGC(args []string) error {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	archive := fs.Bool("archive", false, "archive each finished binding instead of deleting it")
 	dryRun := fs.Bool("dry-run", false, "list what would be cleared, change nothing")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -218,7 +331,7 @@ func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the plan file to hand the builder")
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *file == "" {
@@ -247,7 +360,7 @@ func cmdSend(args []string) error {
 func cmdPull(args []string) error {
 	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -279,7 +392,7 @@ func cmdAnswer(args []string) error {
 	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
 	text := fs.String("text", "", "literal text to send")
 	choice := fs.Int("choice", 0, "numbered dialog option to pick")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -304,7 +417,7 @@ func cmdAnswer(args []string) error {
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -328,6 +441,14 @@ func cmdStatus(args []string) error {
 }
 
 func cmdLog(args []string) error {
+	// A flag set with no flags, purely so `relay log -h` behaves like every
+	// other subcommand instead of being read as a binding name.
+	fs := flag.NewFlagSet("log", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), "usage: relay log <name>") }
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	args = fs.Args()
 	if len(args) != 1 {
 		return fmt.Errorf("usage: relay log <name>")
 	}
@@ -351,7 +472,7 @@ func cmdLog(args []string) error {
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -387,7 +508,7 @@ func cmdWatch(args []string) error {
 func cmdDone(args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
 	name := fs.String("name", "", "binding to mark done")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -448,7 +569,7 @@ func bindingHint(verb string) string {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -456,6 +577,12 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	hooksCfg, err := resolveHooksConfig()
+	if err != nil {
+		return err
+	}
+	rt.Hooks = hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
