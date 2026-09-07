@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (${{ matrix.os }}, go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu and macos are the supported platforms; 1.22 is the floor
+        # declared in go.mod, and stable catches anything the newest toolchain
+        # starts complaining about.
+        os: [ubuntu-latest, macos-latest]
+        go: ['1.22', 'stable']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: make check
+        run: make check
+
+      - name: race detector
+        run: go test -race -count=1 ./...
+
+  portability:
+    name: cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # relay is supported on Linux and macOS only, but the tree must keep
+      # compiling elsewhere: this is what catches a platform-specific syscall
+      # sneaking back in outside a build-tagged file.
+      # CGO_ENABLED=0 because relay is pure Go: without it a same-GOOS
+      # cross-compile (linux/arm64 from linux/amd64) keeps cgo on and reaches
+      # for the host's gcc, which cannot target arm64.
+      - name: build for every target
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            echo "==> $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done

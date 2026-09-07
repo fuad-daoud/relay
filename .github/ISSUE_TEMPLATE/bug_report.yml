@@ -1,0 +1,66 @@
+name: Bug report
+description: Something relay does that it should not
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: relay only drives herdr. If the pane, the agent, or
+        `herdr agent list` itself is wrong, it is probably a herdr issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what relay did instead of what you expected.
+      placeholder: |
+        $ relay send --file plan.md
+        relay: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: input
+    id: relay-version
+    attributes:
+      label: relay version
+      description: Output of `relay version`.
+    validations:
+      required: true
+
+  - type: input
+    id: herdr-version
+    attributes:
+      label: herdr version
+      description: Output of `herdr --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: "Linux x86_64 / macOS arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: relay status --json
+      description: >-
+        If a binding is involved, paste `relay status --json`. Redact paths you
+        would rather not share.
+      render: json
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Daemon logs, the round log from `relay log <name>`, screenshots.

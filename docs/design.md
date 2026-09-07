@@ -1,0 +1,293 @@
+# Relay — automated planner↔builder handoff across agent harnesses
+
+Date: 2026-09-04
+Status: **historical record.** This is the design as approved before relay was
+built, kept because it explains *why* the pieces are shaped the way they are.
+It is not maintained against the code — where the two disagree, the code and
+the README are right.
+
+## Problem
+
+Work is split across two agents in two panes. A **planner** (architect role: `planner`,
+`cplanner`, `aplanner`) designs and verifies. A **builder** (`plan-executor` role:
+`builder`, `cbuilder`, `abuilder`) implements. The human talks only to the planner.
+
+Today the loop is driven by hand: copy the plan out of the planner pane, paste it into
+the builder pane, wait, copy the report back, paste it into the planner, repeat until the
+planner declares the work verified. Questions that need a human are answered by talking to
+the planner, which is the desired behaviour and must survive automation.
+
+The copy-paste is the only manual step, and it is pure mechanism. Relay automates exactly
+that and nothing else.
+
+## Goals
+
+- Move plans, reports, questions and answers between a bound planner and builder with no
+  human copy-paste.
+- Keep the human in conversation with the planner at all times; never steal or corrupt
+  their input.
+- Let the human choose the builder (`builder` / `cbuilder` / `abuilder`) per binding and
+  switch mid-feature.
+- Support multiple concurrent bindings, in one project or across projects.
+- Everything visible: builders run in real panes the human can watch and scroll.
+
+## Non-goals
+
+- Relay makes no judgements. It never summarises, rewrites, or decides whether work is
+  done. All judgement stays in the planner.
+- No headless execution. If it isn't in a pane, relay doesn't run it.
+- No modification of herdr. Relay is built beside it, against its socket API.
+- No auto-worktrees, no parallel builders on one tree, no scheduling.
+
+## Context: what herdr already provides
+
+herdr (0.8.2, AUR `herdr-bin`) is the substrate. Everything below already works:
+
+| Need | herdr command |
+| --- | --- |
+| Enumerate agents, kinds, cwds, states | `herdr agent list` |
+| Lifecycle state (`idle`/`working`/`blocked`/`done`/`unknown`) | `herdr agent get`, `wait` |
+| Submit a prompt into an agent | `herdr agent prompt <t> <text> [--wait]` |
+| Answer a dialog in a blocked agent | `herdr agent send-keys <t> <key>` |
+| Read terminal output | `herdr agent read --source recent-unwrapped` |
+| Create a visible pane beside the planner | `herdr pane split --current --direction right --cwd "$PWD" --no-focus` |
+| Start a named agent in that pane | `herdr agent start <name> --kind <kind> --pane <id> -- <args>` |
+| Surface a nudge to the human | `herdr notification show` |
+| Caller's own location | `$HERDR_PANE_ID`, `$HERDR_TAB_ID`, `$HERDR_WORKSPACE_ID` |
+
+Integrations already installed: **opencode** (`~/.config/opencode/plugins/herdr-agent-state.js`)
+and **claude** (`~/.claude/hooks/herdr-agent-state.sh`). These push accurate lifecycle state
+and session identity over the herdr socket.
+
+Two herdr constraints shape the design:
+
+1. **Terminal reads are unreliable.** Agent TUIs run on the alternate screen; completed
+   responses scroll out of reach of `agent read` regardless of `--lines`. herdr's own
+   prescribed workaround is to have the agent write its response to a file and reply with
+   the path. Relay therefore uses **file handoffs**, not screen scraping.
+2. **`agent prompt` is rejected against a blocked agent** (`agent_blocked`). Answering a
+   dialog must go through `send-keys`.
+
+## Architecture
+
+Three pieces, deliberately thin.
+
+```
+relay CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
+               works whether the planner is claude, opencode or agy.
+
+                 relay bind --builder <alias|pane> [--name <n>]
+                 relay bind --resume <name>
+                 relay send --file <path>
+                 relay answer (--keys <k> | --choice <n> | --text <s>)
+                 relay pull [<name>]
+                 relay done
+                 relay unbind [<name>]
+                 relay status [--json]
+                 relay log <name>
+                 relay watch
+
+relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
+                 1. builder -> idle    : deliver its report to the planner
+                 2. builder -> blocked : deliver the dialog question to the planner
+                 3. round accounting, timeouts, runaway cap
+
+state          ~/.local/state/relay/<binding-name>/
+                 bind.json         the binding
+                 log.jsonl         append-only round log
+                 NNN-plan.md       planner -> builder
+                 NNN-report.md     builder -> planner
+                 NNN-question.md   blocked dialog capture
+```
+
+**Why the CLI and the daemon are separate.** The outbound leg (planner → builder) happens
+while the planner is mid-turn, so the planner can just call `relay send` synchronously. The
+inbound leg (builder → planner) happens *after* the planner's turn has ended, when no model
+is running to notice. That is the only reason a daemon exists.
+
+## Data structures
+
+### `bind.json`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | binding id, `[a-z][a-z0-9_-]{0,31}`, defaults from cwd basename |
+| `cwd` | abs path | the working tree; **unique across active bindings** |
+| `planner.pane_id` | string | e.g. `w2:p3` |
+| `planner.session_id` | string | from the harness integration; survives pane id changes |
+| `planner.kind` | enum | `claude` \| `opencode` \| `agy` |
+| `builder.agent_name` | string | herdr agent name, e.g. `upjo-builder` |
+| `builder.pane_id` | string | |
+| `builder.kind` | enum | |
+| `builder.alias` | enum | `builder` \| `cbuilder` \| `abuilder` |
+| `round` | int | current round, starts at 1 |
+| `state` | enum | `active` \| `held` \| `needs_you` \| `broken` \| `orphaned` \| `done` |
+| `round_cap` | int | default 20 |
+| `round_timeout_ms` | int | default 1_800_000 (30 min) |
+| `created_at`, `updated_at` | iso8601 | |
+
+### Alias table (config, derived from the author's shell functions)
+
+| alias | kind | native args (after `--`) | first-prompt preamble |
+| --- | --- | --- | --- |
+| `builder` | `opencode` | `--agent plan-executor -m openrouter/z-ai/glm-5.3-flash` | — |
+| `cbuilder` | `claude` | `--agent plan-executor --model sonnet` | — |
+| `abuilder` | `agy` | `--model gemini-3.8-flash-high --dangerously-skip-permissions` | `Activate your 'plan-executor' skill and act as the Plan Execution Specialist.` |
+
+`abuilder` needs the preamble because agy has no `--agent` flag — the fish function fakes the
+role by wrapping the task in `-i "..."`. A persistent session cannot bake that into startup,
+so relay prepends it to round 1's prompt only.
+
+### `log.jsonl` entry
+
+`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer",
+   path, delivered_at, confirmed: bool, note }`
+
+## Message protocol
+
+### Planner → builder
+
+```
+planner writes ./plan.md, then runs:  relay send --file ./plan.md
+
+relay: assign round N, copy to <state>/NNN-plan.md
+       herdr agent prompt <builder> "
+         Round N from the planner.
+         Read:  <state>/NNN-plan.md
+         When done, write your report to <state>/NNN-report.md
+         Reply here with only that path."
+       append log entry, return immediately
+```
+
+### Builder → planner
+
+```
+relayd observes builder -> idle|done
+  if <state>/NNN-report.md exists:
+      payload = "Builder finished round N. Report: <path>"
+  else:
+      nudge once: "You did not write the report file. Write it to <path> now."
+      wait for idle again
+      if still missing:
+          scrape = herdr agent read --source recent-unwrapped --lines 200
+          write to NNN-report.md marked SCRAPED (may be truncated)
+          payload = report + explicit unreliability warning
+
+  deliver(payload) -> planner        # see delivery rule below
+```
+
+### Builder blocked
+
+```
+relayd observes builder -> blocked
+  dialog = herdr agent read <builder> --source detection
+  write <state>/NNN-question.md
+  deliver("Builder is blocked at a dialog. Question: <path>.
+           Answer with: relay answer --keys <key> | --choice <n> | --text <s>")
+
+planner reads the actual dialog, then:  relay answer --keys enter
+relay: herdr agent send-keys <builder> enter     # NOT agent prompt; that is rejected
+```
+
+### Delivery rule (the anti-clobber rule)
+
+`herdr agent prompt` types text and presses Enter. If the human is mid-sentence in the
+planner pane, their draft and the payload merge and submit as garbage. herdr exposes pane
+focus but cannot see the input buffer, so:
+
+```
+deliver(payload):
+    if planner is not idle:            queue, retry on next idle
+    else if planner pane is focused:   queue, state = held
+                                       herdr notification show "<name>: report ready"
+                                       # two ways out of held:
+                                       #   human focuses another pane -> inject as normal
+                                       #   human says "go" -> planner runs `relay pull`,
+                                       #     which PRINTS the payload to stdout as tool
+                                       #     output. No injection at all, so it cannot
+                                       #     collide and cannot be rejected mid-turn.
+    else:                              herdr agent prompt <planner> payload
+                                       mark confirmed in log
+```
+
+### Termination
+
+The planner calls `relay done` once it has verified the work. `round_cap` (default 20) is a
+runaway guard only: on reaching it relay stops relaying, sets `needs_you`, and notifies.
+
+## Observability
+
+```
+$ relay status
+relayd  running   pid 48213   herdr session default   up 2h14m
+
+webshop    /home/dev/projects/webshop     w2   round 3   ACTIVE
+  planner  cplanner        w2:p3  claude    working
+  builder  upjo-builder    w2:p4  opencode  working    `builder` -> glm-5.3-flash
+  last     14:22:07  plan 003 -> builder
+  pending  --
+
+career  /home/dev/projects/api               w4   round 1   NEEDS YOU
+  planner  aplanner        w4:pA  agy       idle
+  builder  career-builder  w4:pB  claude    blocked    <- approval dialog
+  last     14:19:51  question 001 -> planner
+  pending  planner to answer
+
+money   /home/dev/money/ai                      wF   round 7   HELD
+  planner  cplanner        wF:p1  claude    idle       (focused -- holding)
+  builder  money-builder   wF:p2  opencode  idle
+  pending  report 007 -> planner, held 45s, delivers when you leave the pane
+```
+
+Three display states cover everything: **ACTIVE** (someone is working), **NEEDS YOU**
+(stalled on a human), **HELD** (ready, but the human is in the pane).
+
+- `relay pull [<name>]` — prints any held payload to stdout instead of injecting it. This is
+  what the planner runs when the human says "go"; it is the only delivery path that works
+  while the planner is mid-turn.
+- `relay log <name>` — every relayed message: round, direction, file, timestamp. The audit
+  trail for "what did the planner actually tell the builder".
+- `relay watch` — live tail of the same.
+- `relay status --json` — feeds `~/.claude/statusline.py` so any pane can show `⇄ upjo r3`.
+
+All agent rows are derived live from herdr on each call. Relay holds no truth herdr already
+has, except bindings and the round log, so `status` cannot disagree with reality.
+
+## Failure handling
+
+| Failure | Behaviour |
+| --- | --- |
+| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay never kills a pane. |
+| Builder wedged (`working` forever) | `round_timeout_ms` elapses -> `needs_you` + notification. Nothing killed. |
+| herdr reports `unknown` | Treated as "keep waiting", **never** as done (herdr documents that `unknown` does not prove completion). After a grace period -> `needs_you`. Most likely with `abuilder`; see prerequisites. |
+| `agent_prompt_stalled` | Retry once, then stop and flag. Never blind-refire — a double-submitted plan means two builders' worth of edits. |
+| Planner session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relay bind --resume <name>` adopts it into a new planner and hands over the round log. |
+| relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
+| Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
+| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relay pull`, receiving the payload as tool output rather than as injected keystrokes. |
+
+## Decisions and rationale
+
+| Fork | Chosen | Why |
+| --- | --- | --- |
+| Who drives the loop | Planner delegates and ends its turn; daemon relays | Keeps judgement in the model the human already talks to, keeps the human able to interject, keeps the daemon dumb enough to trust |
+| Builder session lifetime | Persistent per binding | Matches the manual workflow; follow-ups stay short because the builder remembers what it wrote. Reset comes free via rebinding to a new pane |
+| Handoff channel | Files | herdr documents that alternate-screen output is unrecoverable by `agent read`; scraping is a labelled last resort only |
+| Delivery while focused | Hold + notify, inject when unfocused | The only rule that cannot eat a half-typed message; full autonomy resumes the moment the human looks away |
+| Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; alias names are already stable in the user's head |
+| Concurrent loops on one tree | Refuse the second bind | The one failure mode that destroys work rather than stalling |
+
+## Prerequisites
+
+1. `herdr integration install antigravity-cli` — only **opencode** and **claude**
+   integrations are currently installed. Without it, `abuilder` panes rely on heuristic
+   screen detection and will frequently report `unknown`.
+2. herdr >= 0.8.2 (for `agent start --kind agy`, `agent wait --until`, `notification show`).
+
+## Out of scope (YAGNI)
+
+- Auto-worktree creation for parallel loops.
+- Relay-side summarisation or context compaction.
+- Any planner-side intelligence in the daemon.
+- Cross-machine relaying (herdr `--remote` exists; not needed yet).
+- A TUI. `relay status` / `relay watch` are enough.

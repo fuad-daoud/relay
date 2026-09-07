@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: make check
+        run: make check
+
+      # Only the platforms relay actually supports. Everything is stdlib and
+      # CGO-free, so plain cross-compilation is enough -- no build matrix, no
+      # third-party release tooling.
+      - name: build release archives
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            echo "==> $goos/$goarch"
+            GOOS="$goos" GOARCH="$goarch" go build \
+              -ldflags "-s -w -X main.version=${version}" \
+              -o "dist/relay" ./cmd/relay
+            tar -czf "dist/relay_${version}_${goos}_${goarch}.tar.gz" \
+              -C dist relay \
+              -C .. README.md LICENSE
+            rm dist/relay
+          done
+          (cd dist && sha256sum relay_*.tar.gz > checksums.txt)
+          ls -l dist
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/relay_*.tar.gz dist/checksums.txt

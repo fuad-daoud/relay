@@ -1,14 +1,75 @@
 # relay
 
+[![ci](https://github.com/fuad-daoud/relay/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relay/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `relay` automates the plan/report handoff between two AI coding agent panes
-running under `herdr`, a terminal multiplexer. A human talks to a **planner**
-agent; the planner hands work to a **builder** agent; relay moves the files
-between them so the human never copy-pastes a plan or a report by hand.
+running under [herdr](https://github.com/herdrdev/herdr), a terminal workspace
+manager for coding agents. A human talks to a **planner** agent; the planner
+hands work to a **builder** agent; relay moves the files between them so the
+human never copy-pastes a plan or a report by hand.
 
 Relay makes no judgements. It moves files, types prompts, and watches herdr's
 live agent state — whether a report is good, whether a question needs a
 human, whether the work is done, is a decision that stays with the planner
 (or the human) at every step.
+
+## Requirements
+
+- **[herdr](https://github.com/herdrdev/herdr) 0.8.2 or newer, on `PATH`.**
+  This is a hard runtime dependency, not an integration: herdr owns the panes,
+  and every single thing relay observes or controls goes through the `herdr`
+  CLI. relay is useless without it.
+- **Two agent harnesses that herdr can drive** — one for the planner, one for
+  the builder. relay ships example aliases for `opencode`, `claude` and `agy`;
+  see [Builder aliases](#builder-aliases).
+- **Linux or macOS.** See [Platform support](#platform-support).
+- **Go 1.22+**, to build from source. Not needed if you install a release
+  binary.
+
+## Install
+
+Prebuilt binaries for Linux and macOS (amd64 and arm64) are attached to every
+[release](https://github.com/fuad-daoud/relay/releases); unpack one and put
+`relay` on your `PATH`.
+
+With a Go toolchain:
+
+```
+go install github.com/fuad-daoud/relay/cmd/relay@latest
+```
+
+That drops `relay` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
+
+Or from a clone, which also stamps the binary with the current tag so
+`relay version` is meaningful:
+
+```
+git clone https://github.com/fuad-daoud/relay
+cd relay
+make install        # builds and installs ~/.local/bin/relay
+```
+
+`make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
+`go test -count=1 ./...` — and `make install` runs it first.
+
+To run the reconciler as a background service, see
+[Running the daemon](#running-the-daemon).
+
+## Quick start
+
+From inside the planner's herdr pane, in the repository you want worked on:
+
+```
+relay bind --builder cbuilder     # split a builder pane and bind it to this tree
+relay send --file plan.md         # hand it the plan; the builder starts working
+relay status                      # watch the round
+relay pull                        # print the report the builder wrote back
+relay done <name>                 # stop relaying when you are satisfied
+```
+
+`relay bind` reads the planner's pane from `$HERDR_PANE_ID`, which herdr sets
+inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
@@ -39,7 +100,10 @@ human, whether the work is done, is a decision that stays with the planner
 - `relay gc [--dry-run] [--archive]` — clear every binding the planner marked
   `DONE`, in one pass.
 - `relay daemon [--interval D]` — the long-running reconciler; this is what
-  `relay.service` runs.
+  the service unit runs.
+- `relay help` — the command list. `relay <command> -h` prints that command's
+  flags.
+- `relay version` — the build's version.
 
 `--name` defaults to whichever binding owns the current working directory for
 `send`, `pull`, `answer` and `status`. It is **required** for `done` and
@@ -73,10 +137,10 @@ The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
 
 ### Cleaning up finished bindings
 
-A binding leaves `~/.local/state/relay/<name>/` behind: `bind.json`, `log.jsonl`,
-and every round's plan, report and captured dialog. `relay done` stops relaying
-but removes nothing — the log is the record of what the planner actually told
-the builder.
+A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
+`~/.local/state/relay/<name>/`): `bind.json`, `log.jsonl`, and every round's
+plan, report and captured dialog. `relay done` stops relaying but removes
+nothing — the log is the record of what the planner actually told the builder.
 
 ```
 relay unbind ai              # delete the binding and its whole directory
@@ -108,20 +172,60 @@ loop by accident, and the recovery is `relay bind --resume --name <name>`.
 
 ## Builder aliases
 
+An alias says how to start one builder: which herdr agent kind, and which
+native arguments to launch it with. `relay bind --builder cbuilder` spawns the
+`cbuilder` alias; there is no default, because guessing would silently start
+the wrong (and possibly expensive) agent.
+
+relay ships three aliases, and they are **worked examples, not a supported
+set**:
+
 | alias      | kind     | model                              | role selection |
 |------------|----------|-------------------------------------|----------------|
 | `builder`  | opencode | `openrouter/z-ai/glm-5.3-flash`     | `--agent plan-executor` |
 | `cbuilder` | claude   | `sonnet`                            | `--agent plan-executor` |
 | `abuilder` | agy      | `gemini-3.8-flash-high`             | preamble on the first prompt |
 
-`agy` has no `--agent` flag, so `abuilder` instead gets a preamble — "Activate
-your 'plan-executor' skill..." — prepended to round 1's prompt only.
+Each one assumes things about the machine relay runs on: that the harness is
+installed, that its provider is configured for that model, and that a
+`plan-executor` agent (or skill) exists in it. On a fresh machine at least one
+of those is usually false, so expect to replace them.
 
-An **adopted** pane (bind by pane id, or `--resume`) gets no preamble at all:
-the human's own launcher already put that session in the right role, and
-relay has no alias to consult for an adopted builder.
+> **Note on `abuilder`:** it passes `--dangerously-skip-permissions`, which
+> lets the builder act without approval prompts. That is what makes an
+> unattended relay loop work, and it is a real grant of trust. Keep it only for
+> a working tree you are willing to let an agent edit freely.
 
-Aliases can be overridden or extended via `~/.config/relay/aliases.json`.
+Override or extend the table in `~/.config/relay/aliases.json`. It is a JSON
+array layered over the built-ins, so an entry reusing a built-in name replaces
+it:
+
+```json
+[
+  {
+    "name": "builder",
+    "kind": "opencode",
+    "args": ["--agent", "plan-executor", "-m", "anthropic/claude-sonnet-5"]
+  },
+  {
+    "name": "local",
+    "kind": "opencode",
+    "args": ["-m", "ollama/qwen3-coder"],
+    "preamble": "Act as a plan execution specialist. Implement exactly what the plan specifies."
+  }
+]
+```
+
+- `name` — what you pass to `relay bind --builder`. Required.
+- `kind` — the herdr agent kind (`herdr agent start --kind`). Required.
+- `args` — native arguments passed through to the harness.
+- `preamble` — prepended to round 1's prompt only, for harnesses with no way to
+  select a role at launch. `agy` has no `--agent` flag, which is why `abuilder`
+  uses one.
+
+An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs
+no alias at all: you launched that agent yourself, so it is already in whatever
+role you put it in.
 
 ## Display states
 
@@ -152,54 +256,69 @@ tick. `relay pull` bypasses this entirely — it prints the payload to stdout
 instead of injecting it, so it's safe to run from inside the focused planner
 pane at any time.
 
-## Installation
+## Running the daemon
+
+`relay daemon` is the reconciler: it polls herdr, queues reports back to the
+planner, captures blocking dialogs, and flags stalled rounds. Nothing else
+needs it running — the CLI works on its own — but without it, reports are only
+delivered when you run `relay pull` by hand.
+
+You can just run `relay daemon` in any spare terminal. To have it start with
+your session:
 
 ```
-make install   # builds and installs ~/.local/bin/relay
-make service   # installs dist/relay.service and starts it as a user unit
+make service     # systemd user unit on Linux, LaunchAgent on macOS
+make uninstall   # stop it and remove both the binary and the unit
 ```
 
-`make check` runs `gofmt -l .`, `go vet ./...`, and `go test -count=1 ./...`.
-`make uninstall` stops the unit and removes both the binary and the unit
-file.
+On Linux that installs `dist/relay.service` to
+`~/.config/systemd/user/relay.service` and enables it. On macOS it renders
+`dist/com.github.fuad-daoud.relay.plist.in` into `~/Library/LaunchAgents/` and
+loads it, logging to `~/Library/Logs/relay.log`.
 
-The unit runs `relay daemon` outside any herdr-managed pane, so it starts
-with none of the `HERDR_*` environment variables herdr injects into a pane
-it manages. The cheap way to confirm this is fine before trusting the
-service: if `relay status` works from a plain terminal (not inside a herdr
-pane), the daemon will work there too, since both resolve the running herdr
-session the same way.
+Both run `relay daemon` outside any herdr-managed pane, so it starts with none
+of the `HERDR_*` environment variables herdr injects into a pane it manages.
+The cheap way to confirm this is fine before trusting the service: if
+`relay status` works from a plain terminal (not inside a herdr pane), the
+daemon will work there too, since both resolve the running herdr session the
+same way.
 
-## opencode permission allowlist
+## Lifecycle hooks
 
-relay stages plans and reports under `~/.local/state/relay/<binding>/`, outside
-the repo the builder is working in, so a fresh opencode builder blocks on an
-"Access external directory" dialog on its first round. relay handles it — the
-daemon captures the dialog and the planner answers with `relay answer` — but to
-skip it entirely, `~/.config/opencode/opencode.jsonc` carries:
+relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `~/.config/relay/hooks/<event_type>.d/`.
 
-```jsonc
-"permission": {
-  "external_directory": {
-    "/home/fuad/.local/state/relay/*": "allow",
-    "/home/fuad/.local/state/relay/**": "allow"
-  }
-}
-```
+### Supported events
 
-Claude builders (`cbuilder`) have their own permission model and are not covered
-by that entry.
+- `state_changed` (`~/.config/relay/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
+- `round_started` (`~/.config/relay/hooks/round_started.d/`) — fires whenever a new round starts.
 
-## herdr integrations
+### Hook execution & environment
+
+Each hook script is executed asynchronously in a detached process with a 10-second timeout. relay injects the following environment variables:
+
+- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`).
+- `RELAY_BINDING`: The name of the binding.
+- `RELAY_STATE`: The current state of the binding.
+- `RELAY_OLD_STATE`: The previous state of the binding.
+- `RELAY_ROUND`: The current round number.
+
+Hook stdout, stderr, and execution failures are logged to `~/.local/state/relay/hooks.log` (or `$XDG_STATE_HOME/relay/hooks.log`).
+
+Scripts must have their executable bit set (`chmod +x`). If `~/.config/relay/hooks/` or an event directory does not exist, event dispatch is a silent no-op.
+
+## Setting up your agent harnesses
+
+### herdr lifecycle integrations
 
 relay reads lifecycle state (`idle` / `working` / `blocked` / `done` /
-`unknown`) from herdr, which learns it from a hook each harness installs.
-All three builders are covered on this machine:
+`unknown`) from herdr, which learns it from a hook each harness installs. Check
+what herdr can install with `herdr integration install --help`; the hooks land
+in the harness's own config directory, for example:
 
 ```
 opencode   ~/.config/opencode/plugins/herdr-agent-state.js
 claude     ~/.claude/hooks/herdr-agent-state.sh
-agy        ~/.gemini/config/hooks/herdr-agent-state.sh   (herdr integration install antigravity-cli)
+agy        ~/.gemini/config/hooks/herdr-agent-state.sh
 ```
 
 Without a harness's integration, herdr falls back to heuristic screen
@@ -207,6 +326,27 @@ detection and reports `unknown`. relay never treats `unknown` as done, so such
 a binding stalls rather than misbehaving — but it does stall. A binding whose
 builder reports no session id also never self-heals from `BROKEN`, since
 recovery requires matching the same herdr session (see below).
+
+### opencode permission allowlist
+
+relay stages plans and reports under `~/.local/state/relay/<binding>/`, outside
+the repo the builder is working in, so a fresh opencode builder blocks on an
+"Access external directory" dialog on its first round. relay handles it — the
+daemon captures the dialog and the planner answers with `relay answer` — but to
+skip it entirely, add this to `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
+"permission": {
+  "external_directory": {
+    "/home/you/.local/state/relay/*": "allow",
+    "/home/you/.local/state/relay/**": "allow"
+  }
+}
+```
+
+Substitute your real home directory: opencode does not expand `~` or `$HOME`
+in these patterns. Claude builders (`cbuilder`) have their own permission model
+and are not covered by that entry.
 
 ## Recovering a broken binding
 
@@ -221,6 +361,29 @@ direction.
 If it stays broken, `relay bind --resume --name N` re-points it, or
 `relay unbind N` and bind fresh.
 
+## Platform support
+
+**Linux and macOS.** Both are exercised in CI, on the Go 1.22 floor and on
+current stable.
+
+Windows is not supported. The blocker is not really relay — state locking is
+behind a build tag and could be implemented there — but herdr, which relay
+cannot work without. The tree still cross-compiles for `windows/amd64` (CI
+checks it), and relay will refuse at runtime with a clear error rather than
+running without a state lock.
+
 ## Design
 
-`~/docs/superpowers/specs/2026-09-04-relay-planner-builder-design.md`
+[`docs/design.md`](docs/design.md) is the architecture document written before
+relay was built. It explains why the CLI and the daemon are split, why delivery
+holds on a focused pane, and what was deliberately left out. It is a historical
+record, not maintained against the code.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
+stdlib-only, write the test, and make sure `make check` passes.
+
+## License
+
+[MIT](LICENSE) © Fuad Daoud

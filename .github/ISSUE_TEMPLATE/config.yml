@@ -1,0 +1,7 @@
+blank_issues_enabled: true
+contact_links:
+  - name: herdr issues
+    url: https://github.com/herdrdev/herdr/issues
+    about: >-
+      relay drives herdr. If panes, agent detection or `herdr agent` itself is
+      misbehaving, the problem is more likely to live there.
