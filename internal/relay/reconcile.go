@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -31,6 +32,32 @@ const dialogSource = "detection"
 const nudgePrompt = `You went idle without writing your report.
 Write it to %s now, then reply with only that path.`
 
+func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
+	if rt.Hooks == nil {
+		return
+	}
+	if next.Round > orig.Round {
+		rt.Hooks.Dispatch(ctx, hooks.Event{
+			Type:      hooks.EventRoundStarted,
+			BindingID: next.Name,
+			State:     string(next.State),
+			OldState:  string(orig.State),
+			Round:     next.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+	if next.State != orig.State {
+		rt.Hooks.Dispatch(ctx, hooks.Event{
+			Type:      hooks.EventStateChanged,
+			BindingID: next.Name,
+			State:     string(next.State),
+			OldState:  string(orig.State),
+			Round:     next.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+}
+
 // Reconcile advances one binding against the agent list the daemon already
 // fetched, so a tick costs exactly one herdr call no matter how many bindings
 // exist.
@@ -39,7 +66,13 @@ Write it to %s now, then reply with only that path.`
 // must `tx.Save` it before releasing the lock. Everything it calls takes the
 // same tx rather than locking itself, which is what lets the caller hold one
 // critical section across the whole read-reconcile-write.
-func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (out store.Binding, err error) {
+	orig := b
+	defer func() {
+		if err == nil {
+			emitMutations(ctx, rt, orig, out)
+		}
+	}()
 	if b.State == store.StateDone {
 		return b, nil
 	}

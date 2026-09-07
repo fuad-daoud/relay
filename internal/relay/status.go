@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -175,7 +176,7 @@ func RenderStatus(r Report) string {
 }
 
 // Done stops relaying for a binding once the planner has verified the work.
-func Done(_ context.Context, rt Runtime, name string) error {
+func Done(ctx context.Context, rt Runtime, name string) error {
 	// Load-modify-save, so it runs inside the state lock: the daemon rewrites
 	// this binding on every tick and would otherwise resurrect it by saving a
 	// pre-Done snapshot back over the top. Reach state only through tx here --
@@ -187,8 +188,24 @@ func Done(_ context.Context, rt Runtime, name string) error {
 			return err
 		}
 
+		oldState := b.State
 		b.State = store.StateDone
 
-		return tx.Save(b)
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+
+		if rt.Hooks != nil && oldState != store.StateDone {
+			rt.Hooks.Dispatch(ctx, hooks.Event{
+				Type:      hooks.EventStateChanged,
+				BindingID: b.Name,
+				State:     string(store.StateDone),
+				OldState:  string(oldState),
+				Round:     b.Round,
+				Timestamp: rt.Now().UTC(),
+			})
+		}
+
+		return nil
 	})
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -33,6 +34,7 @@ type Runtime struct {
 	Store   *store.Store
 	Aliases *alias.Table
 	Now     func() time.Time
+	Hooks   hooks.Dispatcher
 }
 
 // FindAgent locates a binding endpoint among the live agents. Session id wins
