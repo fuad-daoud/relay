@@ -4,10 +4,10 @@ import "testing"
 
 const agentListFixture = `{"id":"cli:agent:list","result":{"agents":[
 {"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"c6b59b8f-e80a-48ef-a3de-d2d15ec90e24"},
-"agent_status":"blocked","cwd":"/home/fuad/projects/uniqueperfumesjo","focused":true,"pane_id":"w2:p7",
+"agent_status":"blocked","cwd":"/home/dev/projects/webshop","focused":true,"pane_id":"w2:p7",
 "tab_id":"w2:t7","terminal_title_stripped":"architect","workspace_id":"w2"},
 {"agent":"opencode","agent_session":{"agent":"opencode","kind":"id","source":"herdr:opencode","value":"d483cf1e"},
-"agent_status":"working","cwd":"/home/fuad/projects/career","focused":false,"pane_id":"w4:pA",
+"agent_status":"working","cwd":"/home/dev/projects/api","focused":false,"pane_id":"w4:pA",
 "tab_id":"w4:tA","terminal_title_stripped":"builder","workspace_id":"w4"}],"type":"agent_list"}}`
 
 func TestParseAgentList(t *testing.T) {

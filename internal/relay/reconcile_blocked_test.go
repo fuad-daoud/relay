@@ -23,7 +23,7 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 		t.Errorf("state = %s, want needs_you", b.State)
 	}
 
-	body, err := os.ReadFile(rt.Store.QuestionPath("upjo", 1))
+	body, err := os.ReadFile(rt.Store.QuestionPath("webshop", 1))
 	if err != nil {
 		t.Fatalf("dialog must be captured to the question path: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 		t.Fatalf("dialog reads = %+v, want one %q read", f.reads, dialogSource)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("upjo")
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
 		t.Fatalf("question must be queued for the planner: found=%v err=%v", found, err)
 	}
@@ -50,7 +50,7 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 	if _, err := reconcile(t, rt, b, agents); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	entries, err := rt.Store.ReadLog("upjo")
+	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}

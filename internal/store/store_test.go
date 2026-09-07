@@ -31,12 +31,12 @@ func newBinding(name, cwd string) Binding {
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	s := New(t.TempDir())
-	want := newBinding("upjo", "/home/fuad/projects/uniqueperfumesjo")
+	want := newBinding("webshop", "/home/dev/projects/webshop")
 
 	if err := s.Save(want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	got, err := s.Load("upjo")
+	got, err := s.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -50,11 +50,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestSaveRefusesDuplicateCWD(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 
-	err := s.Save(newBinding("upjo2", "/repo"))
+	err := s.Save(newBinding("webshop2", "/repo"))
 	if !errors.Is(err, ErrCWDTaken) {
 		t.Fatalf("got %v, want ErrCWDTaken", err)
 	}
@@ -62,7 +62,7 @@ func TestSaveRefusesDuplicateCWD(t *testing.T) {
 
 func TestSaveAllowsRewritingSameBinding(t *testing.T) {
 	s := New(t.TempDir())
-	b := newBinding("upjo", "/repo")
+	b := newBinding("webshop", "/repo")
 	if err := s.Save(b); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
@@ -82,16 +82,16 @@ func TestLoadMissingIsErrNotFound(t *testing.T) {
 
 func TestPathsAreZeroPaddedUnderBindingDir(t *testing.T) {
 	s := New("/state")
-	if got, want := s.PlanPath("upjo", 3), filepath.Join("/state", "upjo", "003-plan.md"); got != want {
+	if got, want := s.PlanPath("webshop", 3), filepath.Join("/state", "webshop", "003-plan.md"); got != want {
 		t.Errorf("PlanPath = %q, want %q", got, want)
 	}
-	if got, want := s.ReportPath("upjo", 12), filepath.Join("/state", "upjo", "012-report.md"); got != want {
+	if got, want := s.ReportPath("webshop", 12), filepath.Join("/state", "webshop", "012-report.md"); got != want {
 		t.Errorf("ReportPath = %q, want %q", got, want)
 	}
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"upjo", "a", "money-ai", "x_1"} {
+	for _, ok := range []string{"webshop", "a", "money-ai", "x_1"} {
 		if err := ValidName(ok); err != nil {
 			t.Errorf("ValidName(%q) = %v, want nil", ok, err)
 		}
@@ -245,7 +245,7 @@ func TestAtomicWriteCleanupTempFile(t *testing.T) {
 // resolving onto one would point `relay send` at a finished session.
 func TestFindByCWDSkipsDoneBindings(t *testing.T) {
 	s := New(t.TempDir())
-	done := newBinding("upjo", "/repo")
+	done := newBinding("webshop", "/repo")
 	done.State = StateDone
 	if err := s.Save(done); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -256,15 +256,15 @@ func TestFindByCWDSkipsDoneBindings(t *testing.T) {
 	}
 
 	// The live binding that replaces it is still found.
-	if err := s.Save(newBinding("upjo2", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop2", "/repo")); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
 	got, found, err := s.FindByCWD("/repo")
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v, want the active binding", found, err)
 	}
-	if got.Name != "upjo2" {
-		t.Errorf("name = %q, want upjo2", got.Name)
+	if got.Name != "webshop2" {
+		t.Errorf("name = %q, want webshop2", got.Name)
 	}
 }
 
@@ -273,30 +273,30 @@ func TestFindByCWDSkipsDoneBindings(t *testing.T) {
 // not relax the two-builders-in-one-tree refusal.
 func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
 	s := New(t.TempDir())
-	done := newBinding("upjo", "/repo")
+	done := newBinding("webshop", "/repo")
 	done.State = StateDone
 	if err := s.Save(done); err != nil {
 		t.Fatalf("Save done: %v", err)
 	}
-	if err := s.Save(newBinding("upjo2", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop2", "/repo")); err != nil {
 		t.Fatalf("Save active beside done: %v", err)
 	}
 
-	if err := s.Save(newBinding("upjo3", "/repo")); !errors.Is(err, ErrCWDTaken) {
+	if err := s.Save(newBinding("webshop3", "/repo")); !errors.Is(err, ErrCWDTaken) {
 		t.Fatalf("got %v, want ErrCWDTaken from the still-active binding", err)
 	}
 }
 
 func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := s.AppendLog("upjo", LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}); err != nil {
+	if err := s.AppendLog("webshop", LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	dest, err := s.Archive("upjo")
+	dest, err := s.Archive("webshop")
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
@@ -305,25 +305,25 @@ func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
 	if !filepath.IsAbs(dest) || !strings.HasSuffix(dest, ".tar.gz") {
 		t.Errorf("archive path = %q, want an absolute .tar.gz", dest)
 	}
-	if got := archiveEntries(t, dest); !slices.Contains(got, "upjo/log.jsonl") {
-		t.Errorf("archived tarball entries = %v, want it to contain upjo/log.jsonl", got)
+	if got := archiveEntries(t, dest); !slices.Contains(got, "webshop/log.jsonl") {
+		t.Errorf("archived tarball entries = %v, want it to contain webshop/log.jsonl", got)
 	}
-	if _, err := s.Load("upjo"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Load("webshop"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("archived binding must be gone from the live set, got %v", err)
 	}
 
 	// And the name is free for a fresh bind on the same tree.
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Errorf("archiving must free the name and the working tree: %v", err)
 	}
 }
 
 func TestListSkipsTheArchiveDirectory(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := s.Archive("upjo"); err != nil {
+	if _, err := s.Archive("webshop"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 
@@ -378,16 +378,16 @@ func archiveEntries(t *testing.T, path string) []string {
 
 func TestArchiveIsCompressed(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Highly compressible content, as relay's own state files are.
 	big := strings.Repeat("the planner told the builder to read the plan file\n", 2000)
-	if err := os.WriteFile(s.PlanPath("upjo", 1), []byte(big), 0o644); err != nil {
+	if err := os.WriteFile(s.PlanPath("webshop", 1), []byte(big), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	dest, err := s.Archive("upjo")
+	dest, err := s.Archive("webshop")
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}

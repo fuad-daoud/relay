@@ -17,7 +17,7 @@ import (
 func TestTickReconcilesAndPersists(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := sentBinding(t, f)
-	if err := os.WriteFile(rt.Store.ReportPath("upjo", 1), []byte("done"), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
@@ -26,7 +26,7 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	b, err := rt.Store.Load("upjo")
+	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -102,11 +102,11 @@ func TestTickSurfacesListAgentsFailure(t *testing.T) {
 // TestTickContinuesPastFailingBinding guards the other half of resilience:
 // one binding's reconcile error must not abort the rest of the tick. It
 // builds a second, independent binding by hand -- seedBound/sentBinding are
-// hardwired to the name "upjo" and cwd "/repo" -- because Bind's shared
+// hardwired to the name "webshop" and cwd "/repo" -- because Bind's shared
 // fakeHerdr.newPane would otherwise collide the two builder panes.
 func TestTickContinuesPastFailingBinding(t *testing.T) {
 	f := &fakeHerdr{readErr: errors.New("read pane failed")}
-	rt, _ := sentBinding(t, f) // "upjo": builder goes Blocked below, and its
+	rt, _ := sentBinding(t, f) // "webshop": builder goes Blocked below, and its
 	// dialog capture uses ReadAgent, which readErr makes fail.
 
 	second := store.Binding{
@@ -132,8 +132,8 @@ func TestTickContinuesPastFailingBinding(t *testing.T) {
 	}
 
 	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false), // "upjo" planner
-		builderAgent(herdr.StatusBlocked),       // "upjo" builder: errors on read
+		plannerWith(herdr.StatusWorking, false), // "webshop" planner
+		builderAgent(herdr.StatusBlocked),       // "webshop" builder: errors on read
 		{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w9:p1",
 			Session: herdr.Session{Value: "planner2-sess"}}, // "kobe" planner
 		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w9:p2"}, // "kobe" builder
@@ -145,14 +145,14 @@ func TestTickContinuesPastFailingBinding(t *testing.T) {
 		t.Fatalf("Tick must not fail the whole loop over one binding, got %v", err)
 	}
 
-	// The assertion that matters: if Tick had returned early on "upjo"'s
+	// The assertion that matters: if Tick had returned early on "webshop"'s
 	// error, "kobe" would still be sitting at round 1 with nothing queued.
 	got, err := rt.Store.Load("kobe")
 	if err != nil {
 		t.Fatalf("Load kobe: %v", err)
 	}
 	if got.Round != 2 {
-		t.Errorf("kobe round = %d, want 2 -- the failing upjo binding must not block it", got.Round)
+		t.Errorf("kobe round = %d, want 2 -- the failing webshop binding must not block it", got.Round)
 	}
 	if len(f.prompts) != 1 {
 		t.Errorf("kobe's report must still be delivered, got %+v", f.prompts)
@@ -213,7 +213,7 @@ func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 	rt, _ := sentBinding(t, f)
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
 	f.onList = func() {
-		if err := rt.Store.Delete("upjo"); err != nil {
+		if err := rt.Store.Delete("webshop"); err != nil {
 			t.Errorf("unbind mid-tick: %v", err)
 		}
 	}

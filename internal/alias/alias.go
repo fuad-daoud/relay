@@ -27,8 +27,13 @@ type Table struct {
 	specs map[string]Spec
 }
 
-// DefaultTable returns the three built-in aliases, transcribed from the user's
-// fish functions builder/cbuilder/abuilder.
+// DefaultTable returns the three built-in aliases. Treat them as worked
+// examples rather than a supported set: each one names a harness, a model and
+// a role that have to already exist on the machine relay runs on. In
+// particular `plan-executor` is an agent (or skill) you define in that
+// harness, and each model assumes its provider is configured.
+//
+// Override or extend them in ~/.config/relay/aliases.json; see LoadTable.
 func DefaultTable() *Table {
 	defaults := []Spec{
 		{
@@ -44,6 +49,12 @@ func DefaultTable() *Table {
 		{
 			Name: "abuilder",
 			Kind: "agy",
+			// --dangerously-skip-permissions is what lets a builder run a
+			// whole round unattended, and it is a real grant of trust: the
+			// agent acts without asking. It is set here because relay's own
+			// loop assumes a builder that does not stop for approvals, but it
+			// belongs to a working tree you are willing to let an agent edit
+			// freely. Drop it in your own aliases.json if that is not yours.
 			Args: []string{"--model", "gemini-3.8-flash-high", "--dangerously-skip-permissions"},
 			// agy has no --agent flag, so the role is selected in the first prompt.
 			Preamble: "Activate your 'plan-executor' skill and act as the Plan Execution Specialist. Execute exactly as specified in the skill.",

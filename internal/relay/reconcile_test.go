@@ -14,7 +14,7 @@ import (
 func builderAgent(status string) herdr.Agent {
 	return herdr.Agent{
 		Kind: "agy", Status: status, CWD: "/repo", PaneID: "w2:p4",
-		Title: "upjo-builder",
+		Title: "webshop-builder",
 	}
 }
 
@@ -22,10 +22,10 @@ func builderAgent(status string) herdr.Agent {
 func sentBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	rt, _ := seedBound(t, f)
-	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	b, err := rt.Store.Load("upjo")
+	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -46,15 +46,15 @@ func sentBindingWithBuilderSession(t *testing.T, f *fakeHerdr, sessionID string)
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "upjo", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	b, err = rt.Store.Load("upjo")
+	b, err = rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -79,7 +79,7 @@ func reconcile(t *testing.T, rt Runtime, b store.Binding, agents []herdr.Agent) 
 func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
-	if err := os.WriteFile(rt.Store.ReportPath("upjo", 1), []byte("done"), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
@@ -100,11 +100,11 @@ func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 		t.Errorf("HaltNotifiedRound = %d, want 0 on a fresh round", got.HaltNotifiedRound)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("upjo")
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
-	if !strings.Contains(pending.Payload, rt.Store.ReportPath("upjo", 1)) {
+	if !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
 		t.Errorf("payload must name the report path, got %q", pending.Payload)
 	}
 }
@@ -121,10 +121,10 @@ func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 	if got.Round != 1 {
 		t.Errorf("a nudge must not advance the round, got %d", got.Round)
 	}
-	if len(f.prompts) != 1 || !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("upjo", 1)) {
+	if len(f.prompts) != 1 || !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("webshop", 1)) {
 		t.Fatalf("expected one nudge naming the report path, got %+v", f.prompts)
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("a nudge must not queue anything for the planner")
 	}
 }
@@ -153,7 +153,7 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 		t.Errorf("round = %d, want 2 after the scrape fallback", got.Round)
 	}
 
-	pending, found, err := rt.Store.PendingForPlanner("upjo")
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
 		t.Fatalf("scrape must be queued: found=%v err=%v", found, err)
 	}
@@ -161,7 +161,7 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 		t.Errorf("a scraped report must be labelled unreliable, got %q", pending.Payload)
 	}
 
-	body, err := os.ReadFile(rt.Store.ReportPath("upjo", 1))
+	body, err := os.ReadFile(rt.Store.ReportPath("webshop", 1))
 	if err != nil {
 		t.Fatalf("scrape must be written to the report path: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	if b.Round != 1 {
 		t.Errorf("round = %d, want 1: the round must not be abandoned inside the grace", b.Round)
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("nothing may be queued inside the nudge grace")
 	}
 	if len(f.reads) != 0 {
@@ -226,7 +226,7 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2: past the grace the scrape is the fallback", got.Round)
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); !pending {
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); !pending {
 		t.Error("the scraped report must be queued once the grace has elapsed")
 	}
 }
@@ -261,7 +261,7 @@ func TestReconcileIgnoresWorkingBuilder(t *testing.T) {
 func TestReconcileNeverTreatsUnknownAsDone(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
-	if err := os.WriteFile(rt.Store.ReportPath("upjo", 1), []byte("done"), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusUnknown)}
@@ -273,7 +273,7 @@ func TestReconcileNeverTreatsUnknownAsDone(t *testing.T) {
 	if got.Round != 1 {
 		t.Error("herdr documents that unknown does not prove completion; the round must not advance")
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("nothing may be queued off an unknown status")
 	}
 }
@@ -303,7 +303,7 @@ func TestReconcileRecoversFromBrokenOnSessionMatch(t *testing.T) {
 func TestReconcileRecoveredBindingProceedsNormally(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBindingWithBuilderSession(t, f, "builder-sess")
-	if err := os.WriteFile(rt.Store.ReportPath("upjo", 1), []byte("done"), 0o644); err != nil {
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	b.State = store.StateBroken
@@ -344,7 +344,7 @@ func TestReconcileStaysBrokenOnPaneOnlyMatch(t *testing.T) {
 	if len(f.prompts) != 0 {
 		t.Error("nothing may be relayed into a pane that might hold a different agent")
 	}
-	if _, pending, _ := rt.Store.PendingForPlanner("upjo"); pending {
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("nothing may be queued while still broken")
 	}
 }

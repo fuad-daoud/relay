@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestDefaultsMatchFishFunctions pins the exact argv of each default alias,
-// not just its kind: these are transcriptions of the user's fish functions,
-// and a wrong model string would start the wrong (or a nonexistent) model with
-// no error relay could see.
-func TestDefaultsMatchFishFunctions(t *testing.T) {
+// TestDefaultAliasArgv pins the exact argv of each built-in alias, not just
+// its kind. A wrong model string would start the wrong (or a nonexistent)
+// model with no error relay could see, so the argv is the thing worth
+// asserting even though the aliases themselves are only examples.
+func TestDefaultAliasArgv(t *testing.T) {
 	tbl := DefaultTable()
 
 	b, err := tbl.Lookup("builder")

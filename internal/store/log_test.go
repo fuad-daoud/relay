@@ -12,10 +12,10 @@ import (
 func seedBinding(t *testing.T) (*Store, string) {
 	t.Helper()
 	s := New(t.TempDir())
-	if err := s.Save(newBinding("upjo", "/repo")); err != nil {
+	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	return s, "upjo"
+	return s, "webshop"
 }
 
 func TestAppendAndReadLog(t *testing.T) {

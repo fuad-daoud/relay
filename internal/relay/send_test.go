@@ -19,7 +19,7 @@ func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "upjo", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -41,7 +41,7 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	src := writePlan(t, "# do the thing")
 
-	round, err := Send(context.Background(), rt, "upjo", src)
+	round, err := Send(context.Background(), rt, "webshop", src)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 		t.Fatalf("round = %d, want 1", round)
 	}
 
-	copied, err := os.ReadFile(rt.Store.PlanPath("upjo", 1))
+	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
 	if err != nil {
 		t.Fatalf("plan not copied into state: %v", err)
 	}
@@ -61,13 +61,13 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 		t.Fatalf("got %d prompts, want 1", len(f.prompts))
 	}
 	text := f.prompts[0].Text
-	if !strings.Contains(text, rt.Store.PlanPath("upjo", 1)) {
+	if !strings.Contains(text, rt.Store.PlanPath("webshop", 1)) {
 		t.Error("prompt must name the plan path")
 	}
-	if !strings.Contains(text, rt.Store.ReportPath("upjo", 1)) {
+	if !strings.Contains(text, rt.Store.ReportPath("webshop", 1)) {
 		t.Error("prompt must name the report path")
 	}
-	if f.prompts[0].Target != "upjo-builder" {
+	if f.prompts[0].Target != "webshop-builder" {
 		t.Errorf("target = %q, want the herdr agent name", f.prompts[0].Target)
 	}
 }
@@ -77,14 +77,14 @@ func TestSendIncludesPreambleOnFirstRoundOnly(t *testing.T) {
 	rt, _ := seedBound(t, f) // abuilder carries a preamble
 	src := writePlan(t, "x")
 
-	if _, err := Send(context.Background(), rt, "upjo", src); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
 		t.Fatalf("round 1 Send: %v", err)
 	}
 	if !strings.Contains(f.prompts[0].Text, "plan-executor") {
 		t.Error("round 1 prompt must carry the abuilder preamble")
 	}
 
-	b, err := rt.Store.Load("upjo")
+	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestSendIncludesPreambleOnFirstRoundOnly(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if _, err := Send(context.Background(), rt, "upjo", src); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
 		t.Fatalf("round 2 Send: %v", err)
 	}
 	if strings.Contains(f.prompts[1].Text, "plan-executor") {
@@ -105,11 +105,11 @@ func TestSendLogsThePlan(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
 
-	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
-	entries, err := rt.Store.ReadLog("upjo")
+	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSendRetriesOnceOnStall(t *testing.T) {
 	f.stalls = 1
 	f.prompts = nil
 
-	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
 		t.Fatalf("Send must retry once past a stall: %v", err)
 	}
 	if len(f.prompts) != 1 {
@@ -139,7 +139,7 @@ func TestSendGivesUpAfterTwoStalls(t *testing.T) {
 	f := &fakeHerdr{stalls: 2}
 	rt, _ := seedBound(t, f)
 
-	if _, err := Send(context.Background(), rt, "upjo", writePlan(t, "x")); err == nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err == nil {
 		t.Fatal("two stalls must fail rather than fire a third time")
 	}
 }
@@ -148,7 +148,7 @@ func TestSendSurfacesBlockedBuilder(t *testing.T) {
 	f := &fakeHerdr{promptErr: herdr.ErrAgentBlocked}
 	rt, _ := seedBound(t, f)
 
-	_, err := Send(context.Background(), rt, "upjo", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
 	if !errors.Is(err, ErrBuilderBlocked) {
 		t.Fatalf("got %v, want ErrBuilderBlocked", err)
 	}
@@ -162,7 +162,7 @@ func TestPromptRetryReportsANonStallFailureAsItself(t *testing.T) {
 	f := &fakeHerdr{stalls: 1, promptErr: herdr.ErrAgentBlocked}
 	rt, _ := seedBound(t, f)
 
-	err := promptWithRetry(context.Background(), rt, "upjo-builder", "text")
+	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text")
 	if err == nil {
 		t.Fatal("a failing retry must surface an error")
 	}
@@ -183,7 +183,7 @@ func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
 	f := &fakeHerdr{stalls: 2}
 	rt, _ := seedBound(t, f)
 
-	err := promptWithRetry(context.Background(), rt, "upjo-builder", "text")
+	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text")
 	if err == nil || !strings.Contains(err.Error(), "stalled twice") {
 		t.Fatalf("err = %v, want a stalled-twice error", err)
 	}

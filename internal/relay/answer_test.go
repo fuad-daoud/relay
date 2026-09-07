@@ -16,7 +16,7 @@ func TestAnswerSendsKeysNotAPrompt(t *testing.T) {
 		t.Fatalf("Answer: %v", err)
 	}
 
-	if len(f.keys) != 1 || f.keys[0].Keys != "enter" || f.keys[0].Target != "upjo-builder" {
+	if len(f.keys) != 1 || f.keys[0].Keys != "enter" || f.keys[0].Target != "webshop-builder" {
 		t.Fatalf("keys = %+v", f.keys)
 	}
 	if len(f.prompts) != 0 {

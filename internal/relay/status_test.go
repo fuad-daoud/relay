@@ -68,7 +68,7 @@ func TestStatusSurfacesHeldPending(t *testing.T) {
 	}
 
 	text := RenderStatus(rep)
-	if !strings.Contains(text, "HELD") || !strings.Contains(text, "upjo") {
+	if !strings.Contains(text, "HELD") || !strings.Contains(text, "webshop") {
 		t.Errorf("rendered status = %q", text)
 	}
 	if !strings.Contains(text, "pending") {
