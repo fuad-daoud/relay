@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -503,17 +502,18 @@ func (s *Store) WithLock(fn func(tx *Tx) error) (err error) {
 	return fn(&Tx{s: s})
 }
 
-// acquireFlock polls for the exclusive lock until limit elapses.
+// acquireFlock polls for the exclusive lock until limit elapses. The
+// platform-specific half is tryLockExclusive, in lock_unix.go.
 func acquireFlock(f *os.File, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
+		locked, err := tryLockExclusive(f)
+		if err != nil {
 			return fmt.Errorf("lock state root: %w", err)
+		}
+		if locked {
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("state lock still held after %s", limit)
