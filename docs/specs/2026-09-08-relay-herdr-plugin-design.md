@@ -60,20 +60,28 @@ Five constraints follow from that, and each one shapes a decision below:
    `type = "plugin_action"`. Opening a pane from a key requires an action that
    opens the pane.
 
-A sixth constraint is assumed but not verified; see section 11. Build command
-failures are reported with "capped stdout/stderr", which implies build output
-is captured on pipes rather than attached to a terminal. We therefore assume a
-build command **cannot prompt the user**, and no design here depends on it.
+6. **A build command cannot prompt the user.** Verified against 0.8.2 with a
+   probe plugin: stdin, stdout and stderr are all non-terminals, `/dev/tty` is
+   not writable, and a blocking `read` returns EOF immediately. This is why the
+   download-or-build choice is made by which install command you run.
+7. **Build commands receive no `HERDR_*` environment at all.** Also verified;
+   the probe's environment dump was empty. Build scripts cannot call
+   `$HERDR_BIN_PATH` and must be entirely self-contained.
+
+Build commands run in a temporary directory (`.tmp-install-<pid>-<ms>/checkout`)
+which herdr moves to `~/.config/herdr/plugins/github/<plugin-id>-<hash>/` once
+the install succeeds. Files written during the build survive that move, which is
+what makes writing the binary into the checkout viable at all. For a
+subdirectory variant the plugin root is the subdirectory inside that checkout,
+so the binary must be written to the plugin root, not the repository root.
 
 ### Version provenance
 
 herdr's published plugin documentation is for v0.9.0. relay's floor is herdr
-0.8.2, which is what this was designed against. The manifest types
-(`RawPluginManifest` and its `Pane`, `Build`, `Action`, `Startup`, `EventHook`
-and `LinkHandler` variants), the five pane placements, and the twelve
-`plugin.*` socket methods are all present in the 0.8.2 binary. Individual
-0.9.0-documented fields were not all confirmed there; section 11 lists what to
-check.
+0.8.2, which is what this was designed against and verified against. The
+manifest in section 4 was linked against 0.8.2 in full -- including `contexts`
+on actions, `placement = "overlay"`, and `[[link_handlers]]` -- and returned no
+warnings. Section 11 records the verification in full.
 
 ## 3. Repository layout
 
@@ -187,9 +195,12 @@ root.
 Neither script may modify `herdr-plugin.toml`; herdr aborts the install if the
 manifest changes after the install preview.
 
-Both scripts are what a user reads in the install preview before confirming.
-That preview is the only security review this plugin gets, so both must stay
-short enough to actually read.
+herdr's install preview lists each build command's argv and each action, but
+**not the contents of the scripts they run**. A user confirming an install sees
+`sh scripts/plugin-fetch.sh`, not what that script does. The preview is
+therefore a manifest of what will execute, not a security review; the review has
+to happen in the repository. Both scripts must stay short enough that reading
+them there is realistic, and the README should point at them by path.
 
 ## 6. Runtime components
 
@@ -328,16 +339,30 @@ that failed loudly, and every failure above is one the user can act on.
   `~/.config/relay/hooks/` mechanism and must reconcile with it rather than
   stack on top of it.
 
-## 11. Open questions to verify before implementation
+## 11. Verification
 
-All four are answerable with one throwaway repository and one real
-`herdr plugin install` against herdr 0.8.2.
+All four questions this spec originally left open were settled against herdr
+0.8.2 on 2026-09-08, using a throwaway probe plugin whose build command recorded
+its environment and exited 0.
 
-1. Does 0.8.2 accept `contexts` on `[[actions]]`? The field is documented at
-   0.9.0. If it is rejected, omit it; nothing here depends on it.
-2. Do two subdirectory variants sharing one plugin id replace cleanly, or does
-   the second install conflict?
-3. Can the source variant's build command reach `./cmd/relay` at the repository
-   root from a plugin root one level below it?
-4. Can a `[[build]]` command read stdin or write to the terminal? Section 2
-   assumes not. Confirming this closes the last assumption in the spec.
+1. **Does 0.8.2 accept `contexts` on `[[actions]]`?** Yes. `herdr plugin link`
+   accepted it and echoed it back with no warnings. The full section 4 manifest
+   also links clean, `[[link_handlers]]` and `placement = "overlay"` included.
+2. **Do two subdirectory variants sharing one plugin id replace cleanly?** Yes,
+   and herdr says so explicitly. Installing the second variant printed
+   `replaces: probe.relay from github:<owner>/<repo>@<commit>` in the preview,
+   and `plugin list` reported one plugin afterwards.
+3. **Can a subdirectory variant's build reach the repository root?** Yes. herdr
+   clones the whole repository; the plugin root is the subdirectory; `..` is the
+   repository root, and `go build ../cmd/<pkg>` succeeded from there.
+   `git rev-parse --show-toplevel` also resolves to the checkout root, which is
+   the more robust way for `plugin-build.sh` to locate it.
+4. **Can a `[[build]]` command prompt?** No. stdin, stdout and stderr are all
+   non-terminals, `/dev/tty` is not writable, and a blocking `read` returns EOF
+   immediately. The two-manifest design in section 3 exists because of this.
+
+Two further findings came out of the same probe and are folded into section 2:
+build commands receive no `HERDR_*` environment, and build artifacts written
+into the checkout survive the move to the managed plugin directory.
+
+Nothing in this spec now rests on an unverified assumption about herdr.
