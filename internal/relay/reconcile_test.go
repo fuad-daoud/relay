@@ -648,7 +648,12 @@ func TestReconcileStaysBrokenOnPaneOnlyMatch(t *testing.T) {
 	}
 }
 
-func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
+// TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession covers the agy case
+// specifically: no session is ever reported or recorded, so there is nothing to
+// backfill and pane plus kind is the whole permanent identity. Unlike
+// TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession (which exercises the
+// claude backfill path), this exercises the permanent agy path.
+func TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f) // seedBound's agents carry no builder pane entry, so no session was ever recorded
 	if b.Builder.SessionID != "" {
