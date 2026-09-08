@@ -253,6 +253,18 @@ func cmdBind(args []string) error {
 		return err
 	}
 
+	if *resume && *builderAlias != "" {
+		builderDesc := b.Builder.PaneID
+		if b.BuilderAlias != "" {
+			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderAlias)
+		}
+		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
+			"hand it the round with:\n"+
+			"  relay send --name %s --file %s\n",
+			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+		return nil
+	}
+
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
 		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderAlias, b.Round)
 	return nil

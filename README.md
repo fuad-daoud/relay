@@ -392,8 +392,22 @@ builder. Spawned builders record their session id at `bind` on a best-effort
 basis, so a harness reporting none simply never self-heals, which is the safe
 direction.
 
-If it stays broken, `relay bind --resume --name N` re-points it, or
-`relay unbind N` and bind fresh.
+If the builder is gone, point the binding at a new builder:
+
+```bash
+relay bind --resume --name N --builder abuilder     # spawn a fresh builder
+relay bind --resume --name N --builder w2:p4        # adopt an existing pane
+```
+
+The binding keeps its name, round number, round log, working directory, and diff
+baseline. Because the replacement builder is a new session that has not seen the
+alias preamble, relay re-sends the preamble on the next prompt even after round 1.
+Relay does not automatically re-send the current plan: it prints the `relay send`
+command pointing at the staged plan so you can hand over the round when ready.
+
+If only the planner moved or restarted, `relay bind --resume --name N` re-points
+the planner without touching the builder. If you want to start over from scratch,
+use `relay unbind N` and bind fresh.
 
 ## Platform support
 

@@ -59,6 +59,16 @@ type Binding struct {
 	BuilderScreen   string    `json:"builder_screen,omitempty"`
 	BuilderScreenAt time.Time `json:"builder_screen_at,omitempty"`
 
+	// PreamblePending forces the builder alias's preamble onto the next plan even
+	// when the round is not 1. A replacement builder is a NEW agent session that
+	// has never seen the preamble, and for harnesses with no role flag -- agy --
+	// that preamble is the only thing that selects the builder's role. Without
+	// this, a rebound builder would silently run the round as a plain assistant.
+	//
+	// It defaults false, so no existing binding's behaviour changes: round 1 keeps
+	// its own unconditional preamble.
+	PreamblePending bool `json:"preamble_pending,omitempty"`
+
 	// Worktree is the git worktree RELAY created for this binding, and is therefore
 	// the only directory relay may ever remove. Empty for every binding relay did
 	// not create a tree for -- including a fork bound to a directory the human

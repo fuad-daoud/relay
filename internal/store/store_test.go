@@ -52,6 +52,26 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
 		t.Errorf("builder screen fields must default to zero: %+v", got)
 	}
+	if got.PreamblePending {
+		t.Errorf("preamble pending must default to false: %+v", got)
+	}
+}
+
+func TestPreamblePendingRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	want := newBinding("webshop", "/home/dev/projects/webshop")
+	want.PreamblePending = true
+
+	if err := s.Save(want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.PreamblePending {
+		t.Errorf("got PreamblePending=false, want true")
+	}
 }
 
 func TestBuilderScreenRoundTrip(t *testing.T) {

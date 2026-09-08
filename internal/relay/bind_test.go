@@ -320,6 +320,326 @@ func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
 	}
 }
 
+func TestBindRebindWithGoneBuilder(t *testing.T) {
+	existing := store.Binding{
+		Name:              "webshop",
+		CWD:               "/repo",
+		Round:             5,
+		RoundBaselineTree: "tree-abc",
+		State:             store.StateBroken,
+		HaltNotifiedRound: 5,
+		BuilderScreen:     "some terminal output",
+		BuilderScreenAt:   baseTime,
+		Planner:           store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:           store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		BuilderAlias:      "builder",
+	}
+
+	t.Run("spawn replacement builder", func(t *testing.T) {
+		f := &fakeHerdr{
+			agents: []herdr.Agent{
+				plannerAgent(),
+				{Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
+			},
+			newPane: "w2:p9",
+		}
+		rt := newRuntime(t, f)
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("rebind: %v", err)
+		}
+
+		if got.Builder.PaneID != "w2:p9" || got.Builder.SessionID != "new-builder-sess" {
+			t.Errorf("Builder = %+v, want pane w2:p9 session new-builder-sess", got.Builder)
+		}
+		if got.BuilderAlias != "builder" {
+			t.Errorf("BuilderAlias = %q, want builder", got.BuilderAlias)
+		}
+		if !got.PreamblePending {
+			t.Errorf("PreamblePending = false, want true")
+		}
+		if got.BuilderScreen != "" {
+			t.Errorf("BuilderScreen = %q, want empty", got.BuilderScreen)
+		}
+		if !got.BuilderScreenAt.IsZero() {
+			t.Errorf("BuilderScreenAt = %v, want zero", got.BuilderScreenAt)
+		}
+		if got.HaltNotifiedRound != 0 {
+			t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+		}
+		if got.State != store.StateActive {
+			t.Errorf("State = %s, want active", got.State)
+		}
+		if got.Round != 5 {
+			t.Errorf("Round = %d, want 5 (untouched)", got.Round)
+		}
+		if got.CWD != "/repo" {
+			t.Errorf("CWD = %q, want /repo (untouched)", got.CWD)
+		}
+		if got.RoundBaselineTree != "tree-abc" {
+			t.Errorf("RoundBaselineTree = %q, want tree-abc (untouched)", got.RoundBaselineTree)
+		}
+
+		saved, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if saved.Builder.PaneID != "w2:p9" || saved.Builder.SessionID != "new-builder-sess" ||
+			!saved.PreamblePending || saved.BuilderScreen != "" || !saved.BuilderScreenAt.IsZero() ||
+			saved.HaltNotifiedRound != 0 || saved.Round != 5 || saved.RoundBaselineTree != "tree-abc" {
+			t.Errorf("saved binding does not reflect rebind updates: %+v", saved)
+		}
+	})
+
+	t.Run("adopt replacement builder pane", func(t *testing.T) {
+		adopted := herdr.Agent{
+			Kind:    "claude",
+			Status:  herdr.StatusIdle,
+			PaneID:  "w2:p8",
+			Session: herdr.Session{Value: "adopted-sess"},
+			CWD:     "/repo",
+		}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), adopted}}
+		rt := newRuntime(t, f)
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("rebind adopt: %v", err)
+		}
+		if len(f.starts) != 0 || f.splits != 0 {
+			t.Errorf("adopting must not split or start agents, splits=%d starts=%+v", f.splits, f.starts)
+		}
+		if got.Builder.PaneID != "w2:p8" || got.Builder.SessionID != "adopted-sess" {
+			t.Errorf("Builder = %+v, want pane w2:p8 session adopted-sess", got.Builder)
+		}
+		if got.BuilderAlias != "" {
+			t.Errorf("BuilderAlias = %q, want empty for adopted builder", got.BuilderAlias)
+		}
+		if !got.PreamblePending {
+			t.Errorf("PreamblePending = false, want true")
+		}
+		if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
+			t.Errorf("screen fields not cleared: screen=%q at=%v", got.BuilderScreen, got.BuilderScreenAt)
+		}
+		if got.HaltNotifiedRound != 0 {
+			t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+		}
+	})
+}
+
+func TestBindRebindRefusesLiveBuilder(t *testing.T) {
+	liveBuilder := herdr.Agent{
+		Kind:    "opencode",
+		Status:  herdr.StatusWorking,
+		PaneID:  "w2:p4",
+		Session: herdr.Session{Value: "live-builder-sess"},
+		CWD:     "/repo",
+	}
+	f := &fakeHerdr{
+		agents:  []herdr.Agent{plannerAgent(), liveBuilder},
+		newPane: "w2:p5",
+	}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "live-builder-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrBuilderAlive) {
+		t.Fatalf("got err = %v, want ErrBuilderAlive", err)
+	}
+
+	if f.splits != 0 {
+		t.Errorf("no pane may be split when builder is alive, got %d splits", f.splits)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("no agent may be started when builder is alive, got %+v", f.starts)
+	}
+
+	// Existing binding must be untouched.
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Builder.PaneID != "w2:p4" || loaded.Builder.SessionID != "live-builder-sess" {
+		t.Errorf("existing binding was modified: %+v", loaded)
+	}
+}
+
+func TestBindRebindIdentityRule(t *testing.T) {
+	t.Run("rebind succeeds when old pane is reused by unrelated agent", func(t *testing.T) {
+		unrelatedAgent := herdr.Agent{
+			Kind:    "opencode",
+			Status:  herdr.StatusWorking,
+			PaneID:  "w2:p4",
+			Session: herdr.Session{Value: "unrelated-agent-sess"},
+			CWD:     "/other",
+		}
+		f := &fakeHerdr{
+			agents:  []herdr.Agent{plannerAgent(), unrelatedAgent},
+			newPane: "w2:p9",
+		}
+		rt := newRuntime(t, f)
+
+		existing := store.Binding{
+			Name:    "webshop",
+			CWD:     "/repo",
+			Round:   5,
+			State:   store.StateBroken,
+			Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+			Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		}
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("rebind must succeed when builder session is gone: %v", err)
+		}
+		if got.Builder.PaneID != "w2:p9" {
+			t.Errorf("Builder.PaneID = %q, want w2:p9", got.Builder.PaneID)
+		}
+		if !got.PreamblePending {
+			t.Errorf("PreamblePending = false, want true")
+		}
+	})
+
+	t.Run("rebind refused when builder session is alive", func(t *testing.T) {
+		liveBuilder := herdr.Agent{
+			Kind:    "opencode",
+			Status:  herdr.StatusWorking,
+			PaneID:  "w2:p4",
+			Session: herdr.Session{Value: "live-builder-sess"},
+			CWD:     "/repo",
+		}
+		f := &fakeHerdr{
+			agents:  []herdr.Agent{plannerAgent(), liveBuilder},
+			newPane: "w2:p9",
+		}
+		rt := newRuntime(t, f)
+
+		existing := store.Binding{
+			Name:    "webshop",
+			CWD:     "/repo",
+			Round:   3,
+			State:   store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+			Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "live-builder-sess"},
+		}
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		_, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if !errors.Is(err, ErrBuilderAlive) {
+			t.Fatalf("got err = %v, want ErrBuilderAlive", err)
+		}
+		if f.splits != 0 || len(f.starts) != 0 {
+			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		}
+	})
+}
+
+func TestBindResumeDoneBindingScope(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   4,
+		State:   store.StateDone,
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{PaneID: "w1:p2", SessionID: "builder-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	t.Run("planner-only resume of DONE binding succeeds", func(t *testing.T) {
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("planner-only resume on done binding must succeed: %v", err)
+		}
+		if got.State != store.StateActive {
+			t.Errorf("state = %s, want active", got.State)
+		}
+		if got.Planner.PaneID != "w2:p3" {
+			t.Errorf("Planner.PaneID = %q, want w2:p3", got.Planner.PaneID)
+		}
+		if got.Builder != existing.Builder {
+			t.Errorf("Builder = %+v, want %+v (untouched)", got.Builder, existing.Builder)
+		}
+		if f.splits != 0 || len(f.starts) != 0 {
+			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		}
+	})
+
+	t.Run("rebind of DONE binding is refused", func(t *testing.T) {
+		// Reset state to Done for this subtest
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("reset existing binding: %v", err)
+		}
+		_, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err == nil {
+			t.Fatal("rebind on done binding must be refused")
+		}
+		wantMsg := `binding "webshop" is done: ` + "`relay bind` to start fresh"
+		if !strings.Contains(err.Error(), wantMsg) {
+			t.Errorf("error = %q, want containing %q", err.Error(), wantMsg)
+		}
+		if f.splits != 0 || len(f.starts) != 0 {
+			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		}
+	})
+}
+
+func TestBindRebindNotFound(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("got err = %v, want store.ErrNotFound", err)
+	}
+	if f.splits != 0 || len(f.starts) != 0 {
+		t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+	}
+}
+
 func TestBindOpensBuilderInItsOwnTabWhenAsked(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newTab: "w2:pT"}
 	rt := newRuntime(t, f)
