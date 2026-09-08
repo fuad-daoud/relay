@@ -152,3 +152,84 @@ func TestClientStdoutTranscriptIsNotMisreadAsEnvelope(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+// stubHerdrRecordingArgs records the argv it was invoked with, one argument per
+// line, so a test can assert on the flags the client passes to herdr.
+func stubHerdrRecordingArgs(t *testing.T, argsPath string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "herdr")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\nprintf '%s' '{\"result\":{}}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	return path
+}
+
+// Prompt must ask herdr to wait, because herdr only runs its five second
+// "the prompt produced no lifecycle change" check on the wait path. Without
+// --wait, a prompt typed into a harness that has not finished taking over the
+// terminal is lost and herdr still reports success, so ErrPromptStalled is
+// unreachable and promptWithRetry never fires. See #31.
+func TestClientPromptWaitsSoAStalledPromptIsDetectable(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args")
+	c := NewClient(stubHerdrRecordingArgs(t, argsPath), 5*time.Second)
+
+	if err := c.Prompt(context.Background(), "builder", "hello"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+
+	has := func(want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, want := range []string{"--wait", "--timeout"} {
+		if !has(want) {
+			t.Fatalf("Prompt argv %v is missing %s", args, want)
+		}
+	}
+
+	// Waiting for a settled state would block for the builder's whole turn.
+	// We only want to know the prompt landed, which is the transition out of
+	// idle -- or straight to a dialog.
+	if !has("working") || !has("blocked") {
+		t.Fatalf("Prompt argv %v must wait --until working and blocked, not a settled state", args)
+	}
+}
+
+// A wait that times out means herdr never saw the agent leave idle, which is
+// the same evidence as a stall: nothing landed. Prompt must report it as
+// ErrPromptStalled so promptWithRetry gets its one retry, rather than failing
+// the round and making a human re-send by hand. See #31.
+func TestClientPromptMapsWaitTimeoutToStalled(t *testing.T) {
+	body := `{"error":{"code":"timeout","message":"timed out waiting for agent status"},"id":"cli:agent:prompt"}`
+	c := NewClient(stubHerdrStderr(t, body, 1), 5*time.Second)
+
+	if err := c.Prompt(context.Background(), "builder", "hi"); !errors.Is(err, ErrPromptStalled) {
+		t.Fatalf("got %v, want ErrPromptStalled", err)
+	}
+}
+
+// Other commands must not be told a timeout is a prompt stall.
+func TestClientWaitTimeoutIsDistinctOutsidePrompt(t *testing.T) {
+	body := `{"error":{"code":"timeout","message":"timed out waiting for agent status"},"id":"cli:agent:list"}`
+	c := NewClient(stubHerdrStderr(t, body, 1), 5*time.Second)
+
+	_, err := c.ListAgents(context.Background())
+	if errors.Is(err, ErrPromptStalled) {
+		t.Fatal("a timeout outside Prompt must not be reported as a prompt stall")
+	}
+	if !errors.Is(err, ErrWaitTimeout) {
+		t.Fatalf("got %v, want ErrWaitTimeout", err)
+	}
+}
