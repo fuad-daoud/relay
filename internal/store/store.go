@@ -40,7 +40,11 @@ const (
 	// wrong, and a runaway file should fail the archive rather than balloon it.
 	maxArchiveFileBytes = 64 << 20
 	lockFileName        = ".lock"
-	lockRetryDelay      = 50 * time.Millisecond
+	// daemonLockFileName is held for the daemon's entire lifetime, so it is a
+	// separate file from lockFileName: sharing one would mean the daemon held
+	// the state lock forever and no other command could read anything.
+	daemonLockFileName = ".daemon.lock"
+	lockRetryDelay     = 50 * time.Millisecond
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow external
 	// call turns every other caller's wait into a failure. The longest hold is

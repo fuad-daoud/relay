@@ -758,6 +758,7 @@ func bindingHint(verb string) string {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
+	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -766,6 +767,26 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// --check is the plugin startup hook's probe. It prints nothing on either
+	// path: the exit status is the whole answer, and a hook that printed would
+	// only fill herdr's plugin log with noise on every server start.
+	if *check {
+		running, err := rt.Store.DaemonRunning()
+		if err != nil {
+			return err
+		}
+		if !running {
+			os.Exit(1)
+		}
+		return nil
+	}
+
+	lock, err := rt.Store.AcquireDaemonLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
