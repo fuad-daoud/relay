@@ -30,6 +30,41 @@ human, whether the work is done, is a decision that stays with the planner
 
 ## Install
 
+### As a herdr plugin
+
+If you already run herdr 0.8.2 or newer, install relay as a plugin and skip the
+manual binary and service setup:
+
+    herdr plugin install fuad-daoud/relay
+
+That downloads the release binary matching the plugin manifest and verifies its
+checksum. To build from source instead, which needs a Go toolchain:
+
+    herdr plugin install fuad-daoud/relay/from-source
+
+Either way you get:
+
+- a `relay` overlay pane running `relay ui`, opened by the `open-ui` action
+- an `install-service` action that installs the binary to `~/.local/bin/relay`
+  and registers the daemon with systemd or launchd
+- a startup check that tells you if the reconciler is not running
+
+Bind the reader to a key in herdr's `config.toml`:
+
+    [[keys.command]]
+    key = "prefix+r"
+    type = "plugin_action"
+    command = "fuad-daoud.relay.open-ui"
+    description = "open relay"
+
+herdr does not sandbox plugins, and its install preview lists the commands that
+will run but not their contents. The scripts are `scripts/plugin-*.sh` in this
+repository -- read them before installing.
+
+Until you run `install-service`, the plugin's binary and any `relay` already on
+your `PATH` are two binaries sharing one state directory. Running it makes the
+plugin's binary the `PATH` binary and removes the skew.
+
 Prebuilt binaries for Linux and macOS (amd64 and arm64) are attached to every
 [release](https://github.com/fuad-daoud/relay/releases); unpack one and put
 `relay` on your `PATH`.
