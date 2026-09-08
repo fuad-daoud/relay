@@ -1,0 +1,31 @@
+id = "fuad-daoud.relay"
+name = "relay"
+version = "0.0.0"
+min_herdr_version = "0.8.2"
+description = "Planner/builder handoff for herdr agent panes"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["sh", "scripts/plugin-fetch.sh"]
+
+[[build]]
+command = ["./relay", "version"]
+
+[[startup]]
+command = ["sh", "scripts/plugin-daemon-check.sh"]
+
+[[actions]]
+id = "open-ui"
+title = "Open relay reader"
+command = ["sh", "scripts/plugin-open-ui.sh"]
+
+[[actions]]
+id = "install-service"
+title = "Install relay daemon service"
+command = ["sh", "scripts/plugin-install-service.sh"]
+
+[[panes]]
+id = "ui"
+title = "relay"
+placement = "overlay"
+command = ["./relay", "ui"]
