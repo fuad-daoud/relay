@@ -20,6 +20,9 @@ jobs:
       - name: make check
         run: make check
 
+      - name: check plugin manifest versions
+        run: scripts/check-plugin-version.sh "${{ github.ref_name }}"
+
       # Only the platforms relay actually supports. Everything is stdlib and
       # CGO-free, so plain cross-compilation is enough -- no build matrix, no
       # third-party release tooling.

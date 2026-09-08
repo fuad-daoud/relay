@@ -7,10 +7,10 @@ UNAME_S := $(shell uname -s)
 # Stamp the binary so `relay version` means something in a build made from a
 # clone. A `go install`ed binary gets its version from the module proxy
 # instead, so this is only needed here.
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
-LDFLAGS := -X main.version=$(VERSION)
+BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
+LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check build install service uninstall
+.PHONY: check build install service uninstall release
 
 check:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -23,6 +23,7 @@ check:
 		exit 1; \
 	fi; \
 	rm -f go.mod.check go.sum.check
+	sh scripts/check-plugin-version.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck scripts/*.sh; \
 	else \
@@ -32,6 +33,17 @@ check:
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay
+
+release:
+	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release VERSION=0.1.0)" >&2; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty" >&2; exit 1; }
+	@test "$$(git branch --show-current)" = "main" || { echo "not on main branch" >&2; exit 1; }
+	sed 's/^version = ".*"/version = "$(VERSION)"/' herdr-plugin.toml > herdr-plugin.toml.tmp && mv herdr-plugin.toml.tmp herdr-plugin.toml
+	sed 's/^version = ".*"/version = "$(VERSION)"/' from-source/herdr-plugin.toml > from-source/herdr-plugin.toml.tmp && mv from-source/herdr-plugin.toml.tmp from-source/herdr-plugin.toml
+	$(MAKE) check
+	git commit -m "chore(release): v$(VERSION)" herdr-plugin.toml from-source/herdr-plugin.toml
+	git tag -a v$(VERSION) -m "v$(VERSION)"
+	@echo "git push && git push origin v$(VERSION)"
 
 # mkdir + install rather than `install -D`: -D is a GNU extension and the
 # install(1) that ships with macOS does not have it.
