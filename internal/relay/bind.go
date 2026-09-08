@@ -14,6 +14,11 @@ import (
 // splitDirection matches herdr's own guidance for a sibling agent pane.
 const splitDirection = "right"
 
+// ErrBuilderAlive reports a rebind attempt against a binding whose builder is
+// still running. Relay never abandons a live builder: the human ends it, or
+// `relay done` the binding first.
+var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abandon it")
+
 // BindOptions describes one bind request. BuilderPane adopts an existing pane;
 // leaving it empty spawns a new one from Alias.
 type BindOptions struct {
@@ -54,32 +59,109 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 	}
 
 	if opts.Resume {
-		return resume(rt, opts, planner)
+		return resume(ctx, rt, opts, planner)
 	}
 
 	return create(ctx, rt, opts, planner)
 }
 
-func resume(rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
-	var out store.Binding
+// builderAlive reports whether a binding's builder is still running, using the
+// same identity rule Reconcile uses to un-break a binding: a recorded session
+// id must match, because a pane id can be reissued to an unrelated agent after
+// the builder exits. Only a builder with no recorded session falls back to a
+// pane match, which is the best available evidence for a harness with no herdr
+// session integration.
+func builderAlive(agents []herdr.Agent, b store.Binding) bool {
+	if b.Builder.SessionID != "" {
+		for _, a := range agents {
+			if a.Session.Value == b.Builder.SessionID {
+				return true
+			}
+		}
+		return false
+	}
+	for _, a := range agents {
+		if a.PaneID == b.Builder.PaneID {
+			return true
+		}
+	}
+	return false
+}
 
-	// Load-modify-save, so it runs inside the state lock: the daemon writes the
-	// same binding on every tick and would otherwise clobber the new planner.
+// resume re-points an existing binding at the calling planner pane, and -- when
+// the caller supplied a builder -- at a new builder as well.
+//
+// Preconditions:  the binding exists. When a builder is supplied, the binding's
+//
+//	current builder must NOT be alive: rebinding over a working
+//	builder would abandon a round mid-flight and strand its pane.
+//	A binding whose builder cannot be found by session identity is
+//	treated as gone, even if another agent now occupies its former pane.
+//
+// Postconditions: Planner points at the caller. A rebind of a DONE binding is
+//
+//	refused. A planner-only resume of one is allowed, and
+//	reactivates it, exactly as before this feature existed. When
+//	a builder was supplied: Builder is the new endpoint with its
+//	session id recorded, PreamblePending is true, State is Active,
+//	HaltNotifiedRound is 0, and the builder-screen fields are
+//	cleared. Round, CWD, Name, RoundBaselineTree and the round log
+//	are untouched.
+//
+// Errors: store.ErrNotFound; ErrBuilderAlive; a wrapped herdr failure.
+func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
+	rebinding := opts.Alias != "" || opts.BuilderPane != ""
+
+	var builder store.Endpoint
+	if rebinding {
+		// Refuse before anything is spawned.
+		b, err := rt.Store.Load(opts.Name)
+		if err != nil {
+			return store.Binding{}, err
+		}
+		if b.State == store.StateDone {
+			return store.Binding{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
+		}
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return store.Binding{}, fmt.Errorf("list agents: %w", err)
+		}
+		if builderAlive(agents, b) {
+			return store.Binding{}, ErrBuilderAlive
+		}
+		builder, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
+		if err != nil {
+			return store.Binding{}, err
+		}
+		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
+	}
+
+	var out store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
 		if err != nil {
 			return err
 		}
+		if rebinding && b.State == store.StateDone {
+			return fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
+		}
 
 		b.Planner = endpointOf(planner)
 		b.State = store.StateActive
+		if rebinding {
+			b.Builder = builder
+			b.BuilderAlias = opts.Alias // "" when adopting a pane
+			b.PreamblePending = true
+			b.HaltNotifiedRound = 0
+			b.BuilderScreen = ""
+			b.BuilderScreenAt = time.Time{}
+		}
 
 		if err := tx.Save(b); err != nil {
 			return err
 		}
 
 		out = b
-
 		return nil
 	})
 	if err != nil {

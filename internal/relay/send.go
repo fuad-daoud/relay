@@ -82,6 +82,8 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 			return fmt.Errorf("prompt builder: %w", err)
 		}
 
+		b.PreamblePending = false
+
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPlan,
@@ -128,11 +130,12 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error
 	return nil
 }
 
-// composePrompt prepends the alias preamble on round 1 only. Harnesses without
-// a role flag select their role there and remember it for the session.
+// composePrompt prepends the alias preamble on round 1, and on any round where
+// a rebind left PreamblePending set: a replacement builder is a new session
+// that has never selected its role.
 func composePrompt(rt Runtime, b store.Binding, planPath, reportPath string) (string, error) {
 	text := fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath)
-	if b.Round != 1 {
+	if !(b.Round == 1 || b.PreamblePending) {
 		return text, nil
 	}
 

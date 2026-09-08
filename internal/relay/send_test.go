@@ -101,6 +101,78 @@ func TestSendIncludesPreambleOnFirstRoundOnly(t *testing.T) {
 	}
 }
 
+func TestSendIncludesPreambleWhenPending(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	src := writePlan(t, "x")
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Round = 5
+	b.PreamblePending = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
+		t.Fatalf("round 5 Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("got %d prompts, want 1", len(f.prompts))
+	}
+	if !strings.Contains(f.prompts[0].Text, "plan-executor") {
+		t.Error("round 5 prompt with PreamblePending must carry the preamble")
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.PreamblePending {
+		t.Error("PreamblePending must be cleared after successful Send")
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
+		t.Fatalf("subsequent Send: %v", err)
+	}
+	if len(f.prompts) != 2 {
+		t.Fatalf("got %d prompts, want 2", len(f.prompts))
+	}
+	if strings.Contains(f.prompts[1].Text, "plan-executor") {
+		t.Error("round 5 prompt without PreamblePending must not carry the preamble")
+	}
+}
+
+func TestSendFailedPromptLeavesPreamblePending(t *testing.T) {
+	f := &fakeHerdr{promptErr: errors.New("builder crashed")}
+	rt, _ := seedBound(t, f)
+	src := writePlan(t, "x")
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Round = 5
+	b.PreamblePending = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", src); err == nil {
+		t.Fatal("Send must fail when builder prompt fails")
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !b.PreamblePending {
+		t.Error("PreamblePending must remain set if prompt failed")
+	}
+}
+
 func TestSendLogsThePlan(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
