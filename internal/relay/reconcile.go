@@ -69,6 +69,26 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 	}
 }
 
+// refreshEndpoint updates an endpoint from the live agent it was located by.
+//
+// Preconditions: SameAgent(a, ep) held -- the caller located this agent.
+// Postconditions:
+//   - SessionID is set when it was empty and the agent reports one;
+//   - PaneID becomes a.PaneID;
+//   - Kind is set when it was empty;
+//   - AgentName is untouched;
+//   - A recorded SessionID is never overwritten.
+func refreshEndpoint(ep store.Endpoint, a herdr.Agent) store.Endpoint {
+	ep.PaneID = a.PaneID
+	if ep.SessionID == "" && a.Session.Value != "" {
+		ep.SessionID = a.Session.Value
+	}
+	if ep.Kind == "" && a.Kind != "" {
+		ep.Kind = a.Kind
+	}
+	return ep
+}
+
 // Reconcile advances one binding against the agent list the daemon already
 // fetched, so a tick costs exactly one herdr call no matter how many bindings
 // exist.
@@ -94,15 +114,13 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
-	// A broken binding recovers only when the SAME agent session is back.
-	// Matching on pane alone would resume relaying into whatever now occupies
-	// that pane, which for a closed builder could be an unrelated agent.
 	if b.State == store.StateBroken {
-		if b.Builder.SessionID == "" || builder.Session.Value != b.Builder.SessionID {
-			return b, nil
-		}
-
 		b.State = store.StateActive
+	}
+
+	b.Builder = refreshEndpoint(b.Builder, builder)
+	if planner, ok := FindAgent(agents, b.Planner); ok {
+		b.Planner = refreshEndpoint(b.Planner, planner)
 	}
 
 	// Halt paths return without calling deliverAndSettle, unlike every branch

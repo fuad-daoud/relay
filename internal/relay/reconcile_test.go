@@ -662,11 +662,8 @@ func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.State != store.StateBroken {
-		t.Errorf("state = %s, want still broken: there is no session id to trust", got.State)
-	}
-	if len(f.prompts) != 0 {
-		t.Error("nothing may be relayed without a recorded session id")
+	if got.State == store.StateBroken {
+		t.Errorf("state = %s, want un-broken: pane and kind match", got.State)
 	}
 }
 
@@ -770,5 +767,117 @@ func TestReconcileDiffCapture(t *testing.T) {
 	}
 	if diffCount2 != 1 {
 		t.Fatalf("expected still 1 KindDiff entry after tick 2, got %d", diffCount2)
+	}
+}
+
+func TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StateBroken
+
+	live := builderAgent(herdr.StatusWorking)
+	live.Session = herdr.Session{Value: "late-session"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), live})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State == store.StateBroken {
+		t.Fatal("a located builder must un-break its binding")
+	}
+	if out.Builder.SessionID != "late-session" {
+		t.Fatalf("SessionID = %q, want it backfilled to late-session", out.Builder.SessionID)
+	}
+}
+
+func TestReconcileLeavesBrokenWhenPaneHoldsADifferentKind(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StateBroken
+
+	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Kind = "claude" // same pane, different agent
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken", out.State)
+	}
+	if out.Builder.SessionID != "" {
+		t.Fatal("a rejected agent must not write identity onto the endpoint")
+	}
+}
+
+func TestReconcileBreaksWhenRecordedSessionIsGoneAndPaneReused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Session = herdr.Session{Value: "stranger"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken: the recorded session is gone", out.State)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatal("relay must not prompt an agent that is not this binding's builder")
+	}
+}
+
+func TestReconcileRefreshesPaneIDAfterAPaneMove(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	moved := builderAgent(herdr.StatusWorking)
+	moved.PaneID = "w9:p1"
+	moved.Session = herdr.Session{Value: "mine"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), moved})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.Builder.PaneID != "w9:p1" {
+		t.Fatalf("PaneID = %q, want it refreshed to w9:p1", out.Builder.PaneID)
+	}
+	if out.Builder.SessionID != "mine" {
+		t.Fatal("a recorded session must never be overwritten by a refresh")
+	}
+}
+
+func TestReconcileDoesNotRefreshWhenBuilderIsUnlocatable(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	before := b.Builder
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken", out.State)
+	}
+	if out.Builder != before {
+		t.Fatalf("endpoint = %+v, want it untouched at %+v", out.Builder, before)
+	}
+}
+
+func TestReconcileRefreshesPlannerEndpoint(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+
+	moved := plannerAgent()
+	moved.PaneID = "w9:p2" // same session, new pane
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{moved, builderAgent(herdr.StatusWorking)})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.Planner.PaneID != "w9:p2" {
+		t.Fatalf("planner pane = %q, want w9:p2", out.Planner.PaneID)
 	}
 }
