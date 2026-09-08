@@ -11,13 +11,22 @@ question — *what is happening right now* — without making the human leave th
 screen to run `relay diff`, `relay log`, or scroll a builder's pane by hand.
 
 It is a **pure consumer**. It calls `relay.Status`, `store.ReadLog`,
-`relay.ReadDiff` and `herdr.ReadAgent`; it never writes state, never takes a
-write lock, never types into a pane, and never appends to `log.jsonl`. That last
-one is a rule, not an accident: a reader that logged would pollute the audit
-trail that the round-quiescence fix exists to protect.
+`relay.ReadDiff` and `herdr.ReadAgent`; it never writes state, never types into
+a pane, and never appends to `log.jsonl`. That last one is a
+rule, not an accident: a reader that logged would pollute the audit trail that
+the round-quiescence fix exists to protect.
 
-Because it only reads, it cannot corrupt a handoff, and it cannot race the
-daemon's `Reconcile` critical section into anything worse than stale data.
+It does, however, **take the state lock** — briefly, for every read. relay has
+one lock and it is exclusive: `store.WithLock` takes an exclusive flock, and
+`ReadLog`, `Load` and `PendingForPlanner` all go through it, so a single status
+poll costs `1 + 2×len(bindings)` acquisitions. There is no such thing as a read
+lock here. An earlier draft of this spec claimed the reader "never takes a write
+lock"; that was wrong, and it matters, because contending for that lock with the
+daemon is the entire reason rule 1 below exists.
+
+What the reader cannot do is *mutate*. It cannot corrupt a handoff, and it
+cannot race the daemon's `Reconcile` critical section into anything worse than
+waiting, then stale data.
 
 ### Relationship to `relay watch`
 
