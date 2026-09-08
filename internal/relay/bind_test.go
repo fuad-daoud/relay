@@ -904,3 +904,44 @@ func TestUnbindTeardown(t *testing.T) {
 		}
 	})
 }
+
+func TestResumeRefusesRebindWhenSessionlessBuilderStillLives(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	// The builder was spawned with no session recorded -- the #20 condition --
+	// but its pane still holds an agy agent, so it is alive.
+	f.agents = []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
+	})
+	if !errors.Is(err, ErrBuilderAlive) {
+		t.Fatalf("err = %v, want ErrBuilderAlive", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("started %d agents, want 1 (no builder spawned by the refused rebind)", len(f.starts))
+	}
+}
+
+func TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	// Pane w2:p4 no longer holds anything.
+	f.agents = []herdr.Agent{plannerAgent()}
+	f.newPane = "w2:p7"
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind resume: %v", err)
+	}
+	if b.Builder.PaneID != "w2:p7" {
+		t.Fatalf("builder pane = %q, want w2:p7", b.Builder.PaneID)
+	}
+	if !b.PreamblePending {
+		t.Fatal("a replacement builder must get the preamble")
+	}
+}

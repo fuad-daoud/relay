@@ -65,29 +65,6 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 	return create(ctx, rt, opts, planner)
 }
 
-// builderAlive reports whether a binding's builder is still running, using the
-// same identity rule Reconcile uses to un-break a binding: a recorded session
-// id must match, because a pane id can be reissued to an unrelated agent after
-// the builder exits. Only a builder with no recorded session falls back to a
-// pane match, which is the best available evidence for a harness with no herdr
-// session integration.
-func builderAlive(agents []herdr.Agent, b store.Binding) bool {
-	if b.Builder.SessionID != "" {
-		for _, a := range agents {
-			if a.Session.Value == b.Builder.SessionID {
-				return true
-			}
-		}
-		return false
-	}
-	for _, a := range agents {
-		if a.PaneID == b.Builder.PaneID {
-			return true
-		}
-	}
-	return false
-}
-
 // resume re-points an existing binding at the calling planner pane, and -- when
 // the caller supplied a builder -- at a new builder as well.
 //
@@ -126,7 +103,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if err != nil {
 			return store.Binding{}, fmt.Errorf("list agents: %w", err)
 		}
-		if builderAlive(agents, b) {
+		if _, alive := FindAgent(agents, b.Builder); alive {
 			return store.Binding{}, ErrBuilderAlive
 		}
 		builder, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
@@ -291,12 +268,16 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	// Record the new agent's session id. It is what lets a later
 	// disappearance be told apart from a different agent taking over the same
 	// pane, so a binding can recover from a detection flicker without ever
-	// resuming into a stranger. Harnesses with no herdr integration report no
-	// session; leaving it empty simply means such a binding never self-heals.
+	// resuming into a stranger.
 	//
-	// Best effort only. The agent is already running, so failing the bind here
-	// would strand a live pane over a lookup relay can do without: an empty
-	// SessionID costs this binding self-healing, nothing more.
+	// Best effort only. For a claude builder, this lookup races the agent's
+	// registration; missing it costs only one reconcile tick because the
+	// backfill fills it in on the next tick. For an agy builder (e.g. the
+	// abuilder alias), herdr reports no agent_session at all, so there is
+	// nothing to backfill, ever: pane plus kind is that endpoint's permanent
+	// identity. The lookup still pays for the harnesses that do report a
+	// session, but failing the bind here would strand a live pane over a
+	// lookup relay can recover without.
 	if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
 		if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
 			ep.SessionID = started.Session.Value
