@@ -144,6 +144,12 @@ notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
 The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
 
+When a builder goes idle without writing its report file, relay nudges it once.
+Relay abandons a round only when the builder's terminal has been still for the
+grace period, falling back to a labeled scrape of the builder's terminal. If the
+screen moves, the grace resets: a builder waiting on subagents is therefore no
+longer mistaken for a finished one.
+
 ### Forking a binding
 
 `relay fork` branches a new binding from an earlier round of an existing binding:

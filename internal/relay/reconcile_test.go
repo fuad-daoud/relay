@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -132,7 +133,11 @@ func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 }
 
 func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
-	f := &fakeHerdr{readOut: "I implemented the guard clause but could not write the file."}
+	// The builder's terminal output is assumed stable across ticks (here a single
+	// unchanging string), so relay observes a still screen across nudgeGrace and
+	// proceeds to the scrape fallback.
+	const stableOutput = "I implemented the guard clause but could not write the file."
+	f := &fakeHerdr{readOut: stableOutput}
 	rt, b := sentBinding(t, f)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -174,8 +179,12 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 
 	// A report is prose the builder printed, so it comes from the scrollback.
 	// The blocked-dialog path is the one that needs --source detection.
-	if len(f.reads) != 1 || f.reads[0].Source != "recent-unwrapped" {
-		t.Errorf("scrape reads = %+v, want one recent-unwrapped read", f.reads)
+	// Fingerprinting and scraping both read recent-unwrapped.
+	for _, r := range f.reads {
+		if r.Source != "recent-unwrapped" {
+			t.Errorf("scrape reads = %+v, want recent-unwrapped reads", f.reads)
+			break
+		}
 	}
 }
 
@@ -184,7 +193,11 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 // next, two seconds later, then advanced the round -- so the builder's real
 // report was written to an abandoned round's path and never relayed.
 func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
-	f := &fakeHerdr{readOut: "half a screen of output"}
+	// The builder's terminal output is assumed stable across ticks (an idle
+	// builder that stopped emitting), so any delay before scraping is due to the
+	// clock waiting out nudgeGrace, not due to screen changes resetting it.
+	const stableOutput = "half a screen of output"
+	f := &fakeHerdr{readOut: stableOutput}
 	rt, b := sentBinding(t, f)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -208,8 +221,8 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("nothing may be queued inside the nudge grace")
 	}
-	if len(f.reads) != 0 {
-		t.Errorf("the terminal must not be scraped inside the grace, got %+v", f.reads)
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Error("the terminal must not be scraped inside the grace")
 	}
 
 	// Still nothing one second short of the grace.
@@ -220,6 +233,9 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	}
 	if b.Round != 1 {
 		t.Errorf("round = %d, want 1 one second short of the grace", b.Round)
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Error("the terminal must not be scraped one second short of grace")
 	}
 
 	clock.Advance(2 * time.Second)
@@ -232,6 +248,170 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	}
 	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); !pending {
 		t.Error("the scraped report must be queued once the grace has elapsed")
+	}
+}
+
+func TestReconcileQuiescenceTerminalChangedResetsGrace(t *testing.T) {
+	// Regression test for #11: an agent waiting on subagents emits output,
+	// moving the terminal. When the terminal changes across the grace period,
+	// relay must not scrape or advance the round, and must reset the grace clock.
+	f := &fakeHerdr{readOut: "terminal at nudge: waiting on subagent"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+	screenAtNudge := b.BuilderScreenAt
+	if screenAtNudge.IsZero() {
+		t.Fatal("expected BuilderScreenAt to be recorded at nudge")
+	}
+
+	// Advance past the grace period.
+	clock.Advance(nudgeGrace + time.Second)
+
+	// Terminal changed: subagent finished or emitted output.
+	f.readOut = "terminal changed: subagent completed task"
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("reconcile after terminal change: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1: terminal changed, round must not be abandoned", got.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+		t.Error("nothing may be queued for the planner when terminal changed")
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Error("report must not be scraped when terminal changed")
+	}
+	if !got.BuilderScreenAt.After(screenAtNudge) {
+		t.Errorf("BuilderScreenAt = %v, want after %v", got.BuilderScreenAt, screenAtNudge)
+	}
+}
+
+func TestReconcileQuiescenceTerminalUnchangedScrapes(t *testing.T) {
+	// Terminal unchanged for the full grace period establishes that the builder
+	// has genuinely stopped, so relay scrapes and advances the round.
+	const output = "I crashed without writing a report"
+	f := &fakeHerdr{readOut: output}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+
+	clock.Advance(nudgeGrace + time.Second)
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("scrape Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: unchanged terminal must scrape and advance", got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("scrape must be queued: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(pending.Payload, "SCRAPED") {
+		t.Errorf("scraped report must be labelled unreliable, got %q", pending.Payload)
+	}
+	body, err := os.ReadFile(rt.Store.ReportPath("webshop", 1))
+	if err != nil {
+		t.Fatalf("report file must exist: %v", err)
+	}
+	if !strings.Contains(string(body), output) {
+		t.Errorf("report body = %q, want containing %q", string(body), output)
+	}
+}
+
+func TestReconcileQuiescenceResetThenUnchangedScrapes(t *testing.T) {
+	// Proves the reset is a reset and not a permanent reprieve:
+	// a changed screen resets grace once, but if the screen stops moving for
+	// another full grace, relay scrapes.
+	f := &fakeHerdr{readOut: "terminal at nudge"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+
+	// 1st grace elapses, terminal changes -> grace resets
+	clock.Advance(nudgeGrace + time.Second)
+	f.readOut = "terminal moved: builder active"
+
+	b, err = reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("reconcile after move: %v", err)
+	}
+	if b.Round != 1 {
+		t.Fatalf("round = %d, want 1 after reset", b.Round)
+	}
+
+	// Advance another full grace with terminal now unchanged.
+	clock.Advance(nudgeGrace + time.Second)
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("reconcile second grace: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: still terminal after reset must scrape", got.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); !pending {
+		t.Error("the scraped report must be queued once second grace elapses")
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); err != nil {
+		t.Errorf("report file must exist after scrape: %v", err)
+	}
+}
+
+func TestReconcileQuiescenceReadErrorLeavesRoundOpen(t *testing.T) {
+	// A herdr terminal read failure at check time is not evidence the builder stopped;
+	// relay must leave the round open and not advance.
+	f := &fakeHerdr{readOut: "terminal at nudge"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+
+	clock.Advance(nudgeGrace + time.Second)
+	f.readErr = errors.New("simulated herdr read error")
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("reconcile should swallow terminal read error: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1: terminal read error must not advance round", got.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+		t.Error("nothing must be queued when terminal read fails")
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Error("report must not be scraped when terminal read fails")
 	}
 }
 
