@@ -114,6 +114,10 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
+	// Recovery is unconditional here because FindAgent already answered the
+	// identity question: an agent was located, so SameAgent held, and re-checking
+	// the session would ask the same question twice. Deleting the old gate removes
+	// the disagreement with builderAlive that caused #20.
 	if b.State == store.StateBroken {
 		b.State = store.StateActive
 	}
