@@ -33,6 +33,8 @@ type BindingStatus struct {
 	BuilderStatus string       `json:"builder_status"`
 	Last          *LastEvent   `json:"last,omitempty"`
 	Pending       *PendingInfo `json:"pending,omitempty"`
+	ForkedFrom    string       `json:"forked_from,omitempty"`
+	ForkedAtRound int          `json:"forked_at_round,omitempty"`
 }
 
 // LastEvent is the most recent relayed message, carried as data rather than
@@ -89,8 +91,10 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
-		BuilderAlias: b.BuilderAlias,
-		PlannerPane:  b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
+		BuilderAlias:  b.BuilderAlias,
+		ForkedFrom:    b.ForkedFrom,
+		ForkedAtRound: b.ForkedAtRound,
+		PlannerPane:   b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
 

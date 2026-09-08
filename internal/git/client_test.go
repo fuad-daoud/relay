@@ -198,9 +198,337 @@ func TestClientErrors(t *testing.T) {
 		t.Fatalf("got %v, want ErrNotRepo", err)
 	}
 
+	if _, err := client.HeadCommit(ctx, notRepoDir); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("HeadCommit: got %v, want ErrNotRepo", err)
+	}
+
+	if _, err := client.BranchExists(ctx, notRepoDir, "main"); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("BranchExists: got %v, want ErrNotRepo", err)
+	}
+
+	if err := client.AddWorktree(ctx, notRepoDir, filepath.Join(notRepoDir, "wt"), "branch", "HEAD"); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("AddWorktree: got %v, want ErrNotRepo", err)
+	}
+
+	if err := client.RemoveWorktree(ctx, notRepoDir, filepath.Join(notRepoDir, "wt"), false); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("RemoveWorktree: got %v, want ErrNotRepo", err)
+	}
+
+	if _, err := client.Dirty(ctx, notRepoDir); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("Dirty: got %v, want ErrNotRepo", err)
+	}
+
 	badClient := NewClient("nonexistent-git-binary-xyz", 5*time.Second, DefaultMaxPatchBytes)
-	_, err = badClient.SnapshotTree(ctx, notRepoDir)
-	if !errors.Is(err, ErrGitUnavailable) {
+	if _, err := badClient.SnapshotTree(ctx, notRepoDir); !errors.Is(err, ErrGitUnavailable) {
 		t.Fatalf("got %v, want ErrGitUnavailable", err)
+	}
+
+	if _, err := badClient.HeadCommit(ctx, notRepoDir); !errors.Is(err, ErrGitUnavailable) {
+		t.Fatalf("HeadCommit: got %v, want ErrGitUnavailable", err)
+	}
+
+	if _, err := badClient.BranchExists(ctx, notRepoDir, "main"); !errors.Is(err, ErrGitUnavailable) {
+		t.Fatalf("BranchExists: got %v, want ErrGitUnavailable", err)
+	}
+
+	if err := badClient.AddWorktree(ctx, notRepoDir, filepath.Join(notRepoDir, "wt"), "branch", "HEAD"); !errors.Is(err, ErrGitUnavailable) {
+		t.Fatalf("AddWorktree: got %v, want ErrGitUnavailable", err)
+	}
+
+	if err := badClient.RemoveWorktree(ctx, notRepoDir, filepath.Join(notRepoDir, "wt"), false); !errors.Is(err, ErrGitUnavailable) {
+		t.Fatalf("RemoveWorktree: got %v, want ErrGitUnavailable", err)
+	}
+
+	if _, err := badClient.Dirty(ctx, notRepoDir); !errors.Is(err, ErrGitUnavailable) {
+		t.Fatalf("Dirty: got %v, want ErrGitUnavailable", err)
+	}
+}
+
+func TestWorktreeLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "first commit")
+	commit1 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "commit", "-am", "second commit")
+	commit2 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// Status before AddWorktree
+	statusBefore := runGit(t, repoDir, "status", "--porcelain")
+
+	// 1. AddWorktree produces a working tree on a new branch at the requested commit
+	// while the source tree's git status is unchanged.
+	wtDir := filepath.Join(t.TempDir(), "wt1")
+	branch := "relay/test-wt"
+	if err := client.AddWorktree(ctx, repoDir, wtDir, branch, commit1); err != nil {
+		t.Fatalf("AddWorktree failed: %v", err)
+	}
+
+	// Verify working tree exists
+	if fi, err := os.Stat(wtDir); err != nil || !fi.IsDir() {
+		t.Fatalf("worktree directory %s does not exist or is not a directory", wtDir)
+	}
+
+	// Verify worktree HEAD is commit1
+	wtHead, err := client.HeadCommit(ctx, wtDir)
+	if err != nil {
+		t.Fatalf("HeadCommit on worktree: %v", err)
+	}
+	if wtHead != commit1 {
+		t.Fatalf("worktree HEAD is %s, want %s", wtHead, commit1)
+	}
+
+	// Verify source tree status is unchanged
+	statusAfter := runGit(t, repoDir, "status", "--porcelain")
+	if statusAfter != statusBefore {
+		t.Fatalf("source tree status changed: got %q, want %q", statusAfter, statusBefore)
+	}
+
+	// Verify source tree HEAD is still commit2
+	srcHead, err := client.HeadCommit(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("HeadCommit on repo: %v", err)
+	}
+	if srcHead != commit2 {
+		t.Fatalf("repo HEAD is %s, want %s", srcHead, commit2)
+	}
+
+	// 2. A second AddWorktree on the same branch returns ErrBranchExists.
+	wtDir2 := filepath.Join(t.TempDir(), "wt2")
+	err = client.AddWorktree(ctx, repoDir, wtDir2, branch, commit2)
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("second AddWorktree got %v, want ErrBranchExists", err)
+	}
+	// Verify nothing was left behind at wtDir2
+	if _, err := os.Stat(wtDir2); !os.IsNotExist(err) {
+		t.Fatalf("wtDir2 was not cleaned up after error: %v", err)
+	}
+
+	// 3. RemoveWorktree with force: false returns ErrWorktreeDirty on a tree with
+	// an uncommitted edit and succeeds on a clean one.
+	dirtyFile := filepath.Join(wtDir, "uncommitted.txt")
+	if err := os.WriteFile(dirtyFile, []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = client.RemoveWorktree(ctx, repoDir, wtDir, false)
+	if !errors.Is(err, ErrWorktreeDirty) {
+		t.Fatalf("RemoveWorktree on dirty tree got %v, want ErrWorktreeDirty", err)
+	}
+	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
+		t.Fatal("wtDir was removed despite ErrWorktreeDirty")
+	}
+
+	// Clean the edit and remove again
+	if err := os.Remove(dirtyFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RemoveWorktree(ctx, repoDir, wtDir, false); err != nil {
+		t.Fatalf("RemoveWorktree on clean tree failed: %v", err)
+	}
+	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
+		t.Fatal("wtDir still exists after successful RemoveWorktree")
+	}
+
+	// 4. After a successful removal the branch still resolves.
+	exists, err := client.BranchExists(ctx, repoDir, branch)
+	if err != nil {
+		t.Fatalf("BranchExists after removal: %v", err)
+	}
+	if !exists {
+		t.Fatal("branch was removed after RemoveWorktree; branch must survive")
+	}
+	branchCommit := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "refs/heads/"+branch))
+	if branchCommit != commit1 {
+		t.Fatalf("branch resolves to %s, want %s", branchCommit, commit1)
+	}
+
+	// 5. RemoveWorktree with force: true succeeds on dirty tree.
+	wtDir3 := filepath.Join(t.TempDir(), "wt3")
+	branch3 := "relay/test-wt3"
+	if err := client.AddWorktree(ctx, repoDir, wtDir3, branch3, commit1); err != nil {
+		t.Fatalf("AddWorktree 3: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir3, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RemoveWorktree(ctx, repoDir, wtDir3, true); err != nil {
+		t.Fatalf("RemoveWorktree with force: true failed: %v", err)
+	}
+	if _, err := os.Stat(wtDir3); !os.IsNotExist(err) {
+		t.Fatal("wtDir3 still exists after forced RemoveWorktree")
+	}
+
+	// 6. AddWorktree cleans up path on error (e.g. bad commit).
+	wtDirBad := filepath.Join(t.TempDir(), "wt-bad")
+	err = client.AddWorktree(ctx, repoDir, wtDirBad, "relay/bad", "0000000000000000000000000000000000000000")
+	if err == nil {
+		t.Fatal("AddWorktree with invalid commit expected error, got nil")
+	}
+	if _, err := os.Stat(wtDirBad); !os.IsNotExist(err) {
+		t.Fatal("wtDirBad was not cleaned up on error")
+	}
+}
+
+func TestHeadCommit_BranchExists_Dirty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// Unborn HEAD: git init without commits
+	emptyRepo := t.TempDir()
+	runGit(t, emptyRepo, "init")
+	runGit(t, emptyRepo, "config", "user.name", "Test")
+	runGit(t, emptyRepo, "config", "user.email", "test@example.com")
+
+	_, err := client.HeadCommit(ctx, emptyRepo)
+	if err == nil {
+		t.Fatal("HeadCommit on repo with no commits expected error, got nil")
+	}
+
+	dirty, err := client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty on empty repo: %v", err)
+	}
+	if dirty {
+		t.Fatal("empty repo reported as dirty")
+	}
+
+	// Commit a file
+	if err := os.WriteFile(filepath.Join(emptyRepo, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, emptyRepo, "add", "a.txt")
+	runGit(t, emptyRepo, "commit", "-m", "first")
+
+	head, err := client.HeadCommit(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	if len(head) != 40 {
+		t.Fatalf("expected 40-char commit hash, got %q", head)
+	}
+
+	// BranchExists
+	defaultBranch := strings.TrimSpace(runGit(t, emptyRepo, "branch", "--show-current"))
+	exists, err := client.BranchExists(ctx, emptyRepo, defaultBranch)
+	if err != nil {
+		t.Fatalf("BranchExists: %v", err)
+	}
+	if !exists {
+		t.Fatalf("BranchExists(%q) = false, want true", defaultBranch)
+	}
+
+	// With refs/heads/ prefix
+	exists, err = client.BranchExists(ctx, emptyRepo, "refs/heads/"+defaultBranch)
+	if err != nil {
+		t.Fatalf("BranchExists with prefix: %v", err)
+	}
+	if !exists {
+		t.Fatalf("BranchExists(refs/heads/%s) = false, want true", defaultBranch)
+	}
+
+	// Nonexistent branch
+	exists, err = client.BranchExists(ctx, emptyRepo, "nonexistent-branch-xyz")
+	if err != nil {
+		t.Fatalf("BranchExists nonexistent: %v", err)
+	}
+	if exists {
+		t.Fatal("BranchExists(nonexistent) = true, want false")
+	}
+
+	// Dirty states
+	// Clean repo
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty clean: %v", err)
+	}
+	if dirty {
+		t.Fatal("clean repo reported as dirty")
+	}
+
+	// Untracked non-ignored file
+	untracked := filepath.Join(emptyRepo, "untracked.txt")
+	if err := os.WriteFile(untracked, []byte("foo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty untracked: %v", err)
+	}
+	if !dirty {
+		t.Fatal("untracked file not reported as dirty")
+	}
+
+	// Stage it
+	runGit(t, emptyRepo, "add", "untracked.txt")
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty staged: %v", err)
+	}
+	if !dirty {
+		t.Fatal("staged file not reported as dirty")
+	}
+
+	// Commit it
+	runGit(t, emptyRepo, "commit", "-m", "second")
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty after commit: %v", err)
+	}
+	if dirty {
+		t.Fatal("repo reported as dirty after commit")
+	}
+
+	// Modify tracked file
+	if err := os.WriteFile(untracked, []byte("bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty modified: %v", err)
+	}
+	if !dirty {
+		t.Fatal("modified tracked file not reported as dirty")
+	}
+
+	// Revert modification
+	runGit(t, emptyRepo, "checkout", "--", "untracked.txt")
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty after checkout: %v", err)
+	}
+	if dirty {
+		t.Fatal("repo reported as dirty after revert")
+	}
+
+	// Ignored file
+	if err := os.WriteFile(filepath.Join(emptyRepo, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, emptyRepo, "add", ".gitignore")
+	runGit(t, emptyRepo, "commit", "-m", "ignore")
+
+	if err := os.WriteFile(filepath.Join(emptyRepo, "ignored.txt"), []byte("skip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err = client.Dirty(ctx, emptyRepo)
+	if err != nil {
+		t.Fatalf("Dirty with ignored file: %v", err)
+	}
+	if dirty {
+		t.Fatal("repo with only ignored untracked file reported as dirty")
 	}
 }

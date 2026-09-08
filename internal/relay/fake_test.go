@@ -25,6 +25,15 @@ type startCall struct {
 	Args             []string
 }
 
+type addWorktreeCall struct {
+	Dir, Path, Branch, Commit string
+}
+
+type removeWorktreeCall struct {
+	Dir, Path string
+	Force     bool
+}
+
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
 	snapshotTreeID  string
@@ -38,6 +47,28 @@ type fakeGit struct {
 	lastDiffDir  string
 	lastDiffFrom string
 	lastDiffTo   string
+
+	headCommitID  string
+	headCommitErr error
+	headCalls     int
+	lastHeadDir   string
+
+	branchExists    bool
+	branchExistsErr error
+	branchCalls     int
+	lastBranchDir   string
+	lastBranchName  string
+
+	addWorktreeErr   error
+	addWorktreeCalls []addWorktreeCall
+
+	removeWorktreeErr   error
+	removeWorktreeCalls []removeWorktreeCall
+
+	dirtyResult  bool
+	dirtyErr     error
+	dirtyCalls   int
+	lastDirtyDir string
 }
 
 func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
@@ -60,8 +91,57 @@ func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff
 	return f.diffResult, nil
 }
 
+func (f *fakeGit) HeadCommit(ctx context.Context, dir string) (string, error) {
+	f.headCalls++
+	f.lastHeadDir = dir
+	if f.headCommitErr != nil {
+		return "", f.headCommitErr
+	}
+	return f.headCommitID, nil
+}
+
+func (f *fakeGit) BranchExists(ctx context.Context, dir, branch string) (bool, error) {
+	f.branchCalls++
+	f.lastBranchDir = dir
+	f.lastBranchName = branch
+	if f.branchExistsErr != nil {
+		return false, f.branchExistsErr
+	}
+	return f.branchExists, nil
+}
+
+func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit string) error {
+	f.addWorktreeCalls = append(f.addWorktreeCalls, addWorktreeCall{
+		Dir: dir, Path: path, Branch: branch, Commit: commit,
+	})
+	if f.addWorktreeErr != nil {
+		return f.addWorktreeErr
+	}
+	return nil
+}
+
+func (f *fakeGit) RemoveWorktree(ctx context.Context, dir, path string, force bool) error {
+	f.removeWorktreeCalls = append(f.removeWorktreeCalls, removeWorktreeCall{
+		Dir: dir, Path: path, Force: force,
+	})
+	if f.removeWorktreeErr != nil {
+		return f.removeWorktreeErr
+	}
+	return nil
+}
+
+func (f *fakeGit) Dirty(ctx context.Context, dir string) (bool, error) {
+	f.dirtyCalls++
+	f.lastDirtyDir = dir
+	if f.dirtyErr != nil {
+		return false, f.dirtyErr
+	}
+	return f.dirtyResult, nil
+}
+
 func TestFakeSatisfiesGit(t *testing.T) {
 	var _ Git = (*fakeGit)(nil)
+	var _ Git = (*git.Client)(nil)
 }
 
 // fakeHerdr is the in-memory Herdr used by every test in this package.

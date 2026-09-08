@@ -7,6 +7,9 @@ type EventType string
 const (
 	EventStateChanged EventType = "state_changed"
 	EventRoundStarted EventType = "round_started"
+	// EventForkCreated reports that a new binding was branched from an earlier round
+	// of an existing binding. OldState holds the source binding's name for provenance.
+	EventForkCreated EventType = "fork_created"
 )
 
 // Event encapsulates the context of a state transition or action.

@@ -10,6 +10,12 @@ var ErrNotRepo = errors.New("not a git repository")
 // ErrGitUnavailable reports that the git binary could not be executed at all.
 var ErrGitUnavailable = errors.New("git binary unavailable")
 
+// ErrBranchExists reports an attempt to create a branch that already exists.
+var ErrBranchExists = errors.New("branch already exists")
+
+// ErrWorktreeDirty reports an attempt to remove a worktree with uncommitted changes without force.
+var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
+
 // DefaultMaxPatchBytes is the default byte cap for patch bodies.
 const DefaultMaxPatchBytes = 4 << 20
 

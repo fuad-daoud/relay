@@ -39,6 +39,7 @@ Usage:
 
 Commands:
   bind      bind this planner pane to a builder over the current working tree
+  fork      branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and prompt the builder
   pull      print the newest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
@@ -119,6 +120,8 @@ func run(args []string) error {
 		return nil
 	case "bind":
 		return cmdBind(args[1:])
+	case "fork":
+		return cmdFork(args[1:])
 	case "unbind":
 		return cmdUnbind(args[1:])
 	case "gc":
@@ -255,6 +258,63 @@ func cmdBind(args []string) error {
 	return nil
 }
 
+func cmdFork(args []string) error {
+	fs := flag.NewFlagSet("fork", flag.ContinueOnError)
+	name := fs.String("name", "", "source binding to fork from")
+	round := fs.Int("round", 0, "source round to copy history through")
+	newName := fs.String("new-name", "", "name for the new binding")
+	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt (default: inherits source)")
+	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
+	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	source, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay fork <source> --round N --new-name NAME [--builder ALIAS] [--tab] [--cwd DIR]%s\n"+
+			"fork branches a new binding from an earlier round; it needs the source binding name", bindingHint("fork"))
+	}
+
+	if *round < 1 {
+		return fmt.Errorf("relay fork requires --round N (where N >= 1)")
+	}
+	if *newName == "" {
+		return fmt.Errorf("relay fork requires --new-name NAME")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	opts := relay.ForkOptions{
+		Source:      source,
+		Round:       *round,
+		NewName:     *newName,
+		Alias:       *builderAlias,
+		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		NewTab:      *newTab,
+		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
+		CWD:         *cwd,
+	}
+
+	res, err := relay.Fork(context.Background(), rt, opts)
+	if err != nil {
+		return err
+	}
+
+	if res.Worktree != "" {
+		fmt.Printf("forked %s to %s (round %d) at %s on branch %s\n",
+			source, res.Binding.Name, res.Binding.Round, res.Worktree, res.Branch)
+	} else {
+		fmt.Printf("forked %s to %s (round %d) at %s\n",
+			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
+	}
+
+	return nil
+}
+
 func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding to unbind")
@@ -274,17 +334,24 @@ func cmdUnbind(args []string) error {
 		return err
 	}
 
-	dest, err := relay.Unbind(context.Background(), rt, target, *archive)
+	res, err := relay.Unbind(context.Background(), rt, target, *archive)
 	if err != nil {
 		return err
 	}
 
-	if dest != "" {
-		fmt.Printf("archived %s to %s (panes left untouched)\n", target, dest)
-		return nil
+	if res.ArchivedTo != "" {
+		fmt.Printf("archived %s to %s (panes left untouched)\n", target, res.ArchivedTo)
+	} else {
+		fmt.Printf("unbound %s (panes left untouched)\n", target)
 	}
 
-	fmt.Printf("unbound %s (panes left untouched)\n", target)
+	if res.WorktreeRemoved != "" {
+		fmt.Printf("removed worktree %s\n", res.WorktreeRemoved)
+	} else if res.WorktreeKept != "" {
+		fmt.Printf("kept worktree %s (%s)\n  remove by hand: git -C %s worktree remove %s\n",
+			res.WorktreeKept, res.KeptReason, res.WorktreeKept, res.WorktreeKept)
+	}
+
 	return nil
 }
 
@@ -317,11 +384,29 @@ func cmdGC(args []string) error {
 	for _, r := range done {
 		switch {
 		case *dryRun:
-			fmt.Printf("would clear %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
+			wtMsg := ""
+			if r.WorktreeRemoved != "" {
+				wtMsg = fmt.Sprintf(" (worktree %s would be removed)", r.WorktreeRemoved)
+			} else if r.WorktreeKept != "" {
+				wtMsg = fmt.Sprintf(" (worktree %s kept: %s)", r.WorktreeKept, r.KeptReason)
+			}
+			fmt.Printf("would clear %-10s %s (%d rounds)%s\n", r.Name, r.CWD, r.Rounds, wtMsg)
 		case r.ArchivedTo != "":
 			fmt.Printf("archived    %-10s -> %s\n", r.Name, r.ArchivedTo)
+			if r.WorktreeRemoved != "" {
+				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
+			} else if r.WorktreeKept != "" {
+				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
+					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
+			}
 		default:
 			fmt.Printf("deleted     %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
+			if r.WorktreeRemoved != "" {
+				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
+			} else if r.WorktreeKept != "" {
+				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
+					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
+			}
 		}
 	}
 

@@ -98,9 +98,14 @@ inside every pane it manages, so it has to be run from inside one.
   panes' live herdr status, the last relayed event, and anything pending.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
+- `relay fork <source> --round R --new-name N [--builder ALIAS] [--tab] [--cwd DIR]` —
+  branch a new binding from an earlier round of an existing binding, copying
+  round history and artifacts through round R and launching a fresh builder in a
+  dedicated git worktree (or in `--cwd`).
 - `relay done NAME|--name N` — mark a binding done; relaying stops.
 - `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first.
+
 - `relay gc [--dry-run] [--archive]` — clear every binding the planner marked
   `DONE`, in one pass.
 - `relay daemon [--interval D]` — the long-running reconciler; this is what
@@ -138,6 +143,20 @@ Each round carries a budget; past it, relay flags the binding `NEEDS YOU` and
 notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
 The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
+
+### Forking a binding
+
+`relay fork` branches a new binding from an earlier round of an existing binding:
+
+```
+relay fork webshop --round 2 --new-name webshop-alt
+```
+
+- **What is copied:** Round history up through `--round`: `log.jsonl` entries (marked confirmed with no pending delivery) and all round artifacts (`NNN-plan.md`, `NNN-report.md`, `NNN-question.md`, `NNN-diff.patch`).
+- **What is not copied:** Working tree code state is not rewound. By default, relay creates a fresh git worktree at `~/.local/state/relay/.worktrees/<new-name>` on a new branch `relay/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
+- **State layout:** Relay keeps worktrees it creates under `.worktrees/` directly beside `.archive/` in the state root (`~/.local/state/relay/.worktrees/`).
+- **Teardown rule:** Relay removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relay unbind` and `relay gc` leave the worktree untouched and report the exact command to inspect or remove it manually.
+
 
 ### Cleaning up finished bindings
 
