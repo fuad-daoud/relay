@@ -27,7 +27,7 @@ func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.width = 80
 	m.height = 24
 	m.ready = true
@@ -74,7 +74,7 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.active = tabReport
@@ -104,7 +104,7 @@ func TestScrollParkAndRestore(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.active = tabReport
@@ -159,6 +159,8 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 		t.Fatalf("empty content foreground must not match errorStyle foreground")
 	}
 
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	rendered := bodyOf(c)
 	errRendered := errorStyle.Render(c.empty)
@@ -171,7 +173,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.vp = viewport.New(80, 20)
@@ -204,7 +206,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.active = tabDiff
@@ -228,7 +230,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.ready = true
 	m.width = 80
@@ -267,7 +269,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.ready = true
 	m.width = 80
@@ -303,7 +305,7 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 2
@@ -337,7 +339,7 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 2

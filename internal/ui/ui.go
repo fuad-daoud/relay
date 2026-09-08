@@ -21,14 +21,16 @@ type Options struct {
 const minInterval = 500 * time.Millisecond
 const defaultInterval = 2 * time.Second
 
+// stdoutStat is os.Stdout.Stat, replaceable so the terminal refusal path can be
+// tested without a terminal.
+var stdoutStat = os.Stdout.Stat
+
 // Run renders relay's state until the user quits or ctx is cancelled.
 // It never mutates state.
 //
 // Preconditions:  stdout is a character device; rt.Herdr and rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
 // Errors:         startup failures only. Refresh failures never escape.
-var stdoutStat = os.Stdout.Stat
-
 func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 	info, err := stdoutStat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
@@ -46,6 +48,14 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 
 	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err = p.Run()
+	return runResult(ctx, err)
+}
+
+// runResult maps bubbletea's exit into Run's contract: a cancelled context is a
+// clean exit, not an error. Kept separate from Run so it can be tested without
+// starting a terminal program -- the test that did that failed anywhere without
+// a tty, including every CI runner.
+func runResult(ctx context.Context, err error) error {
 	if ctx.Err() != nil && (errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)) {
 		return nil
 	}

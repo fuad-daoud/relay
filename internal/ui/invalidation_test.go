@@ -16,7 +16,7 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
@@ -62,7 +62,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	ts := time.Now().Truncate(time.Second)
 
@@ -131,7 +131,7 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
@@ -176,7 +176,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = name
 	m.detail.active = tabTerminal
@@ -211,7 +211,7 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"

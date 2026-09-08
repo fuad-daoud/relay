@@ -65,7 +65,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -102,7 +102,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -141,7 +141,7 @@ func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -169,7 +169,7 @@ func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {

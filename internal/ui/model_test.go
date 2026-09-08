@@ -48,7 +48,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
 	m.tabInFlight = false
@@ -70,7 +70,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
 	m.tabInFlight = true
@@ -92,7 +92,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -112,7 +112,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -141,7 +141,7 @@ func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
 	m.statusInFlight = true
@@ -169,7 +169,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -204,7 +204,7 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	m.ready = false
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -247,7 +247,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 4
@@ -278,7 +278,7 @@ func TestLaggingRoundAcceptedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 4
@@ -309,7 +309,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	name := "webshop"
 	ts := time.Now()
 
@@ -354,7 +354,7 @@ func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.statusInFlight = false
 	rep := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -381,7 +381,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
 		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
