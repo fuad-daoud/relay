@@ -68,7 +68,8 @@ else
 service: install
 	install -Dm644 dist/relay.service $(UNIT)
 	systemctl --user daemon-reload
-	systemctl --user enable --now relay.service
+	systemctl --user enable relay.service
+	systemctl --user restart relay.service
 
 uninstall:
 	systemctl --user disable --now relay.service || true
