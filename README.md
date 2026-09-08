@@ -334,6 +334,12 @@ The cheap way to confirm this is fine before trusting the service: if
 daemon will work there too, since both resolve the running herdr session the
 same way.
 
+Only one daemon runs at a time. `relay daemon` takes an exclusive lock on
+`$XDG_STATE_HOME/relay/.daemon.lock` and refuses to start if another one holds
+it, so starting a second by hand next to the service is an error rather than
+two reconcilers racing. `relay daemon --check` exits 0 if a daemon is running
+and 1 if not, printing nothing.
+
 ## Lifecycle hooks
 
 relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `~/.config/relay/hooks/<event_type>.d/`.
