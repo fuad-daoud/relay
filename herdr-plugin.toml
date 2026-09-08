@@ -1,6 +1,6 @@
 id = "fuad-daoud.relay"
 name = "relay"
-version = "0.0.0"
+version = "0.1.0"
 min_herdr_version = "0.8.2"
 description = "Planner/builder handoff for herdr agent panes"
 platforms = ["linux", "macos"]
