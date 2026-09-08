@@ -126,6 +126,14 @@ is running to notice. That is the only reason a daemon exists.
 | `round_timeout_ms` | int | default 1_800_000 (30 min) |
 | `created_at`, `updated_at` | iso8601 | |
 
+#### Endpoint identity and refresh
+
+An endpoint is identified by its `session_id` when one is recorded (exact match, no fallback). When no session is recorded, identity falls back to `pane_id` plus agent `kind` (or bare pane ID if no kind was recorded). Relay treats endpoints as caches of live agent identity rather than static records: whenever Reconcile locates an endpoint's agent among live herdr agents, it refreshes the endpoint's `pane_id` (so moving panes between workspaces stays current) and backfills an empty `session_id` if the agent reports one.
+
+Harnesses form two distinct populations. `claude` panes report a session to herdr, so a missing session is a brief startup race resolved by the next tick's backfill. `agy` panes report no session to herdr at all; for `abuilder` bindings, pane plus kind is therefore the permanent identity and the backfill never fires.
+
+Accepted risk: a session-less endpoint whose pane exits and is reissued to a new agent of the same kind is adopted as the original builder. For claude this risk window is transient (closing on the first tick); for agy it is permanent.
+
 ### Alias table (config, derived from the author's shell functions)
 
 | alias | kind | native args (after `--`) | first-prompt preamble |
