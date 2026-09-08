@@ -311,10 +311,18 @@ of the one tab whose whole point is liveness.
 
 | Tab | Source | Empty case renders as |
 | --- | --- | --- |
-| report | `ReadLog` → newest `DirToPlanner` of kind report or question → read `e.Path` | `round 1 in flight; no report yet` |
+| report | `ReadLog` → newest `DirToPlanner` of kind report or question → `e.Payload` | `round 1 in flight; no report yet` |
 | terminal | `FindAgent(agents, b.Builder)` → `ReadAgent(target, viewportHeight)` | ``builder gone (`agy`); pane wM:p4 no longer exists`` |
 | diff | `relay.ReadDiff(rt, name, round)` | `no diff recorded for round N — no baseline captured` |
 | log | `ReadLog`, rendered as `relay log` does | `no entries yet` |
+
+The report tab reads `LogEntry.Payload`, **not** `LogEntry.Path`. Both are set on
+report and question entries, but `Payload` is the right source for three reasons:
+it is byte-for-byte what the planner receives, it already carries the appended
+diff summary line, and it exists even when the file does not. That last one is
+decisive — a report recovered by terminal scrape (`reconcile.go`, note
+`"scraped"`) records a `Path` the builder never wrote. Reading `Path` would fail
+on exactly the abandoned rounds a reader most needs to show.
 
 **Expected emptiness is never rendered as an error.** The diff row is the one
 that matters: diff capture is deliberately best-effort and has no error in its
