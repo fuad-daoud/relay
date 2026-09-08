@@ -18,6 +18,15 @@ const scrapeLines = 200
 // writing its report file.
 const nudgeNote = "nudge"
 
+// startGrace is how long after a plan was handed over relay refuses to nudge,
+// no matter what herdr reports. A builder is not "idle" seconds after being
+// prompted -- it is starting, and herdr's view of its status lags the prompt.
+// Nudging inside this window tells an agent that has not begun to write its
+// report now, which abandons the round's real work.
+//
+// It is measured from Binding.RoundStartedAt, which Send stamps at handoff.
+const startGrace = 30 * time.Second
+
 // nudgeGrace is how long the builder gets to answer that reminder before relay
 // gives up and scrapes its terminal. It is far longer than a poll interval on
 // purpose: scraping abandons the round, so it must never race a report that is
@@ -213,6 +222,10 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.
 
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
 // a labelled screen scrape.
+//
+// A round is eligible for a nudge only once startGrace has elapsed since
+// RoundStartedAt. A binding whose RoundStartedAt is zero is never nudged:
+// the elapsed time is unknowable, and nudging is the destructive choice.
 func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, error) {
 	if !HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) {
 		return b, nil // nothing was sent for this round yet
@@ -229,6 +242,12 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	nudgedAt, ok := nudgeTime(entries, b.Round)
 	if !ok {
+		if b.RoundStartedAt.IsZero() {
+			return b, nil
+		}
+		if rt.Now().UTC().Sub(b.RoundStartedAt) < startGrace {
+			return b, nil
+		}
 		return nudgeBuilder(ctx, rt, tx, b, reportPath)
 	}
 
