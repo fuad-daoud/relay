@@ -24,6 +24,14 @@ func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
+
+	// The spawned agent registers with herdr moments after StartAgent returns,
+	// which Bind's own post-spawn lookup is too early to see. Appending it here
+	// -- after Bind -- keeps the empty SessionID that lookup produces, which is
+	// the #20 condition several tests rely on, while letting Send and Reconcile
+	// locate the builder the way they would against a real herdr.
+	f.agents = append(f.agents, builderAgent(herdr.StatusWorking))
+
 	return rt, b
 }
 
