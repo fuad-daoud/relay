@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -40,6 +41,7 @@ Commands:
   bind      bind this planner pane to a builder over the current working tree
   send      stage a plan file as the current round and prompt the builder
   pull      print the newest pending payload to stdout, without typing anywhere
+  diff      print a round's captured patch to stdout
   answer    answer a builder that is blocked at a dialog
   status    one row per binding: round, state, live pane status, what is pending
   log       print a binding's append-only round log
@@ -125,6 +127,8 @@ func run(args []string) error {
 		return cmdSend(args[1:])
 	case "pull":
 		return cmdPull(args[1:])
+	case "diff":
+		return cmdDiff(args[1:])
 	case "answer":
 		return cmdAnswer(args[1:])
 	case "status":
@@ -191,6 +195,7 @@ func newRuntime() (relay.Runtime, error) {
 
 	return relay.Runtime{
 		Herdr:   herdr.NewClient("herdr", 30*time.Second),
+		Git:     git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
 		Store:   store.New(root),
 		Aliases: aliases,
 		Now:     time.Now,
@@ -384,6 +389,69 @@ func cmdPull(args []string) error {
 
 	fmt.Println(payload)
 	return nil
+}
+
+func cmdDiff(args []string) error {
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	round := fs.Int("round", 0, "round to diff (default: newest completed round)")
+	stat := fs.Bool("stat", false, "print summary line instead of patch body")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	target, err := resolveBinding(rt, *name)
+	if err != nil {
+		return err
+	}
+
+	b, err := rt.Store.Load(target)
+	if err != nil {
+		return err
+	}
+
+	targetRound := *round
+	if targetRound == 0 {
+		targetRound = b.Round - 1
+	}
+	if targetRound < 1 {
+		return fmt.Errorf("binding %q has no completed round yet", target)
+	}
+
+	if *stat {
+		entries, err := rt.Store.ReadLog(target)
+		if err != nil {
+			return err
+		}
+		var found *store.LogEntry
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == targetRound && entries[i].Kind == store.KindDiff {
+				found = &entries[i]
+				break
+			}
+		}
+		if found == nil || found.Note == "" {
+			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
+		}
+		fmt.Println(found.Note)
+		return nil
+	}
+
+	patch, ok, err := relay.ReadDiff(rt, target, targetRound)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
+	}
+
+	_, err = os.Stdout.Write(patch)
+	return err
 }
 
 func cmdAnswer(args []string) error {

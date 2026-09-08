@@ -224,7 +224,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
 		payload := fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)
-		return queueReport(ctx, rt, tx, b, reportPath, payload, "")
+		return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "")
 	}
 
 	nudgedAt, ok := nudgeTime(entries, b.Round)
@@ -240,7 +240,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, nil
 	}
 
-	return scrapeReport(ctx, rt, tx, b, reportPath)
+	return scrapeReport(ctx, rt, tx, b, entries, reportPath)
 }
 
 func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
@@ -262,7 +262,7 @@ func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // dialog. herdr documents that alternate-screen rows never reach that
 // scrollback, so this may be truncated -- the payload says so explicitly
 // rather than letting the planner trust it.
-func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
+func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, reportPath string) (store.Binding, error) {
 	text, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
 	if err != nil {
 		return b, fmt.Errorf("scrape builder terminal: %w", err)
@@ -277,10 +277,29 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		"Builder finished round %d but never wrote its report file. SCRAPED from its terminal (may be truncated): %s",
 		b.Round, reportPath)
 
-	return queueReport(ctx, rt, tx, b, reportPath, payload, "scraped")
+	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "scraped")
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, path, payload, note string) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string) (store.Binding, error) {
+	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
+		result := CaptureRoundDiff(ctx, rt, b)
+		diffEntry := store.LogEntry{
+			TS:        rt.Now().UTC(),
+			Round:     b.Round,
+			Direction: store.DirToPlanner,
+			Kind:      store.KindDiff,
+			Path:      result.Path,
+			Note:      DiffSummary(result),
+			Confirmed: true,
+		}
+		if err := tx.AppendLog(b.Name, diffEntry); err != nil {
+			return b, err
+		}
+		if line := DiffLine(result); line != "" {
+			payload = payload + "\n" + line
+		}
+	}
+
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindReport,
@@ -302,6 +321,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// A halt notified for the old round says nothing about the new one, so the
 	// next round that goes wrong gets its own single notification.
 	b.HaltNotifiedRound = 0
+	b.RoundBaselineTree = ""
 
 	return b, nil
 }

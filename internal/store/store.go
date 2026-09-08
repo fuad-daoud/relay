@@ -42,13 +42,14 @@ const (
 	lockFileName        = ".lock"
 	lockRetryDelay      = 50 * time.Millisecond
 
-	// lockAcquireLimit must exceed the longest possible hold, or a slow herdr
-	// turns every other caller's wait into a failure. The longest hold is
-	// relay.Send's critical section, which can make two `herdr agent prompt`
-	// calls (the stall retry), each bounded by the herdr client timeout of 30s
-	// in cmd/relay. 70s is that worst case plus headroom; if the client
-	// timeout changes, this must change with it.
-	lockAcquireLimit = 70 * time.Second
+	// lockAcquireLimit must exceed the longest possible hold, or a slow external
+	// call turns every other caller's wait into a failure. The longest hold is
+	// Reconcile's critical section on the scrape fallback path, which can make
+	// one herdr agent read (30s), two git calls for round diff capture (10s
+	// snapshot + 10s diff), and one herdr agent prompt to deliver (30s). 90s is
+	// that 80s worst case plus 10s headroom; if client timeouts change, this
+	// must change with them.
+	lockAcquireLimit = 90 * time.Second
 )
 
 // Store is the state directory. All writes are atomic within it.
@@ -112,23 +113,32 @@ func ValidName(name string) error {
 // Dir is the state directory for one binding.
 func (s *Store) Dir(name string) string { return filepath.Join(s.root, name) }
 
-func (s *Store) roundPath(name string, round int, suffix string) string {
-	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s.md", round, suffix))
+func (s *Store) roundFile(name string, round int, suffix, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s%s", round, suffix, ext))
 }
 
 // PlanPath is where the planner's plan for a round is stored.
 func (s *Store) PlanPath(name string, round int) string {
-	return s.roundPath(name, round, "plan")
+	return s.roundFile(name, round, "plan", ".md")
 }
 
 // ReportPath is where the builder is told to write its report for a round.
 func (s *Store) ReportPath(name string, round int) string {
-	return s.roundPath(name, round, "report")
+	return s.roundFile(name, round, "report", ".md")
 }
 
 // QuestionPath is where a captured blocking dialog is stored.
 func (s *Store) QuestionPath(name string, round int) string {
-	return s.roundPath(name, round, "question")
+	return s.roundFile(name, round, "question", ".md")
+}
+
+// DiffPath is where a round's captured patch is stored.
+// Layout: <binding dir>/NNN-diff.patch
+func (s *Store) DiffPath(name string, round int) string {
+	return s.roundFile(name, round, "diff", ".patch")
 }
 
 func (s *Store) bindingPath(name string) string {

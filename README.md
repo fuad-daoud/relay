@@ -23,6 +23,7 @@ human, whether the work is done, is a decision that stays with the planner
 - **Two agent harnesses that herdr can drive** — one for the planner, one for
   the builder. relay ships example aliases for `opencode`, `claude` and `agy`;
   see [Builder aliases](#builder-aliases).
+- **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relay works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
 - **Go 1.22+**, to build from source. Not needed if you install a release
   binary.
@@ -87,6 +88,9 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay pull [--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
+- `relay diff [--name N] [--round R] [--stat]` — print a round's captured patch
+  to stdout, or its diffstat summary with `--stat`. Defaults to the newest
+  completed round.
 - `relay answer [--name N] (--keys K | --choice N | --text S)` — answer a
   builder that's blocked at a dialog, via `send-keys` rather than a typed
   prompt (herdr refuses `agent prompt` against a blocked agent).
@@ -106,7 +110,7 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay version` — the build's version.
 
 `--name` defaults to whichever binding owns the current working directory for
-`send`, `pull`, `answer` and `status`. It is **required** for `done` and
+`send`, `pull`, `diff`, `answer` and `status`. It is **required** for `done` and
 `unbind`: those are the destructive verbs and they refuse to guess (see below).
 
 ### Panes are yours, always
@@ -139,7 +143,7 @@ The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
 
 A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
 `~/.local/state/relay/<name>/`): `bind.json`, `log.jsonl`, and every round's
-plan, report and captured dialog. `relay done` stops relaying but removes
+plan, report, patch (`NNN-diff.patch`) and captured dialog. `relay done` stops relaying but removes
 nothing — the log is the record of what the planner actually told the builder.
 
 ```
@@ -160,6 +164,11 @@ tar -xzf ~/.local/state/relay/.archive/ai-20260905-121500.tar.gz -O ai/log.jsonl
 `gc` only touches bindings the planner marked `DONE`. A `BROKEN` or `ORPHANED`
 one is left alone: it still needs a human, and clearing it would throw away the
 state that explains why it stopped.
+
+Snapshot tree objects created during round diff capture are written directly to
+git's object database unreferenced. They never alter repository refs, branches,
+or the working index, and they are reclaimed automatically by the repository's
+own `git gc`.
 
 Neither command closes a pane — the builder's terminal stays where it is, for
 you to read and close yourself.
