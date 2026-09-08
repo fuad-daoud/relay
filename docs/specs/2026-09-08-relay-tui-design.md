@@ -130,7 +130,11 @@ type Model struct {
     report relay.Report // newest good Status snapshot; survives a failed refresh
     err    error        // last refresh error, shown in the footer
 
-    inFlight bool // single-flight guard; a tick while set is a no-op
+    // Two guards, not one: a terminal read is a 30s-timeout herdr call, and a
+    // single shared guard would let one slow ReadAgent stall every list
+    // refresh behind it, freezing the fleet view for half a minute.
+    statusInFlight bool // cleared by statusMsg
+    tabInFlight    bool // cleared by tabMsg
 
     list   listModel
     detail detailModel
@@ -221,10 +225,16 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string) tea.Cmd
 
 Three rules. They exist to keep a second poller from hurting the daemon.
 
-### Rule 1 — single-flight
+### Rule 1 — single-flight, on two independent guards
 
-One refresh in flight at a time. The ticker re-arms only when the previous
-returns.
+One status refresh and one tab refresh in flight at a time, each guarded
+separately. The ticker always re-arms; a fetch is issued only if its own guard
+is clear.
+
+The guards are separate because the terminal tab's `ReadAgent` is a 30s-timeout
+call. Sharing one guard would let a slow terminal read stall the list poll
+behind it, freezing the fleet view — and the fleet view is what warns you that
+another binding needs attention while you read.
 
 `relay.Status` takes the state lock twice per binding (`ReadLog` and
 `PendingForPlanner`), and the daemon can hold that lock through `Reconcile`'s
@@ -237,12 +247,18 @@ a frozen screen.**
 
 ```
 on tickMsg:
-    if m.inFlight: return m, tick()      // no-op, re-arm only
-    m.inFlight = true
-    return m, batch(tick(), fetchStatus(...), visibleTabFetch(...))
+    cmds = [tick()]                          // always re-arm
+    if not m.statusInFlight:
+        m.statusInFlight = true
+        cmds += fetchStatus(...)
+    if not m.tabInFlight:
+        if c := visibleTabFetch(m); c != nil:
+            m.tabInFlight = true
+            cmds += c
+    return m, batch(cmds)
 
 on statusMsg:
-    m.inFlight = false
+    m.statusInFlight = false
     if msg.err != nil:
         m.err = msg.err                  // keep m.report: last good snapshot
         return m, nil
@@ -363,7 +379,9 @@ writes. It is invisible to the audit trail by design.
 `Update` is a pure `(Model, Msg) → (Model, Cmd)`, so behaviour tests need no
 terminal.
 
-- **single-flight** — a `tickMsg` while `inFlight` produces no second fetch
+- **single-flight** — a `tickMsg` while `statusInFlight` produces no second
+  status fetch, and the same independently for `tabInFlight`; critically, a
+  `tickMsg` while only `tabInFlight` is set still issues a status fetch
 - **stale snapshot** — a `statusMsg` carrying an error leaves `m.report` intact
   and sets the footer
 - **invalidation** — unchanged `LastEvent.TS` refetches nothing; a changed TS
