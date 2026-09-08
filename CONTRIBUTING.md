@@ -58,6 +58,14 @@ platforms even though they are unsupported — the cross-compile job in CI is
 what enforces that. If you touch anything platform-specific, put it behind a
 build tag rather than a `runtime.GOOS` check.
 
+## Releasing
+
+Plugin manifests (`herdr-plugin.toml` and `from-source/herdr-plugin.toml`) are
+bumped and merged *before* the tag is created. Tagging first leaves that tag's
+own manifest pointing at a release that does not exist, which breaks
+`herdr plugin install --ref <tag>` for that tag permanently. `make release`
+does both in the right order.
+
 ## Reporting bugs
 
 Use the issue templates. `relay version`, `herdr --version` and
