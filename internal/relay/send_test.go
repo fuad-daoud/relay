@@ -332,3 +332,42 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
 	}
 }
+
+func TestSendAddressesTheLocatedPane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts = %d, want 1", len(f.prompts))
+	}
+	if f.prompts[0].Target != "w2:p4" {
+		t.Fatalf("target = %q, want the located pane w2:p4", f.prompts[0].Target)
+	}
+}
+
+func TestSendFailsAndStagesNothingWhenBuilderIsGone(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	if !errors.Is(err, ErrBuilderGone) {
+		t.Fatalf("err = %v, want ErrBuilderGone", err)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatal("nothing may be prompted when the builder is gone")
+	}
+	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+		t.Fatal("no plan may be staged when the builder is gone")
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 1 {
+		t.Fatalf("round = %d, want 1: a failed send must not advance the round", b.Round)
+	}
+}
