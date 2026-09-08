@@ -22,12 +22,11 @@ Read: %s
 When you are done, write your report to: %s
 Reply here with only that path.`
 
-// Target is the herdr target for an endpoint: its agent name when relay
-// started it, otherwise its pane id.
+// Target is the herdr target for an endpoint: its pane id, which Reconcile
+// keeps current by refreshing every endpoint it locates. AgentName is
+// provenance rather than an address, because herdr can forget it across a
+// server restart while the pane stays addressable (#20).
 func Target(ep store.Endpoint) string {
-	if ep.AgentName != "" {
-		return ep.AgentName
-	}
 	return ep.PaneID
 }
 

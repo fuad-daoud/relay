@@ -67,8 +67,8 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	if !strings.Contains(text, rt.Store.ReportPath("webshop", 1)) {
 		t.Error("prompt must name the report path")
 	}
-	if f.prompts[0].Target != "webshop-builder" {
-		t.Errorf("target = %q, want the herdr agent name", f.prompts[0].Target)
+	if f.prompts[0].Target != "w2:p4" {
+		t.Errorf("target = %q, want pane id w2:p4", f.prompts[0].Target)
 	}
 }
 

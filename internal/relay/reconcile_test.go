@@ -886,3 +886,26 @@ func TestReconcileRefreshesPlannerEndpoint(t *testing.T) {
 		t.Fatalf("planner pane = %q, want w9:p2", out.Planner.PaneID)
 	}
 }
+
+func TestReconcileAddressesThePaneNotTheForgottenAgentName(t *testing.T) {
+	f := &fakeHerdr{readOut: "1. yes\n2. no"}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	// herdr forgot the spawned agent's name across a restart, and the pane
+	// moved. Only the live pane id is addressable.
+	moved := builderAgent(herdr.StatusBlocked)
+	moved.PaneID = "w9:p1"
+	moved.Session = herdr.Session{Value: "mine"}
+
+	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), moved}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.reads) == 0 {
+		t.Fatal("expected the blocking dialog to be read")
+	}
+	for _, r := range f.reads {
+		if r.Target != "w9:p1" {
+			t.Fatalf("read target = %q, want the located pane w9:p1", r.Target)
+		}
+	}
+}
