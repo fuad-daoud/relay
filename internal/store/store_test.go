@@ -49,6 +49,28 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.Worktree != "" || got.ForkedFrom != "" || got.ForkedAtRound != 0 {
 		t.Errorf("fork fields must default to zero: %+v", got)
 	}
+	if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
+		t.Errorf("builder screen fields must default to zero: %+v", got)
+	}
+}
+
+func TestBuilderScreenRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	want := newBinding("webshop", "/home/dev/projects/webshop")
+	want.BuilderScreen = "abc123def456"
+	want.BuilderScreenAt = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+	if err := s.Save(want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.BuilderScreen != want.BuilderScreen || !got.BuilderScreenAt.Equal(want.BuilderScreenAt) {
+		t.Errorf("builder screen mismatch: got screen=%q at=%v, want screen=%q at=%v",
+			got.BuilderScreen, got.BuilderScreenAt, want.BuilderScreen, want.BuilderScreenAt)
+	}
 }
 
 func TestForkFieldsRoundTrip(t *testing.T) {

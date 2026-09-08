@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -251,15 +253,76 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return nudgeBuilder(ctx, rt, tx, b, reportPath)
 	}
 
-	// Give the builder a chance to answer the nudge. Without this the next
-	// poll -- two seconds later, before herdr's status has necessarily even
-	// moved -- would scrape the terminal, label the round done and advance
-	// past it, so the real report lands on an abandoned round's path.
-	if rt.Now().UTC().Sub(nudgedAt) < nudgeGrace {
+	next, quiescent, err := builderQuiescent(ctx, rt, b, nudgedAt)
+	if err != nil {
 		return b, nil
 	}
+	if !quiescent {
+		return next, nil
+	}
 
-	return scrapeReport(ctx, rt, tx, b, entries, reportPath)
+	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
+}
+
+// screenFingerprint hashes the builder's current terminal, read from exactly
+// the source scrapeReport would read, so the liveness check and the scrape
+// cannot disagree about what the builder's output is.
+//
+// Errors: a wrapped herdr failure. A failed read is NOT evidence the builder
+// stopped, and callers must not treat it as such.
+func screenFingerprint(ctx context.Context, rt Runtime, b store.Binding) (string, error) {
+	text, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
+	if err != nil {
+		return "", fmt.Errorf("fingerprint builder terminal: %w", err)
+	}
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// builderQuiescent reports whether the builder's terminal has been unchanged
+// for the whole nudge grace, which is relay's evidence that it has genuinely
+// stopped rather than gone quiet.
+//
+// It returns the binding to persist: when the screen HAS moved, the returned
+// binding carries the new fingerprint and a refreshed BuilderScreenAt, which
+// is what resets the grace.
+//
+// Preconditions:  the round has been nudged.
+// Postconditions: quiescent is true only when a fingerprint was taken at least
+//
+//	nudgeGrace ago and the current fingerprint equals it.
+//	On any read failure, quiescent is false and the binding is
+//	returned unchanged.
+func builderQuiescent(ctx context.Context, rt Runtime, b store.Binding, nudgedAt time.Time) (store.Binding, bool, error) {
+	since := b.BuilderScreenAt
+	if since.IsZero() {
+		since = nudgedAt // nudged under the old code: fall back to the log
+	}
+
+	current, err := screenFingerprint(ctx, rt, b)
+	if err != nil {
+		return b, false, err
+	}
+
+	// No fingerprint yet: take one and start the clock from now. A binding
+	// nudged before this feature therefore waits one extra grace period, which
+	// is the safe direction to be wrong in.
+	if b.BuilderScreen == "" {
+		b.BuilderScreen, b.BuilderScreenAt = current, rt.Now().UTC()
+		return b, false, nil
+	}
+
+	if current != b.BuilderScreen {
+		// The screen moved: the builder is alive. Reset the grace.
+		b.BuilderScreen, b.BuilderScreenAt = current, rt.Now().UTC()
+		return b, false, nil
+	}
+
+	if rt.Now().UTC().Sub(since) < nudgeGrace {
+		return b, false, nil // unchanged, but not for long enough yet
+	}
+
+	return b, true, nil
 }
 
 func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
@@ -272,8 +335,15 @@ func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		Direction: store.DirToBuilder, Kind: store.KindPlan,
 		Path: reportPath, Note: nudgeNote, Confirmed: true,
 	}
+	if err := tx.AppendLog(b.Name, entry); err != nil {
+		return b, err
+	}
 
-	return b, tx.AppendLog(b.Name, entry)
+	if fp, err := screenFingerprint(ctx, rt, b); err == nil {
+		b.BuilderScreen, b.BuilderScreenAt = fp, rt.Now().UTC()
+	}
+
+	return b, nil
 }
 
 // scrapeReport is the last resort. It reads the scrollback (ReadAgent's
@@ -341,6 +411,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// next round that goes wrong gets its own single notification.
 	b.HaltNotifiedRound = 0
 	b.RoundBaselineTree = ""
+	b.BuilderScreen = ""
+	b.BuilderScreenAt = time.Time{}
 
 	return b, nil
 }
