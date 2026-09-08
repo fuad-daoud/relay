@@ -151,7 +151,7 @@ func TestFetchTerminalBuilderPresent(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	fh.agents = []herdr.Agent{
-		{PaneID: "w2:p4"},
+		{PaneID: "w2:p4", Kind: "opencode"},
 	}
 	fh.readOut = "terminal output line 1\nline 2"
 	rt := relay.Runtime{Store: st, Herdr: fh}

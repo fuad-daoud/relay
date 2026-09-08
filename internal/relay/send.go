@@ -14,6 +14,10 @@ import (
 // cannot be submitted until the planner answers it with `relay answer`.
 var ErrBuilderBlocked = errors.New("builder is blocked at a dialog; answer it with relay answer")
 
+// ErrBuilderGone reports that a binding's builder could not be located among
+// the live agents, so there is nothing to address.
+var ErrBuilderGone = errors.New("builder is gone; rebind before sending")
+
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relay reads off the terminal.
@@ -22,12 +26,11 @@ Read: %s
 When you are done, write your report to: %s
 Reply here with only that path.`
 
-// Target is the herdr target for an endpoint: its agent name when relay
-// started it, otherwise its pane id.
+// Target is the herdr target for an endpoint: its pane id, which Reconcile
+// keeps current by refreshing every endpoint it locates. AgentName is
+// provenance rather than an address, because herdr can forget it across a
+// server restart while the pane stays addressable (#20).
 func Target(ep store.Endpoint) string {
-	if ep.AgentName != "" {
-		return ep.AgentName
-	}
 	return ep.PaneID
 }
 
@@ -42,8 +45,20 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 	}
 
 	var baseline string
+	var builder herdr.Agent
+	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
 		baseline = CaptureBaseline(ctx, rt, hint)
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("list agents: %w", err)
+		}
+		var ok bool
+		builder, ok = FindAgent(agents, hint.Builder)
+		if !ok {
+			return 0, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
+		}
+		locatedBuilder = true
 	}
 
 	var round int
@@ -63,6 +78,15 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 		if b.Round > b.RoundCap {
 			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 		}
+		// The pre-lock load and this locked load are two separate acquisitions
+		// of the state lock, so a binding can appear between them. An unlocated
+		// builder must never fall through to an empty target.
+		if !locatedBuilder {
+			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+		}
+		if !SameAgent(builder, b.Builder) {
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
+		}
 
 		planPath := rt.Store.PlanPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
@@ -75,7 +99,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 			return err
 		}
 
-		if err := promptWithRetry(ctx, rt, Target(b.Builder), text); err != nil {
+		if err := promptWithRetry(ctx, rt, builder.PaneID, text); err != nil {
 			if errors.Is(err, herdr.ErrAgentBlocked) {
 				return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
 			}

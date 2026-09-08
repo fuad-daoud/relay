@@ -648,7 +648,12 @@ func TestReconcileStaysBrokenOnPaneOnlyMatch(t *testing.T) {
 	}
 }
 
-func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
+// TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession covers the agy case
+// specifically: no session is ever reported or recorded, so there is nothing to
+// backfill and pane plus kind is the whole permanent identity. Unlike
+// TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession (which exercises the
+// claude backfill path), this exercises the permanent agy path.
+func TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f) // seedBound's agents carry no builder pane entry, so no session was ever recorded
 	if b.Builder.SessionID != "" {
@@ -662,11 +667,8 @@ func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.State != store.StateBroken {
-		t.Errorf("state = %s, want still broken: there is no session id to trust", got.State)
-	}
-	if len(f.prompts) != 0 {
-		t.Error("nothing may be relayed without a recorded session id")
+	if got.State == store.StateBroken {
+		t.Errorf("state = %s, want un-broken: pane and kind match", got.State)
 	}
 }
 
@@ -770,5 +772,183 @@ func TestReconcileDiffCapture(t *testing.T) {
 	}
 	if diffCount2 != 1 {
 		t.Fatalf("expected still 1 KindDiff entry after tick 2, got %d", diffCount2)
+	}
+}
+
+func TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StateBroken
+
+	live := builderAgent(herdr.StatusWorking)
+	live.Session = herdr.Session{Value: "late-session"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), live})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State == store.StateBroken {
+		t.Fatal("a located builder must un-break its binding")
+	}
+	if out.Builder.SessionID != "late-session" {
+		t.Fatalf("SessionID = %q, want it backfilled to late-session", out.Builder.SessionID)
+	}
+}
+
+func TestReconcileLeavesBrokenWhenPaneHoldsADifferentKind(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StateBroken
+
+	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Kind = "claude" // same pane, different agent
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken", out.State)
+	}
+	if out.Builder.SessionID != "" {
+		t.Fatal("a rejected agent must not write identity onto the endpoint")
+	}
+}
+
+func TestReconcileBreaksWhenRecordedSessionIsGoneAndPaneReused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Session = herdr.Session{Value: "stranger"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken: the recorded session is gone", out.State)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatal("relay must not prompt an agent that is not this binding's builder")
+	}
+}
+
+func TestReconcileRefreshesPaneIDAfterAPaneMove(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	moved := builderAgent(herdr.StatusWorking)
+	moved.PaneID = "w9:p1"
+	moved.Session = herdr.Session{Value: "mine"}
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), moved})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.Builder.PaneID != "w9:p1" {
+		t.Fatalf("PaneID = %q, want it refreshed to w9:p1", out.Builder.PaneID)
+	}
+	if out.Builder.SessionID != "mine" {
+		t.Fatal("a recorded session must never be overwritten by a refresh")
+	}
+}
+
+func TestReconcileDoesNotRefreshWhenBuilderIsUnlocatable(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	before := b.Builder
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State != store.StateBroken {
+		t.Fatalf("state = %q, want broken", out.State)
+	}
+	if out.Builder != before {
+		t.Fatalf("endpoint = %+v, want it untouched at %+v", out.Builder, before)
+	}
+}
+
+func TestReconcileRefreshesPlannerEndpoint(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+
+	moved := plannerAgent()
+	moved.PaneID = "w9:p2" // same session, new pane
+
+	out, err := reconcile(t, rt, b, []herdr.Agent{moved, builderAgent(herdr.StatusWorking)})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.Planner.PaneID != "w9:p2" {
+		t.Fatalf("planner pane = %q, want w9:p2", out.Planner.PaneID)
+	}
+}
+
+func TestReconcileAddressesThePaneNotTheForgottenAgentName(t *testing.T) {
+	f := &fakeHerdr{readOut: "1. yes\n2. no"}
+	rt, b := sentBindingWithBuilderSession(t, f, "mine")
+
+	// herdr forgot the spawned agent's name across a restart, and the pane
+	// moved. Only the live pane id is addressable.
+	moved := builderAgent(herdr.StatusBlocked)
+	moved.PaneID = "w9:p1"
+	moved.Session = herdr.Session{Value: "mine"}
+
+	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), moved}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.reads) == 0 {
+		t.Fatal("expected the blocking dialog to be read")
+	}
+	for _, r := range f.reads {
+		if r.Target != "w9:p1" {
+			t.Fatalf("read target = %q, want the located pane w9:p1", r.Target)
+		}
+	}
+}
+
+// TestBindRacesSessionLookupAndReconcileRecovers reproduces #20 end to end: the
+// builder is spawned, the post-spawn session lookup loses its race with the
+// agent's own registration, herdr flickers and the binding is flagged BROKEN --
+// and relay recovers it by itself rather than stranding a working builder.
+func TestBindRacesSessionLookupAndReconcileRecovers(t *testing.T) {
+	f := &fakeHerdr{
+		agents:  []herdr.Agent{plannerAgent()},
+		newPane: "w2:p4",
+		listErr: errors.New("herdr restarting"), // every call after Bind's own
+	}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Builder.SessionID != "" {
+		t.Fatal("precondition: this test needs the post-spawn lookup to have lost its race")
+	}
+
+	// The flicker passes; the builder was alive throughout and now registers.
+	f.listErr = nil
+	live := builderAgent(herdr.StatusIdle)
+	live.Session = herdr.Session{Value: "registered-late"}
+	f.agents = []herdr.Agent{plannerAgent(), live}
+
+	b.State = store.StateBroken // what the flicker left behind
+
+	out, err := reconcile(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State == store.StateBroken {
+		t.Fatal("#20: a live builder's binding must not stay broken")
+	}
+	if out.Builder.SessionID != "registered-late" {
+		t.Fatalf("SessionID = %q, want the session backfilled once the agent registered",
+			out.Builder.SessionID)
 	}
 }

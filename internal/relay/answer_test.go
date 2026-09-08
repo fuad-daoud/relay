@@ -2,8 +2,10 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -16,7 +18,7 @@ func TestAnswerSendsKeysNotAPrompt(t *testing.T) {
 		t.Fatalf("Answer: %v", err)
 	}
 
-	if len(f.keys) != 1 || f.keys[0].Keys != "enter" || f.keys[0].Target != "webshop-builder" {
+	if len(f.keys) != 1 || f.keys[0].Keys != "enter" || f.keys[0].Target != "w2:p4" {
 		t.Fatalf("keys = %+v", f.keys)
 	}
 	if len(f.prompts) != 0 {
@@ -63,5 +65,34 @@ func TestAnswerRequiresExactlyOneInput(t *testing.T) {
 	}
 	if err := Answer(context.Background(), rt, b.Name, AnswerInput{Keys: "enter", Text: "yes"}); err == nil {
 		t.Error("two inputs at once must be rejected")
+	}
+}
+
+func TestAnswerAddressesTheLocatedPane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	if err := Answer(context.Background(), rt, "webshop", AnswerInput{Choice: 2}); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if len(f.keys) != 1 {
+		t.Fatalf("key calls = %d, want 1", len(f.keys))
+	}
+	if f.keys[0].Target != "w2:p4" {
+		t.Fatalf("target = %q, want the located pane w2:p4", f.keys[0].Target)
+	}
+}
+
+func TestAnswerFailsWhenBuilderIsGone(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
+
+	err := Answer(context.Background(), rt, "webshop", AnswerInput{Choice: 2})
+	if !errors.Is(err, ErrBuilderGone) {
+		t.Fatalf("err = %v, want ErrBuilderGone", err)
+	}
+	if len(f.keys) != 0 {
+		t.Fatal("no keys may be sent when the builder is gone")
 	}
 }

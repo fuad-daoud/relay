@@ -24,6 +24,14 @@ func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
+
+	// The spawned agent registers with herdr moments after StartAgent returns,
+	// which Bind's own post-spawn lookup is too early to see. Appending it here
+	// -- after Bind -- keeps the empty SessionID that lookup produces, which is
+	// the #20 condition several tests rely on, while letting Send and Reconcile
+	// locate the builder the way they would against a real herdr.
+	f.agents = append(f.agents, builderAgent(herdr.StatusWorking))
+
 	return rt, b
 }
 
@@ -67,8 +75,8 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	if !strings.Contains(text, rt.Store.ReportPath("webshop", 1)) {
 		t.Error("prompt must name the report path")
 	}
-	if f.prompts[0].Target != "webshop-builder" {
-		t.Errorf("target = %q, want the herdr agent name", f.prompts[0].Target)
+	if f.prompts[0].Target != "w2:p4" {
+		t.Errorf("target = %q, want pane id w2:p4", f.prompts[0].Target)
 	}
 }
 
@@ -322,5 +330,65 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	log, err := rt.Store.ReadLog("webshop")
 	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPlan {
 		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
+	}
+}
+
+func TestSendAddressesTheLocatedPane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts = %d, want 1", len(f.prompts))
+	}
+	if f.prompts[0].Target != "w2:p4" {
+		t.Fatalf("target = %q, want the located pane w2:p4", f.prompts[0].Target)
+	}
+}
+
+func TestSendFailsAndStagesNothingWhenBuilderIsGone(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	if !errors.Is(err, ErrBuilderGone) {
+		t.Fatalf("err = %v, want ErrBuilderGone", err)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatal("nothing may be prompted when the builder is gone")
+	}
+	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+		t.Fatal("no plan may be staged when the builder is gone")
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 1 {
+		t.Fatalf("round = %d, want 1: a failed send must not advance the round", b.Round)
+	}
+}
+
+// A binding that appears only after the pre-lock load must never be addressed
+// with the zero agent's empty pane id. See round 3, Task 1.
+func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	// Stand in for the interleaving: no builder could be located pre-lock,
+	// but the binding is present and healthy by the time the lock is held.
+	f.agents = []herdr.Agent{plannerAgent()}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	if !errors.Is(err, ErrBuilderGone) {
+		t.Fatalf("err = %v, want ErrBuilderGone", err)
+	}
+	for _, p := range f.prompts {
+		if p.Target == "" {
+			t.Fatal("relay addressed the empty target instead of refusing")
+		}
 	}
 }

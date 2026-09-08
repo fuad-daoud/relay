@@ -86,7 +86,8 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return Delivery{Held: true, Reason: "planner pane is focused"}, nil
 	}
 
-	if err := promptWithRetry(ctx, rt, Target(b.Planner), pending.Payload); err != nil {
+	// Address the agent FindAgent just located; see internal/ui/fetch.go:170.
+	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload); err != nil {
 		return Delivery{}, fmt.Errorf("prompt planner: %w", err)
 	}
 	if err := tx.ConfirmLatest(b.Name); err != nil {

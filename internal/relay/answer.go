@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -52,6 +53,21 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 		return err
 	}
 
+	var builder herdr.Agent
+	var locatedBuilder bool
+	if hint, err := rt.Store.Load(name); err == nil {
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return fmt.Errorf("list agents: %w", err)
+		}
+		var ok bool
+		builder, ok = FindAgent(agents, hint.Builder)
+		if !ok {
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
+		}
+		locatedBuilder = true
+	}
+
 	// Load-modify-save, so it runs inside the state lock: the daemon rewrites
 	// this binding on every tick and would otherwise clobber the state change
 	// that records the builder is no longer waiting on a human.
@@ -61,7 +77,17 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 			return err
 		}
 
-		if err := rt.Herdr.SendKeys(ctx, Target(b.Builder), keys); err != nil {
+		// The pre-lock load and this locked load are two separate acquisitions
+		// of the state lock, so a binding can appear between them. An unlocated
+		// builder must never fall through to an empty target.
+		if !locatedBuilder {
+			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+		}
+		if !SameAgent(builder, b.Builder) {
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
+		}
+
+		if err := rt.Herdr.SendKeys(ctx, builder.PaneID, keys); err != nil {
 			return fmt.Errorf("send keys to builder: %w", err)
 		}
 

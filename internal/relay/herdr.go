@@ -50,23 +50,39 @@ type Runtime struct {
 	Hooks   hooks.Dispatcher
 }
 
-// FindAgent locates a binding endpoint among the live agents. Session id wins
-// over pane id, because a pane moved between workspaces is issued a new pane
-// id while its session survives.
-func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
+// SameAgent reports whether a live agent is the one an endpoint records.
+//
+// When an endpoint has a recorded SessionID, identity is exact: a live agent
+// must carry that exact session. If no live agent carries it, the agent is
+// considered gone, and relay does not fall back to matching pane id.
+//
+// When no session is recorded, a pane match is the best available evidence for
+// a harness with no herdr session integration. If Kind is recorded, both pane
+// and kind must match. If neither session nor kind is recorded (e.g. from
+// older bindings), matching falls back to pane id alone.
+//
+// Accepted risk: a session-less endpoint whose pane is recycled to an agent of
+// the same kind is adopted as the original builder, and relay will relay into
+// it. This exposure is transient for claude (bounded to the window before the
+// next tick backfills the session), but permanent for agy (e.g. abuilder),
+// which reports no session to herdr at all so pane plus kind is that endpoint's
+// permanent identity.
+func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
 	if ep.SessionID != "" {
-		for _, a := range agents {
-			if a.Session.Value == ep.SessionID {
-				return a, true
-			}
-		}
+		return a.Session.Value == ep.SessionID
 	}
+	if ep.Kind != "" {
+		return a.PaneID == ep.PaneID && a.Kind == ep.Kind
+	}
+	return a.PaneID == ep.PaneID
+}
 
+// FindAgent locates a binding endpoint among the live agents using SameAgent.
+func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
 	for _, a := range agents {
-		if a.PaneID == ep.PaneID {
+		if SameAgent(a, ep) {
 			return a, true
 		}
 	}
-
 	return herdr.Agent{}, false
 }
