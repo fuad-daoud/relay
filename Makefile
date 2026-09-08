@@ -23,6 +23,9 @@ check:
 		exit 1; \
 	fi; \
 	rm -f go.mod.check go.sum.check
+	@command -v shellcheck >/dev/null 2>&1 && shellcheck scripts/*.sh || \
+		echo "shellcheck not installed; skipping shell lint"
+	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t"; done
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay
