@@ -22,6 +22,7 @@ fi
 if repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -d "$repo_root/cmd/relay" ]; then
 	:
 elif [ -d ../cmd/relay ]; then
+	# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 	repo_root=$(CDPATH= cd -- .. && pwd)
 else
 	echo "plugin-build: cannot find cmd/relay from $plugin_root" >&2

@@ -3,7 +3,9 @@
 # is reached by a relative path, and the binary must land in cwd.
 set -eu
 
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 root=$(CDPATH= cd -- "$here/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
