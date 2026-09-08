@@ -18,6 +18,7 @@ type Model struct {
 
 	report relay.Report // newest GOOD snapshot; survives a failed refresh
 	err    error        // last refresh error, shown in the footer
+	notice string       // sticky note (e.g. "webshop is gone"), cleared on keypress
 
 	// Two guards, not one. statusInFlight and tabInFlight are separate
 	// because a terminal read is a 30s-timeout herdr call: a single shared
@@ -36,10 +37,11 @@ type Model struct {
 
 func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
 	return Model{
-		rt:     rt,
-		ctx:    ctx,
-		opts:   opts,
-		screen: screenList,
+		rt:             rt,
+		ctx:            ctx,
+		opts:           opts,
+		screen:         screenList,
+		statusInFlight: true,
 	}
 }
 
@@ -68,12 +70,16 @@ func (m Model) visibleTabFetch() tea.Cmd {
 	if m.screen != screenDetail {
 		return nil
 	}
+	lines := m.detail.vp.Height
+	if lines < 1 {
+		lines = 1
+	}
 	t := m.detail.active
 	if t == tabTerminal {
-		return fetchFor(m.ctx, m.rt, tabTerminal, m.detail.name, m.detail.round, m.detail.vp.Height)
+		return fetchFor(m.ctx, m.rt, tabTerminal, m.detail.name, m.detail.round, lines)
 	}
 	if !m.detail.cache[t].loaded {
-		return fetchFor(m.ctx, m.rt, t, m.detail.name, m.detail.round, m.detail.vp.Height)
+		return fetchFor(m.ctx, m.rt, t, m.detail.name, m.detail.round, lines)
 	}
 	return nil
 }
@@ -85,7 +91,7 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 	r := row(m.report, m.detail.name)
 	if r == nil {
 		m.screen = screenList
-		m.err = fmt.Errorf("%s is gone", m.detail.name)
+		m.notice = fmt.Sprintf("%s is gone", m.detail.name)
 		return m, nil
 	}
 	if r.Last == nil {
@@ -99,17 +105,22 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 	m.detail.round = r.Round - 1
 	for _, t := range []tab{tabReport, tabDiff, tabLog} {
 		m.detail.cache[t] = tabContent{} // loaded=false
+		m.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
-	cmd := m.visibleTabFetch()
-	if cmd != nil {
-		m.tabInFlight = true
+	if !m.tabInFlight {
+		cmd := m.visibleTabFetch()
+		if cmd != nil {
+			m.tabInFlight = true
+			return m, cmd
+		}
 	}
-	return m, cmd
+	return m, nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		m.notice = ""
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -166,13 +177,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.name != m.detail.name {
 			return m, nil
 		}
+		if msg.t != tabReport && msg.round != m.detail.round {
+			return m, nil
+		}
 		if msg.t != m.detail.active {
 			m.detail.cache[msg.t] = msg.content
 			return m, nil
 		}
 		m.detail.cache[msg.t] = msg.content
+		currY := m.detail.vp.YOffset
 		m.detail.vp.SetContent(bodyOf(msg.content))
-		m.detail.vp.YOffset = m.detail.scroll[msg.t]
+		m.detail.vp.SetYOffset(currY)
 		return m, nil
 	}
 
@@ -200,6 +215,9 @@ func (m Model) footer() string {
 		keys = "enter open · q quit"
 	case screenDetail:
 		keys = "esc back · tab next pane · q quit"
+	}
+	if m.notice != "" {
+		keys += "  ! " + m.notice
 	}
 	if m.err != nil {
 		keys += "  ! refresh failed: " + m.err.Error() + " (retrying)"

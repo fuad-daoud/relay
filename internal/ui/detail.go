@@ -37,13 +37,14 @@ func bodyOf(c tabContent) string {
 	if !c.loaded {
 		return "loading…"
 	}
+	st := styleFor(c)
 	if c.err != nil {
-		return errorStyle.Render("error: " + c.err.Error())
+		return st.Render("error: " + c.err.Error())
 	}
 	if c.empty != "" {
-		return emptyStyle.Render(c.empty) // prose, NOT styled as an error
+		return st.Render(c.empty) // prose, NOT styled as an error
 	}
-	return normalStyle.Render(c.body)
+	return st.Render(c.body)
 }
 
 func (m Model) detailView() string {
@@ -59,7 +60,7 @@ func (m Model) detailView() string {
 	if display != "" {
 		title += " · " + display
 	}
-	b.WriteString(renderBorder(title, m.width))
+	b.WriteString(headerStyle.Render(renderBorder(title, m.width)))
 	b.WriteByte('\n')
 
 	for i, t := range tabTitles {
@@ -77,6 +78,6 @@ func (m Model) detailView() string {
 	b.WriteString(m.detail.vp.View())
 	b.WriteByte('\n')
 
-	b.WriteString(renderBorder(m.footer(), m.width))
+	b.WriteString(footerStyle.Render(renderBorder(m.footer(), m.width)))
 	return b.String()
 }

@@ -125,8 +125,9 @@ inside every pane it manages, so it has to be run from inside one.
 remains the tool for shell pipes and scripts; `relay ui` is the interactive
 sibling that lets you inspect substance instead of just state.
 
-It is strictly **read-only**: it never mutates state, acquires write locks,
-types into panes, or modifies round logs.
+It is strictly **read-only**: it never mutates state, never types into panes,
+and never appends to round logs. It holds the state lock only for the duration
+of a read, exactly as `relay status` does.
 
 Opening a binding displays four full-width tabs:
 - **report** — the newest planner-bound report or question payload.

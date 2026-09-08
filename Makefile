@@ -16,6 +16,13 @@ check:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 	go vet ./...
 	go test -count=1 ./...
+	@BEFORE=$$(git hash-object go.mod go.sum 2>/dev/null); \
+	go mod tidy; \
+	AFTER=$$(git hash-object go.mod go.sum 2>/dev/null); \
+	if [ "$$BEFORE" != "$$AFTER" ]; then \
+		echo "go.mod or go.sum is not tidy; run 'go mod tidy'"; \
+		exit 1; \
+	fi
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay

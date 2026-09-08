@@ -127,6 +127,9 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 
 // fetchTerminal resolves the builder agent and reads its recent output.
 func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int) tea.Cmd {
+	if lines < 1 {
+		lines = 1
+	}
 	return func() tea.Msg {
 		b, err := rt.Store.Load(name)
 		if err != nil {
@@ -152,7 +155,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 			}
 		}
 
-		agent, ok := relay.FindAgent(agents, b.Builder)
+		_, ok := relay.FindAgent(agents, b.Builder)
 		if !ok {
 			return tabMsg{
 				name: name,
@@ -163,7 +166,6 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				},
 			}
 		}
-		_ = agent
 
 		out, err := rt.Herdr.ReadAgent(ctx, relay.Target(b.Builder), lines)
 		if err != nil {

@@ -242,3 +242,154 @@ func TestRowHelper(t *testing.T) {
 		t.Errorf("expected nil for 'c', got %+v", rc)
 	}
 }
+
+func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 4
+	m.detail.active = tabDiff
+
+	staleMsg := tabMsg{
+		name:  "webshop",
+		round: 3, // stale round
+		t:     tabDiff,
+		content: tabContent{
+			loaded: true,
+			body:   "old diff content",
+		},
+	}
+
+	res, _ := m.Update(staleMsg)
+	updated := res.(Model)
+
+	if updated.detail.cache[tabDiff].loaded {
+		t.Error("stale diff tabMsg must be discarded and not update cache")
+	}
+	if updated.detail.cache[tabDiff].body != "" {
+		t.Errorf("expected empty cache body, got %q", updated.detail.cache[tabDiff].body)
+	}
+}
+
+func TestLaggingRoundAcceptedForReport(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 4
+	m.detail.active = tabReport
+
+	laggingMsg := tabMsg{
+		name:  "webshop",
+		round: 3, // legitimately lagging round
+		t:     tabReport,
+		content: tabContent{
+			loaded: true,
+			body:   "lagging report content",
+		},
+	}
+
+	res, _ := m.Update(laggingMsg)
+	updated := res.(Model)
+
+	if !updated.detail.cache[tabReport].loaded {
+		t.Error("lagging report tabMsg must be accepted into cache")
+	}
+	if updated.detail.cache[tabReport].body != "lagging report content" {
+		t.Errorf("expected lagging report content, got %q", updated.detail.cache[tabReport].body)
+	}
+}
+
+func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	name := "webshop"
+	ts := time.Now()
+
+	m.screen = screenDetail
+	m.detail.name = name
+	m.detail.active = tabReport
+	m.detail.lastLogTS = ts
+	m.tabInFlight = true
+
+	rep := relay.Report{
+		Bindings: []relay.BindingStatus{
+			{
+				Name:  name,
+				Round: 3,
+				Last: &relay.LastEvent{
+					TS:    ts.Add(5 * time.Second),
+					Round: 3,
+				},
+			},
+		},
+	}
+
+	res, cmd := m.Update(statusMsg{report: rep})
+	updated := res.(Model)
+
+	if cmd != nil {
+		t.Error("maybeInvalidate must issue no fetch while tabInFlight is set")
+	}
+	if !updated.tabInFlight {
+		t.Error("tabInFlight must remain true")
+	}
+}
+
+func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.statusInFlight = false
+	rep := relay.Report{
+		Bindings: []relay.BindingStatus{
+			{Name: name, Round: 2, Display: "ACTIVE"},
+		},
+	}
+	res, _ := m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	// First enter
+	res1, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd1 == nil {
+		t.Fatal("first enter must return non-nil cmd")
+	}
+
+	// Second enter while tabInFlight is true
+	_, cmd2 := res1.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd2 != nil {
+		t.Fatal("second enter while tabInFlight is set must return nil cmd")
+	}
+}
+
+func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+
+	if !m.statusInFlight {
+		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
+	}
+
+	_, cmd := m.Update(tickMsg(time.Now()))
+	batch := extractBatch(cmd)
+	if hasStatusMsg(batch) {
+		t.Fatal("tickMsg arriving before first statusMsg must not issue second status fetch")
+	}
+}

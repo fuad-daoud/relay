@@ -27,8 +27,10 @@ const defaultInterval = 2 * time.Second
 // Preconditions:  stdout is a character device; rt.Herdr and rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
 // Errors:         startup failures only. Refresh failures never escape.
+var stdoutStat = os.Stdout.Stat
+
 func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
-	info, err := os.Stdout.Stat()
+	info, err := stdoutStat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return errors.New("relay ui needs a terminal; use `relay status` or `relay watch` when piping")
 	}
@@ -44,5 +46,8 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 
 	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err = p.Run()
+	if ctx.Err() != nil && (errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)) {
+		return nil
+	}
 	return err
 }

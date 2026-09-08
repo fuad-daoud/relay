@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -228,7 +229,27 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	if m.screen != screenList {
 		t.Fatalf("expected screenList when binding vanishes, got %v", m.screen)
 	}
-	if m.err == nil || !strings.Contains(m.err.Error(), "webshop is gone") {
-		t.Fatalf("expected 'webshop is gone' error note, got %v", m.err)
+	if !strings.Contains(m.notice, "webshop is gone") {
+		t.Fatalf("expected 'webshop is gone' notice, got %q", m.notice)
+	}
+	if !strings.Contains(m.footer(), "webshop is gone") {
+		t.Fatalf("expected footer to contain 'webshop is gone', got %q", m.footer())
+	}
+
+	// Second good statusMsg must NOT clear the notice
+	res, _ = m.Update(statusMsg{report: emptyRep})
+	m = res.(Model)
+	if !strings.Contains(m.notice, "webshop is gone") {
+		t.Fatalf("notice must survive subsequent statusMsg, got %q", m.notice)
+	}
+	if !strings.Contains(m.footer(), "webshop is gone") {
+		t.Fatalf("footer must still show notice after subsequent statusMsg, got %q", m.footer())
+	}
+
+	// Keypress clears the notice
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = res.(Model)
+	if m.notice != "" {
+		t.Fatalf("notice must be cleared on keypress, got %q", m.notice)
 	}
 }

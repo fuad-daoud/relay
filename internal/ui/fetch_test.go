@@ -2,8 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -240,7 +238,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	now := time.Now().Truncate(time.Second)
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
 	e1 := store.LogEntry{
 		TS:        now,
 		Round:     1,
@@ -265,12 +263,8 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	var want strings.Builder
-	for _, e := range []store.LogEntry{e1, e2} {
-		fmt.Fprintf(&want, "%s  round %-3d %-10s %-9s %s %s\n",
-			e.TS.Local().Format("2006-01-02 15:04:05"),
-			e.Round, e.Direction, e.Kind, e.Path, e.Note)
-	}
+	want := "2026-09-08 12:00:00  round 1   to_builder plan      /path/plan1.md started\n" +
+		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
 	cmd := fetchLog(context.Background(), rt, name)
 	msg := cmd()
@@ -281,8 +275,8 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	if tMsg.content.err != nil {
 		t.Fatalf("unexpected error: %v", tMsg.content.err)
 	}
-	if tMsg.content.body != want.String() {
-		t.Fatalf("log mismatch:\ngot:\n%q\nwant:\n%q", tMsg.content.body, want.String())
+	if tMsg.content.body != want {
+		t.Fatalf("log mismatch:\ngot:\n%q\nwant:\n%q", tMsg.content.body, want)
 	}
 }
 

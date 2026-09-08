@@ -10,8 +10,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/muesli/termenv"
 )
 
 func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
@@ -157,9 +159,11 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 		t.Fatalf("empty content foreground must not match errorStyle foreground")
 	}
 
+	lipgloss.SetColorProfile(termenv.TrueColor)
 	rendered := bodyOf(c)
-	if !strings.Contains(rendered, c.empty) {
-		t.Fatalf("expected rendered body to contain %q, got %q", c.empty, rendered)
+	errRendered := errorStyle.Render(c.empty)
+	if rendered == errRendered {
+		t.Fatalf("empty prose must NOT be styled with errorStyle")
 	}
 }
 
@@ -217,5 +221,161 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	}
 	if m.detail.vp.Height != 60-chromeHeight {
 		t.Fatalf("expected vp.Height %d, got %d", 60-chromeHeight, m.detail.vp.Height)
+	}
+}
+
+func TestPanicOnShrinkingContent(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabDiff
+	m.detail.vp = viewport.New(80, 20)
+
+	// Set content of 200 lines and scroll to offset 120
+	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.detail.vp.SetYOffset(120)
+
+	// New tabMsg delivers 3 lines
+	msg := tabMsg{
+		name:  "webshop",
+		round: 2,
+		t:     tabDiff,
+		content: tabContent{
+			loaded: true,
+			body:   "line 1\nline 2\nline 3",
+		},
+	}
+
+	res, _ := m.Update(msg)
+	m = res.(Model)
+
+	// View() must render without panicking
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabDiff
+	m.detail.vp = viewport.New(80, 20)
+
+	// Scroll deep on diff tab
+	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.detail.vp.SetYOffset(120)
+
+	// Switch away to terminal tab
+	res, _ := m.switchTab(tabTerminal)
+	m = res.(Model)
+
+	// Invalidate diff tab cache (e.g. round bump)
+	m.detail.cache[tabDiff] = tabContent{} // unloaded -> bodyOf returns "loading…"
+
+	// Switch back to diff tab
+	res, _ = m.switchTab(tabDiff)
+	m = res.(Model)
+
+	// View() must render without panicking
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabTerminal
+	m.detail.vp = viewport.New(80, 20)
+
+	// Initial terminal content with 100 lines
+	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
+	m.detail.vp.SetYOffset(42)
+
+	// Active tabMsg refresh with 100 lines
+	msg := tabMsg{
+		name:  "webshop",
+		round: 2,
+		t:     tabTerminal,
+		content: tabContent{
+			loaded: true,
+			body:   strings.Repeat("line\n", 100),
+		},
+	}
+
+	res, _ := m.Update(msg)
+	m = res.(Model)
+
+	if m.detail.vp.YOffset != 42 {
+		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", m.detail.vp.YOffset)
+	}
+}
+
+func TestInvalidationResetsParkedOffset(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Second})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabTerminal
+	m.detail.scroll[tabDiff] = 85
+	m.detail.scroll[tabReport] = 40
+	m.detail.scroll[tabLog] = 15
+	m.detail.scroll[tabTerminal] = 10
+
+	ts := time.Now()
+	m.detail.lastLogTS = ts
+
+	rep := relay.Report{
+		Bindings: []relay.BindingStatus{
+			{
+				Name:  "webshop",
+				Round: 3,
+				Last: &relay.LastEvent{
+					TS:    ts.Add(5 * time.Second),
+					Round: 3,
+				},
+			},
+		},
+	}
+
+	res, _ := m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	if m.detail.scroll[tabDiff] != 0 {
+		t.Errorf("expected tabDiff scroll reset to 0, got %d", m.detail.scroll[tabDiff])
+	}
+	if m.detail.scroll[tabReport] != 0 {
+		t.Errorf("expected tabReport scroll reset to 0, got %d", m.detail.scroll[tabReport])
+	}
+	if m.detail.scroll[tabLog] != 0 {
+		t.Errorf("expected tabLog scroll reset to 0, got %d", m.detail.scroll[tabLog])
+	}
+	if m.detail.scroll[tabTerminal] != 10 {
+		t.Errorf("expected tabTerminal scroll preserved, got %d", m.detail.scroll[tabTerminal])
 	}
 }

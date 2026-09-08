@@ -33,6 +33,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				vpHeight = 0
 			}
 			vp := viewport.New(m.width, vpHeight)
+			vp.SetContent(bodyOf(tabContent{}))
 			m.detail = detailModel{
 				name:   row.Name,
 				round:  row.Round - 1,
@@ -43,8 +44,11 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detail.lastLogTS = row.Last.TS
 			}
 			m.screen = screenDetail
-			m.tabInFlight = true
-			return m, fetchReport(m.ctx, m.rt, row.Name)
+			if !m.tabInFlight {
+				m.tabInFlight = true
+				return m, fetchReport(m.ctx, m.rt, row.Name)
+			}
+			return m, nil
 		}
 
 	case screenDetail:
@@ -85,11 +89,15 @@ func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
 	m.detail.active = next
 	c := m.detail.cache[next]
 	m.detail.vp.SetContent(bodyOf(c))
-	m.detail.vp.YOffset = m.detail.scroll[next] // restore
+	m.detail.vp.SetYOffset(m.detail.scroll[next]) // restore
 	if !c.loaded && !m.tabInFlight {
 		m.tabInFlight = true
+		lines := m.detail.vp.Height
+		if lines < 1 {
+			lines = 1
+		}
 		return m, fetchFor(m.ctx, m.rt, next, m.detail.name,
-			m.detail.round, m.detail.vp.Height)
+			m.detail.round, lines)
 	}
 	return m, nil
 }

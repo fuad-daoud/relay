@@ -7,8 +7,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/muesli/termenv"
 )
 
 func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
@@ -40,9 +42,9 @@ func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 		Pending:       &relay.PendingInfo{Round: 3, Kind: store.KindQuestion},
 	}
 
-	want1 := " relay-fork     wM  r3  ACTIVE    builder agy idle    pending report r2"
-	want2 := " relay-quiesce  wM  r2  DONE      builder agy gone    pending --"
-	want3 := ">relay-rebind   wM  r3  NEEDS YOU builder agy blocked pending question"
+	want1 := " relay-fork     wM  r3  " + styleDisplay("ACTIVE") + " builder agy idle    pending report r2"
+	want2 := " relay-quiesce  wM  r2  " + styleDisplay("DONE") + " builder agy gone    pending --"
+	want3 := cursorStyle.Render(">") + "relay-rebind   wM  r3  " + styleDisplay("NEEDS YOU") + " builder agy blocked pending question"
 
 	r1 := renderListRow(b1, false)
 	r2 := renderListRow(b2, false)
@@ -178,5 +180,64 @@ func TestQuitFromList(t *testing.T) {
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		// tea.Quit() returns nil msg internally or signals quit
 		// In bubbletea tea.Quit() is func() Msg { return quitMsg{} }
+	}
+}
+
+func TestRenderBorderWidthWithBullet(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+		width int
+	}{
+		{"relay", 60},
+		{"enter open · q quit", 60},
+		{"webshop · round 3 · NEEDS YOU", 60},
+		{"webshop · round 3 · NEEDS YOU", 80},
+	} {
+		border := renderBorder(tc.title, tc.width)
+		gotW := lipgloss.Width(border)
+		if gotW != tc.width {
+			t.Errorf("renderBorder(%q, %d) width = %d, want %d", tc.title, tc.width, gotW, tc.width)
+		}
+		if !strings.HasPrefix(border, "+- ") || !strings.HasSuffix(border, "+") {
+			t.Errorf("renderBorder(%q, %d) missing frame delimiters: %q", tc.title, tc.width, border)
+		}
+	}
+}
+
+func TestRenderBorderOverlongTruncatesAndCloses(t *testing.T) {
+	longTitle := "this is an extremely long title that exceeds the total border width by a lot · extra info"
+	width := 40
+
+	border := renderBorder(longTitle, width)
+	gotW := lipgloss.Width(border)
+	if gotW != width {
+		t.Fatalf("overlong border width = %d, want %d", gotW, width)
+	}
+	if !strings.HasPrefix(border, "+- ") || !strings.HasSuffix(border, "+") {
+		t.Fatalf("overlong border must remain closed with '+': %q", border)
+	}
+}
+
+func TestStateStylesDistinguishable(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	sActive := styleDisplay("ACTIVE")
+	sDone := styleDisplay("DONE")
+	sNeedsYou := styleDisplay("NEEDS YOU")
+
+	if sActive == sDone || sDone == sNeedsYou || sActive == sNeedsYou {
+		t.Fatalf("state display styles must be distinguishable:\nACTIVE: %q\nDONE: %q\nNEEDS YOU: %q",
+			sActive, sDone, sNeedsYou)
+	}
+
+	b := relay.BindingStatus{
+		Name:          "webshop",
+		Round:         1,
+		Display:       "ACTIVE",
+		BuilderAlias:  "agy",
+		BuilderStatus: "idle",
+	}
+	rowSelected := renderListRow(b, true)
+	if !strings.Contains(rowSelected, cursorStyle.Render(">")) {
+		t.Fatalf("selected row cursor must be styled with cursorStyle, got %q", rowSelected)
 	}
 }

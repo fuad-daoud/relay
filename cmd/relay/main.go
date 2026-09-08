@@ -676,7 +676,7 @@ func cmdWatch(args []string) error {
 
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
-	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
+	interval := fs.Duration("interval", 0, "refresh interval")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

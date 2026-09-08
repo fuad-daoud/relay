@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -45,16 +46,47 @@ func renderBorder(title string, width int) string {
 		width = 80
 	}
 	prefix := "+- " + title + " "
-	if len(prefix) >= width {
-		return prefix
+	prefixWidth := lipgloss.Width(prefix)
+	if prefixWidth >= width {
+		if width <= 5 {
+			return strings.Repeat("-", width)
+		}
+		maxTitleWidth := width - 5
+		var tr strings.Builder
+		curW := 0
+		for _, r := range title {
+			rw := lipgloss.Width(string(r))
+			if curW+rw > maxTitleWidth {
+				break
+			}
+			tr.WriteRune(r)
+			curW += rw
+		}
+		rem := width - 5 - curW
+		return "+- " + tr.String() + " " + strings.Repeat("-", rem) + "+"
 	}
-	return prefix + strings.Repeat("-", width-len(prefix)-1) + "+"
+	return prefix + strings.Repeat("-", width-prefixWidth-1) + "+"
+}
+
+func styleDisplay(display string) string {
+	switch display {
+	case "NEEDS YOU":
+		return stateNeedsYouStyle.Render(fmt.Sprintf("%-9s", display))
+	case "DONE":
+		return stateDoneStyle.Render(fmt.Sprintf("%-9s", display))
+	case "ACTIVE":
+		return stateActiveStyle.Render(fmt.Sprintf("%-9s", display))
+	default:
+		return fmt.Sprintf("%-9s", display)
+	}
 }
 
 func renderListRow(b relay.BindingStatus, selected bool) string {
-	cursorChar := ' '
+	var cursorStr string
 	if selected {
-		cursorChar = '>'
+		cursorStr = cursorStyle.Render(">")
+	} else {
+		cursorStr = " "
 	}
 	pending := "--"
 	if b.Pending != nil {
@@ -64,13 +96,14 @@ func renderListRow(b relay.BindingStatus, selected bool) string {
 			pending = string(b.Pending.Kind)
 		}
 	}
-	return strings.TrimRight(fmt.Sprintf("%c%-14s %-3s r%-2d %-9s builder %-3s %-7s pending %s",
-		cursorChar, b.Name, b.Workspace, b.Round, b.Display, b.BuilderAlias, b.BuilderStatus, pending), " ")
+	disp := styleDisplay(b.Display)
+	return strings.TrimRight(fmt.Sprintf("%s%-14s %-3s r%-2d %s builder %-3s %-7s pending %s",
+		cursorStr, b.Name, b.Workspace, b.Round, disp, b.BuilderAlias, b.BuilderStatus, pending), " ")
 }
 
 func (m Model) listView() string {
 	var b strings.Builder
-	b.WriteString(renderBorder("relay", m.width))
+	b.WriteString(headerStyle.Render(renderBorder("relay", m.width)))
 	b.WriteByte('\n')
 
 	if len(m.report.Bindings) == 0 {
@@ -83,6 +116,6 @@ func (m Model) listView() string {
 		}
 	}
 
-	b.WriteString(renderBorder(m.footer(), m.width))
+	b.WriteString(footerStyle.Render(renderBorder(m.footer(), m.width)))
 	return b.String()
 }
