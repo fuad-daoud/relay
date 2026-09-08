@@ -136,21 +136,23 @@ agent among live herdr agents, it refreshes the endpoint's `pane_id` (so a sessi
 identified endpoint survives a pane move) and backfills an empty `session_id` if the
 agent reports one.
 
-Harnesses form two distinct populations. `claude` panes report a session to herdr, so a
-missing session is a brief startup race resolved by the next tick's backfill. `agy` panes
-report no session to herdr at all; for `abuilder` bindings, pane plus kind is therefore
-the permanent identity and the backfill never fires.
+Both harnesses report a session to herdr, but at different times. Claude's session is
+available almost immediately after spawn, making a missing session a brief startup race
+resolved by the next tick's backfill. Agy reports a session only once the agent has begun
+a conversation (`source: herdr:antigravity_cli`), leaving its session absent when freshly
+spawned and idle. Until the session appears, identity is pane plus kind; once it appears,
+the backfill records it and identity becomes exact.
 
 Accepted risk: a session-less endpoint whose pane exits and is reissued to a new agent
-of the same kind is adopted as the original builder. For claude this risk window is
-transient (closing on the first tick); for agy it is permanent.
+of the same kind is adopted as the original builder. This exposure lasts until a session
+is recorded — brief for claude, and for agy lasting until the agent takes its first turn.
 
-A consequence of the agy population is that moving an agy builder's pane between
-workspaces breaks its binding permanently. Because herdr issues a new pane ID on a
-move, `FindAgent` cannot match the agent without a session ID; the binding transitions
-to `broken` and `refreshEndpoint` never runs to learn the new pane ID. Claude builders
-survive a pane move because the recorded session matches across it and refreshes the
-pane ID. Relay cannot fix this limitation without a session reported from the harness.
+Moving a builder's pane between workspaces breaks its binding if the move happens before
+a session has been recorded (bound but not yet started), because herdr issues a new pane
+ID and `FindAgent` cannot match the agent without a session ID; the binding transitions
+to `broken` and `refreshEndpoint` never runs to learn the new pane ID. Once a session has
+been recorded (nearly immediately for claude, and after the first turn for agy), the
+session survives the move and `refreshEndpoint` updates the pane ID normally.
 
 ### Alias table (config, derived from the author's shell functions)
 
