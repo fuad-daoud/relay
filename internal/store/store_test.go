@@ -46,6 +46,28 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Error("Save must stamp CreatedAt and UpdatedAt")
 	}
+	if got.Worktree != "" || got.ForkedFrom != "" || got.ForkedAtRound != 0 {
+		t.Errorf("fork fields must default to zero: %+v", got)
+	}
+}
+
+func TestForkFieldsRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	want := newBinding("forked", "/repo-fork")
+	want.Worktree = "/state/.worktrees/forked"
+	want.ForkedFrom = "webshop"
+	want.ForkedAtRound = 3
+
+	if err := s.Save(want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Load("forked")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Worktree != want.Worktree || got.ForkedFrom != want.ForkedFrom || got.ForkedAtRound != want.ForkedAtRound {
+		t.Errorf("fork fields mismatch: got %+v, want %+v", got, want)
+	}
 }
 
 func TestSaveRefusesDuplicateCWD(t *testing.T) {

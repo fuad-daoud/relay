@@ -150,3 +150,66 @@ func TestDoneStopsRelaying(t *testing.T) {
 		t.Errorf("state = %s, want done", got.State)
 	}
 }
+
+func TestStatusJSONForkProvenance(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	// 1. Ordinary binding: forked_from and forked_at_round must be omitted from JSON
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	humanBefore := RenderStatus(rep)
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	row := decoded["bindings"].([]any)[0].(map[string]any)
+	if _, ok := row["forked_from"]; ok {
+		t.Errorf("ordinary binding must omit forked_from: %+v", row)
+	}
+	if _, ok := row["forked_at_round"]; ok {
+		t.Errorf("ordinary binding must omit forked_at_round: %+v", row)
+	}
+
+	// 2. Forked binding: forked_from and forked_at_round must be present in JSON
+	b.ForkedFrom = "source"
+	b.ForkedAtRound = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	repFork, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status fork: %v", err)
+	}
+	humanAfter := RenderStatus(repFork)
+
+	// RenderStatus human output must be byte-identical
+	if humanBefore != humanAfter {
+		t.Errorf("RenderStatus human output changed for fork:\nbefore:\n%s\nafter:\n%s", humanBefore, humanAfter)
+	}
+
+	rawFork, err := json.Marshal(repFork)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decodedFork map[string]any
+	if err := json.Unmarshal(rawFork, &decodedFork); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	rowFork := decodedFork["bindings"].([]any)[0].(map[string]any)
+	if got, ok := rowFork["forked_from"].(string); !ok || got != "source" {
+		t.Errorf("forked_from = %v, want 'source'", rowFork["forked_from"])
+	}
+	if got, ok := rowFork["forked_at_round"].(float64); !ok || got != 2 {
+		t.Errorf("forked_at_round = %v, want 2", rowFork["forked_at_round"])
+	}
+}

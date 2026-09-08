@@ -32,6 +32,11 @@ type Herdr interface {
 type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+	HeadCommit(ctx context.Context, dir string) (string, error)
+	BranchExists(ctx context.Context, dir, branch string) (bool, error)
+	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
+	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
+	Dirty(ctx context.Context, dir string) (bool, error)
 }
 
 // Runtime carries relay's dependencies explicitly, so every command and the

@@ -17,11 +17,14 @@ type GCOptions struct {
 
 // GCResult is one binding gc considered.
 type GCResult struct {
-	Name       string `json:"name"`
-	CWD        string `json:"cwd"`
-	Rounds     int    `json:"rounds"`
-	ArchivedTo string `json:"archived_to,omitempty"`
-	Deleted    bool   `json:"deleted"`
+	Name            string `json:"name"`
+	CWD             string `json:"cwd"`
+	Rounds          int    `json:"rounds"`
+	ArchivedTo      string `json:"archived_to,omitempty"`
+	Deleted         bool   `json:"deleted"`
+	WorktreeRemoved string `json:"worktree_removed,omitempty"`
+	WorktreeKept    string `json:"worktree_kept,omitempty"`
+	KeptReason      string `json:"kept_reason,omitempty"`
 }
 
 // GC clears away every binding the planner has marked done. Only StateDone is
@@ -30,7 +33,7 @@ type GCResult struct {
 //
 // The whole sweep runs in one critical section so a binding cannot be marked
 // done, or resumed, between the scan and the removal.
-func GC(_ context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
+func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 	var out []GCResult
 
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -45,6 +48,12 @@ func GC(_ context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 			}
 
 			res := GCResult{Name: b.Name, CWD: b.CWD, Rounds: b.Round}
+
+			outcome := worktreeTeardown(ctx, rt, b, opts.DryRun)
+			res.WorktreeRemoved = outcome.Removed
+			res.WorktreeKept = outcome.Kept
+			res.KeptReason = outcome.Reason
+
 			if opts.DryRun {
 				out = append(out, res)
 				continue

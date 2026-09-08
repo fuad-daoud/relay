@@ -348,6 +348,18 @@ func (s *Store) list() ([]Binding, error) {
 // root but List skips it, since it holds no live bindings.
 func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
 
+// WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
+// is dot-prefixed, which is exactly what keeps list() from walking into it and
+// trying to read a working tree as a binding.
+func (s *Store) WorktreeDir() string {
+	return filepath.Join(s.root, ".worktrees")
+}
+
+// WorktreePath is the worktree directory for one binding name.
+func (s *Store) WorktreePath(name string) string {
+	return filepath.Join(s.WorktreeDir(), name)
+}
+
 // archive packs a binding's directory into a gzipped tarball and removes the
 // directory, so the name frees for a fresh bind while log.jsonl and every
 // round file survive. Relay's state is small text, which gzips well enough

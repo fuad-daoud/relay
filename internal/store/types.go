@@ -47,7 +47,20 @@ type Binding struct {
 	// queued. Empty means no baseline was captured for this round -- a non-git
 	// tree, an unavailable git binary, or a binding created before diff capture
 	// existed -- and the round simply produces no diff.
-	RoundBaselineTree string    `json:"round_baseline_tree,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	RoundBaselineTree string `json:"round_baseline_tree,omitempty"`
+	// Worktree is the git worktree RELAY created for this binding, and is therefore
+	// the only directory relay may ever remove. Empty for every binding relay did
+	// not create a tree for -- including a fork bound to a directory the human
+	// supplied. Never infer ownership from the path.
+	Worktree string `json:"worktree,omitempty"`
+
+	// ForkedFrom is the binding this one was forked from, for provenance only.
+	// Nothing reads it to make a decision: a fork is an ordinary binding the
+	// moment it exists, and the source may be unbound while the fork runs on.
+	ForkedFrom string `json:"forked_from,omitempty"`
+
+	// ForkedAtRound is the source round this binding's history was copied through.
+	ForkedAtRound int       `json:"forked_at_round,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

@@ -184,3 +184,30 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatalf("error %q must name binding and explain no completed round", errNoCompleted.Error())
 	}
 }
+
+func TestForkHelp(t *testing.T) {
+	err := run([]string{"fork", "-h"})
+	if !errors.Is(err, errHelpShown) {
+		t.Fatalf("got %v, want errHelpShown", err)
+	}
+}
+
+func TestForkValidation(t *testing.T) {
+	// Missing source
+	err := run([]string{"fork", "--round", "1", "--new-name", "fork-1"})
+	if err == nil || !strings.Contains(err.Error(), "needs the source binding name") {
+		t.Fatalf("expected error about source binding, got %v", err)
+	}
+
+	// Missing --round
+	err = run([]string{"fork", "src", "--new-name", "fork-1"})
+	if err == nil || !strings.Contains(err.Error(), "--round") {
+		t.Fatalf("expected error about --round, got %v", err)
+	}
+
+	// Missing --new-name
+	err = run([]string{"fork", "src", "--round", "1"})
+	if err == nil || !strings.Contains(err.Error(), "--new-name") {
+		t.Fatalf("expected error about --new-name, got %v", err)
+	}
+}

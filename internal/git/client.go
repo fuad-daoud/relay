@@ -255,3 +255,138 @@ func (c *Client) DiffTrees(ctx context.Context, dir, from, to string) (Diff, err
 		Truncated: false,
 	}, nil
 }
+
+// HeadCommit returns dir's current HEAD commit id.
+// Errors: ErrNotRepo, ErrGitUnavailable, or a wrapped git failure -- including
+// an unborn HEAD in a repository with no commits.
+func (c *Client) HeadCommit(ctx context.Context, dir string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// BranchExists reports whether branch resolves in dir's repository.
+// Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+func (c *Client) BranchExists(ctx context.Context, dir, branch string) (bool, error) {
+	ref := branch
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		ref = "refs/heads/" + ref
+	}
+
+	_, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", ref)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return false, err
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// AddWorktree creates a worktree at path, checking out a NEW branch at commit.
+//
+// Preconditions:  path does not exist; branch does not exist; commit resolves.
+// Postconditions: path is a working tree on branch; dir's own working tree,
+//
+//	index and HEAD are unchanged.
+//
+// Errors: ErrBranchExists, ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+//
+//	On any error nothing is left behind at path.
+func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit string) (retErr error) {
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(dir, absPath)
+	}
+
+	pathExisted := false
+	if _, err := os.Stat(absPath); err == nil {
+		pathExisted = true
+	}
+	defer func() {
+		if retErr != nil && !pathExisted {
+			_ = os.RemoveAll(absPath)
+			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
+		}
+	}()
+
+	branchName := strings.TrimPrefix(branch, "refs/heads/")
+
+	exists, err := c.BranchExists(ctx, dir, branchName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrBranchExists
+	}
+
+	_, err = c.run(ctx, dir, nil, "worktree", "add", "-b", branchName, absPath, commit)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "branch named") ||
+			(strings.Contains(errStr, "branch") && strings.Contains(errStr, "already exists")) ||
+			strings.Contains(errStr, "is already checked out") {
+			return ErrBranchExists
+		}
+		return err
+	}
+
+	return nil
+}
+
+// RemoveWorktree removes a worktree and prunes its administrative entry. It
+// never removes the branch: a branch holds commits, and commits are work.
+//
+// Preconditions:  path is a worktree of dir's repository.
+// Postconditions: path no longer exists; the branch survives.
+// Errors: ErrWorktreeDirty when the tree has uncommitted or untracked changes
+//
+//	and force is false; ErrNotRepo; ErrGitUnavailable; wrapped failure.
+func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force bool) error {
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(dir, absPath)
+	}
+
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, absPath)
+
+	_, err := c.run(ctx, dir, nil, args...)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return err
+		}
+		errStr := strings.ToLower(err.Error())
+		if !force && (strings.Contains(errStr, "contains modified or untracked files") ||
+			strings.Contains(errStr, "uncommitted changes") ||
+			strings.Contains(errStr, "use --force")) {
+			return ErrWorktreeDirty
+		}
+		if !force {
+			if dirty, dirtyErr := c.Dirty(ctx, absPath); dirtyErr == nil && dirty {
+				return ErrWorktreeDirty
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// Dirty reports whether dir has uncommitted or untracked (non-ignored) changes.
+// Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+func (c *Client) Dirty(ctx context.Context, dir string) (bool, error) {
+	out, err := c.run(ctx, dir, nil, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return len(bytes.TrimSpace(out)) > 0, nil
+}

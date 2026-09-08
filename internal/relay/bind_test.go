@@ -399,3 +399,188 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 		}
 	})
 }
+
+func TestUnbindTeardown(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ordinary binding unbinds with all-zero result", func(t *testing.T) {
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		b := store.Binding{
+			Name: "webshop", CWD: "/repo", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "webshop", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.ArchivedTo != "" || res.WorktreeRemoved != "" || res.WorktreeKept != "" || res.KeptReason != "" {
+			t.Errorf("expected all-zero result for ordinary binding unbind, got %+v", res)
+		}
+		if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("binding state still exists after Unbind: %v", err)
+		}
+	})
+
+	t.Run("clean worktree is removed", func(t *testing.T) {
+		fg := &fakeGit{}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		rt.Git = fg
+
+		b := store.Binding{
+			Name: "fork-clean", CWD: "/state/.worktrees/fork-clean",
+			Worktree: "/state/.worktrees/fork-clean", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-clean", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeRemoved != "/state/.worktrees/fork-clean" {
+			t.Errorf("WorktreeRemoved = %q, want /state/.worktrees/fork-clean", res.WorktreeRemoved)
+		}
+		if res.WorktreeKept != "" {
+			t.Errorf("WorktreeKept = %q, want empty", res.WorktreeKept)
+		}
+		if len(fg.removeWorktreeCalls) != 1 {
+			t.Fatalf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
+		}
+		if fg.removeWorktreeCalls[0].Force {
+			t.Error("teardown must pass force: false")
+		}
+		if _, err := rt.Store.Load("fork-clean"); !errors.Is(err, store.ErrNotFound) {
+			t.Error("binding state should be removed")
+		}
+	})
+
+	t.Run("dirty worktree is kept and says why", func(t *testing.T) {
+		fg := &fakeGit{dirtyResult: true}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		rt.Git = fg
+
+		b := store.Binding{
+			Name: "fork-dirty", CWD: "/state/.worktrees/fork-dirty",
+			Worktree: "/state/.worktrees/fork-dirty", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-dirty", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeRemoved != "" {
+			t.Errorf("WorktreeRemoved = %q, want empty", res.WorktreeRemoved)
+		}
+		if res.WorktreeKept != "/state/.worktrees/fork-dirty" {
+			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-dirty", res.WorktreeKept)
+		}
+		if res.KeptReason != "uncommitted changes" {
+			t.Errorf("KeptReason = %q, want 'uncommitted changes'", res.KeptReason)
+		}
+		if len(fg.removeWorktreeCalls) != 0 {
+			t.Error("RemoveWorktree must NOT be called for dirty tree")
+		}
+		if _, err := rt.Store.Load("fork-dirty"); !errors.Is(err, store.ErrNotFound) {
+			t.Error("binding state should still be deleted")
+		}
+	})
+
+	t.Run("dirty check error keeps worktree with honest reason", func(t *testing.T) {
+		fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		rt.Git = fg
+
+		b := store.Binding{
+			Name: "fork-dirty-err", CWD: "/state/.worktrees/fork-dirty-err",
+			Worktree: "/state/.worktrees/fork-dirty-err", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-dirty-err", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeKept != "/state/.worktrees/fork-dirty-err" {
+			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-dirty-err", res.WorktreeKept)
+		}
+		if res.KeptReason != "dirty check failed: git lock busy" {
+			t.Errorf("KeptReason = %q, want 'dirty check failed: git lock busy'", res.KeptReason)
+		}
+		if len(fg.removeWorktreeCalls) != 0 {
+			t.Errorf("RemoveWorktree should not be called on dirty check error, got %d calls", len(fg.removeWorktreeCalls))
+		}
+	})
+
+	t.Run("git unavailable keeps worktree", func(t *testing.T) {
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		rt.Git = nil
+
+		b := store.Binding{
+			Name: "fork-nogit", CWD: "/state/.worktrees/fork-nogit",
+			Worktree: "/state/.worktrees/fork-nogit", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-nogit", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeKept != "/state/.worktrees/fork-nogit" || res.KeptReason != "git unavailable" {
+			t.Errorf("kept mismatch: %+v", res)
+		}
+		if _, err := rt.Store.Load("fork-nogit"); !errors.Is(err, store.ErrNotFound) {
+			t.Error("binding state should still be deleted")
+		}
+	})
+
+	t.Run("git remove failure keeps worktree and completes unbind", func(t *testing.T) {
+		fg := &fakeGit{removeWorktreeErr: errors.New("git lock locked\ndetails")}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+		rt := newRuntime(t, f)
+		rt.Git = fg
+
+		b := store.Binding{
+			Name: "fork-fail", CWD: "/state/.worktrees/fork-fail",
+			Worktree: "/state/.worktrees/fork-fail", State: store.StateActive,
+			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-fail", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeKept != "/state/.worktrees/fork-fail" {
+			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-fail", res.WorktreeKept)
+		}
+		if res.KeptReason != "git lock locked" {
+			t.Errorf("KeptReason = %q, want 'git lock locked' (brief)", res.KeptReason)
+		}
+		if _, err := rt.Store.Load("fork-fail"); !errors.Is(err, store.ErrNotFound) {
+			t.Error("binding state should still be deleted")
+		}
+	})
+}

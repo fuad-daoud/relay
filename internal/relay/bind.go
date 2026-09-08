@@ -255,23 +255,94 @@ func builderPane(ctx context.Context, rt Runtime, opts BindOptions, agentName, p
 	return paneID, nil
 }
 
-// Unbind forgets a binding. It never touches the panes, so the builder's
-// output stays on screen for the human to read.
+// worktreeOutcome is what a teardown attempt decided about one binding's
+// relay-created worktree. All three fields empty means there was nothing to do.
+type worktreeOutcome struct {
+	Removed string // worktree relay removed, or ""
+	Kept    string // worktree relay left in place, or ""
+	Reason  string // why it was kept; "" when nothing was kept
+}
+
+// worktreeTeardown decides what to do with a binding's relay-created worktree
+// and reports what it did. It never returns an error: failing to remove a
+// directory must not fail the unbind or the sweep that asked for it.
+//
+// Rules, in order:
+//  1. b.Worktree == ""        -> nothing to do (zero outcome)
+//  2. rt.Git == nil           -> keep, reason "git unavailable"
+//  3. the dirty check errors    -> keep, reason naming the FAILED CHECK: "dirty check failed: " + brief(err)
+//  4. the tree is dirty         -> keep, reason "uncommitted changes"
+//  5. otherwise                 -> remove; on failure keep with the git error brief(err)
+//
+// The branch is never removed: a branch holds commits, and commits are work.
+func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun bool) worktreeOutcome {
+	if b.Worktree == "" {
+		return worktreeOutcome{}
+	}
+	if rt.Git == nil {
+		return worktreeOutcome{Kept: b.Worktree, Reason: "git unavailable"}
+	}
+
+	dirty, err := rt.Git.Dirty(ctx, b.Worktree)
+	if err != nil {
+		return worktreeOutcome{Kept: b.Worktree, Reason: "dirty check failed: " + brief(err)}
+	}
+	if dirty {
+		return worktreeOutcome{Kept: b.Worktree, Reason: "uncommitted changes"}
+	}
+
+	if dryRun {
+		return worktreeOutcome{Removed: b.Worktree}
+	}
+
+	if err := rt.Git.RemoveWorktree(ctx, b.CWD, b.Worktree, false); err != nil {
+		return worktreeOutcome{Kept: b.Worktree, Reason: brief(err)}
+	}
+	return worktreeOutcome{Removed: b.Worktree}
+}
+
+// UnbindResult is what unbinding actually did. A kept worktree is the important
+// case: it means the fork's tree still holds uncommitted work, so relay left it
+// alone and the human decides.
+type UnbindResult struct {
+	ArchivedTo      string // archive path, or "" when deleted
+	WorktreeRemoved string // worktree relay removed, or ""
+	WorktreeKept    string // worktree relay refused to remove, or ""
+	KeptReason      string // why it was kept; "" when nothing was kept
+}
+
+// Unbind clears away one binding's state, leaving its herdr panes untouched.
 //
 // When archive is set the binding's directory is moved aside rather than
 // deleted, which frees the name for a fresh bind while keeping log.jsonl and
 // every round file — the record of what the planner actually told the builder.
-// It returns the archive path, or "" when the binding was deleted.
-func Unbind(_ context.Context, rt Runtime, name string, archive bool) (string, error) {
-	if _, err := rt.Store.Load(name); err != nil {
-		return "", err
+// If relay created a git worktree for this binding, Unbind removes it provided
+// it is clean, never removing the branch.
+func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindResult, error) {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return UnbindResult{}, err
 	}
+
+	var res UnbindResult
+	outcome := worktreeTeardown(ctx, rt, b, false)
+	res.WorktreeRemoved = outcome.Removed
+	res.WorktreeKept = outcome.Kept
+	res.KeptReason = outcome.Reason
 
 	if archive {
-		return rt.Store.Archive(name)
+		dest, err := rt.Store.Archive(name)
+		if err != nil {
+			return res, err
+		}
+		res.ArchivedTo = dest
+	} else {
+		if err := rt.Store.Delete(name); err != nil {
+			return res, err
+		}
 	}
 
-	return "", rt.Store.Delete(name)
+	return res, nil
 }
 
 // SanitizeName coerces a directory name into herdr's agent-name rule.
