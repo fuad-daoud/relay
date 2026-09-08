@@ -15,6 +15,9 @@ type fakeHerdr struct {
 	readOut   string
 	readErr   error
 	readCalls int
+	// readTargets records what each ReadAgent call was addressed to. A count
+	// alone cannot catch addressing the builder by a name herdr has forgotten.
+	readTargets []string
 }
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
@@ -25,8 +28,9 @@ func (f *fakeHerdr) ListAgents(_ context.Context) ([]herdr.Agent, error) {
 	return f.agents, f.listErr
 }
 
-func (f *fakeHerdr) ReadAgent(_ context.Context, _ string, _ int) (string, error) {
+func (f *fakeHerdr) ReadAgent(_ context.Context, target string, _ int) (string, error) {
 	f.readCalls++
+	f.readTargets = append(f.readTargets, target)
 	return f.readOut, f.readErr
 }
 

@@ -306,3 +306,39 @@ func TestFetchForRouting(t *testing.T) {
 		}
 	}
 }
+
+// A spawned builder records an AgentName that herdr can forget across a server
+// restart. fetchTerminal has already located the live agent, so it must address
+// that agent, not replay a name that may no longer resolve.
+func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{
+		Name: "relay-ui", CWD: t.TempDir(),
+		Planner:      store.Endpoint{PaneID: "wM:p1", Kind: "claude"},
+		Builder:      store.Endpoint{AgentName: "relay-ui-builder", PaneID: "wM:p7", Kind: "agy"},
+		BuilderAlias: "abuilder", Round: 1, State: store.StateActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{{Kind: "agy", PaneID: "wM:p7", Status: "idle"}}
+	fh.readOut = "builder screen"
+	rt := relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
+
+	msg := fetchTerminal(context.Background(), rt, "relay-ui", 40)()
+	tm, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tm.content.err != nil {
+		t.Fatalf("unexpected err: %v", tm.content.err)
+	}
+	if len(fh.readTargets) != 1 {
+		t.Fatalf("expected 1 ReadAgent call, got %d", len(fh.readTargets))
+	}
+	if got := fh.readTargets[0]; got != "wM:p7" {
+		t.Fatalf("ReadAgent addressed %q; want the located agent's pane %q "+
+			"(a recorded agent name herdr has forgotten is unusable)", got, "wM:p7")
+	}
+}

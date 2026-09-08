@@ -155,7 +155,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 			}
 		}
 
-		_, ok := relay.FindAgent(agents, b.Builder)
+		agent, ok := relay.FindAgent(agents, b.Builder)
 		if !ok {
 			return tabMsg{
 				name: name,
@@ -167,7 +167,14 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 			}
 		}
 
-		out, err := rt.Herdr.ReadAgent(ctx, relay.Target(b.Builder), lines)
+		// Address the agent FindAgent just located rather than replaying the
+		// recorded AgentName. herdr can forget a spawned agent's name across a
+		// server restart while its pane stays perfectly addressable, and the
+		// name then resolves to nothing -- which showed up as the terminal tab
+		// rendering `agent target relay-ui-builder not found` against a live
+		// builder. The located agent's pane id is current by construction.
+		// See relay#20 for the same hazard on the Send and Answer paths.
+		out, err := rt.Herdr.ReadAgent(ctx, agent.PaneID, lines)
 		if err != nil {
 			return tabMsg{
 				name: name,
