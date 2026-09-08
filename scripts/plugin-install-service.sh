@@ -50,7 +50,11 @@ Linux)
 	cp "$template" "$unit"
 	chmod 644 "$unit"
 	systemctl --user daemon-reload
-	systemctl --user enable --now relay.service
+	systemctl --user enable relay.service
+	# restart, not `enable --now`: --now starts an inactive unit but leaves a
+	# running one alone, so an upgraded binary keeps being served by the old
+	# daemon and the startup hook reports a stale reconciler forever.
+	systemctl --user restart relay.service
 	notify "installed $bin and started relay.service" "done"
 	;;
 *)
