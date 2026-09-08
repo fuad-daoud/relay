@@ -270,14 +270,11 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	// pane, so a binding can recover from a detection flicker without ever
 	// resuming into a stranger.
 	//
-	// Best effort only. For a claude builder, this lookup races the agent's
-	// registration; missing it costs only one reconcile tick because the
-	// backfill fills it in on the next tick. For an agy builder (e.g. the
-	// abuilder alias), herdr reports no agent_session at all, so there is
-	// nothing to backfill, ever: pane plus kind is that endpoint's permanent
-	// identity. The lookup still pays for the harnesses that do report a
-	// session, but failing the bind here would strand a live pane over a
-	// lookup relay can recover without.
+	// Best effort only. This lookup races the agent's registration for every
+	// harness: claude usually wins it, while agy usually loses it because its
+	// session does not exist until the agent starts work. Either way, failing
+	// the bind here would strand a live pane over a lookup relay can recover
+	// without, and Reconcile backfills the session on a later tick.
 	if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
 		if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
 			ep.SessionID = started.Session.Value

@@ -63,10 +63,9 @@ type Runtime struct {
 //
 // Accepted risk: a session-less endpoint whose pane is recycled to an agent of
 // the same kind is adopted as the original builder, and relay will relay into
-// it. This exposure is transient for claude (bounded to the window before the
-// next tick backfills the session), but permanent for agy (e.g. abuilder),
-// which reports no session to herdr at all so pane plus kind is that endpoint's
-// permanent identity.
+// it. This exposure lasts until a session is recorded: brief for claude (the
+// window before the next tick backfills the session), and for agy lasting until
+// the agent has begun a conversation and herdr reports its session.
 func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
 	if ep.SessionID != "" {
 		return a.Session.Value == ep.SessionID

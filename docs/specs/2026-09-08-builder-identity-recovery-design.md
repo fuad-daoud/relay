@@ -20,13 +20,15 @@ is impossible *because* the session is missing, and manual recovery is refused
 *because* the session is missing. A healthy builder finished a round and relay
 never relayed its report.
 
-**A late correction, from observing a real bind.** The empty `SessionID` is not
-only a race. `herdr agent list` omits `agent_session` entirely for an `agy`
-pane, while every `claude` pane reports one -- observed across nine live agents,
-and matching the `bind.json` in #20. agy ships no herdr session integration, so
-an agy builder's session is not missed by a race, it does not exist. Section 2.1
-draws the consequence: for the `abuilder` alias, the #20 condition is not a rare
-flicker but the guaranteed, permanent state of every binding.
+**A late correction, from observing a real bind and live verification.** The empty
+`SessionID` is a race for both harnesses, but across different timescales.
+`herdr agent list` omits `agent_session` for a freshly spawned `agy` pane, while
+every `claude` pane reports one almost immediately. Live verification showed
+that agy does report a session (`source: herdr:antigravity_cli`), but only once
+the agent has begun a conversation. Thus an agy builder's empty `SessionID` at
+bind time is a wide startup race lasting until its first turn, after which the
+backfill catches it. Section 2.1 draws the consequence: pane-plus-kind identity
+protects the binding during this window.
 
 This spec fixes the flaw underneath all four symptoms: **an endpoint is not a
 record written once, it is a cache of a live agent's identity, and relay never
@@ -64,30 +66,31 @@ Only builders relay **spawned** are exposed. An adopted builder goes through
 session straight off a live agent, so it has neither the racing lookup nor the
 forgettable name.
 
-### 2.1 Two populations, not one
+### 2.1 Two populations: timing, not permanence
 
-Endpoint identity behaves differently depending on whether the harness reports a
-session to herdr, and the difference is permanent rather than transitional:
+*(Correction, 2026-09-08: The original claim that agy reports no session at all
+came from observing freshly spawned, idle agy panes. Live verification of the
+implemented fix showed the session appears once the agent begins work, and
+relay's backfill records it. Both harnesses report sessions; they differ in
+timing.)*
+
+Endpoint identity behaves differently depending on when the harness reports a
+session to herdr:
 
 | Harness | Session reported | Identity rule in practice | `SessionID` empty means |
 |---|---|---|---|
-| `claude` (aliases `cbuilder`, planners) | yes | first arm, exact session match | a genuine race, closed by the next tick's backfill |
-| `agy` (alias `abuilder`) | **no** | second arm, pane + kind, **forever** | normal; there is nothing to backfill |
+| `claude` (aliases `cbuilder`, planners) | immediately | first arm, exact session match | a brief spawn race, closed by the next tick's backfill |
+| `agy` (alias `abuilder`) | on first turn | second arm until first turn, then first arm | expected before first turn; backfilled once active |
 | `opencode` (alias `builder`) | unverified | verify before relying on either | -- |
 
 Two consequences the rest of this spec depends on:
 
-1. The backfill in section 4 is **inert for agy**. It repairs claude endpoints
-   and does nothing for agy ones, because the agent reports no session to
-   record. That is not a defect in the backfill; it is the reason the second arm
-   of `SameAgent` has to carry real weight rather than being a stopgap.
-2. Every claim of the form "session-less endpoints exist only for one tick"
-   holds for claude and is false for agy. Section 10 states the risk in those
-   terms.
-
-Nothing in the design changes if agy later ships a session integration: the
-first arm takes over on its own, per endpoint, the first time a session is
-reported.
+1. The backfill in section 4 is **active for both harnesses**. It repairs claude
+   endpoints on the next tick after spawn, and it repairs agy endpoints once the
+   agent starts work and registers its session.
+2. The second arm of `SameAgent` (pane plus kind) carries the identity during
+   the window before a session is reported. For claude that window lasts
+   milliseconds; for agy it lasts until the agent takes its first turn.
 
 ## 3. The shared predicate
 
@@ -344,19 +347,18 @@ No other error contracts change. `ErrBuilderAlive`, `store.ErrNotFound` and
 A session-less endpoint whose pane is recycled to an agent **of the same kind**
 will be adopted as the original builder, and relay will relay into it.
 
-For a claude builder this is bounded to the window between `bind` and the first
-healthy tick. For an **agy** builder it is permanent, because agy reports no
-session for the backfill to record: pane plus kind is the only identity relay
-will ever have for it. Since `abuilder` is the alias this project actually
-drives its rounds with, treat the permanent case as the normal one.
+This exposure lasts until a session is recorded. For a claude builder this is
+bounded to the window between `bind` and the first healthy tick. For an **agy**
+builder it lasts until the agent takes its first turn, at which point its session
+appears and the backfill closes the window.
 
-Concretely, the exposure for an agy binding is: its builder exits, herdr issues
-that same pane id to another agy agent, and relay sends that agent the next
-round. Both halves are required -- the same pane and the same kind.
+Concretely, the exposure for an agy binding before its first turn is: its builder
+exits before taking a turn, herdr issues that same pane id to another agy agent,
+and relay sends that agent the next round. Both halves are required -- the same
+pane and the same kind.
 
-This is the price of having any recovery path at all for a builder whose harness
-reports no session, and the alternative is the deadlock in #20, which is not
-hypothetical: it is the state every agy binding is in today. relay makes no
+This is the price of having any recovery path during the window before a harness
+reports its session, and the alternative is the deadlock in #20. Relay makes no
 judgements; where it cannot tell two agents apart it uses the best available
 evidence, and the doc comment on `SameAgent` must say exactly how good that
 evidence is.
