@@ -31,6 +31,11 @@ type Model struct {
 	list   listModel
 	detail detailModel
 
+	// statusLoaded is false until the first successful statusMsg. It separates
+	// "no bindings" -- a fact relay.Status returned -- from "not yet asked" and
+	// "could not ask", which are not the same fact and must not read as one.
+	statusLoaded bool
+
 	width, height int
 	ready         bool // set on the first WindowSizeMsg
 }
@@ -162,6 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
+		m.statusLoaded = true
 		m.err = nil
 		m.report = msg.report
 		m.list.resolveSticky(m.report)
@@ -177,7 +183,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.name != m.detail.name {
 			return m, nil
 		}
-		if msg.t != tabReport && msg.round != m.detail.round {
+		// Only the diff tab is round-keyed. The report tab reports the round of the
+		// entry it read, which may legitimately lag; the terminal shows the builder's
+		// screen right now; the log shows every round at once. Testing round equality
+		// against those three discards every reply they will ever send.
+		if msg.t == tabDiff && msg.round != m.detail.round {
 			return m, nil
 		}
 		if msg.t != m.detail.active {
@@ -220,7 +230,7 @@ func (m Model) footer() string {
 		keys += "  ! " + m.notice
 	}
 	if m.err != nil {
-		keys += "  ! refresh failed: " + m.err.Error() + " (retrying)"
+		keys += "  ! refresh failed (retrying)"
 	}
 	if m.screen == screenDetail {
 		for _, b := range m.report.Bindings {

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/muesli/termenv"
@@ -379,5 +380,102 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	}
 	if m.detail.scroll[tabTerminal] != 10 {
 		t.Errorf("expected tabTerminal scroll preserved, got %d", m.detail.scroll[tabTerminal])
+	}
+}
+
+func TestNonRoundKeyedTabsAccepted(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.readOut = "terminal output"
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	b.Round = 4
+	b.Builder.PaneID = "w2:p4"
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		key  string
+		tab  tab
+	}{
+		{name: "log", key: "4", tab: tabLog},
+		{name: "terminal", key: "2", tab: tabTerminal},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+			m.screen = screenDetail
+			m.detail.name = name
+			m.detail.round = 3
+			m.detail.active = tabReport
+			m.detail.vp = viewport.New(80, 20)
+
+			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)})
+			m = res.(Model)
+			if cmd == nil {
+				t.Fatalf("%s: expected non-nil cmd from switchTab", tc.name)
+			}
+			msg := cmd()
+			res, _ = m.Update(msg)
+			m = res.(Model)
+
+			if !m.detail.cache[tc.tab].loaded {
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(m.detail.cache[tc.tab]))
+			}
+		})
+	}
+}
+
+func TestFourTabsLoadContentEndToEnd(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.readOut = "terminal content"
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	b.Round = 4
+	b.Builder.PaneID = "w2:p4"
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = name
+	m.detail.round = 3
+	m.detail.active = tabReport
+	m.detail.vp = viewport.New(80, 20)
+
+	tabKeys := []struct {
+		key string
+		t   tab
+	}{
+		{"1", tabReport},
+		{"2", tabTerminal},
+		{"3", tabDiff},
+		{"4", tabLog},
+	}
+
+	for _, tk := range tabKeys {
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)})
+		m = res.(Model)
+		if cmd == nil {
+			t.Fatalf("tab %v: expected non-nil cmd from switchTab", tk.t)
+		}
+		msg := cmd()
+		res, _ = m.Update(msg)
+		m = res.(Model)
+
+		if !m.detail.cache[tk.t].loaded {
+			t.Fatalf("tab %v reply discarded: cache not loaded", tk.t)
+		}
 	}
 }
