@@ -290,4 +290,6 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 - Relay-side summarisation or context compaction.
 - Any planner-side intelligence in the daemon.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
-- A TUI. `relay status` / `relay watch` are enough.
+- A TUI in the original scope: `relay status` / `relay watch` were enough. Superseded by
+  [`docs/specs/2026-09-08-relay-tui-design.md`](specs/2026-09-08-relay-tui-design.md), which
+  designs `relay ui` as a read-only reader beside `watch` rather than a replacement for it.
