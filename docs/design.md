@@ -145,6 +145,13 @@ Accepted risk: a session-less endpoint whose pane exits and is reissued to a new
 of the same kind is adopted as the original builder. For claude this risk window is
 transient (closing on the first tick); for agy it is permanent.
 
+A consequence of the agy population is that moving an agy builder's pane between
+workspaces breaks its binding permanently. Because herdr issues a new pane ID on a
+move, `FindAgent` cannot match the agent without a session ID; the binding transitions
+to `broken` and `refreshEndpoint` never runs to learn the new pane ID. Claude builders
+survive a pane move because the recorded session matches across it and refreshes the
+pane ID. Relay cannot fix this limitation without a session reported from the harness.
+
 ### Alias table (config, derived from the author's shell functions)
 
 | alias | kind | native args (after `--`) | first-prompt preamble |
