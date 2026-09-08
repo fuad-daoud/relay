@@ -132,9 +132,9 @@ An endpoint is identified by its `session_id` when one is recorded (exact match,
 fallback). When no session is recorded, identity falls back to `pane_id` plus agent
 `kind` (or bare pane ID if no kind was recorded). Relay treats endpoints as caches of
 live agent identity rather than static records: whenever Reconcile locates an endpoint's
-agent among live herdr agents, it refreshes the endpoint's `pane_id` (so moving panes
-between workspaces stays current) and backfills an empty `session_id` if the agent
-reports one.
+agent among live herdr agents, it refreshes the endpoint's `pane_id` (so a session-
+identified endpoint survives a pane move) and backfills an empty `session_id` if the
+agent reports one.
 
 Harnesses form two distinct populations. `claude` panes report a session to herdr, so a
 missing session is a brief startup race resolved by the next tick's backfill. `agy` panes
