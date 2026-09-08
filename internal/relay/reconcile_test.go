@@ -113,6 +113,7 @@ func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	got, err := reconcile(t, rt, b, agents)
@@ -135,6 +136,7 @@ func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 	rt, b := sentBinding(t, f)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	b, err := reconcile(t, rt, b, agents) // nudge
@@ -186,6 +188,7 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	rt, b := sentBinding(t, f)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	b, err := reconcile(t, rt, b, agents) // nudge
@@ -229,6 +232,121 @@ func TestReconcileWaitsOutNudgeGraceBeforeScraping(t *testing.T) {
 	}
 	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); !pending {
 		t.Error("the scraped report must be queued once the grace has elapsed")
+	}
+}
+
+func TestReconcileRefusesNudgeInsideStartGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	clock.Advance(5 * time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("expected zero prompts inside start grace, got %+v", f.prompts)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if _, nudged := nudgeTime(entries, 1); nudged {
+		t.Error("a nudge log entry must not be appended inside start grace")
+	}
+}
+
+func TestReconcileNudgesAfterStartGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	clock.Advance(31 * time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("a nudge must not advance the round, got %d", got.Round)
+	}
+	if len(f.prompts) != 1 || !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("webshop", 1)) {
+		t.Fatalf("expected one nudge naming the report path, got %+v", f.prompts)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+		t.Error("a nudge must not queue anything for the planner")
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if _, nudged := nudgeTime(entries, 1); !nudged {
+		t.Error("expected a nudge log entry after start grace elapsed")
+	}
+}
+
+func TestReconcileRefusesNudgeWhenRoundStartedAtZero(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	clock.Advance(31 * time.Second)
+	b.RoundStartedAt = time.Time{}
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("expected zero prompts when RoundStartedAt is zero, got %+v", f.prompts)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if _, nudged := nudgeTime(entries, 1); nudged {
+		t.Error("a nudge log entry must not be appended when RoundStartedAt is zero")
+	}
+}
+
+func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	clock.Advance(5 * time.Second)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2 after a report", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("expected zero prompts when report file is present, got %+v", f.prompts)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("payload must name the report path, got %q", pending.Payload)
 	}
 }
 
