@@ -98,6 +98,7 @@ inside every pane it manages, so it has to be run from inside one.
   panes' live herdr status, the last relayed event, and anything pending.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
+- `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
 - `relay fork <source> --round R --new-name N [--builder ALIAS] [--tab] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
@@ -117,6 +118,22 @@ inside every pane it manages, so it has to be run from inside one.
 `--name` defaults to whichever binding owns the current working directory for
 `send`, `pull`, `diff`, `answer` and `status`. It is **required** for `done` and
 `unbind`: those are the destructive verbs and they refuse to guess (see below).
+
+### Interactive reader: relay ui
+
+`relay ui` is a full-screen terminal reader for live bindings. `relay watch`
+remains the tool for shell pipes and scripts; `relay ui` is the interactive
+sibling that lets you inspect substance instead of just state.
+
+It is strictly **read-only**: it never mutates state, never types into panes,
+and never appends to round logs. It holds the state lock only for the duration
+of a read, exactly as `relay status` does.
+
+Opening a binding displays four full-width tabs:
+- **report** — the newest planner-bound report or question payload.
+- **terminal** — recent live terminal output from the builder agent's pane.
+- **diff** — the captured git patch from the newest completed round.
+- **log** — the formatted append-only round log.
 
 ### Panes are yours, always
 

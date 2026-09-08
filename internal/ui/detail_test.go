@@ -1,0 +1,481 @@
+package ui
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/muesli/termenv"
+)
+
+func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.width = 80
+	m.height = 24
+	m.ready = true
+
+	rep := relay.Report{
+		Bindings: []relay.BindingStatus{
+			{Name: name, Round: 2, Display: "ACTIVE"},
+		},
+	}
+	res, _ := m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	// Enter detail screen
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(Model)
+
+	if m.screen != screenDetail {
+		t.Fatalf("expected screenDetail, got %v", m.screen)
+	}
+	if m.detail.name != name {
+		t.Fatalf("expected detail.name %s, got %s", name, m.detail.name)
+	}
+	if m.detail.active != tabReport {
+		t.Fatalf("expected active tabReport, got %v", m.detail.active)
+	}
+	if !m.tabInFlight {
+		t.Fatal("expected tabInFlight to be true on enter")
+	}
+
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd on entering detail")
+	}
+	msg := cmd()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg from enter, got %T", msg)
+	}
+	if tMsg.t != tabReport {
+		t.Fatalf("expected tabReport fetch, got tab %v", tMsg.t)
+	}
+}
+
+func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.active = tabReport
+	m.detail.vp = viewport.New(80, 20)
+
+	// Switch to diff tab via key '3'
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = res.(Model)
+
+	if m.detail.active != tabDiff {
+		t.Fatalf("expected active tabDiff, got %v", m.detail.active)
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil fetch command for unloaded tab")
+	}
+	msg := cmd()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tMsg.t != tabDiff {
+		t.Fatalf("expected tabDiff fetch, got %v", tMsg.t)
+	}
+}
+
+func TestScrollParkAndRestore(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.active = tabReport
+	m.detail.vp = viewport.New(80, 20)
+
+	// Populate caches so switching doesn't trigger unloaded fetch
+	m.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("terminal line\n", 50)}
+	m.detail.vp.SetContent(m.detail.cache[tabReport].body)
+
+	// Set scroll offset on report tab
+	m.detail.vp.YOffset = 18
+
+	// Switch to terminal tab ('2')
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = res.(Model)
+	if m.detail.active != tabTerminal {
+		t.Fatalf("expected active tabTerminal, got %v", m.detail.active)
+	}
+	if m.detail.scroll[tabReport] != 18 {
+		t.Fatalf("expected parked scroll for tabReport to be 18, got %d", m.detail.scroll[tabReport])
+	}
+
+	// Change offset on terminal tab
+	m.detail.vp.YOffset = 7
+
+	// Switch back to report tab ('1')
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = res.(Model)
+	if m.detail.active != tabReport {
+		t.Fatalf("expected active tabReport, got %v", m.detail.active)
+	}
+	if m.detail.vp.YOffset != 18 {
+		t.Fatalf("expected restored YOffset on tabReport to be 18, got %d", m.detail.vp.YOffset)
+	}
+	if m.detail.scroll[tabTerminal] != 7 {
+		t.Fatalf("expected parked scroll for tabTerminal to be 7, got %d", m.detail.scroll[tabTerminal])
+	}
+}
+
+func TestEmptyContentNotStyledAsError(t *testing.T) {
+	c := tabContent{
+		loaded: true,
+		empty:  "no diff recorded for round 1 — no baseline captured",
+	}
+
+	st := styleFor(c)
+	if reflect.DeepEqual(st, errorStyle) {
+		t.Fatalf("empty content style must not be errorStyle")
+	}
+	if st.GetForeground() == errorStyle.GetForeground() {
+		t.Fatalf("empty content foreground must not match errorStyle foreground")
+	}
+
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	rendered := bodyOf(c)
+	errRendered := errorStyle.Render(c.empty)
+	if rendered == errRendered {
+		t.Fatalf("empty prose must NOT be styled with errorStyle")
+	}
+}
+
+func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.vp = viewport.New(80, 20)
+
+	m.detail.cache[tabDiff] = tabContent{
+		loaded: true,
+		err:    errors.New("disk read failed"),
+	}
+	m.detail.cache[tabReport] = tabContent{
+		loaded: true,
+		body:   "## Successful report content",
+	}
+
+	// Active tab diff shows error
+	m.detail.active = tabDiff
+	m.detail.vp.SetContent(bodyOf(m.detail.cache[tabDiff]))
+	if !strings.Contains(m.detail.vp.View(), "error: disk read failed") {
+		t.Fatalf("expected error text in diff tab, got %q", m.detail.vp.View())
+	}
+
+	// Switch to report tab: it stays readable
+	res, _ := m.switchTab(tabReport)
+	m = res.(Model)
+	if !strings.Contains(m.detail.vp.View(), "Successful report content") {
+		t.Fatalf("expected report content in report tab, got %q", m.detail.vp.View())
+	}
+}
+
+func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.active = tabDiff
+	m.detail.vp = viewport.New(80, 20)
+
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	m = res.(Model)
+
+	if m.detail.active != tabDiff {
+		t.Fatalf("expected active tab to remain tabDiff, got %v", m.detail.active)
+	}
+	if m.detail.vp.Width != 120 {
+		t.Fatalf("expected vp.Width 120, got %d", m.detail.vp.Width)
+	}
+	if m.detail.vp.Height != 60-chromeHeight {
+		t.Fatalf("expected vp.Height %d, got %d", 60-chromeHeight, m.detail.vp.Height)
+	}
+}
+
+func TestPanicOnShrinkingContent(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabDiff
+	m.detail.vp = viewport.New(80, 20)
+
+	// Set content of 200 lines and scroll to offset 120
+	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.detail.vp.SetYOffset(120)
+
+	// New tabMsg delivers 3 lines
+	msg := tabMsg{
+		name:  "webshop",
+		round: 2,
+		t:     tabDiff,
+		content: tabContent{
+			loaded: true,
+			body:   "line 1\nline 2\nline 3",
+		},
+	}
+
+	res, _ := m.Update(msg)
+	m = res.(Model)
+
+	// View() must render without panicking
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabDiff
+	m.detail.vp = viewport.New(80, 20)
+
+	// Scroll deep on diff tab
+	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.detail.vp.SetYOffset(120)
+
+	// Switch away to terminal tab
+	res, _ := m.switchTab(tabTerminal)
+	m = res.(Model)
+
+	// Invalidate diff tab cache (e.g. round bump)
+	m.detail.cache[tabDiff] = tabContent{} // unloaded -> bodyOf returns "loading…"
+
+	// Switch back to diff tab
+	res, _ = m.switchTab(tabDiff)
+	m = res.(Model)
+
+	// View() must render without panicking
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabTerminal
+	m.detail.vp = viewport.New(80, 20)
+
+	// Initial terminal content with 100 lines
+	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
+	m.detail.vp.SetYOffset(42)
+
+	// Active tabMsg refresh with 100 lines
+	msg := tabMsg{
+		name:  "webshop",
+		round: 2,
+		t:     tabTerminal,
+		content: tabContent{
+			loaded: true,
+			body:   strings.Repeat("line\n", 100),
+		},
+	}
+
+	res, _ := m.Update(msg)
+	m = res.(Model)
+
+	if m.detail.vp.YOffset != 42 {
+		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", m.detail.vp.YOffset)
+	}
+}
+
+func TestInvalidationResetsParkedOffset(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = "webshop"
+	m.detail.round = 2
+	m.detail.active = tabTerminal
+	m.detail.scroll[tabDiff] = 85
+	m.detail.scroll[tabReport] = 40
+	m.detail.scroll[tabLog] = 15
+	m.detail.scroll[tabTerminal] = 10
+
+	ts := time.Now()
+	m.detail.lastLogTS = ts
+
+	rep := relay.Report{
+		Bindings: []relay.BindingStatus{
+			{
+				Name:  "webshop",
+				Round: 3,
+				Last: &relay.LastEvent{
+					TS:    ts.Add(5 * time.Second),
+					Round: 3,
+				},
+			},
+		},
+	}
+
+	res, _ := m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	if m.detail.scroll[tabDiff] != 0 {
+		t.Errorf("expected tabDiff scroll reset to 0, got %d", m.detail.scroll[tabDiff])
+	}
+	if m.detail.scroll[tabReport] != 0 {
+		t.Errorf("expected tabReport scroll reset to 0, got %d", m.detail.scroll[tabReport])
+	}
+	if m.detail.scroll[tabLog] != 0 {
+		t.Errorf("expected tabLog scroll reset to 0, got %d", m.detail.scroll[tabLog])
+	}
+	if m.detail.scroll[tabTerminal] != 10 {
+		t.Errorf("expected tabTerminal scroll preserved, got %d", m.detail.scroll[tabTerminal])
+	}
+}
+
+func TestNonRoundKeyedTabsAccepted(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.readOut = "terminal output"
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	b.Round = 4
+	b.Builder.PaneID = "w2:p4"
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		key  string
+		tab  tab
+	}{
+		{name: "log", key: "4", tab: tabLog},
+		{name: "terminal", key: "2", tab: tabTerminal},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+			m.screen = screenDetail
+			m.detail.name = name
+			m.detail.round = 3
+			m.detail.active = tabReport
+			m.detail.vp = viewport.New(80, 20)
+
+			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)})
+			m = res.(Model)
+			if cmd == nil {
+				t.Fatalf("%s: expected non-nil cmd from switchTab", tc.name)
+			}
+			msg := cmd()
+			res, _ = m.Update(msg)
+			m = res.(Model)
+
+			if !m.detail.cache[tc.tab].loaded {
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(m.detail.cache[tc.tab]))
+			}
+		})
+	}
+}
+
+func TestFourTabsLoadContentEndToEnd(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.readOut = "terminal content"
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	b.Round = 4
+	b.Builder.PaneID = "w2:p4"
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.screen = screenDetail
+	m.detail.name = name
+	m.detail.round = 3
+	m.detail.active = tabReport
+	m.detail.vp = viewport.New(80, 20)
+
+	tabKeys := []struct {
+		key string
+		t   tab
+	}{
+		{"1", tabReport},
+		{"2", tabTerminal},
+		{"3", tabDiff},
+		{"4", tabLog},
+	}
+
+	for _, tk := range tabKeys {
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)})
+		m = res.(Model)
+		if cmd == nil {
+			t.Fatalf("tab %v: expected non-nil cmd from switchTab", tk.t)
+		}
+		msg := cmd()
+		res, _ = m.Update(msg)
+		m = res.(Model)
+
+		if !m.detail.cache[tk.t].loaded {
+			t.Fatalf("tab %v reply discarded: cache not loaded", tk.t)
+		}
+	}
+}
