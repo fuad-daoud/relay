@@ -2,6 +2,7 @@
 # Exercises plugin-fetch.sh against a local fixture served over file://.
 set -eu
 
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
