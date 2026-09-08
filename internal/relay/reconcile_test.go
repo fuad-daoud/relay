@@ -909,3 +909,46 @@ func TestReconcileAddressesThePaneNotTheForgottenAgentName(t *testing.T) {
 		}
 	}
 }
+
+// TestBindRacesSessionLookupAndReconcileRecovers reproduces #20 end to end: the
+// builder is spawned, the post-spawn session lookup loses its race with the
+// agent's own registration, herdr flickers and the binding is flagged BROKEN --
+// and relay recovers it by itself rather than stranding a working builder.
+func TestBindRacesSessionLookupAndReconcileRecovers(t *testing.T) {
+	f := &fakeHerdr{
+		agents:  []herdr.Agent{plannerAgent()},
+		newPane: "w2:p4",
+		listErr: errors.New("herdr restarting"), // every call after Bind's own
+	}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Builder.SessionID != "" {
+		t.Fatal("precondition: this test needs the post-spawn lookup to have lost its race")
+	}
+
+	// The flicker passes; the builder was alive throughout and now registers.
+	f.listErr = nil
+	live := builderAgent(herdr.StatusIdle)
+	live.Session = herdr.Session{Value: "registered-late"}
+	f.agents = []herdr.Agent{plannerAgent(), live}
+
+	b.State = store.StateBroken // what the flicker left behind
+
+	out, err := reconcile(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if out.State == store.StateBroken {
+		t.Fatal("#20: a live builder's binding must not stay broken")
+	}
+	if out.Builder.SessionID != "registered-late" {
+		t.Fatalf("SessionID = %q, want the session backfilled once the agent registered",
+			out.Builder.SessionID)
+	}
+}
