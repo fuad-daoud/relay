@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/ui"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=v1.2.3".
@@ -47,6 +48,7 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending
   log       print a binding's append-only round log
   watch     status, redrawn on a timer
+  ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops
   unbind    forget a binding, deleting or archiving its directory
   gc        clear every binding the planner marked DONE
@@ -140,6 +142,8 @@ func run(args []string) error {
 		return cmdLog(args[1:])
 	case "watch":
 		return cmdWatch(args[1:])
+	case "ui":
+		return cmdUI(args[1:])
 	case "done":
 		return cmdDone(args[1:])
 	case "daemon":
@@ -668,6 +672,26 @@ func cmdWatch(args []string) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func cmdUI(args []string) error {
+	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
+	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return ui.Run(ctx, rt, ui.Options{
+		Interval: *interval,
+	})
 }
 
 func cmdDone(args []string) error {
