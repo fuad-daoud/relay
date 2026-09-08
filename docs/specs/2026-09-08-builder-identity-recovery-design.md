@@ -203,34 +203,42 @@ beyond one tick.
 
 ## 7. Addressing
 
-`Target(ep store.Endpoint)` is deleted. After this change every addressing site
-has a located agent in hand, so it is dead code, and keeping it would preserve
-the trap it represents.
-
-It is replaced, in `send.go`, by:
+`Target` keeps its name and every caller it has. It loses only the preference
+that broke it:
 
 ```go
-// targetOf addresses the agent relay just located, by its current pane id.
-func targetOf(a herdr.Agent) string
+// Target is the herdr target for an endpoint: its pane id, which Reconcile
+// keeps current by refreshing every endpoint it locates.
+func Target(ep store.Endpoint) string
 ```
 
-One comment carries the rationale for all of them rather than five copies:
-herdr can forget a spawned agent's name across a server restart while its pane
-stays perfectly addressable, and the name then resolves to nothing -- which is
-how `agent target relay-ui-builder not found` was reported against a live
+`AgentName` stops being an address and becomes what it always was in practice --
+provenance, recording what relay named the agent at spawn. herdr can forget that
+name across a server restart while the pane stays perfectly addressable, which
+is how `agent target relay-ui-builder not found` was reported against a live
 builder.
 
-Call sites, all in-package:
+**Why the located agent is not threaded through.** `handleBlockedBuilder`,
+`screenFingerprint`, `nudgeBuilder` and `scrapeReport` all take a
+`store.Binding`, not a `herdr.Agent`. Passing a target down through six
+signatures to reach them would buy nothing the refresh has not already bought:
+section 5 refreshes `b.Builder` before the status switch runs, so by the time
+any of them calls `Target(b.Builder)`, that pane id **is** the located agent's
+pane id. The refresh is what makes pane-id addressing correct, and duplicating
+it as a parameter would state the same guarantee twice.
+
+Two sites do hold a located agent, and address it directly rather than going
+back through the endpoint -- the same shape as `internal/ui/fetch.go:170`:
 
 | Site | Change |
 |---|---|
-| `reconcile.go:173` read blocking dialog | `targetOf(builder)` |
-| `reconcile.go:274` read screen | `targetOf(builder)` |
-| `reconcile.go:329` nudge | `targetOf(builder)` |
-| `reconcile.go:355` read screen | `targetOf(builder)` |
-| `deliver.go:89` prompt planner | `targetOf(planner)` |
-| `send.go:78` prompt builder | resolved pre-lock, section 8 |
-| `answer.go:64` send keys | resolved pre-lock, section 8 |
+| `reconcile.go:173` read blocking dialog | unchanged; `Target` is now pane-id |
+| `reconcile.go:274` fingerprint screen | unchanged |
+| `reconcile.go:329` nudge | unchanged |
+| `reconcile.go:355` scrape report | unchanged |
+| `deliver.go:89` prompt planner | `planner.PaneID`, the agent it just located |
+| `send.go:78` prompt builder | the located builder's pane id, section 8 |
+| `answer.go:64` send keys | the located builder's pane id, section 8 |
 
 `internal/ui/fetch.go` already does this and needs no change.
 
@@ -258,7 +266,7 @@ Send(name, file):
         if not SameAgent(builder, b.Builder):    # NEW: the hint may be stale
             return ErrBuilderGone
         ... stage plan, compose prompt ...
-        promptWithRetry(targetOf(builder), text)
+        promptWithRetry(builder.PaneID, text)
         ... unchanged ...
 ```
 
@@ -273,7 +281,7 @@ can rebind the binding underneath it. On mismatch the send fails rather than
 prompting a pane that is no longer this binding's builder.
 
 `Answer` takes the same shape: list and locate before `WithLock`, re-assert
-inside it, then `SendKeys(targetOf(builder), keys)`. A blocked agent still
+inside it, then `SendKeys(builder.PaneID, keys)`. A blocked agent still
 appears in `herdr agent list`, so locating it works while it sits at a dialog.
 
 ## 9. Error handling
@@ -365,17 +373,16 @@ Each step is one deliverable and leaves the tree building and green.
 3. **`refreshEndpoint` and the Reconcile head.** Add the function, wire both
    endpoints in, delete the un-break gate. Depends on step 1. Done when the
    six `Reconcile` cases pass.
-4. **`targetOf`, and the located-agent call sites.** Add the helper and update
-   the five sites in `reconcile.go` and `deliver.go`. `Target` stays for now:
-   `send.go` and `answer.go` still call it and the tree must keep building.
-   Depends on step 3. Done when those five sites address a located agent and
-   the suite is green.
+4. **`Target` becomes pane-id addressing.** Drop the `AgentName` preference and
+   correct its doc comment to name the refresh as the guarantee. Point
+   `deliver.go:89` at the planner it just located. Depends on step 3, which is
+   what makes the stored pane id current. Done when a binding whose `AgentName`
+   herdr has forgotten is still addressable.
 5. **`ErrBuilderGone` and `Send`.** Pre-lock resolution plus the in-lock
    re-assertion. Depends on step 4. Done when the `Send` cases pass, including
    no plan staged on failure.
-6. **`Answer`, then delete `Target`.** Same pre-lock shape as step 5. With the
-   last two callers converted, `Target` is dead and is removed along with its
-   tests. Depends on step 5. Done when no reference to `Target` remains.
+6. **`Answer`.** Same pre-lock shape as step 5. Depends on step 5. Done when
+   `Answer` addresses the pane it located and refuses when the builder is gone.
 7. **End-to-end #20 regression.** Depends on steps 1-6.
 8. **Document the identity rule** in `docs/design.md`, beside the
    `planner.session_id` row at line 117: what identifies an endpoint, that
