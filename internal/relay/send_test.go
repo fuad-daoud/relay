@@ -191,3 +191,64 @@ func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
 		t.Errorf("neither attempt was accepted, so nothing may be recorded: %+v", f.prompts)
 	}
 }
+
+func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	fg := &fakeGit{snapshotTreeID: "tree-abc123"}
+	rt.Git = fg
+
+	src := writePlan(t, "# test plan")
+	round, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if round != 1 {
+		t.Fatalf("round = %d, want 1", round)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "tree-abc123" {
+		t.Errorf("RoundBaselineTree = %q, want tree-abc123", b.RoundBaselineTree)
+	}
+	if fg.snapshotCalls != 1 {
+		t.Errorf("snapshotCalls = %d, want 1", fg.snapshotCalls)
+	}
+}
+
+func TestSendBaselineFailureTolerated(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	fg := &fakeGit{snapshotTreeErr: errors.New("git broken")}
+	rt.Git = fg
+
+	src := writePlan(t, "# test plan")
+	round, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if round != 1 {
+		t.Fatalf("round = %d, want 1", round)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "" {
+		t.Errorf("RoundBaselineTree = %q, want empty", b.RoundBaselineTree)
+	}
+
+	// Verify plan was still copied and logged
+	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	if err != nil || string(copied) != "# test plan" {
+		t.Fatalf("plan file error: %v, content: %q", err, string(copied))
+	}
+	log, err := rt.Store.ReadLog("webshop")
+	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPlan {
+		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
+	}
+}

@@ -401,3 +401,19 @@ func TestArchiveIsCompressed(t *testing.T) {
 			info.Size(), len(big))
 	}
 }
+
+func TestDiffPath(t *testing.T) {
+	s := New("/state")
+	if got := s.DiffPath("ai", 2); !strings.HasSuffix(got, "002-diff.patch") {
+		t.Errorf("DiffPath = %q, want ending in 002-diff.patch", got)
+	}
+	if got, want := s.PlanPath("ai", 2), filepath.Join("/state", "ai", "002-plan.md"); got != want {
+		t.Errorf("PlanPath = %q, want %q", got, want)
+	}
+	if got, want := s.ReportPath("ai", 2), filepath.Join("/state", "ai", "002-report.md"); got != want {
+		t.Errorf("ReportPath = %q, want %q", got, want)
+	}
+	if got, want := s.QuestionPath("ai", 2), filepath.Join("/state", "ai", "002-question.md"); got != want {
+		t.Errorf("QuestionPath = %q, want %q", got, want)
+	}
+}

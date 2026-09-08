@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -27,10 +28,17 @@ type Herdr interface {
 	Notify(ctx context.Context, message string) error
 }
 
+// Git is the slice of the git CLI relay needs. *git.Client satisfies it.
+type Git interface {
+	SnapshotTree(ctx context.Context, dir string) (string, error)
+	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+}
+
 // Runtime carries relay's dependencies explicitly, so every command and the
 // daemon can be driven by a fake in tests.
 type Runtime struct {
 	Herdr   Herdr
+	Git     Git
 	Store   *store.Store
 	Aliases *alias.Table
 	Now     func() time.Time

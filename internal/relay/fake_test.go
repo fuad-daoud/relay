@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -22,6 +23,45 @@ type tabCall struct {
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
+}
+
+// fakeGit is the in-memory Git used by tests in this package.
+type fakeGit struct {
+	snapshotTreeID  string
+	snapshotTreeErr error
+	snapshotCalls   int
+	lastSnapshotDir string
+
+	diffResult   git.Diff
+	diffErr      error
+	diffCalls    int
+	lastDiffDir  string
+	lastDiffFrom string
+	lastDiffTo   string
+}
+
+func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
+	f.snapshotCalls++
+	f.lastSnapshotDir = dir
+	if f.snapshotTreeErr != nil {
+		return "", f.snapshotTreeErr
+	}
+	return f.snapshotTreeID, nil
+}
+
+func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error) {
+	f.diffCalls++
+	f.lastDiffDir = dir
+	f.lastDiffFrom = from
+	f.lastDiffTo = to
+	if f.diffErr != nil {
+		return git.Diff{}, f.diffErr
+	}
+	return f.diffResult, nil
+}
+
+func TestFakeSatisfiesGit(t *testing.T) {
+	var _ Git = (*fakeGit)(nil)
 }
 
 // fakeHerdr is the in-memory Herdr used by every test in this package.

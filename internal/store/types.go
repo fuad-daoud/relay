@@ -41,7 +41,13 @@ type Binding struct {
 	// for. It is deliberately NOT derived from State: every earlier attempt to
 	// dedupe halt notices on State was defeated by a later step in the same
 	// tick rewriting State, which turned one notice into one per poll.
-	HaltNotifiedRound int       `json:"halt_notified_round,omitempty"`
+	HaltNotifiedRound int `json:"halt_notified_round,omitempty"`
+	// RoundBaselineTree is the git tree object the CURRENT round started from,
+	// written by Send and consumed (then cleared) when the round's report is
+	// queued. Empty means no baseline was captured for this round -- a non-git
+	// tree, an unavailable git binary, or a binding created before diff capture
+	// existed -- and the round simply produces no diff.
+	RoundBaselineTree string    `json:"round_baseline_tree,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

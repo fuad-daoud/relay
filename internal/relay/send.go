@@ -41,6 +41,11 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 		return 0, fmt.Errorf("read plan %s: %w", file, err)
 	}
 
+	var baseline string
+	if hint, err := rt.Store.Load(name); err == nil {
+		baseline = CaptureBaseline(ctx, rt, hint)
+	}
+
 	var round int
 
 	// The whole round advance is one critical section: the daemon rewrites this
@@ -87,6 +92,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 		}
 
 		round = b.Round
+		b.RoundBaselineTree = baseline
 		b.RoundStartedAt = rt.Now().UTC()
 		b.State = store.StateActive
 

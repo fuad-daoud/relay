@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -368,5 +369,108 @@ func TestReconcileStaysBrokenWithoutRecordedSession(t *testing.T) {
 	}
 	if len(f.prompts) != 0 {
 		t.Error("nothing may be relayed without a recorded session id")
+	}
+}
+
+func TestReconcileDiffCapture(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{
+		snapshotTreeID: "tree-end",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 2, Insertions: 10, Deletions: 3},
+			Patch: []byte("diff content"),
+		},
+	}
+	rt.Git = fg
+	b.RoundBaselineTree = "tree-start"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	reportFile := rt.Store.ReportPath("webshop", 1)
+	if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	// First tick
+	bAfter, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile 1: %v", err)
+	}
+	if bAfter.Round != 2 {
+		t.Fatalf("expected round 2, got %d", bAfter.Round)
+	}
+	if bAfter.RoundBaselineTree != "" {
+		t.Errorf("RoundBaselineTree not cleared, got %q", bAfter.RoundBaselineTree)
+	}
+
+	log, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify log order: KindDiff before KindReport
+	var diffIdx, reportIdx int = -1, -1
+	diffCount := 0
+	for i, entry := range log {
+		if entry.Round == 1 && entry.Kind == store.KindDiff {
+			diffIdx = i
+			diffCount++
+			if !entry.Confirmed {
+				t.Error("KindDiff entry must be confirmed")
+			}
+			if entry.Direction != store.DirToPlanner {
+				t.Errorf("KindDiff direction = %s, want to_planner", entry.Direction)
+			}
+			if entry.Path != rt.Store.DiffPath("webshop", 1) {
+				t.Errorf("KindDiff path = %s", entry.Path)
+			}
+		}
+		if entry.Round == 1 && entry.Kind == store.KindReport {
+			reportIdx = i
+		}
+	}
+	if diffCount != 1 {
+		t.Fatalf("expected exactly 1 KindDiff entry, got %d", diffCount)
+	}
+	if diffIdx == -1 || reportIdx == -1 || diffIdx >= reportIdx {
+		t.Fatalf("KindDiff (%d) must be ordered before KindReport (%d)", diffIdx, reportIdx)
+	}
+
+	// Verify report payload carries diff line
+	reportEntry := log[reportIdx]
+	wantLine := "Diff: " + rt.Store.DiffPath("webshop", 1) + " (2 files, +10 -3)"
+	if !strings.Contains(reportEntry.Payload, wantLine) {
+		t.Fatalf("report payload %q does not contain %q", reportEntry.Payload, wantLine)
+	}
+
+	// PendingForPlanner still returns the report
+	pending, ok, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !ok {
+		t.Fatalf("PendingForPlanner: ok=%v, err=%v", ok, err)
+	}
+	if pending.Kind != store.KindReport {
+		t.Fatalf("pending kind = %s, want report", pending.Kind)
+	}
+
+	// Second tick: should not append duplicate diff entry
+	_, err = reconcile(t, rt, bAfter, agents)
+	if err != nil {
+		t.Fatalf("Reconcile 2: %v", err)
+	}
+	log2, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffCount2 := 0
+	for _, entry := range log2 {
+		if entry.Round == 1 && entry.Kind == store.KindDiff {
+			diffCount2++
+		}
+	}
+	if diffCount2 != 1 {
+		t.Fatalf("expected still 1 KindDiff entry after tick 2, got %d", diffCount2)
 	}
 }

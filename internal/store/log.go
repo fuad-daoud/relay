@@ -33,6 +33,7 @@ const (
 	KindReport   Kind = "report"
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
+	KindDiff     Kind = "diff"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also
