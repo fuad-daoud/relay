@@ -371,3 +371,24 @@ func TestSendFailsAndStagesNothingWhenBuilderIsGone(t *testing.T) {
 		t.Fatalf("round = %d, want 1: a failed send must not advance the round", b.Round)
 	}
 }
+
+// A binding that appears only after the pre-lock load must never be addressed
+// with the zero agent's empty pane id. See round 3, Task 1.
+func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	// Stand in for the interleaving: no builder could be located pre-lock,
+	// but the binding is present and healthy by the time the lock is held.
+	f.agents = []herdr.Agent{plannerAgent()}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	if !errors.Is(err, ErrBuilderGone) {
+		t.Fatalf("err = %v, want ErrBuilderGone", err)
+	}
+	for _, p := range f.prompts {
+		if p.Target == "" {
+			t.Fatal("relay addressed the empty target instead of refusing")
+		}
+	}
+}

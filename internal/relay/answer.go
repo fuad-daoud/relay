@@ -77,7 +77,13 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 			return err
 		}
 
-		if locatedBuilder && !SameAgent(builder, b.Builder) {
+		// The pre-lock load and this locked load are two separate acquisitions
+		// of the state lock, so a binding can appear between them. An unlocated
+		// builder must never fall through to an empty target.
+		if !locatedBuilder {
+			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+		}
+		if !SameAgent(builder, b.Builder) {
 			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
 		}
 

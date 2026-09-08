@@ -78,7 +78,13 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 		if b.Round > b.RoundCap {
 			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 		}
-		if locatedBuilder && !SameAgent(builder, b.Builder) {
+		// The pre-lock load and this locked load are two separate acquisitions
+		// of the state lock, so a binding can appear between them. An unlocated
+		// builder must never fall through to an empty target.
+		if !locatedBuilder {
+			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+		}
+		if !SameAgent(builder, b.Builder) {
 			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
 		}
 
