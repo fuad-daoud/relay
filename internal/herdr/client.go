@@ -21,6 +21,11 @@ var ErrAgentBlocked = errors.New("herdr rejected prompt: agent blocked")
 // its five second window after a prompt.
 var ErrPromptStalled = errors.New("herdr prompt stalled")
 
+// ErrWaitTimeout is returned when a herdr command that waits for a state gave
+// up before observing it. It is distinct from ErrPromptStalled: a timeout says
+// the state never arrived, not that herdr judged the prompt inert.
+var ErrWaitTimeout = errors.New("herdr wait timed out")
+
 // Client runs the herdr CLI. Every external call is bounded by timeout.
 type Client struct {
 	bin     string
@@ -65,6 +70,8 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 			return nil, ErrAgentBlocked
 		case "agent_prompt_stalled":
 			return nil, ErrPromptStalled
+		case "timeout":
+			return nil, ErrWaitTimeout
 		default:
 			if err != nil {
 				return nil, fmt.Errorf("herdr %s: %s: %w", strings.Join(args, " "), msg, err)
@@ -122,10 +129,43 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 	return ParseAgentList(raw)
 }
 
+// promptLandedTimeout bounds the wait for evidence that a prompt landed. It is
+// herdr's own stall window: herdr reports agent_prompt_stalled when a prompt
+// sent from a non-working state produces no lifecycle change within five
+// seconds.
+const promptLandedTimeout = 5 * time.Second
+
 // Prompt submits text to an agent and presses enter. It returns
-// ErrAgentBlocked without sending anything if the agent is at a dialog.
+// ErrAgentBlocked without sending anything if the agent is at a dialog, and
+// ErrPromptStalled if the prompt produced no lifecycle change at all.
+//
+// --wait is not optional here, and not an optimisation. herdr only runs its
+// "this prompt changed nothing" check on the wait path, so without it a prompt
+// typed into a harness that has not finished taking over the terminal is lost
+// and herdr still reports success. relay then logs a delivery that never
+// happened, and thirty seconds later the reconciler nudges a builder that was
+// never given a plan. That is #31, and it made ErrPromptStalled -- and the
+// retry in promptWithRetry that consumes it -- unreachable code.
+//
+// --until names working and blocked rather than a settled state on purpose.
+// The question is whether the prompt landed, not whether the turn finished;
+// waiting for idle or done would block a send for the builder's whole round.
+// The cost is that a prompt which lands but is never observed as working
+// within the window surfaces as an error instead of silence. That is the right
+// trade: a loud false alarm is recoverable, a silent lost round is not.
 func (c *Client) Prompt(ctx context.Context, target, text string) error {
-	_, err := c.run(ctx, "agent", "prompt", target, text)
+	_, err := c.run(ctx, "agent", "prompt", target, text,
+		"--wait", "--until", "working", "--until", "blocked",
+		"--timeout", strconv.FormatInt(promptLandedTimeout.Milliseconds(), 10))
+
+	// herdr distinguishes "I judged this prompt inert" (agent_prompt_stalled)
+	// from "the state never arrived" (timeout). For a caller deciding whether
+	// to re-send, they are the same evidence: nothing landed. Collapse them so
+	// promptWithRetry gets its one retry either way, which is what makes a lost
+	// prompt self-heal instead of failing the round.
+	if errors.Is(err, ErrWaitTimeout) {
+		return ErrPromptStalled
+	}
 	return err
 }
 
