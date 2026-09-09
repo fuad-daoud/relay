@@ -108,6 +108,14 @@ A freshly spawned, idle opencode pane carries no `agent_session`; after one
 prompt it carries `ses_...` from `source: herdr:opencode`; and moving that pane
 between workspaces changed `pane_id` while the session was unchanged.
 
+**Caveat: this finding is pinned to herdr integration v10.** That is the
+version installed when it was verified, and `relay doctor` reports v11 as
+available. Both opencode reporting paths described below live in files herdr
+owns and overwrites on upgrade (`plugins/herdr-agent-state.js` and
+`herdr-tui-session.js`), so v11 could move when the session is first reported.
+Re-run the check -- spawn, inspect `agent_session`, prompt once, inspect again
+-- after upgrading, and correct this section if it moved.
+
 The mechanism is that both halves of the opencode integration are turn-driven.
 `plugins/herdr-agent-state.js` deliberately reports nothing on `session.created`
 (server-global, so an attached client may own it) and suppresses the same id on
