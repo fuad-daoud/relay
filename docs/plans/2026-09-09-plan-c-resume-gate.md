@@ -239,11 +239,17 @@ In `resume`, directly after the `ErrBuilderAlive` check and **above** the `resol
 		}
 		// Reached only when the builder was NOT located. Without a recorded
 		// session that miss is ambiguous: the pane id it would match on is the
-		// one a workspace move invalidates. Refuse rather than guess.
+		// one a workspace move invalidates.
+		//
+		// Only refuse when a round is open. That is where #21's harm lives --
+		// orphaning a builder "still running the round" -- and it is what
+		// keeps #20's recovery (PR #22) working: a session-less builder with
+		// nothing in flight still rebinds without ceremony.
 		//
 		// Keyed on live evidence rather than b.State so the guard does not
 		// depend on whether the daemon has ticked since the pane went away.
-		if b.Builder.SessionID == "" && !opts.AssumeDead {
+		d := DiagnoseBuilder(b)
+		if !d.SessionIdentified && d.RoundOpen && !opts.AssumeDead {
 			return store.Binding{}, fmt.Errorf(
 				"%w: relay cannot tell a dead builder for %q from a moved pane. "+
 					"Check %s is really gone, then re-run with --assume-dead",

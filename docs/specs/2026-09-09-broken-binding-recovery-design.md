@@ -260,18 +260,51 @@ if _, alive := FindAgent(agents, b.Builder); alive {
     return store.Binding{}, ErrBuilderAlive
 }
 // NEW:
-if b.Builder.SessionID == "" && !opts.AssumeDead {
+d := DiagnoseBuilder(b)
+if !d.SessionIdentified && d.RoundOpen && !opts.AssumeDead {
     return store.Binding{}, fmt.Errorf(...ErrBuilderUnverified...)
 }
 ```
 
-The gate keys on the live evidence -- `FindAgent` missed, and no session is
-recorded -- rather than on `b.State == store.StateBroken`. Keying on the stored
+### 7.1 Why the gate requires an open round
+
+An earlier draft fired on `!SessionIdentified` alone. That re-refuses the
+recovery #20 shipped: `TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone`
+(added by PR #22) asserts that a session-less builder whose pane is gone
+rebinds without ceremony, which is the whole point of that fix.
+
+The two issues are in real tension. #20 says relay must not strand a binding
+whose builder never recorded a session. #21 says relay must not abandon a
+builder that is merely in a moved pane. Both are about the same missing field.
+
+`RoundOpen` separates them, and it is the discriminator #21's own harm
+statement names -- "spawning a replacement and orphaning a builder that is
+**still running the round**":
+
+| round | session | outcome |
+| --- | --- | --- |
+| open | none | **refuse** -- a live builder would lose work in flight |
+| closed | none | rebind silently -- #20's recovery, nothing is at risk |
+| any | recorded | rebind silently -- a failed match is unambiguous |
+
+The residual exposure is a session-less builder that is alive, idle, and in a
+moved pane: rebinding abandons it. That costs a stranded harness process, not
+work, and buying it back would cost #20's recovery path. relay does not act on
+guesses in either direction.
+
+This also unifies the design: the gate consumes `DiagnoseBuilder` rather than
+reading `SessionID` by hand, so both consumers of the diagnosis agree by
+construction.
+
+### 7.2 Positioning
+
+The gate keys on the live evidence -- `FindAgent` missed, plus the two derived
+facts -- rather than on `b.State == store.StateBroken`. Keying on the stored
 state would make the gate's behaviour depend on whether the daemon had ticked
 since the pane went away, which would make it intermittent and untestable.
 
-Note the two checks are exclusive by construction: the first returns when the
-builder *was* found, so the second is only reached when it was not.
+Note the checks are exclusive by construction: the first returns when the
+builder *was* found, so the gate is only reached when it was not.
 
 `--assume-dead` has no effect on any path other than this one. In particular it
 never overrides `ErrBuilderAlive`: a builder relay can positively see is alive
@@ -283,8 +316,9 @@ is still refused, which is #20's guarantee and is not weakened here.
 | --- | --- | --- |
 | builder located, alive | `ErrBuilderAlive` | yes, by not rebinding |
 | builder missing, session recorded | proceeds as today | n/a |
-| builder missing, no session, no flag | `ErrBuilderUnverified` | yes, by verifying then passing `--assume-dead` |
-| builder missing, no session, flag set | proceeds | n/a |
+| builder missing, no session, round closed | proceeds (#20's recovery) | n/a |
+| builder missing, no session, round open, no flag | `ErrBuilderUnverified` | yes, by verifying then passing `--assume-dead` |
+| builder missing, no session, round open, flag set | proceeds | n/a |
 
 Both errors are returned before any pane is spawned, so neither leaves a
 partially-created builder. Neither is wrapped in a way that hides it from
