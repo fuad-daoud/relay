@@ -209,7 +209,7 @@ type Report struct {
     Checks []Check
     // UsableBuilder is true when at least one checked kind has a complete
     // path: binary on PATH and integration installed. It is the verdict the
-    // footer states and the exit code follows.
+    // footer states (the exit code follows Failures()).
     UsableBuilder bool
 }
 
@@ -429,6 +429,12 @@ agy
 
 **Exit code:** 1 if `Failures() > 0`, else 0. Warnings never change the exit
 code, so a one-harness machine with relay working exits 0.
+
+The trailing footer states the counts and the verdict in plain words:
+
+- `Failures() > 0`: `N failures, M warnings -- no usable builder. Fix the failures above.` (or `1 failure... Fix the failure above.`)
+- no failures, `!UsableBuilder`: `M warnings, 0 failures -- could not establish a usable builder.`
+- no failures, `UsableBuilder`: `M warnings, 0 failures -- relay can run.`
 
 Every `Fix` is a literal command. No fix line may say "see the README", "install
 the integration", or any other instruction the user has to translate.

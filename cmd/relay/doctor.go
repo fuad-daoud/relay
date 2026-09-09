@@ -91,7 +91,11 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 
 	if failCount == 0 {
-		fmt.Fprintf(w, "%s, %s -- relay can run.\n", warnPart, failPart)
+		if !rep.UsableBuilder {
+			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder.\n", warnPart, failPart)
+		} else {
+			fmt.Fprintf(w, "%s, %s -- relay can run.\n", warnPart, failPart)
+		}
 	} else {
 		fixPart := "Fix the failures above."
 		if failCount == 1 {

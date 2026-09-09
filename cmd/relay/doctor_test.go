@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/doctor"
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -91,6 +95,57 @@ func TestRenderReportVerdict(t *testing.T) {
 	if !strings.Contains(outFail, "1 failure, 0 warnings -- no usable builder. Fix the failure above.") {
 		t.Errorf("expected failure footer, got: %s", outFail)
 	}
+
+	// Middle case: no failures, !UsableBuilder (via erroring IntegrationStatus)
+	envStub := &stubDoctorEnv{
+		ver:       "0.9.0",
+		intErr:    errors.New("timeout connecting to herdr"),
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+	}
+	repUnverified := doctor.Run(context.Background(), envStub, []string{"claude"})
+	if repUnverified.Failures() != 0 {
+		t.Fatalf("expected 0 failures, got %d", repUnverified.Failures())
+	}
+	if repUnverified.UsableBuilder {
+		t.Fatal("expected UsableBuilder = false when IntegrationStatus errors")
+	}
+
+	buf.Reset()
+	renderReport(&buf, repUnverified)
+	outUnverified := buf.String()
+	if !strings.Contains(outUnverified, "could not establish a usable builder.") {
+		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
+	}
+}
+
+type stubDoctorEnv struct {
+	ver       string
+	intErr    error
+	daemonRun bool
+	lookPaths map[string]string
+}
+
+func (s *stubDoctorEnv) HerdrVersion(ctx context.Context) (string, error) {
+	return s.ver, nil
+}
+func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
+	return nil, s.intErr
+}
+func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
+	return s.daemonRun, nil
+}
+func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
+	if p, ok := s.lookPaths[binary]; ok {
+		return p, nil
+	}
+	return "", os.ErrNotExist
+}
+func (s *stubDoctorEnv) HomePath(rel string) (string, error) {
+	return filepath.Join("/tmp", rel), nil
+}
+func (s *stubDoctorEnv) Stat(path string) error {
+	return nil
 }
 
 func TestBindWarningLines(t *testing.T) {
