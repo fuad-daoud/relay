@@ -327,4 +327,3 @@ func TestClientIntegrationStatus(t *testing.T) {
 		t.Fatalf("claude = %+v", st)
 	}
 }
-

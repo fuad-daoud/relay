@@ -153,4 +153,3 @@ func TestBindWarningLines(t *testing.T) {
 		t.Errorf("all OK must yield zero lines, got: %v", okLines)
 	}
 }
-

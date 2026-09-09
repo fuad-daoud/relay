@@ -13,9 +13,9 @@ import (
 type Severity int
 
 const (
-	SevOK Severity = iota // nothing to do; also used for "not checked"
-	SevWarn               // wrong, but relay can still run
-	SevFail               // relay cannot run
+	SevOK   Severity = iota // nothing to do; also used for "not checked"
+	SevWarn                 // wrong, but relay can still run
+	SevFail                 // relay cannot run
 )
 
 func (s Severity) String() string {
@@ -34,11 +34,11 @@ func (s Severity) String() string {
 // Check is one probe's result. Fix is a literal command the user can paste,
 // never prose, and is empty when Severity is SevOK.
 type Check struct {
-	Group    string   // "" for global rows, else the harness kind
-	Name     string   // "herdr", "daemon", "binary", "integration", "plan-executor"
+	Group    string // "" for global rows, else the harness kind
+	Name     string // "herdr", "daemon", "binary", "integration", "plan-executor"
 	Severity Severity
-	Detail   string   // what was actually found
-	Fix      string   // the command that fixes it
+	Detail   string // what was actually found
+	Fix      string // the command that fixes it
 }
 
 // Report is every check, in render order, plus the derived verdict.

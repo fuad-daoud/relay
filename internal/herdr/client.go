@@ -362,4 +362,3 @@ func ParseIntegrationStatus(raw []byte) map[string]IntegrationState {
 	}
 	return res
 }
-
