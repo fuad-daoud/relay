@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -394,5 +395,88 @@ func TestParseFlagsHandlesNoArguments(t *testing.T) {
 	}
 	if got := fs.Args(); len(got) != 0 {
 		t.Errorf("fs.Args() = %v, want empty", got)
+	}
+}
+
+func TestBindingArgTakesEitherForm(t *testing.T) {
+	cases := []struct {
+		label      string
+		flag       string
+		positional []string
+		want       string
+		wantErr    bool
+	}{
+		{"flag only", "webshop", nil, "webshop", false},
+		{"positional only", "", []string{"webshop"}, "webshop", false},
+		{"neither is not an error", "", nil, "", false},
+		{"both at once is refused", "webshop", []string{"other"}, "", true},
+		{"same name twice is still refused", "webshop", []string{"webshop"}, "", true},
+		{"two positionals refused", "", []string{"a", "b"}, "", true},
+	}
+
+	for _, c := range cases {
+		got, err := bindingArg(c.flag, c.positional)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: expected a refusal, got %q", c.label, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", c.label, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.label, got, c.want)
+		}
+	}
+}
+
+func TestResolveBindingAcceptsAPositionalName(t *testing.T) {
+	rt := relay.Runtime{Store: store.New(t.TempDir())}
+
+	// The whole point of #50: a named binding must be used, not discarded in
+	// favour of whatever owns the cwd.
+	got, err := resolveBinding(rt, "", []string{"webshop"})
+	if err != nil {
+		t.Fatalf("resolveBinding: %v", err)
+	}
+	if got != "webshop" {
+		t.Errorf("got %q, want webshop", got)
+	}
+}
+
+func TestResolveBindingRefusesTwoNames(t *testing.T) {
+	rt := relay.Runtime{Store: store.New(t.TempDir())}
+
+	if _, err := resolveBinding(rt, "webshop", []string{"frontend"}); err == nil {
+		t.Fatal("naming the binding twice must be refused rather than one silently winning")
+	}
+}
+
+func TestResolveBindingStillFallsBackToCWD(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+
+	s := store.New(filepath.Join(tempHome, ".local", "state", "relay"))
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	// Seed a binding that owns the test's own working directory, so the
+	// fallback has something to find without any chdir.
+	if err := s.Save(store.Binding{
+		Name: "here", CWD: cwd, Round: 1, State: store.StateActive,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := resolveBinding(relay.Runtime{Store: s}, "", nil)
+	if err != nil {
+		t.Fatalf("resolveBinding: %v", err)
+	}
+	if got != "here" {
+		t.Errorf("a bare invocation must still fall back to the cwd binding, got %q", got)
 	}
 }

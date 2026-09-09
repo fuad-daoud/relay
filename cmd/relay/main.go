@@ -596,7 +596,7 @@ func cmdSend(args []string) error {
 		return err
 	}
 
-	target, err := resolveBinding(rt, *name)
+	target, err := resolveBinding(rt, *name, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -621,7 +621,7 @@ func cmdPull(args []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := resolveBinding(rt, *name)
+	target, err := resolveBinding(rt, *name, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -653,7 +653,7 @@ func cmdDiff(args []string) error {
 		return err
 	}
 
-	target, err := resolveBinding(rt, *name)
+	target, err := resolveBinding(rt, *name, fs.Args())
 	if err != nil {
 		return err
 	}
@@ -956,9 +956,41 @@ func cmdDaemon(args []string) error {
 	return relay.NewDaemon(rt, *interval).Run(ctx)
 }
 
-// resolveBinding falls back to the binding that owns the current directory, so
-// the planner rarely has to name it.
-func resolveBinding(rt relay.Runtime, name string) (string, error) {
+// bindingArg picks the binding name out of a --name flag and whatever
+// positionals were left over, and refuses to take two. An empty return means
+// no name was given at all, which each caller interprets for itself.
+//
+// It refuses even when both spellings agree: a caller who wrote the name twice
+// has a mistaken model of the command, and silently accepting one of them hides
+// that until the day the two differ.
+func bindingArg(nameFlag string, positional []string) (string, error) {
+	switch {
+	case nameFlag != "" && len(positional) > 0:
+		return "", fmt.Errorf("binding named twice: --name %s and %q; pass it once", nameFlag, positional[0])
+	case len(positional) > 1:
+		return "", fmt.Errorf("too many binding names: %v; pass one", positional)
+	case nameFlag != "":
+		return nameFlag, nil
+	case len(positional) == 1:
+		return positional[0], nil
+	default:
+		return "", nil
+	}
+}
+
+// resolveBinding names the binding a command should act on: the one given by
+// --name or as a positional, else the binding that owns the current directory,
+// so the planner rarely has to name it at all.
+//
+// The positional form is not decoration. Before #50 these commands read --name
+// only and dropped a positional on the floor, which from a bound directory sent
+// `relay send frontend --file p.md` to the CWD's builder instead of frontend's,
+// with no error and a round log that recorded it as legitimate.
+func resolveBinding(rt relay.Runtime, nameFlag string, positional []string) (string, error) {
+	name, err := bindingArg(nameFlag, positional)
+	if err != nil {
+		return "", err
+	}
 	if name != "" {
 		return name, nil
 	}
@@ -973,7 +1005,7 @@ func resolveBinding(rt relay.Runtime, name string) (string, error) {
 		return "", err
 	}
 	if !found {
-		return "", fmt.Errorf("no binding for %s; run relay bind first", cwd)
+		return "", fmt.Errorf("no binding for %s; name one with `relay <command> NAME` or run relay bind first", cwd)
 	}
 
 	return b.Name, nil
