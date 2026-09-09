@@ -63,9 +63,13 @@ type Runtime struct {
 //
 // Accepted risk: a session-less endpoint whose pane is recycled to an agent of
 // the same kind is adopted as the original builder, and relay will relay into
-// it. This exposure lasts until a session is recorded: brief for claude (the
-// window before the next tick backfills the session), and for agy lasting until
-// the agent has begun a conversation and herdr reports its session.
+// it. This exposure lasts until a session is recorded. For claude it is brief: the
+// window before the next tick backfills the session, since claude reports one
+// at spawn. For agy and opencode it lasts until the agent has begun a
+// conversation, because both report a session only once one exists -- verified
+// live 2026-09-09 against herdr integration v10. Since `builder` is opencode
+// and `abuilder` is agy, while claude is the planner, every builder harness
+// relay ships is in the late-session population.
 func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
 	if ep.SessionID != "" {
 		return a.Session.Value == ep.SessionID

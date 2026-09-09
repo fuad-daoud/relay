@@ -19,6 +19,16 @@ const splitDirection = "right"
 // `relay done` the binding first.
 var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abandon it")
 
+// ErrBuilderUnverified reports a rebind attempt against a binding whose builder
+// could not be located but was never session-identified.
+//
+// SameAgent falls back to pane plus kind when no session is recorded, and a
+// workspace move changes the pane id -- so a failed match means either "dead"
+// or "moved, still running". relay cannot tell which, and rebinding on the
+// guess spawns a replacement and orphans a builder that is still working.
+// It refuses instead, until a human says the builder really is gone.
+var ErrBuilderUnverified = errors.New("builder was never session-identified")
+
 // BindOptions describes one bind request. BuilderPane adopts an existing pane;
 // leaving it empty spawns a new one from Alias.
 type BindOptions struct {
@@ -28,6 +38,12 @@ type BindOptions struct {
 	PlannerPane string
 	CWD         string
 	Resume      bool
+
+	// AssumeDead releases the ErrBuilderUnverified guard: the caller asserts a
+	// builder relay cannot verify is gone really is gone. It never overrides
+	// ErrBuilderAlive -- a builder relay can positively see is refused either
+	// way.
+	AssumeDead bool
 
 	// NewTab opens the builder in its own herdr tab instead of splitting the
 	// planner's pane. WorkspaceID scopes that tab to the planner's workspace.
@@ -85,7 +101,8 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	cleared. Round, CWD, Name, RoundBaselineTree and the round log
 //	are untouched.
 //
-// Errors: store.ErrNotFound; ErrBuilderAlive; a wrapped herdr failure.
+// Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
+// herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
 	rebinding := opts.Alias != "" || opts.BuilderPane != ""
 
@@ -105,6 +122,24 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		}
 		if _, alive := FindAgent(agents, b.Builder); alive {
 			return store.Binding{}, ErrBuilderAlive
+		}
+		// Reached only when the builder was NOT located. Without a recorded
+		// session that miss is ambiguous: the pane id it would match on is the
+		// one a workspace move invalidates.
+		//
+		// Only refuse when a round is open. That is where #21's harm lives --
+		// orphaning a builder "still running the round" -- and it is what
+		// keeps #20's recovery (PR #22) working: a session-less builder with
+		// nothing in flight still rebinds without ceremony.
+		//
+		// Keyed on live evidence rather than b.State so the guard does not
+		// depend on whether the daemon has ticked since the pane went away.
+		d := DiagnoseBuilder(b)
+		if !d.SessionIdentified && d.RoundOpen && !opts.AssumeDead {
+			return store.Binding{}, fmt.Errorf(
+				"%w: relay cannot tell a dead builder for %q from a moved pane. "+
+					"Check %s is really gone, then re-run with --assume-dead",
+				ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
 		}
 		builder, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
 		if err != nil {
