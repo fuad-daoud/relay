@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"os/exec"
@@ -315,5 +316,78 @@ func TestAddValidation(t *testing.T) {
 	err = run([]string{"add", "--name", "frontend"})
 	if err == nil || !strings.Contains(err.Error(), "--builder") {
 		t.Fatalf("expected an error about --builder, got %v", err)
+	}
+}
+
+func TestParseFlagsAcceptsFlagsAfterPositionals(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	round := fs.Int("round", 0, "")
+	tab := fs.Bool("tab", false, "")
+
+	// This is the README's documented shape: the binding name first, its flags
+	// after. Go's flag package stops at the first bare word, so before #48 both
+	// flags below were silently dropped.
+	if err := parseFlags(fs, []string{"webshop", "--round", "2", "--tab"}); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if *round != 2 {
+		t.Errorf("--round after a positional must still parse, got %d", *round)
+	}
+	if !*tab {
+		t.Error("--tab after a positional must still parse")
+	}
+	if got := fs.Args(); len(got) != 1 || got[0] != "webshop" {
+		t.Errorf("fs.Args() = %v, want [webshop]", got)
+	}
+}
+
+func TestParseFlagsKeepsEveryPositionalInOrder(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	name := fs.String("name", "", "")
+
+	if err := parseFlags(fs, []string{"alpha", "--name", "n", "beta"}); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if *name != "n" {
+		t.Errorf("--name = %q, want n", *name)
+	}
+	// explicitBinding refuses two positionals, so collapsing or reordering them
+	// would quietly turn a refusal into a wrong guess.
+	got := fs.Args()
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Errorf("fs.Args() = %v, want [alpha beta]", got)
+	}
+}
+
+func TestParseFlagsStillRejectsUnknownFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	// Before #48 this was swallowed with the rest of the tail.
+	if err := parseFlags(fs, []string{"webshop", "--bogus"}); err == nil {
+		t.Fatal("an unknown flag after a positional must still be rejected")
+	}
+}
+
+func TestParseFlagsStillHandlesHelp(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	if err := parseFlags(fs, []string{"-h"}); !errors.Is(err, errHelpShown) {
+		t.Fatalf("got %v, want errHelpShown", err)
+	}
+}
+
+func TestParseFlagsHandlesNoArguments(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	if err := parseFlags(fs, nil); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if got := fs.Args(); len(got) != 0 {
+		t.Errorf("fs.Args() = %v, want empty", got)
 	}
 }

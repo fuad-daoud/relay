@@ -112,14 +112,45 @@ func buildVersion() string {
 }
 
 // parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
-// the flag package has already printed the usage, and asking for help is a
-// request that succeeded, not a command that failed.
+// the flag package has already printed usage, so the caller just returns.
+//
+// It parses iteratively rather than once, because flag.Parse stops at the first
+// non-flag argument -- which meant `relay fork webshop --round 2` silently
+// dropped --round, the exact form the README documents (#48). Each pass takes
+// one leftover word as a positional and re-parses the remainder, so flags are
+// found wherever they appear. Letting Parse do the work is what keeps this
+// correct without knowing any flag's arity: Parse has already consumed a
+// flag's value before the leftovers are looked at, so `--round 2` never leaves
+// a stray "2" behind.
+//
+// There is no `--` passthrough anywhere in this CLI, so nothing here needs to
+// stop early and treat a tail as literal.
 func parseFlags(fs *flag.FlagSet, args []string) error {
-	err := fs.Parse(args)
-	if errors.Is(err, flag.ErrHelp) {
-		return errHelpShown
+	var positional []string
+
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return errHelpShown
+			}
+			return err
+		}
+
+		rest = fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		rest = rest[1:]
 	}
-	return err
+
+	// Re-parse the collected positionals so fs.Args() reports them, leaving
+	// every caller's `fs.Args()` working exactly as before. Parse stops at the
+	// first non-flag argument and every element here is one, so this consumes
+	// nothing and simply reinstates the list. Flag values already set by the
+	// passes above survive: Parse does not reset them.
+	return fs.Parse(positional)
 }
 
 func run(args []string) error {
