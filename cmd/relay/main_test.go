@@ -197,22 +197,27 @@ func TestForkHelp(t *testing.T) {
 }
 
 func TestForkValidation(t *testing.T) {
+	// Each assertion names the specific validation being exercised. The usage
+	// line lists every flag, so asserting on a bare "--round" would pass on the
+	// usage string alone -- which is exactly how these cases passed while never
+	// reaching the validation they claim to cover (#48).
+
 	// Missing source
 	err := run([]string{"fork", "--round", "1", "--new-name", "fork-1"})
 	if err == nil || !strings.Contains(err.Error(), "needs the source binding name") {
-		t.Fatalf("expected error about source binding, got %v", err)
+		t.Fatalf("expected the refuse-to-guess error, got %v", err)
 	}
 
 	// Missing --round
 	err = run([]string{"fork", "src", "--new-name", "fork-1"})
-	if err == nil || !strings.Contains(err.Error(), "--round") {
-		t.Fatalf("expected error about --round, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "relay fork requires --round N") {
+		t.Fatalf("expected the --round validation, got %v", err)
 	}
 
 	// Missing --new-name
 	err = run([]string{"fork", "src", "--round", "1"})
-	if err == nil || !strings.Contains(err.Error(), "--new-name") {
-		t.Fatalf("expected error about --new-name, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "relay fork requires --new-name NAME") {
+		t.Fatalf("expected the --new-name validation, got %v", err)
 	}
 }
 
