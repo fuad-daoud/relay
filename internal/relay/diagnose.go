@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"fmt"
+
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -40,4 +42,47 @@ func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 		RoundOpen:         !b.RoundStartedAt.IsZero(),
 		SessionIdentified: b.Builder.SessionID != "",
 	}
+}
+
+// movedPaneWarning is the clause relay adds when it cannot tell a dead builder
+// from one whose pane moved between workspaces. It is the case where the
+// documented recovery -- `relay bind --resume --builder` -- is the harm, so it
+// is stated wherever a human is about to choose one.
+const movedPaneWarning = "the builder was never session-identified, " +
+	"so it may be alive in a moved pane -- verify before rebinding"
+
+// Detail renders the sentence `relay status` shows beneath a broken binding.
+//
+// The sentence is composed from two independent clauses rather than
+// enumerated, because RoundOpen and SessionIdentified vary independently.
+//
+// Detail is total: every combination yields a non-empty sentence, so a caller
+// never has to treat an empty return as a special case.
+//
+// round is the binding's current round. queueReport increments Round after
+// logging a report, so a closed round's report belongs to round-1 -- and a
+// binding that has never been sent has no delivered report to name at all.
+func (d BuilderDiagnosis) Detail(round int) string {
+	var stake string
+	switch {
+	case d.RoundOpen:
+		stake = fmt.Sprintf("round %d was open -- that work is unaccounted for", round)
+	case round > 1:
+		stake = fmt.Sprintf("round %d report delivered; nothing outstanding", round-1)
+	default:
+		stake = "no round has been sent yet; nothing outstanding"
+	}
+
+	if !d.SessionIdentified {
+		return stake + ", and " + movedPaneWarning
+	}
+	if d.RoundOpen {
+		// Only safe to advise when the builder is positively identifiable:
+		// rebinding an unidentified one is what orphans a live builder.
+		return stake + "; rebind and resend the round"
+	}
+	if round > 1 {
+		return stake + " -- unless you want another round"
+	}
+	return stake + " -- unless you want to send one"
 }
