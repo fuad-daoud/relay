@@ -299,7 +299,7 @@ func cmdBind(args []string) error {
 			hc = herdr.NewClient("herdr", 30*time.Second)
 		}
 		env := doctor.NewEnv(hc, rt.Store)
-		rep := doctor.Run(context.Background(), env, []string{kind})
+		rep := doctor.Run(context.Background(), env, []string{kind}, doctor.WithAdopted(adopted))
 		for _, line := range bindWarningLines(rep, adopted) {
 			fmt.Fprintln(os.Stderr, line)
 		}

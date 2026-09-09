@@ -208,3 +208,27 @@ func TestBindWarningLines(t *testing.T) {
 		t.Errorf("all OK must yield zero lines, got: %v", okLines)
 	}
 }
+
+func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
+	envStub := &stubDoctorEnv{
+		ver:       "0.9.0",
+		daemonRun: true,
+		lookPaths: map[string]string{}, // binary absent
+	}
+
+	// Normal Run: binary absent suppresses integration row
+	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	normalLines := bindWarningLines(normalRep, false)
+	joinedNormal := strings.Join(normalLines, "\n")
+	if !strings.Contains(joinedNormal, "binary") {
+		t.Errorf("expected binary warning for normal bind, got: %s", joinedNormal)
+	}
+
+	// Adopted Run: integration row survives through real Run
+	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
+	adoptedLines := bindWarningLines(adoptedRep, true)
+	joinedAdopted := strings.Join(adoptedLines, "\n")
+	if strings.Contains(joinedAdopted, "binary") {
+		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
+	}
+}

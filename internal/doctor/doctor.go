@@ -114,10 +114,34 @@ func semverAtLeast(v, floor string) (bool, error) {
 	return pat1 >= pat2, nil
 }
 
+// RunOption configures doctor execution.
+type RunOption func(*runConfig)
+
+type runConfig struct {
+	adopted bool
+}
+
+// WithAdopted sets whether checks are scoped to an adopted pane (integration row only).
+func WithAdopted(adopted bool) RunOption {
+	return func(cfg *runConfig) {
+		cfg.adopted = adopted
+	}
+}
+
+// RunAdopted is shorthand for Run(ctx, env, kinds, WithAdopted(true)).
+func RunAdopted(ctx context.Context, env Env, kinds []string) Report {
+	return Run(ctx, env, kinds, WithAdopted(true))
+}
+
 // Run executes every check for the given kinds against env.
 // kinds is the caller's choice of scope; Run does not discover it.
 // Run never returns an error -- a failed probe becomes a Check saying so.
-func Run(ctx context.Context, env Env, kinds []string) Report {
+func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report {
+	var cfg runConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	var checks []Check
 
 	// 1. herdr probe
@@ -200,25 +224,27 @@ func Run(ctx context.Context, env Env, kinds []string) Report {
 			binName = h.Binary
 		}
 
-		binPath, binErr := env.LookPath(binName)
-		if binErr != nil {
+		if !cfg.adopted {
+			binPath, binErr := env.LookPath(binName)
+			if binErr != nil {
+				checks = append(checks, Check{
+					Group:    kind,
+					Name:     "binary",
+					Severity: SevWarn,
+					Detail:   "not on PATH -- skipping the rest of this harness",
+					Fix:      "",
+				})
+				continue
+			}
+
 			checks = append(checks, Check{
 				Group:    kind,
 				Name:     "binary",
-				Severity: SevWarn,
-				Detail:   "not on PATH -- skipping the rest of this harness",
+				Severity: SevOK,
+				Detail:   binPath,
 				Fix:      "",
 			})
-			continue
 		}
-
-		checks = append(checks, Check{
-			Group:    kind,
-			Name:     "binary",
-			Severity: SevOK,
-			Detail:   binPath,
-			Fix:      "",
-		})
 
 		// Integration check
 		target := kind
@@ -293,42 +319,44 @@ func Run(ctx context.Context, env Env, kinds []string) Report {
 			usableBuilder = true
 		}
 
-		// Role (plan-executor) check
-		if !known {
-			checks = append(checks, Check{
-				Group:    kind,
-				Name:     "plan-executor",
-				Severity: SevOK,
-				Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
-				Fix:      "",
-			})
-		} else if h.RolePath == "" {
-			checks = append(checks, Check{
-				Group:    kind,
-				Name:     "plan-executor",
-				Severity: SevOK,
-				Detail:   "selected by preamble, not a file",
-				Fix:      "",
-			})
-		} else {
-			homeRel := "~/" + h.RolePath
-			fullPath, hErr := env.HomePath(h.RolePath)
-			if hErr != nil || env.Stat(fullPath) != nil {
-				checks = append(checks, Check{
-					Group:    kind,
-					Name:     "plan-executor",
-					Severity: SevWarn,
-					Detail:   fmt.Sprintf("missing: %s", homeRel),
-					Fix:      fmt.Sprintf("relay agent print --kind %s > %s", kind, homeRel),
-				})
-			} else {
+		if !cfg.adopted {
+			// Role (plan-executor) check
+			if !known {
 				checks = append(checks, Check{
 					Group:    kind,
 					Name:     "plan-executor",
 					Severity: SevOK,
-					Detail:   homeRel,
+					Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
 					Fix:      "",
 				})
+			} else if h.RolePath == "" {
+				checks = append(checks, Check{
+					Group:    kind,
+					Name:     "plan-executor",
+					Severity: SevOK,
+					Detail:   "selected by preamble, not a file",
+					Fix:      "",
+				})
+			} else {
+				homeRel := "~/" + h.RolePath
+				fullPath, hErr := env.HomePath(h.RolePath)
+				if hErr != nil || env.Stat(fullPath) != nil {
+					checks = append(checks, Check{
+						Group:    kind,
+						Name:     "plan-executor",
+						Severity: SevWarn,
+						Detail:   fmt.Sprintf("missing: %s", homeRel),
+						Fix:      fmt.Sprintf("relay agent print --kind %s > %s", kind, homeRel),
+					})
+				} else {
+					checks = append(checks, Check{
+						Group:    kind,
+						Name:     "plan-executor",
+						Severity: SevOK,
+						Detail:   homeRel,
+						Fix:      "",
+					})
+				}
 			}
 		}
 	}

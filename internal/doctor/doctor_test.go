@@ -309,3 +309,32 @@ func TestDoctorSecondPassStaysFailWhenNoCompleteHarness(t *testing.T) {
 		t.Errorf("claude integration severity = %v, want SevFail", claudeInt.Severity)
 	}
 }
+
+func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
+	// Binary is absent on PATH.
+	// For normal Run: binary check suppresses remaining rows (0 integration rows).
+	// For adopted Run: integration row survives.
+	env := &fakeEnv{
+		herdrVer:  "0.9.0",
+		lookPaths: map[string]string{}, // binary absent
+		intStatus: map[string]herdr.IntegrationState{
+			"claude": {Installed: false, Detail: "not installed"},
+		},
+	}
+
+	// Normal run suppresses integration
+	normalRep := Run(context.Background(), env, []string{"claude"})
+	if findCheck(normalRep, "claude", "integration") != nil {
+		t.Fatal("normal Run should suppress integration row when binary is absent")
+	}
+
+	// Adopted run computes and preserves integration row
+	adoptedRep := Run(context.Background(), env, []string{"claude"}, WithAdopted(true))
+	c := findCheck(adoptedRep, "claude", "integration")
+	if c == nil {
+		t.Fatal("adopted Run must compute integration row even when binary is absent")
+	}
+	if c.Severity != SevFail {
+		t.Errorf("expected SevFail on missing integration, got %v", c.Severity)
+	}
+}
