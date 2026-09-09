@@ -39,9 +39,10 @@ guessing from the name.
 
 ## Verifying a builder's work
 
-Do not trust the report. At minimum re-run `go test ./...` and
-`gofmt -l ./internal ./cmd` yourself, and check `git diff --stat` against the
-plan's declared scope.
+Do not trust the report. Run `make check` yourself -- it is stricter than
+`go test ./...` alone, adding `gofmt -l .` over the whole tree, `go vet`, and a
+`go mod tidy` check -- and compare `git diff --stat` against the plan's
+declared scope.
 
 For anything subtle, mutation-test it: break the specific condition the change
 turns on and confirm a named test fails. A test that passes both with and
@@ -49,10 +50,10 @@ without the logic is not pinning anything.
 
 ## Conventions
 
-- Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`, plans in
-  `docs/plans/YYYY-MM-DD-<name>.md`.
-- Prose in specs, plans and comments uses ASCII `--`, not em dashes.
+- Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
+  plans live in `docs/plans/YYYY-MM-DD-<name>.md`, a directory introduced by
+  #45 -- follow it or drop it, it has no history behind it yet.
 - State lives in `$XDG_STATE_HOME/relay` (default `~/.local/state/relay`);
   config resolves via `os.UserConfigDir()`, which honours `XDG_CONFIG_HOME`.
-  Compose relay config paths through the shared helper, never by hand -- see
-  #42 for what happens otherwise.
+  Compose relay config paths through `userConfigRoot()` (`cmd/relay/main.go`),
+  never by hand -- see #42 for what hand-rolling one costs.
