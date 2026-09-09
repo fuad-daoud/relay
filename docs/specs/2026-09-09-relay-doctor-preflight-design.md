@@ -202,6 +202,10 @@ type Check struct {
     Severity Severity
     Detail   string   // what was actually found
     Fix      string   // the command that fixes it
+    // ProbeFailed marks a row where relay could not establish the fact at all,
+    // as opposed to establishing that something is wrong. Section 9 rule 2
+    // depends on the distinction.
+    ProbeFailed bool
 }
 
 // Report is every check, in render order, plus the derived verdict.
@@ -439,7 +443,12 @@ code, so a one-harness machine with relay working exits 0.
 The trailing footer states the counts and the verdict in plain words:
 
 - `Failures() > 0`: `N failures, M warnings -- no usable builder. Fix the failures above.` (or `1 failure... Fix the failure above.`)
-- no failures, `!UsableBuilder`: `M warnings, 0 failures -- could not establish a usable builder.`
+- no failures, `!UsableBuilder`: `M warnings, 0 failures -- could not establish a
+  usable builder: no checked harness has both its binary on PATH and its
+  integration installed.` The reason is part of the line, because every row can
+  read `ok` and still leave no usable builder -- a machine whose only alias names
+  a kind relay was not taught is the case -- and a bare verdict would point the
+  reader at nothing.
 - no failures, `UsableBuilder`: `M warnings, 0 failures -- relay can run.`
 
 Every `Fix` is a literal command. No fix line may say "see the README", "install
@@ -490,14 +499,26 @@ Three rules, each of which the implementer will be tempted to break:
 
 1. **It never blocks and never fails the bind.** A `SevFail` row prints like any
    other. relay does not refuse work on the strength of its own preflight.
-2. **Probe errors are swallowed.** If `herdr integration status` errors or
-   times out, print nothing and bind. The preflight must not be able to break
-   or noticeably slow the hot path.
-3. **An adopted pane gets the integration row only.** Binding by pane id, or
-   `--resume`, means the user launched that agent themselves, in whatever role
-   they chose -- the binary and role rows are none of relay's business. The
+2. **A row relay could not establish is dropped, one row at a time.** Any check
+   whose `ProbeFailed` is set -- the probe errored, timed out, or returned
+   nothing for that target -- carries nothing the user can act on, so it stays
+   off the hot path. Dropping them **individually** matters: an earlier
+   all-or-nothing rule meant one flaky probe silenced every other warning in the
+   report, including a stopped daemon, which the probe had nothing to do with.
+   The single exception is a `SevFail` row, which prints even when its cause was
+   a failed probe: it means relay cannot run at all, and silence is the worst
+   available answer. The preflight must also not noticeably slow the hot path --
+   it is bounded by `bindPreflightTimeout` (2s), well under the herdr client's
+   own 30s per call.
+3. **An adopted pane is not checked for its binary or its role.** Binding by pane
+   id, or `--resume`, means the user launched that agent themselves, in whatever
+   role they chose -- those two rows are none of relay's business. Its
    integration row still applies, because it decides whether the round can ever
-   be observed to finish.
+   be observed to finish, and it must survive a binary that is absent from
+   `PATH`: suppression-on-missing-binary and adopted-scoping are independent
+   rules, and their interaction is where this went wrong once already. Global
+   rows (`herdr`, `daemon`, `bindings`) are reported for adopted binds too.
+   `doctor.Run` owns this scoping; the renderer does not filter by role.
 
 ## 10. Testing
 
@@ -520,9 +541,20 @@ Three rules, each of which the implementer will be tempted to break:
   `RolePath` also has an empty `RoleDoc`; `All` is sorted.
 - **`relay agent print`**: output for each kind is byte-identical to the
   embedded file; `agy` and an unknown kind exit 2 and write nothing to stdout.
-- **The bind warning**: tested at the function that renders the lines, not
-  through a real bind. Assert that a probe error yields zero lines, and that an
-  adopted bind yields only the integration row.
+- **The bind warning**: tested at `bindPreflight` / `bindWarningLines`, not
+  through a real bind -- a real bind spawns an agent, which is not something a
+  test may do. Drive these from a real `doctor.Run` against a fake `Env`, never
+  from a hand-built `Report`: a hand-built report can express shapes `Run` cannot
+  produce, which is exactly how the adopted/missing-binary hole stayed hidden.
+  Assert that a failed probe drops **only its own row** while an actionable row
+  in the same report survives; that a `SevFail` row prints even when its probe
+  failed; that an adopted preflight reports the integration despite an absent
+  binary while a non-adopted one does not; and that the preflight hands `Run` a
+  context carrying a deadline.
+- **Every guard above must be mutation-checked.** A test that passes against the
+  bug it names is worse than no test, because it reads as coverage. Break the
+  guard deliberately, confirm the suite goes red, restore it. Two rounds of this
+  work shipped tests that could not fail.
 - **Existing tests must keep passing unchanged.** This spec adds no behaviour to
   the relay loop.
 

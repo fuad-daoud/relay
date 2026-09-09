@@ -34,17 +34,24 @@ func (s Severity) String() string {
 // Check is one probe's result. Fix is a literal command the user can paste,
 // never prose, and is empty when Severity is SevOK.
 type Check struct {
-	Group       string // "" for global rows, else the harness kind
-	Name        string // "herdr", "daemon", "binary", "integration", "plan-executor"
-	Severity    Severity
-	Detail      string // what was actually found
-	Fix         string // the command that fixes it
-	ProbeFailed bool   // true when external probe errored/timed out
+	Group    string // "" for global rows, else the harness kind
+	Name     string // "herdr", "daemon", "binary", "integration", "plan-executor"
+	Severity Severity
+	Detail   string // what was actually found
+	Fix      string // the command that fixes it
+	// ProbeFailed marks a row where relay could not establish the fact at all
+	// (the probe errored, timed out, or returned nothing for this target) as
+	// opposed to establishing that something is wrong. The bind-time preflight
+	// skips these, because there is nothing the user can act on.
+	ProbeFailed bool
 }
 
 // Report is every check, in render order, plus the derived verdict.
 type Report struct {
-	Checks        []Check
+	Checks []Check
+	// UsableBuilder is true when at least one checked kind has both its binary
+	// on PATH and its integration installed. It is meaningless in adopted mode,
+	// where the binary is deliberately not probed, so nothing reads it there.
 	UsableBuilder bool
 }
 
@@ -122,16 +129,14 @@ type runConfig struct {
 	adopted bool
 }
 
-// WithAdopted sets whether checks are scoped to an adopted pane (integration row only).
+// WithAdopted scopes the per-kind checks to an adopted pane: the user launched
+// that agent themselves, so its binary and role are none of relay's business,
+// but its integration still decides whether a round can be observed to finish.
+// Global rows are unaffected.
 func WithAdopted(adopted bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.adopted = adopted
 	}
-}
-
-// RunAdopted is shorthand for Run(ctx, env, kinds, WithAdopted(true)).
-func RunAdopted(ctx context.Context, env Env, kinds []string) Report {
-	return Run(ctx, env, kinds, WithAdopted(true))
 }
 
 // Run executes every check for the given kinds against env.
@@ -279,11 +284,12 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					})
 				} else {
 					checks = append(checks, Check{
-						Group:    kind,
-						Name:     "integration",
-						Severity: SevWarn,
-						Detail:   fmt.Sprintf("could not read herdr integration status for %s", target),
-						Fix:      "",
+						Group:       kind,
+						Name:        "integration",
+						Severity:    SevWarn,
+						Detail:      fmt.Sprintf("could not read herdr integration status for %s", target),
+						Fix:         "",
+						ProbeFailed: true,
 					})
 				}
 			} else if !state.Installed {

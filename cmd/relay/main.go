@@ -291,13 +291,11 @@ func cmdBind(args []string) error {
 		}
 	}
 
-	if kind != "" {
-		hc := rt.Herdr.(doctor.HerdrClient)
+	// Preflight is advisory only: it never blocks the bind, and any probe
+	// failure is dropped rather than printed. See bindPreflight.
+	if hc, ok := rt.Herdr.(doctor.HerdrClient); ok && kind != "" {
 		env := doctor.NewEnv(hc, rt.Store)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		rep := doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted))
-		for _, line := range bindWarningLines(rep, adopted) {
+		for _, line := range bindPreflight(context.Background(), env, kind, adopted) {
 			fmt.Fprintln(os.Stderr, line)
 		}
 	}

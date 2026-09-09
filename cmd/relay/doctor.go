@@ -4,22 +4,40 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/fuad-daoud/relay/internal/alias"
-	"github.com/fuad-daoud/relay/internal/doctor"
-	"github.com/fuad-daoud/relay/internal/store"
 	"io"
 	"os"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/doctor"
+	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
-func assembleKinds(aliases *alias.Table, st *store.Store) ([]string, error) {
+// bindPreflightTimeout bounds the bind-time preflight. The hot path must not be
+// slowed by a hung herdr: the herdr client's own per-call timeout is 30s, and
+// two calls would add a minute to `relay bind`.
+const bindPreflightTimeout = 2 * time.Second
+
+// Compile-time proof that the concrete herdr client satisfies the interface
+// doctor needs, so the assertion in newDoctorEnv can never panic at runtime.
+var _ doctor.HerdrClient = (*herdr.Client)(nil)
+
+// assembleKinds is the scope: every kind named by the effective alias table,
+// plus every existing binding's builder kind. storeErr is returned rather than
+// aborting -- a diagnostic that refuses to diagnose because one of its own
+// inputs is unreadable is worse than one that reports the gap, so the caller
+// renders it as a row and checks the kinds it did find.
+func assembleKinds(aliases *alias.Table, st *store.Store) (kinds []string, storeErr error) {
 	seen := make(map[string]bool)
 	if aliases != nil {
 		for _, name := range aliases.Names() {
+			// Names() is the table's own key set, so Lookup cannot miss.
 			spec, err := aliases.Lookup(name)
 			if err != nil {
-				return nil, fmt.Errorf("aliases lookup %q: %w", name, err)
+				continue
 			}
 			if spec.Kind != "" {
 				seen[spec.Kind] = true
@@ -29,7 +47,7 @@ func assembleKinds(aliases *alias.Table, st *store.Store) ([]string, error) {
 	if st != nil {
 		bindings, err := st.List()
 		if err != nil {
-			return nil, fmt.Errorf("store list bindings: %w", err)
+			storeErr = fmt.Errorf("could not list bindings: %w", err)
 		}
 		for _, b := range bindings {
 			if b.Builder.Kind != "" {
@@ -37,12 +55,12 @@ func assembleKinds(aliases *alias.Table, st *store.Store) ([]string, error) {
 			}
 		}
 	}
-	kinds := make([]string, 0, len(seen))
+	kinds = make([]string, 0, len(seen))
 	for k := range seen {
 		kinds = append(kinds, k)
 	}
 	sort.Strings(kinds)
-	return kinds, nil
+	return kinds, storeErr
 }
 
 func renderReport(w io.Writer, rep doctor.Report) {
@@ -95,7 +113,10 @@ func renderReport(w io.Writer, rep doctor.Report) {
 
 	if failCount == 0 {
 		if !rep.UsableBuilder {
-			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder.\n", warnPart, failPart)
+			// Say why. Every row can be `ok` and still leave no usable builder --
+			// a machine whose only alias names a kind relay was not taught reads
+			// as entirely healthy, so a bare verdict would point at nothing.
+			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has both its binary on PATH and its integration installed.\n", warnPart, failPart)
 		} else {
 			fmt.Fprintf(w, "%s, %s -- relay can run.\n", warnPart, failPart)
 		}
@@ -119,13 +140,21 @@ func cmdDoctor(args []string) error {
 		return err
 	}
 
-	kinds, err := assembleKinds(rt.Aliases, rt.Store)
-	if err != nil {
-		return err
+	kinds, storeErr := assembleKinds(rt.Aliases, rt.Store)
+	hc, ok := rt.Herdr.(doctor.HerdrClient)
+	if !ok {
+		return fmt.Errorf("herdr client does not support the probes doctor needs")
 	}
-	hc := rt.Herdr.(doctor.HerdrClient)
 	env := doctor.NewEnv(hc, rt.Store)
 	rep := doctor.Run(context.Background(), env, kinds)
+	if storeErr != nil {
+		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
+			Name:        "bindings",
+			Severity:    doctor.SevWarn,
+			Detail:      storeErr.Error(),
+			ProbeFailed: true,
+		})
+	}
 
 	renderReport(os.Stdout, rep)
 
@@ -135,20 +164,41 @@ func cmdDoctor(args []string) error {
 	return nil
 }
 
-func bindWarningLines(rep doctor.Report, adopted bool) []string {
-	// Probe errors are swallowed — print nothing, bind anyway.
-	for _, c := range rep.Checks {
-		if c.ProbeFailed {
-			return nil
+// insertGlobalCheck puts c after the last global row, so render order stays
+// "globals first, then one block per kind".
+func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
+	last := 0
+	for i, existing := range checks {
+		if existing.Group == "" {
+			last = i + 1
 		}
 	}
+	out := make([]doctor.Check, 0, len(checks)+1)
+	out = append(out, checks[:last]...)
+	out = append(out, c)
+	return append(out, checks[last:]...)
+}
 
+// bindPreflight runs the bind-time preflight for one kind and renders its
+// warning lines. The timeout lives here, not at the call site, so it cannot be
+// dropped by accident; adopted is passed through to doctor.Run, which owns what
+// an adopted pane is and is not checked for.
+func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
+	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
+	defer cancel()
+	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted)))
+}
+
+func bindWarningLines(rep doctor.Report) []string {
 	var warnings []string
 	for _, c := range rep.Checks {
 		if c.Severity == doctor.SevOK {
 			continue
 		}
-		if adopted && (c.Name == "binary" || c.Name == "plan-executor") {
+		// A row relay could not establish is not actionable, so it stays off the
+		// hot path -- unless it is a SevFail, which means relay cannot run at
+		// all and the user needs to hear it even when the cause was a bad probe.
+		if c.ProbeFailed && c.Severity != doctor.SevFail {
 			continue
 		}
 

@@ -73,9 +73,35 @@ func TestAssembleKindsSurfacesErrors(t *testing.T) {
 	st := store.New(filePath)
 	tbl := alias.DefaultTable()
 
-	_, err := assembleKinds(tbl, st)
+	kinds, err := assembleKinds(tbl, st)
 	if err == nil {
 		t.Error("assembleKinds should surface error from store.List(), got nil")
+	}
+	// ...and must still hand back what it did learn. A diagnostic that refuses
+	// to diagnose because one of its own inputs is unreadable is worse than one
+	// that reports the gap and checks the rest.
+	if len(kinds) == 0 {
+		t.Error("assembleKinds must still return the alias-derived kinds when the store is unreadable")
+	}
+}
+
+// The unreadable-store gap is reported as a global row, positioned with the
+// other global rows rather than after the per-kind blocks.
+func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
+	checks := []doctor.Check{
+		{Name: "herdr", Severity: doctor.SevOK},
+		{Name: "daemon", Severity: doctor.SevOK},
+		{Group: "claude", Name: "binary", Severity: doctor.SevOK},
+	}
+	out := insertGlobalCheck(checks, doctor.Check{Name: "bindings", Severity: doctor.SevWarn, Detail: "could not list bindings"})
+	if len(out) != 4 {
+		t.Fatalf("len = %d, want 4", len(out))
+	}
+	if out[2].Name != "bindings" {
+		t.Errorf("inserted row at %d (%q), want index 2 -- after the last global row", 2, out[2].Name)
+	}
+	if out[3].Group != "claude" {
+		t.Errorf("per-kind rows must stay after the globals, got %+v", out[3])
 	}
 }
 
@@ -136,21 +162,23 @@ func TestRenderReportVerdict(t *testing.T) {
 	buf.Reset()
 	renderReport(&buf, repUnverified)
 	outUnverified := buf.String()
-	if !strings.Contains(outUnverified, "could not establish a usable builder.") {
+	if !strings.Contains(outUnverified, "could not establish a usable builder: no checked harness") {
 		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
 	}
 }
 
 type stubDoctorEnv struct {
 	ver       string
+	herdrErr  error
 	intErr    error
 	intStates map[string]herdr.IntegrationState
 	daemonRun bool
 	lookPaths map[string]string
+	statErr   error // nil means every role file exists
 }
 
 func (s *stubDoctorEnv) HerdrVersion(ctx context.Context) (string, error) {
-	return s.ver, nil
+	return s.ver, s.herdrErr
 }
 func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
 	if s.intStates != nil {
@@ -171,98 +199,116 @@ func (s *stubDoctorEnv) HomePath(rel string) (string, error) {
 	return filepath.Join("/tmp", rel), nil
 }
 func (s *stubDoctorEnv) Stat(path string) error {
-	return nil
+	return s.statErr
 }
 
-func TestBindWarningLines(t *testing.T) {
-	// 1. Probe error yields zero lines, tested directly and through a real erroring Env
-	repProbeErr := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "integration status unavailable: timeout", ProbeFailed: true},
-		},
-	}
-	lines := bindWarningLines(repProbeErr, false)
-	if len(lines) != 0 {
-		t.Errorf("probe error must yield zero lines, got: %v", lines)
-	}
-
-	envErr := &stubDoctorEnv{
+// A probe relay could not complete is not actionable and stays off the hot path.
+// An actionable row in the same report must survive it -- the all-or-nothing
+// filter this replaces dropped both, and its test could not tell the difference
+// because the stub's Stat always succeeded.
+func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
+	env := &stubDoctorEnv{
 		ver:       "0.9.0",
 		intErr:    errors.New("connection reset by peer"),
 		daemonRun: true,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		statErr:   os.ErrNotExist,
 	}
-	realErrRep := doctor.Run(context.Background(), envErr, []string{"claude"})
-	if zeroLines := bindWarningLines(realErrRep, false); len(zeroLines) != 0 {
-		t.Errorf("real erroring Env must yield zero lines at bind, got: %v", zeroLines)
+	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	joined := strings.Join(bindWarningLines(rep), "\n")
+
+	if strings.Contains(joined, "status unavailable") {
+		t.Errorf("a row relay could not establish must not reach the hot path: %s", joined)
+	}
+	if !strings.Contains(joined, "plan-executor") {
+		t.Errorf("an actionable row must survive a failed probe elsewhere: %s", joined)
+	}
+}
+
+// The exception: a failed probe whose verdict is SevFail means relay cannot run.
+// Silence would be the worst possible answer, so it prints anyway.
+func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
+	env := &stubDoctorEnv{herdrErr: errors.New("exec: \"herdr\": not found"), daemonRun: true}
+	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	joined := strings.Join(bindWarningLines(rep), "\n")
+	if !strings.Contains(joined, "herdr") {
+		t.Errorf("a SevFail probe failure must still be reported at bind: %s", joined)
+	}
+}
+
+func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
+	env := &stubDoctorEnv{
+		ver:       "0.9.0",
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current (v9)"}},
+	}
+	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	if lines := bindWarningLines(rep); len(lines) != 0 {
+		t.Errorf("a healthy machine must yield zero lines, got: %v", lines)
+	}
+}
+
+// Global rows reach bind too: a stopped daemon makes a binding exactly as inert
+// as a missing integration, which is the failure #24 is about.
+func TestBindWarningLinesIncludesGlobalRows(t *testing.T) {
+	rep := doctor.Report{Checks: []doctor.Check{
+		{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relay daemon"},
+		{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+	}}
+	joined := strings.Join(bindWarningLines(rep), "\n")
+	if !strings.Contains(joined, "daemon not running") {
+		t.Errorf("global rows must reach bind, got: %s", joined)
+	}
+}
+
+// deadlineEnv records whether the context it was handed carried a deadline.
+type deadlineEnv struct {
+	stubDoctorEnv
+	sawDeadline bool
+}
+
+func (e *deadlineEnv) HerdrVersion(ctx context.Context) (string, error) {
+	_, ok := ctx.Deadline()
+	e.sawDeadline = ok
+	return e.stubDoctorEnv.HerdrVersion(ctx)
+}
+
+// The bind preflight must be bounded: the herdr client allows 30s per call, so
+// an unbounded preflight can add a minute to `relay bind`.
+func TestBindPreflightBoundsTheHotPath(t *testing.T) {
+	env := &deadlineEnv{stubDoctorEnv: stubDoctorEnv{ver: "0.9.0", daemonRun: true}}
+	bindPreflight(context.Background(), env, "claude", false)
+	if !env.sawDeadline {
+		t.Error("bindPreflight must hand doctor.Run a deadline-bounded context")
+	}
+}
+
+// An adopted pane's integration row must survive a binary that is not on PATH:
+// the user launched that agent themselves, but the integration still decides
+// whether the round can ever be observed to finish. Fails if the call site stops
+// passing `adopted` through.
+func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
+	env := &stubDoctorEnv{
+		ver:       "0.9.0",
+		daemonRun: true,
+		intStates: map[string]herdr.IntegrationState{"claude": {Installed: false}},
 	}
 
-	// 2. Adopted bind yields only integration row
-	repMulti := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "claude", Name: "binary", Severity: doctor.SevWarn, Detail: "not on PATH -- skipping the rest of this harness"},
-			{Group: "claude", Name: "integration", Severity: doctor.SevFail, Detail: "not installed -- this binding will report `unknown` forever and never finish a round", Fix: "herdr integration install claude"},
-			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relay agent print --kind claude > ~/.claude/agents/plan-executor.md"},
-		},
+	adopted := strings.Join(bindPreflight(context.Background(), env, "claude", true), "\n")
+	if !strings.Contains(adopted, "integration") {
+		t.Errorf("adopted preflight must report the integration despite no binary: %s", adopted)
 	}
-	adoptedLines := bindWarningLines(repMulti, true)
-	if len(adoptedLines) == 0 {
-		t.Fatal("adopted bind should yield warning lines for non-OK integration")
-	}
-	joinedAdopted := strings.Join(adoptedLines, "\n")
-	if !strings.Contains(joinedAdopted, "integration not installed") {
-		t.Errorf("adopted bind missing integration warning: %s", joinedAdopted)
-	}
-	if strings.Contains(joinedAdopted, "binary") {
-		t.Errorf("adopted bind must not include binary check: %s", joinedAdopted)
-	}
-	if strings.Contains(joinedAdopted, "plan-executor") {
-		t.Errorf("adopted bind must not include plan-executor check: %s", joinedAdopted)
+	if strings.Contains(adopted, "binary") {
+		t.Errorf("adopted preflight must not mention the binary: %s", adopted)
 	}
 
-	// 3. Non-adopted bind yields all warning rows
-	normalLines := bindWarningLines(repMulti, false)
-	joinedNormal := strings.Join(normalLines, "\n")
-	if !strings.Contains(joinedNormal, "binary") {
-		t.Errorf("normal bind missing binary warning: %s", joinedNormal)
+	normal := strings.Join(bindPreflight(context.Background(), env, "claude", false), "\n")
+	if !strings.Contains(normal, "binary") {
+		t.Errorf("non-adopted preflight must report the absent binary: %s", normal)
 	}
-	if !strings.Contains(joinedNormal, "integration") {
-		t.Errorf("normal bind missing integration warning: %s", joinedNormal)
-	}
-	if !strings.Contains(joinedNormal, "plan-executor") {
-		t.Errorf("normal bind missing plan-executor warning: %s", joinedNormal)
-	}
-
-	// 4. All OK yields zero lines
-	repAllOk := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-			{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
-			{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
-		},
-	}
-	if okLines := bindWarningLines(repAllOk, false); len(okLines) != 0 {
-		t.Errorf("all OK must yield zero lines, got: %v", okLines)
-	}
-
-	// 5. Global non-OK rows (daemon, herdr) appear in bind warnings for both normal and adopted
-	repGlobal := doctor.Report{
-		Checks: []doctor.Check{
-			{Name: "herdr", Severity: doctor.SevFail, Detail: "0.8.0 (below 0.9.0 minimum)", Fix: "brew upgrade herdr"},
-			{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relay daemon"},
-			{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
-		},
-	}
-	globalNormal := bindWarningLines(repGlobal, false)
-	joinedGlobalNormal := strings.Join(globalNormal, "\n")
-	if !strings.Contains(joinedGlobalNormal, "herdr 0.8.0") || !strings.Contains(joinedGlobalNormal, "daemon not running") {
-		t.Errorf("normal bind should include global warnings, got: %v", globalNormal)
-	}
-
-	globalAdopted := bindWarningLines(repGlobal, true)
-	joinedGlobalAdopted := strings.Join(globalAdopted, "\n")
-	if !strings.Contains(joinedGlobalAdopted, "herdr 0.8.0") || !strings.Contains(joinedGlobalAdopted, "daemon not running") {
-		t.Errorf("adopted bind should include global warnings, got: %v", globalAdopted)
+	if strings.Contains(normal, "integration") {
+		t.Errorf("a missing binary must still suppress the rest of that harness: %s", normal)
 	}
 }
 
@@ -278,7 +324,7 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 
 	// Normal Run: binary absent suppresses integration row
 	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
-	normalLines := bindWarningLines(normalRep, false)
+	normalLines := bindWarningLines(normalRep)
 	joinedNormal := strings.Join(normalLines, "\n")
 	if !strings.Contains(joinedNormal, "binary") {
 		t.Errorf("expected binary warning for normal bind, got: %s", joinedNormal)
@@ -286,7 +332,7 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 
 	// Adopted Run: integration row survives through real Run
 	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
-	adoptedLines := bindWarningLines(adoptedRep, true)
+	adoptedLines := bindWarningLines(adoptedRep)
 	joinedAdopted := strings.Join(adoptedLines, "\n")
 	if strings.Contains(joinedAdopted, "binary") {
 		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
@@ -303,7 +349,7 @@ func TestBindWarningDaemonDownRealRun(t *testing.T) {
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
 	}
 	rep := doctor.Run(context.Background(), envStub, []string{"claude"})
-	lines := bindWarningLines(rep, false)
+	lines := bindWarningLines(rep)
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "daemon not running") {
 		t.Errorf("expected daemon warning when daemon is down, got: %s", joined)
