@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -65,6 +66,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list agents: %w", err)
 	}
+	// Own the snapshot. DeliverPending records a planner it has just prompted
+	// by marking it working in this slice, and that record is true only for the
+	// remainder of this pass -- it must not reach the Herdr implementation's own
+	// storage, nor survive into the next tick, which fetches fresh state anyway.
+	agents = append([]herdr.Agent(nil), agents...)
 
 	for _, b := range bindings {
 		// One critical section per binding: re-read under the lock, reconcile,
