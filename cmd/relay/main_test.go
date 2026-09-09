@@ -211,3 +211,45 @@ func TestForkValidation(t *testing.T) {
 		t.Fatalf("expected error about --new-name, got %v", err)
 	}
 }
+
+func TestAliasConfigHome(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	relayDir := filepath.Join(configHome, "relay")
+	if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aliasContent := `[{"name":"custom-builder","kind":"dummy","args":["arg"]}]`
+	if err := os.WriteFile(filepath.Join(relayDir, "aliases.json"), []byte(aliasContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	if _, err := rt.Aliases.Lookup("custom-builder"); err != nil {
+		t.Fatalf("rt.Aliases.Lookup(%q): %v", "custom-builder", err)
+	}
+}
+
+func TestHooksConfigHome(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	cfg, err := resolveHooksConfig()
+	if err != nil {
+		t.Fatalf("resolveHooksConfig: %v", err)
+	}
+	wantHooksDir := filepath.Join(configHome, "relay", "hooks")
+	if cfg.HooksDir != wantHooksDir {
+		t.Fatalf("got HooksDir %q, want %q", cfg.HooksDir, wantHooksDir)
+	}
+}

@@ -97,3 +97,24 @@ func TestLoadTableMissingFileIsDefaults(t *testing.T) {
 		t.Errorf("got %d aliases, want the 3 defaults", len(tbl.Names()))
 	}
 }
+
+func TestLoadTableUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping test when running as root")
+	}
+
+	path := filepath.Join(t.TempDir(), "unreadable.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o000); err != nil {
+		t.Fatalf("write unreadable file: %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod unreadable file: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(path, 0o600)
+	})
+
+	if _, err := LoadTable(path); err == nil {
+		t.Fatal("LoadTable on unreadable file: got nil error, want error")
+	}
+}

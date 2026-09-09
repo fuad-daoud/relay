@@ -311,9 +311,9 @@ check which ones are installed.
 > unattended relay loop work, and it is a real grant of trust. Keep it only for
 > a working tree you are willing to let an agent edit freely.
 
-Override or extend the table in `~/.config/relay/aliases.json`. It is a JSON
-array layered over the built-ins, so an entry reusing a built-in name replaces
-it:
+Override or extend the table in `~/.config/relay/aliases.json`. Config lives in
+`$XDG_CONFIG_HOME/relay` (default `~/.config/relay`). It is a JSON array
+layered over the built-ins, so an entry reusing a built-in name replaces it:
 
 ```json
 [
@@ -406,7 +406,7 @@ and 1 if not, printing nothing.
 
 ## Lifecycle hooks
 
-relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `~/.config/relay/hooks/<event_type>.d/`.
+relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `~/.config/relay/hooks/<event_type>.d/`. Config lives in `$XDG_CONFIG_HOME/relay` (default `~/.config/relay`).
 
 ### Supported events
 
