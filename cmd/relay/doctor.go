@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
@@ -128,3 +129,59 @@ func cmdDoctor(args []string) error {
 	}
 	return nil
 }
+
+func bindWarningLines(rep doctor.Report, adopted bool) []string {
+	var warnings []string
+	for _, c := range rep.Checks {
+		if c.Group == "" || c.Severity == doctor.SevOK {
+			continue
+		}
+		if adopted && c.Name != "integration" {
+			continue
+		}
+		// Probe errors are swallowed
+		if strings.Contains(c.Detail, "unavailable") || strings.Contains(c.Detail, "probe error") {
+			continue
+		}
+
+		msg := fmt.Sprintf("%s %s %s", c.Group, c.Name, c.Detail)
+		if c.Fix != "" {
+			msg += fmt.Sprintf(". Fix: %s", c.Fix)
+		}
+		warnings = append(warnings, msg)
+	}
+
+	if len(warnings) == 0 {
+		return nil
+	}
+
+	var lines []string
+	for _, w := range warnings {
+		wrapped := wrapText(w, 70)
+		for _, l := range wrapped {
+			lines = append(lines, "relay: "+l)
+		}
+	}
+	lines = append(lines, "relay: run `relay doctor` for the full check")
+	return lines
+}
+
+func wrapText(text string, maxLen int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	var lines []string
+	curr := words[0]
+	for _, w := range words[1:] {
+		if len(curr)+1+len(w) > maxLen {
+			lines = append(lines, curr)
+			curr = "  " + w
+		} else {
+			curr += " " + w
+		}
+	}
+	lines = append(lines, curr)
+	return lines
+}
+

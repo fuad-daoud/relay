@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -267,6 +268,41 @@ func cmdBind(args []string) error {
 		opts.BuilderPane = *builderAlias
 	} else {
 		opts.Alias = *builderAlias
+	}
+
+	adopted := *resume || opts.BuilderPane != ""
+	kind := ""
+	if adopted {
+		if *resume && *name != "" {
+			if existing, err := rt.Store.Load(*name); err == nil {
+				kind = existing.Builder.Kind
+			}
+		}
+		if kind == "" && opts.BuilderPane != "" {
+			if agents, err := rt.Herdr.ListAgents(context.Background()); err == nil {
+				if a, ok := relay.FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane}); ok {
+					kind = a.Kind
+				}
+			}
+		}
+	} else if opts.Alias != "" {
+		if spec, err := rt.Aliases.Lookup(opts.Alias); err == nil {
+			kind = spec.Kind
+		}
+	}
+
+	if kind != "" {
+		var hc doctor.HerdrClient
+		if c, ok := rt.Herdr.(doctor.HerdrClient); ok {
+			hc = c
+		} else {
+			hc = herdr.NewClient("herdr", 30*time.Second)
+		}
+		env := doctor.NewEnv(hc, rt.Store)
+		rep := doctor.Run(context.Background(), env, []string{kind})
+		for _, line := range bindWarningLines(rep, adopted) {
+			fmt.Fprintln(os.Stderr, line)
+		}
 	}
 
 	b, err := relay.Bind(context.Background(), rt, opts)

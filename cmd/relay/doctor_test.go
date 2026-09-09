@@ -92,3 +92,65 @@ func TestRenderReportVerdict(t *testing.T) {
 		t.Errorf("expected failure footer, got: %s", outFail)
 	}
 }
+
+func TestBindWarningLines(t *testing.T) {
+	// 1. Probe error yields zero lines
+	repProbeErr := doctor.Report{
+		Checks: []doctor.Check{
+			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "integration status unavailable: timeout"},
+		},
+	}
+	lines := bindWarningLines(repProbeErr, false)
+	if len(lines) != 0 {
+		t.Errorf("probe error must yield zero lines, got: %v", lines)
+	}
+
+	// 2. Adopted bind yields only integration row
+	repMulti := doctor.Report{
+		Checks: []doctor.Check{
+			{Group: "claude", Name: "binary", Severity: doctor.SevWarn, Detail: "not on PATH -- skipping the rest of this harness"},
+			{Group: "claude", Name: "integration", Severity: doctor.SevFail, Detail: "not installed -- this binding will report `unknown` forever and never finish a round", Fix: "herdr integration install claude"},
+			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relay agent print --kind claude > ~/.claude/agents/plan-executor.md"},
+		},
+	}
+	adoptedLines := bindWarningLines(repMulti, true)
+	if len(adoptedLines) == 0 {
+		t.Fatal("adopted bind should yield warning lines for non-OK integration")
+	}
+	joinedAdopted := strings.Join(adoptedLines, "\n")
+	if !strings.Contains(joinedAdopted, "integration not installed") {
+		t.Errorf("adopted bind missing integration warning: %s", joinedAdopted)
+	}
+	if strings.Contains(joinedAdopted, "binary") {
+		t.Errorf("adopted bind must not include binary check: %s", joinedAdopted)
+	}
+	if strings.Contains(joinedAdopted, "plan-executor") {
+		t.Errorf("adopted bind must not include plan-executor check: %s", joinedAdopted)
+	}
+
+	// 3. Non-adopted bind yields all warning rows
+	normalLines := bindWarningLines(repMulti, false)
+	joinedNormal := strings.Join(normalLines, "\n")
+	if !strings.Contains(joinedNormal, "binary") {
+		t.Errorf("normal bind missing binary warning: %s", joinedNormal)
+	}
+	if !strings.Contains(joinedNormal, "integration") {
+		t.Errorf("normal bind missing integration warning: %s", joinedNormal)
+	}
+	if !strings.Contains(joinedNormal, "plan-executor") {
+		t.Errorf("normal bind missing plan-executor warning: %s", joinedNormal)
+	}
+
+	// 4. All OK yields zero lines
+	repAllOk := doctor.Report{
+		Checks: []doctor.Check{
+			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
+			{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+			{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
+		},
+	}
+	if okLines := bindWarningLines(repAllOk, false); len(okLines) != 0 {
+		t.Errorf("all OK must yield zero lines, got: %v", okLines)
+	}
+}
+
