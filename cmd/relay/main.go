@@ -171,14 +171,24 @@ func run(args []string) error {
 	}
 }
 
+// userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
+func userConfigRoot() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return xdg, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+
+	return filepath.Join(home, ".config"), nil
+}
+
 func resolveHooksConfig() (hooks.Config, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil || configDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return hooks.Config{}, fmt.Errorf("resolve user home directory: %w", err)
-		}
-		configDir = filepath.Join(home, ".config")
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return hooks.Config{}, err
 	}
 
 	stateDir := os.Getenv("XDG_STATE_HOME")
@@ -202,12 +212,12 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
-	home, err := os.UserHomeDir()
+	configDir, err := userConfigRoot()
 	if err != nil {
-		return relay.Runtime{}, fmt.Errorf("resolve home directory: %w", err)
+		return relay.Runtime{}, err
 	}
 
-	aliases, err := alias.LoadTable(filepath.Join(home, ".config", "relay", "aliases.json"))
+	aliases, err := alias.LoadTable(filepath.Join(configDir, "relay", "aliases.json"))
 	if err != nil {
 		return relay.Runtime{}, err
 	}
