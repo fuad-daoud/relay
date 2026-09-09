@@ -243,6 +243,8 @@ func cmdBind(args []string) error {
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
 	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
+	assumeDead := fs.Bool("assume-dead", false,
+		"confirm a builder relay cannot verify is gone really is gone")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	if err := parseFlags(fs, args); err != nil {
@@ -269,6 +271,7 @@ func cmdBind(args []string) error {
 		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
 		CWD:          cwd,
 		Resume:       *resume,
+		AssumeDead:   *assumeDead,
 		NewTab:       *newTab,
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
