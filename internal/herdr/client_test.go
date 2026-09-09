@@ -233,3 +233,98 @@ func TestClientWaitTimeoutIsDistinctOutsidePrompt(t *testing.T) {
 		t.Fatalf("got %v, want ErrWaitTimeout", err)
 	}
 }
+
+func TestParseIntegrationStatus(t *testing.T) {
+	raw := `
+opencode: outdated (v10 < v11) (/home/fuad/.config/opencode/plugins/herdr-agent-state.js)
+pi: not installed (/home/fuad/.pi/agent/extensions/herdr-agent-state.ts)
+antigravity-cli: current (v3) (/home/fuad/.gemini/config/hooks/herdr-agent-state.sh)
+claude: outdated (v8 < v9) (/home/fuad/.claude/hooks/herdr-agent-state.sh)
+futuristic: synced (ready) (/home/fuad/.futuristic/hook.sh)
+this is a garbage line without colon
+garbage: missing parentheses /path
+empty_paren: state ()
+`
+	status := ParseIntegrationStatus([]byte(raw))
+
+	// opencode: outdated (v10 < v11)
+	opencode, ok := status["opencode"]
+	if !ok {
+		t.Fatal("missing opencode")
+	}
+	if !opencode.Installed || !opencode.Outdated || opencode.Detail != "outdated (v10 < v11)" {
+		t.Errorf("opencode = %+v, want Installed: true, Outdated: true, Detail: 'outdated (v10 < v11)'", opencode)
+	}
+
+	// pi: not installed
+	pi, ok := status["pi"]
+	if !ok {
+		t.Fatal("missing pi")
+	}
+	if pi.Installed || pi.Outdated || pi.Detail != "not installed" {
+		t.Errorf("pi = %+v, want Installed: false, Outdated: false, Detail: 'not installed'", pi)
+	}
+
+	// antigravity-cli: current (v3)
+	agy, ok := status["antigravity-cli"]
+	if !ok {
+		t.Fatal("missing antigravity-cli")
+	}
+	if !agy.Installed || agy.Outdated || agy.Detail != "current (v3)" {
+		t.Errorf("antigravity-cli = %+v, want Installed: true, Outdated: false, Detail: 'current (v3)'", agy)
+	}
+
+	// claude: outdated (v8 < v9)
+	claude, ok := status["claude"]
+	if !ok {
+		t.Fatal("missing claude")
+	}
+	if !claude.Installed || !claude.Outdated || claude.Detail != "outdated (v8 < v9)" {
+		t.Errorf("claude = %+v, want Installed: true, Outdated: true, Detail: 'outdated (v8 < v9)'", claude)
+	}
+
+	// futuristic: unfamiliar state defaults to installed: true, keeps detail verbatim
+	fut, ok := status["futuristic"]
+	if !ok {
+		t.Fatal("missing futuristic")
+	}
+	if !fut.Installed || fut.Outdated || fut.Detail != "synced (ready)" {
+		t.Errorf("futuristic = %+v, want Installed: true, Outdated: false, Detail: 'synced (ready)'", fut)
+	}
+
+	// garbage lines must be skipped, not fatal
+	if _, bad := status["this is a garbage line without colon"]; bad {
+		t.Error("garbage line should be skipped")
+	}
+	if _, bad := status["garbage"]; bad {
+		t.Error("garbage line without parens should be skipped")
+	}
+}
+
+func TestClientVersion(t *testing.T) {
+	c := NewClient(stubHerdr(t, "herdr 0.9.0\n", 0), 5*time.Second)
+	v, err := c.Version(context.Background())
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if v != "0.9.0" {
+		t.Fatalf("Version = %q, want 0.9.0", v)
+	}
+}
+
+func TestClientIntegrationStatus(t *testing.T) {
+	raw := "claude: outdated (v8 < v9) (/path/to/hook.sh)\n"
+	c := NewClient(stubHerdr(t, raw, 0), 5*time.Second)
+	status, err := c.IntegrationStatus(context.Background())
+	if err != nil {
+		t.Fatalf("IntegrationStatus: %v", err)
+	}
+	st, ok := status["claude"]
+	if !ok {
+		t.Fatal("expected claude in status")
+	}
+	if !st.Installed || !st.Outdated || st.Detail != "outdated (v8 < v9)" {
+		t.Fatalf("claude = %+v", st)
+	}
+}
+

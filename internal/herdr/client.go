@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -277,3 +278,88 @@ func (c *Client) Notify(ctx context.Context, message string) error {
 	_, err := c.run(ctx, "notification", "show", message)
 	return err
 }
+
+// Version runs `herdr --version` and returns the bare semver.
+func (c *Client) Version(ctx context.Context) (string, error) {
+	raw, err := c.run(ctx, "--version")
+	if err != nil {
+		return "", err
+	}
+	return parseVersion(string(raw))
+}
+
+func parseVersion(output string) (string, error) {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) == 0 {
+		return "", errors.New("empty version output")
+	}
+	ver := fields[len(fields)-1]
+	ver = strings.TrimPrefix(ver, "v")
+	if ver == "" {
+		return "", errors.New("empty version string")
+	}
+	return ver, nil
+}
+
+// IntegrationStatus runs `herdr integration status` and parses its lines.
+func (c *Client) IntegrationStatus(ctx context.Context) (map[string]IntegrationState, error) {
+	raw, err := c.run(ctx, "integration", "status")
+	if err != nil {
+		return nil, err
+	}
+	return ParseIntegrationStatus(raw), nil
+}
+
+// ParseIntegrationStatus parses the lines from `herdr integration status`.
+// An unparseable line is skipped, not fatal.
+func ParseIntegrationStatus(raw []byte) map[string]IntegrationState {
+	res := make(map[string]IntegrationState)
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		target := strings.TrimSpace(parts[0])
+		rest := strings.TrimSpace(parts[1])
+		if target == "" || rest == "" {
+			continue
+		}
+
+		lastOpen := strings.LastIndex(rest, "(")
+		lastClose := strings.LastIndex(rest, ")")
+		if lastOpen == -1 || lastClose == -1 || lastClose <= lastOpen {
+			continue
+		}
+
+		path := strings.TrimSpace(rest[lastOpen+1 : lastClose])
+		if path == "" {
+			continue
+		}
+
+		state := strings.TrimSpace(rest[:lastOpen])
+		if state == "" {
+			continue
+		}
+
+		var st IntegrationState
+		st.Detail = state
+		if strings.HasPrefix(state, "not installed") {
+			st.Installed = false
+			st.Outdated = false
+		} else if strings.HasPrefix(state, "outdated") {
+			st.Installed = true
+			st.Outdated = true
+		} else {
+			st.Installed = true
+			st.Outdated = false
+		}
+		res[target] = st
+	}
+	return res
+}
+
