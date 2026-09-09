@@ -152,9 +152,11 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay diff [--name N] [--round R] [--stat]` — print a round's captured patch
   to stdout, or its diffstat summary with `--stat`. Defaults to the newest
   completed round.
-- `relay answer [--name N] (--keys K | --choice N | --text S)` — answer a
+- `relay answer NAME|--name N (--keys K | --choice N | --text S)` — answer a
   builder that's blocked at a dialog, via `send-keys` rather than a typed
-  prompt (herdr refuses `agent prompt` against a blocked agent).
+  prompt (herdr refuses `agent prompt` against a blocked agent). The binding
+  is **required**: answering types a key into a live dialog, so relay will not
+  guess which builder you meant.
 - `relay status [--json]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, and anything pending.
 - `relay log NAME` — the binding's append-only round log.
@@ -177,8 +179,9 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay version` — the build's version.
 
 `--name` defaults to whichever binding owns the current working directory for
-`send`, `pull`, `diff`, `answer` and `status`. It is **required** for `done` and
-`unbind`: those are the destructive verbs and they refuse to guess (see below).
+`send`, `pull`, `diff` and `status`. It is **required** for `answer`, `done` and
+`unbind`: those act on a specific loop — `answer` types into a live dialog, the
+other two end one — and they refuse to guess (see below).
 
 ### Interactive reader: relay ui
 
