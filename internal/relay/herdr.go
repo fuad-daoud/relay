@@ -80,12 +80,23 @@ func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
 	return a.PaneID == ep.PaneID
 }
 
-// FindAgent locates a binding endpoint among the live agents using SameAgent.
-func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
-	for _, a := range agents {
+// findAgentIndex is FindAgent's positional form. A caller that needs to record
+// something against the agent it just located needs that agent's slot in the
+// snapshot, not a copy of it.
+func findAgentIndex(agents []herdr.Agent, ep store.Endpoint) (int, bool) {
+	for i, a := range agents {
 		if SameAgent(a, ep) {
-			return a, true
+			return i, true
 		}
 	}
-	return herdr.Agent{}, false
+	return -1, false
+}
+
+// FindAgent locates a binding endpoint among the live agents using SameAgent.
+func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
+	i, ok := findAgentIndex(agents, ep)
+	if !ok {
+		return herdr.Agent{}, false
+	}
+	return agents[i], true
 }

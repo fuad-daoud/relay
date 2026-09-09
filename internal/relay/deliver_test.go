@@ -201,3 +201,71 @@ func TestDeliverWithNothingPendingIsNoop(t *testing.T) {
 		t.Fatalf("want a no-op, got %+v", got)
 	}
 }
+
+// twoBindingsOnePlanner seeds two active bindings that share one planner pane,
+// each with a report already queued for that planner. This is the shape a
+// planner running peer builders has, and the shape the fan-in clobber needs.
+func twoBindingsOnePlanner(t *testing.T, f *fakeHerdr) (Runtime, store.Binding, store.Binding) {
+	t.Helper()
+	rt, first := queuedBinding(t, f)
+
+	second := store.Binding{
+		Name:    "storefront",
+		CWD:     "/repo2",
+		Planner: first.Planner,
+		Builder: store.Endpoint{PaneID: "w2:p5"},
+		Round:   1,
+		State:   store.StateActive,
+	}
+	if err := rt.Store.Save(second); err != nil {
+		t.Fatalf("save second binding: %v", err)
+	}
+
+	entry := store.LogEntry{
+		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Payload: "Builder finished round 1. Report: /x2/001-report.md",
+	}
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return Queue(context.Background(), rt, tx, second.Name, entry)
+	})
+	if err != nil {
+		t.Fatalf("Queue second: %v", err)
+	}
+
+	stored, err := rt.Store.Load(second.Name)
+	if err != nil {
+		t.Fatalf("Load second: %v", err)
+	}
+	return rt, first, stored
+}
+
+func TestDeliverMarksPlannerBusyForTheRestOfTheTick(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, first, second := twoBindingsOnePlanner(t, f)
+
+	// One snapshot, shared by both bindings, exactly as Tick shares it.
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+
+	got, err := deliverPending(t, rt, first, agents)
+	if err != nil {
+		t.Fatalf("DeliverPending first: %v", err)
+	}
+	if !got.Delivered {
+		t.Fatalf("the first payload should land, got %+v", got)
+	}
+
+	got, err = deliverPending(t, rt, second, agents)
+	if err != nil {
+		t.Fatalf("DeliverPending second: %v", err)
+	}
+	if got.Delivered {
+		t.Error("a planner already prompted in this tick must not be typed into again")
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("one planner pane takes at most one injection per tick, got %+v", f.prompts)
+	}
+	if _, pending, err := rt.Store.PendingForPlanner(second.Name); err != nil || !pending {
+		t.Errorf("the undelivered payload must stay pending: pending=%v err=%v", pending, err)
+	}
+}
