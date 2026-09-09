@@ -177,6 +177,9 @@ func RenderStatus(r Report) string {
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
 		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`\n",
 			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderAlias)
+		if b.Detail != "" {
+			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)
+		}
 		if b.Last != nil {
 			fmt.Fprintf(&sb, "  last     %s %s %s round %d\n",
 				b.Last.TS.Local().Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)

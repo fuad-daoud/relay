@@ -285,3 +285,39 @@ func TestStatusOmitsDetailForOrphanedBinding(t *testing.T) {
 		t.Errorf("detail = %q, want empty for orphaned", d)
 	}
 }
+
+func TestRenderStatusShowsDetailLine(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "doctor", CWD: "/repo", Workspace: "wM", Round: 3,
+		Display:      "NEEDS YOU",
+		BuilderAlias: "abuilder",
+		PlannerPane:  "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+		BuilderPane: "wM:pV", BuilderKind: "agy", BuilderStatus: "gone",
+		Detail: "round 2 report delivered; nothing outstanding -- unless you want another round",
+	}}})
+
+	if !strings.Contains(out, "  detail   round 2 report delivered") {
+		t.Errorf("detail line missing from:\n%s", out)
+	}
+	// It must sit between the builder line and pending, where a human about to
+	// rebind is already looking.
+	builderAt := strings.Index(out, "  builder ")
+	detailAt := strings.Index(out, "  detail ")
+	pendingAt := strings.Index(out, "  pending ")
+	if !(builderAt < detailAt && detailAt < pendingAt) {
+		t.Errorf("detail must follow builder and precede pending, got:\n%s", out)
+	}
+}
+
+func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",
+		PlannerPane: "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+		BuilderPane: "wM:p2", BuilderKind: "agy", BuilderStatus: "working",
+		BuilderAlias: "abuilder",
+	}}})
+
+	if strings.Contains(out, "detail") {
+		t.Errorf("no detail line may appear for a healthy binding:\n%s", out)
+	}
+}
