@@ -8,6 +8,9 @@ import (
 	"fmt"
 )
 
+// MinVersion is the herdr version floor required by relay.
+const MinVersion = "0.8.2"
+
 // Agent lifecycle states as reported by herdr. StatusUnknown means herdr sees
 // an agent but cannot classify it -- herdr documents that it does not prove
 // completion, so relay must never treat it as done.
@@ -18,6 +21,13 @@ const (
 	StatusDone    = "done"
 	StatusUnknown = "unknown"
 )
+
+// IntegrationState describes the status of a herdr integration target.
+type IntegrationState struct {
+	Installed bool   // a hook file is in place
+	Outdated  bool   // installed, but older than herdr expects
+	Detail    string // herdr's own words, e.g. "outdated (v10 < v11)"
+}
 
 // Session identifies an agent's own conversation, reported by the herdr
 // integration installed in that harness. It outlives pane id changes, so it is

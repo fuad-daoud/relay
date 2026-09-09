@@ -92,6 +92,32 @@ make install        # builds and installs ~/.local/bin/relay
 To run the reconciler as a background service, see
 [Running the daemon](#running-the-daemon).
 
+## First run on a clean machine
+
+On a clean machine, set up prerequisites and preflight with `relay doctor`:
+
+1. Install relay (see [Install](#install)).
+2. Run `relay doctor` to check your environment:
+   ```
+   relay doctor
+   ```
+   Doctor inspects herdr, the background daemon, each harness binary on `PATH`, herdr integrations, and the builder role files.
+3. Run the literal fix commands `relay doctor` prints for any missing items, such as installing a harness integration:
+   ```
+   herdr integration install claude
+   ```
+4. Emit the builder's `plan-executor` role definition directly into your harness's config directory:
+   ```
+   relay agent print --kind claude > ~/.claude/agents/plan-executor.md
+   ```
+   (For `opencode`, redirect to `~/.config/opencode/agents/plan-executor.md`. For `agy`, the role is selected by preamble on the first prompt, so no role file is needed.)
+5. Re-run `relay doctor` to confirm `0 failures`.
+6. Start the daemon (e.g. `relay daemon &` or `make service`).
+7. Bind your first agent from inside a herdr planner pane:
+   ```
+   relay bind --builder cbuilder
+   ```
+
 ## Quick start
 
 From inside the planner's herdr pane, in the repository you want worked on:
@@ -274,8 +300,11 @@ set**:
 
 Each one assumes things about the machine relay runs on: that the harness is
 installed, that its provider is configured for that model, and that a
-`plan-executor` agent (or skill) exists in it. On a fresh machine at least one
-of those is usually false, so expect to replace them.
+`plan-executor` role definition exists in it. Relay can now emit that role
+definition for you with `relay agent print --kind claude` or `--kind opencode`
+(see [First run on a clean machine](#first-run-on-a-clean-machine)), while `agy`
+selects its role via the preamble on the first prompt. Run `relay doctor` to
+check which ones are installed.
 
 > **Note on `abuilder`:** it passes `--dangerously-skip-permissions`, which
 > lets the builder act without approval prompts. That is what makes an

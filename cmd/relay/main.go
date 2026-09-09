@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -53,6 +54,8 @@ Commands:
   unbind    forget a binding, deleting or archiving its directory
   gc        clear every binding the planner marked DONE
   daemon    run the long-running reconciler
+  doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
+  agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
   help      print this message
   version   print the relay version
 
@@ -61,6 +64,14 @@ Run "relay <command> -h" for that command's flags.
 relay drives herdr, which must be on PATH: https://github.com/herdrdev/herdr
 State lives in $XDG_STATE_HOME/relay (default ~/.local/state/relay).
 `
+
+type exitCodeErr struct {
+	code int
+}
+
+func (e exitCodeErr) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
+}
 
 // errHelpShown reports that help was printed on request, so main exits 0
 // without adding an error line. errUsagePrinted is its failure twin: usage is
@@ -72,9 +83,12 @@ var (
 
 func main() {
 	err := run(os.Args[1:])
+	var ec exitCodeErr
 	switch {
 	case err == nil, errors.Is(err, errHelpShown):
 		return
+	case errors.As(err, &ec):
+		os.Exit(ec.code)
 	case errors.Is(err, errUsagePrinted):
 		os.Exit(1)
 	default:
@@ -148,6 +162,10 @@ func run(args []string) error {
 		return cmdDone(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
+	case "doctor":
+		return cmdDoctor(args[1:])
+	case "agent":
+		return cmdAgent(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q; run \"relay help\" for the command list", args[0])
 	}
@@ -250,6 +268,36 @@ func cmdBind(args []string) error {
 		opts.BuilderPane = *builderAlias
 	} else {
 		opts.Alias = *builderAlias
+	}
+
+	adopted := *resume || opts.BuilderPane != ""
+	kind := ""
+	if adopted {
+		if *resume && *name != "" {
+			if existing, err := rt.Store.Load(*name); err == nil {
+				kind = existing.Builder.Kind
+			}
+		}
+		if kind == "" && opts.BuilderPane != "" {
+			if agents, err := rt.Herdr.ListAgents(context.Background()); err == nil {
+				if a, ok := relay.FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane}); ok {
+					kind = a.Kind
+				}
+			}
+		}
+	} else if opts.Alias != "" {
+		if spec, err := rt.Aliases.Lookup(opts.Alias); err == nil {
+			kind = spec.Kind
+		}
+	}
+
+	// Preflight is advisory only: it never blocks the bind, and any probe
+	// failure is dropped rather than printed. See bindPreflight.
+	if hc, ok := rt.Herdr.(doctor.HerdrClient); ok && kind != "" {
+		env := doctor.NewEnv(hc, rt.Store)
+		for _, line := range bindPreflight(context.Background(), env, kind, adopted) {
+			fmt.Fprintln(os.Stderr, line)
+		}
 	}
 
 	b, err := relay.Bind(context.Background(), rt, opts)
