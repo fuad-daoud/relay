@@ -945,3 +945,175 @@ func TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone(t *testing.T) {
 		t.Fatal("a replacement builder must get the preamble")
 	}
 }
+
+// A session-less builder that cannot be located may be dead or may be alive in
+// a pane that moved workspaces. relay cannot tell, so it must not spawn a
+// replacement on the guess -- that is how a live builder gets orphaned.
+func TestBindResumeRefusesUnverifiableBuilder(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:           "webshop",
+		CWD:            "/repo",
+		Round:          3,
+		State:          store.StateBroken,
+		Planner:        store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:        store.Endpoint{PaneID: "w2:p4", Kind: "agy"}, // never session-identified
+		RoundStartedAt: time.Now().UTC(),
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrBuilderUnverified) {
+		t.Fatalf("got err = %v, want ErrBuilderUnverified", err)
+	}
+	if !strings.Contains(err.Error(), "--assume-dead") {
+		t.Errorf("error must name the flag that releases it, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "w2:p4") {
+		t.Errorf("error must name the pane to check, got %q", err)
+	}
+
+	// The refusal must land before anything irreversible.
+	if f.splits != 0 {
+		t.Errorf("no pane may be split, got %d splits", f.splits)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("no agent may be started, got %+v", f.starts)
+	}
+
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Builder.PaneID != "w2:p4" || loaded.Round != 3 {
+		t.Errorf("binding must be untouched, got %+v", loaded)
+	}
+}
+
+func TestBindResumeProceedsWithAssumeDead(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:           "webshop",
+		CWD:            "/repo",
+		Round:          3,
+		State:          store.StateBroken,
+		Planner:        store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:        store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+		RoundStartedAt: time.Now().UTC(),
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3",
+		CWD: "/repo", AssumeDead: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind with AssumeDead: %v", err)
+	}
+	if got.Builder.PaneID != "w2:p5" {
+		t.Errorf("builder pane = %q, want the newly spawned w2:p5", got.Builder.PaneID)
+	}
+}
+
+// A builder with a recorded session is unambiguous: if no live agent carries
+// that session it really is gone, so the gate must not fire.
+func TestBindResumeUnaffectedWhenSessionRecorded(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateBroken,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy", SessionID: "dead-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+}
+
+// --assume-dead releases only the unverifiable case. A builder relay can
+// positively see is alive is still refused: that is #20's guarantee.
+func TestAssumeDeadNeverOverridesBuilderAlive(t *testing.T) {
+	f := &fakeHerdr{
+		agents: []herdr.Agent{
+			plannerAgent(),
+			{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4",
+				Session: herdr.Session{Value: "live-builder-sess"}},
+		},
+		newPane: "w2:p5",
+	}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "live-builder-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3",
+		CWD: "/repo", AssumeDead: true,
+	})
+	if !errors.Is(err, ErrBuilderAlive) {
+		t.Fatalf("got err = %v, want ErrBuilderAlive even with AssumeDead", err)
+	}
+	if f.splits != 0 || len(f.starts) != 0 {
+		t.Errorf("nothing may be spawned, splits=%d starts=%+v", f.splits, f.starts)
+	}
+}
+
+// #20's recovery (PR #22): a session-less builder with no round in flight is
+// unambiguous enough to rebind without ceremony. The gate must not broaden to
+// catch this case -- if it ever does, this test fails loudly.
+func TestBindResumeAllowsSessionlessRebindWhenRoundClosed(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateBroken,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy"}, // never session-identified
+		// RoundStartedAt left zero: no round in flight.
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind resume: %v", err)
+	}
+	if got.Builder.PaneID != "w2:p5" {
+		t.Errorf("builder pane = %q, want the newly spawned w2:p5", got.Builder.PaneID)
+	}
+}
