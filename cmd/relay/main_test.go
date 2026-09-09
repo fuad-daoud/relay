@@ -253,3 +253,20 @@ func TestHooksConfigHome(t *testing.T) {
 		t.Fatalf("got HooksDir %q, want %q", cfg.HooksDir, wantHooksDir)
 	}
 }
+
+// --assume-dead must be defined on the bind flag set. If it were not, parsing
+// would fail with "flag provided but not defined" and never reach the --name
+// check -- which runs before any runtime is built, so this test touches
+// neither the state directory nor herdr.
+func TestBindAcceptsAssumeDeadFlag(t *testing.T) {
+	err := run([]string{"bind", "--resume", "--assume-dead"})
+	if err == nil {
+		t.Fatal("relay bind --resume without --name must still be rejected")
+	}
+	if strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("--assume-dead is not a defined flag: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Errorf("expected the --name error, got %q", err)
+	}
+}
