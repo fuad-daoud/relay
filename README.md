@@ -162,6 +162,9 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
+- `relay add --name N --builder ALIAS [--tab] [--cwd DIR]` — attach an
+  additional builder to this planner on its own git worktree, starting at
+  round 1. This is how one planner drives several builders at once.
 - `relay fork <source> --round R --new-name N [--builder ALIAS] [--tab] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
@@ -230,6 +233,33 @@ Relay abandons a round only when the builder's terminal has been still for the
 grace period, falling back to a labeled scrape of the builder's terminal. If the
 screen moves, the grace resets: a builder waiting on subagents is therefore no
 longer mistaken for a finished one.
+
+### Running several builders at once
+
+`relay bind` gives the planner one builder over the current tree. `relay add`
+attaches more, each on its own git worktree, so they never contend for files:
+
+```
+relay bind --builder cbuilder --name api
+relay add  --name frontend --builder cbuilder
+relay add  --name backend  --builder builder
+
+relay send --name frontend --file ui_plan.md
+relay send --name backend  --file api_plan.md
+```
+
+Each peer is an ordinary binding: its own round counter, round log, captured
+diffs and budget. `relay status` lists them all, and every verb that acts on a
+binding takes `--name`.
+
+Relay does not sequence them and does not merge their trees. The planner
+decides how many builders it needs, which run in parallel and which wait, and
+integrates the results — relay only carries plans out and reports back.
+
+**`relay add` is not `relay fork`.** A fork continues a timeline: it copies
+round history through a chosen round and starts at the round after it. A peer
+starts at round 1 with an empty log, because it is not a continuation of
+anything.
 
 ### Forking a binding
 

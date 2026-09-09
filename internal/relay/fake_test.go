@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -213,6 +214,9 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 
 func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
 	f.splits++
+	if f.newPane == "" {
+		return "", errors.New("pane split returned no pane id")
+	}
 	return f.newPane, nil
 }
 
