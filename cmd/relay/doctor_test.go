@@ -218,6 +218,26 @@ func TestBindWarningLines(t *testing.T) {
 	if okLines := bindWarningLines(repAllOk, false); len(okLines) != 0 {
 		t.Errorf("all OK must yield zero lines, got: %v", okLines)
 	}
+
+	// 5. Global non-OK rows (daemon, herdr) appear in bind warnings for both normal and adopted
+	repGlobal := doctor.Report{
+		Checks: []doctor.Check{
+			{Name: "herdr", Severity: doctor.SevFail, Detail: "0.8.0 (below 0.9.0 minimum)", Fix: "brew upgrade herdr"},
+			{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relay daemon"},
+			{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+		},
+	}
+	globalNormal := bindWarningLines(repGlobal, false)
+	joinedGlobalNormal := strings.Join(globalNormal, "\n")
+	if !strings.Contains(joinedGlobalNormal, "herdr 0.8.0") || !strings.Contains(joinedGlobalNormal, "daemon not running") {
+		t.Errorf("normal bind should include global warnings, got: %v", globalNormal)
+	}
+
+	globalAdopted := bindWarningLines(repGlobal, true)
+	joinedGlobalAdopted := strings.Join(globalAdopted, "\n")
+	if !strings.Contains(joinedGlobalAdopted, "herdr 0.8.0") || !strings.Contains(joinedGlobalAdopted, "daemon not running") {
+		t.Errorf("adopted bind should include global warnings, got: %v", globalAdopted)
+	}
 }
 
 func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
@@ -241,5 +261,22 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 	joinedAdopted := strings.Join(adoptedLines, "\n")
 	if strings.Contains(joinedAdopted, "binary") {
 		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
+	}
+	if !strings.Contains(joinedAdopted, "integration") {
+		t.Errorf("adopted bind must have integration warning, got: %s", joinedAdopted)
+	}
+}
+
+func TestBindWarningDaemonDownRealRun(t *testing.T) {
+	envStub := &stubDoctorEnv{
+		ver:       "0.9.0",
+		daemonRun: false,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+	}
+	rep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	lines := bindWarningLines(rep, false)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "daemon not running") {
+		t.Errorf("expected daemon warning when daemon is down, got: %s", joined)
 	}
 }

@@ -292,14 +292,11 @@ func cmdBind(args []string) error {
 	}
 
 	if kind != "" {
-		var hc doctor.HerdrClient
-		if c, ok := rt.Herdr.(doctor.HerdrClient); ok {
-			hc = c
-		} else {
-			hc = herdr.NewClient("herdr", 30*time.Second)
-		}
+		hc := rt.Herdr.(doctor.HerdrClient)
 		env := doctor.NewEnv(hc, rt.Store)
-		rep := doctor.Run(context.Background(), env, []string{kind}, doctor.WithAdopted(adopted))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		rep := doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted))
 		for _, line := range bindWarningLines(rep, adopted) {
 			fmt.Fprintln(os.Stderr, line)
 		}

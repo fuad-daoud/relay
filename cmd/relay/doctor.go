@@ -4,16 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/doctor"
+	"github.com/fuad-daoud/relay/internal/store"
 	"io"
 	"os"
 	"sort"
 	"strings"
-	"time"
-
-	"github.com/fuad-daoud/relay/internal/alias"
-	"github.com/fuad-daoud/relay/internal/doctor"
-	"github.com/fuad-daoud/relay/internal/herdr"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func assembleKinds(aliases *alias.Table, st *store.Store) []string {
@@ -117,13 +114,8 @@ func cmdDoctor(args []string) error {
 	}
 
 	kinds := assembleKinds(rt.Aliases, rt.Store)
-	var herdrClient doctor.HerdrClient
-	if hc, ok := rt.Herdr.(doctor.HerdrClient); ok {
-		herdrClient = hc
-	} else {
-		herdrClient = herdr.NewClient("herdr", 30*time.Second)
-	}
-	env := doctor.NewEnv(herdrClient, rt.Store)
+	hc := rt.Herdr.(doctor.HerdrClient)
+	env := doctor.NewEnv(hc, rt.Store)
 	rep := doctor.Run(context.Background(), env, kinds)
 
 	renderReport(os.Stdout, rep)
@@ -144,14 +136,19 @@ func bindWarningLines(rep doctor.Report, adopted bool) []string {
 
 	var warnings []string
 	for _, c := range rep.Checks {
-		if c.Group == "" || c.Severity == doctor.SevOK {
+		if c.Severity == doctor.SevOK {
 			continue
 		}
-		if adopted && c.Name != "integration" {
+		if adopted && (c.Name == "binary" || c.Name == "plan-executor") {
 			continue
 		}
 
-		msg := fmt.Sprintf("%s %s %s", c.Group, c.Name, c.Detail)
+		var msg string
+		if c.Group == "" {
+			msg = fmt.Sprintf("%s %s", c.Name, c.Detail)
+		} else {
+			msg = fmt.Sprintf("%s %s %s", c.Group, c.Name, c.Detail)
+		}
 		if c.Fix != "" {
 			msg += fmt.Sprintf(". Fix: %s", c.Fix)
 		}
