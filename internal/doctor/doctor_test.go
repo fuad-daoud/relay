@@ -338,3 +338,47 @@ func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
 		t.Errorf("expected SevFail on missing integration, got %v", c.Severity)
 	}
 }
+
+func TestDoctorUnparseableOrMissingIntegrationIsWarningNotFailure(t *testing.T) {
+	// A known target missing from IntegrationStatus map, or whose line failed to parse
+	// (e.g. from ParseIntegrationStatus with empty_paren), must report SevWarn with
+	// detail that status could not be read, no fix command, and must NOT report SevFail.
+	rawHerdrOutput := `
+claude: state ()
+opencode: not installed (/path/to/opencode.js)
+`
+	parsedStatus := herdr.ParseIntegrationStatus([]byte(rawHerdrOutput))
+	if _, bad := parsedStatus["claude"]; bad {
+		t.Fatal("unparseable claude line should be skipped by parser")
+	}
+
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		daemonRunning: true,
+		lookPaths: map[string]string{
+			"claude": "/usr/bin/claude",
+		},
+		intStatus: parsedStatus,
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+	c := findCheck(report, "claude", "integration")
+	if c == nil {
+		t.Fatal("claude integration check missing")
+	}
+	if c.Severity != SevWarn {
+		t.Errorf("expected SevWarn for unread status, got %v", c.Severity)
+	}
+	if c.Detail != "could not read herdr integration status for claude" {
+		t.Errorf("detail = %q, want 'could not read herdr integration status for claude'", c.Detail)
+	}
+	if c.Fix != "" {
+		t.Errorf("fix should be empty, got %q", c.Fix)
+	}
+	if report.Failures() != 0 {
+		t.Errorf("expected 0 failures, got %d", report.Failures())
+	}
+	if report.UsableBuilder {
+		t.Errorf("UsableBuilder should be false when status could not be read")
+	}
+}

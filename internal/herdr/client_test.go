@@ -299,6 +299,9 @@ empty_paren: state ()
 	if _, bad := status["garbage"]; bad {
 		t.Error("garbage line without parens should be skipped")
 	}
+	if _, bad := status["empty_paren"]; bad {
+		t.Error("empty_paren line should be skipped")
+	}
 }
 
 func TestClientVersion(t *testing.T) {

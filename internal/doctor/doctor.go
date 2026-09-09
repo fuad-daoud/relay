@@ -281,9 +281,9 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					checks = append(checks, Check{
 						Group:    kind,
 						Name:     "integration",
-						Severity: SevFail,
-						Detail:   "not installed -- this binding will report `unknown` forever and never finish a round",
-						Fix:      fmt.Sprintf("herdr integration install %s", target),
+						Severity: SevWarn,
+						Detail:   fmt.Sprintf("could not read herdr integration status for %s", target),
+						Fix:      "",
 					})
 				}
 			} else if !state.Installed {

@@ -122,6 +122,7 @@ func TestRenderReportVerdict(t *testing.T) {
 type stubDoctorEnv struct {
 	ver       string
 	intErr    error
+	intStates map[string]herdr.IntegrationState
 	daemonRun bool
 	lookPaths map[string]string
 }
@@ -130,6 +131,9 @@ func (s *stubDoctorEnv) HerdrVersion(ctx context.Context) (string, error) {
 	return s.ver, nil
 }
 func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
+	if s.intStates != nil {
+		return s.intStates, s.intErr
+	}
 	return nil, s.intErr
 }
 func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
@@ -245,6 +249,9 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 		ver:       "0.9.0",
 		daemonRun: true,
 		lookPaths: map[string]string{}, // binary absent
+		intStates: map[string]herdr.IntegrationState{
+			"claude": {Installed: false, Detail: "not installed"},
+		},
 	}
 
 	// Normal Run: binary absent suppresses integration row

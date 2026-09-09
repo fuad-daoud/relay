@@ -290,7 +290,10 @@ Outdated: true}`; `current` and anything else -> `{Installed: true}`. Defaulting
 an unrecognised state to *installed* is deliberate: relay must not invent a
 failure out of a herdr state it has not been taught. Keep herdr's own text
 in `Detail` verbatim, so a state relay has not seen before still renders
-something truthful. An unparseable line is skipped, not fatal.
+something truthful. An unparseable line is skipped, not fatal. If a known target
+is absent from the map or its line did not parse, doctor reports `SevWarn` with
+detail naming that relay could not read herdr integration status for that target,
+and no fix command: only an explicit `not installed` from herdr may produce `SevFail`.
 
 ## 6. Severity and the verdict
 
@@ -317,7 +320,8 @@ Per-row severities:
 | herdr | absent, unparseable, or `< 0.8.2` | `SevFail` |
 | daemon | not running | `SevWarn` |
 | binary | not on PATH | `SevWarn`, and **the rest of that harness's rows are skipped entirely** |
-| integration | not installed, on a harness whose binary *is* present | `SevFail`, demoted to `SevWarn` by the second pass below if some other kind is complete |
+| integration | not installed (explicitly reported by herdr), on a harness whose binary *is* present | `SevFail`, demoted to `SevWarn` by the second pass below if some other kind is complete |
+| integration | target absent from map or line did not parse | `SevWarn`, detail naming could not read herdr integration status, no fix |
 | integration | outdated | `SevWarn` |
 | integration | `herdr integration status` unavailable | `SevWarn` |
 | plan-executor | role file missing, harness present | `SevWarn` |
@@ -350,7 +354,9 @@ Two of those rows carry the design's whole intent and must not be softened:
 - **A missing integration on an installed harness is the failure.** It is the
   silent stall at the heart of #24: the binding reports `unknown` forever and
   never finishes a round. It is also what makes the "zero complete paths"
-  verdict land on the right row.
+  verdict land on the right row. Only an explicit `not installed` from herdr
+  produces this failure; if herdr omits the target or its line fails to parse,
+  relay reports a warning rather than inventing a failure.
 - **A harness whose binary is absent produces one warning row and nothing
   else.** Relay stops asking questions about a harness the user does not have.
   This single rule is what keeps a one-harness box from reading as three
