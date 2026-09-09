@@ -276,13 +276,19 @@ Line form, one per target:
 ```
 opencode: outdated (v10 < v11) (/home/fuad/.config/opencode/plugins/herdr-agent-state.js)
 pi: not installed (/home/fuad/.pi/agent/extensions/herdr-agent-state.ts)
+antigravity-cli: current (v3) (/home/fuad/.gemini/config/hooks/herdr-agent-state.sh)
 ```
+
+All three observed state literals, captured from herdr 0.9.0: `not installed`,
+`outdated (vN < vM)`, and `current (vN)`.
 
 Parse rule: split on the **first** `": "`. The remainder is a state followed by
 a parenthesised path; the path is the **last** parenthesised group, because
 `outdated (v10 < v11)` contains one of its own. Classify the state prefix:
 `not installed` -> `{Installed: false}`; `outdated` -> `{Installed: true,
-Outdated: true}`; anything else -> `{Installed: true}`. Keep herdr's own text
+Outdated: true}`; `current` and anything else -> `{Installed: true}`. Defaulting
+an unrecognised state to *installed* is deliberate: relay must not invent a
+failure out of a herdr state it has not been taught. Keep herdr's own text
 in `Detail` verbatim, so a state relay has not seen before still renders
 something truthful. An unparseable line is skipped, not fatal.
 
