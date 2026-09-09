@@ -144,12 +144,12 @@ inside every pane it manages, so it has to be run from inside one.
   would collide with the previous session's round log. `--resume --name N`
   re-points that existing binding's planner side at the calling pane without
   touching the builder; `relay unbind N` is the other way out.
-- `relay send --file PATH [--name N]` — stage the file as the current round's
+- `relay send [NAME|--name N] --file PATH` — stage the file as the current round's
   plan and prompt the builder with it.
-- `relay pull [--name N]` — print the newest pending payload to stdout and
+- `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
-- `relay diff [--name N] [--round R] [--stat]` — print a round's captured patch
+- `relay diff [NAME|--name N] [--round R] [--stat]` — print a round's captured patch
   to stdout, or its diffstat summary with `--stat`. Defaults to the newest
   completed round.
 - `relay answer NAME|--name N (--keys K | --choice N | --text S)` — answer a
@@ -157,8 +157,8 @@ inside every pane it manages, so it has to be run from inside one.
   prompt (herdr refuses `agent prompt` against a blocked agent). The binding
   is **required**: answering types a key into a live dialog, so relay will not
   guess which builder you meant.
-- `relay status [--json]` — one row per binding: round, display state, both
-  panes' live herdr status, the last relayed event, and anything pending.
+- `relay status [NAME|--name N] [--json]` — one row per binding: round, display state, both
+  panes' live herdr status, the last relayed event, and anything pending. Naming a binding shows only that one.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
@@ -181,10 +181,12 @@ inside every pane it manages, so it has to be run from inside one.
   flags.
 - `relay version` — the build's version.
 
-`--name` defaults to whichever binding owns the current working directory for
-`send`, `pull`, `diff` and `status`. It is **required** for `answer`, `done` and
-`unbind`: those act on a specific loop — `answer` types into a live dialog, the
-other two end one — and they refuse to guess (see below).
+Every binding-scoped command takes its binding either positionally or as
+`--name`; naming it both ways at once is refused. `send`, `pull` and `diff`
+fall back to whichever binding owns the current working directory, and a bare
+`relay status` lists them all. Naming one is **required** for `answer`, `done`
+and `unbind`: those act on a specific loop — `answer` types into a live dialog,
+the other two end one — and they refuse to guess (see below).
 
 ### Interactive reader: relay ui
 
