@@ -618,7 +618,7 @@ func cmdDiff(args []string) error {
 
 func cmdAnswer(args []string) error {
 	fs := flag.NewFlagSet("answer", flag.ContinueOnError)
-	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	name := fs.String("name", "", "binding whose builder to answer")
 	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
 	text := fs.String("text", "", "literal text to send")
 	choice := fs.Int("choice", 0, "numbered dialog option to pick")
@@ -626,11 +626,19 @@ func cmdAnswer(args []string) error {
 		return err
 	}
 
-	rt, err := newRuntime()
-	if err != nil {
-		return err
+	// answer presses a key into a live dialog, and with peer builders the cwd
+	// fallback resolves to builder #1 every time -- the planner's tree is the
+	// one it owns, while peers live in their own worktrees. Guessing here
+	// answers a prompt nobody read, so answer joins done and unbind in
+	// refusing to guess.
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S)  (or --name <name>)%s\n"+
+			"answer types into a live dialog; it will not guess which one you meant",
+			bindingHint("answer"))
 	}
-	target, err := resolveBinding(rt, *name)
+
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}

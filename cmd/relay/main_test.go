@@ -270,3 +270,26 @@ func TestBindAcceptsAssumeDeadFlag(t *testing.T) {
 		t.Errorf("expected the --name error, got %q", err)
 	}
 }
+
+func TestAnswerRefusesToGuessTheBinding(t *testing.T) {
+	// A bare `relay answer` used to resolve to whichever binding owns the cwd.
+	// With peer builders that is always builder #1, so an unqualified answer
+	// pressed a key into a dialog nobody had looked at.
+	err := run([]string{"answer", "--keys", "enter"})
+	if err == nil {
+		t.Fatal("a bare relay answer must be refused")
+	}
+	if !strings.Contains(err.Error(), "will not guess which one you meant") {
+		t.Fatalf("expected a refuse-to-guess error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "usage: relay answer") {
+		t.Fatalf("expected the usage line, got %v", err)
+	}
+}
+
+func TestAnswerRefusesBothNameAndPositional(t *testing.T) {
+	err := run([]string{"answer", "--name", "webshop", "--keys", "enter", "webshop"})
+	if err == nil || !strings.Contains(err.Error(), "will not guess which one you meant") {
+		t.Fatalf("naming the binding twice must be refused, got %v", err)
+	}
+}
