@@ -17,20 +17,25 @@ const agentGone = "gone"
 
 // BindingStatus is one row of relay status: stored binding plus live herdr state.
 type BindingStatus struct {
-	Name          string       `json:"name"`
-	CWD           string       `json:"cwd"`
-	Workspace     string       `json:"workspace"`
-	Round         int          `json:"round"`
-	State         string       `json:"state"`
-	Display       string       `json:"display"`
-	BuilderAlias  string       `json:"builder_alias"`
-	PlannerPane   string       `json:"planner_pane"`
-	PlannerKind   string       `json:"planner_kind"`
-	PlannerStatus string       `json:"planner_status"`
-	PlannerFocus  bool         `json:"planner_focused"`
-	BuilderPane   string       `json:"builder_pane"`
-	BuilderKind   string       `json:"builder_kind"`
-	BuilderStatus string       `json:"builder_status"`
+	Name          string `json:"name"`
+	CWD           string `json:"cwd"`
+	Workspace     string `json:"workspace"`
+	Round         int    `json:"round"`
+	State         string `json:"state"`
+	Display       string `json:"display"`
+	BuilderAlias  string `json:"builder_alias"`
+	PlannerPane   string `json:"planner_pane"`
+	PlannerKind   string `json:"planner_kind"`
+	PlannerStatus string `json:"planner_status"`
+	PlannerFocus  bool   `json:"planner_focused"`
+	BuilderPane   string `json:"builder_pane"`
+	BuilderKind   string `json:"builder_kind"`
+	BuilderStatus string `json:"builder_status"`
+	// Detail explains an overloaded state where the display word cannot.
+	// Populated only for store.StateBroken, which covers three situations
+	// whose correct recoveries differ -- and in one of which the obvious
+	// recovery orphans a builder that is still running.
+	Detail        string       `json:"detail,omitempty"`
 	Last          *LastEvent   `json:"last,omitempty"`
 	Pending       *PendingInfo `json:"pending,omitempty"`
 	ForkedFrom    string       `json:"forked_from,omitempty"`
@@ -107,6 +112,13 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus
 	if a, ok := FindAgent(agents, b.Builder); ok {
 		row.BuilderStatus = a.Status
 		row.BuilderPane = a.PaneID
+	}
+
+	// Only broken is overloaded: it means "builder pane is gone", which covers
+	// a clean exit, a mid-round exit, and a pane that merely moved workspaces
+	// while the agent kept running. orphaned and needs_you are unambiguous.
+	if b.State == store.StateBroken {
+		row.Detail = DiagnoseBuilder(b).Detail(b.Round)
 	}
 
 	entries, err := rt.Store.ReadLog(b.Name)
