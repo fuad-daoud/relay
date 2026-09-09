@@ -82,7 +82,10 @@ func TestDiffCommand(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
-	cmd = exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-m", "init")
+	// -c commit.gpgsign=false so a developer with signing enabled globally
+	// does not have this fixture commit reach gpg; see internal/git's runGit.
+	cmd = exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e",
+		"-c", "commit.gpgsign=false", "commit", "-m", "init")
 	cmd.Dir = repoDir
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
