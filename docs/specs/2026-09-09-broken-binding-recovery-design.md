@@ -190,8 +190,9 @@ naming a delivered report would be wrong.
 Clause B is empty and `RoundOpen` is true, append `; rebind and resend the
 round` instead -- that is the recovery, and it is only safe to advise when the
 builder is positively identifiable. When Clause B is empty and `RoundOpen` is
-false, append `unless you want another round` to the `nothing outstanding`
-clause, separated by ` -- `.
+false, append ` -- unless you want another round` when `round > 1`, or ` --
+unless you want to send one` when `round <= 1`; a binding that was never sent
+has no *another* round to want.
 
 The `round <= 1 && !SessionIdentified` case is the exact window #21 describes: a
 builder bound but not yet sent its first round, whose session has therefore
