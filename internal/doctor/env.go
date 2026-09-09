@@ -10,6 +10,12 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// HerdrClient represents the methods on herdr needed for doctor preflight checks.
+type HerdrClient interface {
+	Version(ctx context.Context) (string, error)
+	IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error)
+}
+
 // Env abstracts external system facts for testability.
 type Env interface {
 	// HerdrVersion returns the parsed semver of the herdr CLI.
@@ -26,12 +32,12 @@ type Env interface {
 }
 
 type realEnv struct {
-	herdr *herdr.Client
+	herdr HerdrClient
 	store *store.Store
 }
 
 // NewEnv returns a real Env backed by the given herdr client and store.
-func NewEnv(client *herdr.Client, st *store.Store) Env {
+func NewEnv(client HerdrClient, st *store.Store) Env {
 	return &realEnv{herdr: client, store: st}
 }
 
