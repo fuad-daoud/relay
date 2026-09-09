@@ -270,3 +270,24 @@ func TestBindAcceptsAssumeDeadFlag(t *testing.T) {
 		t.Errorf("expected the --name error, got %q", err)
 	}
 }
+
+func TestAddHelp(t *testing.T) {
+	err := run([]string{"add", "-h"})
+	if !errors.Is(err, errHelpShown) {
+		t.Fatalf("got %v, want errHelpShown", err)
+	}
+}
+
+func TestAddValidation(t *testing.T) {
+	// Missing --name
+	err := run([]string{"add", "--builder", "cbuilder"})
+	if err == nil || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("expected an error about --name, got %v", err)
+	}
+
+	// Missing --builder
+	err = run([]string{"add", "--name", "frontend"})
+	if err == nil || !strings.Contains(err.Error(), "--builder") {
+		t.Fatalf("expected an error about --builder, got %v", err)
+	}
+}

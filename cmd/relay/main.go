@@ -41,6 +41,7 @@ Usage:
 
 Commands:
   bind      bind this planner pane to a builder over the current working tree
+  add       attach an additional builder to this planner, on its own worktree
   fork      branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and prompt the builder
   pull      print the newest pending payload to stdout, without typing anywhere
@@ -136,6 +137,8 @@ func run(args []string) error {
 		return nil
 	case "bind":
 		return cmdBind(args[1:])
+	case "add":
+		return cmdAdd(args[1:])
 	case "fork":
 		return cmdFork(args[1:])
 	case "unbind":
@@ -388,6 +391,58 @@ func cmdFork(args []string) error {
 		fmt.Printf("forked %s to %s (round %d) at %s\n",
 			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
 	}
+
+	return nil
+}
+
+func cmdAdd(args []string) error {
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	name := fs.String("name", "", "name for the new binding")
+	builderAlias := fs.String("builder", "", "builder alias to spawn")
+	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
+	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	if *name == "" {
+		return fmt.Errorf("relay add requires --name NAME")
+	}
+	if *builderAlias == "" {
+		return fmt.Errorf("relay add requires --builder ALIAS")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	repo, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	res, err := relay.Add(context.Background(), rt, relay.AddOptions{
+		Name:        *name,
+		Alias:       *builderAlias,
+		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		Repo:        repo,
+		NewTab:      *newTab,
+		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
+		CWD:         *cwd,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("added %s: builder %s in pane %s\n",
+		res.Binding.Name, res.Binding.BuilderAlias, res.Binding.Builder.PaneID)
+	if res.Worktree != "" {
+		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
+	} else {
+		fmt.Printf("  tree %s\n", res.Binding.CWD)
+	}
+	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
 
 	return nil
 }
