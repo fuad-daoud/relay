@@ -34,11 +34,12 @@ func (s Severity) String() string {
 // Check is one probe's result. Fix is a literal command the user can paste,
 // never prose, and is empty when Severity is SevOK.
 type Check struct {
-	Group    string // "" for global rows, else the harness kind
-	Name     string // "herdr", "daemon", "binary", "integration", "plan-executor"
-	Severity Severity
-	Detail   string // what was actually found
-	Fix      string // the command that fixes it
+	Group       string // "" for global rows, else the harness kind
+	Name        string // "herdr", "daemon", "binary", "integration", "plan-executor"
+	Severity    Severity
+	Detail      string // what was actually found
+	Fix         string // the command that fixes it
+	ProbeFailed bool   // true when external probe errored/timed out
 }
 
 // Report is every check, in render order, plus the derived verdict.
@@ -148,11 +149,12 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	herdrVer, err := env.HerdrVersion(ctx)
 	if err != nil {
 		checks = append(checks, Check{
-			Group:    "",
-			Name:     "herdr",
-			Severity: SevFail,
-			Detail:   err.Error(),
-			Fix:      "",
+			Group:       "",
+			Name:        "herdr",
+			Severity:    SevFail,
+			Detail:      err.Error(),
+			Fix:         "",
+			ProbeFailed: true,
 		})
 	} else {
 		atLeast, semErr := semverAtLeast(herdrVer, herdr.MinVersion)
@@ -187,11 +189,12 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	daemonRunning, dErr := env.DaemonRunning(ctx)
 	if dErr != nil {
 		checks = append(checks, Check{
-			Group:    "",
-			Name:     "daemon",
-			Severity: SevWarn,
-			Detail:   fmt.Sprintf("probe error: %v", dErr),
-			Fix:      "relay daemon",
+			Group:       "",
+			Name:        "daemon",
+			Severity:    SevWarn,
+			Detail:      fmt.Sprintf("probe error: %v", dErr),
+			Fix:         "relay daemon",
+			ProbeFailed: true,
 		})
 	} else if !daemonRunning {
 		checks = append(checks, Check{
@@ -256,11 +259,12 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 
 		if intStatusErr != nil {
 			checks = append(checks, Check{
-				Group:    kind,
-				Name:     "integration",
-				Severity: SevWarn,
-				Detail:   fmt.Sprintf("integration status unavailable: %v", intStatusErr),
-				Fix:      "",
+				Group:       kind,
+				Name:        "integration",
+				Severity:    SevWarn,
+				Detail:      fmt.Sprintf("integration status unavailable: %v", intStatusErr),
+				Fix:         "",
+				ProbeFailed: true,
 			})
 		} else {
 			state, found := intStatusMap[target]
@@ -340,7 +344,16 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			} else {
 				homeRel := "~/" + h.RolePath
 				fullPath, hErr := env.HomePath(h.RolePath)
-				if hErr != nil || env.Stat(fullPath) != nil {
+				if hErr != nil {
+					checks = append(checks, Check{
+						Group:       kind,
+						Name:        "plan-executor",
+						Severity:    SevWarn,
+						Detail:      fmt.Sprintf("could not resolve home directory: %v", hErr),
+						Fix:         "",
+						ProbeFailed: true,
+					})
+				} else if env.Stat(fullPath) != nil {
 					checks = append(checks, Check{
 						Group:    kind,
 						Name:     "plan-executor",

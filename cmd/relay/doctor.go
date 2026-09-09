@@ -135,16 +135,19 @@ func cmdDoctor(args []string) error {
 }
 
 func bindWarningLines(rep doctor.Report, adopted bool) []string {
+	// Probe errors are swallowed — print nothing, bind anyway.
+	for _, c := range rep.Checks {
+		if c.ProbeFailed {
+			return nil
+		}
+	}
+
 	var warnings []string
 	for _, c := range rep.Checks {
 		if c.Group == "" || c.Severity == doctor.SevOK {
 			continue
 		}
 		if adopted && c.Name != "integration" {
-			continue
-		}
-		// Probe errors are swallowed
-		if strings.Contains(c.Detail, "unavailable") || strings.Contains(c.Detail, "probe error") {
 			continue
 		}
 

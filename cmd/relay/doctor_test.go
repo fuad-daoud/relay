@@ -149,15 +149,26 @@ func (s *stubDoctorEnv) Stat(path string) error {
 }
 
 func TestBindWarningLines(t *testing.T) {
-	// 1. Probe error yields zero lines
+	// 1. Probe error yields zero lines, tested directly and through a real erroring Env
 	repProbeErr := doctor.Report{
 		Checks: []doctor.Check{
-			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "integration status unavailable: timeout"},
+			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "integration status unavailable: timeout", ProbeFailed: true},
 		},
 	}
 	lines := bindWarningLines(repProbeErr, false)
 	if len(lines) != 0 {
 		t.Errorf("probe error must yield zero lines, got: %v", lines)
+	}
+
+	envErr := &stubDoctorEnv{
+		ver:       "0.9.0",
+		intErr:    errors.New("connection reset by peer"),
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+	}
+	realErrRep := doctor.Run(context.Background(), envErr, []string{"claude"})
+	if zeroLines := bindWarningLines(realErrRep, false); len(zeroLines) != 0 {
+		t.Errorf("real erroring Env must yield zero lines at bind, got: %v", zeroLines)
 	}
 
 	// 2. Adopted bind yields only integration row
