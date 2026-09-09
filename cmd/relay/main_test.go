@@ -82,7 +82,10 @@ func TestDiffCommand(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
-	cmd = exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-m", "init")
+	// -c commit.gpgsign=false so a developer with signing enabled globally
+	// does not have this fixture commit reach gpg; see internal/git's runGit.
+	cmd = exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e",
+		"-c", "commit.gpgsign=false", "commit", "-m", "init")
 	cmd.Dir = repoDir
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
@@ -268,5 +271,49 @@ func TestBindAcceptsAssumeDeadFlag(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--name") {
 		t.Errorf("expected the --name error, got %q", err)
+	}
+}
+
+func TestAnswerRefusesToGuessTheBinding(t *testing.T) {
+	// A bare `relay answer` used to resolve to whichever binding owns the cwd.
+	// With peer builders that is always builder #1, so an unqualified answer
+	// pressed a key into a dialog nobody had looked at.
+	err := run([]string{"answer", "--keys", "enter"})
+	if err == nil {
+		t.Fatal("a bare relay answer must be refused")
+	}
+	if !strings.Contains(err.Error(), "will not guess which one you meant") {
+		t.Fatalf("expected a refuse-to-guess error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "usage: relay answer") {
+		t.Fatalf("expected the usage line, got %v", err)
+	}
+}
+
+func TestAnswerRefusesBothNameAndPositional(t *testing.T) {
+	err := run([]string{"answer", "--name", "webshop", "--keys", "enter", "webshop"})
+	if err == nil || !strings.Contains(err.Error(), "will not guess which one you meant") {
+		t.Fatalf("naming the binding twice must be refused, got %v", err)
+	}
+}
+
+func TestAddHelp(t *testing.T) {
+	err := run([]string{"add", "-h"})
+	if !errors.Is(err, errHelpShown) {
+		t.Fatalf("got %v, want errHelpShown", err)
+	}
+}
+
+func TestAddValidation(t *testing.T) {
+	// Missing --name
+	err := run([]string{"add", "--builder", "cbuilder"})
+	if err == nil || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("expected an error about --name, got %v", err)
+	}
+
+	// Missing --builder
+	err = run([]string{"add", "--name", "frontend"})
+	if err == nil || !strings.Contains(err.Error(), "--builder") {
+		t.Fatalf("expected an error about --builder, got %v", err)
 	}
 }

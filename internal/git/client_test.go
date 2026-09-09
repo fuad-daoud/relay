@@ -20,6 +20,13 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		"GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test",
 		"GIT_COMMITTER_EMAIL=test@example.com",
+		// Ignore the developer's own git config. Setting the identity is not
+		// enough: a global commit.gpgsign makes every fixture commit here try
+		// to reach gpg, which fails outright without a key and blocks for the
+		// agent timeout with one -- a suite that passes or hangs depending on
+		// whose machine it runs on.
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

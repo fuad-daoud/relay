@@ -230,3 +230,53 @@ func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 		t.Errorf("an unbind mid-tick must not be logged as a failure: %s", logged.String())
 	}
 }
+
+func TestTickDoesNotMutateTheHerdrAgentList(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+	f.prompts = nil
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("expected the payload to be delivered, prompts = %+v", f.prompts)
+	}
+
+	// DeliverPending writes the planner's new status into the tick's snapshot.
+	// That record belongs to the tick and must not reach the Herdr client's own
+	// list, where it would outlive the pass that made it true.
+	if f.agents[0].Status != herdr.StatusIdle {
+		t.Errorf("Tick must own its snapshot; herdr's agent list now reads %q", f.agents[0].Status)
+	}
+}
+
+func TestTickInjectsOncePerPlannerPane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, first, _ := twoBindingsOnePlanner(t, f)
+
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusIdle, false),
+		builderAgent(herdr.StatusIdle),
+		{Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo2", PaneID: "w2:p5", Title: "storefront-builder"},
+	}
+	f.prompts = nil
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	toPlanner := 0
+	for _, p := range f.prompts {
+		if p.Target == "w2:p3" {
+			toPlanner++
+		}
+	}
+	if toPlanner != 1 {
+		t.Fatalf("one planner pane takes at most one injection per tick, got %d: %+v", toPlanner, f.prompts)
+	}
+	if _, pending, err := rt.Store.PendingForPlanner(first.Name); err != nil || !pending {
+		t.Errorf("the payload that lost the race must still be pending: pending=%v err=%v", pending, err)
+	}
+}

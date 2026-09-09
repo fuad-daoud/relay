@@ -94,5 +94,17 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return Delivery{}, err
 	}
 
+	// The planner is mid-turn on this payload now, but the snapshot still says
+	// idle: it was taken once, before the daemon began its pass over the
+	// bindings, and nothing refreshes it. Two bindings sharing a planner would
+	// both read that stale idle and both type into the pane -- which is the
+	// exact clobber the status gate above exists to prevent (#46). Record what
+	// we just did, so every later binding in this pass sees the truth and takes
+	// the ordinary "planner is working" path. Tick owns a copy of the snapshot,
+	// so this never reaches the Herdr client or the next tick.
+	if i, ok := findAgentIndex(agents, b.Planner); ok {
+		agents[i].Status = herdr.StatusWorking
+	}
+
 	return Delivery{Delivered: true}, nil
 }
