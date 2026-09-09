@@ -480,3 +480,41 @@ func TestResolveBindingStillFallsBackToCWD(t *testing.T) {
 		t.Errorf("a bare invocation must still fall back to the cwd binding, got %q", got)
 	}
 }
+
+func TestFilterReportNarrowsToOneBinding(t *testing.T) {
+	rep := relay.Report{Bindings: []relay.BindingStatus{
+		{Name: "api"}, {Name: "frontend"}, {Name: "backend"},
+	}}
+
+	got, err := filterReport(rep, "frontend")
+	if err != nil {
+		t.Fatalf("filterReport: %v", err)
+	}
+	if len(got.Bindings) != 1 || got.Bindings[0].Name != "frontend" {
+		t.Fatalf("got %+v, want just frontend", got.Bindings)
+	}
+}
+
+func TestFilterReportKeepsEverythingWhenUnnamed(t *testing.T) {
+	rep := relay.Report{Bindings: []relay.BindingStatus{
+		{Name: "api"}, {Name: "frontend"},
+	}}
+
+	// A bare `relay status` lists every binding; that is its whole job.
+	got, err := filterReport(rep, "")
+	if err != nil {
+		t.Fatalf("filterReport: %v", err)
+	}
+	if len(got.Bindings) != 2 {
+		t.Fatalf("got %+v, want both bindings", got.Bindings)
+	}
+}
+
+func TestFilterReportRejectsAnUnknownName(t *testing.T) {
+	rep := relay.Report{Bindings: []relay.BindingStatus{{Name: "api"}}}
+
+	// Silence here would look identical to "that binding is fine".
+	if _, err := filterReport(rep, "nosuch"); err == nil {
+		t.Fatal("an unknown binding name must be an error, not an empty report")
+	}
+}

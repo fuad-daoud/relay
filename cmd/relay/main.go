@@ -738,10 +738,33 @@ func cmdAnswer(args []string) error {
 	return nil
 }
 
+// filterReport narrows a status report to one binding. An empty name keeps
+// every row, because listing them all is what a bare `relay status` is for.
+//
+// An unknown name is an error rather than an empty report: a silent blank
+// would read exactly like a healthy binding with nothing outstanding.
+func filterReport(rep relay.Report, name string) (relay.Report, error) {
+	if name == "" {
+		return rep, nil
+	}
+	for _, b := range rep.Bindings {
+		if b.Name == name {
+			return relay.Report{Bindings: []relay.BindingStatus{b}}, nil
+		}
+	}
+	return relay.Report{}, fmt.Errorf("no binding named %q", name)
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "machine-readable output")
+	name := fs.String("name", "", "show only this binding (default: all)")
 	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	target, err := bindingArg(*name, fs.Args())
+	if err != nil {
 		return err
 	}
 
@@ -750,6 +773,11 @@ func cmdStatus(args []string) error {
 		return err
 	}
 	rep, err := relay.Status(context.Background(), rt)
+	if err != nil {
+		return err
+	}
+
+	rep, err = filterReport(rep, target)
 	if err != nil {
 		return err
 	}
