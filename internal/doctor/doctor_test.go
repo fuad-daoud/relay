@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -20,6 +21,7 @@ type fakeEnv struct {
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
 	homeDir       string
+	homeErr       error
 }
 
 func (f *fakeEnv) HerdrVersion(ctx context.Context) (string, error) {
@@ -51,6 +53,9 @@ func (f *fakeEnv) LookPath(binary string) (string, error) {
 }
 
 func (f *fakeEnv) HomePath(rel string) (string, error) {
+	if f.homeErr != nil {
+		return "", f.homeErr
+	}
 	home := f.homeDir
 	if home == "" {
 		home = "/fake/home"
@@ -276,6 +281,13 @@ func TestDoctorSecondPassDemotionBesideCompleteHarness(t *testing.T) {
 	if opencodeInt.Severity != SevWarn {
 		t.Errorf("opencode integration severity = %v, want SevWarn (demoted from SevFail)", opencodeInt.Severity)
 	}
+	wantDetail := "not installed -- this binding will report `unknown` forever and never finish a round"
+	if opencodeInt.Detail != wantDetail {
+		t.Errorf("demoted row detail = %q, want %q", opencodeInt.Detail, wantDetail)
+	}
+	if opencodeInt.Fix != "herdr integration install opencode" {
+		t.Errorf("demoted row fix = %q, want 'herdr integration install opencode'", opencodeInt.Fix)
+	}
 }
 
 func TestDoctorSecondPassStaysFailWhenNoCompleteHarness(t *testing.T) {
@@ -380,5 +392,100 @@ opencode: not installed (/path/to/opencode.js)
 	}
 	if report.UsableBuilder {
 		t.Errorf("UsableBuilder should be false when status could not be read")
+	}
+}
+
+func TestDoctorUsableBuilderOutdatedCountsAsComplete(t *testing.T) {
+	// A checked kind with binary on PATH and integration outdated still counts as complete:
+	// UsableBuilder is true, and Failures() is 0.
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		daemonRunning: true,
+		lookPaths: map[string]string{
+			"claude": "/usr/bin/claude",
+		},
+		intStatus: map[string]herdr.IntegrationState{
+			"claude": {Installed: true, Outdated: true, Detail: "outdated (v8 < v9)"},
+		},
+		homeDir: "/fake/home",
+		existingFiles: map[string]bool{
+			"/fake/home/.claude/agents/plan-executor.md": true,
+		},
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+	if !report.UsableBuilder {
+		t.Error("UsableBuilder should be true when integration is outdated (counts as complete)")
+	}
+	if report.Failures() != 0 {
+		t.Errorf("expected 0 failures, got %d", report.Failures())
+	}
+	c := findCheck(report, "claude", "integration")
+	if c == nil || c.Severity != SevWarn {
+		t.Errorf("outdated integration should be SevWarn, got: %+v", c)
+	}
+}
+
+func TestDoctorUsableBuilderMissingRoleFileDoesNotBreakCompleteness(t *testing.T) {
+	// A missing role file does not break completeness:
+	// binary on PATH + integration current -> UsableBuilder is true, Failures() is 0,
+	// plan-executor check is SevWarn.
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		daemonRunning: true,
+		lookPaths: map[string]string{
+			"claude": "/usr/bin/claude",
+		},
+		intStatus: map[string]herdr.IntegrationState{
+			"claude": {Installed: true, Detail: "current (v9)"},
+		},
+		homeDir:       "/fake/home",
+		existingFiles: map[string]bool{}, // role file missing
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+	if !report.UsableBuilder {
+		t.Error("UsableBuilder should be true even when role file is missing")
+	}
+	if report.Failures() != 0 {
+		t.Errorf("expected 0 failures, got %d", report.Failures())
+	}
+	roleCheck := findCheck(report, "claude", "plan-executor")
+	if roleCheck == nil || roleCheck.Severity != SevWarn {
+		t.Errorf("missing role file check should be SevWarn, got: %+v", roleCheck)
+	}
+}
+
+func TestDoctorHomePathFailureReportsErrorWithoutFix(t *testing.T) {
+	// A failure resolving home directory should report SevWarn with detail
+	// explaining home could not be resolved, Fix empty, ProbeFailed true.
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		daemonRunning: true,
+		lookPaths: map[string]string{
+			"claude": "/usr/bin/claude",
+		},
+		intStatus: map[string]herdr.IntegrationState{
+			"claude": {Installed: true, Detail: "current (v9)"},
+		},
+		homeErr: errors.New("cannot determine user home"),
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+	c := findCheck(report, "claude", "plan-executor")
+	if c == nil {
+		t.Fatal("plan-executor check not found")
+	}
+	if c.Severity != SevWarn {
+		t.Errorf("severity = %v, want SevWarn", c.Severity)
+	}
+	if !c.ProbeFailed {
+		t.Error("ProbeFailed must be true on HomePath error")
+	}
+	if c.Fix != "" {
+		t.Errorf("fix must be empty, got %q", c.Fix)
+	}
+	if !strings.Contains(c.Detail, "could not resolve home directory") {
+		t.Errorf("detail = %q, want containing 'could not resolve home directory'", c.Detail)
 	}
 }

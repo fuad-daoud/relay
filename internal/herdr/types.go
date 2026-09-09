@@ -11,9 +11,6 @@ import (
 // MinVersion is the herdr version floor required by relay.
 const MinVersion = "0.8.2"
 
-// MinHerdrVersion is an alias for MinVersion.
-const MinHerdrVersion = MinVersion
-
 // Agent lifecycle states as reported by herdr. StatusUnknown means herdr sees
 // an agent but cannot classify it -- herdr documents that it does not prove
 // completion, so relay must never treat it as done.

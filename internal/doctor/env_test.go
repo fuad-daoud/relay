@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func TestRealEnvHomePathAndStat(t *testing.T) {
-	env, err := DefaultEnv()
-	if err != nil {
-		t.Fatalf("DefaultEnv: %v", err)
-	}
+	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
 
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "test.txt")
@@ -39,10 +39,7 @@ func TestRealEnvHomePathAndStat(t *testing.T) {
 }
 
 func TestRealEnvLookPath(t *testing.T) {
-	env, err := DefaultEnv()
-	if err != nil {
-		t.Fatalf("DefaultEnv: %v", err)
-	}
+	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
 
 	// sh is standard across unix systems
 	path, err := env.LookPath("sh")
@@ -55,14 +52,13 @@ func TestRealEnvLookPath(t *testing.T) {
 }
 
 func TestRealEnvDaemonRunningWithoutDaemon(t *testing.T) {
-	env, err := DefaultEnv()
-	if err != nil {
-		t.Fatalf("DefaultEnv: %v", err)
-	}
+	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
 
 	running, err := env.DaemonRunning(context.Background())
 	if err != nil {
 		t.Fatalf("DaemonRunning: %v", err)
 	}
-	_ = running // Can be true or false depending on whether daemon is running locally
+	if running {
+		t.Error("DaemonRunning on fresh temp root must be false")
+	}
 }

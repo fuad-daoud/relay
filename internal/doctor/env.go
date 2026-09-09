@@ -41,8 +41,8 @@ func NewEnv(client HerdrClient, st *store.Store) Env {
 	return &realEnv{herdr: client, store: st}
 }
 
-// DefaultEnv returns an Env using default clients.
-func DefaultEnv() (Env, error) {
+// defaultEnv returns an Env using default clients.
+func defaultEnv() (Env, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return nil, err

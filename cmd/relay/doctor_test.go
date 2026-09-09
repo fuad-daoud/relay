@@ -21,7 +21,10 @@ func TestAssembleKinds(t *testing.T) {
 	tbl := alias.DefaultTable()
 
 	// Default table has agy, claude, opencode
-	kinds := assembleKinds(tbl, st)
+	kinds, err := assembleKinds(tbl, st)
+	if err != nil {
+		t.Fatalf("assembleKinds: %v", err)
+	}
 	expected := []string{"agy", "claude", "opencode"}
 	if len(kinds) != len(expected) {
 		t.Fatalf("kinds len = %d, want %d: %v", len(kinds), len(expected), kinds)
@@ -44,7 +47,10 @@ func TestAssembleKinds(t *testing.T) {
 		t.Fatalf("st.Save: %v", err)
 	}
 
-	kinds2 := assembleKinds(tbl, st)
+	kinds2, err := assembleKinds(tbl, st)
+	if err != nil {
+		t.Fatalf("assembleKinds: %v", err)
+	}
 	foundCustom := false
 	for _, k := range kinds2 {
 		if k == "custom-kind" {
@@ -54,6 +60,22 @@ func TestAssembleKinds(t *testing.T) {
 	}
 	if !foundCustom {
 		t.Errorf("custom-kind not found in assembled kinds: %v", kinds2)
+	}
+}
+
+func TestAssembleKindsSurfacesErrors(t *testing.T) {
+	// A store pointing at a file (not a directory) causes st.List() to fail.
+	tmp := t.TempDir()
+	filePath := filepath.Join(tmp, "file-not-dir")
+	if err := os.WriteFile(filePath, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	st := store.New(filePath)
+	tbl := alias.DefaultTable()
+
+	_, err := assembleKinds(tbl, st)
+	if err == nil {
+		t.Error("assembleKinds should surface error from store.List(), got nil")
 	}
 }
 

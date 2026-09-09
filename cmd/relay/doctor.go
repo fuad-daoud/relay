@@ -13,21 +13,27 @@ import (
 	"strings"
 )
 
-func assembleKinds(aliases *alias.Table, st *store.Store) []string {
+func assembleKinds(aliases *alias.Table, st *store.Store) ([]string, error) {
 	seen := make(map[string]bool)
 	if aliases != nil {
 		for _, name := range aliases.Names() {
-			if spec, err := aliases.Lookup(name); err == nil && spec.Kind != "" {
+			spec, err := aliases.Lookup(name)
+			if err != nil {
+				return nil, fmt.Errorf("aliases lookup %q: %w", name, err)
+			}
+			if spec.Kind != "" {
 				seen[spec.Kind] = true
 			}
 		}
 	}
 	if st != nil {
-		if bindings, err := st.List(); err == nil {
-			for _, b := range bindings {
-				if b.Builder.Kind != "" {
-					seen[b.Builder.Kind] = true
-				}
+		bindings, err := st.List()
+		if err != nil {
+			return nil, fmt.Errorf("store list bindings: %w", err)
+		}
+		for _, b := range bindings {
+			if b.Builder.Kind != "" {
+				seen[b.Builder.Kind] = true
 			}
 		}
 	}
@@ -36,7 +42,7 @@ func assembleKinds(aliases *alias.Table, st *store.Store) []string {
 		kinds = append(kinds, k)
 	}
 	sort.Strings(kinds)
-	return kinds
+	return kinds, nil
 }
 
 func renderReport(w io.Writer, rep doctor.Report) {
@@ -113,7 +119,10 @@ func cmdDoctor(args []string) error {
 		return err
 	}
 
-	kinds := assembleKinds(rt.Aliases, rt.Store)
+	kinds, err := assembleKinds(rt.Aliases, rt.Store)
+	if err != nil {
+		return err
+	}
 	hc := rt.Herdr.(doctor.HerdrClient)
 	env := doctor.NewEnv(hc, rt.Store)
 	rep := doctor.Run(context.Background(), env, kinds)
