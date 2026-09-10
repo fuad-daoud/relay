@@ -1117,3 +1117,121 @@ func TestBindResumeAllowsSessionlessRebindWhenRoundClosed(t *testing.T) {
 		t.Errorf("builder pane = %q, want the newly spawned w2:p5", got.Builder.PaneID)
 	}
 }
+
+func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
+	existing := store.Binding{
+		Name:            "webshop",
+		CWD:             "/repo",
+		Round:           3,
+		RoundClosedTree: "tree-closed-123",
+		State:           store.StateActive,
+		Planner:         store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:         store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		BuilderAlias:    "builder",
+	}
+
+	t.Run("with alias", func(t *testing.T) {
+		f := &fakeHerdr{
+			agents: []herdr.Agent{
+				plannerAgent(),
+				{Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
+			},
+			newPane: "w2:p9",
+		}
+		rt := newRuntime(t, f)
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("Bind resume with alias: %v", err)
+		}
+		if got.RoundClosedTree != "" {
+			t.Errorf("returned RoundClosedTree = %q, want empty", got.RoundClosedTree)
+		}
+
+		saved, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if saved.RoundClosedTree != "" {
+			t.Errorf("loaded RoundClosedTree = %q, want empty", saved.RoundClosedTree)
+		}
+	})
+
+	t.Run("with builder pane", func(t *testing.T) {
+		adopted := herdr.Agent{
+			Kind:    "claude",
+			Status:  herdr.StatusIdle,
+			PaneID:  "w2:p8",
+			Session: herdr.Session{Value: "adopted-sess"},
+			CWD:     "/repo",
+		}
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), adopted}}
+		rt := newRuntime(t, f)
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		got, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
+		})
+		if err != nil {
+			t.Fatalf("Bind resume with builder pane: %v", err)
+		}
+		if got.RoundClosedTree != "" {
+			t.Errorf("returned RoundClosedTree = %q, want empty", got.RoundClosedTree)
+		}
+
+		saved, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if saved.RoundClosedTree != "" {
+			t.Errorf("loaded RoundClosedTree = %q, want empty", saved.RoundClosedTree)
+		}
+	})
+}
+
+func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{
+		{Kind: "claude", Status: herdr.StatusWorking, CWD: "/repo",
+			PaneID: "w7:pB", Session: herdr.Session{Value: "planner-sess-2"}},
+	}}
+	rt := newRuntime(t, f)
+
+	const closedTree = "tree-closed-123"
+	existing := store.Binding{
+		Name:            "webshop",
+		CWD:             "/repo",
+		Round:           3,
+		RoundClosedTree: closedTree,
+		State:           store.StateOrphaned,
+		Planner:         store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:         store.Endpoint{PaneID: "w2:p4", SessionID: "builder-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w7:pB", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind resume planner only: %v", err)
+	}
+	if got.RoundClosedTree != closedTree {
+		t.Errorf("returned RoundClosedTree = %q, want %q", got.RoundClosedTree, closedTree)
+	}
+
+	saved, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if saved.RoundClosedTree != closedTree {
+		t.Errorf("loaded RoundClosedTree = %q, want %q", saved.RoundClosedTree, closedTree)
+	}
+}

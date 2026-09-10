@@ -145,6 +145,12 @@ func (s *Store) DiffPath(name string, round int) string {
 	return s.roundFile(name, round, "diff", ".patch")
 }
 
+// DriftPath is where the patch for the window between the previous round's
+// report and this round's send is stored.
+func (s *Store) DriftPath(name string, round int) string {
+	return s.roundFile(name, round, "drift", ".patch")
+}
+
 func (s *Store) bindingPath(name string) string {
 	return filepath.Join(s.Dir(name), "bind.json")
 }

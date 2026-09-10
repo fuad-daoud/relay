@@ -98,8 +98,10 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	a builder was supplied: Builder is the new endpoint with its
 //	session id recorded, PreamblePending is true, State is Active,
 //	HaltNotifiedRound is 0, and the builder-screen fields are
-//	cleared. Round, CWD, Name, RoundBaselineTree and the round log
-//	are untouched.
+//	cleared. RoundClosedTree is cleared when a builder was supplied:
+//	a tree that changed hands says nothing about a builder that no
+//	longer exists. Round, CWD, Name, RoundBaselineTree and the round
+//	log are untouched.
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
 // herdr failure.
@@ -167,6 +169,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			b.HaltNotifiedRound = 0
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
+			b.RoundClosedTree = ""
 		}
 
 		if err := tx.Save(b); err != nil {
