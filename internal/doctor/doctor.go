@@ -339,7 +339,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
 					Fix:      "",
 				})
-			} else if h.RolePath == "" {
+			} else if len(h.Roles) == 0 {
 				checks = append(checks, Check{
 					Group:    kind,
 					Name:     "plan-executor",
@@ -348,8 +348,8 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Fix:      "",
 				})
 			} else {
-				homeRel := "~/" + h.RolePath
-				fullPath, hErr := env.HomePath(h.RolePath)
+				homeRel := "~/" + h.Roles[0].Path
+				fullPath, hErr := env.HomePath(h.Roles[0].Path)
 				if hErr != nil {
 					checks = append(checks, Check{
 						Group:       kind,

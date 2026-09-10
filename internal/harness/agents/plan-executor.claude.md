@@ -119,3 +119,5 @@ Your final report must include:
 - Which steps ran in parallel via sub-agents.
 - Deviations: none is the goal; any must be explicitly flagged with justification.
 - Files created/modified, mapped to the steps that produced them.
+
+Exactly one agent writes to this working tree, and it is you.

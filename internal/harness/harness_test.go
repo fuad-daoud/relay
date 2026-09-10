@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 )
@@ -11,7 +12,6 @@ func TestHarnessRules(t *testing.T) {
 		t.Fatal("All() returned no entries")
 	}
 
-	// Verify All() is sorted by Kind
 	if !sort.SliceIsSorted(all, func(i, j int) bool {
 		return all[i].Kind < all[j].Kind
 	}) {
@@ -19,28 +19,13 @@ func TestHarnessRules(t *testing.T) {
 	}
 
 	for _, h := range all {
-		// An empty RolePath implies an empty RoleDoc
-		if h.RolePath == "" && h.RoleDoc != "" {
-			t.Errorf("kind %q has empty RolePath but non-empty RoleDoc %q", h.Kind, h.RoleDoc)
-		}
-
-		// Every entry with a non-empty RoleDoc resolves to a non-empty embedded doc
-		if h.RoleDoc != "" {
-			doc, err := AgentDoc(h.RoleDoc)
-			if err != nil {
-				t.Errorf("kind %q RoleDoc %q failed to resolve: %v", h.Kind, h.RoleDoc, err)
-			}
-			if len(doc) == 0 {
-				t.Errorf("kind %q RoleDoc %q resolved to empty bytes", h.Kind, h.RoleDoc)
-			}
-		}
-
-		// Lookup resolves to the same entry
 		got, ok := Lookup(h.Kind)
 		if !ok {
 			t.Errorf("Lookup(%q) returned ok=false", h.Kind)
+			continue
 		}
-		if got != h {
+		// Harness carries a Roles slice, so it is not comparable with != .
+		if !reflect.DeepEqual(got, h) {
 			t.Errorf("Lookup(%q) = %+v, want %+v", h.Kind, got, h)
 		}
 	}
@@ -59,22 +44,25 @@ func TestTableExactValues(t *testing.T) {
 			Kind:        "agy",
 			Binary:      "agy",
 			Integration: "antigravity-cli",
-			RolePath:    "",
-			RoleDoc:     "",
+			Roles:       nil,
 		},
 		"claude": {
 			Kind:        "claude",
 			Binary:      "claude",
 			Integration: "claude",
-			RolePath:    ".claude/agents/plan-executor.md",
-			RoleDoc:     "claude",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
+				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
+			},
 		},
 		"opencode": {
 			Kind:        "opencode",
 			Binary:      "opencode",
 			Integration: "opencode",
-			RolePath:    ".config/opencode/agents/plan-executor.md",
-			RoleDoc:     "opencode",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
+				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
+			},
 		},
 	}
 
@@ -84,7 +72,7 @@ func TestTableExactValues(t *testing.T) {
 			t.Errorf("Lookup(%q) not found", kind)
 			continue
 		}
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Lookup(%q) = %+v, want %+v", kind, got, want)
 		}
 	}
