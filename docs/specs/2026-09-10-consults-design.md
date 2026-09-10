@@ -148,6 +148,24 @@ ConsultCap int       `json:"consult_cap,omitempty"` // 0 means defaultConsultCap
 `omitempty` on both means every `bind.json` already on disk stays
 byte-identical until its first consult. There is no migration.
 
+**A slice field makes `Binding` non-comparable, and that is not free.**
+`internal/relay/daemon.go:96` short-circuits on `next == fresh` to skip the save
+when Reconcile changed nothing. Adding `Consults []Consult` makes that `==` a
+compile error. It is the only `==` on a `Binding` in the tree, but the
+short-circuit itself must survive: `store.save` stamps `b.UpdatedAt = now`
+unconditionally (`store.go:304`), so dropping it would rewrite every bind.json
+on every tick and degrade `UpdatedAt` from "last change" to "last poll".
+
+The replacement is `store.SameBinding(a, b)`, comparing marshalled forms. A
+hand-written field-by-field `Equal` was rejected: it keeps compiling after a
+field is added and silently stops noticing changes to it, which reintroduces
+exactly this bug with no compile error to catch it. Comparing the serialised
+form asks the question the caller means -- "would this write a different
+bind.json?" -- and cannot drift as fields come and go. A marshal error reports
+"changed", so the caller saves rather than skipping a write it needed.
+
+This behaviour was previously untested; the change is the occasion to pin it.
+
 `ConsultCap` bounds **running** consults per binding, not lifetime ones. It
 exists for the reason `RoundCap` does, and specifically for the case #36 names:
 twelve idle opencode panes is roughly 9.6 GB, which is not a workspace.
@@ -704,6 +722,11 @@ Verification is `make check`, not `go test ./...` (`CLAUDE.md`): it adds
    record.
 9. **Schema compatibility**: a `bind.json` written before this change loads,
    round-trips, and re-serialises without `consults` or `consult_cap` keys.
+10. **`SameBinding` and the no-op tick**: two identical bindings compare same; a
+    binding differing only by an appended consult compares different; and a
+    daemon tick over a binding Reconcile does not change leaves `UpdatedAt`
+    untouched. The last of these pins the short-circuit `next == fresh` provided
+    silently and nothing tested.
 
 **Mutation test** (`CLAUDE.md`): delete the `c.State != ConsultRunning` guard at
 the top of `reconcileConsults` and confirm a *named* test from (4) fails. That
