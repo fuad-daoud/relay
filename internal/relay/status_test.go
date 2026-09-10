@@ -321,3 +321,145 @@ func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 		t.Errorf("no detail line may appear for a healthy binding:\n%s", out)
 	}
 }
+
+func TestStatusReportsForeignAgentInBoundTree(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	stranger := herdr.Agent{
+		PaneID: "w9:p9", Kind: "claude", Status: herdr.StatusIdle,
+		CWD: b.CWD, Title: "plan-executor",
+	}
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking), stranger}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got := rep.Bindings[0].Foreign
+	if len(got) != 1 {
+		t.Fatalf("got %d foreign agents, want 1: %+v", len(got), got)
+	}
+	if got[0].PaneID != "w9:p9" || got[0].Title != "plan-executor" {
+		t.Errorf("foreign = %+v", got[0])
+	}
+}
+
+func TestStatusReportsNoForeignAgentsForHealthyBinding(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep.Bindings[0].Foreign; got != nil {
+		t.Errorf("foreign = %+v, want nil", got)
+	}
+}
+
+func TestStatusForeignDoesNotChangeDisplay(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		builderAgent(herdr.StatusWorking),
+		{PaneID: "w9:p9", Kind: "claude", Status: herdr.StatusIdle, CWD: b.CWD},
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].Display != "ACTIVE" {
+		t.Errorf("display = %q, want ACTIVE: a foreign agent is an observation, not a state",
+			rep.Bindings[0].Display)
+	}
+}
+
+func TestStatusJSONOmitsForeignWhenEmpty(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "foreign") {
+		t.Errorf("empty Foreign must be omitted from JSON, got %s", raw)
+	}
+}
+
+func TestRenderStatusShowsForeignLine(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+		Foreign: []ForeignAgent{
+			{PaneID: "w9:p9", Kind: "claude", Status: "idle", CWD: "/repo", Title: "plan-executor"},
+		},
+	}}})
+	if !strings.Contains(out, "foreign") {
+		t.Errorf("missing foreign line:\n%s", out)
+	}
+	if !strings.Contains(out, "w9:p9") || !strings.Contains(out, "plan-executor") {
+		t.Errorf("foreign line missing pane or title:\n%s", out)
+	}
+}
+
+func TestRenderStatusOmitsForeignLineWhenNone(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+	}}})
+	if strings.Contains(out, "foreign") {
+		t.Errorf("unexpected foreign line:\n%s", out)
+	}
+}
+
+func TestRenderStatusForeignShowsRelativeCWDWhenNested(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+		Foreign: []ForeignAgent{
+			{PaneID: "w9:p9", Kind: "opencode", Status: "working", CWD: "/repo/internal/ui", Title: "researcher"},
+		},
+	}}})
+	if !strings.Contains(out, "internal/ui") {
+		t.Errorf("nested foreign agent must show its location:\n%s", out)
+	}
+	if strings.Contains(out, "/repo/internal/ui") {
+		t.Errorf("location must be relative to the binding cwd, not absolute:\n%s", out)
+	}
+}
+
+func TestRenderStatusForeignOmitsCWDAtTreeRoot(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+		Foreign: []ForeignAgent{
+			{PaneID: "w9:p9", Kind: "claude", Status: "idle", CWD: "/repo", Title: "plan-executor"},
+		},
+	}}})
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "foreign") {
+			continue
+		}
+		if strings.Contains(line, "/repo") {
+			t.Errorf("an agent at the tree root must not repeat the cwd: %q", line)
+		}
+	}
+}
+
+func TestRenderStatusShowsEveryForeignAgent(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{{
+		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+		Foreign: []ForeignAgent{
+			{PaneID: "w9:p1", Kind: "claude", Status: "idle", CWD: "/repo"},
+			{PaneID: "w9:p2", Kind: "agy", Status: "working", CWD: "/repo"},
+		},
+	}}})
+	if n := strings.Count(out, "foreign"); n != 2 {
+		t.Errorf("got %d foreign lines, want 2:\n%s", n, out)
+	}
+}

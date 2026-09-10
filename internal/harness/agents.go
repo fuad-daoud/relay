@@ -5,21 +5,29 @@ import (
 	"errors"
 )
 
-//go:embed agents/plan-executor.claude.md agents/plan-executor.opencode.md
+//go:embed agents/*.md
 var agentFS embed.FS
 
-// ErrNoAgentDoc reports a key with no embedded definition.
+// ErrNoAgentDoc reports a role/kind pair with no embedded definition.
 var ErrNoAgentDoc = errors.New("no embedded agent definition")
 
-// AgentDoc returns the embedded plan-executor definition for a RoleDoc key.
-// ErrNoAgentDoc reports a key with no embedded definition.
-func AgentDoc(key string) ([]byte, error) {
-	switch key {
-	case "claude":
-		return agentFS.ReadFile("agents/plan-executor.claude.md")
-	case "opencode":
-		return agentFS.ReadFile("agents/plan-executor.opencode.md")
-	default:
+// AgentDoc returns the embedded definition for one role of one harness kind.
+//
+// The filename is built from the TABLE's Doc field, never from the caller's
+// role string, so a caller cannot steer the read with path syntax. A pair
+// absent from the table returns ErrNoAgentDoc without touching the embed FS.
+func AgentDoc(role, kind string) ([]byte, error) {
+	h, ok := Lookup(kind)
+	if !ok {
 		return nil, ErrNoAgentDoc
 	}
+	r, ok := h.Role(role)
+	if !ok {
+		return nil, ErrNoAgentDoc
+	}
+	b, err := agentFS.ReadFile("agents/" + r.Doc + ".md")
+	if err != nil {
+		return nil, ErrNoAgentDoc
+	}
+	return b, nil
 }

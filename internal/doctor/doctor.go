@@ -139,6 +139,71 @@ func WithAdopted(adopted bool) RunOption {
 	}
 }
 
+// frontmatterModel returns the value of a `model:` key in the leading `---`
+// fenced block, or "" when there is none.
+//
+// Deliberately shallow: this reports a fact about an installed file for a
+// human to read, so a malformed file yields "" rather than an error. An
+// absent model pin is not a fault, and a parse failure must never mask the
+// fact that the file exists.
+func frontmatterModel(raw []byte) string {
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	// Locate the closing fence first: a `model:` line inside frontmatter
+	// that never terminates is not a pin.
+	end := -1
+	for i, line := range lines[1:] {
+		if strings.TrimSpace(line) == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return "" // unterminated frontmatter
+	}
+	for _, line := range lines[1 : end+1] {
+		rest, ok := strings.CutPrefix(line, "model:")
+		if !ok {
+			continue
+		}
+		return strings.TrimSpace(rest)
+	}
+	return "" // frontmatter ended with no model key
+}
+
+// roleCheck probes one shipped role definition on disk.
+func roleCheck(env Env, kind string, r harness.Role) Check {
+	homeRel := "~/" + r.Path
+	fullPath, err := env.HomePath(r.Path)
+	if err != nil {
+		return Check{
+			Group: kind, Name: r.Name, Severity: SevWarn,
+			Detail:      fmt.Sprintf("could not resolve home directory: %v", err),
+			ProbeFailed: true,
+		}
+	}
+	if env.Stat(fullPath) != nil {
+		return Check{
+			Group: kind, Name: r.Name, Severity: SevWarn,
+			Detail: fmt.Sprintf("missing: %s", homeRel),
+			Fix: fmt.Sprintf("relay agent print --kind %s --role %s > %s",
+				kind, r.Name, homeRel),
+		}
+	}
+
+	detail := homeRel
+	// A read error is deliberately swallowed: the file exists, which is what
+	// this row reports, and the model pin is a courtesy on top of that.
+	if raw, err := env.ReadFile(fullPath); err == nil {
+		if model := frontmatterModel(raw); model != "" {
+			detail = fmt.Sprintf("%s (model: %s)", homeRel, model)
+		}
+	}
+	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
+}
+
 // Run executes every check for the given kinds against env.
 // kinds is the caller's choice of scope; Run does not discover it.
 // Run never returns an error -- a failed probe becomes a Check saying so.
@@ -330,8 +395,12 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 
 		if !cfg.adopted {
-			// Role (plan-executor) check
-			if !known {
+			// Role checks: one row per shipped role. A harness with no roles
+			// selects its role with a preamble on the first prompt instead of
+			// a file, which is agy; its row keeps the name plan-executor,
+			// because that is still the role the preamble selects.
+			switch {
+			case !known:
 				checks = append(checks, Check{
 					Group:    kind,
 					Name:     "plan-executor",
@@ -339,7 +408,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
 					Fix:      "",
 				})
-			} else if h.RolePath == "" {
+			case len(h.Roles) == 0:
 				checks = append(checks, Check{
 					Group:    kind,
 					Name:     "plan-executor",
@@ -347,34 +416,9 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Detail:   "selected by preamble, not a file",
 					Fix:      "",
 				})
-			} else {
-				homeRel := "~/" + h.RolePath
-				fullPath, hErr := env.HomePath(h.RolePath)
-				if hErr != nil {
-					checks = append(checks, Check{
-						Group:       kind,
-						Name:        "plan-executor",
-						Severity:    SevWarn,
-						Detail:      fmt.Sprintf("could not resolve home directory: %v", hErr),
-						Fix:         "",
-						ProbeFailed: true,
-					})
-				} else if env.Stat(fullPath) != nil {
-					checks = append(checks, Check{
-						Group:    kind,
-						Name:     "plan-executor",
-						Severity: SevWarn,
-						Detail:   fmt.Sprintf("missing: %s", homeRel),
-						Fix:      fmt.Sprintf("relay agent print --kind %s > %s", kind, homeRel),
-					})
-				} else {
-					checks = append(checks, Check{
-						Group:    kind,
-						Name:     "plan-executor",
-						Severity: SevOK,
-						Detail:   homeRel,
-						Fix:      "",
-					})
+			default:
+				for _, r := range h.Roles {
+					checks = append(checks, roleCheck(env, kind, r))
 				}
 			}
 		}

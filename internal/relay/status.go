@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -35,11 +36,17 @@ type BindingStatus struct {
 	// Populated only for store.StateBroken, which covers three situations
 	// whose correct recoveries differ -- and in one of which the obvious
 	// recovery orphans a builder that is still running.
-	Detail        string       `json:"detail,omitempty"`
-	Last          *LastEvent   `json:"last,omitempty"`
-	Pending       *PendingInfo `json:"pending,omitempty"`
-	ForkedFrom    string       `json:"forked_from,omitempty"`
-	ForkedAtRound int          `json:"forked_at_round,omitempty"`
+	Detail  string       `json:"detail,omitempty"`
+	Last    *LastEvent   `json:"last,omitempty"`
+	Pending *PendingInfo `json:"pending,omitempty"`
+	// Foreign lists live agents occupying this binding's working tree that no
+	// binding accounts for. It is an observation, never a judgement: relay
+	// cannot see writes, so a sanctioned read-only researcher and a rogue
+	// implementer both land here and the human reads the title to tell them
+	// apart. Deliberately does not affect Display.
+	Foreign       []ForeignAgent `json:"foreign,omitempty"`
+	ForkedFrom    string         `json:"forked_from,omitempty"`
+	ForkedAtRound int            `json:"forked_at_round,omitempty"`
 }
 
 // LastEvent is the most recent relayed message, carried as data rather than
@@ -75,9 +82,13 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 		return Report{}, fmt.Errorf("list agents: %w", err)
 	}
 
+	// Computed once, not per binding: it spans every binding, so it does not
+	// vary across rows.
+	known := knownEndpoints(bindings)
+
 	rows := make([]BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(rt, b, agents)
+		row, err := statusRow(rt, b, agents, known)
 		if err != nil {
 			return Report{}, err
 		}
@@ -92,7 +103,7 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
-func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus, error) {
+func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint) (BindingStatus, error) {
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
@@ -141,6 +152,8 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent) (BindingStatus
 		row.Pending = &PendingInfo{Round: pending.Round, Kind: pending.Kind}
 	}
 
+	row.Foreign = ForeignAgents(agents, known, b.CWD)
+
 	return row, nil
 }
 
@@ -177,6 +190,21 @@ func RenderStatus(r Report) string {
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
 		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`\n",
 			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderAlias)
+		for _, fa := range b.Foreign {
+			loc := ""
+			if fa.CWD != b.CWD {
+				loc = fa.CWD
+				if rel, err := filepath.Rel(b.CWD, fa.CWD); err == nil {
+					loc = rel
+				}
+			}
+			fmt.Fprintf(&sb, "  foreign  %-14s %-8s %-9s %s",
+				fa.PaneID, fa.Kind, fa.Status, fa.Title)
+			if loc != "" {
+				fmt.Fprintf(&sb, "  %s", loc)
+			}
+			fmt.Fprint(&sb, "\n")
+		}
 		if b.Detail != "" {
 			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)
 		}

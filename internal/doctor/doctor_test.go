@@ -20,6 +20,7 @@ type fakeEnv struct {
 	daemonErr     error
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
+	fileContents  map[string]string // path -> content; absent reads as empty
 	homeDir       string
 	homeErr       error
 }
@@ -68,6 +69,12 @@ func (f *fakeEnv) Stat(path string) error {
 		return nil
 	}
 	return os.ErrNotExist
+}
+
+// ReadFile returns recorded content. A path in existingFiles but absent from
+// fileContents reads as empty, which must produce no model suffix and no error.
+func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
+	return []byte(f.fileContents[path]), nil
 }
 
 func findCheck(report Report, group, name string) *Check {
@@ -487,5 +494,149 @@ func TestDoctorHomePathFailureReportsErrorWithoutFix(t *testing.T) {
 	}
 	if !strings.Contains(c.Detail, "could not resolve home directory") {
 		t.Errorf("detail = %q, want containing 'could not resolve home directory'", c.Detail)
+	}
+}
+
+func TestFrontmatterModel(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "pinned model",
+			raw:  "---\nname: researcher\nmodel: haiku\n---\n\nbody\n",
+			want: "haiku",
+		},
+		{
+			name: "model with a slash",
+			raw:  "---\nmodel: openrouter/z-ai/glm-5.3-flash\n---\n",
+			want: "openrouter/z-ai/glm-5.3-flash",
+		},
+		{
+			name: "trailing whitespace trimmed",
+			raw:  "---\nmodel:   haiku   \n---\n",
+			want: "haiku",
+		},
+		{name: "no model key", raw: "---\nname: researcher\n---\n", want: ""},
+		{name: "no frontmatter", raw: "just a body\n", want: ""},
+		{name: "empty file", raw: "", want: ""},
+		{
+			name: "model after the frontmatter is not a pin",
+			raw:  "---\nname: x\n---\n\nmodel: not-a-pin\n",
+			want: "",
+		},
+		{
+			name: "unterminated frontmatter",
+			raw:  "---\nmodel: haiku\n",
+			want: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := frontmatterModel([]byte(tc.raw)); got != tc.want {
+				t.Errorf("frontmatterModel(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoctorEmitsOneRowPerRole(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{
+		"/fake/home/.claude/agents/plan-executor.md": true,
+		"/fake/home/.claude/agents/researcher.md":    true,
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+
+	for _, role := range []string{"plan-executor", "researcher"} {
+		c := findCheck(report, "claude", role)
+		if c == nil {
+			t.Fatalf("no %q row for claude", role)
+		}
+		if c.Severity != SevOK {
+			t.Errorf("%s severity = %v, want ok", role, c.Severity)
+		}
+	}
+}
+
+func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{
+		"/fake/home/.claude/agents/plan-executor.md": true,
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+
+	c := findCheck(report, "claude", "researcher")
+	if c == nil {
+		t.Fatal("no researcher row for claude")
+	}
+	if c.Severity != SevWarn {
+		t.Errorf("severity = %v, want warn", c.Severity)
+	}
+	if !strings.Contains(c.Fix, "--role researcher") {
+		t.Errorf("fix must name the role, got %q", c.Fix)
+	}
+}
+
+func TestDoctorReportsTheInstalledModelPin(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{
+		"/fake/home/.claude/agents/plan-executor.md": true,
+		"/fake/home/.claude/agents/researcher.md":    true,
+	}
+	env.fileContents = map[string]string{
+		"/fake/home/.claude/agents/researcher.md": "---\nname: researcher\nmodel: haiku\n---\n",
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+
+	c := findCheck(report, "claude", "researcher")
+	if c == nil {
+		t.Fatal("no researcher row")
+	}
+	if !strings.Contains(c.Detail, "model: haiku") {
+		t.Errorf("detail = %q, want it to report the pinned model", c.Detail)
+	}
+}
+
+func TestDoctorOmitsModelSuffixWhenUnpinned(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{
+		"/fake/home/.claude/agents/plan-executor.md": true,
+		"/fake/home/.claude/agents/researcher.md":    true,
+	}
+	env.fileContents = map[string]string{
+		"/fake/home/.claude/agents/researcher.md": "---\nname: researcher\n---\n",
+	}
+
+	report := Run(context.Background(), env, []string{"claude"})
+
+	c := findCheck(report, "claude", "researcher")
+	if c == nil {
+		t.Fatal("no researcher row")
+	}
+	if strings.Contains(c.Detail, "model:") {
+		t.Errorf("detail = %q, want no model suffix", c.Detail)
+	}
+	if c.Severity != SevOK {
+		t.Errorf("severity = %v, want ok -- an unpinned model is not a fault", c.Severity)
+	}
+}
+
+// newFakeEnvForKind is a fakeEnv where everything except the role files is
+// healthy, so a test can vary existingFiles and fileContents alone.
+func newFakeEnvForKind(t *testing.T, kind string) *fakeEnv {
+	t.Helper()
+	return &fakeEnv{
+		herdrVer:      herdr.MinVersion,
+		daemonRunning: true,
+		lookPaths:     map[string]string{kind: "/usr/bin/" + kind},
+		intStatus: map[string]herdr.IntegrationState{
+			kind: {Installed: true, Detail: "current (v9)"},
+		},
+		homeDir: "/fake/home",
 	}
 }

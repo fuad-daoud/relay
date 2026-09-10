@@ -202,6 +202,13 @@ func (s *stubDoctorEnv) Stat(path string) error {
 	return s.statErr
 }
 
+// ReadFile satisfies doctor.Env. These tests assert on severities and fix
+// commands, not on role-file contents, so every file reads as empty -- which
+// doctor must render as a role row with no model suffix.
+func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
+	return nil, nil
+}
+
 // A probe relay could not complete is not actionable and stays off the hot path.
 // An actionable row in the same report must survive it -- the all-or-nothing
 // filter this replaces dropped both, and its test could not tell the difference

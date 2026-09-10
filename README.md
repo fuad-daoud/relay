@@ -106,11 +106,27 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    ```
    herdr integration install claude
    ```
-4. Emit the builder's `plan-executor` role definition directly into your harness's config directory:
+4. Emit the builder's role definitions directly into your harness's config directory:
    ```
-   relay agent print --kind claude > ~/.claude/agents/plan-executor.md
+   # claude
+   relay agent print --kind claude --role plan-executor > ~/.claude/agents/plan-executor.md
+   relay agent print --kind claude --role researcher    > ~/.claude/agents/researcher.md
+
+   # opencode
+   relay agent print --kind opencode --role plan-executor > ~/.config/opencode/agents/plan-executor.md
+   relay agent print --kind opencode --role researcher    > ~/.config/opencode/agents/researcher.md
    ```
-   (For `opencode`, redirect to `~/.config/opencode/agents/plan-executor.md`. For `agy`, the role is selected by preamble on the first prompt, so no role file is needed.)
+
+   `researcher` is the read-only role the builder's own sub-agents run as. It
+   exists because exactly one agent may write to a working tree: research can fan
+   out safely, implementation cannot. Both shipped definitions pin a `model:` in
+   their front matter as a worked example, chosen so neither needs a provider the
+   rest of relay does not already assume. That line is the first thing to change
+   for your own setup -- `relay doctor` reports the pin each installed definition
+   carries.
+
+   `agy` has no `--agent` flag and selects its role from the alias preamble
+   instead, so it has no definitions to install.
 5. Re-run `relay doctor` to confirm `0 failures`.
 6. Start the daemon (e.g. `relay daemon &` or `make service`).
 7. Bind your first agent from inside a herdr planner pane:
