@@ -53,6 +53,11 @@ is worth more than a green suite that worked around one.
 `make` is intercepted on this laptop and runs on the desktop. Use
 `dev run make check`, and `dev run go test ./... -run ...` for single tests.
 
+**The desktop is currently down.** If `dev run` reports "no desktop is
+reachable", that is expected: run the bare command locally instead and say so in
+your report. The laptop has 14G and swap is under pressure, so run **one** test
+command at a time and never in parallel.
+
 ## Global Constraints
 
 - Verification is `make check`, never `go test ./...` alone. It adds `gofmt -l .` over the whole tree, `go vet`, and a `go mod tidy` check.
@@ -165,6 +170,13 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	if len(f.prompts) != 1 {
 		t.Fatalf("got %d prompts, want 1", len(f.prompts))
 	}
+	// Assert the TARGET, not just the text. Typing the consult's prompt into
+	// the planner's pane would satisfy every content check below while
+	// corrupting the human's conversation -- the exact failure the anti-clobber
+	// rule exists to prevent.
+	if f.prompts[0].Target != "w2:p9" {
+		t.Errorf("prompt went to %q, want the consult's pane w2:p9", f.prompts[0].Target)
+	}
 	text := f.prompts[0].Text
 	for _, want := range []string{res.Consult.AskPath, res.Consult.FindingsPath, "only that path"} {
 		if !strings.Contains(text, want) {
@@ -179,6 +191,32 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	}
 	if len(got.Consults) != 1 || got.Consults[0].ID != "7f2a3c1d" {
 		t.Fatalf("consults = %+v", got.Consults)
+	}
+}
+
+func TestAskOpensTheConsultInTheBindingsTree(t *testing.T) {
+	// Tree: "binding" is the role's contract, and nothing else in the suite can
+	// observe it: the fake discarded SplitPane's arguments until Step 1b taught
+	// it to record them, so passing the planner's cwd -- or an empty one --
+	// would have gone unnoticed.
+	f := &fakeHerdr{}
+	rt, b := seedForAsk(t, f)
+	q := writeQuestion(t, "review it")
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(f.splitCalls) != 1 {
+		t.Fatalf("got %d splits, want 1", len(f.splitCalls))
+	}
+	if got := f.splitCalls[0].CWD; got != b.CWD {
+		t.Errorf("consult pane opened in %q, want the binding's tree %q", got, b.CWD)
+	}
+	if got := f.splitCalls[0].Target; got != "w2:p3" {
+		t.Errorf("split from %q, want the planner's pane w2:p3", got)
 	}
 }
 
@@ -323,6 +361,41 @@ func TestAskLogsTheQuestionOutbound(t *testing.T) {
 	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || found {
 		t.Errorf("ask entry showed up as pending for the planner: found=%v err=%v", found, err)
 	}
+}
+```
+
+- [ ] **Step 1b: Teach the fake to record splits**
+
+`fakeHerdr.SplitPane` (`internal/relay/fake_test.go:234`) throws its arguments
+away, counting only `f.splits`. That is why no existing test can tell a pane
+opened in the binding's tree from one opened anywhere else. Add the recording
+without removing the counter -- `bind_test.go` asserts on `f.splits` and must
+keep working.
+
+Add this type beside the other call-record types at the top of the file:
+
+```go
+type splitCall struct {
+	Target, Direction, CWD string
+}
+```
+
+Add the field to `fakeHerdr` beside `splits`:
+
+```go
+	splitCalls []splitCall
+```
+
+And replace the method:
+
+```go
+func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) (string, error) {
+	f.splits++
+	f.splitCalls = append(f.splitCalls, splitCall{Target: target, Direction: direction, CWD: cwd})
+	if f.newPane == "" {
+		return "", errors.New("pane split returned no pane id")
+	}
+	return f.newPane, nil
 }
 ```
 
@@ -613,6 +686,47 @@ go test ./internal/relay/ -run TestAsk -v
 ```
 
 Expected: PASS, all eight.
+
+- [ ] **Step 5b: Prove three of the tests pin, by breaking the implementation**
+
+A test that passes with and without the logic it guards is pinning nothing.
+Three of these guard properties that are easy to get wrong and invisible when
+wrong, so prove each one. Apply each mutation, run the named test, confirm
+**FAIL**, then `git checkout internal/relay/ask.go` and re-apply your Step 4
+implementation before the next one.
+
+**(a) Prompt the planner instead of the consult.** In `Ask`, change the
+`promptWithRetry` target from `pane` to `opts.PlannerPane`.
+
+```bash
+go test ./internal/relay/ -run TestAskSpawnsRecordsAndStagesTheQuestion -v
+```
+
+Expect FAIL: `prompt went to "w2:p3", want the consult's pane w2:p9`.
+
+**(b) Open the consult in the wrong tree.** In `consultPane`, pass `""` as the
+cwd to `rt.Herdr.SplitPane` instead of the `cwd` argument.
+
+```bash
+go test ./internal/relay/ -run TestAskOpensTheConsultInTheBindingsTree -v
+```
+
+Expect FAIL: `consult pane opened in "", want the binding's tree "/repo"`.
+
+**(c) Let a spawn failure strand the pane.** In the `strand` closure, return
+`cause` immediately without appending the consult or saving.
+
+```bash
+go test ./internal/relay/ -run TestAskRecordsAReapableConsultWhenTheSpawnFails -v
+```
+
+Expect FAIL: `got 0 consults, want 1 reapable record`.
+
+If any of the three PASSES under its mutation, **stop and report** — that test
+is not pinning and committing it would bank false confidence.
+
+After the third, confirm the tree is back to your Step 4 implementation and
+`go test ./internal/relay/ -run TestAsk` is green before continuing.
 
 - [ ] **Step 6: Wire the CLI**
 
