@@ -225,3 +225,140 @@ func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 		t.Fatalf("expected 0 SnapshotTree calls, got %d", fg.snapshotCalls)
 	}
 }
+
+func TestCaptureRoundDiff_EndTree(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name               string
+		git                func() *fakeGit
+		nilGit             bool
+		baseline           string
+		wantEndTree        string
+		wantAvailable      bool
+		wantReasonNonEmpty bool
+		assertCalls        func(t *testing.T, fg *fakeGit)
+	}{
+		{
+			name: "successful snapshot, successful diff -> EndTree set, Available true",
+			git: func() *fakeGit {
+				return &fakeGit{
+					snapshotTreeID: "tree-end",
+					diffResult: git.Diff{
+						Stat: git.Stat{FilesChanged: 1, Insertions: 2, Deletions: 1},
+					},
+				}
+			},
+			baseline:           "tree-start",
+			wantEndTree:        "tree-end",
+			wantAvailable:      true,
+			wantReasonNonEmpty: false,
+			assertCalls: func(t *testing.T, fg *fakeGit) {
+				if fg.snapshotCalls != 1 {
+					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+				}
+				if fg.diffCalls != 1 {
+					t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
+				}
+			},
+		},
+		{
+			name: "successful snapshot, DiffTrees fails -> EndTree still set, Available false with a Reason",
+			git: func() *fakeGit {
+				return &fakeGit{
+					snapshotTreeID: "tree-end",
+					diffErr:        errors.New("boom: diff failed"),
+				}
+			},
+			baseline:           "tree-start",
+			wantEndTree:        "tree-end",
+			wantAvailable:      false,
+			wantReasonNonEmpty: true,
+			assertCalls: func(t *testing.T, fg *fakeGit) {
+				if fg.snapshotCalls != 1 {
+					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+				}
+				if fg.diffCalls != 1 {
+					t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
+				}
+			},
+		},
+		{
+			name:               "rt.Git == nil -> EndTree empty",
+			nilGit:             true,
+			baseline:           "tree-start",
+			wantEndTree:        "",
+			wantAvailable:      false,
+			wantReasonNonEmpty: false,
+		},
+		{
+			name: "b.RoundBaselineTree == \"\" -> EndTree empty, and no snapshot was attempted",
+			git: func() *fakeGit {
+				return &fakeGit{snapshotTreeID: "tree-end"}
+			},
+			baseline:           "",
+			wantEndTree:        "",
+			wantAvailable:      false,
+			wantReasonNonEmpty: true,
+			assertCalls: func(t *testing.T, fg *fakeGit) {
+				if fg.snapshotCalls != 0 {
+					t.Fatalf("expected 0 SnapshotTree calls, got %d", fg.snapshotCalls)
+				}
+			},
+		},
+		{
+			name: "SnapshotTree returns git.ErrNotRepo -> EndTree empty",
+			git: func() *fakeGit {
+				return &fakeGit{snapshotTreeErr: git.ErrNotRepo}
+			},
+			baseline:           "tree-start",
+			wantEndTree:        "",
+			wantAvailable:      false,
+			wantReasonNonEmpty: false,
+			assertCalls: func(t *testing.T, fg *fakeGit) {
+				if fg.snapshotCalls != 1 {
+					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.New(t.TempDir())
+			var fg *fakeGit
+			var g Git
+			if !tc.nilGit {
+				if tc.git != nil {
+					fg = tc.git()
+				} else {
+					fg = &fakeGit{}
+				}
+				g = fg
+			}
+			rt := Runtime{Store: s, Git: g}
+			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: tc.baseline}
+			if err := s.Save(b); err != nil {
+				t.Fatal(err)
+			}
+
+			res := CaptureRoundDiff(ctx, rt, b)
+
+			if res.EndTree != tc.wantEndTree {
+				t.Fatalf("EndTree = %q, want %q", res.EndTree, tc.wantEndTree)
+			}
+			if res.Available != tc.wantAvailable {
+				t.Fatalf("Available = %v, want %v", res.Available, tc.wantAvailable)
+			}
+			if tc.wantReasonNonEmpty && res.Reason == "" {
+				t.Fatal("expected non-empty Reason")
+			}
+			if !tc.wantReasonNonEmpty && res.Reason != "" {
+				t.Fatalf("expected empty Reason, got %q", res.Reason)
+			}
+			if tc.assertCalls != nil && fg != nil {
+				tc.assertCalls(t, fg)
+			}
+		})
+	}
+}
