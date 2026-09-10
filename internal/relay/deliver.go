@@ -63,7 +63,7 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return Delivery{Reason: "planner is " + planner.Status}, nil
 	}
 
-	pending, found, err := tx.PendingForPlanner(b.Name)
+	pending, idx, found, err := tx.PendingForPlanner(b.Name)
 	if err != nil {
 		return Delivery{}, err
 	}
@@ -90,7 +90,7 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload); err != nil {
 		return Delivery{}, fmt.Errorf("prompt planner: %w", err)
 	}
-	if err := tx.ConfirmLatest(b.Name); err != nil {
+	if err := tx.ConfirmIndex(b.Name, idx); err != nil {
 		return Delivery{}, err
 	}
 

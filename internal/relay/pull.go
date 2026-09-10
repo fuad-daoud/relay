@@ -19,14 +19,14 @@ func Pull(_ context.Context, rt Runtime, name string) (string, bool, error) {
 	// Same critical section as DeliverPending: the daemon may be delivering
 	// this very payload right now, and only one of us may claim it.
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		pending, ok, err := tx.PendingForPlanner(name)
+		pending, idx, ok, err := tx.PendingForPlanner(name)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return nil
 		}
-		if err := tx.ConfirmLatest(name); err != nil {
+		if err := tx.ConfirmIndex(name, idx); err != nil {
 			return err
 		}
 
