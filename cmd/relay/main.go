@@ -44,7 +44,8 @@ Commands:
   add       attach an additional builder to this planner, on its own worktree
   fork      branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and prompt the builder
-  pull      print the newest pending payload to stdout, without typing anywhere
+  ask       spawn a one-shot consult and record it on the binding
+  pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
   answer    answer a builder that is blocked at a dialog
   status    one row per binding: round, state, live pane status, what is pending
@@ -178,6 +179,12 @@ func run(args []string) error {
 		return cmdGC(args[1:])
 	case "send":
 		return cmdSend(args[1:])
+	case "ask":
+		rt, err := newRuntime()
+		if err != nil {
+			return err
+		}
+		return runAsk(context.Background(), rt, args[1:])
 	case "pull":
 		return cmdPull(args[1:])
 	case "diff":
@@ -610,6 +617,45 @@ func cmdSend(args []string) error {
 		fmt.Println(res.Drift)
 	}
 	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	return nil
+}
+
+func runAsk(ctx context.Context, rt relay.Runtime, args []string) error {
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	role := fs.String("role", "", "consult role to spawn")
+	file := fs.String("file", "", "file containing the question")
+	nameFlag := fs.String("name", "", "binding name")
+	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
+	workspace := fs.String("workspace", "", "workspace for --new-tab")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *role == "" {
+		return fmt.Errorf("relay ask needs --role ROLE")
+	}
+	if *file == "" {
+		return fmt.Errorf("relay ask needs --file PATH")
+	}
+
+	name, err := resolveBinding(rt, *nameFlag, fs.Args())
+	if err != nil {
+		return err
+	}
+
+	res, err := relay.Ask(ctx, rt, relay.AskOptions{
+		Role:        *role,
+		File:        *file,
+		Name:        name,
+		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		NewTab:      *newTab,
+		WorkspaceID: *workspace,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
+		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
 	return nil
 }
 
