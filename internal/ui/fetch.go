@@ -90,7 +90,8 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 
 		for i := len(entries) - 1; i >= 0; i-- {
 			e := entries[i]
-			if e.Direction == store.DirToPlanner && (e.Kind == store.KindReport || e.Kind == store.KindQuestion) {
+			if e.Direction == store.DirToPlanner &&
+				(e.Kind == store.KindReport || e.Kind == store.KindQuestion || e.Kind == store.KindFindings) {
 				if e.Payload == "" {
 					return tabMsg{
 						name:  name,
