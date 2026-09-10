@@ -422,18 +422,19 @@ consult's pane stays open until you run `relay reap [NAME] [--dry-run]`, which
 closes the panes of finished consults and drops their records. Terminal ones
 are a reap chore, not work in flight, so the count does not include them.
 
-relay ships definitions for two harnesses inside its source tree, at
-`internal/harness/agents/`. Copy them into the harness's agent directory:
+Emit the definitions into the harness's agent directory the same way as the
+other roles:
 
 ```
 # claude
-cp internal/harness/agents/reviewer.claude.md   ~/.claude/agents/reviewer.md
+relay agent print --kind claude   --role reviewer > ~/.claude/agents/reviewer.md
 # opencode
-cp internal/harness/agents/reviewer.opencode.md ~/.config/opencode/agents/reviewer.md
+relay agent print --kind opencode --role reviewer > ~/.config/opencode/agents/reviewer.md
 ```
 
-`agy` has no `--agent` flag, so a consult on `agy` selects its role from the
-alias preamble instead and needs no definition file.
+`relay doctor` reports whether the definition landed. `agy` has no `--agent`
+flag, so a consult on `agy` selects its role from the alias preamble instead
+and needs no definition file.
 
 Read-only is a property of the role's configuration — the definition pins a
 read-only tool set and the alias decides where it runs — not something relay

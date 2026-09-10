@@ -53,6 +53,7 @@ func TestTableExactValues(t *testing.T) {
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
+				{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
 			},
 		},
 		"opencode": {
@@ -62,6 +63,7 @@ func TestTableExactValues(t *testing.T) {
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
+				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 			},
 		},
 	}
