@@ -392,8 +392,10 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 }
 
 func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string) (store.Binding, error) {
+	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
 		result := CaptureRoundDiff(ctx, rt, b)
+		closed = result.EndTree
 		diffEntry := store.LogEntry{
 			TS:        rt.Now().UTC(),
 			Round:     b.Round,
@@ -433,6 +435,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// next round that goes wrong gets its own single notification.
 	b.HaltNotifiedRound = 0
 	b.RoundBaselineTree = ""
+	b.RoundClosedTree = closed
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 

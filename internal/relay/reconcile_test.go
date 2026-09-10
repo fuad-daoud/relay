@@ -953,3 +953,112 @@ func TestBindRacesSessionLookupAndReconcileRecovers(t *testing.T) {
 			out.Builder.SessionID)
 	}
 }
+
+func TestQueueReport_RoundClosedTree(t *testing.T) {
+	t.Run("ordinary close", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		fg := &fakeGit{
+			snapshotTreeID: "tree-end-ordinary",
+			diffResult: git.Diff{
+				Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+				Patch: []byte("diff content"),
+			},
+		}
+		rt.Git = fg
+		b.RoundBaselineTree = "tree-start"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		reportFile := rt.Store.ReportPath(b.Name, b.Round)
+		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		got, err := reconcile(t, rt, b, agents)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if got.Round != 2 {
+			t.Fatalf("round = %d, want 2", got.Round)
+		}
+		if got.RoundClosedTree != fg.snapshotTreeID {
+			t.Fatalf("RoundClosedTree = %q, want %q", got.RoundClosedTree, fg.snapshotTreeID)
+		}
+	})
+
+	t.Run("retry path", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		fg := &fakeGit{
+			snapshotTreeID: "tree-snapshot-should-not-be-used",
+		}
+		rt.Git = fg
+		b.RoundBaselineTree = "tree-start"
+		b.RoundClosedTree = "stale-tree-from-round-3"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		// A KindDiff entry already exists for the round
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			return tx.AppendLog(b.Name, store.LogEntry{
+				TS:        rt.Now().UTC(),
+				Round:     b.Round,
+				Direction: store.DirToPlanner,
+				Kind:      store.KindDiff,
+				Confirmed: true,
+			})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		reportFile := rt.Store.ReportPath(b.Name, b.Round)
+		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		got, err := reconcile(t, rt, b, agents)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if got.Round != 2 {
+			t.Fatalf("round = %d, want 2", got.Round)
+		}
+		if got.RoundClosedTree != "" {
+			t.Fatalf("RoundClosedTree = %q, want empty", got.RoundClosedTree)
+		}
+	})
+
+	t.Run("non-git tree", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		rt.Git = nil
+		b.RoundBaselineTree = "tree-start"
+		b.RoundClosedTree = "stale-tree-from-round-3"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		reportFile := rt.Store.ReportPath(b.Name, b.Round)
+		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		got, err := reconcile(t, rt, b, agents)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if got.Round != 2 {
+			t.Fatalf("round = %d, want 2 (the round still advances normally)", got.Round)
+		}
+		if got.RoundClosedTree != "" {
+			t.Fatalf("RoundClosedTree = %q, want empty", got.RoundClosedTree)
+		}
+	})
+}
