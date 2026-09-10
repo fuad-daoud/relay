@@ -162,7 +162,9 @@ type Consult struct {
 	// NudgedAt is when relay sent this consult its single nudge; zero means it
 	// has not been nudged. A consult runs for a minute or two, so it does not
 	// inherit the builder's screen-fingerprint quiescence or scrape fallback.
-	NudgedAt time.Time `json:"nudged_at,omitempty"`
+	// (no omitempty: encoding/json never omits a struct, so the option read as
+	// a promise the zero time would vanish from bind.json. It never did.)
+	NudgedAt time.Time `json:"nudged_at"`
 
 	// Note is why a silent consult gave up. Empty for running and done.
 	Note string `json:"note,omitempty"`
