@@ -25,6 +25,21 @@ every step below will fail in confusing ways. This is not something to work
 around by implementing the missing piece yourself -- that is another task's
 work and would collide with it.
 
+## Where you are working
+
+Two directories look almost identical in tool output. Getting them confused
+costs a builder several tool calls, and an edit to the wrong one silently does
+nothing:
+
+| path | what it is |
+| --- | --- |
+| `~/.local/state/relay/.worktrees/<binding>` | **the git worktree. Every source edit goes here.** It is your shell's cwd. |
+| `~/.local/state/relay/<binding>` | relay's drop directory: `NNN-plan.md`, `NNN-report.md`, `NNN-diff.patch`. Never edit source here. |
+
+`pwd` is the worktree. Prefer paths relative to it (`internal/store/types.go`)
+over absolute ones, and if you must go absolute, check the `.worktrees/`
+segment is present.
+
 ## Stop rather than improvise
 
 If a step is impossible as written, or the plan contradicts what you find in
