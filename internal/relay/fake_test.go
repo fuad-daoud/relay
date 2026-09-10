@@ -191,6 +191,10 @@ type fakeHerdr struct {
 	// the one window a concurrent `relay unbind` has to land in.
 	onList  func()
 	readErr error // when set, ReadAgent fails instead of returning readOut
+
+	closed   []string // pane ids handed to ClosePane
+	closeErr error    // when set, ClosePane fails
+	onClose  func()
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
@@ -260,6 +264,17 @@ func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args 
 
 func (f *fakeHerdr) Notify(_ context.Context, msg string) error {
 	f.notices = append(f.notices, msg)
+	return nil
+}
+
+func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	f.closed = append(f.closed, paneID)
 	return nil
 }
 

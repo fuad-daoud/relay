@@ -224,6 +224,13 @@ func (c *Client) SplitPane(ctx context.Context, paneID, direction, cwd string) (
 	return env.Result.Pane.PaneID, nil
 }
 
+// ClosePane closes a pane. relay calls this from exactly one place, `relay
+// reap`, and only for a consult pane relay spawned itself.
+func (c *Client) ClosePane(ctx context.Context, paneID string) error {
+	_, err := c.run(ctx, "pane", "close", paneID)
+	return err
+}
+
 type tabEnvelope struct {
 	Result struct {
 		RootPane struct {

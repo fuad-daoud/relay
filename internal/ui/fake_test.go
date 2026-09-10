@@ -68,3 +68,8 @@ func (f *fakeHerdr) Notify(_ context.Context, _ string) error {
 	f.t.Errorf("read-only violation: Notify called")
 	return errors.New("read-only violation: Notify called")
 }
+
+func (f *fakeHerdr) ClosePane(_ context.Context, _ string) error {
+	f.t.Errorf("read-only violation: ClosePane called")
+	return errors.New("read-only violation: ClosePane called")
+}

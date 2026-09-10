@@ -26,6 +26,7 @@ type Herdr interface {
 	CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error)
 	StartAgent(ctx context.Context, name, kind, paneID string, args []string) error
 	Notify(ctx context.Context, message string) error
+	ClosePane(ctx context.Context, paneID string) error
 }
 
 // Git is the slice of the git CLI relay needs. *git.Client satisfies it.
