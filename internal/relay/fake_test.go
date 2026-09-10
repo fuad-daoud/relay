@@ -24,6 +24,10 @@ type tabCall struct {
 	WorkspaceID, CWD, Label string
 }
 
+type splitCall struct {
+	Target, Direction, CWD string
+}
+
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
@@ -166,21 +170,22 @@ func consultTable(t *testing.T) *alias.Table {
 
 // fakeHerdr is the in-memory Herdr used by every test in this package.
 type fakeHerdr struct {
-	agents    []herdr.Agent
-	prompts   []promptCall
-	keys      []keyCall
-	starts    []startCall
-	reads     []readCall
-	notices   []string
-	readOut   string
-	newPane   string
-	newTab    string
-	tabs      []tabCall
-	splits    int
-	promptErr error
-	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
-	listCalls int
-	listErr   error // when set, every ListAgents call after the first fails
+	agents     []herdr.Agent
+	prompts    []promptCall
+	keys       []keyCall
+	starts     []startCall
+	reads      []readCall
+	notices    []string
+	readOut    string
+	newPane    string
+	newTab     string
+	tabs       []tabCall
+	splitCalls []splitCall
+	splits     int
+	promptErr  error
+	stalls     int // when >0, Prompt returns ErrPromptStalled and decrements
+	listCalls  int
+	listErr    error // when set, every ListAgents call after the first fails
 	// onList runs at the top of every ListAgents call. Tick makes that call
 	// after it has listed bindings and before it reconciles them, which is
 	// the one window a concurrent `relay unbind` has to land in.
@@ -231,8 +236,9 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 	return f.readOut, nil
 }
 
-func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
+func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) (string, error) {
 	f.splits++
+	f.splitCalls = append(f.splitCalls, splitCall{Target: target, Direction: direction, CWD: cwd})
 	if f.newPane == "" {
 		return "", errors.New("pane split returned no pane id")
 	}

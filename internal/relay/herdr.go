@@ -48,6 +48,10 @@ type Runtime struct {
 	Aliases *alias.Table
 	Now     func() time.Time
 	Hooks   hooks.Dispatcher
+
+	// NewID mints a consult id. Nil means a crypto/rand id, so no production
+	// call site has to set it and tests can make ids deterministic.
+	NewID func() string
 }
 
 // SameAgent reports whether a live agent is the one an endpoint records.
