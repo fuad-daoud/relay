@@ -151,6 +151,32 @@ func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }
 
+// AskPath is where a consult's question is staged.
+// Layout: <binding dir>/NNN-<id>-ask.md
+//
+// Deliberately not NNN-question.md: that name belongs to QuestionPath, the
+// blocked-dialog capture, and a consult being asked a question is a different
+// event from a builder being blocked on one.
+func (s *Store) AskPath(name string, round int, id string) string {
+	return s.consultFile(name, round, id, "ask", ".md")
+}
+
+// FindingsPath is where a consult is told to write. Its existence is the entire
+// completion gate.
+// Layout: <binding dir>/NNN-<id>-findings.md
+func (s *Store) FindingsPath(name string, round int, id string) string {
+	return s.consultFile(name, round, id, "findings", ".md")
+}
+
+// consultFile is roundFile with a consult id folded in. roundFile takes no id,
+// and widening it would touch five call sites that will never have one.
+func (s *Store) consultFile(name string, round int, id, suffix, ext string) string {
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s-%s%s", round, id, suffix, ext))
+}
+
 func (s *Store) bindingPath(name string) string {
 	return filepath.Join(s.Dir(name), "bind.json")
 }

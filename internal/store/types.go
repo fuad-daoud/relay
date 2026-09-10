@@ -2,7 +2,11 @@
 // round log. Everything else relay knows is queried live from herdr.
 package store
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"time"
+)
 
 // State is a binding's display and control state.
 type State string
@@ -88,7 +92,106 @@ type Binding struct {
 	ForkedFrom string `json:"forked_from,omitempty"`
 
 	// ForkedAtRound is the source round this binding's history was copied through.
-	ForkedAtRound int       `json:"forked_at_round,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ForkedAtRound int `json:"forked_at_round,omitempty"`
+
+	// Consults are the read-only one-shot agents attached to this binding,
+	// running and awaiting-reap alike. omitempty keeps every bind.json written
+	// before consults existed byte-identical until its first consult.
+	Consults []Consult `json:"consults,omitempty"`
+
+	// ConsultCap bounds RUNNING consults; zero means DefaultConsultCap.
+	ConsultCap int `json:"consult_cap,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DefaultConsultCap bounds how many consults may be RUNNING on one binding at
+// once. It exists for the reason RoundCap does: an idle harness pane holds
+// roughly 800 MB, so an unbounded fan-out is a memory failure, not a workspace.
+const DefaultConsultCap = 8
+
+// ConsultState is where one consult has got to.
+//
+// done and silent are both terminal and both reapable. A finished consult's
+// record is NOT dropped, because `relay reap` needs the pane id to close it:
+// Binding.Consults is the reap worklist as well as the watch list.
+type ConsultState string
+
+const (
+	ConsultRunning ConsultState = "running" // spawned; no findings yet
+	ConsultDone    ConsultState = "done"    // findings queued to the planner
+	ConsultSilent  ConsultState = "silent"  // gave up; "no findings" reported
+)
+
+// Consult is one ephemeral, read-only, one-shot agent attached to a binding.
+//
+// It is deliberately not a Binding. A consult has no round counter, no diff
+// baseline, no worktree, no screen fingerprint and no persistent session, and
+// modelling it as a Binding would leave every one of those fields dead while
+// forcing Status, gc, Fork, doctor and the UI to learn to filter it out.
+//
+// "Read-only" describes how the role is configured, not something relay
+// enforces: `herdr agent list` reports a kind, a status, a cwd and a title, and
+// nothing more, so relay cannot observe writes.
+type Consult struct {
+	// ID is 8 lowercase hex characters, unique within one binding. It appears
+	// in the log, in both filenames, and in `relay reap`, so it is short enough
+	// to read aloud.
+	ID string `json:"id"`
+
+	// Role is the alias name that was asked, recorded as a name rather than a
+	// resolved spec: the spec can change under the record, and the record
+	// should stay truthful about what was intended.
+	Role string `json:"role"`
+
+	Endpoint Endpoint `json:"endpoint"`
+
+	// Round is the owning binding's round at spawn. It is a label for audit and
+	// filenames and nothing else -- a consult never advances a round, never
+	// stamps RoundStartedAt, and never touches a diff baseline.
+	Round int `json:"round"`
+
+	AskPath      string `json:"ask_path"`
+	FindingsPath string `json:"findings_path"`
+
+	State ConsultState `json:"state"`
+
+	SpawnedAt time.Time `json:"spawned_at"`
+
+	// NudgedAt is when relay sent this consult its single nudge; zero means it
+	// has not been nudged. A consult runs for a minute or two, so it does not
+	// inherit the builder's screen-fingerprint quiescence or scrape fallback.
+	NudgedAt time.Time `json:"nudged_at,omitempty"`
+
+	// Note is why a silent consult gave up. Empty for running and done.
+	Note string `json:"note,omitempty"`
+}
+
+// SameBinding reports whether two bindings hold the same state, by comparing
+// their serialised forms.
+//
+// Binding stopped being comparable with == when Consults, a slice, was added.
+// The daemon's per-tick short-circuit needs an equality test that survives that
+// and every field added later.
+//
+// A hand-written field-by-field Equal was rejected: it keeps compiling when a
+// field is added and silently stops noticing changes to it, which is the same
+// bug with no compiler error to catch it. Comparing the serialised form asks
+// what the caller means -- would this write a different bind.json -- and cannot
+// drift as fields come and go.
+//
+// A marshal error reports "not the same", so a caller saves rather than
+// skipping a write it needed.
+func SameBinding(a, b Binding) bool {
+	ra, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	rb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+
+	return bytes.Equal(ra, rb)
 }

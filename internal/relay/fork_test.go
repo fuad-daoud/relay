@@ -185,8 +185,8 @@ func TestForkSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if srcBefore != srcAfter {
-		t.Errorf("source binding was mutated: %+v != %+v", srcBefore, srcAfter)
+	if !store.SameBinding(srcBefore, srcAfter) {
+		t.Errorf("source binding was mutated:\n got %+v\nwant %+v", srcAfter, srcBefore)
 	}
 	srcLogAfter, err := rt.Store.ReadLog("source")
 	if err != nil {
