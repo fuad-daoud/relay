@@ -19,6 +19,12 @@ type DiffResult struct {
 	Stat      git.Stat // exact whenever Available
 	Truncated bool     // patch omitted because it exceeded the cap
 	Reason    string   // why Available is false; "" when it is true
+
+	// The tree snapshotted at round close. Non-empty whenever the snapshot itself
+	// succeeded -- including when the subsequent DiffTrees failed, because a
+	// successful snapshot is a valid drift origin regardless of what the comparison
+	// did.
+	EndTree string
 }
 
 func formatFiles(n int) string {
@@ -92,6 +98,9 @@ func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) string {
 //	baseline is empty, or git failed. When Available is true,
 //	Stat is exact and Path names an existing file unless the diff
 //	was empty or truncated.
+//
+//	EndTree is the snapshotted tree whenever the snapshot succeeded, and empty
+//	otherwise. It is set independently of Available.
 func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResult {
 	if rt.Git == nil {
 		return DiffResult{Available: false}
@@ -110,26 +119,26 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResu
 
 	diff, err := rt.Git.DiffTrees(ctx, b.CWD, b.RoundBaselineTree, end)
 	if errors.Is(err, git.ErrNotRepo) {
-		return DiffResult{Available: false}
+		return DiffResult{Available: false, EndTree: end}
 	}
 	if err != nil {
-		return DiffResult{Available: false, Reason: brief(err)}
+		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
 	}
 
 	if diff.Stat.Empty() {
-		return DiffResult{Available: true, Stat: diff.Stat}
+		return DiffResult{Available: true, Stat: diff.Stat, EndTree: end}
 	}
 
 	if diff.Truncated {
-		return DiffResult{Available: true, Stat: diff.Stat, Truncated: true}
+		return DiffResult{Available: true, Stat: diff.Stat, Truncated: true, EndTree: end}
 	}
 
 	patchPath := rt.Store.DiffPath(b.Name, b.Round)
 	if err := os.WriteFile(patchPath, diff.Patch, 0o644); err != nil {
-		return DiffResult{Available: false, Reason: brief(err)}
+		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
 	}
 
-	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat}
+	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
 }
 
 // DiffLine renders the report-payload line for a result, or "" when the result

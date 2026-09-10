@@ -48,6 +48,13 @@ type Binding struct {
 	// tree, an unavailable git binary, or a binding created before diff capture
 	// existed -- and the round simply produces no diff.
 	RoundBaselineTree string `json:"round_baseline_tree,omitempty"`
+	// RoundClosedTree is the git tree object the PREVIOUS round ended at,
+	// written by queueReport and consumed, then cleared, by the next
+	// successful Send. Empty means no drift origin exists and the next send
+	// says nothing. It is deliberately not derived from RoundBaselineTree: the
+	// two describe different instants, and the round advance clears one while
+	// setting the other.
+	RoundClosedTree string `json:"round_closed_tree,omitempty"`
 	// BuilderScreen is a fingerprint of the builder's terminal as relay last
 	// observed it, and BuilderScreenAt is when that observation was taken. They
 	// exist to tell a builder that has STOPPED from one that is merely quiet:
