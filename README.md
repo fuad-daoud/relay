@@ -395,6 +395,81 @@ An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs
 no alias at all: you launched that agent yourself, so it is already in whatever
 role you put it in.
 
+## Consults: asking a reviewer
+
+A **consult** is a one-shot agent spawned beside a binding to answer one
+question. Unlike a builder, it is not persistent, does not advance the round,
+and does not count against the one-writer-per-tree rule: it is a separate
+record on the binding, not a binding of its own.
+
+The planner runs, from its own pane:
+
+```
+relay ask --role reviewer --file q.md webshop
+```
+
+relay stages the question, splits a pane beside the planner, and starts the
+role there. The consult reads the staged question, writes its findings to a
+file, and replies with only that path. Findings land under the binding's state
+directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —
+and relay queues them to the planner like any other report, once the file
+exists. That file's existence is the only completion gate: relay makes no
+judgements about what the findings say.
+
+While consults are running, `relay status` appends ` +Nc` to the binding's row
+— only when non-zero, so a healthy binding looks no different. A finished
+consult's pane stays open until you run `relay reap [NAME] [--dry-run]`, which
+closes the panes of finished consults and drops their records. Terminal ones
+are a reap chore, not work in flight, so the count does not include them.
+
+relay ships definitions for two harnesses inside its source tree, at
+`internal/harness/agents/`. Copy them into the harness's agent directory:
+
+```
+# claude
+cp internal/harness/agents/reviewer.claude.md   ~/.claude/agents/reviewer.md
+# opencode
+cp internal/harness/agents/reviewer.opencode.md ~/.config/opencode/agents/reviewer.md
+```
+
+`agy` has no `--agent` flag, so a consult on `agy` selects its role from the
+alias preamble instead and needs no definition file.
+
+Read-only is a property of the role's configuration — the definition pins a
+read-only tool set and the alias decides where it runs — not something relay
+enforces. relay cannot observe writes; it reports what is in a tree and no
+more. Note also that `reviewer` is deliberately not the `researcher` role:
+`researcher` is dispatched by a builder's own plan-executor and returns
+findings in-band to it, while a reviewer runs in its own relay pane and hands
+back a file path.
+
+### The reviewer alias
+
+`relay ask --role reviewer` resolves the role through the alias table, and no
+built-in alias is a consult. Add one to `$XDG_CONFIG_HOME/relay/aliases.json`
+(default `~/.config/relay/aliases.json`):
+
+```json
+[
+  {
+    "name": "reviewer",
+    "kind": "claude",
+    "args": ["--agent", "reviewer", "--model", "opus"],
+    "role": "consult",
+    "tree": "binding"
+  }
+]
+```
+
+Until you add that entry, `relay ask --role reviewer` fails with
+`alias.ErrUnknownAlias`. That is the honest failure: relay does not know what
+model you are entitled to run.
+
+One trap, because it bites silently: an entry replaces a spec **wholesale**
+rather than merging fields. Adding a **new** name is safe. Overriding an
+**existing** alias means repeating its full `args` list, or its role and model
+vanish.
+
 ## Display states
 
 `relay status` collapses the binding's internal state into four:
