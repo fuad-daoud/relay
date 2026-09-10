@@ -208,3 +208,33 @@ func TestForeignAgentsSortsByPaneID(t *testing.T) {
 		t.Errorf("not sorted by pane id: %+v", got)
 	}
 }
+
+func TestConsultInABoundTreeIsNotForeign(t *testing.T) {
+	b := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+		Consults: []store.Consult{{
+			ID:       "7f2a3c1d",
+			Role:     "reviewer",
+			State:    store.ConsultRunning,
+			Endpoint: store.Endpoint{PaneID: "w2:p9", Kind: "claude"},
+		}},
+	}
+
+	agents := []herdr.Agent{
+		{PaneID: "w2:p4", Kind: "agy", CWD: "/repo", Status: herdr.StatusWorking},
+		{PaneID: "w2:p9", Kind: "claude", CWD: "/repo", Status: herdr.StatusWorking, Title: "webshop-reviewer-7f2a3c1d"},
+		{PaneID: "w2:pX", Kind: "claude", CWD: "/repo", Status: herdr.StatusWorking, Title: "someone else"},
+	}
+
+	got := ForeignAgents(agents, knownEndpoints([]store.Binding{b}), "/repo")
+
+	if len(got) != 1 {
+		t.Fatalf("got %d foreign agents, want 1:\n%+v", len(got), got)
+	}
+	if got[0].PaneID != "w2:pX" {
+		t.Errorf("foreign = %q; a consult relay spawned and recorded is not foreign", got[0].PaneID)
+	}
+}
