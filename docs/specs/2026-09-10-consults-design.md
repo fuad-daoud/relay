@@ -339,13 +339,20 @@ relay and its endpoint is recorded, so it is referenced.
 ### 4.6 `internal/store/log.go` (modified)
 
 ```go
-func (s *Store) PendingForPlanner(name string) (LogEntry, bool, error) // now OLDEST
-func (tx *Tx) ConfirmEntry(name string, ts time.Time, kind Kind) error // replaces ConfirmLatest
+// now returns the OLDEST unconfirmed entry, plus its index in the log
+func (t *Tx) PendingForPlanner(name string) (LogEntry, int, bool, error)
+func (t *Tx) ConfirmIndex(name string, idx int) error // replaces ConfirmLatest
 ```
 
-`confirmLatest` is removed rather than kept alongside. "Latest" is ambiguous the
-moment two payloads are pending, and leaving an ambiguous function reachable is
-how the two callers drift apart.
+`confirmLatest` is removed rather than kept alongside. Today's pair agrees only
+by construction -- both scan for "the newest unconfirmed" -- which is an
+implicit coupling that survives exactly as long as nobody edits one of them.
+Confirming by index makes the caller name the entry it claimed, and the index is
+stable because the caller holds the state lock across both calls.
+
+Identity by `(ts, kind)` was considered and rejected: `Now` is injectable and
+the test clock is fixed (`baseTime`, `bind_test.go:16`), so two entries of one
+kind routinely share a timestamp.
 
 ## 5. High-level pseudocode
 
@@ -593,7 +600,7 @@ arrived after it.
 
 Arrival order is the only order relay can defend without judging content, so
 delivery becomes FIFO and confirmation becomes identity-based
-(`ConfirmEntry(name, ts, kind)`). This is worth landing as its own step: it is
+(`ConfirmIndex(name, idx)`). This is worth landing as its own step: it is
 independently testable, and it is arguably a latent bug today, since a report
 and a blocked-dialog question can already be pending together.
 
@@ -660,7 +667,7 @@ Verification is `make check`, not `go test ./...` (`CLAUDE.md`): it adds
 
 1. **FIFO delivery** (step 1, no consult code required): three pending
    planner-bound entries; assert delivery order is arrival order and that
-   `ConfirmEntry` confirms the entry that was delivered, not the newest. Include
+   `ConfirmIndex` confirms the entry that was delivered, not the newest. Include
    the report-behind-findings case from §7.5 explicitly.
 2. **`Pull` and `DeliverPending` agree**: both must claim the same entry, since
    they race under one lock.
@@ -695,7 +702,7 @@ Each step is one focused session with its own verification.
 
 **Step 1 -- FIFO pending queue.** Depends on nothing. Change
 `pendingForPlanner` to return the oldest unconfirmed planner-bound entry;
-replace `confirmLatest` with `ConfirmEntry(name, ts, kind)`; update
+replace `confirmLatest` with `ConfirmIndex(name, idx)`, widening `PendingForPlanner` to return the index; update
 `DeliverPending` and `Pull` to confirm the entry they claimed.
 *Verify:* tests (1) and (2); `make check` clean; no behaviour change with a
 single pending payload.
