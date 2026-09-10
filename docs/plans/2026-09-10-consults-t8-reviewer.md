@@ -53,6 +53,10 @@ is worth more than a green suite that worked around one.
 `make` is intercepted on this laptop and runs on the desktop. Use
 `dev run make check`, and `dev run go test ./... -run ...` for single tests.
 
+zen is up as of this dispatch. If `dev run` fails with either "no desktop is
+reachable" or `Unknown: ChildProcess.kill`, run the bare command locally and say
+so in your report.
+
 ## Global Constraints
 
 - Verification is `make check`, never `go test ./...` alone. It adds `gofmt -l .` over the whole tree, `go vet`, and a `go mod tidy` check.
@@ -127,6 +131,28 @@ go test ./internal/relay/ -run TestStatusCountsOnlyRunningConsults -v
 
 Expected: FAIL to compile — `BindingStatus.Consults` undefined.
 
+- [ ] **Step 2b: Write the second failing test — the zero case**
+
+Add to `internal/relay/status_test.go`. The count is only useful if it stays out
+of the way when there is nothing to report; `+0c` on every row is the regression
+this catches.
+
+```go
+func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Round: 3, Consults: 0,
+	}}}
+
+	if out := RenderStatus(r); strings.Contains(out, "+0c") {
+		t.Errorf("rendered a zero consult count:\n%s", out)
+	}
+}
+```
+
+If `BindingStatus` needs more fields set for `RenderStatus` not to panic, add
+only what it needs and say so in your report — do not change `RenderStatus` to
+suit the test.
+
 - [ ] **Step 3: Add the count**
 
 In `internal/relay/status.go`, add to `BindingStatus`:
@@ -169,7 +195,50 @@ In `CLAUDE.md`, the "relay never closes a pane it spawned" bullet becomes:
 
 Add a short section covering: what a consult is, the `relay ask --role reviewer --file q.md` invocation, where findings land, that `relay reap` closes finished panes, and where to copy the reviewer definition for each harness. State plainly that read-only is a property of the role's configuration, not something relay enforces.
 
-Before adding the alias to `DefaultTable`, **check how #24 resolved the "does relay ship a table at all" question**. If defaults are being removed, ship the reviewer entry as a documented example only. Do not decide this unilaterally.
+**Decided: the reviewer alias does NOT go in `DefaultTable`.** Do not add it there. `internal/alias/alias.go` is not touched by this task at all.
+
+It ships as a README example the user pastes into `~/.config/relay/aliases.json`:
+
+```json
+[
+  {
+    "name": "reviewer",
+    "kind": "claude",
+    "args": ["--agent", "reviewer", "--model", "opus"],
+    "role": "consult",
+    "tree": "binding"
+  }
+]
+```
+
+The README must also state the trap, because it bites silently: `LoadTable` does `tbl.specs[s.Name] = s`, replacing a spec wholesale rather than merging fields. Adding a **new** name is safe. Overriding an **existing** alias means repeating its full `args` list, or its role and model vanish.
+
+Until the user adds that entry, `relay ask --role reviewer` fails with `alias.ErrUnknownAlias`, which is the honest failure: relay does not know what model the user is entitled to run.
+
+- [ ] **Step 6b: Prove the count pins**
+
+Apply each mutation, run the named test, confirm **FAIL**, then
+`git checkout internal/relay/status.go` and re-apply your Step 3 edit.
+
+**(a) Count every consult, not just running ones.** Change
+`Consults: runningConsults(b)` to `Consults: len(b.Consults)`.
+
+```bash
+dev run go test ./internal/relay/ -run TestStatusCountsOnlyRunningConsults -v
+```
+
+Expect FAIL: `Consults = 3, want 2 running (the done one awaits reap)`.
+
+**(b) Render the count unconditionally.** Remove the `> 0` guard in
+`RenderStatus`.
+
+```bash
+dev run go test ./internal/relay/ -run TestRenderStatusOmitsTheConsultCountWhenZero -v
+```
+
+Expect FAIL: `rendered a zero consult count`.
+
+If either PASSES under its mutation, **stop and report**.
 
 - [ ] **Step 7: Full verification**
 
