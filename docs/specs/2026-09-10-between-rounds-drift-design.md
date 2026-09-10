@@ -214,12 +214,18 @@ The `Note` for the log entry. `"unavailable: <reason>"` / `"unavailable"` /
 `"no drift"` / `"truncated"` / `"3 files, +40 -2"`.
 
 ```
-func DriftLine(res DriftResult) string
+func DriftLine(res DriftResult, round int) string
 ```
 
-The stdout line. Returns `""` when there is nothing worth telling the planner --
-`rt.Git` off, not a repository, **or an empty `Stat`**. That last case is what
-keeps a quiet send quiet.
+The stdout line. `round` is the round **opening**; the prose names `round-1`,
+the round that closed. The parameter exists because a `DriftResult` alone cannot
+name either round, and section 8.2's offset must be visible in the output rather
+than inferred.
+
+Returns `""` when there is nothing worth telling the planner -- `rt.Git` off,
+not a repository, **or an empty `Stat`**. That last case is what keeps a quiet
+send quiet, and it is the one place `DriftLine` deliberately differs from
+`DiffLine`, which prints "no file changes" instead.
 
 When there is something to say:
 
@@ -336,7 +342,7 @@ under the lock, immediately after the KindPlan entry is appended:
                 Path: res.Path, Note: DriftSummary(res),
                 Confirmed: true,
             }
-            driftLine = DriftLine(res)
+            driftLine = DriftLine(res, b.Round)
 
     round = b.Round
     b.RoundBaselineTree = baseline
