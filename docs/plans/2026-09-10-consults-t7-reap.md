@@ -52,6 +52,10 @@ is worth more than a green suite that worked around one.
 `make` is intercepted on this laptop and runs on the desktop. Use
 `dev run make check`, and `dev run go test ./... -run ...` for single tests.
 
+The desktop (zen) is up as of this dispatch. If `dev run` ever reports "no
+desktop is reachable", run the bare command locally instead and say so in your
+report.
+
 ## Global Constraints
 
 - Verification is `make check`, never `go test ./...` alone. It adds `gofmt -l .` over the whole tree, `go vet`, and a `go mod tidy` check.
@@ -136,10 +140,18 @@ func TestReapClosesTerminalConsultsAndKeepsRunningOnes(t *testing.T) {
 	if len(f.closed) != 2 {
 		t.Fatalf("closed %d panes, want 2", len(f.closed))
 	}
+	// Assert the exact set. Counting two and rejecting the running one would
+	// still pass if reap closed the same terminal pane twice and missed the
+	// other, which leaks a pane while looking correct.
+	closed := map[string]bool{}
 	for _, pane := range f.closed {
-		if pane == "w2:pB" {
-			t.Error("reap closed a RUNNING consult's pane")
-		}
+		closed[pane] = true
+	}
+	if !closed["w2:p9"] || !closed["w2:pA"] {
+		t.Errorf("closed %v, want exactly the two terminal panes w2:p9 and w2:pA", f.closed)
+	}
+	if closed["w2:pB"] {
+		t.Error("reap closed a RUNNING consult's pane")
 	}
 
 	b, err := rt.Store.Load("webshop")
@@ -231,7 +243,7 @@ func (c *Client) ClosePane(ctx context.Context, paneID string) error {
 }
 ```
 
-Check the real flag shape with `herdr pane close --help` before writing it; adjust the argv if it differs. Per `CLAUDE.md`, if the correct invocation cannot be established, **stop and report** rather than guessing — a wrong argv here closes the wrong pane.
+**This argv is verified, not guessed.** The planner ran `herdr pane close <id>` five times while executing this plan, against herdr 0.9.0, each returning `{"id":"cli:pane:close","result":{"type":"ok"}}` and closing the intended pane. Use it as written. If `herdr pane close --help` disagrees with it on your machine, **stop and report** rather than reconciling the two yourself — a wrong argv here closes a pane that is not the consult's, and the failure is silent.
 
 Add to the `Herdr` interface in `internal/relay/herdr.go`:
 
@@ -351,6 +363,42 @@ func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, erro
 ```bash
 make check
 ```
+
+- [ ] **Step 5b: Prove the tests pin, by breaking the implementation**
+
+`reap.go` is new and uncommitted at this point, so `git checkout
+internal/relay/reap.go` would *delete* it rather than restore it. Copy it first
+(`cp internal/relay/reap.go /tmp/reap.go.step4`) and restore from that between
+mutations.
+
+**(a) Reap a running consult.** Delete the
+`if c.State == store.ConsultRunning { keep = append(keep, c); continue }` guard.
+
+```bash
+dev run go test ./internal/relay/ -run TestReapClosesTerminalConsultsAndKeepsRunningOnes -v
+```
+
+Expect FAIL: three panes closed, and `reap closed a RUNNING consult's pane`.
+
+**(b) Drop the record when the close fails.** In the `ClosePane` error branch,
+stop appending to `keep`.
+
+```bash
+dev run go test ./internal/relay/ -run TestReapKeepsTheRecordWhenTheCloseFails -v
+```
+
+Expect FAIL: the record is gone, so the pane can never be retried and leaks
+permanently.
+
+**(c) Let a dry run close.** Delete the `if opts.DryRun` branch inside the loop.
+
+```bash
+dev run go test ./internal/relay/ -run TestReapDryRunClosesNothing -v
+```
+
+Expect FAIL: `dry run closed 2 panes`.
+
+If any PASSES under its mutation, **stop and report**.
 
 - [ ] **Step 6: Wire the CLI**
 
