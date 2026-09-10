@@ -636,7 +636,45 @@ queued findings wait on disk and the planner retrieves them with `relay pull`.
 `reconcile.go:133-138` already documents exactly this for a halted binding's
 payloads.
 
-### 7.7 A consult does not advance the round
+### 7.7 Reap closes panes while holding the state lock
+
+`Reap` calls `ClosePane` inside its per-binding `Store.WithLock` closure, so a
+sweep holds the state flock across one herdr subprocess call per terminal
+consult. This is deliberate and consistent: `DeliverPending` and `Send` already
+hold the same lock across a herdr `Prompt`, and `deliver.go:53` justifies it --
+the call does not wait on the agent, so the lock costs milliseconds.
+
+The known cost, recorded rather than fixed: reap is a fan-out cleanup command,
+so N terminal consults mean N sequential herdr calls under the lock, and an
+unresponsive pane can hold it for the client's 30s timeout, stalling the daemon
+tick and every other relay command for that span.
+
+Closing outside the lock was considered -- lock, collect the reapable set,
+unlock, close, re-lock, drop what closed. It removes the stall but restructures
+a verified path into three phases with a merge step for failures, and a crash
+between phases leaks a record instead of a pane. Not worth it against a cost
+that only bites when herdr itself is hung, at which point relay has larger
+problems. Revisit if a real sweep is ever observed stalling the daemon.
+
+**Consequence for tests.** The lock is taken per binding, not per sweep, so a
+concurrent `relay unbind` genuinely can land between two bindings' closures --
+the race §7.8 defends. But a test hook firing inside a closure cannot use
+`Store.Delete`, which re-enters `WithLock`; Go mutexes are not reentrant
+(`status.go:229`) and it deadlocks. Such a hook must remove the directory
+lock-free instead, which reproduces the same end state.
+
+### 7.8 `reap --all` skips a binding that vanished; a named one still errors
+
+`--all` lists names, then loads each under the lock. An unbind landing between
+those two moments makes `tx.Load` return `ErrNotFound`. Skipping it matches
+`daemon.go:82`, which resolves the identical List-then-Load race and calls it
+"normal use, not a failure worth logging". Aborting instead would leave every
+binding after the vanished one unreaped.
+
+The asymmetry is deliberate: when the human *names* a binding, `ErrNotFound` is
+a typo and must surface.
+
+### 7.9 A consult does not advance the round
 
 `Ask` does not increment `Round`, does not stamp `RoundStartedAt`, and does not
 capture or clear a diff baseline. `Round` on a `Consult` is a label. A consult
