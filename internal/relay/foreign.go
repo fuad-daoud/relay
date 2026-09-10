@@ -47,8 +47,9 @@ type ForeignAgent struct {
 	Title  string `json:"title,omitempty"`
 }
 
-// knownEndpoints returns every endpoint relay accounts for, across ALL
-// bindings rather than just the one being examined.
+// knownEndpoints returns every endpoint relay accounts for -- planner,
+// builder, and any consults -- across ALL bindings rather than just the one
+// being examined.
 //
 // The breadth is the point. A second binding's planner may legitimately sit in
 // this binding's tree, and a nested worktree's builder is inside its parent's
@@ -59,6 +60,14 @@ func knownEndpoints(bindings []store.Binding) []store.Endpoint {
 	eps := make([]store.Endpoint, 0, len(bindings)*2)
 	for _, b := range bindings {
 		eps = append(eps, b.Planner, b.Builder)
+		// A consult is spawned by relay and its endpoint is recorded, so it is
+		// referenced by a binding and is not foreign. This does not soften the
+		// rule that a sanctioned read-only pane relay did NOT spawn still shows
+		// as foreign: relay holds no endpoint for one of those, and suppressing
+		// it would mean trusting a title.
+		for _, c := range b.Consults {
+			eps = append(eps, c.Endpoint)
+		}
 	}
 	return eps
 }
