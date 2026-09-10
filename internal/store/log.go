@@ -34,6 +34,7 @@ const (
 	KindQuestion Kind = "question"
 	KindAnswer   Kind = "answer"
 	KindDiff     Kind = "diff"
+	KindDrift    Kind = "drift"
 	KindFork     Kind = "fork"
 )
 

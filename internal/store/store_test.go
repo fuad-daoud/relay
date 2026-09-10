@@ -481,3 +481,15 @@ func TestDiffPath(t *testing.T) {
 		t.Errorf("QuestionPath = %q, want %q", got, want)
 	}
 }
+
+func TestDriftPath(t *testing.T) {
+	s := New("/state")
+	drift := s.DriftPath("webshop", 5)
+	if !strings.HasSuffix(drift, "005-drift.patch") {
+		t.Errorf("DriftPath = %q, want ending in 005-drift.patch", drift)
+	}
+	diff := s.DiffPath("webshop", 5)
+	if filepath.Dir(drift) != filepath.Dir(diff) {
+		t.Errorf("DriftPath dir = %q, want %q", filepath.Dir(drift), filepath.Dir(diff))
+	}
+}
