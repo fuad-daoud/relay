@@ -29,10 +29,10 @@ guessing from the name.
 
 - Give each concurrent builder its own git worktree. Two builders committing in
   one worktree will race.
-- relay never closes a pane it spawned. After an `unbind`, a mis-bind, or any
-  `--assume-dead` rebind, close the orphaned pane yourself with
-  `herdr pane close <id>` or it holds memory indefinitely (an idle opencode
-  builder is roughly 800 MB).
+- relay closes a pane only in `relay reap`, and only a terminal consult pane
+  it spawned. After an `unbind`, a mis-bind, or any `--assume-dead` rebind,
+  close the orphaned builder pane yourself with `herdr pane close <id>` or it
+  holds memory indefinitely (an idle opencode builder is roughly 800 MB).
 - Tell a builder to stop rather than improvise when a step is impossible as
   written or the plan conflicts with existing code. A halt that surfaces a
   design error is worth more than a green suite that bent a test to fit.

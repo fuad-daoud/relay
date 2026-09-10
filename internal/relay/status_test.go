@@ -463,3 +463,42 @@ func TestRenderStatusShowsEveryForeignAgent(t *testing.T) {
 		t.Errorf("got %d foreign lines, want 2:\n%s", n, out)
 	}
 }
+
+func TestStatusCountsOnlyRunningConsults(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Consults = []store.Consult{
+		{ID: "aaaaaaaa", Role: "reviewer", State: store.ConsultRunning},
+		{ID: "bbbbbbbb", Role: "reviewer", State: store.ConsultRunning},
+		{ID: "cccccccc", Role: "reviewer", State: store.ConsultDone},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings", len(rep.Bindings))
+	}
+	if rep.Bindings[0].Consults != 2 {
+		t.Errorf("Consults = %d, want 2 running (the done one awaits reap)", rep.Bindings[0].Consults)
+	}
+}
+
+func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Round: 3, Consults: 0,
+	}}}
+
+	if out := RenderStatus(r); strings.Contains(out, "+0c") {
+		t.Errorf("rendered a zero consult count:\n%s", out)
+	}
+}

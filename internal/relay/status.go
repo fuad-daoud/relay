@@ -47,6 +47,9 @@ type BindingStatus struct {
 	Foreign       []ForeignAgent `json:"foreign,omitempty"`
 	ForkedFrom    string         `json:"forked_from,omitempty"`
 	ForkedAtRound int            `json:"forked_at_round,omitempty"`
+	// Consults is how many consults are still running on this binding.
+	// Terminal ones are omitted: they are a reap chore, not work in flight.
+	Consults int `json:"consults,omitempty"`
 }
 
 // LastEvent is the most recent relayed message, carried as data rather than
@@ -110,6 +113,7 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 		BuilderAlias:  b.BuilderAlias,
 		ForkedFrom:    b.ForkedFrom,
 		ForkedAtRound: b.ForkedAtRound,
+		Consults:      runningConsults(b),
 		PlannerPane:   b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
@@ -180,8 +184,14 @@ func RenderStatus(r Report) string {
 
 	var sb strings.Builder
 	for _, b := range r.Bindings {
-		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s\n",
+		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
 			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
+		// Zero stays out of the row entirely: +0c on every healthy binding
+		// would be noise, not information.
+		if b.Consults > 0 {
+			fmt.Fprintf(&sb, " +%dc", b.Consults)
+		}
+		fmt.Fprint(&sb, "\n")
 		focus := ""
 		if b.PlannerFocus {
 			focus = "  (focused)"
