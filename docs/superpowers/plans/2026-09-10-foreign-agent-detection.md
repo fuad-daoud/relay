@@ -1341,6 +1341,18 @@ Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
 **Files:**
 - Modify: `internal/doctor/env.go`
 - Modify: `internal/doctor/doctor_test.go` (the `fakeEnv` type near line 14)
+- Modify: `cmd/relay/doctor_test.go` (the `stubDoctorEnv` type near line 170)
+
+**Survey first:** widening an interface breaks every implementer, and the
+implementers here are test doubles that a search for production callers will
+not find. The tree has exactly two — `fakeEnv` in `internal/doctor/doctor_test.go`
+and `stubDoctorEnv` in `cmd/relay/doctor_test.go` — plus `deadlineEnv`, which
+embeds `stubDoctorEnv` and therefore needs no change of its own. Confirm that
+is still true before you start:
+
+```bash
+grep -rn 'doctor.Env' --include='*.go' . 
+```
 
 **Interfaces:**
 - Produces: `Env.ReadFile(path string) ([]byte, error)`; `realEnv.ReadFile` delegating to `os.ReadFile`; `fakeEnv.fileContents map[string]string`.
@@ -1389,9 +1401,25 @@ func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
 }
 ```
 
+- [ ] **Step 3a: Add `ReadFile` to `stubDoctorEnv`**
+
+`cmd/relay/doctor_test.go` defines a second implementer. Add beside its other
+methods:
+
+```go
+// ReadFile satisfies doctor.Env. These tests assert on severities and fix
+// commands, not on role-file contents, so every file reads as empty -- which
+// doctor must render as a role row with no model suffix.
+func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
+	return nil, nil
+}
+```
+
+`deadlineEnv` embeds `stubDoctorEnv` and inherits this. Do not give it one.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test ./internal/doctor/ -count=1`
+Run: `go test ./internal/doctor/ -count=1 && go test ./cmd/relay/ -count=1`
 Expected: PASS, unchanged behaviour.
 
 - [ ] **Step 5: Run the full check**
@@ -1402,11 +1430,15 @@ Expected: clean.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/doctor/env.go internal/doctor/doctor_test.go
+git add internal/doctor/env.go internal/doctor/doctor_test.go cmd/relay/doctor_test.go
 git commit -m "refactor(doctor): let Env read a file it can already stat
 
-Needed to report the model an installed role definition pins. No caller
-changes and no behaviour change.
+Needed to report the model an installed role definition pins. No production
+caller changes and no behaviour change.
+
+Both test doubles implementing the interface gain the method:
+internal/doctor's fakeEnv and cmd/relay's stubDoctorEnv. deadlineEnv embeds
+the latter and needs no change.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
@@ -1637,7 +1669,7 @@ Expected: FAIL — only one role row exists, and its name comes from `h.Roles[0]
 
 - [ ] **Step 7: Replace the role block with a loop**
 
-In `internal/doctor/doctor.go`, inside `if !cfg.adopted {`, replace the whole `// Role (plan-executor) check` block with:
+In `internal/doctor/doctor.go`, inside `if !cfg.adopted {`, replace the whole `// Role (plan-executor) check` block with the code below. Find that block by its comment, not by line number — earlier tasks will have moved it.
 
 ```go
 			// Role checks: one row per shipped role. A harness with no roles
