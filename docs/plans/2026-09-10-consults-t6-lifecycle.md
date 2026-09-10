@@ -53,6 +53,10 @@ is worth more than a green suite that worked around one.
 `make` is intercepted on this laptop and runs on the desktop. Use
 `dev run make check`, and `dev run go test ./... -run ...` for single tests.
 
+The desktop (zen) is up as of this dispatch. If `dev run` ever reports "no
+desktop is reachable", run the bare command locally instead and say so in your
+report.
+
 ## Global Constraints
 
 - Verification is `make check`, never `go test ./...` alone. It adds `gofmt -l .` over the whole tree, `go vet`, and a `go mod tidy` check.
@@ -202,6 +206,12 @@ func TestConsultIdleWithoutFindingsIsNudgedOnce(t *testing.T) {
 	}
 	if len(f.prompts) != before+1 {
 		t.Fatalf("got %d prompts, want 1 nudge", len(f.prompts)-before)
+	}
+	// Assert the TARGET. Counting prompts cannot tell a nudge sent to the
+	// consult from one typed into the planner's pane, which would land in the
+	// human's conversation instead -- the anti-clobber failure again.
+	if got := f.prompts[len(f.prompts)-1].Target; got != "w2:p9" {
+		t.Errorf("nudge went to %q, want the consult's pane w2:p9", got)
 	}
 
 	// A second tick inside the grace window must not nudge again.
@@ -582,6 +592,39 @@ In `internal/ui/fetch.go:93`, add `KindFindings` to the filter:
 ```bash
 make check
 ```
+
+- [ ] **Step 6b: Prove the nudge and the blocked path pin**
+
+Two more properties are easy to get wrong and silent when wrong. Apply each
+mutation, run the named test, confirm **FAIL**, then restore
+`internal/relay/consult.go` from your Step 3 version before the next.
+
+**(a) Nudge the planner instead of the consult.** In `reconcileConsults`, change
+the `promptWithRetry` target from `agent.PaneID` to `b.Planner.PaneID`.
+
+```bash
+dev run go test ./internal/relay/ -run TestConsultIdleWithoutFindingsIsNudgedOnce -v
+```
+
+Expect FAIL: `nudge went to "w2:p3", want the consult's pane w2:p9`.
+
+**(b) Answer a blocked consult instead of reporting it.** Delete the
+`agent.Status == herdr.StatusBlocked` branch entirely, so a blocked consult
+falls through to the idle/nudge path.
+
+```bash
+dev run go test ./internal/relay/ -run TestBlockedConsultIsReportedNotNegotiatedWith -v
+```
+
+Expect FAIL — the consult stays `running` rather than going `silent`, and relay
+prompts an agent that is sitting at a dialog.
+
+If either PASSES under its mutation, **stop and report**.
+
+**Note on restoring.** `git checkout internal/relay/consult.go` reverts the file
+to HEAD. Since `consult.go` is new and uncommitted at this point, that will
+*delete your work*, not restore it. Keep a copy (`cp internal/relay/consult.go
+/tmp/consult.go.step3`) before the first mutation and restore from that.
 
 - [ ] **Step 7: Run the mutation test**
 
