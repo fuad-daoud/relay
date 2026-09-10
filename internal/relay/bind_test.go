@@ -150,6 +150,14 @@ func TestBindRefusesAConsultAlias(t *testing.T) {
 	if len(f.starts) != 0 {
 		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
 	}
+	// Also assert no pane was SPLIT. Checking only f.starts cannot tell a
+	// refusal that happened before anything was created from one that ran after
+	// builderPane and left a pane behind with nothing pointing at it -- the
+	// ~800 MB leak CLAUDE.md warns about. This is what pins the refusal's
+	// placement ahead of builderPane.
+	if f.splits != 0 {
+		t.Errorf("split %d panes; a refused bind must not create a pane it then abandons", f.splits)
+	}
 }
 
 func TestBindSpawnUnknownAliasFails(t *testing.T) {
