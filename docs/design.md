@@ -305,6 +305,29 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; alias names are already stable in the user's head |
 | Concurrent loops on one tree | Refuse the second bind | The one failure mode that destroys work rather than stalling |
 
+relay enforces one writer per working tree only for bindings: `Bind` refuses a
+second binding on a tree another one drives. An agent relay did not start is
+outside that guarantee entirely, and relay cannot prevent one -- it does not
+own the harness.
+
+What it can do is say so. `relay status` reports, per binding, every live agent
+whose cwd is inside that binding's working tree and which no binding accounts
+for, as `foreign` rows. The rule is occupancy, not authorship: `herdr agent
+list` reports a kind, a status, a cwd and a title, and nothing about writes, so
+a sanctioned read-only researcher and a rogue implementer look identical from
+here. relay reports that something is there and shows its title; the reader
+draws the conclusion. Rows are never filtered by title, which would mean relay
+trusting a string any agent can set.
+
+An agent is foreign when no binding references it, not merely when it is not
+this binding's builder -- a second binding's planner may legitimately share a
+tree, and relay knows about it. Agents in subdirectories of the tree count;
+agents in parent directories do not.
+
+Known limit: paths are compared literally. A tree reached through a symlink
+under one name and reported by herdr under another will not match, and the
+agent goes unreported.
+
 ## Prerequisites
 
 1. `herdr integration install antigravity-cli` — only **opencode** and **claude**
