@@ -40,7 +40,7 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 	return tx.AppendLog(name, e)
 }
 
-// DeliverPending attempts the newest pending payload for one binding. It takes
+// DeliverPending attempts the oldest pending payload for one binding. It takes
 // the agent list rather than fetching one, so a daemon tick costs exactly one
 // herdr call regardless of how many bindings it reconciles.
 //

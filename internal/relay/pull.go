@@ -6,7 +6,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// Pull returns the newest pending payload and marks it delivered, WITHOUT
+// Pull returns the oldest pending payload and marks it delivered, WITHOUT
 // injecting anything. This is the path the planner uses mid-turn: the CLI
 // prints the result to stdout and the planner reads it as tool output, so it
 // can neither collide with the human's typing nor be rejected by herdr.

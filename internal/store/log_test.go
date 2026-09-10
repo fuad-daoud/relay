@@ -97,7 +97,10 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 		}
 	}
 
-	if err := s.ConfirmIndex(name, 2); err != nil {
+	// Confirm the OLDER of the two pending entries. Naming index 2 would pin
+	// nothing: index 2 is also the newest unconfirmed entry, so an
+	// implementation that ignored idx and confirmed the newest would pass.
+	if err := s.ConfirmIndex(name, 1); err != nil {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
@@ -105,13 +108,13 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	if entries[1].Confirmed {
-		t.Error("index 1 confirmed; ConfirmIndex must confirm only the index it was given")
+	if !entries[1].Confirmed {
+		t.Error("index 1 not confirmed; ConfirmIndex must confirm the index it was given")
 	}
-	if !entries[2].Confirmed {
-		t.Error("index 2 not confirmed")
+	if entries[2].Confirmed {
+		t.Error("index 2 confirmed; ConfirmIndex must confirm ONLY the index it was given, never the newest")
 	}
-	if entries[2].DeliveredAt == nil {
+	if entries[1].DeliveredAt == nil {
 		t.Error("DeliveredAt not stamped on the confirmed entry")
 	}
 }

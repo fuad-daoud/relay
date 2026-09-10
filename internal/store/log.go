@@ -156,7 +156,7 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 // readLog returns every entry in order, refusing to read past
 // maxLogEntries rather than silently truncating: since the log is
 // append-only, truncating would drop the newest entries, which is exactly
-// what pendingForPlanner and confirmLatest need.
+// what pendingForPlanner and confirmIndex need.
 func (s *Store) readLog(name string) ([]LogEntry, error) {
 	f, err := os.Open(s.logPath(name))
 	if errors.Is(err, os.ErrNotExist) {
