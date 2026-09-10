@@ -724,11 +724,22 @@ the claude pin is deliberately above `cbuilder`'s.
   "role": "consult", "tree": "binding" }
 ```
 
-Whether this ships in `DefaultTable` at all is governed by the open decision in
-#24 §2 ("does relay ship a table at all"). If defaults survive that issue, this
-entry joins them; if they do not, it ships as a documented example only. This
-spec does not pre-empt that decision, and the implementer must check #24's
-resolution before adding to `DefaultTable`.
+**Decided 2026-09-10: this entry does NOT ship in `DefaultTable`.** It is
+documented in the README as an example to paste into
+`~/.config/relay/aliases.json`, and nothing in the shipped table references it.
+
+#24 §2 argues relay should not ship a table that assumes the author's providers
+and accounts. Adding a fourth default entry pinned to `opus` -- a stronger and
+more expensive model than any current default -- walks further in the direction
+that issue is trying to reverse, and would have to be walked back when #24
+lands. `relay ask --role reviewer` therefore fails with
+`alias.ErrUnknownAlias` until the user adds the entry, which is the honest
+failure: relay does not know what model you are entitled to run.
+
+One consequence the README must state, because it is a real trap:
+`LoadTable` does `tbl.specs[s.Name] = s`, replacing a spec wholesale rather than
+merging fields. Adding a new name is safe, but overriding an existing alias
+means repeating its full `args`, or the role and model silently disappear.
 
 ## 9. Testing requirements
 
