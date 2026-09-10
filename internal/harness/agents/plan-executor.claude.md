@@ -105,6 +105,10 @@ You therefore delegate READS ONLY:
 3. NEVER dispatch a sub-agent to execute an implementation step, apply an edit,
    create or delete a file, or run any command that modifies the tree, the
    index, or HEAD. You make every change yourself.
+4. Dispatch every research sub-agent as the `researcher` role -- pass
+   subagent_type: researcher to the Agent tool. That role is read-only by
+   definition, which is what makes delegating to it safe. Do not dispatch
+   research to the default role.
 
 WORKFLOW
 1. Parse the plan: read every step; identify inputs, outputs, and dependencies.
