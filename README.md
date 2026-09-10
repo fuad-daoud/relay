@@ -165,9 +165,11 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
-- `relay diff [NAME|--name N] [--round R] [--stat]` — print a round's captured patch
-  to stdout, or its diffstat summary with `--stat`. Defaults to the newest
-  completed round.
+- `relay diff [NAME|--name N] [--round R] [--stat] [--drift]` — print a round's
+  captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
+  to inspect between-rounds drift instead of the round's diff; `--drift` composes
+  with `--stat` and `--round`, and defaults to the currently open round where plain
+  `relay diff` defaults to the newest completed one.
 - `relay answer NAME|--name N (--keys K | --choice N | --text S)` — answer a
   builder that's blocked at a dialog, via `send-keys` rather than a typed
   prompt (herdr refuses `agent prompt` against a blocked agent). The binding
