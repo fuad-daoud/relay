@@ -190,6 +190,121 @@ func TestDiffCommand(t *testing.T) {
 	}
 }
 
+func TestDiffDriftCommand(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+
+	repoDir := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	driftPatchRound2 := "diff --git a/drift.txt b/drift.txt\n--- a/drift.txt\n+++ b/drift.txt\n@@ -1 +1,2 @@\n drift\n+round2\n"
+	driftPatchRound1 := "diff --git a/drift.txt b/drift.txt\n--- a/drift.txt\n+++ b/drift.txt\n@@ -1 +1,2 @@\n drift\n+round1\n"
+
+	s := store.New(filepath.Join(tempHome, ".local", "state", "relay"))
+	b := store.Binding{
+		Name:  "webshop",
+		CWD:   repoDir,
+		Round: 2,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write round 2 drift patch
+	if err := os.WriteFile(s.DriftPath("webshop", 2), []byte(driftPatchRound2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write round 1 drift patch
+	if err := os.WriteFile(s.DriftPath("webshop", 1), []byte(driftPatchRound1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add KindDrift log entry for round 2
+	if err := s.AppendLog("webshop", store.LogEntry{
+		Round:     2,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindDrift,
+		Note:      "1 file, +5 -1",
+		Confirmed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. --drift defaults to the current round (round 2)
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	runErr := run([]string{"diff", "--name", "webshop", "--drift"})
+
+	w.Close()
+	os.Stdout = origStdout
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runErr != nil {
+		t.Fatalf("run diff --drift: %v", runErr)
+	}
+	if string(out) != driftPatchRound2 {
+		t.Fatalf("got stdout %q, want round 2 drift %q", string(out), driftPatchRound2)
+	}
+
+	// 2. --round overrides (requests round 1)
+	rRound, wRound, _ := os.Pipe()
+	os.Stdout = wRound
+	runErr = run([]string{"diff", "--name", "webshop", "--drift", "--round", "1"})
+	wRound.Close()
+	os.Stdout = origStdout
+	outRound, _ := io.ReadAll(rRound)
+	if runErr != nil {
+		t.Fatalf("run diff --drift --round 1: %v", runErr)
+	}
+	if string(outRound) != driftPatchRound1 {
+		t.Fatalf("got stdout %q, want round 1 drift %q", string(outRound), driftPatchRound1)
+	}
+
+	// 3. --stat prints the KindDrift Note
+	rStat, wStat, _ := os.Pipe()
+	os.Stdout = wStat
+	runErr = run([]string{"diff", "--name", "webshop", "--drift", "--stat"})
+	wStat.Close()
+	os.Stdout = origStdout
+	outStat, _ := io.ReadAll(rStat)
+	if runErr != nil {
+		t.Fatalf("run diff --drift --stat: %v", runErr)
+	}
+	if strings.TrimSpace(string(outStat)) != "1 file, +5 -1" {
+		t.Fatalf("got stat %q, want %q", strings.TrimSpace(string(outStat)), "1 file, +5 -1")
+	}
+
+	// 4. a round with no drift errors mentioning --drift
+	errNoDrift := run([]string{"diff", "--name", "webshop", "--drift", "--round", "99"})
+	if errNoDrift == nil {
+		t.Fatal("expected error for round with no drift")
+	}
+	if !strings.Contains(errNoDrift.Error(), "--drift") || !strings.Contains(errNoDrift.Error(), "99") || !strings.Contains(errNoDrift.Error(), "webshop") {
+		t.Fatalf("error %q must name --drift, round 99, and webshop", errNoDrift.Error())
+	}
+
+	errNoDriftStat := run([]string{"diff", "--name", "webshop", "--drift", "--stat", "--round", "99"})
+	if errNoDriftStat == nil {
+		t.Fatal("expected error for --stat on round with no drift")
+	}
+	if !strings.Contains(errNoDriftStat.Error(), "--drift") || !strings.Contains(errNoDriftStat.Error(), "99") || !strings.Contains(errNoDriftStat.Error(), "webshop") {
+		t.Fatalf("error %q must name --drift, round 99, and webshop", errNoDriftStat.Error())
+	}
+}
+
 func TestForkHelp(t *testing.T) {
 	err := run([]string{"fork", "-h"})
 	if !errors.Is(err, errHelpShown) {

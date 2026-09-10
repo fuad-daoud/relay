@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -49,12 +50,12 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	src := writePlan(t, "# do the thing")
 
-	round, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if round != 1 {
-		t.Fatalf("round = %d, want 1", round)
+	if res.Round != 1 {
+		t.Fatalf("round = %d, want 1", res.Round)
 	}
 
 	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
@@ -279,12 +280,12 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 	rt.Git = fg
 
 	src := writePlan(t, "# test plan")
-	round, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if round != 1 {
-		t.Fatalf("round = %d, want 1", round)
+	if res.Round != 1 {
+		t.Fatalf("round = %d, want 1", res.Round)
 	}
 
 	b, err := rt.Store.Load("webshop")
@@ -306,12 +307,12 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	rt.Git = fg
 
 	src := writePlan(t, "# test plan")
-	round, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if round != 1 {
-		t.Fatalf("round = %d, want 1", round)
+	if res.Round != 1 {
+		t.Fatalf("round = %d, want 1", res.Round)
 	}
 
 	b, err := rt.Store.Load("webshop")
@@ -390,5 +391,318 @@ func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
 		if p.Target == "" {
 			t.Fatal("relay addressed the empty target instead of refusing")
 		}
+	}
+}
+
+func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift != "" {
+		t.Errorf("got Drift %q, want empty", res.Drift)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry: %+v", e)
+		}
+	}
+}
+
+func TestSendChangedTreeBetweenRounds(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+			Patch: []byte("patch content\n"),
+		},
+	}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 2 {
+		t.Fatalf("res.Round = %d, want 2", res.Round)
+	}
+	if res.Drift == "" {
+		t.Fatal("expected non-empty Drift line")
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var driftEntries []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			driftEntries = append(driftEntries, e)
+		}
+	}
+	if len(driftEntries) != 1 {
+		t.Fatalf("got %d KindDrift entries, want 1", len(driftEntries))
+	}
+	de := driftEntries[0]
+	if de.Round != 2 {
+		t.Errorf("drift entry Round = %d, want opening round 2", de.Round)
+	}
+	if !de.Confirmed {
+		t.Error("drift entry must have Confirmed == true")
+	}
+	if de.Direction != store.DirToPlanner {
+		t.Errorf("drift entry Direction = %v, want DirToPlanner", de.Direction)
+	}
+	if de.Path == "" {
+		t.Fatal("drift entry Path is empty")
+	}
+	patch, err := os.ReadFile(de.Path)
+	if err != nil {
+		t.Fatalf("read drift patch %s: %v", de.Path, err)
+	}
+	if string(patch) != "patch content\n" {
+		t.Errorf("patch = %q, want %q", string(patch), "patch content\n")
+	}
+}
+
+// TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport asserts that
+// an unconsumed pending report is still returned by Pull after a Send with drift.
+// An unconfirmed drift entry would shadow the report in pendingForPlanner.
+func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f) // queues an unconfirmed report for round 1
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+			Patch: []byte("patch content\n"),
+		},
+	}
+
+	src := writePlan(t, "plan round 2")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift == "" {
+		t.Fatal("expected drift to be detected")
+	}
+
+	payload, found, err := Pull(context.Background(), rt, "webshop")
+	if err != nil || !found {
+		t.Fatalf("Pull: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(payload, "001-report.md") {
+		t.Fatalf("Pull returned payload %q, want pending report", payload)
+	}
+}
+
+func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	if b.RoundClosedTree != "" {
+		t.Fatalf("expected round 1 RoundClosedTree to be empty, got %q", b.RoundClosedTree)
+	}
+
+	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift != "" {
+		t.Errorf("res.Drift = %q, want empty", res.Drift)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry on round 1: %+v", e)
+		}
+	}
+}
+
+func TestSendFailedPromptPreservesRoundClosedTree(t *testing.T) {
+	f := &fakeHerdr{promptErr: errors.New("builder prompt crashed")}
+	rt, b := seedBound(t, f)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 3, Deletions: 1},
+			Patch: []byte("diff\n"),
+		},
+	}
+
+	src := writePlan(t, "plan")
+	_, err := Send(context.Background(), rt, "webshop", src)
+	if err == nil {
+		t.Fatal("expected Send to fail when prompt fails")
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RoundClosedTree != "tree-1" {
+		t.Errorf("RoundClosedTree = %q, want tree-1 preserved after prompt failure", b.RoundClosedTree)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry when prompt failed: %+v", e)
+		}
+	}
+
+	// Subsequent successful send reports the drift
+	f.promptErr = nil
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("subsequent Send failed: %v", err)
+	}
+	if res.Drift == "" {
+		t.Fatal("subsequent Send must report the drift")
+	}
+
+	entries, err = rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var driftCount int
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			driftCount++
+		}
+	}
+	if driftCount != 1 {
+		t.Fatalf("got %d KindDrift entries, want 1", driftCount)
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RoundClosedTree != "" {
+		t.Errorf("RoundClosedTree = %q, want cleared after successful send", b.RoundClosedTree)
+	}
+}
+
+func TestSendConcurrentRoundAdvanceSkipsDrift(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+			Patch: []byte("patch content\n"),
+		},
+	}
+
+	// f.onList fires inside rt.Herdr.ListAgents, which runs after hintRound is read
+	// and before WithLock is taken.
+	f.onList = func() {
+		cur, err := rt.Store.Load("webshop")
+		if err == nil {
+			cur.Round = 3
+			_ = rt.Store.Save(cur)
+		}
+	}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 3 {
+		t.Fatalf("res.Round = %d, want 3", res.Round)
+	}
+	if res.Drift != "" {
+		t.Errorf("expected Drift to be empty on concurrent advance, got %q", res.Drift)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry on stale round snapshot: %+v", e)
+		}
+	}
+}
+
+func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.Round = 2
+	b.RoundClosedTree = "tree-closed"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 2 {
+		t.Fatalf("round = %d, want 2", res.Round)
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RoundClosedTree != "" {
+		t.Errorf("RoundClosedTree = %q, want empty after successful send", b.RoundClosedTree)
 	}
 }

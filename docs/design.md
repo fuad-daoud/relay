@@ -328,6 +328,32 @@ Known limit: paths are compared literally. A tree reached through a symlink
 under one name and reported by herdr under another will not match, and the
 agent goes unreported.
 
+### What the diff trail covers
+
+A round's diff covers exactly **send -> report**. That was always true; it was
+never written down, and a reader reasonably assumed otherwise.
+
+The window between a report and the next send is now captured separately, as
+drift. A round diff is recorded when a round closes; drift is recorded when the
+next one opens, and is keyed to that opening round.
+
+**A commit is not drift.** relay snapshots working-tree *content* (`add -A` into
+a temporary index), so a planner committing, amending, or rebasing the builder's
+work changes nothing relay can see. A merge that brings in new content, a
+checkout, or a builder that kept editing after it reported all do register.
+
+This narrowness is a property to rely on, and a reader who does not know it will
+misread a quiet send.
+
+**relay reports drift; it does not attribute it.** Drift never changes a
+binding's state, never notifies, and never fires a hook. relay cannot observe
+*who* wrote -- `herdr agent list` can say which agents were in the tree (that is
+the foreign-agent feature), and joining the two is the planner's judgement, not
+relay's.
+
+One honest gap: a round that produced no baseline also records no drift origin,
+so the next send is silent. It self-heals after one round.
+
 ## Prerequisites
 
 1. `herdr integration install antigravity-cli` — only **opencode** and **claude**

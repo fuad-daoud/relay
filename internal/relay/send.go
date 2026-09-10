@@ -34,34 +34,43 @@ func Target(ep store.Endpoint) string {
 	return ep.PaneID
 }
 
+// SendResult is what one successful Send produced.
+type SendResult struct {
+	Round int    // the round the plan was filed under
+	Drift string // the drift line for stdout, or "" when there is nothing to say
+}
+
 // Send copies the planner's plan into relay state and hands it to the builder.
-// It returns the round number it was filed under.
-func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
+// It returns a SendResult describing the round and any between-rounds drift.
+func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error) {
 	// Read the caller's file before taking the lock; it is the one input that
 	// does not depend on binding state.
 	body, err := os.ReadFile(file)
 	if err != nil {
-		return 0, fmt.Errorf("read plan %s: %w", file, err)
+		return SendResult{}, fmt.Errorf("read plan %s: %w", file, err)
 	}
 
 	var baseline string
+	var hintRound int
 	var builder herdr.Agent
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
 		baseline = CaptureBaseline(ctx, rt, hint)
+		hintRound = hint.Round
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
-			return 0, fmt.Errorf("list agents: %w", err)
+			return SendResult{}, fmt.Errorf("list agents: %w", err)
 		}
 		var ok bool
 		builder, ok = FindAgent(agents, hint.Builder)
 		if !ok {
-			return 0, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
+			return SendResult{}, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
 		}
 		locatedBuilder = true
 	}
 
 	var round int
+	var driftLineOut string
 
 	// The whole round advance is one critical section: the daemon rewrites this
 	// same binding on every tick, and a lost update here would re-send a plan
@@ -117,18 +126,37 @@ func Send(ctx context.Context, rt Runtime, name, file string) (int, error) {
 			return err
 		}
 
+		driftLine := ""
+		if b.Round == hintRound {
+			res := CaptureDrift(ctx, rt, b, baseline)
+			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
+				driftEntry := store.LogEntry{
+					TS: rt.Now().UTC(), Round: b.Round,
+					Direction: store.DirToPlanner, Kind: store.KindDrift,
+					Path: res.Path, Note: DriftSummary(res),
+					Confirmed: true,
+				}
+				if err := tx.AppendLog(name, driftEntry); err != nil {
+					return err
+				}
+				driftLine = DriftLine(res, b.Round)
+			}
+		}
+
 		round = b.Round
+		driftLineOut = driftLine
 		b.RoundBaselineTree = baseline
+		b.RoundClosedTree = ""
 		b.RoundStartedAt = rt.Now().UTC()
 		b.State = store.StateActive
 
 		return tx.Save(b)
 	})
 	if err != nil {
-		return 0, err
+		return SendResult{}, err
 	}
 
-	return round, nil
+	return SendResult{Round: round, Drift: driftLineOut}, nil
 }
 
 // promptWithRetry retries once past herdr's five second stall detection, then

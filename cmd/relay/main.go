@@ -601,12 +601,15 @@ func cmdSend(args []string) error {
 		return err
 	}
 
-	round, err := relay.Send(context.Background(), rt, target, *file)
+	res, err := relay.Send(context.Background(), rt, target, *file)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("sent round %d to %s's builder\n", round, target)
+	if res.Drift != "" {
+		fmt.Println(res.Drift)
+	}
+	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
 	return nil
 }
 
@@ -642,8 +645,9 @@ func cmdPull(args []string) error {
 func cmdDiff(args []string) error {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	round := fs.Int("round", 0, "round to diff (default: newest completed round)")
+	round := fs.Int("round", 0, "round to diff (default: newest completed round, or the open round with --drift)")
 	stat := fs.Bool("stat", false, "print summary line instead of patch body")
+	drift := fs.Bool("drift", false, "show between-rounds drift instead of round diff (default: the open round)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -665,7 +669,11 @@ func cmdDiff(args []string) error {
 
 	targetRound := *round
 	if targetRound == 0 {
-		targetRound = b.Round - 1
+		if *drift {
+			targetRound = b.Round
+		} else {
+			targetRound = b.Round - 1
+		}
 	}
 	if targetRound < 1 {
 		return fmt.Errorf("binding %q has no completed round yet", target)
@@ -676,25 +684,41 @@ func cmdDiff(args []string) error {
 		if err != nil {
 			return err
 		}
+		targetKind := store.KindDiff
+		if *drift {
+			targetKind = store.KindDrift
+		}
 		var found *store.LogEntry
 		for i := len(entries) - 1; i >= 0; i-- {
-			if entries[i].Round == targetRound && entries[i].Kind == store.KindDiff {
+			if entries[i].Round == targetRound && entries[i].Kind == targetKind {
 				found = &entries[i]
 				break
 			}
 		}
 		if found == nil || found.Note == "" {
+			if *drift {
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, target)
+			}
 			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
 		}
 		fmt.Println(found.Note)
 		return nil
 	}
 
-	patch, ok, err := relay.ReadDiff(rt, target, targetRound)
+	var patch []byte
+	var ok bool
+	if *drift {
+		patch, ok, err = relay.ReadDrift(rt, target, targetRound)
+	} else {
+		patch, ok, err = relay.ReadDiff(rt, target, targetRound)
+	}
 	if err != nil {
 		return err
 	}
 	if !ok {
+		if *drift {
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, target)
+		}
 		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
 	}
 
