@@ -107,16 +107,16 @@ Expected: FAIL to build — `undefined: withinTree`.
 
 Create `internal/relay/foreign.go`:
 
+Only the two imports `withinTree` actually uses — Go rejects unused imports,
+so listing Step 7's imports here would stop the package compiling and make
+Step 4 unreachable. Step 7 widens the block.
+
 ```go
 package relay
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // withinTree reports whether cwd is tree itself or is nested under it.
@@ -333,7 +333,20 @@ Expected: FAIL to build — `undefined: knownEndpoints`, `undefined: ForeignAgen
 
 - [ ] **Step 7: Implement the type and both functions**
 
-Append to `internal/relay/foreign.go`:
+First widen the import block to:
+
+```go
+import (
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/store"
+)
+```
+
+Then append to `internal/relay/foreign.go`:
 
 ```go
 // ForeignAgent is a live agent occupying a bound working tree that no binding
@@ -715,6 +728,7 @@ Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
 - Modify: `internal/harness/harness.go`
 - Modify: `internal/harness/agents.go`
 - Modify: `internal/harness/agents_test.go`
+- Modify: `internal/harness/harness_test.go`
 - Create: `internal/harness/harness_role_test.go`
 
 **Interfaces:**
@@ -723,6 +737,12 @@ Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
   - `Harness.Roles []Role` — **replaces** `Harness.RolePath` and `Harness.RoleDoc`
   - `func AgentDoc(role, kind string) ([]byte, error)` — **signature change**, was `AgentDoc(key string)`
 - Breaks: `internal/doctor/doctor.go` (reads `h.RolePath`) and `cmd/relay/agent.go` (calls `AgentDoc(*kind)`). Both are repaired in this task with the minimum edit that compiles; Tasks 4–6 then build on them.
+
+**A trap worth naming before you start:** adding a slice field makes `Harness`
+**uncomparable**. Go structs support `==`/`!=` only when every field does, so
+`internal/harness/harness_test.go` lines 43 and 87 (`got != h`, `got != want`)
+become *compile errors*, not test failures, and no mechanical field
+substitution can fix them. Step 3a rewrites that file.
 
 **Context you need:** `Harness.RoleDoc` currently holds `"claude"` / `"opencode"` and `AgentDoc` switches on it. The new `Role.Doc` holds the filename **stem** — `"plan-executor.claude"` — and the file read is `agents/<Doc>.md`. The filename must be built from the table's `Doc`, never from the caller's `role` argument, or `AgentDoc("../../etc/passwd", ...)` becomes a file read.
 
@@ -945,6 +965,107 @@ func (h Harness) RoleNames() []string {
 
 Leave `Lookup` and `All` exactly as they are.
 
+Add to the `Harness` doc comment, above the struct, so a future reader hits the
+reason in the type rather than in a test:
+
+```go
+// Harness is not comparable: Roles is a slice, so use reflect.DeepEqual rather
+// than == on two Harness values.
+```
+
+- [ ] **Step 3a: Rewrite `internal/harness/harness_test.go`**
+
+It asserts against `RolePath`/`RoleDoc` and compares whole `Harness` values with
+`!=`. Replace the file in full:
+
+```go
+package harness
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+)
+
+func TestHarnessRules(t *testing.T) {
+	all := All()
+	if len(all) == 0 {
+		t.Fatal("All() returned no entries")
+	}
+
+	if !sort.SliceIsSorted(all, func(i, j int) bool {
+		return all[i].Kind < all[j].Kind
+	}) {
+		t.Errorf("All() is not sorted by Kind: %+v", all)
+	}
+
+	for _, h := range all {
+		got, ok := Lookup(h.Kind)
+		if !ok {
+			t.Errorf("Lookup(%q) returned ok=false", h.Kind)
+			continue
+		}
+		// Harness carries a Roles slice, so it is not comparable with != .
+		if !reflect.DeepEqual(got, h) {
+			t.Errorf("Lookup(%q) = %+v, want %+v", h.Kind, got, h)
+		}
+	}
+}
+
+func TestLookupUnknown(t *testing.T) {
+	_, ok := Lookup("unknown-kind")
+	if ok {
+		t.Errorf("Lookup(unknown-kind) returned ok=true, want false")
+	}
+}
+
+func TestTableExactValues(t *testing.T) {
+	expected := map[string]Harness{
+		"agy": {
+			Kind:        "agy",
+			Binary:      "agy",
+			Integration: "antigravity-cli",
+			Roles:       nil,
+		},
+		"claude": {
+			Kind:        "claude",
+			Binary:      "claude",
+			Integration: "claude",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
+				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
+			},
+		},
+		"opencode": {
+			Kind:        "opencode",
+			Binary:      "opencode",
+			Integration: "opencode",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
+				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
+			},
+		},
+	}
+
+	for kind, want := range expected {
+		got, ok := Lookup(kind)
+		if !ok {
+			t.Errorf("Lookup(%q) not found", kind)
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Lookup(%q) = %+v, want %+v", kind, got, want)
+		}
+	}
+}
+```
+
+Nothing is lost. The old file's two role invariants — an empty role path implies
+an empty doc key, and every doc key resolves to non-empty bytes — are now
+covered more thoroughly by `TestEveryRoleIsFullyPopulated` in
+`harness_role_test.go` and `TestAgentDocResolvesEveryTableRole` in
+`agents_test.go`, both written in Step 1.
+
 - [ ] **Step 4: Change `AgentDoc` to take a role and a kind**
 
 Replace `internal/harness/agents.go` in full:
@@ -1048,7 +1169,7 @@ Expected: clean, including `./internal/doctor` and `./cmd/relay`.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add internal/harness cmd/relay/agent.go internal/doctor/doctor.go
+git add internal/harness cmd/relay/agent.go cmd/relay/agent_test.go internal/doctor/doctor.go
 git commit -m "refactor(harness): make shipped roles plural
 
 Harness.RolePath/RoleDoc become Roles []Role so relay can ship more than one
@@ -1060,6 +1181,10 @@ agents/*.md.
 Adds the one-writer sentence to both plan-executor definitions and a test
 that fails if either loses it. Placeholder researcher files land here so the
 table resolves; their content follows.
+
+Harness gains a slice field and is therefore no longer comparable, so
+harness_test.go's whole-struct != checks become reflect.DeepEqual. Its two
+role invariants now live in harness_role_test.go and agents_test.go.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
@@ -1216,6 +1341,18 @@ Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
 **Files:**
 - Modify: `internal/doctor/env.go`
 - Modify: `internal/doctor/doctor_test.go` (the `fakeEnv` type near line 14)
+- Modify: `cmd/relay/doctor_test.go` (the `stubDoctorEnv` type near line 170)
+
+**Survey first:** widening an interface breaks every implementer, and the
+implementers here are test doubles that a search for production callers will
+not find. The tree has exactly two — `fakeEnv` in `internal/doctor/doctor_test.go`
+and `stubDoctorEnv` in `cmd/relay/doctor_test.go` — plus `deadlineEnv`, which
+embeds `stubDoctorEnv` and therefore needs no change of its own. Confirm that
+is still true before you start:
+
+```bash
+grep -rn 'doctor.Env' --include='*.go' . 
+```
 
 **Interfaces:**
 - Produces: `Env.ReadFile(path string) ([]byte, error)`; `realEnv.ReadFile` delegating to `os.ReadFile`; `fakeEnv.fileContents map[string]string`.
@@ -1264,9 +1401,25 @@ func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
 }
 ```
 
+- [ ] **Step 3a: Add `ReadFile` to `stubDoctorEnv`**
+
+`cmd/relay/doctor_test.go` defines a second implementer. Add beside its other
+methods:
+
+```go
+// ReadFile satisfies doctor.Env. These tests assert on severities and fix
+// commands, not on role-file contents, so every file reads as empty -- which
+// doctor must render as a role row with no model suffix.
+func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
+	return nil, nil
+}
+```
+
+`deadlineEnv` embeds `stubDoctorEnv` and inherits this. Do not give it one.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test ./internal/doctor/ -count=1`
+Run: `go test ./internal/doctor/ -count=1 && go test ./cmd/relay/ -count=1`
 Expected: PASS, unchanged behaviour.
 
 - [ ] **Step 5: Run the full check**
@@ -1277,11 +1430,15 @@ Expected: clean.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/doctor/env.go internal/doctor/doctor_test.go
+git add internal/doctor/env.go internal/doctor/doctor_test.go cmd/relay/doctor_test.go
 git commit -m "refactor(doctor): let Env read a file it can already stat
 
-Needed to report the model an installed role definition pins. No caller
-changes and no behaviour change.
+Needed to report the model an installed role definition pins. No production
+caller changes and no behaviour change.
+
+Both test doubles implementing the interface gain the method:
+internal/doctor's fakeEnv and cmd/relay's stubDoctorEnv. deadlineEnv embeds
+the latter and needs no change.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_019ra83DtaVmCPmPXu4mLGS1"
@@ -1512,7 +1669,7 @@ Expected: FAIL — only one role row exists, and its name comes from `h.Roles[0]
 
 - [ ] **Step 7: Replace the role block with a loop**
 
-In `internal/doctor/doctor.go`, inside `if !cfg.adopted {`, replace the whole `// Role (plan-executor) check` block with:
+In `internal/doctor/doctor.go`, inside `if !cfg.adopted {`, replace the whole `// Role (plan-executor) check` block with the code below. Find that block by its comment, not by line number — earlier tasks will have moved it.
 
 ```go
 			// Role checks: one row per shipped role. A harness with no roles
