@@ -13,14 +13,30 @@ import (
 // ErrUnknownAlias reports a builder name with no entry in the table.
 var ErrUnknownAlias = errors.New("unknown builder alias")
 
-// Spec is how to start one builder. Preamble is prepended to the first prompt
-// of a session for harnesses that cannot select a role at launch.
+// Spec is how to start one agent. Preamble is prepended to the first prompt of
+// a session for harnesses that cannot select a role at launch.
 type Spec struct {
 	Name     string   `json:"name"`
 	Kind     string   `json:"kind"`
 	Args     []string `json:"args"`
 	Preamble string   `json:"preamble,omitempty"`
+
+	// Role is "" or "builder" for a persistent writer, or "consult" for an
+	// ephemeral read-only one-shot. Empty defaults to builder, so every
+	// aliases.json written before roles existed parses unchanged.
+	Role string `json:"role,omitempty"`
+
+	// Tree is "" or "binding" to run in the owning binding's working tree, or
+	// "none" for a treeless role. "none" is forward-declared for a future
+	// explorer-light and is REFUSED by `relay ask` today; a config field with an
+	// explicit refusal is honest where a silently ignored one is not.
+	Tree string `json:"tree,omitempty"`
 }
+
+// IsConsult reports whether this spec describes a consult rather than a
+// builder. Callers must branch on this rather than comparing Role directly, so
+// the empty-means-builder default lives in exactly one place.
+func (s Spec) IsConsult() bool { return s.Role == "consult" }
 
 // Table resolves alias names to specs.
 type Table struct {
@@ -29,9 +45,12 @@ type Table struct {
 
 // DefaultTable returns the three built-in aliases. Treat them as worked
 // examples rather than a supported set: each one names a harness, a model and
-// a role that have to already exist on the machine relay runs on. In
-// particular `plan-executor` is an agent (or skill) you define in that
+// a plan-executor role that have to already exist on the machine relay runs
+// on. In particular `plan-executor` is an agent (or skill) you define in that
 // harness, and each model assumes its provider is configured.
+//
+// All three are builders: they predate the Role and Tree fields, whose empty
+// values default to a persistent writer in the owning binding's tree.
 //
 // Override or extend them in ~/.config/relay/aliases.json; see LoadTable.
 func DefaultTable() *Table {
