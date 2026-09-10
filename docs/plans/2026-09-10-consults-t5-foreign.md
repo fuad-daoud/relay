@@ -52,6 +52,11 @@ is worth more than a green suite that worked around one.
 `make` is intercepted on this laptop and runs on the desktop. Use
 `dev run make check`, and `dev run go test ./... -run ...` for single tests.
 
+**The desktop is currently down.** If `dev run` reports "no desktop is
+reachable", that is expected: run the bare command locally instead and say so in
+your report. The laptop has 14G and swap is under pressure, so run **one** test
+command at a time and do not run anything in parallel.
+
 ## Global Constraints
 
 - Verification is `make check`, never `go test ./...` alone. It adds `gofmt -l .` over the whole tree, `go vet`, and a `go mod tidy` check.
@@ -155,6 +160,38 @@ Update the function's doc comment to mention consults alongside planners and bui
 ```bash
 make check
 ```
+
+- [ ] **Step 4b: Prove the test pins, by breaking the implementation**
+
+A test that passes with and without the change is pinning nothing. Prove this
+one is not. Temporarily delete the loop you added in Step 3, so
+`knownEndpoints` is back to returning only the planner and builder:
+
+```go
+		for _, c := range b.Consults {
+			eps = append(eps, c.Endpoint)
+		}
+```
+
+Run:
+
+```bash
+go test ./internal/relay/ -run TestConsultInABoundTreeIsNotForeign -v
+```
+
+Expected: **FAIL**, reporting `got 2 foreign agents, want 1` — the consult's
+pane `w2:p9` reappearing as foreign is exactly the bug this task removes.
+
+Then restore the loop:
+
+```bash
+git checkout internal/relay/foreign.go
+```
+
+and re-apply the Step 3 edit. Re-run the test and expect PASS.
+
+If it PASSES with the loop deleted, **stop and report** — the test is not
+pinning and there is no point committing it.
 
 - [ ] **Step 5: Commit**
 
