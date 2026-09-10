@@ -166,8 +166,8 @@ func TestBlockedConsultIsReportedNotNegotiatedWith(t *testing.T) {
 		t.Error("relay prompted a blocked consult; a consult is one-shot and is not answered")
 	}
 	pending, _, _ := rt.Store.PendingForPlanner("webshop")
-	if !strings.Contains(pending.Payload, "still open") {
-		t.Errorf("payload must tell the human the pane survives: %q", pending.Payload)
+	if !strings.Contains(pending.Payload, "open until the next `relay reap`") {
+		t.Errorf("payload must tell the human the pane is open, and for how long: %q", pending.Payload)
 	}
 }
 

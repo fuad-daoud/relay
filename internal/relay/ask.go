@@ -146,7 +146,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 			c.State, c.Note = store.ConsultSilent, reason+": "+brief(cause)
 			b.Consults = append(b.Consults, c)
 			if err := tx.Save(b); err != nil {
-				return err
+				return strandError(cause, err)
 			}
 			out = c
 			return cause
@@ -252,4 +252,14 @@ func randomConsultID() string {
 		return fmt.Sprintf("%08x", uint32(time.Now().UnixNano()))
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// strandError combines the failure that stranded a consult with any failure to
+// record it. Returning only the save error hides the half that explains what
+// actually went wrong.
+func strandError(cause, saveErr error) error {
+	if saveErr != nil {
+		return fmt.Errorf("%w (also failed to record the consult: %v)", cause, saveErr)
+	}
+	return cause
 }

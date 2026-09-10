@@ -586,14 +586,47 @@ func cmdGC(args []string) error {
 	return nil
 }
 
-func cmdReap(args []string) error {
+// workspaceOrEnv resolves the workspace a new consult tab opens in: the
+// explicit --workspace flag wins, otherwise the planner's own workspace, the
+// same environment variable bind, fork and add already read. Empty is a valid
+// answer -- CreateTab omits --workspace entirely for it.
+func workspaceOrEnv(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	return os.Getenv("HERDR_WORKSPACE_ID")
+}
+
+// reapFlags is the parsed command line of `relay reap`.
+type reapFlags struct {
+	all    bool
+	name   string
+	dryRun bool
+}
+
+// parseReapFlags exists so the wiring between what the user typed and what
+// Reap is asked to do is testable on its own: the previous shape read fine and
+// silently dropped two flags, and no test could reach it.
+func parseReapFlags(args []string) (reapFlags, []string, error) {
 	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
-	all := *fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
+	all := fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
 	nameFlag := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	dryRun := *fs.Bool("dry-run", false, "list what would be closed, change nothing")
+	dryRun := fs.Bool("dry-run", false, "list what would be closed, change nothing")
 	if err := parseFlags(fs, args); err != nil {
+		return reapFlags{}, nil, err
+	}
+	// Dereference only AFTER parseFlags: flag writes through these pointers,
+	// so reading them any earlier captures the defaults and silently discards
+	// what the user typed.
+	return reapFlags{all: *all, name: *nameFlag, dryRun: *dryRun}, fs.Args(), nil
+}
+
+func cmdReap(args []string) error {
+	opts, positional, err := parseReapFlags(args)
+	if err != nil {
 		return err
 	}
+	all, dryRun := opts.all, opts.dryRun
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -604,7 +637,7 @@ func cmdReap(args []string) error {
 	// an unbound directory, where the sweep is most wanted.
 	var name string
 	if !all {
-		name, err = resolveBinding(rt, *nameFlag, fs.Args())
+		name, err = resolveBinding(rt, opts.name, positional)
 		if err != nil {
 			return err
 		}
@@ -701,7 +734,7 @@ func cmdAsk(args []string) error {
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		NewTab:      *newTab,
-		WorkspaceID: *workspace,
+		WorkspaceID: workspaceOrEnv(*workspace),
 	})
 	if err != nil {
 		return err

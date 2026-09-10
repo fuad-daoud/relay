@@ -83,8 +83,11 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 		// A blocked consult is reported and abandoned, not negotiated with.
 		// `relay answer` stays builder-only: a one-shot agent that needs a
-		// conversation has already failed its contract. The pane stays open so
-		// a human can answer the dialog and the planner can re-ask.
+		// conversation has already failed its contract. The pane is left open
+		// so a human can answer the dialog and the planner can re-ask -- but
+		// only until the next `relay reap`, which closes the pane of every
+		// non-running consult, this one included. The message says so rather
+		// than promising a pane that a routine sweep will take away.
 		if agent.Status == herdr.StatusBlocked {
 			var err error
 			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
@@ -94,16 +97,19 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			continue
 		}
 
-		if idle {
-			if b.Consults[i].NudgedAt.IsZero() {
-				text := fmt.Sprintf(consultNudgePrompt, b.Consults[i].FindingsPath)
-				if err := promptWithRetry(ctx, rt, agent.PaneID, text); err != nil {
-					// A failed prompt is not evidence the consult stopped.
-					continue
-				}
+		if idle && b.Consults[i].NudgedAt.IsZero() {
+			text := fmt.Sprintf(consultNudgePrompt, b.Consults[i].FindingsPath)
+			if err := promptWithRetry(ctx, rt, agent.PaneID, text); err == nil {
 				b.Consults[i].NudgedAt = now
 				continue
 			}
+			// A failed prompt is not evidence the consult stopped, so it is not
+			// recorded as a nudge -- but it must not exempt the consult from its
+			// deadline either. Fall through to the consultTimeout check below:
+			// a nudge that can never be delivered would otherwise leave the
+			// record at ConsultRunning forever, unreapable and holding a slot
+			// against ConsultCap.
+		} else if idle {
 			if now.Sub(b.Consults[i].NudgedAt) >= consultGrace {
 				var err error
 				if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
@@ -148,7 +154,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
 		// does not exist would send the planner to read nothing.
-		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. Pane %s is still open.",
+		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. Pane %s is open until the next `relay reap`.",
 			c.ID, c.Role, note, c.Endpoint.PaneID)
 	}
 
