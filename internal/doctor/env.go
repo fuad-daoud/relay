@@ -29,6 +29,10 @@ type Env interface {
 	// HomePath joins a home-relative path, and Stat reports whether it exists.
 	HomePath(rel string) (string, error)
 	Stat(path string) error
+	// ReadFile reads a file whose existence Stat has already established.
+	// Used to report facts about an installed role definition; a read error
+	// is never itself a check failure.
+	ReadFile(path string) ([]byte, error)
 }
 
 type realEnv struct {
@@ -77,4 +81,8 @@ func (e *realEnv) HomePath(rel string) (string, error) {
 func (e *realEnv) Stat(path string) error {
 	_, err := os.Stat(path)
 	return err
+}
+
+func (e *realEnv) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
 }

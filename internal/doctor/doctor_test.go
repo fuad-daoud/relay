@@ -20,6 +20,7 @@ type fakeEnv struct {
 	daemonErr     error
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
+	fileContents  map[string]string // path -> content; absent reads as empty
 	homeDir       string
 	homeErr       error
 }
@@ -68,6 +69,12 @@ func (f *fakeEnv) Stat(path string) error {
 		return nil
 	}
 	return os.ErrNotExist
+}
+
+// ReadFile returns recorded content. A path in existingFiles but absent from
+// fileContents reads as empty, which must produce no model suffix and no error.
+func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
+	return []byte(f.fileContents[path]), nil
 }
 
 func findCheck(report Report, group, name string) *Check {
