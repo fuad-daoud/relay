@@ -58,6 +58,45 @@ func TestDefaultAliasArgv(t *testing.T) {
 	}
 }
 
+func TestSpecDefaultsToBuilderRoleAndBindingTree(t *testing.T) {
+	// The three shipped aliases predate roles. They must keep parsing as
+	// builders with no edit to aliases.json.
+	tbl := DefaultTable()
+	for _, name := range tbl.Names() {
+		spec, err := tbl.Lookup(name)
+		if err != nil {
+			t.Fatalf("Lookup(%q): %v", name, err)
+		}
+		if spec.IsConsult() {
+			t.Errorf("%q reports as a consult; shipped aliases are builders", name)
+		}
+	}
+}
+
+func TestLoadTableReadsRoleAndTree(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aliases.json")
+	body := `[{"name":"reviewer","kind":"claude","args":["--agent","reviewer"],"role":"consult","tree":"binding"}]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write aliases: %v", err)
+	}
+
+	tbl, err := LoadTable(path)
+	if err != nil {
+		t.Fatalf("LoadTable: %v", err)
+	}
+	spec, err := tbl.Lookup("reviewer")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if !spec.IsConsult() {
+		t.Errorf("role = %q, want a consult", spec.Role)
+	}
+	if spec.Tree != "binding" {
+		t.Errorf("tree = %q, want %q", spec.Tree, "binding")
+	}
+}
+
 func TestLookupUnknownAlias(t *testing.T) {
 	if _, err := DefaultTable().Lookup("nope"); !errors.Is(err, ErrUnknownAlias) {
 		t.Fatal("want ErrUnknownAlias")

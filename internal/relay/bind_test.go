@@ -135,6 +135,23 @@ func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	}
 }
 
+func TestBindRefusesAConsultAlias(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Aliases = consultTable(t)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Alias: "reviewer", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+
+	if !errors.Is(err, ErrConsultAlias) {
+		t.Fatalf("want ErrConsultAlias, got %v", err)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
+	}
+}
+
 func TestBindSpawnUnknownAliasFails(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
