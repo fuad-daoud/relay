@@ -240,8 +240,20 @@ matching `^model:\s*(.+)$`, value trimmed. A file with no frontmatter, or an
 unreadable one, simply omits the suffix; it is never an error, because a
 missing model pin is not a fault.
 
-`doctor.Env` is unchanged. `Report.UsableBuilder` is unchanged: role rows have
-never contributed to it and still do not.
+**`doctor.Env` gains one method.** The interface can `Stat` a path but cannot
+read one, so the model pin is unreachable as the interface stands:
+
+```
+ReadFile(path string) ([]byte, error)
+```
+
+`realEnv.ReadFile` delegates to `os.ReadFile`. The test `fakeEnv` gains a
+`fileContents map[string]string` beside its existing `existingFiles`; a path
+present in `existingFiles` but absent from `fileContents` reads as empty, which
+must yield no model suffix and no error.
+
+`Report.UsableBuilder` is unchanged: role rows have never contributed to it and
+still do not.
 
 ## 5. High-level pseudocode
 
