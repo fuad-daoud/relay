@@ -604,7 +604,21 @@ delivery becomes FIFO and confirmation becomes identity-based
 independently testable, and it is arguably a latent bug today, since a report
 and a blocked-dialog question can already be pending together.
 
-### 7.6 A consult does not advance the round
+### 7.6 Consults reconcile before the builder, not after
+
+`reconcileConsults` is called immediately after `Reconcile`'s `StateDone`
+guard, **before** the builder is located. `Reconcile` returns early when the
+builder is gone (`reconcile.go:112`) and again on the round-cap halt
+(`reconcile.go:137`), and a consult is orthogonal to both: a reviewer reading a
+diff has no stake in whether the builder's pane still exists.
+
+Consequence, and it is the existing behaviour rather than a new rule: on a
+`broken` or halted binding those early returns skip `deliverAndSettle`, so
+queued findings wait on disk and the planner retrieves them with `relay pull`.
+`reconcile.go:133-138` already documents exactly this for a halted binding's
+payloads.
+
+### 7.7 A consult does not advance the round
 
 `Ask` does not increment `Round`, does not stamp `RoundStartedAt`, and does not
 capture or clear a diff baseline. `Round` on a `Consult` is a label. A consult
