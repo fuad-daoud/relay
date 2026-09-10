@@ -44,7 +44,8 @@ Commands:
   add       attach an additional builder to this planner, on its own worktree
   fork      branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and prompt the builder
-  pull      print the newest pending payload to stdout, without typing anywhere
+  ask       spawn a one-shot consult and record it on the binding
+  pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
   answer    answer a builder that is blocked at a dialog
   status    one row per binding: round, state, live pane status, what is pending
@@ -54,6 +55,7 @@ Commands:
   done      mark a binding done; relaying stops
   unbind    forget a binding, deleting or archiving its directory
   gc        clear every binding the planner marked DONE
+  reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
@@ -176,8 +178,12 @@ func run(args []string) error {
 		return cmdUnbind(args[1:])
 	case "gc":
 		return cmdGC(args[1:])
+	case "reap":
+		return cmdReap(args[1:])
 	case "send":
 		return cmdSend(args[1:])
+	case "ask":
+		return cmdAsk(args[1:])
 	case "pull":
 		return cmdPull(args[1:])
 	case "diff":
@@ -580,6 +586,55 @@ func cmdGC(args []string) error {
 	return nil
 }
 
+func cmdReap(args []string) error {
+	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
+	all := *fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
+	nameFlag := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	dryRun := *fs.Bool("dry-run", false, "list what would be closed, change nothing")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	// --all needs no name, and resolving one from the cwd would only fail in
+	// an unbound directory, where the sweep is most wanted.
+	var name string
+	if !all {
+		name, err = resolveBinding(rt, *nameFlag, fs.Args())
+		if err != nil {
+			return err
+		}
+	}
+
+	results, err := relay.Reap(context.Background(), rt, relay.ReapOptions{
+		Name:   name,
+		All:    all,
+		DryRun: dryRun,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, r := range results {
+		for _, c := range r.Closed {
+			verb := "closed"
+			if dryRun {
+				verb = "would close"
+			}
+			fmt.Printf("%s %s consult %s (pane %s) on %s\n", verb, c.Role, c.ID, c.Endpoint.PaneID, r.Binding)
+		}
+		for _, c := range r.Failed {
+			fmt.Printf("could not close pane %s for consult %s on %s; record kept\n", c.Endpoint.PaneID, c.ID, r.Binding)
+		}
+	}
+
+	return nil
+}
+
 func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the plan file to hand the builder")
@@ -610,6 +665,50 @@ func cmdSend(args []string) error {
 		fmt.Println(res.Drift)
 	}
 	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	return nil
+}
+
+func cmdAsk(args []string) error {
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	role := fs.String("role", "", "consult role to spawn")
+	file := fs.String("file", "", "file containing the question")
+	nameFlag := fs.String("name", "", "binding name")
+	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
+	workspace := fs.String("workspace", "", "workspace for --new-tab")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *role == "" {
+		return fmt.Errorf("relay ask needs --role ROLE")
+	}
+	if *file == "" {
+		return fmt.Errorf("relay ask needs --file PATH")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	name, err := resolveBinding(rt, *nameFlag, fs.Args())
+	if err != nil {
+		return err
+	}
+
+	res, err := relay.Ask(context.Background(), rt, relay.AskOptions{
+		Role:        *role,
+		File:        *file,
+		Name:        name,
+		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		NewTab:      *newTab,
+		WorkspaceID: *workspace,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
+		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
 	return nil
 }
 

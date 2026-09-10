@@ -42,41 +42,106 @@ func TestAppendAndReadLog(t *testing.T) {
 	}
 }
 
-func TestPendingForPlannerFindsNewestUnconfirmed(t *testing.T) {
+func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 	s, name := seedBinding(t)
 
-	entries := []LogEntry{
-		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "old", Confirmed: true},
-		{Round: 2, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true},
-		{Round: 2, Direction: DirToPlanner, Kind: KindReport, Payload: "new"},
-	}
-	for _, e := range entries {
+	// A report, a blocked-dialog question and a drift note can already be
+	// pending together today; consults only make it routine. Arrival order is
+	// the only order relay can defend without judging content.
+	for _, e := range []LogEntry{
+		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
+		{Round: 3, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r3"},
+		{Round: 3, Direction: DirToPlanner, Kind: KindDrift, Payload: "drift r3"},
+	} {
 		if err := s.AppendLog(name, e); err != nil {
 			t.Fatalf("AppendLog: %v", err)
 		}
 	}
 
-	got, found, err := s.PendingForPlanner(name)
-	if err != nil || !found {
-		t.Fatalf("PendingForPlanner: found=%v err=%v", found, err)
+	want := []string{"report r3", "question r3", "drift r3"}
+	for i, w := range want {
+		var got LogEntry
+		var idx int
+		var ok bool
+		err := s.WithLock(func(tx *Tx) error {
+			var err error
+			got, idx, ok, err = tx.PendingForPlanner(name)
+			return err
+		})
+		if err != nil || !ok {
+			t.Fatalf("delivery %d: PendingForPlanner ok=%v err=%v", i, ok, err)
+		}
+		if got.Payload != w {
+			t.Fatalf("delivery %d = %q, want %q", i, got.Payload, w)
+		}
+		if err := s.ConfirmIndex(name, idx); err != nil {
+			t.Fatalf("ConfirmIndex: %v", err)
+		}
 	}
-	if got.Payload != "new" {
-		t.Errorf("payload = %q, want %q", got.Payload, "new")
+
+	if _, found, err := s.PendingForPlanner(name); err != nil || found {
+		t.Fatalf("queue not drained: found=%v err=%v", found, err)
 	}
 }
 
-func TestConfirmLatestClearsPending(t *testing.T) {
+func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
+	s, name := seedBinding(t)
+
+	for _, e := range []LogEntry{
+		{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true},
+		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "first"},
+		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "second"},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	// Confirm the OLDER of the two pending entries. Naming index 2 would pin
+	// nothing: index 2 is also the newest unconfirmed entry, so an
+	// implementation that ignored idx and confirmed the newest would pass.
+	if err := s.ConfirmIndex(name, 1); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if !entries[1].Confirmed {
+		t.Error("index 1 not confirmed; ConfirmIndex must confirm the index it was given")
+	}
+	if entries[2].Confirmed {
+		t.Error("index 2 confirmed; ConfirmIndex must confirm ONLY the index it was given, never the newest")
+	}
+	if entries[1].DeliveredAt == nil {
+		t.Error("DeliveredAt not stamped on the confirmed entry")
+	}
+}
+
+func TestConfirmIndexClearsPending(t *testing.T) {
 	s, name := seedBinding(t)
 	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x"}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	if err := s.ConfirmLatest(name); err != nil {
-		t.Fatalf("ConfirmLatest: %v", err)
+	if err := s.ConfirmIndex(name, 0); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
 	if _, found, err := s.PendingForPlanner(name); err != nil || found {
 		t.Fatalf("still pending after confirm: found=%v err=%v", found, err)
+	}
+}
+
+func TestConfirmIndexRejectsAnIndexOutsideTheLog(t *testing.T) {
+	s, name := seedBinding(t)
+	if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x"}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	if err := s.ConfirmIndex(name, 7); err == nil {
+		t.Fatal("ConfirmIndex(7) on a 1-entry log returned nil; an out-of-range index is a caller bug, not a no-op")
 	}
 }
 
@@ -96,35 +161,6 @@ func TestReadLogOnNeverWrittenLogIsNilNil(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("got %+v, want nil", got)
-	}
-}
-
-func TestConfirmLatestOnlyConfirmsNewestUnconfirmed(t *testing.T) {
-	s, name := seedBinding(t)
-
-	entries := []LogEntry{
-		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "older"},
-		{Round: 2, Direction: DirToPlanner, Kind: KindReport, Payload: "newer"},
-	}
-	for _, e := range entries {
-		if err := s.AppendLog(name, e); err != nil {
-			t.Fatalf("AppendLog: %v", err)
-		}
-	}
-
-	if err := s.ConfirmLatest(name); err != nil {
-		t.Fatalf("ConfirmLatest: %v", err)
-	}
-
-	got, found, err := s.PendingForPlanner(name)
-	if err != nil {
-		t.Fatalf("PendingForPlanner: %v", err)
-	}
-	if !found {
-		t.Fatal("found=false, want the older entry still pending")
-	}
-	if got.Payload != "older" {
-		t.Errorf("payload = %q, want %q (only the newest should be confirmed)", got.Payload, "older")
 	}
 }
 

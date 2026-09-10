@@ -285,7 +285,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 
 | Failure | Behaviour |
 | --- | --- |
-| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay never kills a pane. |
+| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay kills a pane only in `relay reap`, and only a consult pane it spawned itself. |
 | Builder wedged (`working` forever) | `round_timeout_ms` elapses -> `needs_you` + notification. Nothing killed. |
 | herdr reports `unknown` | Treated as "keep waiting", **never** as done (herdr documents that `unknown` does not prove completion). After a grace period -> `needs_you`. Most likely with `abuilder`; see prerequisites. |
 | `agent_prompt_stalled` | Retry once, then stop and flag. Never blind-refire — a double-submitted plan means two builders' worth of edits. |

@@ -2,7 +2,9 @@
 
 - Date: 2026-09-10
 - Issues: #40 (relay is blind to writers it did not spawn), partially #24
-- Status: approved, not yet planned
+- Status: implemented in #52 (`2b3b0fe`, `internal/relay/foreign.go`)
+- Amended 2026-09-10: §7.2 gains a harness-specific caveat after an
+  opencode sub-agent was observed NOT surfacing as its own herdr pane
 
 ## 1. System overview
 
@@ -359,6 +361,34 @@ Suppressing by title would mean relay trusting a string any agent can set, to
 decide whether to report a fact. relay cannot distinguish a reader from a
 writer, so it reports occupancy and shows the title; the *human* reads the
 title and draws the conclusion. That division is the whole design.
+
+**Whether it surfaces at all is harness-specific.** Observed 2026-09-10 against
+herdr 0.9.0, opencode integration v11: two `builder`-alias builders were run in
+relay worktrees, and one dispatched a `researcher` sub-agent. It rendered as a
+labelled card *inside* the builder's own opencode TUI. `herdr agent list`
+reported three agents -- the planner and the two builders -- and no researcher.
+So on opencode the sub-agent produced **no** `foreign` row.
+
+Do not read that as the quieter, better case. It is the worse one. A row you did
+not want is noise you can dismiss; a sub-agent herdr cannot see is occupancy
+relay cannot report, and `ForeignAgents` will stay silent about it whether it
+reads or writes. Detection covers agents herdr knows about, which is not the
+same set as agents touching the tree -- and the gap is invisible from
+`relay status` by construction.
+
+Two consequences for the reader of this spec:
+
+- A user on the `builder` (opencode) alias who sees no `researcher` rows has not
+  verified that nothing else is in the tree. They have verified that herdr
+  reported nothing else.
+- The claude observation above and this opencode one are both single
+  observations, on one machine, at one integration version. Neither generalises
+  to "this harness always does X". Treat the vocabulary as: relay reports what
+  herdr reports, and how much that covers varies by harness.
+
+This changes nothing in the implementation. It is recorded because §7.2
+previously read as though noisy `researcher` rows were the universal outcome,
+which would leave an opencode user drawing a false conclusion from silence.
 
 ### 7.3 Containment, one direction
 

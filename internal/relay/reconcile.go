@@ -108,6 +108,20 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
+	// Consults reconcile before the builder is located, because they are
+	// orthogonal to it: a reviewer reading a diff has no stake in whether the
+	// builder's pane still exists. Reconcile returns early both when the
+	// builder is gone (below) and on the round-cap halt, and neither should
+	// stop a consult from finishing.
+	//
+	// On those early-return paths deliverAndSettle is skipped, so queued
+	// findings wait on disk and `relay pull` retrieves them -- the same
+	// behaviour the halt comment below describes for a halted binding.
+	b, err = reconcileConsults(ctx, rt, tx, b, agents)
+	if err != nil {
+		return b, err
+	}
+
 	builder, ok := FindAgent(agents, b.Builder)
 	if !ok {
 		b.State = store.StateBroken

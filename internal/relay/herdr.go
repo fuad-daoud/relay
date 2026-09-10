@@ -26,6 +26,7 @@ type Herdr interface {
 	CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error)
 	StartAgent(ctx context.Context, name, kind, paneID string, args []string) error
 	Notify(ctx context.Context, message string) error
+	ClosePane(ctx context.Context, paneID string) error
 }
 
 // Git is the slice of the git CLI relay needs. *git.Client satisfies it.
@@ -48,6 +49,10 @@ type Runtime struct {
 	Aliases *alias.Table
 	Now     func() time.Time
 	Hooks   hooks.Dispatcher
+
+	// NewID mints a consult id. Nil means a crypto/rand id, so no production
+	// call site has to set it and tests can make ids deterministic.
+	NewID func() string
 }
 
 // SameAgent reports whether a live agent is the one an endpoint records.

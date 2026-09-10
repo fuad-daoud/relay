@@ -252,6 +252,33 @@ func TestTickDoesNotMutateTheHerdrAgentList(t *testing.T) {
 	}
 }
 
+func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
+	// The next == fresh short-circuit this replaces was never tested. save()
+	// stamps UpdatedAt unconditionally, so without the short-circuit every tick
+	// rewrites every bind.json and UpdatedAt stops meaning "last change".
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+
+	before, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	after, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("UpdatedAt moved %v -> %v on a tick that changed nothing",
+			before.UpdatedAt, after.UpdatedAt)
+	}
+}
+
 func TestTickInjectsOncePerPlannerPane(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, first, _ := twoBindingsOnePlanner(t, f)

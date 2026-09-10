@@ -29,6 +29,11 @@ var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abando
 // It refuses instead, until a human says the builder really is gone.
 var ErrBuilderUnverified = errors.New("builder was never session-identified")
 
+// ErrConsultAlias reports a bind or add naming a consult role. A consult is
+// ephemeral, read-only and one-shot; installing one as a binding's builder
+// would put a reader where the work happens.
+var ErrConsultAlias = errors.New("that alias is a consult role, not a builder")
+
 // BindOptions describes one bind request. BuilderPane adopts an existing pane;
 // leaving it empty spawns a new one from Alias.
 type BindOptions struct {
@@ -288,6 +293,12 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	spec, err := rt.Aliases.Lookup(opts.Alias)
 	if err != nil {
 		return store.Endpoint{}, err
+	}
+
+	if spec.IsConsult() {
+		return store.Endpoint{}, fmt.Errorf(
+			"%q is a consult role; ask it with `relay ask --role %s`: %w",
+			opts.Alias, opts.Alias, ErrConsultAlias)
 	}
 
 	agentName := name + "-builder"

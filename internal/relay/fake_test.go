@@ -3,9 +3,12 @@ package relay
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -19,6 +22,10 @@ type readCall struct {
 }
 type tabCall struct {
 	WorkspaceID, CWD, Label string
+}
+
+type splitCall struct {
+	Target, Direction, CWD string
 }
 
 type startCall struct {
@@ -145,28 +152,49 @@ func TestFakeSatisfiesGit(t *testing.T) {
 	var _ Git = (*git.Client)(nil)
 }
 
+// consultTable is a table with one consult role, `reviewer`, layered over the
+// shipped builder aliases.
+func consultTable(t *testing.T) *alias.Table {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "aliases.json")
+	body := `[{"name":"reviewer","kind":"claude","args":["--agent","reviewer"],"role":"consult","tree":"binding"}]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write aliases: %v", err)
+	}
+	tbl, err := alias.LoadTable(path)
+	if err != nil {
+		t.Fatalf("LoadTable: %v", err)
+	}
+	return tbl
+}
+
 // fakeHerdr is the in-memory Herdr used by every test in this package.
 type fakeHerdr struct {
-	agents    []herdr.Agent
-	prompts   []promptCall
-	keys      []keyCall
-	starts    []startCall
-	reads     []readCall
-	notices   []string
-	readOut   string
-	newPane   string
-	newTab    string
-	tabs      []tabCall
-	splits    int
-	promptErr error
-	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
-	listCalls int
-	listErr   error // when set, every ListAgents call after the first fails
+	agents     []herdr.Agent
+	prompts    []promptCall
+	keys       []keyCall
+	starts     []startCall
+	reads      []readCall
+	notices    []string
+	readOut    string
+	newPane    string
+	newTab     string
+	tabs       []tabCall
+	splitCalls []splitCall
+	splits     int
+	promptErr  error
+	stalls     int // when >0, Prompt returns ErrPromptStalled and decrements
+	listCalls  int
+	listErr    error // when set, every ListAgents call after the first fails
 	// onList runs at the top of every ListAgents call. Tick makes that call
 	// after it has listed bindings and before it reconciles them, which is
 	// the one window a concurrent `relay unbind` has to land in.
 	onList  func()
 	readErr error // when set, ReadAgent fails instead of returning readOut
+
+	closed   []string // pane ids handed to ClosePane
+	closeErr error    // when set, ClosePane fails
+	onClose  func()
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
@@ -212,8 +240,9 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 	return f.readOut, nil
 }
 
-func (f *fakeHerdr) SplitPane(context.Context, string, string, string) (string, error) {
+func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) (string, error) {
 	f.splits++
+	f.splitCalls = append(f.splitCalls, splitCall{Target: target, Direction: direction, CWD: cwd})
 	if f.newPane == "" {
 		return "", errors.New("pane split returned no pane id")
 	}
@@ -235,6 +264,17 @@ func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args 
 
 func (f *fakeHerdr) Notify(_ context.Context, msg string) error {
 	f.notices = append(f.notices, msg)
+	return nil
+}
+
+func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	f.closed = append(f.closed, paneID)
 	return nil
 }
 
