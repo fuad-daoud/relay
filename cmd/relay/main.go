@@ -55,6 +55,7 @@ Commands:
   done      mark a binding done; relaying stops
   unbind    forget a binding, deleting or archiving its directory
   gc        clear every binding the planner marked DONE
+  reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
@@ -177,6 +178,8 @@ func run(args []string) error {
 		return cmdUnbind(args[1:])
 	case "gc":
 		return cmdGC(args[1:])
+	case "reap":
+		return cmdReap(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
@@ -578,6 +581,54 @@ func cmdGC(args []string) error {
 
 	if *dryRun {
 		fmt.Printf("\n%d binding(s) would be cleared; re-run without --dry-run\n", len(done))
+	}
+
+	return nil
+}
+
+func cmdReap(args []string) error {
+	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
+	all := *fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
+	dryRun := *fs.Bool("dry-run", false, "list what would be closed, change nothing")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	// --all needs no name, and resolving one from the cwd would only fail in
+	// an unbound directory, where the sweep is most wanted.
+	var name string
+	if !all {
+		name, err = resolveBinding(rt, "", fs.Args())
+		if err != nil {
+			return err
+		}
+	}
+
+	results, err := relay.Reap(context.Background(), rt, relay.ReapOptions{
+		Name:   name,
+		All:    all,
+		DryRun: dryRun,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, r := range results {
+		for _, c := range r.Closed {
+			verb := "closed"
+			if dryRun {
+				verb = "would close"
+			}
+			fmt.Printf("%s %s consult %s (pane %s) on %s\n", verb, c.Role, c.ID, c.Endpoint.PaneID, r.Binding)
+		}
+		for _, c := range r.Failed {
+			fmt.Printf("could not close pane %s for consult %s on %s; record kept\n", c.Endpoint.PaneID, c.ID, r.Binding)
+		}
 	}
 
 	return nil
