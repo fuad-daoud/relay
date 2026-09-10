@@ -93,7 +93,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if next == fresh {
+			if store.SameBinding(next, fresh) {
 				return nil
 			}
 

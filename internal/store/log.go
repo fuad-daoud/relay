@@ -23,6 +23,12 @@ type Direction string
 const (
 	DirToBuilder Direction = "to_builder"
 	DirToPlanner Direction = "to_planner"
+
+	// DirToConsult is an outbound message to a consult. It is additive: every
+	// consumer of Direction tests equality against a specific value, and there
+	// is no exhaustive switch in the tree. Reusing DirToBuilder would instead
+	// redefine what a persisted value means.
+	DirToConsult Direction = "to_consult"
 )
 
 // Kind is what sort of message it was.
@@ -36,6 +42,9 @@ const (
 	KindDiff     Kind = "diff"
 	KindDrift    Kind = "drift"
 	KindFork     Kind = "fork"
+
+	KindAsk      Kind = "ask"      // planner -> consult, the staged question
+	KindFindings Kind = "findings" // consult -> planner, the findings path
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also

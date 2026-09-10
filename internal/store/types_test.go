@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestBindingRoundClosedTreeJSON(t *testing.T) {
@@ -42,4 +44,80 @@ func TestBindingRoundClosedTreeJSON(t *testing.T) {
 			t.Errorf("round_closed_tree = %v, want %v", got, treeID)
 		}
 	})
+}
+
+func TestBindingWithoutConsultsSerialisesWithoutTheKeys(t *testing.T) {
+	// Every bind.json already on disk was written before consults existed.
+	// Loading and re-saving one must not add keys to it.
+	b := newBinding("webshop", "/repo")
+
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{"consults", "consult_cap"} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Errorf("empty binding serialised %q; both fields need omitempty", key)
+		}
+	}
+}
+
+func TestConsultRoundTripsThroughJSON(t *testing.T) {
+	b := newBinding("webshop", "/repo")
+	b.ConsultCap = 4
+	b.Consults = []Consult{{
+		ID:           "7f2a3c1d",
+		Role:         "reviewer",
+		Endpoint:     Endpoint{AgentName: "webshop-reviewer-7f2a3c1d", PaneID: "w2:p9", Kind: "claude"},
+		Round:        3,
+		AskPath:      "/state/webshop/003-7f2a3c1d-ask.md",
+		FindingsPath: "/state/webshop/003-7f2a3c1d-findings.md",
+		State:        ConsultRunning,
+		SpawnedAt:    time.Unix(1757000000, 0).UTC(),
+	}}
+
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Binding
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if len(got.Consults) != 1 {
+		t.Fatalf("got %d consults, want 1", len(got.Consults))
+	}
+	if got.Consults[0] != b.Consults[0] {
+		t.Errorf("consult did not round-trip:\n got %+v\nwant %+v", got.Consults[0], b.Consults[0])
+	}
+	if got.ConsultCap != 4 {
+		t.Errorf("ConsultCap = %d, want 4", got.ConsultCap)
+	}
+}
+
+func TestSameBindingIgnoresNothingAndCatchesAConsult(t *testing.T) {
+	a := newBinding("webshop", "/repo")
+	b := newBinding("webshop", "/repo")
+
+	if !SameBinding(a, b) {
+		t.Fatal("two identically-built bindings compare different")
+	}
+
+	b.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultRunning}}
+	if SameBinding(a, b) {
+		t.Error("a binding differing only by an appended consult compares same; the daemon would skip the save")
+	}
+}
+
+func TestSameBindingCatchesAConsultStateChange(t *testing.T) {
+	a := newBinding("webshop", "/repo")
+	a.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultRunning}}
+
+	b := a
+	b.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultDone}}
+
+	if SameBinding(a, b) {
+		t.Error("a consult moving running -> done compares same; the daemon would never persist the transition")
+	}
 }

@@ -493,3 +493,19 @@ func TestDriftPath(t *testing.T) {
 		t.Errorf("DriftPath dir = %q, want %q", filepath.Dir(drift), filepath.Dir(diff))
 	}
 }
+
+func TestConsultPathsCarryRoundAndID(t *testing.T) {
+	s := New("/state")
+
+	if got, want := s.AskPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-ask.md"; got != want {
+		t.Errorf("AskPath = %q, want %q", got, want)
+	}
+	if got, want := s.FindingsPath("webshop", 12, "7f2a3c1d"), "/state/webshop/012-7f2a3c1d-findings.md"; got != want {
+		t.Errorf("FindingsPath = %q, want %q", got, want)
+	}
+	// NNN-question.md belongs to the blocked-dialog capture. A consult being
+	// asked something is not a builder being blocked on something.
+	if s.AskPath("webshop", 3, "7f2a3c1d") == s.QuestionPath("webshop", 3) {
+		t.Error("AskPath collides with QuestionPath")
+	}
+}
