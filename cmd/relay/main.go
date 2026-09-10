@@ -589,6 +589,7 @@ func cmdGC(args []string) error {
 func cmdReap(args []string) error {
 	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
 	all := *fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
+	nameFlag := fs.String("name", "", "binding name (default: the binding for this cwd)")
 	dryRun := *fs.Bool("dry-run", false, "list what would be closed, change nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -603,7 +604,7 @@ func cmdReap(args []string) error {
 	// an unbound directory, where the sweep is most wanted.
 	var name string
 	if !all {
-		name, err = resolveBinding(rt, "", fs.Args())
+		name, err = resolveBinding(rt, *nameFlag, fs.Args())
 		if err != nil {
 			return err
 		}

@@ -59,6 +59,17 @@ func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, erro
 
 		err := rt.Store.WithLock(func(tx *store.Tx) error {
 			b, err := tx.Load(name)
+			if errors.Is(err, store.ErrNotFound) && opts.All {
+				// A `relay unbind` landed between List and here. The lock is
+				// taken per binding, not per sweep, so this race is real.
+				// Skipping matches the daemon's tick, which resolves the same
+				// List-then-Load race the same way (daemon.go:82). A sweep must
+				// not abandon every binding after the one that vanished.
+				//
+				// Deliberately NOT extended to a named binding: there,
+				// ErrNotFound is the human's typo and must surface.
+				return nil
+			}
 			if err != nil {
 				return err
 			}

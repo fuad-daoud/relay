@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/store"
@@ -101,5 +102,75 @@ func TestReapKeepsTheRecordWhenTheCloseFails(t *testing.T) {
 	b, _ := rt.Store.Load("webshop")
 	if len(b.Consults) != 3 {
 		t.Errorf("a failed close dropped the record, so a retry is impossible: %+v", b.Consults)
+	}
+}
+
+func TestReapAllSurvivesABindingVanishingMidSweep(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	seedReapable(t, rt)
+
+	// A second binding, sorted after "webshop" so the first close comes from
+	// webshop. Store.List reads the state root with os.ReadDir, which returns
+	// entries sorted by name, so this ordering is deterministic.
+	zlast := store.Binding{
+		Name:    "zlast",
+		CWD:     "/zlast",
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{PaneID: "w2:pC", Kind: "opencode"},
+		Round:   1,
+		State:   store.StateActive,
+		Consults: []store.Consult{{
+			ID: "dddddddd", Role: "reviewer", State: store.ConsultDone,
+			Endpoint: store.Endpoint{PaneID: "w2:pD"},
+		}},
+	}
+	if err := rt.Store.Save(zlast); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// A `relay unbind zlast` that has already completed, observed from inside
+	// the sweep. Deliberately os.RemoveAll and not rt.Store.Delete: Delete
+	// re-enters WithLock, Reap already holds it, and Go mutexes are not
+	// reentrant (see status.go:229), so the test would deadlock rather than
+	// fail. Removing the directory reproduces the same end state -- zlast is
+	// gone by the time its own closure loads it.
+	//
+	// The race is real despite the hook firing inside a closure: Reap takes the
+	// lock per binding, not per sweep, so a real unbind can land between two
+	// bindings' closures.
+	var once bool
+	f.onClose = func() {
+		if once {
+			return
+		}
+		once = true
+		if err := os.RemoveAll(rt.Store.Dir("zlast")); err != nil {
+			t.Fatalf("RemoveAll: %v", err)
+		}
+	}
+
+	res, err := Reap(context.Background(), rt, ReapOptions{All: true})
+	if err != nil {
+		t.Fatalf("a binding unbound mid-sweep aborted the whole sweep: %v", err)
+	}
+
+	var closed int
+	for _, r := range res {
+		closed += len(r.Closed)
+	}
+	if closed != 2 {
+		t.Errorf("closed %d panes, want webshop's 2; the sweep did not finish", closed)
+	}
+}
+
+func TestReapANamedBindingThatDoesNotExistIsAnError(t *testing.T) {
+	// The --all skip must not swallow a genuine mistake: when the human names a
+	// binding, a missing one is a typo, not a race.
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	if _, err := Reap(context.Background(), rt, ReapOptions{Name: "nope"}); err == nil {
+		t.Fatal("reaping a binding that does not exist returned nil")
 	}
 }
