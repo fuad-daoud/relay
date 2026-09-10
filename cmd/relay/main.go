@@ -180,11 +180,7 @@ func run(args []string) error {
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
-		rt, err := newRuntime()
-		if err != nil {
-			return err
-		}
-		return runAsk(context.Background(), rt, args[1:])
+		return cmdAsk(args[1:])
 	case "pull":
 		return cmdPull(args[1:])
 	case "diff":
@@ -620,7 +616,7 @@ func cmdSend(args []string) error {
 	return nil
 }
 
-func runAsk(ctx context.Context, rt relay.Runtime, args []string) error {
+func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	role := fs.String("role", "", "consult role to spawn")
 	file := fs.String("file", "", "file containing the question")
@@ -637,12 +633,17 @@ func runAsk(ctx context.Context, rt relay.Runtime, args []string) error {
 		return fmt.Errorf("relay ask needs --file PATH")
 	}
 
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
 	name, err := resolveBinding(rt, *nameFlag, fs.Args())
 	if err != nil {
 		return err
 	}
 
-	res, err := relay.Ask(ctx, rt, relay.AskOptions{
+	res, err := relay.Ask(context.Background(), rt, relay.AskOptions{
 		Role:        *role,
 		File:        *file,
 		Name:        name,
