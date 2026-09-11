@@ -41,11 +41,15 @@ func TestLookupUnknown(t *testing.T) {
 func TestTableExactValues(t *testing.T) {
 	expected := map[string]Harness{
 		"agy": {
-			Kind:                  "agy",
-			Binary:                "agy",
-			Integration:           "antigravity-cli",
-			Roles:                 nil,
-			SelectsRoleByPreamble: true,
+			Kind:        "agy",
+			Binary:      "agy",
+			Integration: "antigravity-cli",
+			MinVersion:  "1.1.6",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
+				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
+				{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+			},
 		},
 		"claude": {
 			Kind:        "claude",
@@ -109,12 +113,8 @@ func TestRoleTable(t *testing.T) {
 	}
 
 	for _, name := range RoleNames() {
-		r, ok := RoleByName(name)
-		if !ok {
+		if _, ok := RoleByName(name); !ok {
 			t.Fatalf("RoleByName(%q) returned ok=false", name)
-		}
-		if r.Preamble == "" {
-			t.Errorf("RoleByName(%q).Preamble is empty", name)
 		}
 	}
 
@@ -152,24 +152,6 @@ func TestCanServe(t *testing.T) {
 			t.Errorf("Harness(%q).CanServe(%q) = %v, want %v", tt.kind, tt.role, got, tt.want)
 		}
 	}
-
-	agy, ok := Lookup("agy")
-	if !ok {
-		t.Fatal("Lookup(\"agy\") not found")
-	}
-	if !agy.SelectsRoleByPreamble {
-		t.Errorf("Lookup(\"agy\").SelectsRoleByPreamble = false, want true")
-	}
-
-	for _, kind := range []string{"claude", "opencode"} {
-		h, ok := Lookup(kind)
-		if !ok {
-			t.Fatalf("Lookup(%q) not found", kind)
-		}
-		if h.SelectsRoleByPreamble {
-			t.Errorf("Lookup(%q).SelectsRoleByPreamble = true, want false", kind)
-		}
-	}
 }
 
 func TestLaunch(t *testing.T) {
@@ -181,76 +163,68 @@ func TestLaunch(t *testing.T) {
 	if !ok {
 		t.Fatal("RoleByName(\"reviewer\") not found")
 	}
+	researcher, ok := RoleByName("researcher")
+	if !ok {
+		t.Fatal("RoleByName(\"researcher\") not found")
+	}
 
 	tests := []struct {
-		name         string
-		kind         string
-		provider     string
-		model        string
-		extra        []string
-		role         RoleSpec
-		wantArgs     []string
-		wantPreamble string
+		name     string
+		kind     string
+		provider string
+		model    string
+		extra    []string
+		role     RoleSpec
+		wantArgs []string
 	}{
 		{
-			name:         "claude builder",
-			kind:         "claude",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        nil,
-			role:         builder,
-			wantArgs:     []string{"--model", "m/x", "--agent", "plan-executor"},
-			wantPreamble: "",
+			name:     "claude builder",
+			kind:     "claude",
+			provider: "prov",
+			model:    "m/x",
+			extra:    nil,
+			role:     builder,
+			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor"},
 		},
 		{
-			name:         "opencode builder",
-			kind:         "opencode",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        nil,
-			role:         builder,
-			wantArgs:     []string{"--agent", "plan-executor", "-m", "prov/m/x"},
-			wantPreamble: "",
+			name:     "opencode builder",
+			kind:     "opencode",
+			provider: "prov",
+			model:    "m/x",
+			extra:    nil,
+			role:     builder,
+			wantArgs: []string{"--agent", "plan-executor", "-m", "prov/m/x"},
 		},
 		{
-			name:         "agy builder",
-			kind:         "agy",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        nil,
-			role:         builder,
-			wantArgs:     []string{"--model", "m/x"},
-			wantPreamble: builder.Preamble,
+			name: "agy builder", kind: "agy", provider: "prov", model: "m/x", extra: nil, role: builder,
+			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor"},
 		},
 		{
-			name:         "agy builder with extra",
-			kind:         "agy",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        []string{"--dangerously-skip-permissions"},
-			role:         builder,
-			wantArgs:     []string{"--model", "m/x", "--dangerously-skip-permissions"},
-			wantPreamble: builder.Preamble,
+			name: "agy builder with extra", kind: "agy", provider: "prov", model: "m/x",
+			extra: []string{"--dangerously-skip-permissions"}, role: builder,
+			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor", "--dangerously-skip-permissions"},
 		},
 		{
-			name:         "claude builder with extra",
-			kind:         "claude",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        []string{"--auto"},
-			role:         builder,
-			wantArgs:     []string{"--model", "m/x", "--agent", "plan-executor", "--auto"},
-			wantPreamble: "",
+			name: "agy researcher", kind: "agy", provider: "prov", model: "m/x", extra: nil, role: researcher,
+			wantArgs: []string{"--model", "m/x", "--agent", "researcher"},
 		},
 		{
-			name:         "opencode reviewer",
-			kind:         "opencode",
-			provider:     "prov",
-			model:        "m/x",
-			extra:        nil,
-			role:         reviewer,
-			wantArgs:     []string{"--agent", "reviewer", "-m", "prov/m/x"},
-			wantPreamble: "",
+			name:     "claude builder with extra",
+			kind:     "claude",
+			provider: "prov",
+			model:    "m/x",
+			extra:    []string{"--auto"},
+			role:     builder,
+			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor", "--auto"},
+		},
+		{
+			name:     "opencode reviewer",
+			kind:     "opencode",
+			provider: "prov",
+			model:    "m/x",
+			extra:    nil,
+			role:     reviewer,
+			wantArgs: []string{"--agent", "reviewer", "-m", "prov/m/x"},
 		},
 	}
 
@@ -266,9 +240,6 @@ func TestLaunch(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.Args, tt.wantArgs) {
 				t.Errorf("Launch().Args = %v, want %v", got.Args, tt.wantArgs)
-			}
-			if got.Preamble != tt.wantPreamble {
-				t.Errorf("Launch().Preamble = %q, want %q", got.Preamble, tt.wantPreamble)
 			}
 		})
 	}

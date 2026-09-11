@@ -10,14 +10,14 @@ import (
 
 func cmdAgent(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <claude|opencode> [--role <plan-executor|researcher|reviewer>]")
+		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <agy|claude|opencode> [--role <plan-executor|researcher|reviewer>]")
 		return exitCodeErr{code: 2}
 	}
 	switch args[0] {
 	case "print":
 		return cmdAgentPrint(args[1:])
 	case "help", "-h", "--help":
-		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <claude|opencode> [--role <plan-executor|researcher|reviewer>]")
+		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <agy|claude|opencode> [--role <plan-executor|researcher|reviewer>]")
 		return nil
 	default:
 		fmt.Fprintf(os.Stderr, "relay agent: unknown command %q\n", args[0])
@@ -35,12 +35,7 @@ func cmdAgentPrint(args []string) error {
 	}
 
 	if *kind == "" {
-		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <claude|opencode> [--role <plan-executor|researcher|reviewer>]")
-		return exitCodeErr{code: 2}
-	}
-
-	if *kind == "agy" {
-		fmt.Fprintln(os.Stderr, "agy selects its role with a preamble on the first prompt, not an agent file; relay prepends it when it starts an agy candidate (see README \"Candidates\")")
+		fmt.Fprintln(os.Stderr, "usage: relay agent print --kind <agy|claude|opencode> [--role <plan-executor|researcher|reviewer>]")
 		return exitCodeErr{code: 2}
 	}
 
@@ -50,7 +45,7 @@ func cmdAgentPrint(args []string) error {
 			fmt.Fprintf(os.Stderr, "relay: kind %q has no role %q (known: %v)\n",
 				*kind, *role, h.RoleNames())
 		} else {
-			fmt.Fprintf(os.Stderr, "relay: unknown kind %q (known with definitions: claude, opencode)\n", *kind)
+			fmt.Fprintf(os.Stderr, "relay: unknown kind %q (known: agy, claude, opencode)\n", *kind)
 		}
 		return exitCodeErr{code: 2}
 	}

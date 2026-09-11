@@ -100,7 +100,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	refused. A planner-only resume of one is allowed, and
 //	reactivates it, exactly as before this feature existed. When
 //	a builder was supplied: Builder is the new endpoint with its
-//	session id recorded, PreamblePending is true, State is Active,
+//	session id recorded, State is Active,
 //	HaltNotifiedRound is 0, and the builder-screen fields are
 //	cleared. RoundClosedTree is cleared when a builder was supplied:
 //	a tree that changed hands says nothing about a builder that no
@@ -172,7 +172,6 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if rebinding {
 			b.Builder = builder
 			b.BuilderCandidate = token // "" when adopting a pane
-			b.PreamblePending = true
 			b.HaltNotifiedRound = 0
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}

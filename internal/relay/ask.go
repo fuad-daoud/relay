@@ -193,11 +193,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 			consult.Note = "start failed: " + brief(err)
 			spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
 		} else {
-			text := l.Preamble
-			if text != "" {
-				text += "\n\n"
-			}
-			text += fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
+			text := fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
 
 			if err := promptWithRetry(ctx, rt, pane, text); err != nil {
 				consult.State = store.ConsultSilent

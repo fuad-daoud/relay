@@ -219,8 +219,8 @@ func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
 	if f.starts[0].Kind != "agy" {
 		t.Errorf("Kind = %q, want agy", f.starts[0].Kind)
 	}
-	if !reflect.DeepEqual(f.starts[0].Args, []string{"--model", "m", "--x"}) {
-		t.Errorf("Args = %v, want [--model m --x]", f.starts[0].Args)
+	if !reflect.DeepEqual(f.starts[0].Args, []string{"--model", "m", "--agent", "plan-executor", "--x"}) {
+		t.Errorf("Args = %v, want [--model m --agent plan-executor --x]", f.starts[0].Args)
 	}
 	if b.BuilderCandidate != "agy/test/m" {
 		t.Errorf("BuilderCandidate = %q, want agy/test/m", b.BuilderCandidate)
@@ -468,9 +468,6 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if got.BuilderCandidate != testOpencodeRef {
 			t.Errorf("BuilderCandidate = %q, want %s", got.BuilderCandidate, testOpencodeRef)
 		}
-		if !got.PreamblePending {
-			t.Errorf("PreamblePending = false, want true")
-		}
 		if got.BuilderScreen != "" {
 			t.Errorf("BuilderScreen = %q, want empty", got.BuilderScreen)
 		}
@@ -498,7 +495,7 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 			t.Fatalf("Load: %v", err)
 		}
 		if saved.Builder.PaneID != "w2:p9" || saved.Builder.SessionID != "new-builder-sess" ||
-			!saved.PreamblePending || saved.BuilderScreen != "" || !saved.BuilderScreenAt.IsZero() ||
+			saved.BuilderScreen != "" || !saved.BuilderScreenAt.IsZero() ||
 			saved.HaltNotifiedRound != 0 || saved.Round != 5 || saved.RoundBaselineTree != "tree-abc" {
 			t.Errorf("saved binding does not reflect rebind updates: %+v", saved)
 		}
@@ -532,9 +529,6 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		}
 		if got.BuilderCandidate != "" {
 			t.Errorf("BuilderAlias = %q, want empty for adopted builder", got.BuilderCandidate)
-		}
-		if !got.PreamblePending {
-			t.Errorf("PreamblePending = false, want true")
 		}
 		if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
 			t.Errorf("screen fields not cleared: screen=%q at=%v", got.BuilderScreen, got.BuilderScreenAt)
@@ -630,9 +624,6 @@ func TestBindRebindIdentityRule(t *testing.T) {
 		}
 		if got.Builder.PaneID != "w2:p9" {
 			t.Errorf("Builder.PaneID = %q, want w2:p9", got.Builder.PaneID)
-		}
-		if !got.PreamblePending {
-			t.Errorf("PreamblePending = false, want true")
 		}
 	})
 
@@ -1089,9 +1080,6 @@ func TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone(t *testing.T) {
 	}
 	if b.Builder.PaneID != "w2:p7" {
 		t.Fatalf("builder pane = %q, want w2:p7", b.Builder.PaneID)
-	}
-	if !b.PreamblePending {
-		t.Fatal("a replacement builder must get the preamble")
 	}
 }
 

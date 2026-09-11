@@ -81,121 +81,23 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	}
 }
 
-func TestSendIncludesPreambleOnFirstRoundOnly(t *testing.T) {
+// The role is selected with --agent at launch (#85); the plan prompt is
+// the plan prompt, on round 1 as on every other.
+func TestSendPromptCarriesNoPreamble(t *testing.T) {
 	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f) // abuilder carries a preamble
+	rt, _ := seedBound(t, f) // an agy candidate, the kind that used to get one
 	src := writePlan(t, "x")
-
-	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
-		t.Fatalf("round 1 Send: %v", err)
-	}
-	if !strings.Contains(f.prompts[0].Text, "plan-executor") {
-		t.Error("round 1 prompt must carry the abuilder preamble")
-	}
-
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	b.Round = 2
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
-		t.Fatalf("round 2 Send: %v", err)
-	}
-	if strings.Contains(f.prompts[1].Text, "plan-executor") {
-		t.Error("the preamble must not repeat after round 1")
-	}
-}
-
-func TestSendWithoutPreambleWhenCandidateWasRemoved(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	rt.Candidates = candidateSet(t, "[]")
-	src := writePlan(t, "x")
-
 	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
 		t.Fatalf("round 1 Send: %v", err)
 	}
 	if len(f.prompts) != 1 {
 		t.Fatalf("got %d prompts, want 1", len(f.prompts))
 	}
-	if strings.Contains(f.prompts[0].Text, "plan-executor") {
-		t.Error("prompt must not carry preamble when candidate was removed")
+	if strings.Contains(f.prompts[0].Text, "Activate your") {
+		t.Errorf("round 1 prompt must not carry a preamble:\n%s", f.prompts[0].Text)
 	}
-}
-
-func TestSendIncludesPreambleWhenPending(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	src := writePlan(t, "x")
-
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	b.Round = 5
-	b.PreamblePending = true
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
-		t.Fatalf("round 5 Send: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
-	}
-	if !strings.Contains(f.prompts[0].Text, "plan-executor") {
-		t.Error("round 5 prompt with PreamblePending must carry the preamble")
-	}
-
-	b, err = rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if b.PreamblePending {
-		t.Error("PreamblePending must be cleared after successful Send")
-	}
-
-	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
-		t.Fatalf("subsequent Send: %v", err)
-	}
-	if len(f.prompts) != 2 {
-		t.Fatalf("got %d prompts, want 2", len(f.prompts))
-	}
-	if strings.Contains(f.prompts[1].Text, "plan-executor") {
-		t.Error("round 5 prompt without PreamblePending must not carry the preamble")
-	}
-}
-
-func TestSendFailedPromptLeavesPreamblePending(t *testing.T) {
-	f := &fakeHerdr{promptErr: errors.New("builder crashed")}
-	rt, _ := seedBound(t, f)
-	src := writePlan(t, "x")
-
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	b.Round = 5
-	b.PreamblePending = true
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	if _, err := Send(context.Background(), rt, "webshop", src); err == nil {
-		t.Fatal("Send must fail when builder prompt fails")
-	}
-
-	b, err = rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !b.PreamblePending {
-		t.Error("PreamblePending must remain set if prompt failed")
+	if !strings.HasPrefix(f.prompts[0].Text, "Round 1 from the planner.") {
+		t.Errorf("prompt must start with the builder prompt template:\n%s", f.prompts[0].Text)
 	}
 }
 

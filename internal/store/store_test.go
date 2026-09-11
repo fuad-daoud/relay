@@ -52,26 +52,6 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
 		t.Errorf("builder screen fields must default to zero: %+v", got)
 	}
-	if got.PreamblePending {
-		t.Errorf("preamble pending must default to false: %+v", got)
-	}
-}
-
-func TestPreamblePendingRoundTrip(t *testing.T) {
-	s := New(t.TempDir())
-	want := newBinding("webshop", "/home/dev/projects/webshop")
-	want.PreamblePending = true
-
-	if err := s.Save(want); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := s.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !got.PreamblePending {
-		t.Errorf("got PreamblePending=false, want true")
-	}
 }
 
 func TestBuilderScreenRoundTrip(t *testing.T) {
@@ -532,6 +512,37 @@ func TestLoadIgnoresLegacyBuilderAlias(t *testing.T) {
 	}
 	if got.BuilderCandidate != "" {
 		t.Errorf("got.BuilderCandidate = %q, want empty", got.BuilderCandidate)
+	}
+}
+
+// A binding written before #85 carries preamble_pending; the decoder drops it,
+// and nothing reads it: the role is selected at launch now.
+func TestLoadIgnoresLegacyPreamblePending(t *testing.T) {
+	s := New(t.TempDir())
+	dir := s.Dir("old")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"preamble_pending":true,"round":3,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+	got, err := s.Load("old")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Round != 3 {
+		t.Errorf("got.Round = %d, want 3", got.Round)
+	}
+	if err := s.Save(got); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "bind.json"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if strings.Contains(string(raw), "preamble_pending") {
+		t.Errorf("round-trip must drop preamble_pending, got:\n%s", raw)
 	}
 }
 
