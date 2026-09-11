@@ -872,3 +872,20 @@ func TestStatusPopulatesGated(t *testing.T) {
 		t.Errorf("empty report must omit gated, got %s", rawEmpty)
 	}
 }
+
+// TestHideDoneKeepsGated pins that hiding DONE bindings does not drop the
+// machine-wide gated block: cmdStatus applies HideDone between Status and
+// RenderStatus, so a gate lost here never reaches the terminal.
+func TestHideDoneKeepsGated(t *testing.T) {
+	in := Report{
+		Bindings: []BindingStatus{{Name: "old", State: string(store.StateDone)}},
+		Gated:    []ledger.Gate{{Token: "agy/test/m", Kind: ledger.RateLimited}},
+	}
+	out := HideDone(in)
+	if out.DoneHidden != 1 || len(out.Bindings) != 0 {
+		t.Fatalf("HideDone = %+v, want one hidden and no rows", out)
+	}
+	if len(out.Gated) != 1 || out.Gated[0].Token != "agy/test/m" {
+		t.Fatalf("Gated = %+v, want the gate carried through", out.Gated)
+	}
+}

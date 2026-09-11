@@ -288,6 +288,10 @@ func HideDone(r Report) Report {
 	out := Report{
 		Bindings:   make([]BindingStatus, 0, len(r.Bindings)),
 		DoneHidden: 0,
+		// Gated is machine-wide, not per binding: hiding DONE rows must not
+		// hide a rate limit (#61). Found by rendering a hand-written ledger
+		// through the real binary; the renderer tests could not see it.
+		Gated: r.Gated,
 	}
 	for _, b := range r.Bindings {
 		if b.State == string(store.StateDone) {
