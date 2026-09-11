@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -342,7 +341,9 @@ func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
 	}
 }
 
-func TestAskPrependsThePreambleForAPreambleHarness(t *testing.T) {
+// An agy consult is launched with --agent (#85); its first prompt is the
+// consult prompt and nothing else.
+func TestAskSendsTheConsultPromptAlone(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"t","model":"m","roles":["reviewer"]}]`)
@@ -357,13 +358,27 @@ func TestAskPrependsThePreambleForAPreambleHarness(t *testing.T) {
 	if len(f.prompts) != 1 {
 		t.Fatalf("got %d prompts, want 1", len(f.prompts))
 	}
-	roleSpec, ok := harness.RoleByName("reviewer")
-	if !ok {
-		t.Fatal("RoleByName(reviewer) failed")
+	if strings.Contains(f.prompts[0].Text, "Activate your") {
+		t.Errorf("consult prompt must not carry a preamble:\n%s", f.prompts[0].Text)
 	}
-	if !strings.HasPrefix(f.prompts[0].Text, roleSpec.Preamble) {
-		t.Errorf("prompt text does not start with preamble %q:\n%s", roleSpec.Preamble, f.prompts[0].Text)
+
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d starts, want 1", len(f.starts))
 	}
+	if !containsAdjacentPair(f.starts[0].Args, "--agent", "reviewer") {
+		t.Errorf("starts[0].Args = %v, want it to contain the adjacent pair --agent reviewer", f.starts[0].Args)
+	}
+}
+
+// containsAdjacentPair reports whether args contains a, b as consecutive
+// elements, in that order.
+func containsAdjacentPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAskRefusesAtTheConsultCap(t *testing.T) {

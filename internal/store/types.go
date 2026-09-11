@@ -90,15 +90,8 @@ type Binding struct {
 	// rather than a bare duration. Written with PlannerScreen, cleared with it.
 	HeldGrace time.Duration `json:"held_grace,omitempty"`
 
-	// PreamblePending forces the builder alias's preamble onto the next plan even
-	// when the round is not 1. A replacement builder is a NEW agent session that
-	// has never seen the preamble, and for harnesses with no role flag -- agy --
-	// that preamble is the only thing that selects the builder's role. Without
-	// this, a rebound builder would silently run the round as a plain assistant.
-	//
-	// It defaults false, so no existing binding's behaviour changes: round 1 keeps
-	// its own unconditional preamble.
-	PreamblePending bool `json:"preamble_pending,omitempty"`
+	// preamble_pending (pre-#85) is ignored on load: the role is selected at
+	// launch now.
 
 	// Worktree is the git worktree RELAY created for this binding, and is therefore
 	// the only directory relay may ever remove. Empty for every binding relay did

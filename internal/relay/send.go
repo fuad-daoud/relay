@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -111,10 +109,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
-		text, err := composePrompt(rt, b, planPath, reportPath)
-		if err != nil {
-			return err
-		}
+		text := composePrompt(b, planPath, reportPath)
 
 		if err := promptWithRetry(ctx, rt, builder.PaneID, text); err != nil {
 			if errors.Is(err, herdr.ErrAgentBlocked) {
@@ -122,8 +117,6 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			}
 			return fmt.Errorf("prompt builder: %w", err)
 		}
-
-		b.PreamblePending = false
 
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
@@ -190,35 +183,9 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error
 	return nil
 }
 
-// composePrompt prepends the candidate preamble on round 1, and on any round where
-// a rebind left PreamblePending set: a replacement builder is a new session
-// that has never selected its role.
-func composePrompt(rt Runtime, b store.Binding, planPath, reportPath string) (string, error) {
-	text := fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath)
-	if !(b.Round == 1 || b.PreamblePending) {
-		return text, nil
-	}
-	if b.BuilderCandidate == "" {
-		return text, nil // adopted, or a pre-#80 binding
-	}
-	ref, err := candidate.ParseRef(b.BuilderCandidate)
-	if err != nil {
-		return "", err
-	}
-	c, err := rt.Candidates.Lookup(ref)
-	if errors.Is(err, candidate.ErrUnknownCandidate) {
-		// The builder is already running; the preamble is a round-1 courtesy,
-		// so a candidate removed from the file after bind must not fail the round (spec §4.7).
-		return text, nil
-	}
-	if err != nil {
-		return "", err
-	}
-	role, _ := harness.RoleByName("builder")
-	h, _ := harness.Lookup(c.Harness)
-	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
-	if l.Preamble == "" {
-		return text, nil
-	}
-	return l.Preamble + "\n\n" + text, nil
+// composePrompt renders the builder prompt for this round. Nothing is
+// prepended on any round: every kind selects its role with --agent at
+// launch (#85), so there is no first-prompt courtesy left to pay.
+func composePrompt(b store.Binding, planPath, reportPath string) string {
+	return fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath)
 }

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,6 @@ func TestAgentDocResolvesEveryTableRole(t *testing.T) {
 
 func TestAgentDocRejectsUnknownPairs(t *testing.T) {
 	tests := []struct{ role, kind string }{
-		{role: "plan-executor", kind: "agy"}, // agy selects by preamble
 		{role: "plan-executor", kind: "nosuch"},
 		{role: "nosuch", kind: "claude"},
 		{role: "", kind: "claude"},
@@ -58,7 +58,7 @@ func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 	// a second writer in one tree destroys work rather than stalling.
 	const oneWriter = "Exactly one agent writes to this working tree, and it is you."
 
-	for _, kind := range []string{"claude", "opencode"} {
+	for _, kind := range []string{"claude", "opencode", "agy"} {
 		doc, err := AgentDoc("plan-executor", kind)
 		if err != nil {
 			t.Fatalf("AgentDoc(plan-executor, %s): %v", kind, err)
@@ -67,4 +67,55 @@ func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 			t.Errorf("plan-executor.%s.md must contain %q", kind, oneWriter)
 		}
 	}
+}
+
+// agy enforces what the other kinds only say: a tools allowlist with
+// no write tool, and subagent: false on the one writer (spec §7.3, §7.4).
+func TestAgyDefinitionsFrontmatter(t *testing.T) {
+	forbidden := regexp.MustCompile(`(?m)^\s*-\s*(write_to_file|replace_file_content|create_file|delete_file|notebook_edit|invoke_subagent|send_command_input)\s*$`)
+	for _, role := range []string{"plan-executor", "researcher", "reviewer"} {
+		doc, err := AgentDoc(role, "agy")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
+		}
+		fm := frontmatter(t, doc)
+		if !strings.Contains(fm, "\nname: "+role+"\n") {
+			t.Errorf("%s: frontmatter must carry name: %s", role, role)
+		}
+		if !strings.Contains(fm, "\nmodel: inherit\n") {
+			t.Errorf("%s: frontmatter must pin model: inherit", role)
+		}
+		switch role {
+		case "plan-executor":
+			if !strings.Contains(fm, "\nsubagent: false\n") {
+				t.Errorf("plan-executor must be subagent: false")
+			}
+			if strings.Contains(fm, "\ntools:") {
+				t.Errorf("plan-executor must not restrict tools; it is the writer")
+			}
+		default:
+			if !strings.Contains(fm, "\ntools:\n") {
+				t.Errorf("%s must carry a tools allowlist", role)
+			}
+			if m := forbidden.FindString(fm); m != "" {
+				t.Errorf("%s allowlist contains a writing tool: %q", role, strings.TrimSpace(m))
+			}
+		}
+	}
+}
+
+// frontmatter returns the text between the first two --- fences,
+// with a leading newline so callers can match "\nkey: value\n".
+func frontmatter(t *testing.T, doc []byte) string {
+	t.Helper()
+	s := string(doc)
+	if !strings.HasPrefix(s, "---\n") {
+		t.Fatal("definition does not open with a --- fence")
+	}
+	rest := s[len("---\n"):]
+	end := strings.Index(rest, "\n---\n")
+	if end < 0 {
+		t.Fatal("definition frontmatter never closes")
+	}
+	return "\n" + rest[:end] + "\n"
 }

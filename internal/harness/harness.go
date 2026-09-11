@@ -17,7 +17,6 @@ type RoleSpec struct {
 	Name       string
 	Shape      RoleShape
 	Definition string
-	Preamble   string
 }
 
 // roleTable defines relay's built-in roles: a role is relay's name for a job
@@ -29,19 +28,16 @@ var roleTable = []RoleSpec{
 		Name:       "builder",
 		Shape:      ShapeBuilder,
 		Definition: "plan-executor",
-		Preamble:   "Activate your 'plan-executor' skill and act as the Plan Execution Specialist. Execute exactly as specified in the skill.",
 	},
 	{
 		Name:       "reviewer",
 		Shape:      ShapeConsult,
 		Definition: "reviewer",
-		Preamble:   "Activate your 'reviewer' skill and act exactly as it specifies.",
 	},
 	{
 		Name:       "researcher",
 		Shape:      ShapeConsult,
 		Definition: "researcher",
-		Preamble:   "Activate your 'researcher' skill and act exactly as it specifies.",
 	},
 }
 
@@ -70,6 +66,11 @@ type Role struct {
 	Name string // as the user types it: "plan-executor", "researcher"
 	Path string // home-relative install path
 	Doc  string // basename stem of the embedded definition, "<role>.<kind>"
+	// ExpectModel is the only model pin doctor accepts in an installed copy
+	// without warning; "" means any pin is fine. It is "inherit" on every
+	// agy row because agy's model key is a tier that would override the
+	// --model relay passes on the launch line (spec §7.2).
+	ExpectModel string
 }
 
 // Harness describes how one herdr agent kind appears on the local machine.
@@ -81,21 +82,26 @@ type Harness struct {
 	Integration string // herdr integration target; "" when the harness has none
 	// Roles are the definitions relay ships for this kind, ordered with
 	// plan-executor first so doctor reports the role relay's loop depends on
-	// before the rest. Empty means the harness selects its role with a
-	// preamble on the first prompt rather than with a file, which is agy.
+	// before the rest. Never empty for a known kind: every kind relay runs
+	// selects its role with --agent.
 	Roles []Role
-	// SelectsRoleByPreamble is true for a kind with no --agent flag. Its
-	// Roles slice is nil and every role in the table is servable.
-	SelectsRoleByPreamble bool
+	// MinVersion is the semver floor doctor holds the binary to; "" means
+	// unchecked. agy's floor is the release that added Markdown agent
+	// definitions, without which --agent has nothing to select.
+	MinVersion string
 }
 
 var knownHarnesses = map[string]Harness{
 	"agy": {
-		Kind:                  "agy",
-		Binary:                "agy",
-		Integration:           "antigravity-cli",
-		Roles:                 nil, // no --agent flag; the alias preamble selects the role
-		SelectsRoleByPreamble: true,
+		Kind:        "agy",
+		Binary:      "agy",
+		Integration: "antigravity-cli",
+		MinVersion:  "1.1.6",
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
+			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
+			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+		},
 	},
 	"claude": {
 		Kind:        "claude",
@@ -146,27 +152,23 @@ func (h Harness) CanServe(role string) bool {
 	if !ok {
 		return false
 	}
-	if h.SelectsRoleByPreamble {
-		return true
-	}
 	_, found := h.Role(spec.Definition)
 	return found
 }
 
 // Launch describes how to start an agent process for a specific role and model.
 type Launch struct {
-	Kind     string
-	Args     []string
-	Preamble string
+	Kind string
+	Args []string
 }
 
-// Launch renders the command-line arguments and prompt preamble needed to run
-// the given role on this harness. Relay renders the argv because model and the
-// role are now fields (spec §1 point 2); with a verbatim args list in config,
-// the model would be a label relay could not check against what it launched.
+// Launch renders the command-line arguments needed to run the given role on
+// this harness. Relay renders the argv because model and role are fields
+// (candidates spec §1 point 2): with a verbatim args list in config, the
+// model would be a label relay could not check against what it launched.
+// Every kind selects its role with --agent; there is no other mechanism (#85).
 func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) Launch {
 	var base []string
-	var preamble string
 
 	switch h.Kind {
 	case "claude":
@@ -174,15 +176,13 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) L
 	case "opencode":
 		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
 	case "agy":
-		base = []string{"--model", model}
-		preamble = role.Preamble
+		base = []string{"--model", model, "--agent", role.Definition}
 	}
 
 	args := append(append([]string(nil), base...), extra...)
 	return Launch{
-		Kind:     h.Kind,
-		Args:     args,
-		Preamble: preamble,
+		Kind: h.Kind,
+		Args: args,
 	}
 }
 
