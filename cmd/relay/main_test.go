@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -337,7 +338,9 @@ func TestForkValidation(t *testing.T) {
 	}
 }
 
-func TestAliasConfigHome(t *testing.T) {
+// TestCandidatesConfigHome pins #42: relay config is composed through
+// userConfigRoot(), so XDG_CONFIG_HOME decides where candidates.json is read.
+func TestCandidatesConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
@@ -348,8 +351,8 @@ func TestAliasConfigHome(t *testing.T) {
 	if err := os.MkdirAll(relayDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	aliasContent := `[{"name":"custom-builder","kind":"dummy","args":["arg"]}]`
-	if err := os.WriteFile(filepath.Join(relayDir, "aliases.json"), []byte(aliasContent), 0o644); err != nil {
+	body := `[{"harness":"claude","provider":"test","model":"m","roles":["builder"]}]`
+	if err := os.WriteFile(filepath.Join(relayDir, "candidates.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -357,8 +360,8 @@ func TestAliasConfigHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRuntime: %v", err)
 	}
-	if _, err := rt.Aliases.Lookup("custom-builder"); err != nil {
-		t.Fatalf("rt.Aliases.Lookup(%q): %v", "custom-builder", err)
+	if _, err := rt.Candidates.Lookup(candidate.Ref{Harness: "claude", Provider: "test", Model: "m"}); err != nil {
+		t.Fatalf("rt.Candidates.Lookup: %v", err)
 	}
 }
 

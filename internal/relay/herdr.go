@@ -7,7 +7,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -44,12 +43,9 @@ type Git interface {
 // Runtime carries relay's dependencies explicitly, so every command and the
 // daemon can be driven by a fake in tests.
 type Runtime struct {
-	Herdr   Herdr
-	Git     Git
-	Store   *store.Store
-	Aliases *alias.Table
-	// Candidates is the configured harness/provider/model triples (#80);
-	// Aliases remains only until T5–T7 move ask, names and doctor off it.
+	Herdr      Herdr
+	Git        Git
+	Store      *store.Store
 	Candidates *candidate.Set
 	Now        func() time.Time
 	Hooks      hooks.Dispatcher

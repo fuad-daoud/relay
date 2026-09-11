@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
@@ -250,6 +249,7 @@ func resolveHooksConfig() (hooks.Config, error) {
 	}, nil
 }
 
+// newRuntime constructs the production runtime; aliases.json is never read (#80).
 func newRuntime() (relay.Runtime, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -257,11 +257,6 @@ func newRuntime() (relay.Runtime, error) {
 	}
 
 	configDir, err := userConfigRoot()
-	if err != nil {
-		return relay.Runtime{}, err
-	}
-
-	aliases, err := alias.LoadTable(filepath.Join(configDir, "relay", "aliases.json"))
 	if err != nil {
 		return relay.Runtime{}, err
 	}
@@ -281,7 +276,6 @@ func newRuntime() (relay.Runtime, error) {
 		Herdr:      herdr.NewClient("herdr", 30*time.Second),
 		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
 		Store:      store.New(root),
-		Aliases:    aliases,
 		Candidates: candidates,
 		Now:        time.Now,
 		Hooks:      dispatcher,
