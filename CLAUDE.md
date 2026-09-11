@@ -13,17 +13,17 @@ harness kind.
 
 Use harnesses in this order, exhausting each before moving to the next:
 
-1. `abuilder` (agy)
-2. `cbuilder` (claude)
-3. `builder` (opencode)
+1. `agy/google/gemini-3.8-flash-high`
+2. `claude/anthropic/sonnet`
+3. `opencode/openrouter/z-ai/glm-5.3-flash`
 
 Move down the list only when the current harness is unavailable -- usage limits
 as much as a crash. Do not assign different harnesses to different tasks as a
 way of parallelising.
 
-Note the alias names do not track the priority order: `builder` is **opencode**
-(third), not the default choice. Check `internal/alias/alias.go` rather than
-guessing from the name.
+Candidates are configured in `~/.config/relay/candidates.json`; `relay candidates`
+lists what this machine has. Pass the token to `--builder`, or omit it when only
+one candidate serves `builder`.
 
 ## Working with builders
 

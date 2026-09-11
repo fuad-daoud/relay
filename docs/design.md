@@ -76,7 +76,7 @@ Three pieces, deliberately thin.
 relay CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
                works whether the planner is claude, opencode or agy.
 
-                 relay bind --builder <alias|pane> [--name <n>]
+                 relay bind --builder <candidate|pane> [--name <n>]
                  relay bind --resume <name>
                  relay send --file <path>
                  relay answer (--keys <k> | --choice <n> | --text <s>)
@@ -119,7 +119,7 @@ is running to notice. That is the only reason a daemon exists.
 | `builder.agent_name` | string | herdr agent name, e.g. `upjo-builder` |
 | `builder.pane_id` | string | |
 | `builder.kind` | enum | |
-| `builder.alias` | enum | `builder` \| `cbuilder` \| `abuilder` |
+| `builder_candidate` | string | harness/provider/model the builder was started from; empty when adopted |
 | `round` | int | current round, starts at 1 |
 | `state` | enum | `active` \| `held` \| `needs_you` \| `broken` \| `orphaned` \| `done` |
 | `round_cap` | int | default 20 |
@@ -154,17 +154,17 @@ to `broken` and `refreshEndpoint` never runs to learn the new pane ID. Once a se
 been recorded (nearly immediately for claude, and after the first turn for agy), the
 session survives the move and `refreshEndpoint` updates the pane ID normally.
 
-### Alias table (config, derived from the author's shell functions)
+### Candidates (config)
 
-| alias | kind | native args (after `--`) | first-prompt preamble |
-| --- | --- | --- | --- |
-| `builder` | `opencode` | `--agent plan-executor -m openrouter/z-ai/glm-5.3-flash` | — |
-| `cbuilder` | `claude` | `--agent plan-executor --model sonnet` | — |
-| `abuilder` | `agy` | `--model gemini-3.8-flash-high --dangerously-skip-permissions` | `Activate your 'plan-executor' skill and act as the Plan Execution Specialist.` |
+Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relay renders harness launch arguments and preambles per kind:
 
-`abuilder` needs the preamble because agy has no `--agent` flag — the fish function fakes the
-role by wrapping the task in `-i "..."`. A persistent session cannot bake that into startup,
-so relay prepends it to round 1's prompt only.
+| kind | args | preamble |
+| --- | --- | --- |
+| `claude` | `--model <model> --agent <role.Definition>` | `""` |
+| `opencode` | `--agent <role.Definition> -m <provider>/<model>` | `""` |
+| `agy` | `--model <model>` | `role.Preamble` |
+
+then `extra_args` are appended. `agy` needs the preamble because it has no `--agent` flag — a persistent session cannot bake the role into startup, so relay prepends it to round 1's prompt only.
 
 ### `log.jsonl` entry
 
@@ -304,7 +304,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | Builder session lifetime | Persistent per binding | Matches the manual workflow; follow-ups stay short because the builder remembers what it wrote. Reset comes free via rebinding to a new pane |
 | Handoff channel | Files | herdr documents that alternate-screen output is unrecoverable by `agent read`; scraping is a labelled last resort only |
 | Delivery while focused | Hold + notify, inject when unfocused | The only rule that cannot eat a half-typed message; full autonomy resumes the moment the human looks away |
-| Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; alias names are already stable in the user's head |
+| Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; the token names exactly what starts, so the log and `status` show it without a lookup |
 | Concurrent loops on one tree | Refuse the second bind | The one failure mode that destroys work rather than stalling |
 
 relay enforces one writer per working tree only for bindings: `Bind` refuses a
