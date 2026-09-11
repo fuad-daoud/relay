@@ -16,6 +16,9 @@ func TestConsultRolesTooLong(t *testing.T) {
 		{"abcdefghijklm", []string{"researcher"}},
 		{"abcdefghijklmn", []string{"researcher"}},
 		{"abcdefghijklmno", []string{"researcher", "reviewer"}},
+		// 16 + 1 + 7 + 1 + 8 = 33 would make builder "too long" too, but it
+		// is not a consult role and must never appear in the note.
+		{"abcdefghijklmnop", []string{"researcher", "reviewer"}},
 		{"", nil},
 	}
 
