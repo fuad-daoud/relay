@@ -161,9 +161,9 @@ type Consult struct {
 	// to read aloud.
 	ID string `json:"id"`
 
-	// Role is the alias name that was asked, recorded as a name rather than a
-	// resolved spec: the spec can change under the record, and the record
-	// should stay truthful about what was intended.
+	// Role is the role-table name that was asked (`reviewer`), recorded as a
+	// name rather than the candidate that ran it: the candidate is the
+	// planner's choice at the time, the role is what was intended.
 	Role string `json:"role"`
 
 	Endpoint Endpoint `json:"endpoint"`

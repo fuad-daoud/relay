@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -21,7 +23,6 @@ import (
 func seedForAsk(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := seedBound(t, f)
-	rt.Aliases = consultTable(t)
 	rt.NewID = func() string { return "7f2a3c1d" }
 	f.newPane = "w2:p9"
 	f.starts, f.splitCalls, f.splits = nil, nil, 0
@@ -225,20 +226,143 @@ func TestAskDoesNotAdvanceTheRound(t *testing.T) {
 	}
 }
 
-func TestAskRefusesABuilderAlias(t *testing.T) {
+func TestAskRefusesAnUnknownRole(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "abuilder", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviwer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+
+	if !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("want ErrUnknownRole, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "known:") {
+		t.Errorf("expected error message to contain 'known:', got %q", err.Error())
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("starts = %d, want 0", len(f.starts))
+	}
+	if f.splits != 0 {
+		t.Errorf("splits = %d, want 0", f.splits)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none", b.Consults)
+	}
+}
+
+func TestAskRefusesTheBuilderRole(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "builder", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
 
 	if !errors.Is(err, ErrNotAConsultRole) {
 		t.Fatalf("want ErrNotAConsultRole, got %v", err)
 	}
+	if len(f.starts) != 0 {
+		t.Errorf("starts = %d, want 0", len(f.starts))
+	}
 	if f.splits != 0 {
-		t.Error("a refused ask split a pane; validation must precede spawning")
+		t.Errorf("splits = %d, want 0", f.splits)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none", b.Consults)
+	}
+}
+
+func TestAskRefusesACandidateThatDoesNotServeTheRole(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role:        "reviewer",
+		Candidate:   testAgyRef,
+		File:        q,
+		Name:        "webshop",
+		PlannerPane: "w2:p3",
+	})
+
+	if !errors.Is(err, ErrRoleNotServed) {
+		t.Fatalf("want ErrRoleNotServed, got %v", err)
+	}
+}
+
+func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"a","model":"m","roles":["reviewer"]},{"harness":"claude","provider":"b","model":"m","roles":["reviewer"]}]`)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+
+	if !errors.Is(err, ErrAmbiguousCandidate) {
+		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
+	}
+}
+
+func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "review this")
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d starts, want 1", len(f.starts))
+	}
+	if f.starts[0].Kind != "claude" {
+		t.Errorf("starts[0].Kind = %q, want claude", f.starts[0].Kind)
+	}
+	wantArgs := []string{"--model", "m", "--agent", "reviewer"}
+	if !reflect.DeepEqual(f.starts[0].Args, wantArgs) {
+		t.Errorf("starts[0].Args = %v, want %v", f.starts[0].Args, wantArgs)
+	}
+	if res.Consult.Role != "reviewer" {
+		t.Errorf("res.Consult.Role = %q, want reviewer", res.Consult.Role)
+	}
+}
+
+func TestAskPrependsThePreambleForAPreambleHarness(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"t","model":"m","roles":["reviewer"]}]`)
+	q := writeQuestion(t, "review this")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("got %d prompts, want 1", len(f.prompts))
+	}
+	roleSpec, ok := harness.RoleByName("reviewer")
+	if !ok {
+		t.Fatal("RoleByName(reviewer) failed")
+	}
+	if !strings.HasPrefix(f.prompts[0].Text, roleSpec.Preamble) {
+		t.Errorf("prompt text does not start with preamble %q:\n%s", roleSpec.Preamble, f.prompts[0].Text)
 	}
 }
 

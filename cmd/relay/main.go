@@ -290,8 +290,8 @@ func newRuntime() (relay.Runtime, error) {
 // for -- so a later `relay ask` failing on the derived name is not a surprise
 // a day later. It is a note, not an error: a binding that can build is still
 // useful, and refusing would let the alias table dictate binding names.
-func noteConsultRolesTooLong(aliases *alias.Table, name string) {
-	roles := relay.ConsultRolesTooLong(aliases, name)
+func noteConsultRolesTooLong(name string) {
+	roles := relay.ConsultRolesTooLong(name)
 	if len(roles) == 0 {
 		return
 	}
@@ -409,7 +409,7 @@ func cmdBind(args []string) error {
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
 	if !adopted {
-		noteConsultRolesTooLong(rt.Aliases, b.Name)
+		noteConsultRolesTooLong(b.Name)
 	}
 	return nil
 }
@@ -467,7 +467,7 @@ func cmdFork(args []string) error {
 		fmt.Printf("forked %s to %s (round %d) at %s\n",
 			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
 	}
-	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
+	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
 }
@@ -517,7 +517,7 @@ func cmdAdd(args []string) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
-	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
+	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
 }
@@ -763,7 +763,8 @@ func cmdSend(args []string) error {
 
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	role := fs.String("role", "", "consult role to spawn")
+	role := fs.String("role", "", "consult role: reviewer, researcher")
+	cand := fs.String("candidate", "", "candidate harness/provider/model; omit when exactly one serves the role")
 	file := fs.String("file", "", "file containing the question")
 	nameFlag := fs.String("name", "", "binding name")
 	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
@@ -790,6 +791,7 @@ func cmdAsk(args []string) error {
 
 	res, err := relay.Ask(context.Background(), rt, relay.AskOptions{
 		Role:        *role,
+		Candidate:   *cand,
 		File:        *file,
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),

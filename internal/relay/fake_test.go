@@ -3,13 +3,10 @@ package relay
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -164,22 +161,6 @@ func TestFakeStartAgentRefusesAnInvalidName(t *testing.T) {
 	if !errors.Is(err, herdr.ErrInvalidAgentName) {
 		t.Fatalf("StartAgent err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
 	}
-}
-
-// consultTable is a table with one consult role, `reviewer`, layered over the
-// shipped builder aliases.
-func consultTable(t *testing.T) *alias.Table {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "aliases.json")
-	body := `[{"name":"reviewer","kind":"claude","args":["--agent","reviewer"],"role":"consult","tree":"binding"}]`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write aliases: %v", err)
-	}
-	tbl, err := alias.LoadTable(path)
-	if err != nil {
-		t.Fatalf("LoadTable: %v", err)
-	}
-	return tbl
 }
 
 // fakeHerdr is the in-memory Herdr used by every test in this package.

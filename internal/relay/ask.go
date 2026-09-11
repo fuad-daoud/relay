@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -16,7 +17,7 @@ import (
 // ErrNotAConsultRole reports an ask naming an alias that is a builder. A
 // builder is persistent and writes; handing one a prompt with no plan in it
 // would start a round that never was.
-var ErrNotAConsultRole = errors.New("that alias is a builder, not a consult role")
+var ErrNotAConsultRole = errors.New("that role is the builder role; bind it with relay bind, not relay ask")
 
 // ErrTreelessUnsupported reports an ask for a role declaring tree "none".
 // The field is forward-declared for a future treeless explorer; no treeless
@@ -41,6 +42,7 @@ Reply here with only that path. Do not modify any file in this repository.`
 // AskOptions describes one consult request.
 type AskOptions struct {
 	Role        string // consult role to spawn; required
+	Candidate   string // a harness/provider/model token; empty resolves through the one rule in resolveCandidate
 	File        string // the question file; required
 	Name        string // binding name, already resolved by the caller
 	PlannerPane string // $HERDR_PANE_ID; required
@@ -77,10 +79,11 @@ type AskResult struct {
 //	for the id exists, State is silent, Endpoint.PaneID is empty, and
 //	Note names the failure, so `relay reap` drops it without a close.
 //
-// Errors: ErrNotAConsultRole, ErrTreelessUnsupported, ErrConsultCap,
+// Errors: ErrUnknownRole, ErrNotAConsultRole, ErrNoCandidates, ErrRoleNotServed,
 //
-//	alias.ErrUnknownAlias, store.ErrNotFound, a wrapped herdr failure,
-//	or a wrapped store error from either phase.
+//	ErrAmbiguousCandidate, candidate.ErrUnknownCandidate,
+//	ErrTreelessUnsupported, ErrConsultCap, store.ErrNotFound, a wrapped
+//	herdr failure, or a wrapped store error from either phase.
 func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if opts.PlannerPane == "" {
 		return AskResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
@@ -93,16 +96,22 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return AskResult{}, fmt.Errorf("read question %s: %w", opts.File, err)
 	}
 
-	spec, err := rt.Aliases.Lookup(opts.Role)
+	role, ok := harness.RoleByName(opts.Role)
+	if !ok {
+		return AskResult{}, fmt.Errorf("unknown role %q (known: %v): %w", opts.Role, harness.RoleNames(), ErrUnknownRole)
+	}
+	if role.Shape != harness.ShapeConsult {
+		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)
+	}
+	c, err := resolveCandidate(rt.Candidates, opts.Candidate, opts.Role)
 	if err != nil {
 		return AskResult{}, err
 	}
-	if !spec.IsConsult() {
-		return AskResult{}, fmt.Errorf("%q is a builder alias: %w", opts.Role, ErrNotAConsultRole)
+	if c.Tree == "none" {
+		return AskResult{}, fmt.Errorf("candidate %q declares tree \"none\": %w", c.Ref().String(), ErrTreelessUnsupported)
 	}
-	if spec.Tree == "none" {
-		return AskResult{}, fmt.Errorf("role %q declares tree \"none\": %w", opts.Role, ErrTreelessUnsupported)
-	}
+	h, _ := harness.Lookup(c.Harness)
+	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
 
 	newID := rt.NewID
 	if newID == nil {
@@ -112,21 +121,18 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	// Mint the id and compose the agent name before the lock, so a name herdr
 	// would refuse fails as a validation error before the reservation is
 	// written or the question staged: nothing to clean up.
-	// Mint the id and compose the agent name before the lock, so a name herdr
-	// would refuse fails as a validation error before the reservation is
-	// written or the question staged: nothing to clean up.
 	id := newID()
-	agentName := opts.Name + "-" + spec.Name + "-" + id
+	agentName := opts.Name + "-" + role.Name + "-" + id
 	if err := herdr.ValidateAgentName(agentName); err != nil {
 		return AskResult{}, fmt.Errorf(
 			"consult agent name %q: %w -- binding %q needs a name of at most %d characters to run %q consults",
-			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+spec.Name+"-")-8, spec.Name)
+			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+role.Name+"-")-8, role.Name)
 	}
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
 	var (
-		c   store.Consult
-		cwd string
+		consult store.Consult
+		cwd     string
 	)
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
@@ -141,22 +147,22 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 				b.Name, runningConsults(b), consultCap(b), ErrConsultCap)
 		}
 
-		c = store.Consult{
+		consult = store.Consult{
 			ID:           id,
-			Role:         spec.Name,
+			Role:         role.Name,
 			Round:        b.Round,
 			AskPath:      rt.Store.AskPath(b.Name, b.Round, id),
 			FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, id),
-			Endpoint:     store.Endpoint{AgentName: agentName, Kind: spec.Kind},
+			Endpoint:     store.Endpoint{AgentName: agentName, Kind: l.Kind},
 			State:        store.ConsultSpawning,
 			SpawnedAt:    rt.Now().UTC(),
 		}
 
-		if err := os.WriteFile(c.AskPath, body, 0o644); err != nil {
-			return fmt.Errorf("stage question at %s: %w", c.AskPath, err)
+		if err := os.WriteFile(consult.AskPath, body, 0o644); err != nil {
+			return fmt.Errorf("stage question at %s: %w", consult.AskPath, err)
 		}
 
-		b.Consults = append(b.Consults, c)
+		b.Consults = append(b.Consults, consult)
 		if err := tx.Save(b); err != nil {
 			return err
 		}
@@ -169,31 +175,31 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
 	var spawnErr error
-	pane, err := consultPane(ctx, rt, opts, cwd, c.Endpoint.AgentName)
+	pane, err := consultPane(ctx, rt, opts, cwd, consult.Endpoint.AgentName)
 	if err != nil {
-		c.State = store.ConsultSilent
-		c.Note = "split failed: " + brief(err)
+		consult.State = store.ConsultSilent
+		consult.Note = "split failed: " + brief(err)
 		spawnErr = err
 	} else {
-		c.Endpoint.PaneID = pane
+		consult.Endpoint.PaneID = pane
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
-		if err := rt.Herdr.StartAgent(ctx, c.Endpoint.AgentName, spec.Kind, pane, spec.Args); err != nil {
-			c.State = store.ConsultSilent
-			c.Note = "start failed: " + brief(err)
-			spawnErr = fmt.Errorf("start consult %q: %w", c.Endpoint.AgentName, err)
+		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.Args); err != nil {
+			consult.State = store.ConsultSilent
+			consult.Note = "start failed: " + brief(err)
+			spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
 		} else {
-			text := spec.Preamble
+			text := l.Preamble
 			if text != "" {
 				text += "\n\n"
 			}
-			text += fmt.Sprintf(consultPrompt, c.AskPath, c.FindingsPath)
+			text += fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
 
 			if err := promptWithRetry(ctx, rt, pane, text); err != nil {
-				c.State = store.ConsultSilent
-				c.Note = "prompt failed: " + brief(err)
+				consult.State = store.ConsultSilent
+				consult.Note = "prompt failed: " + brief(err)
 				spawnErr = fmt.Errorf("prompt consult: %w", err)
 			} else {
-				c.State = store.ConsultRunning
+				consult.State = store.ConsultRunning
 			}
 		}
 	}
@@ -207,24 +213,24 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 		found := false
 		for i, existing := range b.Consults {
-			if existing.ID == c.ID {
-				b.Consults[i] = c
+			if existing.ID == consult.ID {
+				b.Consults[i] = consult
 				found = true
 				break
 			}
 		}
 		if !found {
-			b.Consults = append(b.Consults, c)
+			b.Consults = append(b.Consults, consult)
 		}
 
-		if c.State == store.ConsultRunning {
+		if consult.State == store.ConsultRunning {
 			entry := store.LogEntry{
 				TS:        rt.Now().UTC(),
-				Round:     c.Round,
+				Round:     consult.Round,
 				Direction: store.DirToConsult,
 				Kind:      store.KindAsk,
-				Path:      c.AskPath,
-				Note:      spec.Name + " " + c.ID,
+				Path:      consult.AskPath,
+				Note:      role.Name + " " + consult.ID,
 				Confirmed: true,
 			}
 			if err := tx.AppendLog(b.Name, entry); err != nil {
@@ -236,12 +242,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	})
 	if saveErr != nil {
 		if spawnErr != nil {
-			return AskResult{Consult: c, Binding: opts.Name}, strandError(spawnErr, saveErr)
+			return AskResult{Consult: consult, Binding: opts.Name}, strandError(spawnErr, saveErr)
 		}
-		return AskResult{Consult: c, Binding: opts.Name}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", c.ID, c.Endpoint.PaneID, saveErr)
+		return AskResult{Consult: consult, Binding: opts.Name}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
 	}
 
-	return AskResult{Consult: c, Binding: opts.Name}, spawnErr
+	return AskResult{Consult: consult, Binding: opts.Name}, spawnErr
 }
 
 // consultPane makes somewhere for the consult to live: its own tab when asked,
