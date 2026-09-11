@@ -264,8 +264,11 @@ func Bind(ctx, rt, opts) (store.Binding, error)                       // = BindR
 ```
 
 `Add` and `Fork` keep their early `resolveCandidate` call (a refused add or
-fork must leave no worktree); its `Resolution` is discarded. The one
-recorded is `resolveBuilder`'s -- the resolution that actually spawned.
+fork must leave no worktree) and **that** is the `Resolution` they record
+and return. They hand `resolveBuilder` the resolved token explicitly, so
+`resolveBuilder`'s own resolution is always `HowExplicit` and is discarded
+-- recording it would log every `add` as a policy bypass. The spawned
+candidate is the same one either way.
 `Fork` sets `res.InheritedFrom = opts.Source` when `opts.Candidate == ""`
 and the source's `BuilderCandidate` was used; an inherited token is
 `HowExplicit` (the planner's earlier choice), so a fork of a gated builder is
