@@ -107,7 +107,7 @@ type Policy struct {
 }
 
 func Load(path string) (Policy, error)
-func (p Policy) Order(role string) []string    // nil when the role has no entry; never mutates
+func (p Policy) OrderFor(role string) []string // nil when the role has no entry; returns a copy
 ```
 
 The file:
@@ -236,7 +236,7 @@ onto configured tokens). The rule, replacing candidates-design §4.3:
 
 ```
 ranked := []
-for i, tok in pol.Order(role):
+for i, tok in pol.OrderFor(role):
     c, ok := set.Lookup(tok); if !ok or !c.Serves(role): continue     -- tolerated; §4.6 warns
     ranked += (c, HowOrder, i+1)
 for c in set.ForRole(role):           -- ref-sorted, as today
@@ -430,7 +430,7 @@ if len(serving) == 1:
     if len(g) == 0: return Resolution{serving[0], HowSole}
     return ErrAllGated{serving[0]: g}
 
-if len(pol.Order(role)) == 0: return ErrAmbiguousCandidate (+ policy hint)
+if len(pol.OrderFor(role)) == 0: return ErrAmbiguousCandidate (+ policy hint)
 
 ranked := rankedList(set, pol, role)          -- §4.2
 skipped := []
@@ -520,10 +520,10 @@ Each step is one plan / one builder session; `make check` green at every
 step; a builder that finds a step impossible as written halts.
 
 1. **`policy` package + `Runtime.Policy`.** §3.1, §3.4, §4.1. `Load`,
-   `Order`, `ErrBadPolicy`. `newRuntime` loads
+   `OrderFor`, `ErrBadPolicy`. `newRuntime` loads
    `filepath.Join(configDir, "relay", "policy.json")`. Tests: missing file
    → zero value; each validation branch with its message substring;
-   `Order` on an unknown role is nil. No caller reads `Policy` yet.
+   `OrderFor` on an unknown role is nil. No caller reads `Policy` yet.
    Verify: `go build ./...`; `relay status` on a machine with no
    `policy.json` is unchanged.
 

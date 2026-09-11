@@ -78,7 +78,7 @@ type Policy struct {
 }
 
 func Load(path string) (Policy, error)
-func (p Policy) Order(role string) []string
+func (p Policy) OrderFor(role string) []string
 
 // internal/relay/herdr.go, Runtime
 Policy policy.Policy
@@ -104,16 +104,16 @@ Policy policy.Policy
 
   - `TestLoadMissingFileIsZeroPolicy`: `Load(filepath.Join(t.TempDir(),
     "absent.json"))` → nil error, `len(p.Order) == 0`, and
-    `p.Order("builder") == nil`.
+    `p.OrderFor("builder") == nil`.
   - `TestLoadValidPolicy`: body
     ```json
     {"order":{"builder":["agy/google/m","claude/anthropic/sonnet"],"reviewer":["claude/anthropic/opus"]}}
     ```
-    → nil error; `p.Order("builder")` equals the two tokens in that
-    order; `p.Order("reviewer")` equals the one; `p.Order("researcher")`
+    → nil error; `p.OrderFor("builder")` equals the two tokens in that
+    order; `p.OrderFor("reviewer")` equals the one; `p.OrderFor("researcher")`
     is nil.
   - `TestOrderReturnsACopy`: load the valid body, `got :=
-    p.Order("builder")`, `got[0] = "x"`, then `p.Order("builder")[0]` is
+    p.OrderFor("builder")`, `got[0] = "x"`, then `p.OrderFor("builder")[0]` is
     still `"agy/google/m"`.
   - `TestLoadErrors`: a table, each row `{name, body, contains []string}`;
     every row wants `errors.Is(err, ErrBadPolicy)` and each `contains`
@@ -133,7 +133,7 @@ Policy policy.Policy
     `candidate.ErrBadRef`'s wrapped message -- wrap the `ParseRef` error
     with `%v`, do not restate it.
   - `TestLoadEmptyOrderIsValid`: `{"order":{}}` and `{}` both load with no
-    error and `Order("builder") == nil`.
+    error and `OrderFor("builder") == nil`.
 
   Run: `go test ./internal/policy/`. Expected: FAIL to compile (package
   does not exist).
@@ -167,7 +167,7 @@ Policy policy.Policy
       token %q: %w`.
   - Return the decoded `Policy`.
 
-  `Order(role)`: `nil` when absent; otherwise `append([]string(nil),
+  `OrderFor(role)`: `nil` when absent; otherwise `append([]string(nil),
   p.Order[role]...)`. Doc comment says it copies so a caller cannot
   reorder the loaded policy by accident.
 

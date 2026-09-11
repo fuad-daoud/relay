@@ -63,7 +63,7 @@ cp go.mod /tmp/gm; cp go.sum /tmp/gs; go mod tidy; cmp go.mod /tmp/gm && cmp go.
 - Modify (call sites only): `internal/relay/bind.go` (`resolveBuilder`),
   `internal/relay/add.go`, `internal/relay/fork.go`, `internal/relay/ask.go`
 
-**Interfaces consumed:** `policy.Policy.Order(role) []string` (T1);
+**Interfaces consumed:** `policy.Policy.OrderFor(role) []string` (T1);
 `ledger.Gate{Token, Kind, Until}`; `ledger.Kind`; `Gates(rt)`,
 `GateKindText`, `GateUntilText` (`internal/relay/ledger.go`);
 `candidate.Set.{Lookup, ForRole, Refs, Len}`, `candidate.ParseRef`,
@@ -134,7 +134,7 @@ func ExplainResolution(role string, res Resolution) string
 
   ```
   seen := map[string]bool
-  for i, tok := range pol.Order(role):
+  for i, tok := range pol.OrderFor(role):
       ref, err := candidate.ParseRef(tok); if err → continue      // Load validated; belt and braces
       c, err := set.Lookup(ref);           if err → continue      // tolerated: T4 warns
       if !c.Serves(role) → continue                               // tolerated: T4 warns
@@ -245,7 +245,7 @@ func ExplainResolution(role string, res Resolution) string
   if len(serving) == 1:
       if s := skipsFor(gates, serving[0].Ref().String()); len(s) > 0: return allGated(role, s)
       return Resolution{Candidate: serving[0], How: HowSole}, nil
-  if len(pol.Order(role)) == 0:
+  if len(pol.OrderFor(role)) == 0:
       ErrAmbiguousCandidate; message: "%d candidates serve %q: %v; name one with --builder or --candidate, or set order.%s in ~/.config/relay/policy.json: %w"
   var skipped []Skip
   for _, r := range rankedList(set, pol, role):

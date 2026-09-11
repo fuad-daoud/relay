@@ -68,7 +68,7 @@ cp go.mod /tmp/gm; cp go.sum /tmp/gs; go mod tidy; cmp go.mod /tmp/gm && cmp go.
 gates, "", role)`, `ErrAllGated`, `ErrAmbiguousCandidate`,
 `ErrRoleNotServed`, `ErrNoCandidates`, `skipsFor`, `HowSole`, `HowOrder`,
 `HowUnlisted`; `GateKindText`, `GateUntilText`, `Gates(rt)`;
-`harness.RoleNames()`; `policy.Policy.Order`; `candidate.Set.{ForRole,
+`harness.RoleNames()`; `policy.Policy.OrderFor`; `candidate.Set.{ForRole,
 Lookup, Len}`, `candidate.ParseRef`; `doctor.Check`, `doctor.SevWarn`.
 
 **Interfaces produced** (spec §4.6–4.8):
@@ -127,7 +127,7 @@ func policyChecks(warnings []relay.PolicyWarning) []doctor.Check
 
   ```
   for role in harness.RoleNames():
-      order := pol.Order(role); if len(order) == 0: continue
+      order := pol.OrderFor(role); if len(order) == 0: continue
       listed := map[string]bool
       for i, tok in order:
           ref, err := ParseRef(tok)          -- cannot fail after Load; treat as "not configured" if it does
@@ -213,7 +213,7 @@ func policyChecks(warnings []relay.PolicyWarning) []doctor.Check
   byToken := gates grouped by Token
   for role in harness.RoleNames():
       serving := set.ForRole(role)
-      ordered := len(pol.Order(role)) > 0
+      ordered := len(pol.OrderFor(role)) > 0
       header := role + ("  (order set in ~/.config/relay/policy.json)" | "  (no order set)")
       if len(serving) == 0: header; "  no candidate serves this role"; continue
       rows := ordered ? rankedList(set, pol, role) : serving as rankedEntry{How: ""}
