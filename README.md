@@ -180,7 +180,7 @@ inside every pane it manages, so it has to be run from inside one.
   unbounded. If you genuinely mean to type into a running agent, that is
   `herdr agent send-keys <pane> <keys>`, not relay.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
-  panes' live herdr status, the last relayed event, and anything pending. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.

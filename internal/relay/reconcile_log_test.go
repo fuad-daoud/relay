@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -96,5 +97,132 @@ func TestSettleStaysSilentOnTheUnfocusedPath(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "payload") {
 		t.Errorf("the unfocused delivery is the ordinary path and must not log:\n%s", buf.String())
+	}
+}
+
+// nudgedBinding drives one binding through the nudge: plan sent, builder
+// idle past startGrace, no report on disk. It returns the binding after the
+// nudge tick and the clock the caller advances between later ticks.
+func nudgedBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding, *fakeClock, []herdr.Agent) {
+	t.Helper()
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+	return rt, b, clock, agents
+}
+
+func TestReconcileLogsNudgeOnceAndScrapeOnce(t *testing.T) {
+	buf := captureLog(t)
+	f := &fakeHerdr{readOut: "half a screen of output"}
+	rt, b, clock, agents := nudgedBinding(t, f)
+
+	if n := strings.Count(buf.String(), `msg="builder nudged"`); n != 1 {
+		t.Fatalf("builder nudged logged %d times after the nudge tick, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "binding=webshop") || !strings.Contains(buf.String(), "round=1") {
+		t.Errorf("nudge line must name the binding and round:\n%s", buf.String())
+	}
+
+	// Three ticks inside the grace: the quiescence clock runs, nothing is
+	// decided, nothing is logged.
+	before := buf.Len()
+	for i := 0; i < 3; i++ {
+		clock.Advance(10 * time.Second)
+		var err error
+		if b, err = reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("tick %d: %v", i+2, err)
+		}
+	}
+	if buf.Len() != before {
+		t.Fatalf("ticks inside the grace must not log:\n%s", buf.String()[before:])
+	}
+
+	clock.Advance(nudgeGrace)
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("scrape Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the scrape", got.Round)
+	}
+	if n := strings.Count(buf.String(), `msg="builder quiescent, scraping report"`); n != 1 {
+		t.Fatalf("scrape logged %d times, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "quiet=1m30s") {
+		t.Errorf("scrape line must carry how long the screen was quiet:\n%s", buf.String())
+	}
+}
+
+func TestReconcileWarnsWhenBuilderScreenUnreadable(t *testing.T) {
+	buf := captureLog(t)
+	f := &fakeHerdr{readOut: "terminal at nudge"}
+	rt, b, clock, agents := nudgedBinding(t, f)
+
+	clock.Advance(nudgeGrace + time.Second)
+	f.readErr = errors.New("simulated herdr read error")
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile must still swallow the read error: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("round = %d, want 1: the behaviour must not change", got.Round)
+	}
+	if !strings.Contains(buf.String(), `level=WARN msg="builder screen unreadable"`) {
+		t.Errorf("a dropped read error must be logged at WARN:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "simulated herdr read error") {
+		t.Errorf("the line must carry the error:\n%s", buf.String())
+	}
+}
+
+func TestReconcileLogsHaltOncePerRound(t *testing.T) {
+	buf := captureLog(t)
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
+	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+
+	for i := 0; i < 3; i++ {
+		var err error
+		if b, err = reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("tick %d: %v", i+1, err)
+		}
+	}
+	if b.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", b.State)
+	}
+	if n := strings.Count(buf.String(), `msg="binding halted"`); n != 1 {
+		t.Fatalf("binding halted logged %d times across three halted ticks, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "has run past") {
+		t.Errorf("halt line must carry the reason:\n%s", buf.String())
+	}
+}
+
+func TestReconcileLogsBlockedOncePerRound(t *testing.T) {
+	buf := captureLog(t)
+	f := &fakeHerdr{readOut: "Allow edit to src/main.go?  1. Yes  2. No"}
+	rt, b := sentBinding(t, f)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusBlocked)}
+
+	for i := 0; i < 2; i++ {
+		var err error
+		if b, err = reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("tick %d: %v", i+1, err)
+		}
+	}
+	if n := strings.Count(buf.String(), `msg="builder blocked"`); n != 1 {
+		t.Fatalf("builder blocked logged %d times across two blocked ticks, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "question="+rt.Store.QuestionPath("webshop", 1)) {
+		t.Errorf("blocked line must point at the question file:\n%s", buf.String())
 	}
 }
