@@ -921,6 +921,18 @@ func cmdAnswer(args []string) error {
 //
 // An unknown name is an error rather than an empty report: a silent blank
 // would read exactly like a healthy binding with nothing outstanding.
+// scopeReport decides what a status-shaped command shows. A named binding is
+// always shown, DONE or not: asking for one by name is already a request for
+// that specific thing. Otherwise DONE rows are hidden unless --all, and the
+// same rule applies to --json so the two formats never disagree about what
+// exists. It is a pure function so the rule can be tested without a herdr.
+func scopeReport(rep relay.Report, name string, all bool) relay.Report {
+	if name != "" || all {
+		return rep
+	}
+	return relay.HideDone(rep)
+}
+
 func filterReport(rep relay.Report, name string) (relay.Report, error) {
 	if name == "" {
 		return rep, nil
@@ -960,10 +972,7 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	if target == "" && !*all {
-		rep = relay.HideDone(rep)
-	}
+	rep = scopeReport(rep, target, *all)
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -1031,9 +1040,7 @@ func cmdWatch(args []string) error {
 			}
 			return err
 		}
-		if !*all {
-			rep = relay.HideDone(rep)
-		}
+		rep = scopeReport(rep, "", *all)
 		fmt.Print("\033[H\033[2J", relay.RenderStatus(rep))
 
 		select {
