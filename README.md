@@ -801,7 +801,9 @@ relay bind --resume --name N --builder w2:p4        # adopt an existing pane
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its role on the launch line,
-like any builder relay spawns. With --rebind the candidate is resolved through policy.json order and the ledger, and the pick is logged, exactly as a fresh bind with --builder omitted. Relay does not automatically re-send the current
+like any builder relay spawns. With `--rebind` the candidate is resolved through
+`policy.json` order and the ledger, and the pick is logged, exactly as a fresh
+bind with `--builder` omitted. Relay does not automatically re-send the current
 plan: it prints the `relay send` command pointing at the staged plan so you can
 hand over the round when ready.
 
