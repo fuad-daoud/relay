@@ -113,15 +113,16 @@ const DefaultConsultCap = 8
 
 // ConsultState is where one consult has got to.
 //
-// done and silent are both terminal and both reapable. A finished consult's
-// record is NOT dropped, because `relay reap` needs the pane id to close it:
-// Binding.Consults is the reap worklist as well as the watch list.
+// spawning and running are non-terminal and both occupy a cap slot; only done
+// and silent are reapable; a finished record is kept because it is the reap
+// worklist.
 type ConsultState string
 
 const (
-	ConsultRunning ConsultState = "running" // spawned; no findings yet
-	ConsultDone    ConsultState = "done"    // findings queued to the planner
-	ConsultSilent  ConsultState = "silent"  // gave up; "no findings" reported
+	ConsultSpawning ConsultState = "spawning" // slot reserved; no pane yet
+	ConsultRunning  ConsultState = "running"  // spawned; no findings yet
+	ConsultDone     ConsultState = "done"     // findings queued to the planner
+	ConsultSilent   ConsultState = "silent"   // gave up; "no findings" reported
 )
 
 // Consult is one ephemeral, read-only, one-shot agent attached to a binding.

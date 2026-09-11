@@ -52,7 +52,9 @@ const (
 	// one herdr agent read (30s), two git calls for round diff capture (10s
 	// snapshot + 10s diff), and one herdr agent prompt to deliver (30s). 90s is
 	// that 80s worst case plus 10s headroom; if client timeouts change, this
-	// must change with them.
+	// must change with them. Ask spawns its consult between two short critical
+	// sections on purpose, so its herdr calls do not count here; keep it that
+	// way.
 	lockAcquireLimit = 90 * time.Second
 )
 

@@ -23,6 +23,7 @@ type ReapResult struct {
 	Binding string
 	Closed  []store.Consult // pane closed, record dropped
 	Failed  []store.Consult // close failed, record kept for a retry
+	Dropped []store.Consult // record dropped; no pane ever existed to close
 }
 
 // Reap closes the panes of terminal consults and drops their records.
@@ -78,6 +79,17 @@ func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, erro
 			for _, c := range b.Consults {
 				if c.State == store.ConsultRunning {
 					keep = append(keep, c)
+					continue
+				}
+				if c.State == store.ConsultSpawning {
+					keep = append(keep, c)
+					continue
+				}
+				if c.Endpoint.PaneID == "" {
+					res.Dropped = append(res.Dropped, c)
+					if opts.DryRun {
+						keep = append(keep, c)
+					}
 					continue
 				}
 				if opts.DryRun {

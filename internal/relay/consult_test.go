@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -270,5 +271,90 @@ func TestReconcileConsultsMakesNoHerdrCallsForTerminalRecords(t *testing.T) {
 
 	if f.listCalls != listsBefore {
 		t.Errorf("reconcileConsults made %d ListAgents calls; it reads the snapshot it is given", f.listCalls-listsBefore)
+	}
+}
+
+func seedSpawning(t *testing.T, f *fakeHerdr) (Runtime, *fakeClock) {
+	t.Helper()
+	rt, _ := seedBound(t, f)
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	clock := &fakeClock{now: baseTime}
+	b.Consults = []store.Consult{
+		{
+			ID:           "7f2a3c1d",
+			Role:         "reviewer",
+			Round:        1,
+			AskPath:      "/repo/.relay/consults/7f2a3c1d-ask.md",
+			FindingsPath: "/repo/.relay/consults/7f2a3c1d-findings.md",
+			Endpoint:     store.Endpoint{AgentName: "reviewer", Kind: "claude"},
+			State:        store.ConsultSpawning,
+			SpawnedAt:    baseTime,
+		},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	return withClock(rt, clock), clock
+}
+
+func TestReconcileSkipsAFreshReservation(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedSpawning(t, f)
+
+	b := tickConsults(t, rt, f)
+	if b.Consults[0].State != store.ConsultSpawning {
+		t.Fatalf("state = %q, want spawning", b.Consults[0].State)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("got %d log entries queued, want 0", len(entries))
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("len(f.prompts) = %d, want 0", len(f.prompts))
+	}
+}
+
+func TestReconcileExpiresAStaleReservation(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, clock := seedSpawning(t, f)
+	clock.Advance(consultSpawnTimeout + time.Second)
+
+	b := tickConsults(t, rt, f)
+	if b.Consults[0].State != store.ConsultSilent {
+		t.Fatalf("state = %q, want silent", b.Consults[0].State)
+	}
+	if !strings.Contains(b.Consults[0].Note, "spawn did not complete") {
+		t.Errorf("note = %q, want it to mention 'spawn did not complete'", b.Consults[0].Note)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var findings []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindFindings {
+			findings = append(findings, e)
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings entries, want 1", len(findings))
+	}
+	if strings.Contains(findings[0].Payload, "Pane ") {
+		t.Errorf("payload %q names a pane with 'Pane '", findings[0].Payload)
+	}
+	rest := strings.ReplaceAll(findings[0].Payload, "No pane was spawned.", "")
+	if strings.Contains(rest, "pane ") {
+		t.Errorf("payload rest %q contains 'pane '", rest)
+	}
+	if !strings.HasSuffix(findings[0].Payload, "No pane was spawned.") {
+		t.Errorf("payload %q does not end with 'No pane was spawned.'", findings[0].Payload)
 	}
 }

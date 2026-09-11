@@ -660,6 +660,13 @@ func cmdReap(args []string) error {
 			}
 			fmt.Printf("%s %s consult %s (pane %s) on %s\n", verb, c.Role, c.ID, c.Endpoint.PaneID, r.Binding)
 		}
+		for _, c := range r.Dropped {
+			verb := "dropped"
+			if dryRun {
+				verb = "would drop"
+			}
+			fmt.Printf("%s %s consult %s on %s (no pane was spawned)\n", verb, c.Role, c.ID, r.Binding)
+		}
 		for _, c := range r.Failed {
 			fmt.Printf("could not close pane %s for consult %s on %s; record kept\n", c.Endpoint.PaneID, c.ID, r.Binding)
 		}

@@ -63,17 +63,23 @@ type AskResult struct {
 //	not "none"; the binding exists and is neither broken nor done;
 //	running consults are below the binding's cap.
 //
-// Postconditions: on success a ConsultRunning record exists on the binding, the
+// Postconditions: on a validation failure nothing on disk changed and nothing
 //
-//	question is staged at AskPath, one DirToConsult/KindAsk entry
-//	is logged, and a pane is running the role. On a VALIDATION
-//	failure nothing was spawned. On a SPAWN failure after the pane
-//	exists, a ConsultSilent record is written so `relay reap` can
-//	close the pane rather than stranding it.
+//	was spawned. On a reservation failure no record is written and no
+//	pane exists; ErrConsultCap is raised here and only here. On success
+//	exactly one record for the id exists, State is running,
+//	Endpoint.PaneID is set, and the ask is logged with Confirmed: true.
+//	On a spawn failure after a pane exists, exactly one record for the
+//	id exists, State is silent, Endpoint.PaneID is set, and Note names
+//	the failure, so `relay reap` can close it. On a spawn failure before
+//	a pane exists (SplitPane/CreateTab itself failed), exactly one record
+//	for the id exists, State is silent, Endpoint.PaneID is empty, and
+//	Note names the failure, so `relay reap` drops it without a close.
 //
 // Errors: ErrNotAConsultRole, ErrTreelessUnsupported, ErrConsultCap,
 //
-//	alias.ErrUnknownAlias, store.ErrNotFound, or a wrapped herdr failure.
+//	alias.ErrUnknownAlias, store.ErrNotFound, a wrapped herdr failure,
+//	or a wrapped store error from either phase.
 func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if opts.PlannerPane == "" {
 		return AskResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
@@ -102,8 +108,11 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		newID = randomConsultID
 	}
 
-	var out store.Consult
-
+	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
+	var (
+		c   store.Consult
+		cwd string
+	)
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
 		if err != nil {
@@ -118,13 +127,15 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		}
 
 		id := newID()
-		c := store.Consult{
+		agentName := b.Name + "-" + spec.Name + "-" + id
+		c = store.Consult{
 			ID:           id,
 			Role:         spec.Name,
 			Round:        b.Round,
 			AskPath:      rt.Store.AskPath(b.Name, b.Round, id),
 			FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, id),
-			State:        store.ConsultRunning,
+			Endpoint:     store.Endpoint{AgentName: agentName, Kind: spec.Kind},
+			State:        store.ConsultSpawning,
 			SpawnedAt:    rt.Now().UTC(),
 		}
 
@@ -132,75 +143,92 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 			return fmt.Errorf("stage question at %s: %w", c.AskPath, err)
 		}
 
-		agentName := b.Name + "-" + spec.Name + "-" + id
-		pane, err := consultPane(ctx, rt, opts, b.CWD, agentName)
-		if err != nil {
-			return err
-		}
-		c.Endpoint = store.Endpoint{AgentName: agentName, PaneID: pane, Kind: spec.Kind}
-
-		// From here the pane exists. Every failure records the consult as
-		// silent so `relay reap` can close it; returning the bare error would
-		// strand a pane with nothing pointing at it.
-		strand := func(reason string, cause error) error {
-			c.State, c.Note = store.ConsultSilent, reason+": "+brief(cause)
-			b.Consults = append(b.Consults, c)
-			if err := tx.Save(b); err != nil {
-				return strandError(cause, err)
-			}
-			out = c
-			return cause
-		}
-
-		if err := rt.Herdr.StartAgent(ctx, agentName, spec.Kind, pane, spec.Args); err != nil {
-			return strand("start failed", fmt.Errorf("start consult %q: %w", agentName, err))
-		}
-
-		// Best effort, exactly as resolveBuilder does it: the lookup races the
-		// agent's registration, and failing here would strand a live pane over
-		// an id Reconcile backfills on a later tick.
-		if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
-			if started, ok := FindAgent(agents, store.Endpoint{PaneID: pane}); ok {
-				c.Endpoint.SessionID = started.Session.Value
-			}
-		}
-
-		text := spec.Preamble
-		if text != "" {
-			text += "\n\n"
-		}
-		text += fmt.Sprintf(consultPrompt, c.AskPath, c.FindingsPath)
-
-		if err := promptWithRetry(ctx, rt, pane, text); err != nil {
-			return strand("prompt failed", fmt.Errorf("prompt consult: %w", err))
-		}
-
-		entry := store.LogEntry{
-			TS:        rt.Now().UTC(),
-			Round:     c.Round,
-			Direction: store.DirToConsult,
-			Kind:      store.KindAsk,
-			Path:      c.AskPath,
-			Note:      spec.Name + " " + id,
-			Confirmed: true,
-		}
-		if err := tx.AppendLog(b.Name, entry); err != nil {
-			return err
-		}
-
 		b.Consults = append(b.Consults, c)
 		if err := tx.Save(b); err != nil {
 			return err
 		}
-
-		out = c
+		cwd = b.CWD
 		return nil
 	})
 	if err != nil {
-		return AskResult{Consult: out, Binding: opts.Name}, err
+		return AskResult{}, err
 	}
 
-	return AskResult{Consult: out, Binding: opts.Name}, nil
+	// ── phase 2: spawn ──────────────────────────────────────── no lock held
+	var spawnErr error
+	pane, err := consultPane(ctx, rt, opts, cwd, c.Endpoint.AgentName)
+	if err != nil {
+		c.State = store.ConsultSilent
+		c.Note = "split failed: " + brief(err)
+		spawnErr = err
+	} else {
+		c.Endpoint.PaneID = pane
+		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
+		if err := rt.Herdr.StartAgent(ctx, c.Endpoint.AgentName, spec.Kind, pane, spec.Args); err != nil {
+			c.State = store.ConsultSilent
+			c.Note = "start failed: " + brief(err)
+			spawnErr = fmt.Errorf("start consult %q: %w", c.Endpoint.AgentName, err)
+		} else {
+			text := spec.Preamble
+			if text != "" {
+				text += "\n\n"
+			}
+			text += fmt.Sprintf(consultPrompt, c.AskPath, c.FindingsPath)
+
+			if err := promptWithRetry(ctx, rt, pane, text); err != nil {
+				c.State = store.ConsultSilent
+				c.Note = "prompt failed: " + brief(err)
+				spawnErr = fmt.Errorf("prompt consult: %w", err)
+			} else {
+				c.State = store.ConsultRunning
+			}
+		}
+	}
+
+	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
+	saveErr := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(opts.Name)
+		if err != nil {
+			return err
+		}
+
+		found := false
+		for i, existing := range b.Consults {
+			if existing.ID == c.ID {
+				b.Consults[i] = c
+				found = true
+				break
+			}
+		}
+		if !found {
+			b.Consults = append(b.Consults, c)
+		}
+
+		if c.State == store.ConsultRunning {
+			entry := store.LogEntry{
+				TS:        rt.Now().UTC(),
+				Round:     c.Round,
+				Direction: store.DirToConsult,
+				Kind:      store.KindAsk,
+				Path:      c.AskPath,
+				Note:      spec.Name + " " + c.ID,
+				Confirmed: true,
+			}
+			if err := tx.AppendLog(b.Name, entry); err != nil {
+				return err
+			}
+		}
+
+		return tx.Save(b)
+	})
+	if saveErr != nil {
+		if spawnErr != nil {
+			return AskResult{Consult: c, Binding: opts.Name}, strandError(spawnErr, saveErr)
+		}
+		return AskResult{Consult: c, Binding: opts.Name}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", c.ID, c.Endpoint.PaneID, saveErr)
+	}
+
+	return AskResult{Consult: c, Binding: opts.Name}, spawnErr
 }
 
 // consultPane makes somewhere for the consult to live: its own tab when asked,
@@ -223,13 +251,13 @@ func consultPane(ctx context.Context, rt Runtime, opts AskOptions, cwd, agentNam
 	return pane, nil
 }
 
-// runningConsults counts only the consults still working. A terminal record is
-// waiting to be reaped and is not occupying a pane slot the cap cares about --
-// it is occupying a pane, but one the human has been told to reap.
+// runningConsults counts ConsultSpawning as well as ConsultRunning. A
+// reservation occupies a slot the cap cares about, or two concurrent asks
+// would both see it free.
 func runningConsults(b store.Binding) int {
 	n := 0
 	for _, c := range b.Consults {
-		if c.State == store.ConsultRunning {
+		if c.State == store.ConsultSpawning || c.State == store.ConsultRunning {
 			n++
 		}
 	}

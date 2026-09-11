@@ -11,6 +11,14 @@ import (
 )
 
 const (
+	// consultSpawnTimeout is how long a consult reservation may stay in the
+	// spawning state before the daemon expires it. It must exceed Ask's
+	// worst-case spawn phase (five herdr calls at the client's 30 s timeout) so
+	// a slow live spawn is never expired from under its owner, and it is how
+	// long a crashed Ask holds a cap slot. It follows the client timeout, as
+	// lockAcquireLimit does.
+	consultSpawnTimeout = 5 * time.Minute
+
 	// consultTimeout is how long a consult may stay `working` before relay
 	// gives up on it. A consult reads and writes one file; the alternative to a
 	// deadline is a record that never becomes terminal and so is never reaped.
@@ -55,7 +63,21 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// Terminal records stay until `relay reap` closes their pane. Without
 		// this guard every tick re-queues findings that were already
 		// delivered, which is one notification per poll, forever.
-		if b.Consults[i].State != store.ConsultRunning {
+		if b.Consults[i].State == store.ConsultDone || b.Consults[i].State == store.ConsultSilent {
+			continue
+		}
+
+		if b.Consults[i].State == store.ConsultSpawning {
+			// FindAgent is never called for a spawning record: there is no pane
+			// yet to match, and a fresh reservation is not gone. If the
+			// reservation has expired, finish it as silent.
+			if now.Sub(b.Consults[i].SpawnedAt) >= consultSpawnTimeout {
+				var err error
+				if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
+					"spawn did not complete within "+consultSpawnTimeout.String()); err != nil {
+					return b, err
+				}
+			}
 			continue
 		}
 
@@ -159,8 +181,13 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
 		// does not exist would send the planner to read nothing.
-		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. Pane %s is open until the next `relay reap`.",
-			c.ID, c.Role, note, c.Endpoint.PaneID)
+		if c.Endpoint.PaneID == "" {
+			entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. No pane was spawned.",
+				c.ID, c.Role, note)
+		} else {
+			entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. Pane %s is open until the next `relay reap`.",
+				c.ID, c.Role, note, c.Endpoint.PaneID)
+		}
 	}
 
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {

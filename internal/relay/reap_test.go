@@ -19,6 +19,8 @@ func seedReapable(t *testing.T, rt Runtime) {
 		{ID: "aaaaaaaa", Role: "reviewer", State: store.ConsultDone, Endpoint: store.Endpoint{PaneID: "w2:p9"}},
 		{ID: "bbbbbbbb", Role: "reviewer", State: store.ConsultSilent, Endpoint: store.Endpoint{PaneID: "w2:pA"}},
 		{ID: "cccccccc", Role: "reviewer", State: store.ConsultRunning, Endpoint: store.Endpoint{PaneID: "w2:pB"}},
+		{ID: "dddddddd", Role: "reviewer", State: store.ConsultSpawning},
+		{ID: "eeeeeeee", Role: "reviewer", State: store.ConsultSilent},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -59,8 +61,8 @@ func TestReapClosesTerminalConsultsAndKeepsRunningOnes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(b.Consults) != 1 || b.Consults[0].ID != "cccccccc" {
-		t.Errorf("consults = %+v, want only the running one", b.Consults)
+	if len(b.Consults) != 2 {
+		t.Errorf("consults = %+v, want the running and spawning ones", b.Consults)
 	}
 }
 
@@ -81,7 +83,7 @@ func TestReapDryRunClosesNothing(t *testing.T) {
 	}
 
 	b, _ := rt.Store.Load("webshop")
-	if len(b.Consults) != 3 {
+	if len(b.Consults) != 5 {
 		t.Errorf("dry run dropped records: %+v", b.Consults)
 	}
 }
@@ -100,8 +102,71 @@ func TestReapKeepsTheRecordWhenTheCloseFails(t *testing.T) {
 	}
 
 	b, _ := rt.Store.Load("webshop")
-	if len(b.Consults) != 3 {
+	if len(b.Consults) != 4 {
 		t.Errorf("a failed close dropped the record, so a retry is impossible: %+v", b.Consults)
+	}
+}
+
+func TestReapDropsATerminalRecordWithNoPane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	seedReapable(t, rt)
+
+	// Dry run: eeeeeeee is listed in Dropped and still saved.
+	res, err := Reap(context.Background(), rt, ReapOptions{Name: "webshop", DryRun: true})
+	if err != nil {
+		t.Fatalf("Reap (dry run): %v", err)
+	}
+	if len(res) != 1 || len(res[0].Dropped) != 1 || res[0].Dropped[0].ID != "eeeeeeee" {
+		t.Fatalf("dry run Dropped = %+v, want eeeeeeee", res[0].Dropped)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var foundE bool
+	for _, c := range b.Consults {
+		if c.ID == "eeeeeeee" {
+			foundE = true
+		}
+	}
+	if !foundE {
+		t.Error("dry run dropped eeeeeeee from disk")
+	}
+
+	// Real run: eeeeeeee in Dropped, not in f.closed, gone from saved binding; dddddddd kept.
+	f.closed = nil
+	res, err = Reap(context.Background(), rt, ReapOptions{Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(res) != 1 || len(res[0].Dropped) != 1 || res[0].Dropped[0].ID != "eeeeeeee" {
+		t.Fatalf("Dropped = %+v, want eeeeeeee", res[0].Dropped)
+	}
+	for _, p := range f.closed {
+		if p == "" {
+			t.Error("ClosePane was called with an empty pane id")
+		}
+	}
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var foundD bool
+	foundE = false
+	for _, c := range b.Consults {
+		if c.ID == "eeeeeeee" {
+			foundE = true
+		}
+		if c.ID == "dddddddd" {
+			foundD = true
+		}
+	}
+	if foundE {
+		t.Error("eeeeeeee still saved in binding after real reap")
+	}
+	if !foundD {
+		t.Error("dddddddd (spawning) was not kept in binding")
 	}
 }
 
