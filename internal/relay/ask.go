@@ -59,6 +59,9 @@ type AskResult struct {
 	// Candidate is the canonical token the consult was started from, for the
 	// CLI's gatedNote (#61 step 1).
 	Candidate string
+
+	// Resolution is how the candidate was chosen, for the pick line.
+	Resolution Resolution
 }
 
 // Ask spawns one read-only, one-shot consult beside a binding's builder and
@@ -226,6 +229,10 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		}
 
 		if consult.State == store.ConsultRunning {
+			if err := tx.AppendLog(b.Name, pickEntry(rt.Now(), consult.Round, role.Name, res)); err != nil {
+				return err
+			}
+
 			entry := store.LogEntry{
 				TS:        rt.Now().UTC(),
 				Round:     consult.Round,
@@ -244,12 +251,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	})
 	if saveErr != nil {
 		if spawnErr != nil {
-			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, strandError(spawnErr, saveErr)
+			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, strandError(spawnErr, saveErr)
 		}
-		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
+		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
 	}
 
-	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, spawnErr
+	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, spawnErr
 }
 
 // consultPane makes somewhere for the consult to live: its own tab when asked,

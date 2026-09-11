@@ -50,6 +50,9 @@ type ForkResult struct {
 	Worktree string // "" when --cwd was used
 	Branch   string // "" when --cwd was used
 	Base     string // commit the worktree was cut from; "" when --cwd was used
+
+	// Resolution is how the builder was chosen, for the pick line.
+	Resolution Resolution
 }
 
 // Fork branches a new binding from the source's state as of a given round.
@@ -200,10 +203,18 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
+	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
+	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
+	// call would report HowExplicit and lose the real How/Position/Skipped
+	// resolved above -- res, from before the worktree was cut, is what the
+	// pick entry and ForkResult.Resolution must carry.
 	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.NewName, planner.PaneID)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
+	}
+	if opts.Candidate == "" {
+		res.InheritedFrom = src.Name
 	}
 
 	b := store.Binding{
@@ -227,7 +238,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		return writeFork(tx, rt.Store, src.Name, b, opts.Round, now)
+		return writeFork(tx, rt.Store, src.Name, b, opts.Round, now, pickEntry(now, b.Round, "builder", res))
 	})
 	if err != nil {
 		rollback()
@@ -251,10 +262,11 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 
 	return ForkResult{
-		Binding:  b,
-		Worktree: worktree,
-		Branch:   branch,
-		Base:     base,
+		Binding:    b,
+		Worktree:   worktree,
+		Branch:     branch,
+		Base:       base,
+		Resolution: res,
 	}, nil
 }
 
@@ -268,7 +280,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 //
 //	round files, and bind.json. On ANY error, that directory
 //	does not exist.
-func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throughRound int, now time.Time) error {
+func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throughRound int, now time.Time, pick store.LogEntry) error {
 	success := false
 	defer func() {
 		if !success {
@@ -292,6 +304,9 @@ func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throug
 		Note:      fmt.Sprintf("forked from %s at round %d", src, throughRound),
 	}
 	if err := tx.AppendLog(b.Name, forkEntry); err != nil {
+		return err
+	}
+	if err := tx.AppendLog(b.Name, pick); err != nil {
 		return err
 	}
 	if err := tx.Save(b); err != nil {

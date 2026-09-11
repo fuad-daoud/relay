@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // ErrNoCandidates reports that no candidates are configured.
@@ -251,6 +252,17 @@ func ExplainResolution(role string, res Resolution) string {
 	}
 
 	return out
+}
+
+// pickEntry is the log record of one resolution. Confirmed and bound for
+// the planner so it is never mistaken for an undelivered payload; the
+// note is ExplainResolution, so `relay log` reads exactly what bind
+// printed (spec §3.2, §4.4).
+func pickEntry(now time.Time, round int, role string, res Resolution) store.LogEntry {
+	return store.LogEntry{
+		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
+		Kind: store.KindPick, Confirmed: true, Note: ExplainResolution(role, res),
+	}
 }
 
 // CandidateKind returns the harness kind a bind with this token would start,

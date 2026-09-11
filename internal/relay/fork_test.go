@@ -202,15 +202,22 @@ func TestForkSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(altLog) != 5 { // 2 plans + 2 reports from round 1&2 + 1 KindFork
-		t.Fatalf("alt log length = %d, want 5", len(altLog))
+	if len(altLog) != 6 { // 2 plans + 2 reports from round 1&2 + 1 KindFork + 1 KindPick
+		t.Fatalf("alt log length = %d, want 6", len(altLog))
 	}
-	lastEntry := altLog[len(altLog)-1]
-	if lastEntry.Kind != store.KindFork || lastEntry.Round != 3 || !lastEntry.Confirmed || lastEntry.Direction != store.DirToPlanner {
-		t.Errorf("last log entry mismatch: %+v", lastEntry)
+	forkEntry := altLog[len(altLog)-2]
+	if forkEntry.Kind != store.KindFork || forkEntry.Round != 3 || !forkEntry.Confirmed || forkEntry.Direction != store.DirToPlanner {
+		t.Errorf("fork log entry mismatch: %+v", forkEntry)
 	}
-	if lastEntry.Note != "forked from source at round 2" {
-		t.Errorf("last log entry note = %q", lastEntry.Note)
+	if forkEntry.Note != "forked from source at round 2" {
+		t.Errorf("fork log entry note = %q", forkEntry.Note)
+	}
+	pickLogEntry := altLog[len(altLog)-1]
+	if pickLogEntry.Kind != store.KindPick || pickLogEntry.Round != 3 || !pickLogEntry.Confirmed || pickLogEntry.Direction != store.DirToPlanner {
+		t.Errorf("pick log entry mismatch: %+v", pickLogEntry)
+	}
+	if pickLogEntry.Note != "picked opencode/test/m for builder: explicit, inherited from source, policy bypassed" {
+		t.Errorf("pick log entry note = %q", pickLogEntry.Note)
 	}
 
 	// Round files copied
@@ -555,8 +562,18 @@ func TestForkWriteForkCleanupOnSaveFailure(t *testing.T) {
 		State: store.StateActive,
 	}
 
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return writeFork(tx, rt.Store, "source", b, 2, time.Now().UTC())
+	ref, err := candidate.ParseRef(testOpencodeRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oc, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		return writeFork(tx, rt.Store, "source", b, 2, time.Now().UTC(),
+			pickEntry(time.Now().UTC(), b.Round, "builder", Resolution{How: HowExplicit, Candidate: oc}))
 	})
 	if err == nil {
 		t.Fatal("expected error from writeFork with empty CWD, got nil")

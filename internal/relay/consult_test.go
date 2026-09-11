@@ -317,8 +317,10 @@ func TestReconcileSkipsAFreshReservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("got %d log entries queued, want 0", len(entries))
+	// seedSpawning's underlying seedBound already wrote the builder bind's
+	// pick entry; the reservation itself queues nothing further.
+	if len(entries) != 1 || entries[0].Kind != store.KindPick {
+		t.Errorf("got %d log entries queued, want the single pick entry from the bind: %+v", len(entries), entries)
 	}
 	if len(f.prompts) != 0 {
 		t.Errorf("len(f.prompts) = %d, want 0", len(f.prompts))
