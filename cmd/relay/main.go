@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -272,6 +273,11 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
 		return relay.Runtime{}, err
@@ -286,6 +292,7 @@ func newRuntime() (relay.Runtime, error) {
 		Store:      st,
 		Candidates: candidates,
 		LedgerPath: st.LedgerPath(),
+		Policy:     pol,
 		Now:        time.Now,
 		Hooks:      dispatcher,
 	}, nil
