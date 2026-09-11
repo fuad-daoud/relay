@@ -108,6 +108,10 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    ```
 4. Emit the builder's role definitions directly into your harness's config directory:
    ```
+   # agy
+   relay agent print --kind agy --role plan-executor > ~/.gemini/config/agents/plan-executor.md
+   relay agent print --kind agy --role researcher    > ~/.gemini/config/agents/researcher.md
+
    # claude
    relay agent print --kind claude --role plan-executor > ~/.claude/agents/plan-executor.md
    relay agent print --kind claude --role researcher    > ~/.claude/agents/researcher.md
@@ -119,14 +123,14 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
 
    `researcher` is the read-only role the builder's own sub-agents run as. It
    exists because exactly one agent may write to a working tree: research can fan
-   out safely, implementation cannot. Both shipped definitions pin a `model:` in
-   their front matter as a worked example, chosen so neither needs a provider the
-   rest of relay does not already assume. That line is the first thing to change
-   for your own setup -- `relay doctor` reports the pin each installed definition
-   carries.
-
-   `agy` has no `--agent` flag; relay prepends the role's preamble on the first prompt
-   instead, so it has no definitions to install.
+   out safely, implementation cannot. The claude and opencode definitions pin a
+   `model:` in their front matter as a worked example, chosen so neither needs a
+   provider the rest of relay does not already assume; that line is the first
+   thing to change for your own setup. The agy definitions pin `model: inherit`
+   and that is not an example: on agy the key is a tier (`inherit`, `flash`,
+   `pro`) that would override the `--model` relay passes at launch. `relay
+   doctor` reports the pin each installed definition carries, and warns when an
+   agy copy pins a tier.
 5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
 6. Re-run `relay doctor` to confirm `0 failures`.
 7. Start the daemon (e.g. `relay daemon &` or `make service`).
@@ -398,11 +402,11 @@ A role is relay's name for a job; the harness definition it selects is what `rel
 
 ### How relay launches one
 
-| kind | args | preamble |
-| --- | --- | --- |
-| `claude` | `--model <model> --agent <role.Definition>` | `""` |
-| `opencode` | `--agent <role.Definition> -m <provider>/<model>` | `""` |
-| `agy` | `--model <model>` | `role.Preamble` |
+| kind | args |
+| --- | --- |
+| `agy` | `--model <model> --agent <role.Definition>` |
+| `claude` | `--model <model> --agent <role.Definition>` |
+| `opencode` | `--agent <role.Definition> -m <provider>/<model>` |
 
 Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
 
@@ -441,7 +445,7 @@ something is gated; `relay candidates` marks gated rows `unavailable:`;
 `bind`/`add`/`fork`/`ask` print a `note:` on stderr when they start a gated
 candidate and **proceed** -- refusing is a later step of #61.
 
-An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in.
+An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in. relay selects a role only for agents it starts, with `--agent` on the launch line.
 
 `aliases.json` from earlier versions is no longer read.
 
@@ -476,20 +480,22 @@ Emit the definitions into the harness's agent directory the same way as the
 other roles:
 
 ```
+# agy
+relay agent print --kind agy      --role reviewer > ~/.gemini/config/agents/reviewer.md
 # claude
 relay agent print --kind claude   --role reviewer > ~/.claude/agents/reviewer.md
 # opencode
 relay agent print --kind opencode --role reviewer > ~/.config/opencode/agents/reviewer.md
 ```
 
-`relay doctor` reports whether the definition landed. `agy` has no `--agent`
-flag; relay prepends the role's preamble when the candidate is `agy`, so it
-needs no definition file.
+`relay doctor` reports whether the definition landed, on every kind.
 
 Read-only is a property of the role's configuration — the definition pins a
 read-only tool set and the candidate's `tree` decides where it runs — not
-something relay enforces. relay cannot observe writes; it reports what is in a
-tree and no more. Note also that `reviewer` is deliberately not the `researcher`
+something relay enforces. On agy the definition's `tools:` allowlist makes it
+a property the harness enforces: a write tool that is not listed is not
+offered. relay cannot observe writes; it reports what is in a tree and no
+more. Note also that `reviewer` is deliberately not the `researcher`
 role: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs in its own relay pane and hands
 back a file path.
@@ -664,10 +670,10 @@ relay bind --resume --name N --builder w2:p4        # adopt an existing pane
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
-baseline. Because the replacement builder is a new session that has not seen the
-role's preamble, relay re-sends the preamble on the next prompt even after round 1.
-Relay does not automatically re-send the current plan: it prints the `relay send`
-command pointing at the staged plan so you can hand over the round when ready.
+baseline. The replacement builder is started with its role on the launch line,
+like any builder relay spawns. Relay does not automatically re-send the current
+plan: it prints the `relay send` command pointing at the staged plan so you can
+hand over the round when ready.
 
 If only the planner moved or restarted, `relay bind --resume --name N` re-points
 the planner without touching the builder. If you want to start over from scratch,

@@ -6,6 +6,13 @@
 "The reviewer alias"; `docs/specs/2026-09-10-consults-design.md` wherever it
 says a consult role is an alias
 
+**Amended 2026-09-11 by `2026-09-11-agy-role-definitions-design.md` (#85):**
+agy selects its role with `--agent` like every other kind. `RoleSpec.Preamble`
+(§3.4), `Harness.SelectsRoleByPreamble` and `Launch.Preamble` (§3.5), the
+preamble branch of `composePrompt` (§4.7) and the `l.Preamble +` prefix in
+`Ask` (§4.8) no longer exist. The sections below describe the design as
+shipped in #83; read them as history.
+
 ## 1. System overview
 
 Today the thing relay starts is an *alias*: a human-invented name
