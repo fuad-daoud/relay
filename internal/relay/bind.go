@@ -314,6 +314,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	}
 
 	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.Args); err != nil {
+		recordSpawnFailure(rt, c.Ref().String(), name, err)
 		return store.Endpoint{}, "", fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 

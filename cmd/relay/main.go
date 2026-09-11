@@ -272,11 +272,14 @@ func newRuntime() (relay.Runtime, error) {
 	}
 	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
 
+	st := store.New(root)
+
 	return relay.Runtime{
 		Herdr:      herdr.NewClient("herdr", 30*time.Second),
 		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:      store.New(root),
+		Store:      st,
 		Candidates: candidates,
+		LedgerPath: st.LedgerPath(),
 		Now:        time.Now,
 		Hooks:      dispatcher,
 	}, nil

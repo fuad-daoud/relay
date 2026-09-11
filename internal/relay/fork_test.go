@@ -36,6 +36,7 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 		Git:        g,
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, testCandidatesJSON),
+		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
 		Now:        func() time.Time { return baseTime },
 		Hooks:      hd,
 	}

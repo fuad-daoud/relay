@@ -23,6 +23,7 @@ func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 		Herdr:      f,
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, testCandidatesJSON),
+		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
 		Now:        func() time.Time { return baseTime },
 	}
 }

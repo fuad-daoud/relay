@@ -47,6 +47,7 @@ type Runtime struct {
 	Git        Git
 	Store      *store.Store
 	Candidates *candidate.Set
+	LedgerPath string // the availability ledger file (#61 step 1)
 	Now        func() time.Time
 	Hooks      hooks.Dispatcher
 

@@ -282,7 +282,7 @@ func TestCaptureDrift_Cases(t *testing.T) {
 				}
 				g = fg
 			}
-			rt := Runtime{Store: s, Git: g}
+			rt := Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
 
 			if tc.setupStore != nil {
 				tc.setupStore(t, s, tc.binding)
@@ -339,7 +339,7 @@ func TestCaptureDrift_DiffTreesArgOrder(t *testing.T) {
 			Patch: []byte("patch"),
 		},
 	}
-	rt := Runtime{Store: s, Git: fg}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
 	b := store.Binding{
 		Name:            "webshop",
 		CWD:             "/repo",
@@ -452,7 +452,7 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 
 func TestReadDrift(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Runtime{Store: s, LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
 
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 5}
 	if err := s.Save(b); err != nil {
