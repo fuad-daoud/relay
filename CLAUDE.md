@@ -57,3 +57,13 @@ without the logic is not pinning anything.
   config resolves via `os.UserConfigDir()`, which honours `XDG_CONFIG_HOME`.
   Compose relay config paths through `userConfigRoot()` (`cmd/relay/main.go`),
   never by hand -- see #42 for what hand-rolling one costs.
+
+## Merging and CI
+
+- Merge only after `gh pr checks <n> --watch` has finished with every job
+  passing. Checking the first job to complete, or chaining `gh pr merge`
+  behind an unconditional check, merged #68 with four jobs pending and broke
+  `main` (#70 fixed it).
+- CI runners have no `herdr` binary. A test in `cmd/relay` must not execute
+  a subcommand that reaches herdr; test the rule as a pure function in
+  `internal/relay` instead. Say so in any plan step that adds a CLI test.
