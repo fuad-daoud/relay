@@ -166,6 +166,68 @@ func TestStatusPendingLineUnchangedWhenNotHeld(t *testing.T) {
 	}
 }
 
+func TestStatusShowsNudgeClock(t *testing.T) {
+	f := &fakeHerdr{readOut: "half a screen of output"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	// One tick nudges and takes the fingerprint at baseTime; the daemon
+	// would persist it, so Status must see the saved binding.
+	b, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("nudge Reconcile: %v", err)
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	f.agents = agents
+	clock.Advance(23 * time.Second)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.Nudge == nil {
+		t.Fatalf("a nudged round must carry a Nudge, got %+v", row)
+	}
+	if !row.Nudge.At.Equal(baseTime) || row.Nudge.QuietMS != 23000 || row.Nudge.GraceMS != 60000 {
+		t.Fatalf("Nudge = %+v, want at baseTime, quiet 23000ms of 60000ms", row.Nudge)
+	}
+	if row.Last == nil || row.Last.Note != "nudge" {
+		t.Fatalf("Last = %+v, want the nudge entry with its note", row.Last)
+	}
+
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "  nudge    "+baseTime.Local().Format("15:04:05")+"  quiet 23s of 1m0s\n") {
+		t.Errorf("rendered status = %q", text)
+	}
+	if !strings.Contains(text, "plan to_builder round 1 (nudge)\n") {
+		t.Errorf("the last line must say it was a nudge, got %q", text)
+	}
+}
+
+func TestStatusHasNoNudgeLineWhenNotNudged(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].Nudge != nil {
+		t.Fatalf("Nudge = %+v, want nil on an un-nudged round", rep.Bindings[0].Nudge)
+	}
+	text := RenderStatus(rep)
+	if strings.Contains(text, "  nudge") || strings.Contains(text, "(") {
+		t.Errorf("no nudge line and no note on an ordinary round, got %q", text)
+	}
+}
+
 // TestStatusJSONCarriesStructuredFields guards the statusline interface: Last
 // and Pending must serialise as JSON objects with typed fields, not as
 // rendered prose the consumer would have to regex apart.

@@ -39,6 +39,10 @@ type BindingStatus struct {
 	Detail  string       `json:"detail,omitempty"`
 	Last    *LastEvent   `json:"last,omitempty"`
 	Pending *PendingInfo `json:"pending,omitempty"`
+	// Nudge is set while the current round has been nudged and no report has
+	// arrived: when relay nudged, and how long the builder's terminal has been
+	// unchanged against the grace after which relay scrapes it. Nil otherwise.
+	Nudge *NudgeInfo `json:"nudge,omitempty"`
 	// Foreign lists live agents occupying this binding's working tree that no
 	// binding accounts for. It is an observation, never a judgement: relay
 	// cannot see writes, so a sanctioned read-only researcher and a rogue
@@ -60,6 +64,10 @@ type LastEvent struct {
 	Round     int             `json:"round"`
 	Direction store.Direction `json:"direction"`
 	Kind      store.Kind      `json:"kind"`
+	// Note is the entry's note, when it has one. A nudge is a plan entry to
+	// the builder and a scrape is a report entry to the planner, so without
+	// it the last line after either reads exactly like the ordinary case.
+	Note string `json:"note,omitempty"`
 }
 
 // PendingInfo describes a payload waiting on the planner.
@@ -84,6 +92,21 @@ type HoldInfo struct {
 	// record its grace (state written before HeldGrace existed). status then
 	// shows the quiet time alone rather than guess a fraction.
 	GraceMS int `json:"grace_ms,omitempty"`
+}
+
+// NudgeInfo is the quiescence clock carried as data, like HoldInfo. The
+// grace needs no state field: nudgeGrace is a constant in this package, so
+// status knows it without the daemon writing it down.
+type NudgeInfo struct {
+	At      time.Time `json:"at"`
+	QuietMS int       `json:"quiet_ms"`
+	GraceMS int       `json:"grace_ms"`
+}
+
+// NudgeText is the human form of the quiescence clock: "quiet 23s of 1m0s".
+func NudgeText(n NudgeInfo) string {
+	quiet := (time.Duration(n.QuietMS) * time.Millisecond).Truncate(time.Second)
+	return fmt.Sprintf("quiet %s of %s", quiet, time.Duration(n.GraceMS)*time.Millisecond)
 }
 
 // Report is the whole status surface.
@@ -168,6 +191,26 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 		row.Last = &LastEvent{
 			TS: last.TS, Round: last.Round,
 			Direction: last.Direction, Kind: last.Kind,
+			Note: last.Note,
+		}
+	}
+
+	// What relay acts on is what it shows: the clock starts where
+	// builderQuiescent starts it -- at the last fingerprint, falling back to
+	// the nudge itself when none has been taken yet.
+	if nudgedAt, ok := nudgeTime(entries, b.Round); ok {
+		since := b.BuilderScreenAt
+		if since.IsZero() {
+			since = nudgedAt
+		}
+		quiet := rt.Now().UTC().Sub(since)
+		if quiet < 0 {
+			quiet = 0
+		}
+		row.Nudge = &NudgeInfo{
+			At:      nudgedAt,
+			QuietMS: int(quiet / time.Millisecond),
+			GraceMS: int(nudgeGrace / time.Millisecond),
 		}
 	}
 
@@ -294,9 +337,17 @@ func RenderStatus(r Report) string {
 		if b.Detail != "" {
 			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)
 		}
+		if b.Nudge != nil {
+			fmt.Fprintf(&sb, "  nudge    %s  %s\n",
+				b.Nudge.At.Local().Format("15:04:05"), NudgeText(*b.Nudge))
+		}
 		if b.Last != nil {
-			fmt.Fprintf(&sb, "  last     %s %s %s round %d\n",
+			fmt.Fprintf(&sb, "  last     %s %s %s round %d",
 				b.Last.TS.Local().Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
+			if b.Last.Note != "" {
+				fmt.Fprintf(&sb, " (%s)", b.Last.Note)
+			}
+			fmt.Fprint(&sb, "\n")
 		}
 		if b.Pending != nil {
 			fmt.Fprintf(&sb, "  pending  %s round %d -> planner", b.Pending.Kind, b.Pending.Round)

@@ -215,6 +215,9 @@ func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message strin
 			return b, fmt.Errorf("notify halt: %w", err)
 		}
 
+		// Shares the notify's once-per-round dedup.
+		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
+
 		b.HaltNotifiedRound = b.Round
 	}
 
@@ -254,6 +257,9 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
 	}
+
+	// Once per round: HasEntry on the question gates the call.
+	slog.Info("builder blocked", "binding", b.Name, "round", b.Round, "question", path)
 
 	b.State = store.StateNeedsYou
 
@@ -316,12 +322,19 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	next, quiescent, err := builderQuiescent(ctx, rt, b, nudgedAt)
 	if err != nil {
+		// The round stays open (a failed read is not evidence the builder
+		// stopped), but a read that keeps failing is a herdr problem the
+		// human should see. Per tick on purpose.
+		slog.Warn("builder screen unreadable", "binding", b.Name, "round", b.Round, "err", err)
 		return b, nil
 	}
 	if !quiescent {
 		return next, nil
 	}
 
+	// Once per round: the report scrapeReport queues ends this path.
+	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round,
+		"quiet", rt.Now().UTC().Sub(next.BuilderScreenAt).Truncate(time.Second))
 	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
 }
 
@@ -398,6 +411,9 @@ func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if err := tx.AppendLog(b.Name, entry); err != nil {
 		return b, err
 	}
+
+	// Once per round: nudgeTime gates the call.
+	slog.Info("builder nudged", "binding", b.Name, "round", b.Round)
 
 	if fp, err := screenFingerprint(ctx, rt, b); err == nil {
 		b.BuilderScreen, b.BuilderScreenAt = fp, rt.Now().UTC()
