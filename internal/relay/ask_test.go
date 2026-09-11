@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -34,6 +35,58 @@ func writeQuestion(t *testing.T, body string) string {
 		t.Fatalf("write question: %v", err)
 	}
 	return path
+}
+
+// TestAskRefusesAConsultNameHerdrWouldRefuse pins #64: a 15-character binding
+// name builds a 33-character consult agent name, and Ask must refuse it before
+// the reservation is written or the question staged -- nothing on disk, no
+// pane split, no consult recorded.
+func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+
+	// seedBound fixes the binding name at "webshop", so seed a second binding
+	// by hand with the long name. It gets its own CWD: the store refuses a
+	// second active binding on the same working tree as webshop's.
+	name := "abcdefghij12345" // 15 chars; + "-reviewer-" + 8 hex = 33
+	b := store.Binding{
+		Name:    name,
+		CWD:     "/other-tree",
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "agy"},
+		Round:   1,
+		State:   store.StateActive,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("seed %s binding: %v", name, err)
+	}
+	q := writeQuestion(t, "Review 003-diff.patch against the plan.")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: name, PlannerPane: "w2:p3",
+	})
+
+	// A refused ask leaves nothing behind; these are asserted before the
+	// error's identity so the exact artifact left behind is what the failure
+	// reports.
+	if matches, _ := filepath.Glob(filepath.Join(rt.Store.Dir(name), "*-ask.md")); len(matches) != 0 {
+		t.Errorf("a refused ask must stage no question file, found %v", matches)
+	}
+	if f.splits != 0 {
+		t.Errorf("a refused ask must touch no pane: splits = %d", f.splits)
+	}
+
+	got, loadErr := rt.Store.Load(name)
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
+	if len(got.Consults) != 0 {
+		t.Errorf("consults = %+v, want none: a refused ask records nothing", got.Consults)
+	}
+
+	if !errors.Is(err, herdr.ErrInvalidAgentName) {
+		t.Fatalf("Ask err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	}
 }
 
 func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {

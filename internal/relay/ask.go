@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -108,6 +109,20 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		newID = randomConsultID
 	}
 
+	// Mint the id and compose the agent name before the lock, so a name herdr
+	// would refuse fails as a validation error before the reservation is
+	// written or the question staged: nothing to clean up.
+	// Mint the id and compose the agent name before the lock, so a name herdr
+	// would refuse fails as a validation error before the reservation is
+	// written or the question staged: nothing to clean up.
+	id := newID()
+	agentName := opts.Name + "-" + spec.Name + "-" + id
+	if err := herdr.ValidateAgentName(agentName); err != nil {
+		return AskResult{}, fmt.Errorf(
+			"consult agent name %q: %w -- binding %q needs a name of at most %d characters to run %q consults",
+			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+spec.Name+"-")-8, spec.Name)
+	}
+
 	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
 	var (
 		c   store.Consult
@@ -126,8 +141,6 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 				b.Name, runningConsults(b), consultCap(b), ErrConsultCap)
 		}
 
-		id := newID()
-		agentName := b.Name + "-" + spec.Name + "-" + id
 		c = store.Consult{
 			ID:           id,
 			Role:         spec.Name,

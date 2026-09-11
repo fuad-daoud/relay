@@ -262,6 +262,18 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	return stored, nil
 }
 
+// builderAgentName composes and validates the herdr agent name for a
+// binding's builder. It runs before any pane or worktree exists, so a name
+// herdr would refuse fails as a validation error with nothing to clean up.
+func builderAgentName(name string) (string, error) {
+	agentName := name + "-builder"
+	if err := herdr.ValidateAgentName(agentName); err != nil {
+		return "", fmt.Errorf("builder agent name %q: %w -- use a binding name of at most %d characters",
+			agentName, err, herdr.MaxAgentNameLen-len("-builder"))
+	}
+	return agentName, nil
+}
+
 // resolveBuilder adopts an existing builder pane, or splits a sibling pane and
 // starts the aliased agent in it. Focus stays with the planner either way.
 //
@@ -302,7 +314,10 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 			opts.Alias, opts.Alias, ErrConsultAlias)
 	}
 
-	agentName := name + "-builder"
+	agentName, err := builderAgentName(name)
+	if err != nil {
+		return store.Endpoint{}, err
+	}
 
 	paneID, err := builderPane(ctx, rt, opts, agentName, plannerPane)
 	if err != nil {

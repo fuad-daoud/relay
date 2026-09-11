@@ -131,6 +131,33 @@ func TestAddRollsBackTheWorktreeWhenTheBuilderFailsToStart(t *testing.T) {
 	}
 }
 
+// TestAddRefusesALongNameBeforeCuttingAWorktree pins #64: a 25-character name
+// builds a 33-character builder agent name, and Add must refuse it before the
+// worktree is cut -- a refused name leaves nothing behind.
+func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: name, Alias: "abuilder", PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
+	}
+	if fh.splits != 0 || len(fh.starts) != 0 {
+		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", fh.splits, len(fh.starts))
+	}
+	if !errors.Is(err, herdr.ErrInvalidAgentName) {
+		t.Fatalf("Add err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	}
+	if _, loadErr := rt.Store.Load(name); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound: a refused name saves no binding", loadErr)
+	}
+}
+
 func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}

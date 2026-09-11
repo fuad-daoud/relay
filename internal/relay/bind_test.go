@@ -59,6 +59,30 @@ func TestBindSpawnsBuilderPane(t *testing.T) {
 	}
 }
 
+// TestBindRefusesABuilderNameHerdrWouldRefuse pins #64: a 25-character binding
+// name passes the store's own limit but builds a 33-character agent name, and
+// Bind must refuse it before any pane is split, any agent started or any
+// binding saved.
+func TestBindRefusesABuilderNameHerdrWouldRefuse(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+
+	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if f.splits != 0 || len(f.starts) != 0 {
+		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", f.splits, len(f.starts))
+	}
+	if !errors.Is(err, herdr.ErrInvalidAgentName) {
+		t.Fatalf("Bind err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	}
+	if _, loadErr := rt.Store.Load(name); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound: a refused name saves no binding", loadErr)
+	}
+}
+
 func TestBindSpawnRecordsBuilderSessionID(t *testing.T) {
 	f := &fakeHerdr{
 		agents: []herdr.Agent{
