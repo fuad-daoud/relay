@@ -168,6 +168,7 @@ func cmdDoctor(args []string) error {
 	}
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
+	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
 
 	renderReport(os.Stdout, rep)
 
@@ -203,6 +204,23 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
 				g.Token, relay.GateKindText(g.Kind), g.Since.Local().Format("15:04"), relay.GateUntilText(g.Until)),
 			Fix: fix,
+		})
+	}
+	return checks
+}
+
+// policyChecks turns policy/candidates inconsistencies into doctor rows.
+// Warnings, not failures: an unlisted candidate is a degraded order, not
+// a broken machine (spec §4.8).
+func policyChecks(warnings []relay.PolicyWarning) []doctor.Check {
+	checks := make([]doctor.Check, 0, len(warnings))
+	for _, w := range warnings {
+		checks = append(checks, doctor.Check{
+			Group:    "",
+			Name:     "policy",
+			Severity: doctor.SevWarn,
+			Detail:   w.Text,
+			Fix:      "edit ~/.config/relay/policy.json",
 		})
 	}
 	return checks

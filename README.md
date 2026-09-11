@@ -198,6 +198,9 @@ inside every pane it manages, so it has to be run from inside one.
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`).
 - `relay candidates` — list the configured candidates and the roles each serves.
+- `relay policy` — show, per role, the candidates in the order relay would
+  try them, which one it would pick right now, and any gap between
+  `policy.json` and `candidates.json`.
 - `relay unavailable <harness/provider/model> [--for D] [--reason S]` — record
   that a candidate's provider is rate-limited; gates every candidate on that
   provider until `--for` elapses, or until `relay available` clears it.
@@ -414,13 +417,83 @@ Any `extra_args` are appended verbatim after what relay renders. Because relay r
 
 ### Choosing a candidate
 
-Pass the token to `relay bind --builder claude/anthropic/sonnet`. With `--builder` omitted, relay uses the only configured candidate that serves `builder`; with several it refuses and lists them; with none it names the file. The same rule applies to `relay add`, `relay fork` (which first inherits the source's candidate) and `relay ask --candidate`. `relay candidates` prints the configured tokens with their roles. A `--builder` value containing `:` and no `/` is a herdr pane id to adopt.
+Pass the token to `relay bind --builder claude/anthropic/sonnet` and relay
+starts exactly that, gated or not (with a `note:` on stderr if it is).
+
+With `--builder` omitted, relay decides, by one rule:
+
+- exactly one configured candidate serves the role → that one, unless it
+  is gated;
+- several serve it and `policy.json` orders them (see [Policy](#policy))
+  → the first in that order that is not gated, then any serving
+  candidate the order does not list, in token order;
+- several serve it and nothing is ordered → relay refuses and lists
+  them. Name one, or write the order.
+
+When every candidate serving the role is gated, relay refuses and says
+why each one is; an explicit `--builder` still bypasses that. The same
+rule applies to `relay add`, `relay fork` (which first inherits the
+source's candidate -- an inherited token counts as explicit) and `relay
+ask --candidate`.
+
+Every choice is written down. `bind`, `add`, `fork` and `ask` print one
+line saying what was picked and why, and the same line lands in the
+binding's log as a `pick` entry, so `relay log` shows it later:
+
+```
+picked claude/anthropic/sonnet for builder: order #2; skipped agy/google/gemini-3.8-flash-high (rate-limited until 20:28)
+```
+
+`relay candidates` prints the configured tokens with their roles. A
+`--builder` value containing `:` and no `/` is a herdr pane id to adopt.
+
+### Policy
+
+`~/.config/relay/policy.json` is where you tell relay the order to try
+candidates in, per role:
+
+```json
+{
+  "order": {
+    "builder": ["agy/google/gemini-3.8-flash-high",
+                "claude/anthropic/sonnet",
+                "opencode/openrouter/z-ai/glm-5.3-flash"]
+  }
+}
+```
+
+Roles you leave out are unordered, and an omitted `--builder` keeps
+refusing for them when several candidates serve the role. A candidate
+you add to `candidates.json` without adding it here is tried last, after
+everything listed. An entry here that names a candidate that is not
+configured, or one that does not serve the role, is skipped -- never an
+error, because removing a candidate must not stop every command -- and
+`relay policy` and `relay doctor` warn about it.
+
+`relay policy` shows what relay would do right now:
+
+```
+builder  (order set in ~/.config/relay/policy.json)
+  1  agy/google/gemini-3.8-flash-high        order     rate-limited until 20:28
+  2  claude/anthropic/sonnet                 order     <- would pick
+  3  opencode/openrouter/z-ai/glm-5.3-flash  unlisted
+reviewer  (no order set)
+  1  claude/anthropic/opus                   sole      <- would pick
+```
+
+The marker is computed by the same code `bind` runs, so it cannot
+disagree with what `bind` does next. There is no `relay policy set`:
+edit the file. The rest of #61 -- scoring for unordered roles, peak
+windows, mid-round switching -- will add keys to this file as it
+lands.
 
 ### Availability
 
 relay keeps a ledger of when a candidate could not be used: spawn failures it
-observed itself, rate limits you report. It shows the ledger; it does not
-(yet) act on it. The file is `~/.local/state/relay/ledger.json`.
+observed itself, rate limits you report. It shows the ledger, and an omitted
+`--builder` skips what the ledger gates (see [Choosing a
+candidate](#choosing-a-candidate)). The file is
+`~/.local/state/relay/ledger.json`.
 
 Report a limit with:
 
@@ -442,8 +515,10 @@ its own.
 Where it shows: `relay status` gains a `candidates` block only while
 something is gated; `relay candidates` marks gated rows `unavailable:`;
 `relay doctor` warns per gated candidate with the command that clears it.
-`bind`/`add`/`fork`/`ask` print a `note:` on stderr when they start a gated
-candidate and **proceed** -- refusing is a later step of #61.
+`bind`/`add`/`fork`/`ask` with an explicit token print a `note:` on
+stderr when the candidate is gated and **proceed** -- you named it. With
+the token omitted they skip gated candidates and refuse when nothing
+ungated serves the role.
 
 An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in. relay selects a role only for agents it starts, with `--agent` on the launch line.
 

@@ -42,6 +42,7 @@ const (
 	KindDiff     Kind = "diff"
 	KindDrift    Kind = "drift"
 	KindFork     Kind = "fork"
+	KindPick     Kind = "pick" // relay -> log only: which candidate a spawn resolved to and why (#61 step 2)
 
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path

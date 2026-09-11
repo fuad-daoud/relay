@@ -11,22 +11,21 @@ harnesses.** Several agy builders can run at once, each in its own worktree.
 Needing two builders concurrently is never a reason to reach for a second
 harness kind.
 
-Use harnesses in this order, exhausting each before moving to the next:
+The harness order lives in `~/.config/relay/policy.json` under
+`order.builder`, not here. Omit `--builder` and relay takes the first
+candidate in that order the ledger does not gate; `relay policy` shows
+which one that is right now and why. Name a token only to override the
+order for one binding.
 
-1. `agy/google/gemini-3.8-flash-high`
-2. `claude/anthropic/sonnet`
-3. `opencode/openrouter/z-ai/glm-5.3-flash`
-
-Move down the list only when the current harness is unavailable -- usage limits
-as much as a crash. When a builder reports a usage limit, run `relay
-unavailable <token> --reason '<what it said>'` before moving down, so `relay
-status` and `relay doctor` show why, and `relay available <provider>` when it
-lifts. Do not assign different harnesses to different tasks as a way of
-parallelising.
+When a builder reports a usage limit, run `relay unavailable <token>
+--reason '<what it said>'` before the next bind, so the next pick skips
+that provider, and `relay available <provider>` when it lifts. Do not
+bind different harnesses to different tasks as a way of parallelising;
+do not work around a gated provider by naming a token on it.
 
 Candidates are configured in `~/.config/relay/candidates.json`; `relay candidates`
-lists what this machine has. Pass the token to `--builder`, or omit it when only
-one candidate serves `builder`.
+lists what this machine has. Pass the token to `--builder` only to
+override the order.
 
 ## Working with builders
 

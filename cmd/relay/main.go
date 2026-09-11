@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -59,6 +60,7 @@ Commands:
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   candidates   list the configured harness/provider/model candidates
+  policy       show, per role, which candidate relay would pick right now and why
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
@@ -209,6 +211,8 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "candidates":
 		return cmdCandidates(args[1:])
+	case "policy":
+		return cmdPolicy(args[1:])
 	case "unavailable":
 		return cmdUnavailable(args[1:])
 	case "available":
@@ -272,6 +276,11 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
 		return relay.Runtime{}, err
@@ -286,6 +295,7 @@ func newRuntime() (relay.Runtime, error) {
 		Store:      st,
 		Candidates: candidates,
 		LedgerPath: st.LedgerPath(),
+		Policy:     pol,
 		Now:        time.Now,
 		Hooks:      dispatcher,
 	}, nil
@@ -311,6 +321,16 @@ func noteConsultRolesTooLong(name string) {
 	}
 	fmt.Printf("note: %s is too long for the %s consult role(s); relay ask needs a binding name of at most %d characters for %s\n",
 		name, strings.Join(roles, ", "), herdr.MaxAgentNameLen-10-len(longest), longest)
+}
+
+// notePick prints why relay chose the candidate it spawned. Silent for
+// an explicit token (the planner already knows) and for adoption
+// (nothing was chosen); the gated note, if any, is printed separately.
+func notePick(role string, res relay.Resolution) {
+	if res.How == "" || res.How == relay.HowExplicit {
+		return
+	}
+	fmt.Fprintln(os.Stderr, relay.ExplainResolution(role, res))
 }
 
 // isPaneID tells a herdr pane id apart from a candidate token on the same
@@ -349,6 +369,21 @@ func cmdCandidates(args []string) error {
 	}
 
 	fmt.Print(relay.FormatCandidates(rt.Candidates, relay.Gates(rt)))
+	return nil
+}
+
+func cmdPolicy(args []string) error {
+	fs := flag.NewFlagSet("policy", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(relay.FormatPolicy(rt.Candidates, rt.Policy, relay.Gates(rt)))
 	return nil
 }
 
@@ -430,7 +465,7 @@ func cmdAvailable(args []string) error {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn, or a pane id to adopt; omit when exactly one candidate serves builder")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn, or a pane id to adopt; omit to take the first ungated candidate in policy.json order[builder]")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	assumeDead := fs.Bool("assume-dead", false,
 		"confirm a builder relay cannot verify is gone really is gone")
@@ -499,7 +534,7 @@ func cmdBind(args []string) error {
 		}
 	}
 
-	b, err := relay.Bind(context.Background(), rt, opts)
+	b, res, err := relay.BindResolved(context.Background(), rt, opts)
 	if err != nil {
 		return err
 	}
@@ -513,6 +548,7 @@ func cmdBind(args []string) error {
 			"hand it the round with:\n"+
 			"  relay send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+		notePick("builder", res)
 		return nil
 	}
 
@@ -521,6 +557,7 @@ func cmdBind(args []string) error {
 	if n := relay.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
+	notePick("builder", res)
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
@@ -535,7 +572,7 @@ func cmdFork(args []string) error {
 	name := fs.String("name", "", "source binding to fork from")
 	round := fs.Int("round", 0, "source round to copy history through")
 	newName := fs.String("new-name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source)")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
@@ -586,6 +623,7 @@ func cmdFork(args []string) error {
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
+	notePick("builder", res.Resolution)
 	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
@@ -594,7 +632,7 @@ func cmdFork(args []string) error {
 func cmdAdd(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit when exactly one candidate serves builder")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
@@ -633,6 +671,7 @@ func cmdAdd(args []string) error {
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
+	notePick("builder", res.Resolution)
 	if res.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
 	} else {
@@ -886,7 +925,7 @@ func cmdSend(args []string) error {
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	role := fs.String("role", "", "consult role: reviewer, researcher")
-	cand := fs.String("candidate", "", "candidate harness/provider/model; omit when exactly one serves the role")
+	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in policy.json order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	nameFlag := fs.String("name", "", "binding name")
 	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
@@ -929,6 +968,7 @@ func cmdAsk(args []string) error {
 	if n := relay.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
+	notePick(*role, res.Resolution)
 	return nil
 }
 

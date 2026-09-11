@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -48,8 +49,14 @@ type Runtime struct {
 	Store      *store.Store
 	Candidates *candidate.Set
 	LedgerPath string // the availability ledger file (#61 step 1)
-	Now        func() time.Time
-	Hooks      hooks.Dispatcher
+
+	// Policy is ~/.config/relay/policy.json: the planner's candidate order
+	// per role (#61 step 2). The zero value means nothing is ordered, so
+	// tests that do not set it behave as a machine with no policy file.
+	Policy policy.Policy
+
+	Now   func() time.Time
+	Hooks hooks.Dispatcher
 
 	// HeldGrace is how long a focused planner's screen must be unchanged before
 	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by

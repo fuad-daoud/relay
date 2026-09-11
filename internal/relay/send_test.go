@@ -113,10 +113,11 @@ func TestSendLogsThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Kind != store.KindPlan || entries[0].Direction != store.DirToBuilder {
+	// seedBound's underlying Bind already wrote the builder bind's pick entry.
+	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPlan || entries[1].Direction != store.DirToBuilder {
 		t.Fatalf("log = %+v", entries)
 	}
-	if !entries[0].Confirmed {
+	if !entries[1].Confirmed {
 		t.Error("an outbound plan is confirmed the moment herdr accepts it")
 	}
 }

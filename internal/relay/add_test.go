@@ -66,14 +66,14 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 		t.Errorf("worktree cut wrongly: %+v", call)
 	}
 
-	// The round log must exist and be empty of relayed messages: nothing has
-	// been handed over yet.
+	// The round log holds nothing relayed yet, only the pick entry recording
+	// why relay chose the builder it spawned (#61 step 2).
 	entries, err := rt.Store.ReadLog("frontend")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("a fresh peer binding has relayed nothing, got %+v", entries)
+	if len(entries) != 1 || entries[0].Kind != store.KindPick {
+		t.Errorf("a fresh peer binding has relayed nothing but its pick, got %+v", entries)
 	}
 }
 

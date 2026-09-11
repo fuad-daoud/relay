@@ -59,23 +59,25 @@ type BindOptions struct {
 	RoundTimeout time.Duration
 }
 
-// Bind ties the calling planner pane to a builder over one working tree.
-func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, error) {
+// BindResolved ties the calling planner pane to a builder over one working
+// tree. The second return is how the builder was chosen, zero when a pane
+// was adopted.
+func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, Resolution, error) {
 	if opts.PlannerPane == "" {
-		return store.Binding{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+		return store.Binding{}, Resolution{}, errors.New("no planner pane; is HERDR_PANE_ID set")
 	}
 	if opts.CWD == "" {
-		return store.Binding{}, errors.New("no working directory")
+		return store.Binding{}, Resolution{}, errors.New("no working directory")
 	}
 
 	agents, err := rt.Herdr.ListAgents(ctx)
 	if err != nil {
-		return store.Binding{}, fmt.Errorf("list agents: %w", err)
+		return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
 	}
 
 	planner, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
 	if !ok {
-		return store.Binding{}, fmt.Errorf("no agent in planner pane %s", opts.PlannerPane)
+		return store.Binding{}, Resolution{}, fmt.Errorf("no agent in planner pane %s", opts.PlannerPane)
 	}
 
 	if opts.Resume {
@@ -83,6 +85,14 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 	}
 
 	return create(ctx, rt, opts, planner)
+}
+
+// Bind is BindResolved without the resolution, for the callers that only
+// need the binding. cmdBind uses BindResolved to print why relay picked
+// what it did.
+func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, error) {
+	b, _, err := BindResolved(ctx, rt, opts)
+	return b, err
 }
 
 // resume re-points an existing binding at the calling planner pane, and -- when
@@ -109,28 +119,28 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
 // herdr failure.
-func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
+func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
 	rebinding := opts.Candidate != "" || opts.BuilderPane != ""
 
 	var (
 		builder store.Endpoint
-		token   string
+		res     Resolution
 	)
 	if rebinding {
 		// Refuse before anything is spawned.
 		b, err := rt.Store.Load(opts.Name)
 		if err != nil {
-			return store.Binding{}, err
+			return store.Binding{}, Resolution{}, err
 		}
 		if b.State == store.StateDone {
-			return store.Binding{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
+			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
-			return store.Binding{}, fmt.Errorf("list agents: %w", err)
+			return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
 		}
 		if _, alive := FindAgent(agents, b.Builder); alive {
-			return store.Binding{}, ErrBuilderAlive
+			return store.Binding{}, Resolution{}, ErrBuilderAlive
 		}
 		// Reached only when the builder was NOT located. Without a recorded
 		// session that miss is ambiguous: the pane id it would match on is the
@@ -145,14 +155,14 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		// depend on whether the daemon has ticked since the pane went away.
 		d := DiagnoseBuilder(b)
 		if !d.Identified && d.RoundOpen && !opts.AssumeDead {
-			return store.Binding{}, fmt.Errorf(
+			return store.Binding{}, Resolution{}, fmt.Errorf(
 				"%w: relay cannot tell a dead builder for %q from a moved pane. "+
 					"Check %s is really gone, then re-run with --assume-dead",
 				ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
 		}
-		builder, token, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
+		builder, res, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
 		if err != nil {
-			return store.Binding{}, err
+			return store.Binding{}, Resolution{}, err
 		}
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
 	}
@@ -171,7 +181,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		b.State = store.StateActive
 		if rebinding {
 			b.Builder = builder
-			b.BuilderCandidate = token // "" when adopting a pane
+			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.HaltNotifiedRound = 0
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
@@ -182,23 +192,29 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			return err
 		}
 
+		if rebinding && res.How != "" {
+			if err := tx.AppendLog(opts.Name, pickEntry(rt.Now(), b.Round, "builder", res)); err != nil {
+				return err
+			}
+		}
+
 		out = b
 		return nil
 	})
 	if err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 
-	return out, nil
+	return out, res, nil
 }
 
-func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
+func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
 	name := opts.Name
 	if name == "" {
 		name = SanitizeName(baseName(opts.CWD))
 	}
 	if err := store.ValidName(name); err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 
 	// Refuse a name that is already taken, before anything is spawned. Save
@@ -207,11 +223,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	// round 1 and Reconcile would read that old report entry as "already
 	// handled" -- silently, with no error and no notification.
 	if _, err := rt.Store.Load(name); err == nil {
-		return store.Binding{}, fmt.Errorf(
+		return store.Binding{}, Resolution{}, fmt.Errorf(
 			"binding %q already exists: `relay unbind %s` to start fresh, or `relay bind --resume --name %s` to adopt it",
 			name, name, name)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 
 	// Check the working tree before spawning anything. Save re-checks under the
@@ -219,16 +235,16 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	// a started builder pane stranded with nothing pointing at it.
 	other, found, err := rt.Store.FindByCWD(opts.CWD)
 	if err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 	if found && other.Name != name && other.State != store.StateDone {
-		return store.Binding{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+		return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
 	}
 
-	builder, token, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
+	builder, res, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
 	if err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 
 	b := store.Binding{
@@ -236,7 +252,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		CWD:              opts.CWD,
 		Planner:          endpointOf(planner),
 		Builder:          builder,
-		BuilderCandidate: token,
+		BuilderCandidate: res.Token(),
 		Round:            1,
 		State:            store.StateActive,
 	}
@@ -244,10 +260,19 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
 	}
 
-	if err := rt.Store.Save(b); err != nil {
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		if res.How == "" {
+			return nil
+		}
+		return tx.AppendLog(name, pickEntry(rt.Now(), 1, "builder", res))
+	})
+	if err != nil {
 		// The pre-check passed but the lock disagreed, so a builder pane is now
 		// running with no binding. Name it: relay never closes a pane itself.
-		return store.Binding{}, fmt.Errorf("bind failed after starting builder in pane %s (close it yourself): %w",
+		return store.Binding{}, Resolution{}, fmt.Errorf("bind failed after starting builder in pane %s (close it yourself): %w",
 			builder.PaneID, err)
 	}
 
@@ -256,10 +281,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	// the pre-Save value and letting the two drift.
 	stored, err := rt.Store.Load(b.Name)
 	if err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, Resolution{}, err
 	}
 
-	return stored, nil
+	return stored, res, nil
 }
 
 // builderAgentName composes and validates the herdr agent name for a
@@ -280,41 +305,43 @@ func builderAgentName(name string) (string, error) {
 // The candidate is resolved only on the spawn path. Adopting a pane needs no
 // candidate: the human launched that agent themselves, so relay has no kind or
 // args to supply -- and for agy, their fish function already activated the
-// plan-executor role in that session.
-func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, string, error) {
+// plan-executor role in that session. The second return is the resolution,
+// zero when adopting.
+func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, Resolution, error) {
 	if opts.BuilderPane != "" {
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
-			return store.Endpoint{}, "", fmt.Errorf("list agents: %w", err)
+			return store.Endpoint{}, Resolution{}, fmt.Errorf("list agents: %w", err)
 		}
 		found, ok := FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane})
 		if !ok {
-			return store.Endpoint{}, "", fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
+			return store.Endpoint{}, Resolution{}, fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
 		}
-		return endpointOf(found), "", nil
+		return endpointOf(found), Resolution{}, nil
 	}
 
-	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
-		return store.Endpoint{}, "", err
+		return store.Endpoint{}, Resolution{}, err
 	}
+	c := res.Candidate
 	role, _ := harness.RoleByName("builder")
 	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
 	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
 
 	agentName, err := builderAgentName(name)
 	if err != nil {
-		return store.Endpoint{}, "", err
+		return store.Endpoint{}, Resolution{}, err
 	}
 
 	paneID, err := builderPane(ctx, rt, opts, agentName, plannerPane)
 	if err != nil {
-		return store.Endpoint{}, "", err
+		return store.Endpoint{}, Resolution{}, err
 	}
 
 	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.Args); err != nil {
 		recordSpawnFailure(rt, c.Ref().String(), name, err)
-		return store.Endpoint{}, "", fmt.Errorf("start builder %q: %w", agentName, err)
+		return store.Endpoint{}, Resolution{}, fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 
 	ep := store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: l.Kind}
@@ -335,7 +362,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		}
 	}
 
-	return ep, c.Ref().String(), nil
+	return ep, res, nil
 }
 
 // endpointOf projects a live herdr agent onto the store's durable endpoint

@@ -33,6 +33,9 @@ type AddResult struct {
 	Worktree string // "" when --cwd was used
 	Branch   string // "" when --cwd was used
 	Base     string // commit the worktree was cut from; "" when --cwd was used
+
+	// Resolution is how the builder was chosen, for the pick line.
+	Resolution Resolution
 }
 
 // Add attaches an additional builder to the calling planner, on its own tree.
@@ -72,10 +75,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return AddResult{}, err
 	}
+	c := res.Candidate
 
 	agents, err := rt.Herdr.ListAgents(ctx)
 	if err != nil {
@@ -158,6 +162,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
+	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
+	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
+	// call would report HowExplicit and lose the real How/Position/Skipped
+	// this function resolved above -- res, from the pre-worktree resolution,
+	// is what the pick entry and AddResult.Resolution must carry.
 	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.Name, planner.PaneID)
 	if err != nil {
 		rollback()
@@ -179,7 +188,13 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return tx.Save(b)
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		if res.How != "" {
+			return tx.AppendLog(b.Name, pickEntry(rt.Now(), 1, "builder", res))
+		}
+		return nil
 	}); err != nil {
 		rollback()
 		return AddResult{}, fmt.Errorf("add failed after starting builder in pane %s (close it yourself): %w",
@@ -190,5 +205,5 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		b = stored
 	}
 
-	return AddResult{Binding: b, Worktree: worktree, Branch: branch, Base: base}, nil
+	return AddResult{Binding: b, Worktree: worktree, Branch: branch, Base: base, Resolution: res}, nil
 }

@@ -166,10 +166,19 @@ Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates]
 
 then `extra_args` are appended. `agy` needs the preamble because it has no `--agent` flag — a persistent session cannot bake the role into startup, so relay prepends it to round 1's prompt only.
 
+Which candidate an omitted token resolves to is decided by
+`~/.config/relay/policy.json` (`order[role]`) together with the
+availability ledger: the first ungated candidate in the order, refusing
+when nothing ungated serves the role or when several serve it and
+nothing is ordered. Each resolution is a `pick` entry in the binding's
+`log.jsonl`. See `docs/specs/2026-09-11-policy-order-design.md`.
+
 ### `log.jsonl` entry
 
-`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer",
+`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick",
    path, delivered_at, confirmed: bool, note }`
+
+A `pick` entry is relay -> log only: which candidate a spawn resolved to and why.
 
 ## Message protocol
 
