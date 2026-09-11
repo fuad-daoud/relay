@@ -66,6 +66,24 @@ type LastEvent struct {
 type PendingInfo struct {
 	Round int        `json:"round"`
 	Kind  store.Kind `json:"kind"`
+	// Hold is the daemon's quiet clock for a HELD binding: how long the
+	// planner's screen has been unchanged, against the grace it will be
+	// injected at. Nil when the binding is not held, and nil when it is held
+	// but the clock has not started -- a failed screen read, or a hold
+	// recorded before the daemon read the screen. The human should know the
+	// clock is not running.
+	Hold *HoldInfo `json:"hold,omitempty"`
+}
+
+// HoldInfo is the quiet clock carried as data, like LastEvent: a statusline
+// consumer reads the two numbers, and RenderStatus formats them. Milliseconds
+// as ints, the way RoundTimeoutMS is, not time.Duration's nanoseconds.
+type HoldInfo struct {
+	QuietMS int `json:"quiet_ms"`
+	// GraceMS is zero when the binding was held by a daemon that did not
+	// record its grace (state written before HeldGrace existed). status then
+	// shows the quiet time alone rather than guess a fraction.
+	GraceMS int `json:"grace_ms,omitempty"`
 }
 
 // Report is the whole status surface.
@@ -159,6 +177,16 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 	}
 	if found {
 		row.Pending = &PendingInfo{Round: pending.Round, Kind: pending.Kind}
+		if b.State == store.StateHeld && b.PlannerScreen != "" {
+			quiet := rt.Now().UTC().Sub(b.PlannerScreenAt)
+			if quiet < 0 {
+				quiet = 0
+			}
+			row.Pending.Hold = &HoldInfo{
+				QuietMS: int(quiet / time.Millisecond),
+				GraceMS: int(b.HeldGrace / time.Millisecond),
+			}
+		}
 	}
 
 	row.Foreign = ForeignAgents(agents, known, b.CWD)
@@ -179,6 +207,26 @@ func displayState(s store.State) string {
 	default:
 		return "ACTIVE"
 	}
+}
+
+// HoldText is the human form of a held binding's clock, shared by
+// RenderStatus and the TUI so the two never drift: "quiet 23s of 1m0s",
+// "quiet 23s" when the grace is unknown, or "waiting for the planner's
+// screen" when the clock has not started. Empty for any binding that is
+// not HELD with a pending payload.
+func HoldText(b BindingStatus) string {
+	if b.Display != "HELD" || b.Pending == nil {
+		return ""
+	}
+	h := b.Pending.Hold
+	if h == nil {
+		return "waiting for the planner's screen"
+	}
+	quiet := (time.Duration(h.QuietMS) * time.Millisecond).Truncate(time.Second)
+	if h.GraceMS == 0 {
+		return fmt.Sprintf("quiet %s", quiet)
+	}
+	return fmt.Sprintf("quiet %s of %s", quiet, time.Duration(h.GraceMS)*time.Millisecond)
 }
 
 // HideDone returns a copy of r excluding every binding whose state is DONE.
@@ -251,7 +299,11 @@ func RenderStatus(r Report) string {
 				b.Last.TS.Local().Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
 		}
 		if b.Pending != nil {
-			fmt.Fprintf(&sb, "  pending  %s round %d -> planner\n\n", b.Pending.Kind, b.Pending.Round)
+			fmt.Fprintf(&sb, "  pending  %s round %d -> planner", b.Pending.Kind, b.Pending.Round)
+			if hold := HoldText(b); hold != "" {
+				fmt.Fprintf(&sb, ", held: %s", hold)
+			}
+			fmt.Fprint(&sb, "\n\n")
 		} else {
 			fmt.Fprint(&sb, "  pending  --\n\n")
 		}

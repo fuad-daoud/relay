@@ -85,6 +85,27 @@ func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 	}
 }
 
+func TestRenderListRowShowsHoldClock(t *testing.T) {
+	b := relay.BindingStatus{
+		Name: "relay-held", Workspace: "wM", Round: 3, Display: "HELD",
+		BuilderAlias: "agy", BuilderStatus: "idle",
+		Pending: &relay.PendingInfo{
+			Round: 3, Kind: store.KindReport,
+			Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000},
+		},
+	}
+	got := renderListRow(b, false)
+	if !strings.HasSuffix(got, "pending report r3, held: quiet 23s of 1m0s") {
+		t.Errorf("row = %q", got)
+	}
+
+	b.Pending.Hold = nil
+	got = renderListRow(b, false)
+	if !strings.HasSuffix(got, "pending report r3, held: waiting for the planner's screen") {
+		t.Errorf("row = %q", got)
+	}
+}
+
 func TestListRowsBudget(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
