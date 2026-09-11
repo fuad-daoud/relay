@@ -192,6 +192,46 @@ func TestSpawnFailureDoesNotMaskTheError(t *testing.T) {
 	}
 }
 
+// TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock
+// the T2 round-2 report found: switchBuilder runs inside Reconcile's
+// Store.WithLock, and recordSpawnFailureLocked must be able to record a
+// failed replacement spawn from in there without trying to re-take that
+// (non-reentrant) lock. If it ever does, this test hangs until the 5s
+// timer fires instead of failing fast, which is why the assertion is a
+// select against a timer rather than a bare call.
+func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- rt.Store.WithLock(func(*store.Tx) error {
+			recordSpawnFailureLocked(rt, testAgyRef, "webshop", errors.New("boom"))
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WithLock: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlocked")
+	}
+
+	l := loadLedger(t, rt)
+	count := 0
+	for _, e := range l.Entries {
+		if e.Kind == ledger.SpawnFailed && e.Subject == testAgyRef {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("spawn_failed entries for %s = %d, want 1", testAgyRef, count)
+	}
+}
+
 func TestUnavailableRecordsTheProvider(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := newRuntime(t, f)

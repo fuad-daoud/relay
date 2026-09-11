@@ -147,11 +147,31 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
+	// Two triggers replace this binding's builder mid-round instead of just
+	// marking it broken: the builder cannot be located for switchGrace
+	// ("gone"), or the ledger holds a live rate-limit gate on its own
+	// candidate token ("gated"). Neither ever fires for an adopted builder
+	// (BuilderCandidate == "") or a closed round (RoundStartedAt zero) --
+	// relay did not spawn the former, and there is nothing to resend for the
+	// latter (spec §4.1).
+	now := rt.Now().UTC()
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+
 	builder, ok := FindAgent(agents, b.Builder)
 	if !ok {
+		if b.BuilderMissingSince.IsZero() {
+			b.BuilderMissingSince = now
+		}
 		b.State = store.StateBroken
+		if switchable && now.Sub(b.BuilderMissingSince) >= switchGrace {
+			return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("gone for %s", now.Sub(b.BuilderMissingSince).Truncate(time.Second)), false)
+		}
+		// Whether it just switched (above) or is still waiting out the grace,
+		// a switch tick delivers nothing else to this binding: like a halt,
+		// it either replaced the builder or has nothing more to reconcile.
 		return b, nil
 	}
+	b.BuilderMissingSince = time.Time{}
 
 	// Recovery is unconditional here because FindAgent already answered the
 	// identity question: an agent was located, so SameAgent held, and re-checking
@@ -164,6 +184,16 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	b.Builder = refreshEndpoint(b.Builder, builder)
 	if planner, ok := FindAgent(agents, b.Planner); ok {
 		b.Planner = refreshEndpoint(b.Planner, planner)
+	}
+
+	if switchable {
+		if g, gated := gatedBuilder(rt, b); gated {
+			reason := "rate-limited"
+			if g.Note != "" {
+				reason = "rate-limited: " + g.Note
+			}
+			return switchBuilder(ctx, rt, tx, b, reason, true)
+		}
 	}
 
 	// Halt paths return without calling deliverAndSettle, unlike every branch

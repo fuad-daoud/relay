@@ -23,22 +23,38 @@ const SpawnFailedCooldown = 10 * time.Minute
 // serialises bind.json (spec §3.3).
 func mutateLedger(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
 	return rt.Store.WithLock(func(*store.Tx) error {
-		l, err := ledger.Load(rt.LedgerPath)
-		if err != nil {
-			return err
-		}
-		l = fn(l.Prune(rt.Now()))
-		return ledger.Save(rt.LedgerPath, l)
+		return mutateLedgerLocked(rt, fn)
 	})
 }
 
-// recordSpawnFailure notes that relay failed to start token's process for
-// binding. It never returns an error: a failed bookkeeping write must not
-// mask the spawn error the caller is about to return, so a write failure is
-// printed to stderr and dropped instead (spec §4.1).
-func recordSpawnFailure(rt Runtime, token, binding string, cause error) {
+// mutateLedgerLocked is mutateLedger for a caller that already holds the
+// state lock -- switchBuilder, via resolveBuilder's tx parameter (#61 step
+// 6). It does the same load-prune-apply-save without taking Store.WithLock
+// itself, since that lock is a plain mutex and is not reentrant: a second
+// Lock from the same goroutine that already holds it blocks forever rather
+// than erroring.
+func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
+	l, err := ledger.Load(rt.LedgerPath)
+	if err != nil {
+		return err
+	}
+	l = fn(l.Prune(rt.Now()))
+	return ledger.Save(rt.LedgerPath, l)
+}
+
+// recordSpawnFailureWith notes that relay failed to start token's process
+// for binding, committing the record through mutate -- mutateLedger (takes
+// the state lock) or mutateLedgerLocked (caller already holds it).
+// recordSpawnFailure and recordSpawnFailureLocked are this function with
+// each mutate function threaded through, so the two never drift on what a
+// spawn failure looks like or on the never-returns-an-error rule.
+//
+// It never returns an error: a failed bookkeeping write must not mask the
+// spawn error the caller is about to return, so a write failure is printed
+// to stderr and dropped instead (spec §4.1).
+func recordSpawnFailureWith(rt Runtime, mutate func(Runtime, func(ledger.Ledger) ledger.Ledger) error, token, binding string, cause error) {
 	now := rt.Now()
-	err := mutateLedger(rt, func(l ledger.Ledger) ledger.Ledger {
+	err := mutate(rt, func(l ledger.Ledger) ledger.Ledger {
 		return l.Append(ledger.Entry{
 			Kind:    ledger.SpawnFailed,
 			Subject: token,
@@ -52,6 +68,23 @@ func recordSpawnFailure(rt Runtime, token, binding string, cause error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not record spawn failure: %v\n", err)
 	}
+}
+
+// recordSpawnFailure notes that relay failed to start token's process for
+// binding. It takes the state lock itself (via mutateLedger); a caller that
+// already holds it must use recordSpawnFailureLocked instead, or this
+// function deadlocks re-entering the lock (#61 step 6).
+func recordSpawnFailure(rt Runtime, token, binding string, cause error) {
+	recordSpawnFailureWith(rt, mutateLedger, token, binding, cause)
+}
+
+// recordSpawnFailureLocked is recordSpawnFailure for a caller that already
+// holds the state lock: switchBuilder, reached through resolveBuilder's tx
+// parameter when a switch's replacement spawn fails (#61 step 6). Same
+// record, same never-returns-an-error contract, just committed through
+// mutateLedgerLocked instead of re-taking Store.WithLock.
+func recordSpawnFailureLocked(rt Runtime, token, binding string, cause error) {
+	recordSpawnFailureWith(rt, mutateLedgerLocked, token, binding, cause)
 }
 
 // Unavailable records that token's provider is rate-limited, so every

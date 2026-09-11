@@ -167,7 +167,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// this function resolved above -- res, from the pre-worktree resolution,
 	// is what the pick entry and AddResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.Name, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name, planner.PaneID)
 	if err != nil {
 		rollback()
 		return AddResult{}, err
