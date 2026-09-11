@@ -32,13 +32,14 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 		g = fg
 	}
 	return Runtime{
-		Herdr:      f,
-		Git:        g,
-		Store:      store.New(t.TempDir()),
-		Candidates: candidateSet(t, testCandidatesJSON),
-		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
-		Now:        func() time.Time { return baseTime },
-		Hooks:      hd,
+		Herdr:       f,
+		Git:         g,
+		Store:       store.New(t.TempDir()),
+		Candidates:  candidateSet(t, testCandidatesJSON),
+		LedgerPath:  filepath.Join(t.TempDir(), "ledger.json"),
+		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+		Now:         func() time.Time { return baseTime },
+		Hooks:       hd,
 	}
 }
 

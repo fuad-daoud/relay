@@ -290,14 +290,15 @@ func newRuntime() (relay.Runtime, error) {
 	st := store.New(root)
 
 	return relay.Runtime{
-		Herdr:      herdr.NewClient("herdr", 30*time.Second),
-		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:      st,
-		Candidates: candidates,
-		LedgerPath: st.LedgerPath(),
-		Policy:     pol,
-		Now:        time.Now,
-		Hooks:      dispatcher,
+		Herdr:       herdr.NewClient("herdr", 30*time.Second),
+		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Store:       st,
+		Candidates:  candidates,
+		LedgerPath:  st.LedgerPath(),
+		HistoryPath: st.HistoryPath(),
+		Policy:      pol,
+		Now:         time.Now,
+		Hooks:       dispatcher,
 	}, nil
 }
 

@@ -391,6 +391,9 @@ func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirNam
 // bind.json write.
 func (s *Store) LedgerPath() string { return filepath.Join(s.root, "ledger.json") }
 
+// HistoryPath is the availability history file (#61 step 7), beside ledger.json.
+func (s *Store) HistoryPath() string { return filepath.Join(s.root, "history.json") }
+
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.
