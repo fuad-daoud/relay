@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -116,6 +117,12 @@ type Report struct {
 	// whenever nothing was filtered, so a consumer that never learned the
 	// field sees the document it always did.
 	DoneHidden int `json:"done_hidden,omitempty"`
+	// Gated lists every live ledger gate against the configured candidates,
+	// independent of any binding: a rate limit or spawn failure exists
+	// whether or not a builder is currently running it. Absent from JSON
+	// when nothing is gated, so a consumer that never learned the field
+	// sees the document it always did.
+	Gated []ledger.Gate `json:"gated,omitempty"`
 }
 
 // Status derives every row live from herdr, so it cannot disagree with reality.
@@ -145,7 +152,9 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
-	return Report{Bindings: rows}, nil
+	rep := Report{Bindings: rows}
+	rep.Gated = Gates(rt)
+	return rep, nil
 }
 
 // statusRow is read-only, so it reaches the store through the self-locking
@@ -290,18 +299,61 @@ func HideDone(r Report) Report {
 	return out
 }
 
-// RenderStatus formats a Report for a terminal.
-func RenderStatus(r Report) string {
-	if len(r.Bindings) == 0 {
-		if r.DoneHidden > 0 {
-			// The footer says "clear" and not "free": gc frees disk only for
-			// relay-created worktrees, and the footer must not overpromise.
-			return fmt.Sprintf("%d done · relay gc to clear\n", r.DoneHidden)
+// writeGatedBlock renders the "candidates" block RenderStatus, `relay
+// candidates` and `relay doctor` all draw from the same ledger.Gate slice
+// for: one row per live gate, sharing GateKindText/GateUntilText so the
+// wording never drifts between renderers. trailingBlank adds one blank
+// line after the block, only when a footer follows it in the output.
+func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank bool) {
+	sb.WriteString("candidates\n")
+
+	width := 0
+	for _, g := range gates {
+		if len(g.Token) > width {
+			width = len(g.Token)
 		}
-		return "no bindings\n"
 	}
 
+	for _, g := range gates {
+		fmt.Fprintf(sb, "  %-*s  %-12s  %s  %s",
+			width, g.Token, GateKindText(g.Kind), g.Since.Local().Format("15:04"), GateUntilText(g.Until))
+		if g.Note != "" {
+			fmt.Fprintf(sb, "  %s", g.Note)
+		}
+		if g.Binding != "" {
+			fmt.Fprintf(sb, "  (%s)", g.Binding)
+		}
+		sb.WriteString("\n")
+	}
+
+	if trailingBlank {
+		sb.WriteString("\n")
+	}
+}
+
+// RenderStatus formats a Report for a terminal.
+func RenderStatus(r Report) string {
 	var sb strings.Builder
+
+	switch {
+	case len(r.Bindings) == 0 && r.DoneHidden > 0:
+		// The footer says "clear" and not "free": gc frees disk only for
+		// relay-created worktrees, and the footer must not overpromise.
+		fmt.Fprintf(&sb, "%d done · relay gc to clear\n", r.DoneHidden)
+		if len(r.Gated) > 0 {
+			writeGatedBlock(&sb, r.Gated, false)
+		}
+		return sb.String()
+
+	case len(r.Bindings) == 0 && len(r.Gated) == 0:
+		return "no bindings\n"
+
+	case len(r.Bindings) == 0:
+		sb.WriteString("no bindings\n")
+		writeGatedBlock(&sb, r.Gated, false)
+		return sb.String()
+	}
+
 	for _, b := range r.Bindings {
 		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
 			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
@@ -358,6 +410,10 @@ func RenderStatus(r Report) string {
 		} else {
 			fmt.Fprint(&sb, "  pending  --\n\n")
 		}
+	}
+
+	if len(r.Gated) > 0 {
+		writeGatedBlock(&sb, r.Gated, r.DoneHidden > 0)
 	}
 
 	if r.DoneHidden > 0 {

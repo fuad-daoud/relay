@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,6 +319,112 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 	}
 	if l.Entries[0].Kind != ledger.SpawnFailed {
 		t.Errorf("remaining entry kind = %v, want SpawnFailed", l.Entries[0].Kind)
+	}
+}
+
+func TestGatesEmptyWhenNoLedger(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if got := Gates(rt); got != nil {
+		t.Errorf("Gates() = %+v, want nil", got)
+	}
+}
+
+func TestGatesProjectsOntoCandidates(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	recordSpawnFailure(rt, testAgyRef, "webshop", errors.New("x"))
+
+	gates := Gates(rt)
+	if len(gates) != 4 {
+		t.Fatalf("got %d gates, want 4: %+v", len(gates), gates)
+	}
+
+	// The first two gates are both for agy/test/m: one RateLimited (from
+	// the provider-wide gate) and one SpawnFailed. Both have Since ==
+	// baseTime, so the sort between them is not guaranteed; assert as a set.
+	agyKinds := map[ledger.Kind]bool{}
+	for _, g := range gates[:2] {
+		if g.Token != testAgyRef {
+			t.Errorf("gate = %+v, want token %q", g, testAgyRef)
+		}
+		agyKinds[g.Kind] = true
+	}
+	if !agyKinds[ledger.RateLimited] || !agyKinds[ledger.SpawnFailed] {
+		t.Errorf("first two gates = %+v, want one RateLimited and one SpawnFailed for %q", gates[:2], testAgyRef)
+	}
+
+	if gates[2].Token != testClaudeRef || gates[2].Kind != ledger.RateLimited {
+		t.Errorf("gate 2 = %+v, want RateLimited for %q", gates[2], testClaudeRef)
+	}
+	if gates[3].Token != testOpencodeRef || gates[3].Kind != ledger.RateLimited {
+		t.Errorf("gate 3 = %+v, want RateLimited for %q", gates[3], testOpencodeRef)
+	}
+}
+
+func TestGatesToleratesABadLedger(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if err := os.WriteFile(rt.LedgerPath, []byte("not json"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if got := Gates(rt); got != nil {
+		t.Errorf("Gates() = %+v, want nil", got)
+	}
+}
+
+func TestGateUntilText(t *testing.T) {
+	if got := GateUntilText(time.Time{}); got != "until cleared" {
+		t.Errorf("GateUntilText(zero) = %q, want %q", got, "until cleared")
+	}
+
+	fixed := baseTime
+	want := "until " + fixed.Local().Format("15:04")
+	if got := GateUntilText(fixed); got != want {
+		t.Errorf("GateUntilText(fixed) = %q, want %q", got, want)
+	}
+}
+
+func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if got := gatedNote(rt, testClaudeRef); got != "" {
+		t.Errorf("gatedNote() = %q, want empty", got)
+	}
+}
+
+func TestGatedNoteFormatsEveryGate(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	recordSpawnFailure(rt, testClaudeRef, "webshop", errors.New("boom"))
+
+	got := gatedNote(rt, testClaudeRef)
+	if !strings.HasPrefix(got, fmt.Sprintf("note: %s is gated: ", testClaudeRef)) {
+		t.Fatalf("gatedNote() = %q, want prefix %q", got, fmt.Sprintf("note: %s is gated: ", testClaudeRef))
+	}
+	if !strings.HasSuffix(got, "; proceeding") {
+		t.Errorf("gatedNote() = %q, want suffix %q", got, "; proceeding")
+	}
+	if strings.Count(got, "\n") != 0 {
+		t.Errorf("gatedNote() = %q, want one line", got)
+	}
+	if !strings.Contains(got, "rate-limited") || !strings.Contains(got, "spawn failed") {
+		t.Errorf("gatedNote() = %q, want both gate kinds present", got)
+	}
+	if !strings.Contains(got, "boom") {
+		t.Errorf("gatedNote() = %q, want the spawn-failure note included", got)
 	}
 }
 

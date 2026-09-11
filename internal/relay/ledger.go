@@ -3,6 +3,7 @@ package relay
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -106,4 +107,80 @@ func Available(rt Runtime, subject string) (provider string, removed int, err er
 	}
 
 	return provider, removed, nil
+}
+
+// Gates is what every reader renders from: the live ledger projected onto
+// the configured candidates. A load error is reported once on stderr and
+// read as an empty ledger -- status, candidates and doctor must not go
+// down over a bookkeeping file (spec §6).
+func Gates(rt Runtime) []ledger.Gate {
+	if rt.Candidates == nil {
+		return nil
+	}
+
+	l, err := ledger.Load(rt.LedgerPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: could not read ledger: %v\n", err)
+		return nil
+	}
+
+	providerOf := func(tok string) string {
+		r, err := candidate.ParseRef(tok)
+		if err != nil {
+			return ""
+		}
+		return r.Provider
+	}
+
+	return ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
+}
+
+// GateKindText is the human wording for a gate kind in status, candidates
+// and doctor, so the three never drift: "spawn failed", "rate-limited".
+func GateKindText(k ledger.Kind) string {
+	switch k {
+	case ledger.SpawnFailed:
+		return "spawn failed"
+	case ledger.RateLimited:
+		return "rate-limited"
+	default:
+		return string(k)
+	}
+}
+
+// GateUntilText renders Until as "until HH:MM" in local time, or
+// "until cleared" for a zero Until.
+func GateUntilText(until time.Time) string {
+	if until.IsZero() {
+		return "until cleared"
+	}
+	return "until " + until.Local().Format("15:04")
+}
+
+// gatedNote is the one advisory line bind, add, fork and ask print after a
+// successful spawn of a candidate the ledger says is gated. Advisory only:
+// the agent is already running, and refusing is #61 step 4's job.
+func gatedNote(rt Runtime, token string) string {
+	var parts []string
+	for _, g := range Gates(rt) {
+		if g.Token != token {
+			continue
+		}
+		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), g.Since.Local().Format("15:04"), GateUntilText(g.Until))
+		if g.Note != "" {
+			part += ": " + g.Note
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("note: %s is gated: %s; proceeding", token, strings.Join(parts, "; "))
+}
+
+// GatedNote is gatedNote exported for cmd/relay, which prints it to stderr
+// after bind, add, fork and ask spawn successfully (T4).
+func GatedNote(rt Runtime, token string) string {
+	return gatedNote(rt, token)
 }

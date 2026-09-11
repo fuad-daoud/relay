@@ -13,6 +13,8 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -165,12 +167,45 @@ func cmdDoctor(args []string) error {
 		})
 	}
 
+	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
+
 	renderReport(os.Stdout, rep)
 
 	if rep.Failures() > 0 {
 		return exitCodeErr{code: 1}
 	}
 	return nil
+}
+
+// ledgerChecks turns live gates into doctor rows under the candidate's
+// harness. They warn, never fail: a gated provider is a fact about right
+// now, not a broken install, and must not change doctor's exit code.
+func ledgerChecks(gates []ledger.Gate) []doctor.Check {
+	checks := make([]doctor.Check, 0, len(gates))
+	for _, g := range gates {
+		ref, err := candidate.ParseRef(g.Token)
+		group := ""
+		provider := ""
+		if err == nil {
+			group = ref.Harness
+			provider = ref.Provider
+		}
+
+		fix := "wait until " + g.Until.Local().Format("15:04")
+		if g.Kind == ledger.RateLimited {
+			fix = "relay available " + provider
+		}
+
+		checks = append(checks, doctor.Check{
+			Group:    group,
+			Name:     "ledger",
+			Severity: doctor.SevWarn,
+			Detail: fmt.Sprintf("%s: %s since %s (%s)",
+				g.Token, relay.GateKindText(g.Kind), g.Since.Local().Format("15:04"), relay.GateUntilText(g.Until)),
+			Fix: fix,
+		})
+	}
+	return checks
 }
 
 // insertGlobalCheck puts c after the last global row, so render order stays

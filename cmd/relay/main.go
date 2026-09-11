@@ -325,7 +325,7 @@ func cmdCandidates(args []string) error {
 		return err
 	}
 
-	fmt.Print(relay.FormatCandidates(rt.Candidates))
+	fmt.Print(relay.FormatCandidates(rt.Candidates, relay.Gates(rt)))
 	return nil
 }
 
