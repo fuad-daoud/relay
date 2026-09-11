@@ -15,13 +15,31 @@ func TestSameAgent(t *testing.T) {
 		want  bool
 	}{
 		{
-			name:  "session matches, pane moved",
+			name:  "name match wins over a differing session and pane",
+			agent: herdr.Agent{Name: "builder", PaneID: "w2:p9", Kind: "agy", Session: herdr.Session{Value: "s2"}},
+			ep:    store.Endpoint{AgentName: "builder", PaneID: "w2:p4", Kind: "agy", SessionID: "s1"},
+			want:  true,
+		},
+		{
+			name:  "name mismatch loses despite matching session and pane",
+			agent: herdr.Agent{Name: "other", PaneID: "w2:p4", Kind: "agy", Session: herdr.Session{Value: "s1"}},
+			ep:    store.Endpoint{AgentName: "builder", PaneID: "w2:p4", Kind: "agy", SessionID: "s1"},
+			want:  false,
+		},
+		{
+			name:  "named endpoint vs nameless agent falls to session",
+			agent: herdr.Agent{Name: "", PaneID: "w2:p9", Kind: "agy", Session: herdr.Session{Value: "s1"}},
+			ep:    store.Endpoint{AgentName: "builder", PaneID: "w2:p4", Kind: "agy", SessionID: "s1"},
+			want:  true,
+		},
+		{
+			name:  "session match",
 			agent: herdr.Agent{PaneID: "w2:p9", Kind: "agy", Session: herdr.Session{Value: "s1"}},
 			ep:    store.Endpoint{PaneID: "w2:p4", Kind: "agy", SessionID: "s1"},
 			want:  true,
 		},
 		{
-			name:  "session recorded but gone, pane reused by a stranger",
+			name:  "session mismatch is gone even in the same pane and kind",
 			agent: herdr.Agent{PaneID: "w2:p4", Kind: "agy", Session: herdr.Session{Value: "s2"}},
 			ep:    store.Endpoint{PaneID: "w2:p4", Kind: "agy", SessionID: "s1"},
 			want:  false,

@@ -98,7 +98,8 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 		b.Consults[i].Endpoint = refreshEndpoint(b.Consults[i].Endpoint, agent)
 
-		idle := agent.Status == herdr.StatusIdle || agent.Status == herdr.StatusDone
+		status := effectiveStatus(b.Consults[i].Endpoint, agent)
+		idle := status == herdr.StatusIdle || status == herdr.StatusDone
 
 		if idle && fileExists(b.Consults[i].FindingsPath) {
 			var err error
@@ -115,7 +116,7 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// only until the next `relay reap`, which closes the pane of every
 		// non-running consult, this one included. The message says so rather
 		// than promising a pane that a routine sweep will take away.
-		if agent.Status == herdr.StatusBlocked {
+		if status == herdr.StatusBlocked {
 			var err error
 			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
 				"blocked on a prompt in pane "+agent.PaneID); err != nil {

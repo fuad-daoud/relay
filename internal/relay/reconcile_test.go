@@ -15,6 +15,7 @@ import (
 
 func builderAgent(status string) herdr.Agent {
 	return herdr.Agent{
+		Name: "webshop-builder",
 		Kind: "agy", Status: status, CWD: "/repo", PaneID: "w2:p4",
 		Title: "webshop-builder",
 	}
@@ -802,6 +803,7 @@ func TestReconcileLeavesBrokenWhenPaneHoldsADifferentKind(t *testing.T) {
 	b.State = store.StateBroken
 
 	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Name = ""       // a stranger does not carry the name relay gave its builder
 	stranger.Kind = "claude" // same pane, different agent
 
 	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
@@ -821,6 +823,7 @@ func TestReconcileBreaksWhenRecordedSessionIsGoneAndPaneReused(t *testing.T) {
 	rt, b := sentBindingWithBuilderSession(t, f, "mine")
 
 	stranger := builderAgent(herdr.StatusWorking)
+	stranger.Name = "" // a stranger does not carry the name relay gave its builder
 	stranger.Session = herdr.Session{Value: "stranger"}
 
 	out, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent(), stranger})
@@ -1061,4 +1064,37 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 			t.Fatalf("RoundClosedTree = %q, want empty", got.RoundClosedTree)
 		}
 	})
+}
+
+func TestEffectiveStatus(t *testing.T) {
+	cases := []struct {
+		name      string
+		epSession string
+		aSession  string
+		status    string
+		want      string
+	}{
+		{name: "same session passes idle", epSession: "s1", aSession: "s1", status: herdr.StatusIdle, want: herdr.StatusIdle},
+		{name: "same session passes done", epSession: "s1", aSession: "s1", status: herdr.StatusDone, want: herdr.StatusDone},
+		{name: "same session passes working", epSession: "s1", aSession: "s1", status: herdr.StatusWorking, want: herdr.StatusWorking},
+		{name: "same session passes blocked", epSession: "s1", aSession: "s1", status: herdr.StatusBlocked, want: herdr.StatusBlocked},
+		{name: "differing session maps idle to working", epSession: "s1", aSession: "s2", status: herdr.StatusIdle, want: herdr.StatusWorking},
+		{name: "differing session maps done to working", epSession: "s1", aSession: "s2", status: herdr.StatusDone, want: herdr.StatusWorking},
+		{name: "differing session maps working to working", epSession: "s1", aSession: "s2", status: herdr.StatusWorking, want: herdr.StatusWorking},
+		{name: "differing session maps blocked to blocked", epSession: "s1", aSession: "s2", status: herdr.StatusBlocked, want: herdr.StatusBlocked},
+		{name: "empty recorded session passes idle", epSession: "", aSession: "s2", status: herdr.StatusIdle, want: herdr.StatusIdle},
+		{name: "empty recorded session passes done", epSession: "", aSession: "s2", status: herdr.StatusDone, want: herdr.StatusDone},
+		{name: "empty live session passes idle", epSession: "s1", aSession: "", status: herdr.StatusIdle, want: herdr.StatusIdle},
+		{name: "empty live session passes done", epSession: "s1", aSession: "", status: herdr.StatusDone, want: herdr.StatusDone},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ep := store.Endpoint{SessionID: tc.epSession}
+			a := herdr.Agent{Status: tc.status, Session: herdr.Session{Value: tc.aSession}}
+			if got := effectiveStatus(ep, a); got != tc.want {
+				t.Errorf("effectiveStatus() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

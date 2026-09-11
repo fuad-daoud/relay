@@ -307,3 +307,154 @@ func TestTickInjectsOncePerPlannerPane(t *testing.T) {
 		t.Errorf("the payload that lost the race must still be pending: pending=%v err=%v", pending, err)
 	}
 }
+
+func TestTickIgnoresASubAgentsIdle(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+
+	a := builderAgent(herdr.StatusWorking)
+	a.Session = herdr.Session{Value: "parent"}
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
+
+	// Tick once so builder's session ("parent") is recorded.
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+
+	clock.Advance(startGrace + time.Second)
+
+	// Replace the builder agent with one carrying Session.Value: "child" and StatusIdle.
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{
+			Name:    "webshop-builder",
+			Kind:    "agy",
+			Status:  herdr.StatusIdle,
+			CWD:     "/repo",
+			PaneID:  "w2:p4",
+			Session: herdr.Session{Value: "child"},
+		},
+	}
+	f.prompts = nil
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+
+	if len(f.prompts) != 0 {
+		t.Errorf("no prompt should be sent to builder under sub-agent idle, got %+v", f.prompts)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			t.Errorf("no report entry should be queued, found %+v", e)
+		}
+	}
+
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State != store.StateActive {
+		t.Errorf("state = %s, want active", loaded.State)
+	}
+	if loaded.Builder.SessionID != "parent" {
+		t.Errorf("Builder.SessionID = %q, want parent", loaded.Builder.SessionID)
+	}
+}
+
+func TestTickStillCapturesASubAgentsBlock(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+
+	a := builderAgent(herdr.StatusWorking)
+	a.Session = herdr.Session{Value: "parent"}
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
+
+	// Tick once so builder's session ("parent") is recorded.
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+
+	clock.Advance(startGrace + time.Second)
+
+	f.readOut = "Allow edit to src/main.go?  1. Yes  2. No"
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{
+			Name:    "webshop-builder",
+			Kind:    "agy",
+			Status:  herdr.StatusBlocked,
+			CWD:     "/repo",
+			PaneID:  "w2:p4",
+			Session: herdr.Session{Value: "child"},
+		},
+	}
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("question must be queued for planner: found=%v err=%v", found, err)
+	}
+	if pending.Kind != store.KindQuestion {
+		t.Errorf("pending kind = %v, want question", pending.Kind)
+	}
+}
+
+func TestTickLocatesABuilderByNameAfterAPaneMove(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+
+	a := builderAgent(herdr.StatusWorking)
+	a.Session = herdr.Session{Value: "parent"}
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
+
+	// Tick once so builder's session ("parent") is recorded.
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+
+	// Builder agent with fixture name, different PaneID, and Session.Value: "child".
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{
+			Name:    "webshop-builder",
+			Kind:    "agy",
+			Status:  herdr.StatusWorking,
+			CWD:     "/repo",
+			PaneID:  "w9:p8",
+			Session: herdr.Session{Value: "child"},
+		},
+	}
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.State != store.StateActive {
+		t.Errorf("state = %s, want active", loaded.State)
+	}
+	if loaded.Builder.PaneID != "w9:p8" {
+		t.Errorf("Builder.PaneID = %q, want w9:p8", loaded.Builder.PaneID)
+	}
+}

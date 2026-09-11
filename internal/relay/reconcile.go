@@ -77,7 +77,9 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 //   - PaneID becomes a.PaneID;
 //   - Kind is set when it was empty;
 //   - AgentName is untouched;
-//   - A recorded SessionID is never overwritten.
+//   - A recorded SessionID is never overwritten: it must not overwrite a recorded
+//     session on mismatch, or a sub-agent's session would be recorded and the
+//     parent would look foreign.
 func refreshEndpoint(ep store.Endpoint, a herdr.Agent) store.Endpoint {
 	ep.PaneID = a.PaneID
 	if ep.SessionID == "" && a.Session.Value != "" {
@@ -87,6 +89,24 @@ func refreshEndpoint(ep store.Endpoint, a herdr.Agent) store.Endpoint {
 		ep.Kind = a.Kind
 	}
 	return ep
+}
+
+// effectiveStatus returns a's status, or StatusWorking when a foreground session
+// mismatch indicates that a sub-agent is occupying the pane.
+//
+// When herdr reports a foreground session that differs from the recorded
+// session, herdr is reporting a sub-agent running in the agent's pane. The
+// sub-agent's idle or done status reflects only the sub-agent's state, while the
+// parent agent remains busy waiting on it. In contrast, a blocked sub-agent has
+// an active dialog requiring human input that blocks the parent as well, so
+// StatusBlocked passes through.
+func effectiveStatus(ep store.Endpoint, a herdr.Agent) string {
+	if ep.SessionID != "" && a.Session.Value != "" && a.Session.Value != ep.SessionID {
+		if a.Status == herdr.StatusIdle || a.Status == herdr.StatusDone {
+			return herdr.StatusWorking
+		}
+	}
+	return a.Status
 }
 
 // Reconcile advances one binding against the agent list the daemon already
@@ -164,7 +184,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	}
 
 	var next store.Binding
-	switch builder.Status {
+	switch effectiveStatus(b.Builder, builder) {
 	case herdr.StatusIdle, herdr.StatusDone:
 		next, err = handleIdleBuilder(ctx, rt, tx, b, entries)
 	case herdr.StatusBlocked:

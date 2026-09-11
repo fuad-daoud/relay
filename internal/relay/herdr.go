@@ -57,6 +57,10 @@ type Runtime struct {
 
 // SameAgent reports whether a live agent is the one an endpoint records.
 //
+// When ep.AgentName and a.Name are both set, matching by name decides. Relay
+// chooses agent names uniquely and they survive workspace moves and session
+// flips.
+//
 // When an endpoint has a recorded SessionID, identity is exact: a live agent
 // must carry that exact session. If no live agent carries it, the agent is
 // considered gone, and relay does not fall back to matching pane id.
@@ -74,8 +78,13 @@ type Runtime struct {
 // conversation, because both report a session only once one exists -- verified
 // live 2026-09-09 against herdr integration v10. Since `builder` is opencode
 // and `abuilder` is agy, while claude is the planner, every builder harness
-// relay ships is in the late-session population.
+// relay ships is in the late-session population. A nameless endpoint (adopted
+// pane) running sub-agents will still read as gone while a sub-agent is in the
+// foreground, and `--builder <pane>` adopters should know it.
 func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
+	if ep.AgentName != "" && a.Name != "" {
+		return a.Name == ep.AgentName
+	}
 	if ep.SessionID != "" {
 		return a.Session.Value == ep.SessionID
 	}

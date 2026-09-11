@@ -3,7 +3,7 @@ package herdr
 import "testing"
 
 const agentListFixture = `{"id":"cli:agent:list","result":{"agents":[
-{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"c6b59b8f-e80a-48ef-a3de-d2d15ec90e24"},
+{"name":"architect-pane","agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"c6b59b8f-e80a-48ef-a3de-d2d15ec90e24"},
 "agent_status":"blocked","cwd":"/home/dev/projects/webshop","focused":true,"pane_id":"w2:p7",
 "tab_id":"w2:t7","terminal_title_stripped":"architect","workspace_id":"w2"},
 {"agent":"opencode","agent_session":{"agent":"opencode","kind":"id","source":"herdr:opencode","value":"d483cf1e"},
@@ -17,6 +17,12 @@ func TestParseAgentList(t *testing.T) {
 	}
 	if len(agents) != 2 {
 		t.Fatalf("got %d agents, want 2", len(agents))
+	}
+	if agents[0].Name != "architect-pane" {
+		t.Errorf("agent 0 name = %q, want %q", agents[0].Name, "architect-pane")
+	}
+	if agents[1].Name != "" {
+		t.Errorf("agent 1 name = %q, want empty", agents[1].Name)
 	}
 	if agents[0].Status != StatusBlocked {
 		t.Errorf("agent 0 status = %q, want %q", agents[0].Status, StatusBlocked)

@@ -143,7 +143,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		// Keyed on live evidence rather than b.State so the guard does not
 		// depend on whether the daemon has ticked since the pane went away.
 		d := DiagnoseBuilder(b)
-		if !d.SessionIdentified && d.RoundOpen && !opts.AssumeDead {
+		if !d.Identified && d.RoundOpen && !opts.AssumeDead {
 			return store.Binding{}, fmt.Errorf(
 				"%w: relay cannot tell a dead builder for %q from a moved pane. "+
 					"Check %s is really gone, then re-run with --assume-dead",

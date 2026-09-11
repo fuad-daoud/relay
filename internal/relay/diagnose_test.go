@@ -12,10 +12,10 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 	sent := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name     string
-		binding  store.Binding
-		wantOpen bool
-		wantSess bool
+		name           string
+		binding        store.Binding
+		wantOpen       bool
+		wantIdentified bool
 	}{
 		{
 			name: "round in flight and session recorded",
@@ -23,16 +23,24 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 				RoundStartedAt: sent,
 				Builder:        store.Endpoint{PaneID: "w2:p4", SessionID: "sess-1"},
 			},
-			wantOpen: true,
-			wantSess: true,
+			wantOpen:       true,
+			wantIdentified: true,
 		},
 		{
 			name: "round closed and session recorded",
 			binding: store.Binding{
 				Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "sess-1"},
 			},
-			wantOpen: false,
-			wantSess: true,
+			wantOpen:       false,
+			wantIdentified: true,
+		},
+		{
+			name: "named, session-less endpoint",
+			binding: store.Binding{
+				Builder: store.Endpoint{PaneID: "w2:p4", AgentName: "webshop-builder"},
+			},
+			wantOpen:       false,
+			wantIdentified: true,
 		},
 		{
 			name: "round in flight and no session",
@@ -40,22 +48,22 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 				RoundStartedAt: sent,
 				Builder:        store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			},
-			wantOpen: true,
-			wantSess: false,
+			wantOpen:       true,
+			wantIdentified: false,
 		},
 		{
 			name: "round closed and no session",
 			binding: store.Binding{
 				Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			},
-			wantOpen: false,
-			wantSess: false,
+			wantOpen:       false,
+			wantIdentified: false,
 		},
 		{
-			name:     "zero binding does not panic",
-			binding:  store.Binding{},
-			wantOpen: false,
-			wantSess: false,
+			name:           "zero binding does not panic",
+			binding:        store.Binding{},
+			wantOpen:       false,
+			wantIdentified: false,
 		},
 	}
 
@@ -65,15 +73,15 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 			if got.RoundOpen != tc.wantOpen {
 				t.Errorf("RoundOpen = %v, want %v", got.RoundOpen, tc.wantOpen)
 			}
-			if got.SessionIdentified != tc.wantSess {
-				t.Errorf("SessionIdentified = %v, want %v", got.SessionIdentified, tc.wantSess)
+			if got.Identified != tc.wantIdentified {
+				t.Errorf("Identified = %v, want %v", got.Identified, tc.wantIdentified)
 			}
 		})
 	}
 }
 
 func TestBuilderDiagnosisDetail(t *testing.T) {
-	const moved = ", and the builder was never session-identified, " +
+	const moved = ", and the builder cannot be identified by name or session, " +
 		"so it may be alive in a moved pane -- verify before rebinding"
 
 	tests := []struct {
@@ -84,7 +92,7 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 	}{
 		{
 			name:  "round open, identified",
-			d:     BuilderDiagnosis{RoundOpen: true, SessionIdentified: true},
+			d:     BuilderDiagnosis{RoundOpen: true, Identified: true},
 			round: 3,
 			want:  "round 3 was open -- that work is unaccounted for; rebind and resend the round",
 		},
@@ -96,7 +104,7 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 		},
 		{
 			name:  "report delivered, identified",
-			d:     BuilderDiagnosis{SessionIdentified: true},
+			d:     BuilderDiagnosis{Identified: true},
 			round: 3,
 			want:  "round 2 report delivered; nothing outstanding -- unless you want another round",
 		},
@@ -108,7 +116,7 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 		},
 		{
 			name:  "never sent, identified",
-			d:     BuilderDiagnosis{SessionIdentified: true},
+			d:     BuilderDiagnosis{Identified: true},
 			round: 1,
 			want:  "no round has been sent yet; nothing outstanding -- unless you want to send one",
 		},
@@ -136,7 +144,7 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 // turn, so it is exactly the unidentified case this detail exists to warn
 // about; it must not be papered over with a nonsense round number.
 func TestDetailNeverNamesRoundZero(t *testing.T) {
-	for _, d := range []BuilderDiagnosis{{}, {SessionIdentified: true}} {
+	for _, d := range []BuilderDiagnosis{{}, {Identified: true}} {
 		got := d.Detail(1)
 		if strings.Contains(got, "round 0") {
 			t.Errorf("Detail(1) = %q, must not name round 0", got)
@@ -150,8 +158,8 @@ func TestDetailNeverNamesRoundZero(t *testing.T) {
 func TestDetailIsTotal(t *testing.T) {
 	for _, round := range []int{0, 1, 2, 7} {
 		for _, open := range []bool{true, false} {
-			for _, sess := range []bool{true, false} {
-				d := BuilderDiagnosis{RoundOpen: open, SessionIdentified: sess}
+			for _, ident := range []bool{true, false} {
+				d := BuilderDiagnosis{RoundOpen: open, Identified: ident}
 				if d.Detail(round) == "" {
 					t.Errorf("Detail(%d) empty for %+v", round, d)
 				}
