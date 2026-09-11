@@ -24,7 +24,7 @@ func seedForAsk(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	rt, b := seedBound(t, f)
 	rt.NewID = func() string { return "7f2a3c1d" }
 	f.newPane = "w2:p9"
-	f.starts, f.splitCalls, f.splits = nil, nil, 0
+	f.starts, f.tabs = nil, nil
 	return rt, b
 }
 
@@ -72,8 +72,8 @@ func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
 	if matches, _ := filepath.Glob(filepath.Join(rt.Store.Dir(name), "*-ask.md")); len(matches) != 0 {
 		t.Errorf("a refused ask must stage no question file, found %v", matches)
 	}
-	if f.splits != 0 {
-		t.Errorf("a refused ask must touch no pane: splits = %d", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("a refused ask must touch no pane: tabs = %d", len(f.tabs))
 	}
 
 	got, loadErr := rt.Store.Load(name)
@@ -178,27 +178,26 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 
 func TestAskOpensTheConsultInTheBindingsTree(t *testing.T) {
 	// Tree: "binding" is the role's contract, and nothing else in the suite can
-	// observe it: the fake discarded SplitPane's arguments until Step 1b taught
-	// it to record them, so passing the planner's cwd -- or an empty one --
-	// would have gone unnoticed.
+	// observe it: passing the planner's cwd -- or an empty one -- to the tab
+	// would go unnoticed without this pin.
 	f := &fakeHerdr{}
 	rt, b := seedForAsk(t, f)
 	q := writeQuestion(t, "review it")
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3", WorkspaceID: "w2",
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 
-	if len(f.splitCalls) != 1 {
-		t.Fatalf("got %d splits, want 1", len(f.splitCalls))
+	if len(f.tabs) != 1 {
+		t.Fatalf("got %d tabs, want 1", len(f.tabs))
 	}
-	if got := f.splitCalls[0].CWD; got != b.CWD {
-		t.Errorf("consult pane opened in %q, want the binding's tree %q", got, b.CWD)
+	if got := f.tabs[0].CWD; got != b.CWD {
+		t.Errorf("consult tab opened in %q, want the binding's tree %q", got, b.CWD)
 	}
-	if got := f.splitCalls[0].Target; got != "w2:p3" {
-		t.Errorf("split from %q, want the planner's pane w2:p3", got)
+	if got := f.tabs[0].WorkspaceID; got != "w2" {
+		t.Errorf("consult tab in workspace %q, want the planner's w2", got)
 	}
 }
 
@@ -243,8 +242,8 @@ func TestAskRefusesAnUnknownRole(t *testing.T) {
 	if len(f.starts) != 0 {
 		t.Errorf("starts = %d, want 0", len(f.starts))
 	}
-	if f.splits != 0 {
-		t.Errorf("splits = %d, want 0", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("tabs = %d, want 0", len(f.tabs))
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -270,8 +269,8 @@ func TestAskRefusesTheBuilderRole(t *testing.T) {
 	if len(f.starts) != 0 {
 		t.Errorf("starts = %d, want 0", len(f.starts))
 	}
-	if f.splits != 0 {
-		t.Errorf("splits = %d, want 0", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("tabs = %d, want 0", len(f.tabs))
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -425,8 +424,8 @@ func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
 	if !errors.Is(err, ErrConsultCap) {
 		t.Fatalf("want ErrConsultCap, got %v", err)
 	}
-	if !(f.splits == 0 && len(f.starts) == 0) {
-		t.Errorf("expected f.splits == 0 && len(f.starts) == 0, got splits=%d starts=%d", f.splits, len(f.starts))
+	if !(len(f.tabs) == 0 && len(f.starts) == 0) {
+		t.Errorf("expected no tabs and no starts, got tabs=%d starts=%d", len(f.tabs), len(f.starts))
 	}
 }
 
@@ -519,10 +518,10 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 	q := writeQuestion(t, "x")
 
 	lockFree := make(chan struct{})
-	f.onSplit = func() {
+	f.onSpawn = func() {
 		go func() {
 			// Mutexes are not reentrant (spec §7.1): if Ask holds the store
-			// lock across SplitPane, WithLock blocks and never returns. A
+			// lock across CreateTab, WithLock blocks and never returns. A
 			// timeout is therefore proof the lock was held.
 			_ = rt.Store.WithLock(func(*store.Tx) error {
 				return nil
@@ -532,7 +531,7 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 		select {
 		case <-lockFree:
 		case <-time.After(2 * time.Second):
-			t.Fatal("state lock is held during SplitPane")
+			t.Fatal("state lock is held during CreateTab")
 		}
 	}
 
@@ -550,7 +549,7 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 	q := writeQuestion(t, "x")
 
 	done := make(chan struct{})
-	f.onSplit = func() {
+	f.onSpawn = func() {
 		go func() {
 			defer close(done)
 			b, err := rt.Store.Load("webshop")
@@ -576,7 +575,7 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for Load inside onSplit")
+			t.Fatal("timed out waiting for Load inside onSpawn")
 		}
 	}
 
@@ -658,7 +657,7 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 	q := writeQuestion(t, "x")
 
 	modified := make(chan struct{})
-	f.onSplit = func() {
+	f.onSpawn = func() {
 		go func() {
 			defer close(modified)
 			b, err := rt.Store.Load("webshop")
@@ -679,7 +678,7 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 		select {
 		case <-modified:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for rewrite inside onSplit")
+			t.Fatal("timed out waiting for rewrite inside onSpawn")
 		}
 	}
 
@@ -712,7 +711,7 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 	q := writeQuestion(t, "x")
 
 	reaped := make(chan struct{})
-	f.onSplit = func() {
+	f.onSpawn = func() {
 		go func() {
 			defer close(reaped)
 			b, err := rt.Store.Load("webshop")
@@ -728,7 +727,7 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 		select {
 		case <-reaped:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for reap simulation in onSplit")
+			t.Fatal("timed out waiting for reap simulation in onSpawn")
 		}
 	}
 

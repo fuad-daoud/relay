@@ -13,9 +13,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// splitDirection matches herdr's own guidance for a sibling agent pane.
-const splitDirection = "right"
-
 // ErrBuilderAlive reports a rebind attempt against a binding whose builder is
 // still running. Relay never abandons a live builder: the human ends it, or
 // `relay done` the binding first.
@@ -49,9 +46,7 @@ type BindOptions struct {
 	// way.
 	AssumeDead bool
 
-	// NewTab opens the builder in its own herdr tab instead of splitting the
-	// planner's pane. WorkspaceID scopes that tab to the planner's workspace.
-	NewTab      bool
+	// WorkspaceID scopes the builder's tab to the planner's workspace.
 	WorkspaceID string
 
 	// RoundTimeout overrides the binding's round budget. Zero keeps the
@@ -299,8 +294,8 @@ func builderAgentName(name string) (string, error) {
 	return agentName, nil
 }
 
-// resolveBuilder adopts an existing builder pane, or splits a sibling pane and
-// starts the candidate agent in it. Focus stays with the planner either way.
+// resolveBuilder adopts an existing builder pane, or opens a tab and starts
+// the candidate agent in its root pane. Focus stays with the planner either way.
 //
 // The candidate is resolved only on the spawn path. Adopting a pane needs no
 // candidate: the human launched that agent themselves, so relay has no kind or
@@ -345,7 +340,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 		return store.Endpoint{}, Resolution{}, err
 	}
 
-	paneID, err := builderPane(ctx, rt, opts, agentName, plannerPane)
+	paneID, err := openTab(ctx, rt, opts.WorkspaceID, opts.CWD, agentName)
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
@@ -390,24 +385,16 @@ func endpointOf(a herdr.Agent) store.Endpoint {
 	}
 }
 
-// builderPane makes somewhere for the builder to live: its own tab when asked,
-// otherwise a sibling pane beside the planner. Focus stays with the planner
-// either way.
-func builderPane(ctx context.Context, rt Runtime, opts BindOptions, agentName, plannerPane string) (string, error) {
-	if opts.NewTab {
-		paneID, err := rt.Herdr.CreateTab(ctx, opts.WorkspaceID, opts.CWD, agentName)
-		if err != nil {
-			return "", fmt.Errorf("create tab for builder: %w", err)
-		}
-
-		return paneID, nil
-	}
-
-	paneID, err := rt.Herdr.SplitPane(ctx, plannerPane, splitDirection, opts.CWD)
+// openTab makes somewhere for a spawned agent to live: its own herdr tab in
+// the planner's workspace, rooted at cwd and labelled so the tab strip says
+// which builder or consult lives there. Focus stays with the planner.
+// Every spawn site (bind, add, fork, ask) comes through here; placement is
+// not a per-command decision (#79).
+func openTab(ctx context.Context, rt Runtime, workspaceID, cwd, label string) (string, error) {
+	paneID, err := rt.Herdr.CreateTab(ctx, workspaceID, cwd, label)
 	if err != nil {
-		return "", fmt.Errorf("split pane for builder: %w", err)
+		return "", fmt.Errorf("create tab %q: %w", label, err)
 	}
-
 	return paneID, nil
 }
 

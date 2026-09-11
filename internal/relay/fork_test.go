@@ -265,7 +265,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if !errors.Is(err, ErrRoundOutOfRange) {
 			t.Fatalf("got %v, want ErrRoundOutOfRange", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("worktree or pane created on refusal")
 		}
 	})
@@ -278,7 +278,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if !errors.Is(err, ErrRoundOutOfRange) {
 			t.Fatalf("got %v, want ErrRoundOutOfRange", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("worktree or pane created on refusal")
 		}
 	})
@@ -291,7 +291,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("got %v, want already exists error", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("worktree or pane created on refusal")
 		}
 	})
@@ -305,7 +305,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if !errors.Is(err, store.ErrCWDTaken) {
 			t.Fatalf("got %v, want ErrCWDTaken", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("worktree or pane created on refusal")
 		}
 	})
@@ -323,7 +323,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if !errors.Is(err, ErrGitRequired) {
 			t.Fatalf("got %v, want ErrGitRequired", err)
 		}
-		if len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("pane created on refusal")
 		}
 	})
@@ -337,7 +337,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		if !errors.Is(err, git.ErrBranchExists) {
 			t.Fatalf("got %v, want ErrBranchExists", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("worktree or pane created on refusal")
 		}
 	})
@@ -399,8 +399,8 @@ func TestForkRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
 	}
-	if fh.splits != 0 || len(fh.starts) != 0 {
-		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", fh.splits, len(fh.starts))
+	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
+		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(fh.tabs), len(fh.starts))
 	}
 	if !errors.Is(err, herdr.ErrInvalidAgentName) {
 		t.Fatalf("Fork err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
@@ -427,7 +427,7 @@ func TestForkRollback(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "worktree disk error") {
 			t.Fatalf("got %v, want worktree disk error", err)
 		}
-		if len(fh.starts) != 0 || fh.splits != 0 {
+		if len(fh.starts) != 0 || len(fh.tabs) != 0 {
 			t.Error("builder pane spawned after AddWorktree failure")
 		}
 	})

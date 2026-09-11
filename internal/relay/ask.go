@@ -46,7 +46,6 @@ type AskOptions struct {
 	File        string // the question file; required
 	Name        string // binding name, already resolved by the caller
 	PlannerPane string // $HERDR_PANE_ID; required
-	NewTab      bool
 	WorkspaceID string
 }
 
@@ -82,7 +81,7 @@ type AskResult struct {
 //	On a spawn failure after a pane exists, exactly one record for the
 //	id exists, State is silent, Endpoint.PaneID is set, and Note names
 //	the failure, so `relay reap` can close it. On a spawn failure before
-//	a pane exists (SplitPane/CreateTab itself failed), exactly one record
+//	a pane exists (CreateTab itself failed), exactly one record
 //	for the id exists, State is silent, Endpoint.PaneID is empty, and
 //	Note names the failure, so `relay reap` drops it without a close.
 //
@@ -183,7 +182,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
 	var spawnErr error
-	pane, err := consultPane(ctx, rt, opts, cwd, consult.Endpoint.AgentName)
+	pane, err := openTab(ctx, rt, opts.WorkspaceID, cwd, consult.Endpoint.AgentName)
 	if err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "split failed: " + brief(err)
@@ -257,26 +256,6 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	}
 
 	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, spawnErr
-}
-
-// consultPane makes somewhere for the consult to live: its own tab when asked,
-// otherwise a sibling pane beside the planner. Focus stays with the planner
-// either way. It mirrors builderPane; they are kept separate because a consult
-// takes its cwd from the binding rather than from bind options.
-func consultPane(ctx context.Context, rt Runtime, opts AskOptions, cwd, agentName string) (string, error) {
-	if opts.NewTab {
-		pane, err := rt.Herdr.CreateTab(ctx, opts.WorkspaceID, cwd, agentName)
-		if err != nil {
-			return "", fmt.Errorf("create tab for consult: %w", err)
-		}
-		return pane, nil
-	}
-
-	pane, err := rt.Herdr.SplitPane(ctx, opts.PlannerPane, splitDirection, cwd)
-	if err != nil {
-		return "", fmt.Errorf("split pane for consult: %w", err)
-	}
-	return pane, nil
 }
 
 // runningConsults counts ConsultSpawning as well as ConsultRunning. A
