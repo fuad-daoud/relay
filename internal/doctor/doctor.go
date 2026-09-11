@@ -194,11 +194,19 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	}
 
 	detail := homeRel
-	// A read error is deliberately swallowed: the file exists, which is what
-	// this row reports, and the model pin is a courtesy on top of that.
+	// A read error is deliberately swallowed: the file exists, which is
+	// what this row reports, and the model pin is a courtesy on top of
+	// that -- except on a kind whose pin would override the launch line.
 	if raw, err := env.ReadFile(fullPath); err == nil {
 		if model := frontmatterModel(raw); model != "" {
 			detail = fmt.Sprintf("%s (model: %s)", homeRel, model)
+			if r.ExpectModel != "" && model != r.ExpectModel {
+				return Check{
+					Group: kind, Name: r.Name, Severity: SevWarn,
+					Detail: fmt.Sprintf("%s -- pins a tier; the candidate's --model is ignored", detail),
+					Fix:    fmt.Sprintf("set model: %s in %s", r.ExpectModel, homeRel),
+				}
+			}
 		}
 	}
 	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
@@ -317,6 +325,40 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 				Detail:   binPath,
 				Fix:      "",
 			})
+
+			if known && h.MinVersion != "" {
+				// A harness with a floor is held to it before its roles are checked:
+				// below the floor, --agent has nothing to select and every role row
+				// would be reporting a file the binary cannot load (spec §7.6).
+				ver, verr := env.BinaryVersion(ctx, binPath)
+				switch {
+				case verr != nil:
+					checks = append(checks, Check{
+						Group: kind, Name: "version", Severity: SevWarn,
+						Detail: fmt.Sprintf("could not read version: %v", verr), ProbeFailed: true,
+					})
+				default:
+					atLeast, semErr := semverAtLeast(ver, h.MinVersion)
+					switch {
+					case semErr != nil:
+						checks = append(checks, Check{
+							Group: kind, Name: "version", Severity: SevWarn,
+							Detail: fmt.Sprintf("unparseable version %q", ver),
+						})
+					case !atLeast:
+						checks = append(checks, Check{
+							Group: kind, Name: "version", Severity: SevFail,
+							Detail: fmt.Sprintf("%s (below floor %s)", ver, h.MinVersion),
+							Fix:    fmt.Sprintf("upgrade %s to >= %s", h.Binary, h.MinVersion),
+						})
+					default:
+						checks = append(checks, Check{
+							Group: kind, Name: "version", Severity: SevOK,
+							Detail: fmt.Sprintf("%s (floor %s)", ver, h.MinVersion),
+						})
+					}
+				}
+			}
 		}
 
 		// Integration check
@@ -395,10 +437,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 
 		if !cfg.adopted {
-			// Role checks: one row per shipped role. A harness with no roles
-			// selects its role with a preamble on the first prompt instead of
-			// a file, which is agy; its row keeps the name plan-executor,
-			// because that is still the role the preamble selects.
+			// Role checks: one row per shipped role. Every known kind has rows (#85).
 			switch {
 			case !known:
 				checks = append(checks, Check{
@@ -406,14 +445,6 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Name:     "plan-executor",
 					Severity: SevOK,
 					Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
-					Fix:      "",
-				})
-			case len(h.Roles) == 0:
-				checks = append(checks, Check{
-					Group:    kind,
-					Name:     "plan-executor",
-					Severity: SevOK,
-					Detail:   "selected by preamble, not a file",
 					Fix:      "",
 				})
 			default:

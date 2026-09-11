@@ -2,9 +2,11 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -33,6 +35,10 @@ type Env interface {
 	// Used to report facts about an installed role definition; a read error
 	// is never itself a check failure.
 	ReadFile(path string) ([]byte, error)
+	// BinaryVersion runs `<path> --version` and returns the first field of
+	// its trimmed stdout, so a harness with a version floor can be held to
+	// it the way herdr is (spec §4.4). path came from LookPath.
+	BinaryVersion(ctx context.Context, path string) (string, error)
 }
 
 type realEnv struct {
@@ -85,4 +91,16 @@ func (e *realEnv) Stat(path string) error {
 
 func (e *realEnv) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
+}
+
+func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) == 0 {
+		return "", errors.New("empty version output")
+	}
+	return fields[0], nil
 }

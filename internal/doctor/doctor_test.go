@@ -23,6 +23,8 @@ type fakeEnv struct {
 	fileContents  map[string]string // path -> content; absent reads as empty
 	homeDir       string
 	homeErr       error
+	versions      map[string]string // binary path -> version output
+	versionErr    error
 }
 
 func (f *fakeEnv) HerdrVersion(ctx context.Context) (string, error) {
@@ -75,6 +77,17 @@ func (f *fakeEnv) Stat(path string) error {
 // fileContents reads as empty, which must produce no model suffix and no error.
 func (f *fakeEnv) ReadFile(path string) ([]byte, error) {
 	return []byte(f.fileContents[path]), nil
+}
+
+func (f *fakeEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
+	if f.versionErr != nil {
+		return "", f.versionErr
+	}
+	v, ok := f.versions[path]
+	if !ok {
+		return "", errors.New("no version recorded for " + path)
+	}
+	return v, nil
 }
 
 func findCheck(report Report, group, name string) *Check {
@@ -196,30 +209,6 @@ func TestDoctorMissingBinarySuppressesRemainingRows(t *testing.T) {
 	}
 	if binCheck.Detail != "not on PATH -- skipping the rest of this harness" {
 		t.Errorf("opencode binary detail = %q, want 'not on PATH -- skipping the rest of this harness'", binCheck.Detail)
-	}
-}
-
-func TestDoctorAgyRoleSelectedByPreamble(t *testing.T) {
-	env := &fakeEnv{
-		herdrVer: "0.9.0",
-		lookPaths: map[string]string{
-			"agy": "/home/fuad/.local/bin/agy",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"antigravity-cli": {Installed: true, Detail: "current (v3)"},
-		},
-	}
-
-	report := Run(context.Background(), env, []string{"agy"})
-	roleCheck := findCheck(report, "agy", "plan-executor")
-	if roleCheck == nil {
-		t.Fatal("agy plan-executor check not found")
-	}
-	if roleCheck.Severity != SevOK {
-		t.Errorf("agy role severity = %v, want SevOK", roleCheck.Severity)
-	}
-	if roleCheck.Detail != "selected by preamble, not a file" {
-		t.Errorf("agy role detail = %q, want 'selected by preamble, not a file'", roleCheck.Detail)
 	}
 }
 
@@ -638,5 +627,143 @@ func newFakeEnvForKind(t *testing.T, kind string) *fakeEnv {
 			kind: {Installed: true, Detail: "current (v9)"},
 		},
 		homeDir: "/fake/home",
+	}
+}
+
+// agyEnv is an agy machine in good order: binary on PATH, integration
+// installed, three role files present and pinning inherit. Tests perturb
+// one thing at a time from here.
+func agyEnv(t *testing.T) *fakeEnv {
+	t.Helper()
+	home := "/home/u"
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		homeDir:       home,
+		lookPaths:     map[string]string{"agy": "/home/fuad/.local/bin/agy"},
+		intStatus:     map[string]herdr.IntegrationState{"antigravity-cli": {Installed: true, Detail: "current (v3)"}},
+		existingFiles: map[string]bool{},
+		fileContents:  map[string]string{},
+		versions:      map[string]string{"/home/fuad/.local/bin/agy": "1.2.1"},
+	}
+	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+		p := home + "/.gemini/config/agents/" + name + ".md"
+		env.existingFiles[p] = true
+		env.fileContents[p] = "---\nname: " + name + "\nmodel: inherit\n---\nbody\n"
+	}
+	return env
+}
+
+func TestDoctorAgyVersionFloor(t *testing.T) {
+	cases := []struct {
+		name     string
+		version  string
+		err      error
+		wantSev  Severity
+		wantDet  string
+		wantFix  string
+		wantProb bool
+	}{
+		{name: "at floor", version: "1.1.6", wantSev: SevOK, wantDet: "1.1.6 (floor 1.1.6)"},
+		{name: "above floor", version: "1.2.1", wantSev: SevOK, wantDet: "1.2.1 (floor 1.1.6)"},
+		{name: "below floor", version: "1.1.5", wantSev: SevFail, wantDet: "1.1.5 (below floor 1.1.6)", wantFix: "upgrade agy to >= 1.1.6"},
+		{name: "garbage", version: "garbage", wantSev: SevWarn, wantDet: `unparseable version "garbage"`},
+		{name: "probe fails", err: errors.New("boom"), wantSev: SevWarn, wantDet: "could not read version: boom", wantProb: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := agyEnv(t) // step 4's helper: paths, integration, three role files pinning inherit
+			env.versions = map[string]string{"/home/fuad/.local/bin/agy": tc.version}
+			env.versionErr = tc.err
+			report := Run(context.Background(), env, []string{"agy"})
+			c := findCheck(report, "agy", "version")
+			if c == nil {
+				t.Fatal("agy version row not found")
+			}
+			if c.Severity != tc.wantSev || c.Detail != tc.wantDet || c.Fix != tc.wantFix || c.ProbeFailed != tc.wantProb {
+				t.Errorf("row = %+v, want sev %v detail %q fix %q probeFailed %v", *c, tc.wantSev, tc.wantDet, tc.wantFix, tc.wantProb)
+			}
+		})
+	}
+}
+
+func TestDoctorNoVersionRowWithoutAFloor(t *testing.T) {
+	for _, kind := range []string{"claude", "opencode"} {
+		env := &fakeEnv{
+			herdrVer:  "0.9.0",
+			lookPaths: map[string]string{kind: "/usr/bin/" + kind},
+			intStatus: map[string]herdr.IntegrationState{kind: {Installed: true}},
+		}
+		report := Run(context.Background(), env, []string{kind})
+		if c := findCheck(report, kind, "version"); c != nil {
+			t.Errorf("%s has no MinVersion, got version row %+v", kind, *c)
+		}
+	}
+}
+
+func TestDoctorAgyRoleWarnsOnATierPin(t *testing.T) {
+	env := agyEnv(t)
+	env.versions = map[string]string{"/home/fuad/.local/bin/agy": "1.2.1"}
+	env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = "---\nname: researcher\nmodel: pro\n---\nbody\n"
+	report := Run(context.Background(), env, []string{"agy"})
+
+	c := findCheck(report, "agy", "researcher")
+	if c == nil {
+		t.Fatal("agy researcher row not found")
+	}
+	if c.Severity != SevWarn {
+		t.Errorf("severity = %v, want SevWarn", c.Severity)
+	}
+	if c.Detail != "~/.gemini/config/agents/researcher.md (model: pro) -- pins a tier; the candidate's --model is ignored" {
+		t.Errorf("detail = %q", c.Detail)
+	}
+	if c.Fix != "set model: inherit in ~/.gemini/config/agents/researcher.md" {
+		t.Errorf("fix = %q", c.Fix)
+	}
+	for _, name := range []string{"plan-executor", "reviewer"} {
+		if c := findCheck(report, "agy", name); c == nil || c.Severity != SevOK {
+			t.Errorf("%s row = %+v, want SevOK", name, c)
+		}
+	}
+}
+
+func TestDoctorClaudeRoleNeverWarnsOnAPin(t *testing.T) {
+	env := &fakeEnv{
+		herdrVer:      "0.9.0",
+		homeDir:       "/home/u",
+		lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
+		intStatus:     map[string]herdr.IntegrationState{"claude": {Installed: true}},
+		existingFiles: map[string]bool{"/home/u/.claude/agents/plan-executor.md": true},
+		fileContents:  map[string]string{"/home/u/.claude/agents/plan-executor.md": "---\nmodel: opus\n---\n"},
+	}
+	report := Run(context.Background(), env, []string{"claude"})
+	c := findCheck(report, "claude", "plan-executor")
+	if c == nil || c.Severity != SevOK || c.Detail != "~/.claude/agents/plan-executor.md (model: opus)" {
+		t.Errorf("row = %+v, want SevOK with the pin reported", c)
+	}
+}
+
+func TestDoctorAgyRolesAreCheckedLikeAnyKind(t *testing.T) {
+	env := agyEnv(t)
+	report := Run(context.Background(), env, []string{"agy"})
+	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+		c := findCheck(report, "agy", name)
+		if c == nil {
+			t.Fatalf("agy %s row not found", name)
+		}
+		want := "~/.gemini/config/agents/" + name + ".md (model: inherit)"
+		if c.Severity != SevOK || c.Detail != want {
+			t.Errorf("%s row = %+v, want SevOK %q", name, *c, want)
+		}
+	}
+}
+
+func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
+	env := agyEnv(t)
+	delete(env.existingFiles, "/home/u/.gemini/config/agents/reviewer.md")
+	report := Run(context.Background(), env, []string{"agy"})
+	c := findCheck(report, "agy", "reviewer")
+	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
+		c.Fix != "relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
+		t.Errorf("row = %+v", c)
 	}
 }

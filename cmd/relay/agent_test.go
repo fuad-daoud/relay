@@ -85,20 +85,24 @@ func TestAgentPrintOpencodeByteIdentical(t *testing.T) {
 	}
 }
 
-func TestAgentPrintAgyExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "agy"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "preamble") {
-		t.Errorf("expected stderr to explain preamble, got %q", string(stderr))
+func TestAgentPrintAgyByteIdentical(t *testing.T) {
+	for _, role := range []string{"plan-executor", "researcher", "reviewer"} {
+		expected, err := harness.AgentDoc(role, "agy")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
+		}
+		stdout, stderr, runErr := captureOutput(t, func() error {
+			return run([]string{"agent", "print", "--kind", "agy", "--role", role})
+		})
+		if runErr != nil {
+			t.Fatalf("%s: unexpected error: %v", role, runErr)
+		}
+		if len(stderr) != 0 {
+			t.Errorf("%s: expected empty stderr, got %q", role, string(stderr))
+		}
+		if !bytes.Equal(stdout, expected) {
+			t.Errorf("%s: stdout not byte-identical to embedded agy doc", role)
+		}
 	}
 }
 

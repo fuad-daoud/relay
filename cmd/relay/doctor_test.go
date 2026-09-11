@@ -284,6 +284,13 @@ func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
 	return nil, nil
 }
 
+// BinaryVersion satisfies doctor.Env. None of these tests exercise a kind
+// with a MinVersion floor, so this is never called; it exists only to keep
+// stubDoctorEnv implementing the interface.
+func (s *stubDoctorEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
+	return "", nil
+}
+
 // A probe relay could not complete is not actionable and stays off the hot path.
 // An actionable row in the same report must survive it -- the all-or-nothing
 // filter this replaces dropped both, and its test could not tell the difference
