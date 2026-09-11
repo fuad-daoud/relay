@@ -721,4 +721,3 @@ func TestBindRejectsTabFlag(t *testing.T) {
 		}
 	}
 }
-
