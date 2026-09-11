@@ -386,6 +386,11 @@ func (s *Store) list() ([]Binding, error) {
 // root but List skips it, since it holds no live bindings.
 func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
 
+// LedgerPath is the availability ledger (#61): one file at the state root,
+// beside .lock, so every write to it can run under WithLock like a
+// bind.json write.
+func (s *Store) LedgerPath() string { return filepath.Join(s.root, "ledger.json") }
+
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.
