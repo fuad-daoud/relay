@@ -14,8 +14,12 @@ import (
 // consultAgent is the live pane a seeded consult occupies.
 func consultAgent(status string) herdr.Agent {
 	return herdr.Agent{
-		Kind: "claude", Status: status, CWD: "/repo", PaneID: "w2:p9",
-		Title: "webshop-reviewer-7f2a3c1d",
+		Name:   "webshop-reviewer-7f2a3c1d",
+		Kind:   "claude",
+		Status: status,
+		CWD:    "/repo",
+		PaneID: "w2:p9",
+		Title:  "webshop-reviewer-7f2a3c1d",
 	}
 }
 
@@ -356,5 +360,44 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 	if !strings.HasSuffix(findings[0].Payload, "No pane was spawned.") {
 		t.Errorf("payload %q does not end with 'No pane was spawned.'", findings[0].Payload)
+	}
+}
+
+func TestReconcileIgnoresAConsultSubAgentsIdle(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _, _ := seedConsult(t, f)
+
+	for i := range f.agents {
+		if f.agents[i].Name == "webshop-reviewer-7f2a3c1d" {
+			f.agents[i].Session = herdr.Session{Value: "consult-parent"}
+		}
+	}
+
+	// Tick once to record the session.
+	tickConsults(t, rt, f)
+
+	// Swap in Session.Value: "child" + StatusIdle, no findings.
+	for i := range f.agents {
+		if f.agents[i].Name == "webshop-reviewer-7f2a3c1d" {
+			f.agents[i].Session = herdr.Session{Value: "child"}
+			f.agents[i].Status = herdr.StatusIdle
+		}
+	}
+	f.prompts = nil
+
+	b := tickConsults(t, rt, f)
+
+	if len(f.prompts) != 0 {
+		t.Errorf("expected no nudge prompt under sub-agent idle, got %+v", f.prompts)
+	}
+	if len(b.Consults) != 1 {
+		t.Fatalf("expected 1 consult, got %d", len(b.Consults))
+	}
+	c := b.Consults[0]
+	if c.State != store.ConsultRunning {
+		t.Errorf("consult state = %v, want %v", c.State, store.ConsultRunning)
+	}
+	if !c.NudgedAt.IsZero() {
+		t.Errorf("NudgedAt = %v, want zero", c.NudgedAt)
 	}
 }

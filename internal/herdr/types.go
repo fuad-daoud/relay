@@ -40,6 +40,7 @@ type Session struct {
 
 // Agent is one agent-occupied pane in the live herdr session.
 type Agent struct {
+	Name        string  `json:"name"` // the name given at `herdr agent start`; empty for agents herdr did not start
 	Kind        string  `json:"agent"`
 	Status      string  `json:"agent_status"`
 	CWD         string  `json:"cwd"`

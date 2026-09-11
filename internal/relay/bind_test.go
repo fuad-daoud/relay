@@ -1118,6 +1118,32 @@ func TestBindResumeUnaffectedWhenSessionRecorded(t *testing.T) {
 	}
 }
 
+// A builder with an agent name is unambiguous: it can be identified by name, so
+// the gate must not fire even when SessionID is empty and a round was open.
+func TestBindResumeUnaffectedWhenNamedWithoutSession(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:           "webshop",
+		CWD:            "/repo",
+		Round:          3,
+		State:          store.StateBroken,
+		Planner:        store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:        store.Endpoint{PaneID: "w2:p4", Kind: "agy", AgentName: "webshop-builder"},
+		RoundStartedAt: time.Now().UTC(),
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+}
+
 // --assume-dead releases only the unverifiable case. A builder relay can
 // positively see is alive is still refused: that is #20's guarantee.
 func TestAssumeDeadNeverOverridesBuilderAlive(t *testing.T) {

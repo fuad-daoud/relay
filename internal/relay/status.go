@@ -122,14 +122,15 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
 
+	// What relay acts on is what it shows (spec §7.4).
 	if a, ok := FindAgent(agents, b.Planner); ok {
-		row.PlannerStatus = a.Status
+		row.PlannerStatus = effectiveStatus(b.Planner, a)
 		row.PlannerFocus = a.Focused
 		row.PlannerPane = a.PaneID
 		row.Workspace = a.WorkspaceID
 	}
 	if a, ok := FindAgent(agents, b.Builder); ok {
-		row.BuilderStatus = a.Status
+		row.BuilderStatus = effectiveStatus(b.Builder, a)
 		row.BuilderPane = a.PaneID
 	}
 

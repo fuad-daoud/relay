@@ -237,9 +237,28 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 	if got.Detail != want {
 		t.Errorf("detail =\n  %q\nwant\n  %q", got.Detail, want)
 	}
-	// sentBinding leaves the builder session-less, so the warning must appear.
-	if !strings.Contains(got.Detail, "moved pane") {
-		t.Errorf("detail must warn about a moved pane, got %q", got.Detail)
+	// sentBinding names the builder, so it is identified; no moved-pane warning.
+	if strings.Contains(got.Detail, "moved pane") {
+		t.Errorf("detail must not warn about a moved pane when named, got %q", got.Detail)
+	}
+
+	// Sibling case: an adopted pane (nameless and session-less) still gets the warning.
+	b.Builder.AgentName = ""
+	b.Builder.SessionID = ""
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	repAdopted, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	gotAdopted := repAdopted.Bindings[0]
+	wantAdopted := DiagnoseBuilder(b).Detail(b.Round)
+	if gotAdopted.Detail != wantAdopted {
+		t.Errorf("adopted detail =\n  %q\nwant\n  %q", gotAdopted.Detail, wantAdopted)
+	}
+	if !strings.Contains(gotAdopted.Detail, "moved pane") {
+		t.Errorf("adopted detail must warn about a moved pane, got %q", gotAdopted.Detail)
 	}
 }
 
@@ -567,5 +586,38 @@ func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
 	}
 	if strings.Contains(out, "no bindings") {
 		t.Errorf("RenderStatus output should not contain 'no bindings':\n%s", out)
+	}
+}
+
+func TestStatusShowsWorkingUnderASubAgentSession(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "parent-session")
+
+	// Builder agent with same name and pane, but different session and StatusDone.
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		{
+			Name:    "webshop-builder",
+			Kind:    "agy",
+			Status:  herdr.StatusDone,
+			CWD:     b.CWD,
+			PaneID:  b.Builder.PaneID,
+			Session: herdr.Session{Value: "child-session"},
+		},
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	got := rep.Bindings[0]
+	if got.BuilderStatus != "working" {
+		t.Errorf("BuilderStatus = %q, want working", got.BuilderStatus)
+	}
+	if len(got.Foreign) != 0 {
+		t.Errorf("Foreign = %+v, want empty", got.Foreign)
 	}
 }

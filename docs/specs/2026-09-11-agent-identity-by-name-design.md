@@ -29,8 +29,8 @@ This design does two things.
    moved between workspaces (#21) and a session that flips. `herdr.Agent`
    gains the `name` field it has never parsed, and `SameAgent` matches on it
    first. Session stays the rule for endpoints relay did not name (the
-   planner, an adopted pane), and for those a session mismatch now falls back
-   to pane id + kind rather than to "gone".
+   planner, an adopted pane), exactly as before: a session mismatch means gone,
+   with no pane fallback.
 2. **A foreign foreground session means busy, not done.** When the located
    agent carries a session other than the recorded one, its `idle` or `done`
    is a sub-agent's and says nothing about the builder. Those two statuses
@@ -43,20 +43,15 @@ herdr data that account for a documented quirk of one integration, in the
 way screen-fingerprint quiescence already accounts for a builder that is
 quiet because its own sub-agents are running.
 
-### Why pane id fallback is now acceptable
+### Why there is still no pane fallback
 
-The 2026-09-08 identity spec refused a pane fallback because a recycled pane
-id could hand a session-less endpoint to a stranger. Two facts change the
-weighing. herdr pane ids are not recycled -- observed across this session's
-closes and re-splits (`p1V … p1Z, p10, p22`, monotonic) -- so "same pane id,
-same kind" after a session mismatch means the same pane still hosts an agent
-of the builder's kind, which is either the builder or a human's deliberate
-replacement of it. And the fallback applies only to endpoints without a
-relay-chosen name, which after this change is the planner and adopted panes;
-everything relay starts is matched by name before session is consulted.
-
-The accepted-risk paragraph in `SameAgent`'s comment is rewritten to say
-this.
+Round 1 of the plan tried falling back from a session mismatch to pane id
++ kind for nameless endpoints. `TestBindRebindIdentityRule/rebind succeeds
+when old pane is reused by unrelated agent` showed the cost: a dead
+builder's pane taken by an unrelated agent reads as "alive" and the
+documented #21 recovery is refused. An adopted pane that runs sub-agents
+is the only case the fallback would have served, and relay cannot name an
+adopted pane. The 2026-09-08 rule stands for nameless endpoints.
 
 ### Scope boundary
 
@@ -132,7 +127,7 @@ Rules, in order; the first that applies decides:
 | `AgentName != ""` | `a.Name != ""` | `a.Name == ep.AgentName` |
 | `AgentName != ""` | `a.Name == ""` | fall through to the session rule (herdr version without names, or an agent restarted by hand in the pane) |
 | `SessionID != ""` | `a.Session.Value == ep.SessionID` | true |
-| `SessionID != ""` | session differs or empty | pane+kind: `a.PaneID == ep.PaneID && (ep.Kind == "" || a.Kind == ep.Kind)` |
+| `SessionID != ""` | session differs or empty | false (unchanged: no pane fallback) |
 | neither | — | pane, and kind if recorded (unchanged) |
 
 Postcondition: a builder whose pane reports a sub-agent's session is
@@ -180,8 +175,7 @@ pane with a round open.
 ```
 if ep.AgentName != "" and a.Name != "":  return a.Name == ep.AgentName
 if ep.SessionID != "":
-    if a.Session.Value == ep.SessionID:  return true
-    return a.PaneID == ep.PaneID and (ep.Kind == "" or a.Kind == ep.Kind)
+    return a.Session.Value == ep.SessionID
 if ep.Kind != "":  return a.PaneID == ep.PaneID and a.Kind == ep.Kind
 return a.PaneID == ep.PaneID
 ```
@@ -248,8 +242,7 @@ acted on.
 1. `SameAgent` matrix (`herdr_test.go`): name match wins over a differing
    session and pane; name mismatch loses despite matching session and pane;
    named endpoint vs nameless agent falls to session; session match; session
-   mismatch with pane+kind match → true; session mismatch with pane match,
-   kind differs → false; session-less rules unchanged.
+   mismatch → false regardless of pane; session-less rules unchanged.
 2. `effectiveStatus`: same session passes every status; differing session
    turns idle and done into working, leaves working and blocked; empty
    recorded or live session passes through.
@@ -287,3 +280,4 @@ make it also override `blocked` (test 4 must fail).
 - Recording more than one session per endpoint.
 - The nudge itself, `startGrace`, or the screen-fingerprint path.
 - #64's name-length validation, though it touches the same names.
+- A pane fallback for nameless endpoints (tried in round 1, withdrawn).

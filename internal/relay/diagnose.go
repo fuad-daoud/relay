@@ -23,11 +23,11 @@ type BuilderDiagnosis struct {
 	// came back, so that round's work is unaccounted for.
 	RoundOpen bool
 
-	// SessionIdentified reports that herdr has recorded a session for the
-	// builder. When false, SameAgent has been matching on pane plus kind, and
-	// a workspace move changes the pane id -- so a failed match cannot be
-	// distinguished from a moved pane, and the builder may still be alive.
-	SessionIdentified bool
+	// Identified reports that the builder can be located by name or by session.
+	// When false, SameAgent has been matching on pane plus kind, and a workspace
+	// move changes the pane id -- so a failed match cannot be distinguished from
+	// a moved pane, and the builder may still be alive.
+	Identified bool
 }
 
 // DiagnoseBuilder derives the diagnosis for a binding. Pure.
@@ -39,8 +39,8 @@ type BuilderDiagnosis struct {
 // an empty value means herdr has never reported one.
 func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 	return BuilderDiagnosis{
-		RoundOpen:         !b.RoundStartedAt.IsZero(),
-		SessionIdentified: b.Builder.SessionID != "",
+		RoundOpen:  !b.RoundStartedAt.IsZero(),
+		Identified: b.Builder.AgentName != "" || b.Builder.SessionID != "",
 	}
 }
 
@@ -48,13 +48,13 @@ func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 // from one whose pane moved between workspaces. It is the case where the
 // documented recovery -- `relay bind --resume --builder` -- is the harm, so it
 // is stated wherever a human is about to choose one.
-const movedPaneWarning = "the builder was never session-identified, " +
+const movedPaneWarning = "the builder cannot be identified by name or session, " +
 	"so it may be alive in a moved pane -- verify before rebinding"
 
 // Detail renders the sentence `relay status` shows beneath a broken binding.
 //
 // The sentence is composed from two independent clauses rather than
-// enumerated, because RoundOpen and SessionIdentified vary independently.
+// enumerated, because RoundOpen and Identified vary independently.
 //
 // Detail is total: every combination yields a non-empty sentence, so a caller
 // never has to treat an empty return as a special case.
@@ -73,7 +73,7 @@ func (d BuilderDiagnosis) Detail(round int) string {
 		stake = "no round has been sent yet; nothing outstanding"
 	}
 
-	if !d.SessionIdentified {
+	if !d.Identified {
 		return stake + ", and " + movedPaneWarning
 	}
 	if d.RoundOpen {
