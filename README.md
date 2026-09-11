@@ -479,7 +479,7 @@ binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 builder  (order set in ~/.config/relay/policy.json)
   1  agy/google/gemini-3.8-flash-high        order     rate-limited until 20:28
   2  claude/anthropic/sonnet                 order     <- would pick
-  3  opencode/openrouter/z-ai/glm-5.3-flash  unlisted
+  3  opencode/openrouter/z-ai/glm-5.3-flash  unlisted  limited 2x around 14:00 (30d)
 reviewer  (no order set)
   1  claude/anthropic/opus                   sole      <- would pick
 ```
@@ -560,6 +560,17 @@ gone between rounds is `BROKEN` as before -- `relay bind --resume`.
 An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in. relay selects a role only for agents it starts, with `--agent` on the launch line.
 
 `aliases.json` from earlier versions is no longer read.
+
+#### History
+
+Every gate relay records -- a limit you report, a spawn failure it hit
+-- is also kept for 30 days in `~/.local/state/relay/history.json`, by
+provider and local hour. `relay policy` shows it twice: a `limited 3x
+around 21:00 (30d)` note on a candidate whose provider was limited
+within an hour of now, and a `history` block with a 24-hour row per
+provider. It changes nothing about which candidate is picked; it is the
+cue to write a different order, or to `relay unavailable` a provider
+before it bites.
 
 ## Consults: asking a reviewer
 

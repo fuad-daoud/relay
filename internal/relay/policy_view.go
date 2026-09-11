@@ -3,10 +3,14 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/policy"
 )
@@ -93,7 +97,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks (spec §4.7). It is a listing, not a check:
 // `relay policy` prints this and always exits 0.
-func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) string {
+func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; write ~/.config/relay/candidates.json (see README \"Candidates\")\n"
 	}
@@ -147,11 +151,14 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) st
 			}
 			tok := r.Candidate.Ref().String()
 
-			var gateTexts []string
-			for _, g := range byToken[tok] {
-				gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+			var tailParts []string
+			if pt := peakText(hist, r.Candidate.Ref().Provider, now, loc); pt != "" {
+				tailParts = append(tailParts, pt)
 			}
-			tail := strings.Join(gateTexts, "; ")
+			for _, g := range byToken[tok] {
+				tailParts = append(tailParts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+			}
+			tail := strings.Join(tailParts, "; ")
 
 			// This combination cannot occur: a gated row is never picked.
 			if err == nil && tok == res.Token() {
@@ -180,8 +187,84 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) st
 		}
 	}
 
+	if s := formatHistory(hist, loc); s != "" {
+		sb.WriteString("\n" + s)
+	}
+
 	if len(pol.Order) == 0 {
 		sb.WriteString("no policy configured; write ~/.config/relay/policy.json (see README \"Policy\")\n")
+	}
+
+	return sb.String()
+}
+
+// peakText is a candidate row's cue that its provider was recently
+// rate-limited: "limited <n>x around <HH>:00 (30d)" for the local hour
+// around now, or "" when the window around now saw none (spec §4.2).
+// History never changes a pick -- resolveCandidate is untouched -- this is
+// display only.
+func peakText(hist history.History, provider string, now time.Time, loc *time.Location) string {
+	c := history.HourCounts(hist, provider, ledger.RateLimited, loc)
+	h := now.In(loc).Hour()
+	n := c[(h+23)%24] + c[h] + c[(h+1)%24]
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("limited %dx around %02d:00 (30d)", n, h)
+}
+
+// formatHistory renders the "history (30d, local hours)" block: one row per
+// (provider, kind) with at least one event in hist, providers sorted and
+// RateLimited before SpawnFailed within a provider (spec §4.2). It returns
+// "" when hist has no events, so a fresh install's `relay policy` prints
+// nothing extra.
+func formatHistory(hist history.History, loc *time.Location) string {
+	if len(hist.Events) == 0 {
+		return ""
+	}
+
+	type pair struct {
+		provider string
+		kind     ledger.Kind
+	}
+	seen := make(map[pair]bool)
+	providerSeen := make(map[string]bool)
+	var providers []string
+	for _, e := range hist.Events {
+		seen[pair{e.Provider, e.Kind}] = true
+		if !providerSeen[e.Provider] {
+			providerSeen[e.Provider] = true
+			providers = append(providers, e.Provider)
+		}
+	}
+	sort.Strings(providers)
+
+	var sb strings.Builder
+	sb.WriteString("history (30d, local hours)\n")
+
+	var labels [24]string
+	for h := range labels {
+		labels[h] = fmt.Sprintf("%02d", h)
+	}
+	sb.WriteString(strings.Repeat(" ", 27) + strings.Join(labels[:], " ") + "\n")
+
+	kinds := []ledger.Kind{ledger.RateLimited, ledger.SpawnFailed}
+	for _, p := range providers {
+		for _, k := range kinds {
+			if !seen[pair{p, k}] {
+				continue
+			}
+			counts := history.HourCounts(hist, p, k, loc)
+			row := fmt.Sprintf("  %-10s %-13s", p, GateKindText(k))
+			for _, n := range counts {
+				cell := "."
+				if n != 0 {
+					cell = strconv.Itoa(n)
+				}
+				row += fmt.Sprintf(" %2s", cell)
+			}
+			sb.WriteString(row + "\n")
+		}
 	}
 
 	return sb.String()
