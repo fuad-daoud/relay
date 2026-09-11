@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -157,6 +158,35 @@ func TestLedgerChecks(t *testing.T) {
 
 	if got := ledgerChecks(nil); len(got) != 0 {
 		t.Errorf("ledgerChecks(nil) = %+v, want empty", got)
+	}
+}
+
+func TestPolicyChecks(t *testing.T) {
+	warnings := []relay.PolicyWarning{
+		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},
+		{Role: "builder", Index: -1, Token: "opencode/test/m", Text: `builder: opencode/test/m serves the role but is not in order.builder`},
+	}
+
+	checks := policyChecks(warnings)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
+	}
+
+	for i, w := range warnings {
+		c := checks[i]
+		if c.Group != "" || c.Name != "policy" || c.Severity != doctor.SevWarn {
+			t.Errorf("check %d = %+v", i, c)
+		}
+		if c.Detail != w.Text {
+			t.Errorf("check %d Detail = %q, want %q", i, c.Detail, w.Text)
+		}
+		if c.Fix != "edit ~/.config/relay/policy.json" {
+			t.Errorf("check %d Fix = %q, want %q", i, c.Fix, "edit ~/.config/relay/policy.json")
+		}
+	}
+
+	if got := policyChecks(nil); len(got) != 0 {
+		t.Errorf("policyChecks(nil) = %+v, want empty", got)
 	}
 }
 

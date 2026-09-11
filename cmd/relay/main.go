@@ -60,6 +60,7 @@ Commands:
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   candidates   list the configured harness/provider/model candidates
+  policy       show, per role, which candidate relay would pick right now and why
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
@@ -210,6 +211,8 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "candidates":
 		return cmdCandidates(args[1:])
+	case "policy":
+		return cmdPolicy(args[1:])
 	case "unavailable":
 		return cmdUnavailable(args[1:])
 	case "available":
@@ -356,6 +359,21 @@ func cmdCandidates(args []string) error {
 	}
 
 	fmt.Print(relay.FormatCandidates(rt.Candidates, relay.Gates(rt)))
+	return nil
+}
+
+func cmdPolicy(args []string) error {
+	fs := flag.NewFlagSet("policy", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(relay.FormatPolicy(rt.Candidates, rt.Policy, relay.Gates(rt)))
 	return nil
 }
 
