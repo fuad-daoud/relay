@@ -2,8 +2,6 @@ package relay
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -337,8 +335,7 @@ func screenFingerprint(ctx context.Context, rt Runtime, b store.Binding) (string
 	if err != nil {
 		return "", fmt.Errorf("fingerprint builder terminal: %w", err)
 	}
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:]), nil
+	return fingerprint(text), nil
 }
 
 // builderQuiescent reports whether the builder's terminal has been unchanged
@@ -485,10 +482,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // deliverAndSettle attempts any pending delivery and folds the result into the
 // binding's state.
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
-	got, err := DeliverPending(ctx, rt, tx, b, agents)
+	next, got, err := DeliverPending(ctx, rt, tx, b, agents)
 	if err != nil {
 		return b, err
 	}
+	b = next
 
 	switch {
 	case got.PlannerGone:

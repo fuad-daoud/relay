@@ -197,8 +197,9 @@ inside every pane it manages, so it has to be run from inside one.
 
 - `relay gc [--dry-run] [--delete]` — clear every binding the planner marked
   `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relay gc --archive` is accepted as a no-op).
-- `relay daemon [--interval D]` — the long-running reconciler; this is what
-  the service unit runs.
+- `relay daemon [--interval D] [--held-grace D]` — the long-running reconciler; this is what
+  the service unit runs. A held payload is injected into a focused planner once its input
+  box is empty or its screen has been quiet for `--held-grace` (default 60s).
 - `relay help` — the command list. `relay <command> -h` prints that command's
   flags.
 - `relay version` — the build's version.
@@ -498,11 +499,15 @@ vanish.
 `herdr agent prompt` types text into a pane and presses Enter. Since relay
 cannot see what a human has half-typed, it treats a focused planner pane as
 unsafe to inject into: it holds the payload and sends one herdr notification
-(not one per tick) instead of typing over the human. As soon as the human's
-focus moves to another pane, the daemon delivers the held payload on its next
-tick. `relay pull` bypasses this entirely — it prints the payload to stdout
-instead of injecting it, so it's safe to run from inside the focused planner
-pane at any time.
+(not one per tick) instead of typing over the human. A held payload leaves the
+hold three ways: your focus moves to another pane, so the daemon delivers on
+its next tick; the planner's input box is seen empty (claude only today), so
+there is nothing to clobber; or the planner's visible screen has not changed
+for `--held-grace`, in which case an abandoned draft gets the payload appended
+— accepted on purpose, since it beats a payload that never arrives. `relay
+pull` bypasses this entirely — it prints the payload to stdout instead of
+injecting it, so it's safe to run from inside the focused planner pane at any
+time.
 
 ## Running the daemon
 

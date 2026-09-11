@@ -44,54 +44,63 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 // the agent list rather than fetching one, so a daemon tick costs exactly one
 // herdr call regardless of how many bindings it reconciles.
 //
-// The focus check is the anti-clobber rule: herdr agent prompt types text and
-// presses enter, and herdr cannot see the human's input buffer, so injecting
-// into a focused planner pane risks merging the payload with a half-typed
-// message. Focus is the only proxy available.
+// The hold is the anti-clobber rule: herdr agent prompt types text and presses
+// enter, and herdr cannot see the human's input buffer, so injecting into a
+// focused planner pane risks merging the payload with a half-typed message.
+// Focus alone is no longer the test: on a focused planner, plannerHold applies
+// the two signals that mean "nothing to clobber" -- the planner's input box
+// reads empty, or its visible screen has been unchanged for rt.HeldGrace. The
+// returned binding carries the fingerprint state a hold sets; every other
+// return clears it, and the caller must persist the returned binding.
 //
 // The caller holds the state lock across pending -> prompt -> confirm and
 // passes tx in: `relay pull` runs the same sequence from another process, and
 // unserialised both could deliver the same payload, and Reconcile needs this
 // step inside the same lock as the rest of one binding's advance.
-func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (Delivery, error) {
+func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, Delivery, error) {
 	planner, ok := FindAgent(agents, b.Planner)
 	if !ok {
-		return Delivery{PlannerGone: true, Reason: "planner session is gone"}, nil
+		return clearPlannerScreen(b), Delivery{PlannerGone: true, Reason: "planner session is gone"}, nil
 	}
 
 	if planner.Status != herdr.StatusIdle && planner.Status != herdr.StatusDone {
-		return Delivery{Reason: "planner is " + planner.Status}, nil
+		return clearPlannerScreen(b), Delivery{Reason: "planner is " + planner.Status}, nil
 	}
 
 	pending, idx, found, err := tx.PendingForPlanner(b.Name)
 	if err != nil {
-		return Delivery{}, err
+		return b, Delivery{}, err
 	}
 	if !found {
-		return Delivery{Empty: true, Reason: "nothing pending"}, nil
+		return clearPlannerScreen(b), Delivery{Empty: true, Reason: "nothing pending"}, nil
 	}
 
+	reason := ""
 	if planner.Focused {
-		// Notify only on the transition into held. The daemon reconciles
-		// every couple of seconds and a payload stays held for as long as
-		// the human sits in the planner pane, so notifying per tick would
-		// fire indefinitely instead of nudging once.
-		if b.State != store.StateHeld {
-			msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
-			if err := rt.Herdr.Notify(ctx, msg); err != nil {
-				return Delivery{}, fmt.Errorf("notify held delivery: %w", err)
+		var inject bool
+		b, inject, reason = plannerHold(ctx, rt, b, planner)
+		if !inject {
+			// Notify only on the transition into held. The daemon reconciles
+			// every couple of seconds and a payload stays held for as long as
+			// the human sits in the planner pane, so notifying per tick would
+			// fire indefinitely instead of nudging once.
+			if b.State != store.StateHeld {
+				msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
+				if err := rt.Herdr.Notify(ctx, msg); err != nil {
+					return b, Delivery{}, fmt.Errorf("notify held delivery: %w", err)
+				}
 			}
-		}
 
-		return Delivery{Held: true, Reason: "planner pane is focused"}, nil
+			return b, Delivery{Held: true, Reason: reason}, nil
+		}
 	}
 
 	// Address the agent FindAgent just located; see internal/ui/fetch.go:170.
 	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload); err != nil {
-		return Delivery{}, fmt.Errorf("prompt planner: %w", err)
+		return b, Delivery{}, fmt.Errorf("prompt planner: %w", err)
 	}
 	if err := tx.ConfirmIndex(b.Name, idx); err != nil {
-		return Delivery{}, err
+		return b, Delivery{}, err
 	}
 
 	// The planner is mid-turn on this payload now, but the snapshot still says
@@ -106,5 +115,5 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		agents[i].Status = herdr.StatusWorking
 	}
 
-	return Delivery{Delivered: true}, nil
+	return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason}, nil
 }
