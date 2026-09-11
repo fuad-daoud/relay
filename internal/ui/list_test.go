@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,27 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/muesli/termenv"
 )
+
+func TestListWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		top, cursor, rows, n int
+		want                 int
+	}{
+		{"no limit", 0, 0, 0, 10, 0},
+		{"fits", 0, 3, 5, 3, 0},
+		{"cursor below", 0, 7, 5, 10, 3},
+		{"cursor above", 6, 2, 5, 10, 2},
+		{"already visible", 3, 4, 5, 10, 3},
+		{"clamped from past the end", 9, 4, 5, 10, 4},
+		{"last row", 0, 9, 5, 10, 5},
+	} {
+		if got := listWindow(tc.top, tc.cursor, tc.rows, tc.n); got != tc.want {
+			t.Errorf("%s: listWindow(%d, %d, %d, %d) = %d, want %d",
+				tc.name, tc.top, tc.cursor, tc.rows, tc.n, got, tc.want)
+		}
+	}
+}
 
 func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 	b1 := relay.BindingStatus{
@@ -60,6 +82,172 @@ func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 	}
 	if r3 != want3 {
 		t.Fatalf("row 3 mismatch:\ngot:  %q\nwant: %q", r3, want3)
+	}
+}
+
+func TestListRowsBudget(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.ready = true
+	m.width = 80
+
+	m.height = 24
+	m.err = nil
+	if got := m.listRows(); got != 22 {
+		t.Errorf("height 24, no error: listRows() = %d, want 22", got)
+	}
+
+	m.err = errors.New("line one\nline two")
+	if got := m.listRows(); got != 20 {
+		t.Errorf("height 24, two-line error: listRows() = %d, want 20", got)
+	}
+
+	m.height = 2
+	m.err = nil
+	if got := m.listRows(); got != 1 {
+		t.Errorf("height 2: listRows() = %d, want 1", got)
+	}
+
+	m.height = 0
+	if got := m.listRows(); got != 0 {
+		t.Errorf("height 0: listRows() = %d, want 0", got)
+	}
+}
+
+// tenBindings builds a model at the given height showing b00..b09.
+func tenBindings(t *testing.T, height int) Model {
+	t.Helper()
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.ready = true
+	m.width = 80
+	m.height = height
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
+	m = res.(Model)
+	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(10)}})
+	return res.(Model)
+}
+
+// bindingStatuses builds Display:"ACTIVE" bindings named b00..b{count-1}.
+func bindingStatuses(count int) []relay.BindingStatus {
+	bs := make([]relay.BindingStatus, count)
+	for i := range bs {
+		bs[i] = relay.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
+	}
+	return bs
+}
+
+// press sends r as a KeyMsg through Update and returns the updated model.
+func press(t *testing.T, m Model, r rune) Model {
+	t.Helper()
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	return res.(Model)
+}
+
+// assertCursorVisible fails t unless the list view shows the cursor row for
+// name, the header, the footer, and exactly m.height-1 newlines. The height is
+// read off the model so the same helper works after a resize.
+func assertCursorVisible(t *testing.T, m Model, name string) {
+	t.Helper()
+	view := m.View()
+	// renderListRow puts the cursor glyph (rendered by cursorStyle) directly
+	// before the binding name, so build the needle with the same function the
+	// way TestListRowsRenderFixedGoldenWidth builds its expected rows; a plain
+	// "> name" needle would miss escape codes if lipgloss emitted them.
+	if !strings.Contains(view, cursorStyle.Render(">")+name) {
+		t.Errorf("view must show the cursor row for %s, got:\n%s", name, view)
+	}
+	if !strings.Contains(view, "+- relay") {
+		t.Errorf("view must contain the header border, got:\n%s", view)
+	}
+	if !strings.Contains(view, "enter open") {
+		t.Errorf("view must contain the footer, got:\n%s", view)
+	}
+	if got := strings.Count(m.View(), "\n"); got != m.height-1 {
+		t.Errorf("view must have %d newlines at height %d, got %d:\n%s",
+			m.height-1, m.height, got, view)
+	}
+}
+
+func TestListViewKeepsCursorVisibleWhenScrollingDown(t *testing.T) {
+	m := tenBindings(t, 6)
+	for i := 1; i <= 9; i++ {
+		m = press(t, m, 'j')
+		assertCursorVisible(t, m, fmt.Sprintf("b%02d", i))
+	}
+}
+
+func TestListViewKeepsCursorVisibleWhenScrollingUp(t *testing.T) {
+	m := tenBindings(t, 6)
+	for i := 0; i < 9; i++ {
+		m = press(t, m, 'j')
+	}
+	for i := 8; i >= 0; i-- {
+		m = press(t, m, 'k')
+		assertCursorVisible(t, m, fmt.Sprintf("b%02d", i))
+		if i == 8 {
+			// After the first k from the bottom the window must not have
+			// moved: it still shows b06..b09, not b05.
+			view := m.View()
+			if !strings.Contains(view, "b06") {
+				t.Errorf("after the first k the view must still contain b06, got:\n%s", view)
+			}
+			if strings.Contains(view, "b05") {
+				t.Errorf("after the first k the view must not contain b05 yet, got:\n%s", view)
+			}
+		}
+	}
+}
+
+func TestListViewRewindowsOnResize(t *testing.T) {
+	m := tenBindings(t, 6)
+	for i := 0; i < 7; i++ {
+		m = press(t, m, 'j')
+	}
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 4})
+	m = res.(Model)
+	assertCursorVisible(t, m, "b07")
+	if got := strings.Count(m.View(), "\n"); got != 3 {
+		t.Errorf("after resize to height 4 the view must have 3 newlines, got %d:\n%s", got, m.View())
+	}
+}
+
+func TestListViewRewindowsWhenBindingRemoved(t *testing.T) {
+	m := tenBindings(t, 6)
+	for i := 0; i < 9; i++ {
+		m = press(t, m, 'j')
+	}
+	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(5)}})
+	m = res.(Model)
+	if m.list.cursor != 4 {
+		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", m.list.cursor)
+	}
+	assertCursorVisible(t, m, "b04")
+}
+
+func TestListViewUnlimitedBeforeResize(t *testing.T) {
+	// Built by hand rather than through tenBindings: no WindowSizeMsg, so
+	// height stays 0 and listRows reads as no limit — every row must render,
+	// exactly as before windowing existed.
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.ready = true
+	m.width = 80
+	m.height = 0
+	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(10)}})
+	m = res.(Model)
+
+	view := m.View()
+	for _, name := range []string{"b00", "b01", "b02", "b03", "b04", "b05", "b06", "b07", "b08", "b09"} {
+		if !strings.Contains(view, name) {
+			t.Errorf("height 0 must render every row; %s missing from:\n%s", name, view)
+		}
 	}
 }
 

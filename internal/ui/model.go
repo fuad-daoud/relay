@@ -142,6 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpHeight = 0
 		}
 		m.detail.vp.Height = vpHeight
+		m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
 		return m, nil
 
 	case tickMsg:
@@ -171,6 +172,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.report = msg.report
 		m.list.resolveSticky(m.report)
+		m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
 		var cmd tea.Cmd
 		m, cmd = m.maybeInvalidate()
 		return m, cmd

@@ -16,12 +16,14 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.list.sticky = m.report.Bindings[m.list.cursor].Name
 				}
 			}
+			m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
 			return m, nil
 		case "down", "j":
 			if m.list.cursor < len(m.report.Bindings)-1 {
 				m.list.cursor++
 				m.list.sticky = m.report.Bindings[m.list.cursor].Name
 			}
+			m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
 			return m, nil
 		case "enter":
 			if len(m.report.Bindings) == 0 {

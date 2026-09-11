@@ -12,6 +12,56 @@ import (
 type listModel struct {
 	cursor int    // index into Model.report.Bindings
 	sticky string // binding NAME the cursor is on
+	// top is the index of the first rendered row. It moves only as far as
+	// it must to keep cursor visible, so the list scrolls a row at a time
+	// at either edge rather than re-centring on every keystroke.
+	top int
+}
+
+// listWindow returns where the first rendered row must be for cursor to be
+// visible in a window of rows rows over n items, moving top as little as
+// possible. rows <= 0 means no limit: the answer is 0 and every row renders.
+func listWindow(top, cursor, rows, n int) int {
+	// Rule 1: no row budget or everything fits — render from the top.
+	if rows <= 0 || n <= rows {
+		return 0
+	}
+	// Rule 2: clamp top into [0, n-rows].
+	if top > n-rows {
+		top = n - rows
+	}
+	if top < 0 {
+		top = 0
+	}
+	// Rule 3: cursor scrolled above the window — pull the window up to it.
+	if cursor < top {
+		top = cursor
+	}
+	// Rule 4: cursor scrolled below the window — push the window down to it.
+	if cursor >= top+rows {
+		top = cursor - rows + 1
+	}
+	// Rule 5: top now keeps cursor visible and moved as little as possible.
+	return top
+}
+
+// listRows is how many binding rows the list screen can show: the terminal
+// height less the header, the footer, and whatever the error block takes.
+// Zero before the first WindowSizeMsg, which listWindow reads as no limit.
+// Never less than one once a height is known, so the cursor row is always
+// drawn even on an absurdly short terminal.
+func (m Model) listRows() int {
+	if m.height <= 0 {
+		return 0
+	}
+	errLines := 0
+	if m.err != nil {
+		errLines = strings.Count(renderError(m.err, m.width), "\n") + 1
+	}
+	if rows := m.height - 2 - errLines; rows >= 1 {
+		return rows
+	}
+	return 1
 }
 
 // resolveSticky re-points cursor at the binding named by sticky after the
@@ -216,9 +266,17 @@ func (m Model) listView() string {
 	} else if len(m.report.Bindings) == 0 {
 		b.WriteString("no bindings\n")
 	} else {
-		for i, binding := range m.report.Bindings {
+		// Recompute the window here on purpose: a render can never hide the cursor even if an Update path forgets to re-window.
+		n := len(m.report.Bindings)
+		rows := m.listRows()
+		start := listWindow(m.list.top, m.list.cursor, rows, n)
+		end := n
+		if rows > 0 && start+rows < n {
+			end = start + rows
+		}
+		for i := start; i < end; i++ {
 			selected := i == m.list.cursor
-			b.WriteString(renderListRow(binding, selected))
+			b.WriteString(renderListRow(m.report.Bindings[i], selected))
 			b.WriteByte('\n')
 		}
 	}
