@@ -50,6 +50,11 @@ type Runtime struct {
 	Now     func() time.Time
 	Hooks   hooks.Dispatcher
 
+	// HeldGrace is how long a focused planner's screen must be unchanged before
+	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by
+	// `relay daemon --held-grace`; daemon-wide like --interval, not per binding.
+	HeldGrace time.Duration
+
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.
 	NewID func() string

@@ -228,12 +228,14 @@ deliver(payload):
     if planner is not idle:            queue, retry on next idle
     else if planner pane is focused:   queue, state = held
                                        herdr notification show "<name>: report ready"
-                                       # two ways out of held:
+                                       # four ways out of held:
                                        #   human focuses another pane -> inject as normal
-                                       #   human says "go" -> planner runs `relay pull`,
-                                       #     which PRINTS the payload to stdout as tool
-                                       #     output. No injection at all, so it cannot
-                                       #     collide and cannot be rejected mid-turn.
+                                       #   planner's input box reads empty (claude) -> inject at once
+                                       #   screen unchanged for --held-grace -> inject anyway (appends
+                                       #     to an abandoned draft, accepted on purpose)
+                                       #   human says "go" -> planner runs `relay pull`, which PRINTS
+                                       #     the payload to stdout as tool output. No injection at all,
+                                       #     so it cannot collide and cannot be rejected mid-turn.
     else:                              herdr agent prompt <planner> payload
                                        mark confirmed in log
 ```
@@ -292,7 +294,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | Planner session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relay bind --resume <name>` adopts it into a new planner and hands over the round log. |
 | relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
 | Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
-| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relay pull`, receiving the payload as tool output rather than as injected keystrokes. |
+| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relay pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
 
 ## Decisions and rationale
 

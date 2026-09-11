@@ -1165,6 +1165,8 @@ func bindingHint(verb string) string {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
+	heldGrace := fs.Duration("held-grace", relay.DefaultHeldGrace,
+		"how long a focused planner must be quiet before a held payload is injected anyway")
 	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -1174,6 +1176,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+	rt.HeldGrace = *heldGrace
 
 	// --check is the plugin startup hook's probe. It prints nothing on either
 	// path: the exit status is the whole answer, and a hook that printed would
@@ -1204,7 +1207,7 @@ func cmdDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("relay daemon starting", "interval", *interval)
+	slog.Info("relay daemon starting", "interval", *interval, "held_grace", *heldGrace)
 	return relay.NewDaemon(rt, *interval).Run(ctx)
 }
 

@@ -70,6 +70,17 @@ type Binding struct {
 	BuilderScreen   string    `json:"builder_screen,omitempty"`
 	BuilderScreenAt time.Time `json:"builder_screen_at,omitempty"`
 
+	// PlannerScreen is a fingerprint of the planner's visible screen as relay
+	// last observed it while HOLDING a payload, and PlannerScreenAt is when the
+	// screen was last seen to change. They exist to tell a human who is typing
+	// from one who has walked away with the pane focused: the hold ends when the
+	// screen has been unchanged for HeldGrace.
+	//
+	// Both are transient: set only while a payload is held on a focused planner,
+	// and cleared by every DeliverPending return that is not such a hold.
+	PlannerScreen   string    `json:"planner_screen,omitempty"`
+	PlannerScreenAt time.Time `json:"planner_screen_at,omitempty"`
+
 	// PreamblePending forces the builder alias's preamble onto the next plan even
 	// when the round is not 1. A replacement builder is a NEW agent session that
 	// has never seen the preamble, and for harnesses with no role flag -- agy --
