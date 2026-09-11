@@ -49,6 +49,18 @@ type Binding struct {
 	// dedupe halt notices on State was defeated by a later step in the same
 	// tick rewriting State, which turned one notice into one per poll.
 	HaltNotifiedRound int `json:"halt_notified_round,omitempty"`
+
+	// RoundSwitches counts builder switches in the current round (#61 step
+	// 6). Reset when the round advances. Compared against
+	// policy.Policy.SwitchLimit().
+	RoundSwitches int `json:"round_switches,omitempty"`
+
+	// BuilderMissingSince is when the daemon first failed to locate the
+	// builder during the current absence; zero while it is located. Stamped
+	// on the first miss and cleared on any hit, so a detection flicker never
+	// accumulates toward a switch.
+	BuilderMissingSince time.Time `json:"builder_missing_since,omitempty"`
+
 	// RoundBaselineTree is the git tree object the CURRENT round started from,
 	// written by Send and consumed (then cleared) when the round's report is
 	// queued. Empty means no baseline was captured for this round -- a non-git

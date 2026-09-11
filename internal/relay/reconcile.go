@@ -488,6 +488,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// A halt notified for the old round says nothing about the new one, so the
 	// next round that goes wrong gets its own single notification.
 	b.HaltNotifiedRound = 0
+	// A switch counted against the old round says nothing about the new one.
+	b.RoundSwitches = 0
 	b.RoundBaselineTree = ""
 	b.RoundClosedTree = closed
 	b.BuilderScreen = ""
