@@ -142,6 +142,26 @@ func skipText(s Skip) string {
 	return fmt.Sprintf("%s (%s %s)", s.Token, GateKindText(s.Kind), GateUntilText(s.Until))
 }
 
+// uniqStrings drops later duplicates, keeping first occurrences in order.
+// Gate texts are de-duplicated at render time only (#93): the ledger keeps
+// every `relay unavailable` entry and resolveCandidate yields one Skip per
+// gate, but a row or a pick line says each distinct text once.
+func uniqStrings(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := in[:0:0]
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
 // resolveCandidate is the one rule for an omitted candidate token, shared by
 // bind, add, fork and ask: a named token is looked up and must serve the
 // role, and gates never refuse it -- they are only recorded. With no token,
@@ -207,7 +227,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 	for _, s := range skipped {
 		texts = append(texts, skipText(s))
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relay available <provider>: %w", role, strings.Join(texts, ", "), ErrAllGated)
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relay available <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
 }
 
 // ExplainResolution is the one line that says what was picked and why.
@@ -240,7 +260,7 @@ func ExplainResolution(role string, res Resolution) string {
 		for _, s := range res.Skipped {
 			texts = append(texts, skipText(s))
 		}
-		out += "; skipped " + strings.Join(texts, ", ")
+		out += "; skipped " + strings.Join(uniqStrings(texts), ", ")
 	}
 
 	if res.How == HowExplicit && len(res.Gates) > 0 {
@@ -248,7 +268,7 @@ func ExplainResolution(role string, res Resolution) string {
 		for _, g := range res.Gates {
 			texts = append(texts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
 		}
-		out += "; gated: " + strings.Join(texts, ", ")
+		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
 	}
 
 	return out

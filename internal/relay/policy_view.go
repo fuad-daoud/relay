@@ -155,9 +155,11 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 			if pt := peakText(hist, r.Candidate.Ref().Provider, now, loc); pt != "" {
 				tailParts = append(tailParts, pt)
 			}
+			var gateTexts []string
 			for _, g := range byToken[tok] {
-				tailParts = append(tailParts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+				gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
 			}
+			tailParts = append(tailParts, uniqStrings(gateTexts)...)
 			tail := strings.Join(tailParts, "; ")
 
 			// This combination cannot occur: a gated row is never picked.
