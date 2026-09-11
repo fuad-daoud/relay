@@ -69,6 +69,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
+	// Refuse here, not just inside resolveBuilder: Add cuts its worktree before
+	// that runs, and a name herdr would refuse must not leave a worktree
+	// behind. The composed name is discarded -- resolveBuilder recomputes it.
+	if _, err := builderAgentName(opts.Name); err != nil {
+		return AddResult{}, err
+	}
 	if opts.Alias == "" {
 		return AddResult{}, ErrAliasRequired
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,6 +153,19 @@ func TestFakeSatisfiesGit(t *testing.T) {
 	var _ Git = (*git.Client)(nil)
 }
 
+// TestFakeStartAgentRefusesAnInvalidName pins the fake against drift from the
+// real client: it must return herdr's own error for a name herdr would refuse,
+// or tests could pass against a name `herdr agent start` then rejects.
+func TestFakeStartAgentRefusesAnInvalidName(t *testing.T) {
+	f := &fakeHerdr{}
+
+	err := f.StartAgent(context.Background(), strings.Repeat("a", 33), "claude", "w2:p9", nil)
+
+	if !errors.Is(err, herdr.ErrInvalidAgentName) {
+		t.Fatalf("StartAgent err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	}
+}
+
 // consultTable is a table with one consult role, `reviewer`, layered over the
 // shipped builder aliases.
 func consultTable(t *testing.T) *alias.Table {
@@ -271,6 +285,12 @@ func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string)
 
 func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args []string) error {
 	f.starts = append(f.starts, startCall{Name: name, Kind: kind, Pane: pane, Args: args})
+	// The fixture must refuse what the real client would refuse, or a test
+	// could pass against a name herdr then rejects: #64 was found because
+	// this fake had drifted from the real client.
+	if err := herdr.ValidateAgentName(name); err != nil {
+		return err
+	}
 	if f.startErr != nil {
 		return f.startErr
 	}

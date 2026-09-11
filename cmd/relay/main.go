@@ -278,6 +278,28 @@ func newRuntime() (relay.Runtime, error) {
 	}, nil
 }
 
+// noteConsultRolesTooLong prints, after a successful bind/add/fork, the one
+// advisory line naming configured consult roles the binding's name is too long
+// for -- so a later `relay ask` failing on the derived name is not a surprise
+// a day later. It is a note, not an error: a binding that can build is still
+// useful, and refusing would let the alias table dictate binding names.
+func noteConsultRolesTooLong(aliases *alias.Table, name string) {
+	roles := relay.ConsultRolesTooLong(aliases, name)
+	if len(roles) == 0 {
+		return
+	}
+	// The tightest limit is set by the longest role: relay ask needs the
+	// binding name at most herdr.MaxAgentNameLen - 10 - len(role) characters.
+	longest := roles[0]
+	for _, r := range roles[1:] {
+		if len(r) > len(longest) {
+			longest = r
+		}
+	}
+	fmt.Printf("note: %s is too long for the %s consult role(s); relay ask needs a binding name of at most %d characters for %s\n",
+		name, strings.Join(roles, ", "), herdr.MaxAgentNameLen-10-len(longest), longest)
+}
+
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
@@ -372,6 +394,12 @@ func cmdBind(args []string) error {
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
 		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderAlias, b.Round)
+	// Spawn path only: an adopted pane or resumed binding has no fresh name
+	// relay chose, so the note would warn about a name the human did not pick
+	// here.
+	if !adopted {
+		noteConsultRolesTooLong(rt.Aliases, b.Name)
+	}
 	return nil
 }
 
@@ -428,6 +456,7 @@ func cmdFork(args []string) error {
 		fmt.Printf("forked %s to %s (round %d) at %s\n",
 			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
 	}
+	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
 
 	return nil
 }
@@ -480,6 +509,7 @@ func cmdAdd(args []string) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
+	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
 
 	return nil
 }

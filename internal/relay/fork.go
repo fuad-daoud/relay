@@ -75,6 +75,13 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if err := store.ValidName(opts.NewName); err != nil {
 		return ForkResult{}, err
 	}
+	// Refuse here, not just inside resolveBuilder: Fork cuts its worktree
+	// before that runs, and a name herdr would refuse must not leave a
+	// worktree behind. The composed name is discarded -- resolveBuilder
+	// recomputes it.
+	if _, err := builderAgentName(opts.NewName); err != nil {
+		return ForkResult{}, err
+	}
 
 	agents, err := rt.Herdr.ListAgents(ctx)
 	if err != nil {

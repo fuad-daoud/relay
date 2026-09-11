@@ -1,6 +1,10 @@
 package herdr
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 const agentListFixture = `{"id":"cli:agent:list","result":{"agents":[
 {"name":"architect-pane","agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"c6b59b8f-e80a-48ef-a3de-d2d15ec90e24"},
@@ -41,5 +45,47 @@ func TestParseAgentList(t *testing.T) {
 func TestParseAgentListRejectsEmpty(t *testing.T) {
 	if _, err := ParseAgentList(nil); err == nil {
 		t.Fatal("want error for empty response, got nil")
+	}
+}
+
+// TestValidateAgentName pins the rule as transcribed from herdr 0.9.0: the
+// boundary at exactly 32 characters, and every refusal wrapping
+// ErrInvalidAgentName so call sites can errors.Is it.
+func TestValidateAgentName(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+		wantLen bool // the message must carry the offending length
+	}{
+		{"a", false, false},
+		{"reviewer-2b", false, false},
+		{strings.Repeat("a", 32), false, false}, // exactly the limit
+		{strings.Repeat("a", 33), true, true},   // one over
+		{"Abc", true, false},                    // uppercase start
+		{"1abc", true, false},                   // leading digit
+		{"a b", true, false},                    // a space
+		{"a.b", true, false},                    // a dot
+		{"", true, false},                       // empty
+		{"-abc", true, false},                   // '-' is not a lowercase letter
+	}
+
+	for _, tt := range tests {
+		err := ValidateAgentName(tt.name)
+		if !tt.wantErr {
+			if err != nil {
+				t.Errorf("ValidateAgentName(%q) = %v, want nil", tt.name, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("ValidateAgentName(%q) = nil, want an error", tt.name)
+			continue
+		}
+		if !errors.Is(err, ErrInvalidAgentName) {
+			t.Errorf("ValidateAgentName(%q) err = %v, want one wrapping ErrInvalidAgentName", tt.name, err)
+		}
+		if tt.wantLen && !strings.Contains(err.Error(), "33 characters") {
+			t.Errorf("ValidateAgentName(%q) err = %v, want the length in the message", tt.name, err)
+		}
 	}
 }
