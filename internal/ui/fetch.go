@@ -163,7 +163,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
-					empty:  fmt.Sprintf("builder gone (`%s`); pane %s no longer exists", b.BuilderAlias, b.Builder.PaneID),
+					empty:  fmt.Sprintf("builder gone (`%s`); pane %s no longer exists", b.BuilderCandidate, b.Builder.PaneID),
 				},
 			}
 		}

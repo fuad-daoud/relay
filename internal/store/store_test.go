@@ -17,15 +17,15 @@ import (
 
 func newBinding(name, cwd string) Binding {
 	return Binding{
-		Name:           name,
-		CWD:            cwd,
-		Planner:        Endpoint{PaneID: "w2:p3", SessionID: "abc", Kind: "claude"},
-		Builder:        Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
-		BuilderAlias:   "builder",
-		Round:          1,
-		State:          StateActive,
-		RoundCap:       20,
-		RoundTimeoutMS: 1800000,
+		Name:             name,
+		CWD:              cwd,
+		Planner:          Endpoint{PaneID: "w2:p3", SessionID: "abc", Kind: "claude"},
+		Builder:          Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
+		BuilderCandidate: "builder",
+		Round:            1,
+		State:            StateActive,
+		RoundCap:         20,
+		RoundTimeoutMS:   1800000,
 	}
 }
 
@@ -507,5 +507,30 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	// asked something is not a builder being blocked on something.
 	if s.AskPath("webshop", 3, "7f2a3c1d") == s.QuestionPath("webshop", 3) {
 		t.Error("AskPath collides with QuestionPath")
+	}
+}
+
+// A binding written before #80 carries builder_alias; the decoder drops it, so
+// the binding reads as adopted -- that is the whole migration (spec §3.6).
+func TestLoadIgnoresLegacyBuilderAlias(t *testing.T) {
+	s := New(t.TempDir())
+	dir := s.Dir("old")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"builder_alias":"abuilder","round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	got, err := s.Load("old")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Name != "old" {
+		t.Errorf("got.Name = %q, want %q", got.Name, "old")
+	}
+	if got.BuilderCandidate != "" {
+		t.Errorf("got.BuilderCandidate = %q, want empty", got.BuilderCandidate)
 	}
 }

@@ -39,31 +39,31 @@ func TestListWindow(t *testing.T) {
 
 func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 	b1 := relay.BindingStatus{
-		Name:          "relay-fork",
-		Workspace:     "wM",
-		Round:         3,
-		Display:       "ACTIVE",
-		BuilderAlias:  "agy",
-		BuilderStatus: "idle",
-		Pending:       &relay.PendingInfo{Round: 2, Kind: store.KindReport},
+		Name:             "relay-fork",
+		Workspace:        "wM",
+		Round:            3,
+		Display:          "ACTIVE",
+		BuilderCandidate: "agy",
+		BuilderStatus:    "idle",
+		Pending:          &relay.PendingInfo{Round: 2, Kind: store.KindReport},
 	}
 	b2 := relay.BindingStatus{
-		Name:          "relay-quiesce",
-		Workspace:     "wM",
-		Round:         2,
-		Display:       "DONE",
-		BuilderAlias:  "agy",
-		BuilderStatus: "gone",
-		Pending:       nil,
+		Name:             "relay-quiesce",
+		Workspace:        "wM",
+		Round:            2,
+		Display:          "DONE",
+		BuilderCandidate: "agy",
+		BuilderStatus:    "gone",
+		Pending:          nil,
 	}
 	b3 := relay.BindingStatus{
-		Name:          "relay-rebind",
-		Workspace:     "wM",
-		Round:         3,
-		Display:       "NEEDS YOU",
-		BuilderAlias:  "agy",
-		BuilderStatus: "blocked",
-		Pending:       &relay.PendingInfo{Round: 3, Kind: store.KindQuestion},
+		Name:             "relay-rebind",
+		Workspace:        "wM",
+		Round:            3,
+		Display:          "NEEDS YOU",
+		BuilderCandidate: "agy",
+		BuilderStatus:    "blocked",
+		Pending:          &relay.PendingInfo{Round: 3, Kind: store.KindQuestion},
 	}
 
 	want1 := " relay-fork     wM  r3  " + styleDisplay("ACTIVE") + " builder agy idle    pending report r2"
@@ -88,7 +88,7 @@ func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
 func TestRenderListRowShowsHoldClock(t *testing.T) {
 	b := relay.BindingStatus{
 		Name: "relay-held", Workspace: "wM", Round: 3, Display: "HELD",
-		BuilderAlias: "agy", BuilderStatus: "idle",
+		BuilderCandidate: "agy", BuilderStatus: "idle",
 		Pending: &relay.PendingInfo{
 			Round: 3, Kind: store.KindReport,
 			Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000},
@@ -443,11 +443,11 @@ func TestStateStylesDistinguishable(t *testing.T) {
 	}
 
 	b := relay.BindingStatus{
-		Name:          "webshop",
-		Round:         1,
-		Display:       "ACTIVE",
-		BuilderAlias:  "agy",
-		BuilderStatus: "idle",
+		Name:             "webshop",
+		Round:            1,
+		Display:          "ACTIVE",
+		BuilderCandidate: "agy",
+		BuilderStatus:    "idle",
 	}
 	rowSelected := renderListRow(b, true)
 	if !strings.Contains(rowSelected, cursorStyle.Render(">")) {

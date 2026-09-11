@@ -382,8 +382,8 @@ func cmdBind(args []string) error {
 
 	if *resume && *builderAlias != "" {
 		builderDesc := b.Builder.PaneID
-		if b.BuilderAlias != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderAlias)
+		if b.BuilderCandidate != "" {
+			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderCandidate)
 		}
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
@@ -393,7 +393,7 @@ func cmdBind(args []string) error {
 	}
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
-		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderAlias, b.Round)
+		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderCandidate, b.Round)
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
@@ -502,7 +502,7 @@ func cmdAdd(args []string) error {
 	}
 
 	fmt.Printf("added %s: builder %s in pane %s\n",
-		res.Binding.Name, res.Binding.BuilderAlias, res.Binding.Builder.PaneID)
+		res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
 	if res.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
 	} else {

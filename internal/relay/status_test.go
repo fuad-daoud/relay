@@ -31,8 +31,8 @@ func TestStatusReportsLiveAgentState(t *testing.T) {
 	if got.Display != "ACTIVE" {
 		t.Errorf("display = %q, want ACTIVE", got.Display)
 	}
-	if got.BuilderAlias != "abuilder" {
-		t.Errorf("alias = %q", got.BuilderAlias)
+	if got.BuilderCandidate != "abuilder" {
+		t.Errorf("candidate = %q", got.BuilderCandidate)
 	}
 }
 
@@ -460,9 +460,9 @@ func TestStatusOmitsDetailForOrphanedBinding(t *testing.T) {
 func TestRenderStatusShowsDetailLine(t *testing.T) {
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "doctor", CWD: "/repo", Workspace: "wM", Round: 3,
-		Display:      "NEEDS YOU",
-		BuilderAlias: "abuilder",
-		PlannerPane:  "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+		Display:          "NEEDS YOU",
+		BuilderCandidate: "abuilder",
+		PlannerPane:      "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
 		BuilderPane: "wM:pV", BuilderKind: "agy", BuilderStatus: "gone",
 		Detail: "round 2 report delivered; nothing outstanding -- unless you want another round",
 	}}})
@@ -485,7 +485,7 @@ func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",
 		PlannerPane: "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
 		BuilderPane: "wM:p2", BuilderKind: "agy", BuilderStatus: "working",
-		BuilderAlias: "abuilder",
+		BuilderCandidate: "abuilder",
 	}}})
 
 	if strings.Contains(out, "detail") {

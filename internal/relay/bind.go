@@ -170,7 +170,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		b.State = store.StateActive
 		if rebinding {
 			b.Builder = builder
-			b.BuilderAlias = opts.Alias // "" when adopting a pane
+			b.BuilderCandidate = opts.Alias // "" when adopting a pane
 			b.PreamblePending = true
 			b.HaltNotifiedRound = 0
 			b.BuilderScreen = ""
@@ -232,13 +232,13 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	}
 
 	b := store.Binding{
-		Name:         name,
-		CWD:          opts.CWD,
-		Planner:      endpointOf(planner),
-		Builder:      builder,
-		BuilderAlias: opts.Alias,
-		Round:        1,
-		State:        store.StateActive,
+		Name:             name,
+		CWD:              opts.CWD,
+		Planner:          endpointOf(planner),
+		Builder:          builder,
+		BuilderCandidate: opts.Alias,
+		Round:            1,
+		State:            store.StateActive,
 	}
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)

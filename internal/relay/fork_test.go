@@ -44,15 +44,15 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 	t.Helper()
 	b := store.Binding{
-		Name:           name,
-		CWD:            cwd,
-		Planner:        store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess", Kind: "claude"},
-		Builder:        store.Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
-		BuilderAlias:   "builder",
-		Round:          4,
-		State:          store.StateActive,
-		RoundCap:       20,
-		RoundTimeoutMS: 1800000,
+		Name:             name,
+		CWD:              cwd,
+		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess", Kind: "claude"},
+		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
+		BuilderCandidate: "builder",
+		Round:            4,
+		State:            store.StateActive,
+		RoundCap:         20,
+		RoundTimeoutMS:   1800000,
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -337,7 +337,7 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		_, _, rt, srcCWD := setup(t)
 		// Update source to have no builder alias
 		src, _ := rt.Store.Load("source")
-		src.BuilderAlias = ""
+		src.BuilderCandidate = ""
 		_ = rt.Store.Save(src)
 
 		_, err := Fork(ctx, rt, ForkOptions{
