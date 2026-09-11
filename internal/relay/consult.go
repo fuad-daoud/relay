@@ -46,6 +46,11 @@ Reply here with only that path.`
 func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
 	now := rt.Now().UTC()
 
+	// Own the slice: the caller compares its copy of the binding against the
+	// returned one to decide whether to save, and an in-place write to a
+	// shared backing array would change both sides at once.
+	b.Consults = append([]store.Consult(nil), b.Consults...)
+
 	for i := range b.Consults {
 		// Terminal records stay until `relay reap` closes their pane. Without
 		// this guard every tick re-queues findings that were already
