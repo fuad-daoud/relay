@@ -490,7 +490,6 @@ func cmdBind(args []string) error {
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	assumeDead := fs.Bool("assume-dead", false,
 		"confirm a builder relay cannot verify is gone really is gone")
-	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -517,7 +516,6 @@ func cmdBind(args []string) error {
 		CWD:          cwd,
 		Resume:       *resume,
 		AssumeDead:   *assumeDead,
-		NewTab:       *newTab,
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
 	}
@@ -594,7 +592,6 @@ func cmdFork(args []string) error {
 	round := fs.Int("round", 0, "source round to copy history through")
 	newName := fs.String("new-name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
-	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -602,7 +599,7 @@ func cmdFork(args []string) error {
 
 	source, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay fork <source> --round N --new-name NAME [--builder CANDIDATE] [--tab] [--cwd DIR]%s\n"+
+		return fmt.Errorf("usage: relay fork <source> --round N --new-name NAME [--builder CANDIDATE] [--cwd DIR]%s\n"+
 			"fork branches a new binding from an earlier round; it needs the source binding name", bindingHint("fork"))
 	}
 
@@ -624,7 +621,6 @@ func cmdFork(args []string) error {
 		NewName:     *newName,
 		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		NewTab:      *newTab,
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 	}
@@ -654,7 +650,6 @@ func cmdAdd(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
-	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -679,7 +674,6 @@ func cmdAdd(args []string) error {
 		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		Repo:        repo,
-		NewTab:      *newTab,
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 	})
@@ -949,8 +943,7 @@ func cmdAsk(args []string) error {
 	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in policy.json order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	nameFlag := fs.String("name", "", "binding name")
-	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
-	workspace := fs.String("workspace", "", "workspace for --new-tab")
+	workspace := fs.String("workspace", "", "workspace for the consult's tab (default: $HERDR_WORKSPACE_ID)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -977,7 +970,6 @@ func cmdAsk(args []string) error {
 		File:        *file,
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		NewTab:      *newTab,
 		WorkspaceID: workspaceOrEnv(*workspace),
 	})
 	if err != nil {

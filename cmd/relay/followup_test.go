@@ -48,7 +48,7 @@ func TestReapFlagsReachTheCommand(t *testing.T) {
 
 // TestAskFallsBackToThePlannersWorkspace pins the one pane-spawning command
 // that ignored HERDR_WORKSPACE_ID. bind, fork and add all read it; ask used
-// only its --workspace flag, so `relay ask --new-tab` opened the consult in
+// only its --workspace flag, so `relay ask` opened the consult in
 // herdr's default workspace instead of the planner's -- somewhere the human is
 // not looking, and somewhere `relay status` will misreport.
 func TestAskFallsBackToThePlannersWorkspace(t *testing.T) {
