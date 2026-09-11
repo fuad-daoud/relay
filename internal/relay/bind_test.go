@@ -1380,3 +1380,95 @@ func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
 		t.Errorf("loaded RoundClosedTree = %q, want %q", saved.RoundClosedTree, closedTree)
 	}
 }
+
+func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
+	// #92: a builder that halted between rounds is gone, no round is open,
+	// and the planner wants a replacement without naming a token. Rebind
+	// must walk policy.json order and the ledger exactly as create does,
+	// and record the pick.
+	existing := store.Binding{
+		Name:             "webshop",
+		CWD:              "/repo",
+		Round:            3,
+		State:            store.StateBroken,
+		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:          store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess", Kind: "opencode"},
+		BuilderCandidate: testOpencodeRef,
+	}
+	f := &fakeHerdr{
+		agents: []herdr.Agent{
+			plannerAgent(),
+			{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
+		},
+		newPane: "w2:p9",
+	}
+	rt := newRuntime(t, f)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+
+	if res.How != HowOrder || res.Position != 1 {
+		t.Errorf("resolution = %+v, want order #1", res)
+	}
+	if got.BuilderCandidate != testAgyRef {
+		t.Errorf("BuilderCandidate = %q, want the order's first, %s", got.BuilderCandidate, testAgyRef)
+	}
+	if got.Builder.PaneID != "w2:p9" || got.State != store.StateActive || got.Round != 3 {
+		t.Errorf("binding = %+v, want new builder in w2:p9, active, still round 3", got)
+	}
+	if len(f.starts) != 1 || f.starts[0].Kind != "agy" {
+		t.Errorf("starts = %+v, want exactly one agy start", f.starts)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var picks int
+	for _, e := range entries {
+		if e.Kind == store.KindPick && e.Round == 3 && e.Note == ExplainResolution("builder", res) {
+			picks++
+		}
+	}
+	if picks != 1 {
+		t.Errorf("want exactly one pick entry for round 3 reading %q, got entries %+v", ExplainResolution("builder", res), entries)
+	}
+}
+
+func TestResumeRebindRefusesALiveBuilder(t *testing.T) {
+	// --rebind is a rebind: the ErrBuilderAlive guard applies to it exactly
+	// as it does to --builder.
+	liveBuilder := herdr.Agent{
+		Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p4",
+		Session: herdr.Session{Value: "live-builder-sess"}, CWD: "/repo",
+	}
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), liveBuilder}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+	existing := store.Binding{
+		Name: "webshop", CWD: "/repo", Round: 3, State: store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{PaneID: "w2:p4", SessionID: "live-builder-sess"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrBuilderAlive) {
+		t.Fatalf("got %v, want ErrBuilderAlive", err)
+	}
+	if len(f.starts) != 0 || len(f.tabs) != 0 {
+		t.Errorf("a refused rebind must spawn nothing: starts=%+v tabs=%+v", f.starts, f.tabs)
+	}
+}
