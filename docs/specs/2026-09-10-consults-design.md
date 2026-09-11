@@ -537,6 +537,11 @@ would require a two-phase write for a failure mode `herdr pane close` already
 resolves by hand. `docs/design.md` names risks of this class rather than
 engineering them away; this follows that precedent.
 
+Superseded for the crash-between-phases case by
+`docs/specs/2026-09-11-ask-outside-lock-design.md` §6 -- a crashed `Ask`
+now leaves a `spawning` record the daemon expires, and a pane that got
+a record late is still recorded.
+
 ### 6.4 The consult failure path stays dumb
 
 Builders get a nudge, screen-fingerprint quiescence and a scrape fallback

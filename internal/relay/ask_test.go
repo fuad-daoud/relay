@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -40,6 +41,7 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	rt, _ := seedForAsk(t, f)
 	q := writeQuestion(t, "Review 003-diff.patch against the plan.")
 
+	listsBefore := f.listCalls
 	res, err := Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
@@ -95,6 +97,29 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	}
 	if len(got.Consults) != 1 || got.Consults[0].ID != "7f2a3c1d" {
 		t.Fatalf("consults = %+v", got.Consults)
+	}
+
+	// The KindAsk entry was logged with Confirmed: true.
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var askEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindAsk {
+			askEntry = &entries[i]
+		}
+	}
+	if askEntry == nil {
+		t.Fatal("KindAsk log entry not found")
+	}
+	if !askEntry.Confirmed {
+		t.Error("KindAsk log entry Confirmed = false, want true")
+	}
+
+	// Backfill is gone: ListAgents was not called during Ask.
+	if f.listCalls != listsBefore {
+		t.Errorf("listCalls increased %d -> %d during Ask; ListAgents backfill was deleted", listsBefore, f.listCalls)
 	}
 }
 
@@ -187,6 +212,32 @@ func TestAskRefusesAtTheConsultCap(t *testing.T) {
 	}
 }
 
+func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "x")
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.ConsultCap = 1
+	b.Consults = []store.Consult{{ID: "aaaaaaaa", Role: "reviewer", State: store.ConsultSpawning}}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, err = Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if !errors.Is(err, ErrConsultCap) {
+		t.Fatalf("want ErrConsultCap, got %v", err)
+	}
+	if !(f.splits == 0 && len(f.starts) == 0) {
+		t.Errorf("expected f.splits == 0 && len(f.starts) == 0, got splits=%d starts=%d", f.splits, len(f.starts))
+	}
+}
+
 func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)
@@ -237,6 +288,9 @@ func TestAskRecordsAReapableConsultWhenTheSpawnFails(t *testing.T) {
 	if got.Consults[0].Endpoint.PaneID != "w2:p9" {
 		t.Errorf("pane = %q; the record must name the pane so reap can close it", got.Consults[0].Endpoint.PaneID)
 	}
+	if !strings.HasPrefix(got.Consults[0].Note, "prompt failed") {
+		t.Errorf("note = %q, want prefix 'prompt failed'", got.Consults[0].Note)
+	}
 }
 
 func TestAskLogsTheQuestionOutbound(t *testing.T) {
@@ -264,5 +318,242 @@ func TestAskLogsTheQuestionOutbound(t *testing.T) {
 	// The pending scan must be untouched by an outbound consult entry.
 	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || found {
 		t.Errorf("ask entry showed up as pending for the planner: found=%v err=%v", found, err)
+	}
+}
+
+func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "x")
+
+	lockFree := make(chan struct{})
+	f.onSplit = func() {
+		go func() {
+			// Mutexes are not reentrant (spec §7.1): if Ask holds the store
+			// lock across SplitPane, WithLock blocks and never returns. A
+			// timeout is therefore proof the lock was held.
+			_ = rt.Store.WithLock(func(*store.Tx) error {
+				return nil
+			})
+			close(lockFree)
+		}()
+		select {
+		case <-lockFree:
+		case <-time.After(2 * time.Second):
+			t.Fatal("state lock is held during SplitPane")
+		}
+	}
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+}
+
+func TestAskReservesBeforeSpawning(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.NewID = func() string { return "7f2a3c1d" }
+	q := writeQuestion(t, "x")
+
+	done := make(chan struct{})
+	f.onSplit = func() {
+		go func() {
+			defer close(done)
+			b, err := rt.Store.Load("webshop")
+			if err != nil {
+				t.Errorf("Load: %v", err)
+				return
+			}
+			if len(b.Consults) != 1 {
+				t.Errorf("got %d consults, want 1 reservation", len(b.Consults))
+				return
+			}
+			c := b.Consults[0]
+			if c.ID != "7f2a3c1d" {
+				t.Errorf("id = %q, want 7f2a3c1d", c.ID)
+			}
+			if c.State != store.ConsultSpawning {
+				t.Errorf("state = %q, want spawning", c.State)
+			}
+			if c.Endpoint.PaneID != "" {
+				t.Errorf("pane = %q, want empty before split", c.Endpoint.PaneID)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for Load inside onSplit")
+		}
+	}
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+}
+
+func TestAskRecordsSilentWithNoPaneWhenTheSplitFails(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	f.newPane = ""
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err == nil {
+		t.Fatal("Ask succeeded when split returned empty pane")
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 1 {
+		t.Fatalf("got %d consults, want 1", len(b.Consults))
+	}
+	c := b.Consults[0]
+	if c.State != store.ConsultSilent {
+		t.Errorf("state = %q, want silent", c.State)
+	}
+	if c.Endpoint.PaneID != "" {
+		t.Errorf("pane = %q, want empty", c.Endpoint.PaneID)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("starts = %d, want 0", len(f.starts))
+	}
+}
+
+func TestAskRecordsAReapableConsultWhenTheStartFails(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	f.startErr = errors.New("cannot start")
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err == nil {
+		t.Fatal("Ask succeeded when StartAgent failed")
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 1 {
+		t.Fatalf("got %d consults, want 1", len(b.Consults))
+	}
+	c := b.Consults[0]
+	if c.State != store.ConsultSilent {
+		t.Errorf("state = %q, want silent", c.State)
+	}
+	if c.Endpoint.PaneID != "w2:p9" {
+		t.Errorf("pane = %q, want w2:p9", c.Endpoint.PaneID)
+	}
+	if !strings.HasPrefix(c.Note, "start failed") {
+		t.Errorf("note = %q, want prefix 'start failed'", c.Note)
+	}
+}
+
+func TestAskUpsertsAnExpiredReservation(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.NewID = func() string { return "7f2a3c1d" }
+	q := writeQuestion(t, "x")
+
+	modified := make(chan struct{})
+	f.onSplit = func() {
+		go func() {
+			defer close(modified)
+			b, err := rt.Store.Load("webshop")
+			if err != nil {
+				t.Errorf("Load: %v", err)
+				return
+			}
+			for i := range b.Consults {
+				if b.Consults[i].ID == "7f2a3c1d" {
+					b.Consults[i].State = store.ConsultSilent
+					b.Consults[i].Note = "spawn did not complete"
+				}
+			}
+			if err := rt.Store.Save(b); err != nil {
+				t.Errorf("Save: %v", err)
+			}
+		}()
+		select {
+		case <-modified:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for rewrite inside onSplit")
+		}
+	}
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 1 {
+		t.Fatalf("got %d consults, want 1", len(b.Consults))
+	}
+	c := b.Consults[0]
+	if c.State != store.ConsultRunning {
+		t.Errorf("state = %q, want running", c.State)
+	}
+	if c.Endpoint.PaneID != "w2:p9" {
+		t.Errorf("pane = %q, want w2:p9", c.Endpoint.PaneID)
+	}
+}
+
+func TestAskReappendsAReapedReservation(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.NewID = func() string { return "7f2a3c1d" }
+	q := writeQuestion(t, "x")
+
+	reaped := make(chan struct{})
+	f.onSplit = func() {
+		go func() {
+			defer close(reaped)
+			b, err := rt.Store.Load("webshop")
+			if err != nil {
+				t.Errorf("Load: %v", err)
+				return
+			}
+			b.Consults = nil
+			if err := rt.Store.Save(b); err != nil {
+				t.Errorf("Save: %v", err)
+			}
+		}()
+		select {
+		case <-reaped:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for reap simulation in onSplit")
+		}
+	}
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 1 {
+		t.Fatalf("got %d consults, want 1 re-appended consult", len(b.Consults))
+	}
+	if b.Consults[0].State != store.ConsultRunning {
+		t.Errorf("state = %q, want running", b.Consults[0].State)
 	}
 }

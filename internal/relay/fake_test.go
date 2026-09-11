@@ -195,6 +195,12 @@ type fakeHerdr struct {
 	closed   []string // pane ids handed to ClosePane
 	closeErr error    // when set, ClosePane fails
 	onClose  func()
+
+	// onSplit runs at the top of SplitPane and CreateTab, before any other logic. Ask calls SplitPane/CreateTab as its first herdr call after releasing the lock, which is where a test proves the lock is free and where it can rewrite the reservation to simulate a slow spawn.
+	onSplit func()
+
+	// startErr is returned by StartAgent when set, after recording the call. The strand-on-start path had no test because the fake could not fail a start.
+	startErr error
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
@@ -241,6 +247,9 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 }
 
 func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) (string, error) {
+	if f.onSplit != nil {
+		f.onSplit()
+	}
 	f.splits++
 	f.splitCalls = append(f.splitCalls, splitCall{Target: target, Direction: direction, CWD: cwd})
 	if f.newPane == "" {
@@ -250,6 +259,9 @@ func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) 
 }
 
 func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string) (string, error) {
+	if f.onSplit != nil {
+		f.onSplit()
+	}
 	f.tabs = append(f.tabs, tabCall{WorkspaceID: workspaceID, CWD: cwd, Label: label})
 	if f.newTab != "" {
 		return f.newTab, nil
@@ -259,6 +271,9 @@ func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string)
 
 func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args []string) error {
 	f.starts = append(f.starts, startCall{Name: name, Kind: kind, Pane: pane, Args: args})
+	if f.startErr != nil {
+		return f.startErr
+	}
 	return nil
 }
 

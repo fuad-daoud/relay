@@ -47,7 +47,7 @@ type BindingStatus struct {
 	Foreign       []ForeignAgent `json:"foreign,omitempty"`
 	ForkedFrom    string         `json:"forked_from,omitempty"`
 	ForkedAtRound int            `json:"forked_at_round,omitempty"`
-	// Consults is how many consults are still running on this binding.
+	// Consults is how many consults are reserved or running on this binding.
 	// Terminal ones are omitted: they are a reap chore, not work in flight.
 	Consults int `json:"consults,omitempty"`
 }
