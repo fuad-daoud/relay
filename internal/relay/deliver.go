@@ -16,6 +16,9 @@ type Delivery struct {
 	PlannerGone bool
 	Empty       bool // the planner was reachable and nothing was waiting
 	Reason      string
+	// Round is the pending entry's round, set on Held and Delivered so the
+	// caller can log the outcome without re-reading the queue.
+	Round int
 }
 
 // Queue records a planner-bound payload as pending BEFORE any delivery is
@@ -91,7 +94,7 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 				}
 			}
 
-			return b, Delivery{Held: true, Reason: reason}, nil
+			return b, Delivery{Held: true, Reason: reason, Round: pending.Round}, nil
 		}
 	}
 
@@ -115,5 +118,5 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		agents[i].Status = herdr.StatusWorking
 	}
 
-	return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason}, nil
+	return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason, Round: pending.Round}, nil
 }

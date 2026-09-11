@@ -266,7 +266,7 @@ career  /home/dev/projects/api               w4   round 1   NEEDS YOU
 money   /home/dev/money/ai                      wF   round 7   HELD
   planner  cplanner        wF:p1  claude    idle       (focused -- holding)
   builder  money-builder   wF:p2  opencode  idle
-  pending  report 007 -> planner, held 45s, delivers when you leave the pane
+  pending  report round 7 -> planner, held: quiet 45s of 1m0s
 ```
 
 Three display states cover everything: **ACTIVE** (someone is working), **NEEDS YOU**

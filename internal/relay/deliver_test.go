@@ -384,6 +384,49 @@ func TestHeldDeliversAfterQuietGrace(t *testing.T) {
 	}
 }
 
+func TestHeldRecordsRoundAndGraceInState(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, true)}
+	f.readOut = claudeDraftScreen
+	f.prompts = nil
+	rt.HeldGrace = 5 * time.Second
+	now, rt := heldClock(rt)
+
+	next, got := heldTick(t, rt, b, f)
+	if !got.Held {
+		t.Fatalf("first tick: want held, got %+v", got)
+	}
+	if got.Round != 1 {
+		t.Errorf("held Round = %d, want 1", got.Round)
+	}
+	if next.HeldGrace != 5*time.Second {
+		t.Errorf("HeldGrace = %v, want 5s: status cannot show a fraction without it", next.HeldGrace)
+	}
+	next.State = store.StateHeld
+
+	// A read failure holds with everything untouched, the grace included.
+	f.readErr = errors.New("boom")
+	*now = now.Add(time.Second)
+	next, got = heldTick(t, rt, next, f)
+	if !got.Held || next.HeldGrace != 5*time.Second {
+		t.Fatalf("read failure must keep HeldGrace, got %+v / %+v", got, next)
+	}
+	f.readErr = nil
+
+	*now = now.Add(5 * time.Second)
+	next, got = heldTick(t, rt, next, f)
+	if !got.Delivered {
+		t.Fatalf("want delivered, got %+v", got)
+	}
+	if got.Round != 1 {
+		t.Errorf("delivered Round = %d, want 1", got.Round)
+	}
+	if next.HeldGrace != 0 {
+		t.Errorf("a delivery must clear HeldGrace with the fingerprint, got %v", next.HeldGrace)
+	}
+}
+
 func TestHeldResetsWhenScreenMoves(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := queuedBinding(t, f)

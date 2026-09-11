@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -480,13 +481,27 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 }
 
 // deliverAndSettle attempts any pending delivery and folds the result into the
-// binding's state.
+// binding's state. It is also where a held-path decision becomes visible:
+// DeliverPending records why it held or injected, and nothing else in
+// production reads that reason (#75).
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+	prev := b.State
 	next, got, err := DeliverPending(ctx, rt, tx, b, agents)
 	if err != nil {
 		return b, err
 	}
 	b = next
+
+	switch {
+	case got.Held && prev != store.StateHeld:
+		// Log the transition only. A held tick's reason carries the quiet
+		// clock ("quiet 23s of 1m0s") and would change every tick.
+		slog.Info("payload held", "binding", b.Name, "round", got.Round, "reason", got.Reason)
+	case got.Delivered && got.Reason != "":
+		// The two focused-path injects. The unfocused delivery has an empty
+		// reason and stays silent: it is the ordinary path.
+		slog.Info("payload delivered", "binding", b.Name, "round", got.Round, "reason", got.Reason)
+	}
 
 	switch {
 	case got.PlannerGone:

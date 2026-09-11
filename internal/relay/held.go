@@ -62,10 +62,12 @@ func fingerprint(text string) string {
 
 // clearPlannerScreen ends a fingerprint hold. Every DeliverPending return
 // that is not a fingerprint hold goes through here, so PlannerScreen is
-// never stale.
+// never stale. HeldGrace goes with them: it describes the clock, and there is
+// no clock.
 func clearPlannerScreen(b store.Binding) store.Binding {
 	b.PlannerScreen = ""
 	b.PlannerScreenAt = time.Time{}
+	b.HeldGrace = 0
 	return b
 }
 
@@ -111,6 +113,7 @@ func plannerHold(ctx context.Context, rt Runtime, b store.Binding, planner herdr
 		// First look, or the screen moved since it: the human may be typing,
 		// so (re)start the grace clock from now.
 		b.PlannerScreen, b.PlannerScreenAt = fp, now
+		b.HeldGrace = grace
 		return b, false, "planner pane is focused; screen changing"
 	}
 

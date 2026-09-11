@@ -145,6 +145,9 @@ func renderListRow(b relay.BindingStatus, selected bool) string {
 		} else {
 			pending = string(b.Pending.Kind)
 		}
+		if hold := relay.HoldText(b); hold != "" {
+			pending += ", held: " + hold
+		}
 	}
 	disp := styleDisplay(b.Display)
 	return strings.TrimRight(fmt.Sprintf("%s%-14s %-3s r%-2d %s builder %-3s %-7s pending %s",

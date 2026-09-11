@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -73,6 +74,95 @@ func TestStatusSurfacesHeldPending(t *testing.T) {
 	}
 	if !strings.Contains(text, "pending") {
 		t.Errorf("rendered status must still show a pending line, got %q", text)
+	}
+}
+
+// heldStatusBinding saves a HELD binding whose planner clock started 23s
+// before the runtime's fixed clock, with the grace the test supplies.
+func heldStatusBinding(t *testing.T, f *fakeHerdr, screen string, grace time.Duration) Runtime {
+	t.Helper()
+	rt, b := queuedBinding(t, f)
+	b.State = store.StateHeld
+	b.PlannerScreen = screen
+	if screen != "" {
+		b.PlannerScreenAt = baseTime.Add(-23 * time.Second)
+	}
+	b.HeldGrace = grace
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, true), builderAgent(herdr.StatusIdle)}
+	return rt
+}
+
+func TestStatusShowsHoldClockAgainstGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := heldStatusBinding(t, f, "fp", time.Minute)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	hold := rep.Bindings[0].Pending.Hold
+	if hold == nil || hold.QuietMS != 23000 || hold.GraceMS != 60000 {
+		t.Fatalf("Hold = %+v, want quiet 23000ms of 60000ms", hold)
+	}
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "pending  report round 1 -> planner, held: quiet 23s of 1m0s") {
+		t.Errorf("rendered status = %q", text)
+	}
+}
+
+func TestStatusShowsHoldClockWithoutGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := heldStatusBinding(t, f, "fp", 0)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	hold := rep.Bindings[0].Pending.Hold
+	if hold == nil || hold.QuietMS != 23000 || hold.GraceMS != 0 {
+		t.Fatalf("Hold = %+v, want quiet 23000ms with no grace", hold)
+	}
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "held: quiet 23s\n") {
+		t.Errorf("a binding held before HeldGrace existed shows the quiet time alone, got %q", text)
+	}
+}
+
+func TestStatusShowsHoldWaitingForScreen(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := heldStatusBinding(t, f, "", time.Minute)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].Pending.Hold != nil {
+		t.Fatalf("Hold = %+v, want nil: the clock has not started", rep.Bindings[0].Pending.Hold)
+	}
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "held: waiting for the planner's screen") {
+		t.Errorf("rendered status = %q", text)
+	}
+}
+
+func TestStatusPendingLineUnchangedWhenNotHeld(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].Pending == nil || rep.Bindings[0].Pending.Hold != nil {
+		t.Fatalf("Pending = %+v, want a pending with no hold", rep.Bindings[0].Pending)
+	}
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "pending  report round 1 -> planner\n") || strings.Contains(text, "held:") {
+		t.Errorf("an active binding's pending line must not mention a hold, got %q", text)
 	}
 }
 

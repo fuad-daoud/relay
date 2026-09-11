@@ -81,6 +81,12 @@ type Binding struct {
 	PlannerScreen   string    `json:"planner_screen,omitempty"`
 	PlannerScreenAt time.Time `json:"planner_screen_at,omitempty"`
 
+	// HeldGrace is the grace the daemon was running with when it started the
+	// PlannerScreen clock. It exists so `relay status`, which runs in another
+	// process and never sees `--held-grace`, can print "quiet 23s of 1m0s"
+	// rather than a bare duration. Written with PlannerScreen, cleared with it.
+	HeldGrace time.Duration `json:"held_grace,omitempty"`
+
 	// PreamblePending forces the builder alias's preamble onto the next plan even
 	// when the round is not 1. A replacement builder is a NEW agent session that
 	// has never seen the preamble, and for harnesses with no role flag -- agy --

@@ -486,7 +486,10 @@ vanish.
   builder (answer its dialog), a dead builder pane, a lost planner pane, a
   round that ran past its timeout, and a binding that hit its round cap.
 - **HELD** — a payload is ready for the planner, but the planner pane is
-  focused, so relay is holding it rather than typing into it.
+  focused, so relay is holding it rather than typing into it. `relay status`
+  shows the hold's clock on the `pending` line: how long the planner's screen
+  has been quiet against `--held-grace`, or that the clock has not started
+  because the screen could not be read.
 - **DONE** — the planner declared the work verified via `relay done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
