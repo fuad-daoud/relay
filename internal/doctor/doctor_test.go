@@ -8,8 +8,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 )
+
+// shippedDoc returns the exact bytes this relay ships for role/kind, so a
+// fixture can be built that matches the shipped copy and does not spuriously
+// trip the doctor's ship-drift check (step 3, #91/#94).
+func shippedDoc(t *testing.T, role, kind string) string {
+	t.Helper()
+	b, err := harness.AgentDoc(role, kind)
+	if err != nil {
+		t.Fatalf("AgentDoc(%s, %s): %v", role, kind, err)
+	}
+	return string(b)
+}
 
 type fakeEnv struct {
 	herdrVer      string
@@ -536,6 +549,10 @@ func TestDoctorEmitsOneRowPerRole(t *testing.T) {
 		"/fake/home/.claude/agents/plan-executor.md": true,
 		"/fake/home/.claude/agents/researcher.md":    true,
 	}
+	env.fileContents = map[string]string{
+		"/fake/home/.claude/agents/plan-executor.md": shippedDoc(t, "plan-executor", "claude"),
+		"/fake/home/.claude/agents/researcher.md":    shippedDoc(t, "researcher", "claude"),
+	}
 
 	report := Run(context.Background(), env, []string{"claude"})
 
@@ -592,20 +609,25 @@ func TestDoctorReportsTheInstalledModelPin(t *testing.T) {
 }
 
 func TestDoctorOmitsModelSuffixWhenUnpinned(t *testing.T) {
+	// plan-executor.claude.md ships with no model: line at all (the pin is a
+	// researcher/reviewer worked example, not a plan-executor one), so it is
+	// the one role whose shipped copy is itself the "unpinned" fixture and
+	// therefore does not also trip the doctor's ship-drift check (step 3).
 	env := newFakeEnvForKind(t, "claude")
 	env.existingFiles = map[string]bool{
 		"/fake/home/.claude/agents/plan-executor.md": true,
 		"/fake/home/.claude/agents/researcher.md":    true,
 	}
 	env.fileContents = map[string]string{
-		"/fake/home/.claude/agents/researcher.md": "---\nname: researcher\n---\n",
+		"/fake/home/.claude/agents/plan-executor.md": shippedDoc(t, "plan-executor", "claude"),
+		"/fake/home/.claude/agents/researcher.md":    shippedDoc(t, "researcher", "claude"),
 	}
 
 	report := Run(context.Background(), env, []string{"claude"})
 
-	c := findCheck(report, "claude", "researcher")
+	c := findCheck(report, "claude", "plan-executor")
 	if c == nil {
-		t.Fatal("no researcher row")
+		t.Fatal("no plan-executor row")
 	}
 	if strings.Contains(c.Detail, "model:") {
 		t.Errorf("detail = %q, want no model suffix", c.Detail)
@@ -648,7 +670,7 @@ func agyEnv(t *testing.T) *fakeEnv {
 	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
 		p := home + "/.gemini/config/agents/" + name + ".md"
 		env.existingFiles[p] = true
-		env.fileContents[p] = "---\nname: " + name + "\nmodel: inherit\n---\nbody\n"
+		env.fileContents[p] = shippedDoc(t, name, "agy")
 	}
 	return env
 }
@@ -727,6 +749,9 @@ func TestDoctorAgyRoleWarnsOnATierPin(t *testing.T) {
 }
 
 func TestDoctorClaudeRoleNeverWarnsOnAPin(t *testing.T) {
+	// This test pins the decision that non-agy definitions are the user's to
+	// edit: claude's Role.ExpectModel is "" (spec §3.2), so neither the
+	// tier-pin branch nor the ship-drift check (round 2, #91/#94) fires here.
 	env := &fakeEnv{
 		herdrVer:      "0.9.0",
 		homeDir:       "/home/u",
@@ -766,4 +791,81 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 		c.Fix != "relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
 		t.Errorf("row = %+v", c)
 	}
+}
+
+// Step 3 (#91/#94), narrowed in round 2: relay doctor warns when an
+// installed definition differs from the shipped one only on a kind whose
+// definition relay owns outright (Role.ExpectModel set -- today, agy).
+// These four subtests exercise that on agy; the fifth exercises the
+// opposite on claude, which the gate in doctor.roleCheck excludes.
+func TestDoctorRoleDriftFromShipped(t *testing.T) {
+	shipped := shippedDoc(t, "researcher", "agy")
+
+	t.Run("identical to shipped is OK", func(t *testing.T) {
+		env := agyEnv(t)
+		env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = shipped
+		report := Run(context.Background(), env, []string{"agy"})
+		c := findCheck(report, "agy", "researcher")
+		wantDetail := "~/.gemini/config/agents/researcher.md (model: inherit)"
+		if c == nil || c.Severity != SevOK || c.Detail != wantDetail {
+			t.Errorf("row = %+v, want SevOK %q", c, wantDetail)
+		}
+	})
+
+	t.Run("shipped plus a trailing newline is still OK", func(t *testing.T) {
+		env := agyEnv(t)
+		env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = shipped + "\n"
+		report := Run(context.Background(), env, []string{"agy"})
+		c := findCheck(report, "agy", "researcher")
+		if c == nil || c.Severity != SevOK {
+			t.Errorf("row = %+v, want SevOK -- a missing final newline from a `>` redirect must not warn", c)
+		}
+	})
+
+	t.Run("one extra line warns with the print fix", func(t *testing.T) {
+		env := agyEnv(t)
+		env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = shipped + "\nextra line\n"
+		report := Run(context.Background(), env, []string{"agy"})
+		c := findCheck(report, "agy", "researcher")
+		if c == nil || c.Severity != SevWarn {
+			t.Fatalf("row = %+v, want SevWarn", c)
+		}
+		if !strings.Contains(c.Detail, "differs from the definition this relay ships") {
+			t.Errorf("detail = %q, want it to mention shipped drift", c.Detail)
+		}
+		if c.Fix != "relay agent print --kind agy --role researcher > ~/.gemini/config/agents/researcher.md" {
+			t.Errorf("fix = %q", c.Fix)
+		}
+	})
+
+	t.Run("a tier-pin mismatch still reports the pin warning, not drift", func(t *testing.T) {
+		// agyEnv's role files are already byte-identical to the shipped
+		// copies (agyEnv/shippedDoc, above); overriding the pin necessarily
+		// makes the installed copy differ from what's shipped too, but the
+		// pin check runs first and its message is the more specific one.
+		env := agyEnv(t)
+		env.fileContents[env.homeDir+"/.gemini/config/agents/researcher.md"] = "---\nname: researcher\nmodel: pro\n---\nbody\n"
+		report := Run(context.Background(), env, []string{"agy"})
+		c := findCheck(report, "agy", "researcher")
+		wantDetail := "~/.gemini/config/agents/researcher.md (model: pro) -- pins a tier; the candidate's --model is ignored"
+		if c == nil || c.Severity != SevWarn || c.Detail != wantDetail {
+			t.Errorf("row = %+v, want SevWarn %q", c, wantDetail)
+		}
+	})
+
+	t.Run("a claude definition that differs from shipped is still OK", func(t *testing.T) {
+		// This is the test the ExpectModel gate in doctor.roleCheck is for:
+		// claude's Role.ExpectModel is "", so the installed copy is the
+		// user's to edit and doctor does not compare it against shipped.
+		env := newFakeEnvForKind(t, "claude")
+		env.existingFiles = map[string]bool{"/fake/home/.claude/agents/plan-executor.md": true}
+		env.fileContents = map[string]string{
+			"/fake/home/.claude/agents/plan-executor.md": shippedDoc(t, "plan-executor", "claude") + "\nextra line\n",
+		}
+		report := Run(context.Background(), env, []string{"claude"})
+		c := findCheck(report, "claude", "plan-executor")
+		if c == nil || c.Severity != SevOK {
+			t.Errorf("row = %+v, want SevOK", c)
+		}
+	})
 }

@@ -7,14 +7,10 @@ model: inherit
 commandExecutionPolicy: sandbox
 tools:
   - view_file
-  - view_file_outline
-  - view_code_item
   - grep_search
   - find_by_name
   - list_dir
   - run_command
-  - command_status
-  - read_terminal
 ---
 
 # System Prompt
@@ -64,8 +60,10 @@ doctor` warns when an installed copy pins anything else.
 
 # Why the tools list is short
 
-The `tools:` allowlist above is every read-only tool agy exposes and none of
-the writing ones. On this harness read-only is not a request to you, it is a
-refusal by the harness: a write tool is not offered. `run_command` is present
-under `commandExecutionPolicy: sandbox` so `git diff` and `git log` work; a
-command that writes to the tree is refused by the sandbox.
+The `tools:` allowlist above is the read-only tools agy 1.2.1 exposes and none
+of the writing ones. On this harness read-only is not a request to you, it is a
+refusal by the harness: a write tool is not listed, so it is not offered.
+`run_command` is present under `commandExecutionPolicy: sandbox` so `git diff`
+and `git log` work; a command that writes to the tree is refused by the
+sandbox. Every name here is one agy resolves: an unknown name in this list
+stops the agent from starting at all.

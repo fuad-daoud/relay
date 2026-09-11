@@ -156,15 +156,15 @@ session survives the move and `refreshEndpoint` updates the pane ID normally.
 
 ### Candidates (config)
 
-Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relay renders harness launch arguments and preambles per kind:
+Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relay renders harness launch arguments per kind:
 
-| kind | args | preamble |
-| --- | --- | --- |
-| `claude` | `--model <model> --agent <role.Definition>` | `""` |
-| `opencode` | `--agent <role.Definition> -m <provider>/<model>` | `""` |
-| `agy` | `--model <model>` | `role.Preamble` |
+| kind | args |
+| --- | --- |
+| `claude` | `--model <model> --agent <role.Definition>` |
+| `opencode` | `--agent <role.Definition> -m <provider>/<model>` |
+| `agy` | `--model <model> --agent <role.Definition>` |
 
-then `extra_args` are appended. `agy` needs the preamble because it has no `--agent` flag — a persistent session cannot bake the role into startup, so relay prepends it to round 1's prompt only.
+then `extra_args` are appended.
 
 Which candidate an omitted token resolves to is decided by
 `~/.config/relay/policy.json` (`order[role]`) together with the

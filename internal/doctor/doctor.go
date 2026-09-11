@@ -208,6 +208,25 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 				}
 			}
 		}
+		// Drift from the shipped bytes is only a finding on a kind whose
+		// definition relay owns outright (ExpectModel set: the pin must be
+		// inherit, so any edit is already wrong). Elsewhere the README invites
+		// the user to repin model:, and a warning whose fix overwrites that
+		// edit would be worse than silence. #91 is the case this catches:
+		// an agy copy that predates a tools: fix starts a builder that
+		// cannot build, and nothing else on this machine notices.
+		if r.ExpectModel != "" {
+			if shipped, shipErr := harness.AgentDoc(r.Name, kind); shipErr == nil {
+				trim := func(b []byte) string { return strings.TrimRight(string(b), " \t\r\n") }
+				if trim(shipped) != trim(raw) {
+					return Check{
+						Group: kind, Name: r.Name, Severity: SevWarn,
+						Detail: fmt.Sprintf("%s -- differs from the definition this relay ships", detail),
+						Fix:    fmt.Sprintf("relay agent print --kind %s --role %s > %s", kind, r.Name, homeRel),
+					}
+				}
+			}
+		}
 	}
 	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
 }
