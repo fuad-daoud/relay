@@ -49,11 +49,6 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, _, _ string, _ int) (stri
 	return "", errors.New("read-only violation: ReadAgentSource called")
 }
 
-func (f *fakeHerdr) SplitPane(_ context.Context, _, _, _ string) (string, error) {
-	f.t.Errorf("read-only violation: SplitPane called")
-	return "", errors.New("read-only violation: SplitPane called")
-}
-
 func (f *fakeHerdr) CreateTab(_ context.Context, _, _, _ string) (string, error) {
 	f.t.Errorf("read-only violation: CreateTab called")
 	return "", errors.New("read-only violation: CreateTab called")

@@ -196,34 +196,6 @@ func (c *Client) ReadAgentSource(ctx context.Context, target, source string, lin
 	return string(raw), nil
 }
 
-type paneEnvelope struct {
-	Result struct {
-		Pane struct {
-			PaneID string `json:"pane_id"`
-		} `json:"pane"`
-	} `json:"result"`
-}
-
-// SplitPane creates a sibling pane without moving the user's focus and returns
-// its pane id.
-func (c *Client) SplitPane(ctx context.Context, paneID, direction, cwd string) (string, error) {
-	raw, err := c.run(ctx, "pane", "split", "--pane", paneID,
-		"--direction", direction, "--cwd", cwd, "--no-focus")
-	if err != nil {
-		return "", err
-	}
-
-	var env paneEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", fmt.Errorf("decode pane split: %w", err)
-	}
-	if env.Result.Pane.PaneID == "" {
-		return "", errors.New("pane split returned no pane id")
-	}
-
-	return env.Result.Pane.PaneID, nil
-}
-
 // ClosePane closes a pane. relay calls this from exactly one place, `relay
 // reap`, and only for a consult pane relay spawned itself.
 func (c *Client) ClosePane(ctx context.Context, paneID string) error {
@@ -240,8 +212,7 @@ type tabEnvelope struct {
 }
 
 // CreateTab opens a tab and returns its root pane, leaving focus where it is.
-// A builder in its own tab keeps the planner pane full width, at the cost of
-// not being able to watch the builder work side by side.
+// Every agent relay spawns lives in its own tab (#79).
 func (c *Client) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
 	args := []string{"tab", "create", "--cwd", cwd, "--no-focus"}
 	if workspaceID != "" {
