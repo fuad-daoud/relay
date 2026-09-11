@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -777,9 +778,10 @@ func TestUnbindTeardown(t *testing.T) {
 		rt := newRuntime(t, f)
 		rt.Git = fg
 
+		wt := t.TempDir()
 		b := store.Binding{
-			Name: "fork-clean", CWD: "/state/.worktrees/fork-clean",
-			Worktree: "/state/.worktrees/fork-clean", State: store.StateActive,
+			Name: "fork-clean", CWD: wt,
+			Worktree: wt, State: store.StateActive,
 			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
 		}
 		if err := rt.Store.Save(b); err != nil {
@@ -790,8 +792,8 @@ func TestUnbindTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
-		if res.WorktreeRemoved != "/state/.worktrees/fork-clean" {
-			t.Errorf("WorktreeRemoved = %q, want /state/.worktrees/fork-clean", res.WorktreeRemoved)
+		if res.WorktreeRemoved != wt {
+			t.Errorf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
 		}
 		if res.WorktreeKept != "" {
 			t.Errorf("WorktreeKept = %q, want empty", res.WorktreeKept)
@@ -813,9 +815,10 @@ func TestUnbindTeardown(t *testing.T) {
 		rt := newRuntime(t, f)
 		rt.Git = fg
 
+		wt := t.TempDir()
 		b := store.Binding{
-			Name: "fork-dirty", CWD: "/state/.worktrees/fork-dirty",
-			Worktree: "/state/.worktrees/fork-dirty", State: store.StateActive,
+			Name: "fork-dirty", CWD: wt,
+			Worktree: wt, State: store.StateActive,
 			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
 		}
 		if err := rt.Store.Save(b); err != nil {
@@ -829,8 +832,8 @@ func TestUnbindTeardown(t *testing.T) {
 		if res.WorktreeRemoved != "" {
 			t.Errorf("WorktreeRemoved = %q, want empty", res.WorktreeRemoved)
 		}
-		if res.WorktreeKept != "/state/.worktrees/fork-dirty" {
-			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-dirty", res.WorktreeKept)
+		if res.WorktreeKept != wt {
+			t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, wt)
 		}
 		if res.KeptReason != "uncommitted changes" {
 			t.Errorf("KeptReason = %q, want 'uncommitted changes'", res.KeptReason)
@@ -849,9 +852,10 @@ func TestUnbindTeardown(t *testing.T) {
 		rt := newRuntime(t, f)
 		rt.Git = fg
 
+		wt := t.TempDir()
 		b := store.Binding{
-			Name: "fork-dirty-err", CWD: "/state/.worktrees/fork-dirty-err",
-			Worktree: "/state/.worktrees/fork-dirty-err", State: store.StateActive,
+			Name: "fork-dirty-err", CWD: wt,
+			Worktree: wt, State: store.StateActive,
 			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
 		}
 		if err := rt.Store.Save(b); err != nil {
@@ -862,8 +866,8 @@ func TestUnbindTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
-		if res.WorktreeKept != "/state/.worktrees/fork-dirty-err" {
-			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-dirty-err", res.WorktreeKept)
+		if res.WorktreeKept != wt {
+			t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, wt)
 		}
 		if res.KeptReason != "dirty check failed: git lock busy" {
 			t.Errorf("KeptReason = %q, want 'dirty check failed: git lock busy'", res.KeptReason)
@@ -905,9 +909,10 @@ func TestUnbindTeardown(t *testing.T) {
 		rt := newRuntime(t, f)
 		rt.Git = fg
 
+		wt := t.TempDir()
 		b := store.Binding{
-			Name: "fork-fail", CWD: "/state/.worktrees/fork-fail",
-			Worktree: "/state/.worktrees/fork-fail", State: store.StateActive,
+			Name: "fork-fail", CWD: wt,
+			Worktree: wt, State: store.StateActive,
 			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
 		}
 		if err := rt.Store.Save(b); err != nil {
@@ -918,8 +923,8 @@ func TestUnbindTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
-		if res.WorktreeKept != "/state/.worktrees/fork-fail" {
-			t.Errorf("WorktreeKept = %q, want /state/.worktrees/fork-fail", res.WorktreeKept)
+		if res.WorktreeKept != wt {
+			t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, wt)
 		}
 		if res.KeptReason != "git lock locked" {
 			t.Errorf("KeptReason = %q, want 'git lock locked' (brief)", res.KeptReason)
@@ -928,6 +933,44 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Error("binding state should still be deleted")
 		}
 	})
+}
+
+func TestUnbindReportsAnAlreadyGoneWorktree(t *testing.T) {
+	ctx := context.Background()
+	fg := &fakeGit{}
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Git = fg
+
+	missingWT := filepath.Join(t.TempDir(), "already-gone-worktree")
+	b := store.Binding{
+		Name: "fork-gone", CWD: "/repo",
+		Worktree: missingWT, State: store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Unbind(ctx, rt, "fork-gone", false)
+	if err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	if res.WorktreeGone != missingWT {
+		t.Errorf("WorktreeGone = %q, want %q", res.WorktreeGone, missingWT)
+	}
+	if res.WorktreeKept != "" || res.WorktreeRemoved != "" {
+		t.Errorf("kept=%q removed=%q, want both empty", res.WorktreeKept, res.WorktreeRemoved)
+	}
+	if fg.dirtyCalls != 0 {
+		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
+	}
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("removeWorktreeCalls = %d, want 0", len(fg.removeWorktreeCalls))
+	}
+	if _, err := rt.Store.Load("fork-gone"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("binding state should still be deleted")
+	}
 }
 
 func TestResumeRefusesRebindWhenSessionlessBuilderStillLives(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -631,5 +632,99 @@ func TestFilterReportRejectsAnUnknownName(t *testing.T) {
 	// Silence here would look identical to "that binding is fine".
 	if _, err := filterReport(rep, "nosuch"); err == nil {
 		t.Fatal("an unknown binding name must be an error, not an empty report")
+	}
+}
+
+func TestStatusHidesDoneUnlessAllOrNamed(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+
+	s := store.New(filepath.Join(tempHome, ".local", "state", "relay"))
+	if err := s.Save(store.Binding{
+		Name:  "active-bind",
+		CWD:   t.TempDir(),
+		Round: 1,
+		State: store.StateActive,
+	}); err != nil {
+		t.Fatalf("save active: %v", err)
+	}
+	if err := s.Save(store.Binding{
+		Name:  "done-bind",
+		CWD:   t.TempDir(),
+		Round: 2,
+		State: store.StateDone,
+	}); err != nil {
+		t.Fatalf("save done: %v", err)
+	}
+
+	execStatus := func(args ...string) ([]byte, relay.Report) {
+		t.Helper()
+		origStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		os.Stdout = w
+
+		runErr := run(append([]string{"status", "--json"}, args...))
+
+		w.Close()
+		os.Stdout = origStdout
+		out, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("io.ReadAll: %v", err)
+		}
+		if runErr != nil {
+			t.Fatalf("run status %v: %v", args, runErr)
+		}
+
+		var rep relay.Report
+		if err := json.Unmarshal(out, &rep); err != nil {
+			t.Fatalf("unmarshal %q: %v", string(out), err)
+		}
+		return out, rep
+	}
+
+	// 1. Plain status --json has one row and done_hidden: 1
+	outPlain, repPlain := execStatus()
+	if len(repPlain.Bindings) != 1 {
+		t.Fatalf("plain status: got %d bindings, want 1", len(repPlain.Bindings))
+	}
+	if repPlain.Bindings[0].Name != "active-bind" {
+		t.Errorf("plain status: binding = %q, want active-bind", repPlain.Bindings[0].Name)
+	}
+	if repPlain.DoneHidden != 1 {
+		t.Errorf("plain status: DoneHidden = %d, want 1", repPlain.DoneHidden)
+	}
+	if !strings.Contains(string(outPlain), `"done_hidden": 1`) {
+		t.Errorf("plain status json missing done_hidden: 1, got: %s", string(outPlain))
+	}
+
+	// 2. status --json --all has two rows and no done_hidden
+	outAll, repAll := execStatus("--all")
+	if len(repAll.Bindings) != 2 {
+		t.Fatalf("status --all: got %d bindings, want 2", len(repAll.Bindings))
+	}
+	if repAll.DoneHidden != 0 {
+		t.Errorf("status --all: DoneHidden = %d, want 0", repAll.DoneHidden)
+	}
+	if strings.Contains(string(outAll), "done_hidden") {
+		t.Errorf("status --all json should not contain done_hidden, got: %s", string(outAll))
+	}
+
+	// 3. status --json --name <done> has the done row and no done_hidden
+	outNamed, repNamed := execStatus("--name", "done-bind")
+	if len(repNamed.Bindings) != 1 {
+		t.Fatalf("status --name done-bind: got %d bindings, want 1", len(repNamed.Bindings))
+	}
+	if repNamed.Bindings[0].Name != "done-bind" {
+		t.Errorf("status --name done-bind: binding = %q, want done-bind", repNamed.Bindings[0].Name)
+	}
+	if repNamed.DoneHidden != 0 {
+		t.Errorf("status --name done-bind: DoneHidden = %d, want 0", repNamed.DoneHidden)
+	}
+	if strings.Contains(string(outNamed), "done_hidden") {
+		t.Errorf("status --name done-bind json should not contain done_hidden, got: %s", string(outNamed))
 	}
 }

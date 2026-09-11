@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -365,11 +366,13 @@ func builderPane(ctx context.Context, rt Runtime, opts BindOptions, agentName, p
 }
 
 // worktreeOutcome is what a teardown attempt decided about one binding's
-// relay-created worktree. All three fields empty means there was nothing to do.
+// relay-created worktree. Exactly one of Removed, Kept, Gone is set, or none
+// when the binding never had a worktree.
 type worktreeOutcome struct {
 	Removed string // worktree relay removed, or ""
 	Kept    string // worktree relay left in place, or ""
 	Reason  string // why it was kept; "" when nothing was kept
+	Gone    string // recorded worktree whose directory no longer exists, or ""
 }
 
 // worktreeTeardown decides what to do with a binding's relay-created worktree
@@ -379,9 +382,10 @@ type worktreeOutcome struct {
 // Rules, in order:
 //  1. b.Worktree == ""        -> nothing to do (zero outcome)
 //  2. rt.Git == nil           -> keep, reason "git unavailable"
-//  3. the dirty check errors    -> keep, reason naming the FAILED CHECK: "dirty check failed: " + brief(err)
-//  4. the tree is dirty         -> keep, reason "uncommitted changes"
-//  5. otherwise                 -> remove; on failure keep with the git error brief(err)
+//  3. stat(worktree) is ErrNotExist -> gone (the directory was already removed)
+//  4. the dirty check errors    -> keep, reason naming the FAILED CHECK: "dirty check failed: " + brief(err)
+//  5. the tree is dirty         -> keep, reason "uncommitted changes"
+//  6. otherwise                 -> remove; on failure keep with the git error brief(err)
 //
 // The branch is never removed: a branch holds commits, and commits are work.
 func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun bool) worktreeOutcome {
@@ -390,6 +394,12 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 	}
 	if rt.Git == nil {
 		return worktreeOutcome{Kept: b.Worktree, Reason: "git unavailable"}
+	}
+
+	// git classifies a chdir into a missing directory as a missing binary,
+	// which is the wrong diagnosis; the caller knows the path and checks it first.
+	if _, err := os.Stat(b.Worktree); errors.Is(err, os.ErrNotExist) {
+		return worktreeOutcome{Gone: b.Worktree}
 	}
 
 	dirty, err := rt.Git.Dirty(ctx, b.Worktree)
@@ -410,14 +420,16 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 	return worktreeOutcome{Removed: b.Worktree}
 }
 
-// UnbindResult is what unbinding actually did. A kept worktree is the important
-// case: it means the fork's tree still holds uncommitted work, so relay left it
-// alone and the human decides.
+// UnbindResult is what unbinding actually did. Exactly one of WorktreeRemoved,
+// WorktreeKept, WorktreeGone is set, or none when the binding never had a
+// worktree. A kept worktree is the important case: it means the fork's tree
+// still holds uncommitted work, so relay left it alone and the human decides.
 type UnbindResult struct {
 	ArchivedTo      string // archive path, or "" when deleted
 	WorktreeRemoved string // worktree relay removed, or ""
 	WorktreeKept    string // worktree relay refused to remove, or ""
 	KeptReason      string // why it was kept; "" when nothing was kept
+	WorktreeGone    string // recorded worktree whose directory no longer exists, or ""
 }
 
 // Unbind clears away one binding's state, leaving its herdr panes untouched.
@@ -438,6 +450,7 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	res.WorktreeRemoved = outcome.Removed
 	res.WorktreeKept = outcome.Kept
 	res.KeptReason = outcome.Reason
+	res.WorktreeGone = outcome.Gone
 
 	if archive {
 		dest, err := rt.Store.Archive(name)

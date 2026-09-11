@@ -502,3 +502,70 @@ func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
 		t.Errorf("rendered a zero consult count:\n%s", out)
 	}
 }
+
+func TestHideDoneRemovesOnlyDoneRows(t *testing.T) {
+	in := Report{
+		Bindings: []BindingStatus{
+			{Name: "first", State: string(store.StateActive)},
+			{Name: "second", State: string(store.StateDone)},
+			{Name: "third", State: string(store.StateBroken)},
+		},
+	}
+
+	got := HideDone(in)
+
+	if len(in.Bindings) != 3 {
+		t.Fatalf("HideDone modified input report: len = %d, want 3", len(in.Bindings))
+	}
+	if got.DoneHidden != 1 {
+		t.Errorf("DoneHidden = %d, want 1", got.DoneHidden)
+	}
+	if len(got.Bindings) != 2 {
+		t.Fatalf("got %d bindings, want 2", len(got.Bindings))
+	}
+	if got.Bindings[0].Name != "first" || got.Bindings[1].Name != "third" {
+		t.Errorf("bindings = %+v, want first and third in original order", got.Bindings)
+	}
+}
+
+func TestRenderStatusFooterCountsHidden(t *testing.T) {
+	cases := []struct {
+		hidden    int
+		wantSub   string
+		wantNoSub string
+	}{
+		{hidden: 3, wantSub: "3 done · relay gc to clear"},
+		{hidden: 1, wantSub: "1 done · relay gc to clear"},
+		{hidden: 0, wantNoSub: "done ·"},
+	}
+
+	for _, tc := range cases {
+		r := Report{
+			Bindings: []BindingStatus{
+				{Name: "live", CWD: "/repo", Workspace: "w1", Round: 1, Display: "ACTIVE"},
+			},
+			DoneHidden: tc.hidden,
+		}
+		out := RenderStatus(r)
+		if tc.wantSub != "" && !strings.Contains(out, tc.wantSub) {
+			t.Errorf("hidden=%d: RenderStatus output missing %q:\n%s", tc.hidden, tc.wantSub, out)
+		}
+		if tc.wantNoSub != "" && strings.Contains(out, tc.wantNoSub) {
+			t.Errorf("hidden=%d: RenderStatus output should not contain %q:\n%s", tc.hidden, tc.wantNoSub, out)
+		}
+	}
+}
+
+func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
+	r := Report{
+		Bindings:   nil,
+		DoneHidden: 2,
+	}
+	out := RenderStatus(r)
+	if !strings.Contains(out, "2 done · relay gc to clear") {
+		t.Errorf("RenderStatus output missing footer:\n%s", out)
+	}
+	if strings.Contains(out, "no bindings") {
+		t.Errorf("RenderStatus output should not contain 'no bindings':\n%s", out)
+	}
+}

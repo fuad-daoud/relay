@@ -71,6 +71,10 @@ type PendingInfo struct {
 // Report is the whole status surface.
 type Report struct {
 	Bindings []BindingStatus `json:"bindings"`
+	// DoneHidden is the number of DONE rows HideDone removed; zero and absent
+	// whenever nothing was filtered, so a consumer that never learned the
+	// field sees the document it always did.
+	DoneHidden int `json:"done_hidden,omitempty"`
 }
 
 // Status derives every row live from herdr, so it cannot disagree with reality.
@@ -176,9 +180,32 @@ func displayState(s store.State) string {
 	}
 }
 
+// HideDone returns a copy of r excluding every binding whose state is DONE.
+// The order of the remaining bindings is preserved. DoneHidden is set to
+// the count of removed bindings. The input report is not modified.
+func HideDone(r Report) Report {
+	out := Report{
+		Bindings:   make([]BindingStatus, 0, len(r.Bindings)),
+		DoneHidden: 0,
+	}
+	for _, b := range r.Bindings {
+		if b.State == string(store.StateDone) {
+			out.DoneHidden++
+		} else {
+			out.Bindings = append(out.Bindings, b)
+		}
+	}
+	return out
+}
+
 // RenderStatus formats a Report for a terminal.
 func RenderStatus(r Report) string {
 	if len(r.Bindings) == 0 {
+		if r.DoneHidden > 0 {
+			// The footer says "clear" and not "free": gc frees disk only for
+			// relay-created worktrees, and the footer must not overpromise.
+			return fmt.Sprintf("%d done · relay gc to clear\n", r.DoneHidden)
+		}
 		return "no bindings\n"
 	}
 
@@ -227,6 +254,12 @@ func RenderStatus(r Report) string {
 		} else {
 			fmt.Fprint(&sb, "  pending  --\n\n")
 		}
+	}
+
+	if r.DoneHidden > 0 {
+		// The footer says "clear" and not "free": gc frees disk only for
+		// relay-created worktrees, and the footer must not overpromise.
+		fmt.Fprintf(&sb, "%d done · relay gc to clear\n", r.DoneHidden)
 	}
 
 	return sb.String()

@@ -48,9 +48,9 @@ Commands:
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
   answer    answer a builder that is blocked at a dialog
-  status    one row per binding: round, state, live pane status, what is pending
+  status    one row per binding: round, state, live pane status, what is pending [--all]
   log       print a binding's append-only round log
-  watch     status, redrawn on a timer
+  watch     status, redrawn on a timer [--all]
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops
   unbind    forget a binding, deleting or archiving its directory
@@ -519,6 +519,8 @@ func cmdUnbind(args []string) error {
 	} else if res.WorktreeKept != "" {
 		fmt.Printf("kept worktree %s (%s)\n  remove by hand: git -C %s worktree remove %s\n",
 			res.WorktreeKept, res.KeptReason, res.WorktreeKept, res.WorktreeKept)
+	} else if res.WorktreeGone != "" {
+		fmt.Printf("worktree %s was already gone\n", res.WorktreeGone)
 	}
 
 	return nil
@@ -526,11 +528,18 @@ func cmdUnbind(args []string) error {
 
 func cmdGC(args []string) error {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
-	archive := fs.Bool("archive", false, "archive each finished binding instead of deleting it")
+	delete := fs.Bool("delete", false, "remove each finished binding's directory instead of archiving it")
+	// --archive is kept as an accepted, ignored flag so scripts written against the old default do not break; archiving is now the default (spec §7.3).
+	archive := fs.Bool("archive", false, "no-op; archiving is now the default")
 	dryRun := fs.Bool("dry-run", false, "list what would be cleared, change nothing")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: relay gc [--dry-run] [--delete]")
+		fs.PrintDefaults()
+	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	_ = archive
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -538,8 +547,8 @@ func cmdGC(args []string) error {
 	}
 
 	done, err := relay.GC(context.Background(), rt, relay.GCOptions{
-		Archive: *archive,
-		DryRun:  *dryRun,
+		Delete: *delete,
+		DryRun: *dryRun,
 	})
 	if err != nil {
 		return err
@@ -558,6 +567,8 @@ func cmdGC(args []string) error {
 				wtMsg = fmt.Sprintf(" (worktree %s would be removed)", r.WorktreeRemoved)
 			} else if r.WorktreeKept != "" {
 				wtMsg = fmt.Sprintf(" (worktree %s kept: %s)", r.WorktreeKept, r.KeptReason)
+			} else if r.WorktreeGone != "" {
+				wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
 			}
 			fmt.Printf("would clear %-10s %s (%d rounds)%s\n", r.Name, r.CWD, r.Rounds, wtMsg)
 		case r.ArchivedTo != "":
@@ -567,6 +578,8 @@ func cmdGC(args []string) error {
 			} else if r.WorktreeKept != "" {
 				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
 					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
+			} else if r.WorktreeGone != "" {
+				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
 			}
 		default:
 			fmt.Printf("deleted     %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
@@ -575,6 +588,8 @@ func cmdGC(args []string) error {
 			} else if r.WorktreeKept != "" {
 				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
 					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
+			} else if r.WorktreeGone != "" {
+				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
 			}
 		}
 	}
@@ -920,6 +935,7 @@ func filterReport(rep relay.Report, name string) (relay.Report, error) {
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relay gc clears them)")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	name := fs.String("name", "", "show only this binding (default: all)")
 	if err := parseFlags(fs, args); err != nil {
@@ -943,6 +959,10 @@ func cmdStatus(args []string) error {
 	rep, err = filterReport(rep, target)
 	if err != nil {
 		return err
+	}
+
+	if target == "" && !*all {
+		rep = relay.HideDone(rep)
 	}
 
 	if *asJSON {
@@ -986,6 +1006,7 @@ func cmdLog(args []string) error {
 
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relay gc clears them)")
 	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -1009,6 +1030,9 @@ func cmdWatch(args []string) error {
 				return nil // Ctrl-C landed mid-query; that is a clean exit
 			}
 			return err
+		}
+		if !*all {
+			rep = relay.HideDone(rep)
 		}
 		fmt.Print("\033[H\033[2J", relay.RenderStatus(rep))
 
@@ -1062,7 +1086,7 @@ func cmdDone(args []string) error {
 		return err
 	}
 
-	fmt.Printf("%s marked done; relaying stopped\n", target)
+	fmt.Printf("%s marked done; relaying stopped (relay gc archives it when you are finished with it)\n", target)
 	return nil
 }
 

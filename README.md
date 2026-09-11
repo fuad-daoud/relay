@@ -179,10 +179,10 @@ inside every pane it manages, so it has to be run from inside one.
   can false-positive and the gap between the notice and your answer is
   unbounded. If you genuinely mean to type into a running agent, that is
   `herdr agent send-keys <pane> <keys>`, not relay.
-- `relay status [NAME|--name N] [--json]` — one row per binding: round, display state, both
-  panes' live herdr status, the last relayed event, and anything pending. Naming a binding shows only that one.
+- `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
+  panes' live herdr status, the last relayed event, and anything pending. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
-- `relay watch [--interval D]` — `status`, redrawn on a timer, default 2s.
+- `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
 - `relay add --name N --builder ALIAS [--tab] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
@@ -195,8 +195,8 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first.
 
-- `relay gc [--dry-run] [--archive]` — clear every binding the planner marked
-  `DONE`, in one pass.
+- `relay gc [--dry-run] [--delete]` — clear every binding the planner marked
+  `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relay gc --archive` is accepted as a no-op).
 - `relay daemon [--interval D]` — the long-running reconciler; this is what
   the service unit runs.
 - `relay help` — the command list. `relay <command> -h` prints that command's
@@ -309,11 +309,11 @@ nothing — the log is the record of what the planner actually told the builder.
 ```
 relay unbind ai              # delete the binding and its whole directory
 relay unbind ai --archive    # pack it into .archive/ai-<date>.tar.gz, keeping the log
-relay gc --dry-run           # list every DONE binding that would be cleared
-relay gc --archive           # archive them all in one go
+relay gc                     # archive every DONE binding into .archive/
+relay gc --delete            # remove them instead
 ```
 
-Archives are gzipped tarballs under `~/.local/state/relay/.archive/`. A typical
+Archives are gzipped tarballs under `~/.local/state/relay/.archive/`. Archiving is the default because every other destruction decision in relay keeps by default. A typical
 eight-round binding compresses about 60x — a thousand of them is under 2 MB — so
 archiving is effectively free. To read one back:
 
