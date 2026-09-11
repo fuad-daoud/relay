@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -36,7 +35,6 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 		Herdr:      f,
 		Git:        g,
 		Store:      store.New(t.TempDir()),
-		Aliases:    alias.DefaultTable(),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Now:        func() time.Time { return baseTime },
 		Hooks:      hd,

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -23,7 +22,6 @@ func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 	return Runtime{
 		Herdr:      f,
 		Store:      store.New(t.TempDir()),
-		Aliases:    alias.DefaultTable(),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Now:        func() time.Time { return baseTime },
 	}

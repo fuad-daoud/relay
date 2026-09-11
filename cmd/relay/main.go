@@ -59,6 +59,7 @@ Commands:
   reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
+  candidates   list the configured harness/provider/model candidates
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
   help      print this message
   version   print the relay version
@@ -205,6 +206,8 @@ func run(args []string) error {
 		return cmdDaemon(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
+	case "candidates":
+		return cmdCandidates(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
 	default:
@@ -312,6 +315,21 @@ func noteConsultRolesTooLong(name string) {
 // always has a '/'. A model name may contain ':', so ':' alone is not enough.
 func isPaneID(s string) bool {
 	return strings.Contains(s, ":") && !strings.Contains(s, "/")
+}
+
+func cmdCandidates(args []string) error {
+	fs := flag.NewFlagSet("candidates", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(relay.FormatCandidates(rt.Candidates))
+	return nil
 }
 
 func cmdBind(args []string) error {
