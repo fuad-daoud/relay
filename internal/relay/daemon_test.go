@@ -193,7 +193,7 @@ func TestRunSurvivesFailingTick(t *testing.T) {
 // TestNewDaemonFloorsInterval guards the floor by inspection made concrete:
 // a misconfigured (zero or negative) interval must not spin the herdr socket.
 func TestNewDaemonFloorsInterval(t *testing.T) {
-	rt := Runtime{LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
+	rt := Runtime{LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
 
 	if d := NewDaemon(rt, 0); d.interval != minInterval {
 		t.Errorf("zero interval -> %s, want floor %s", d.interval, minInterval)

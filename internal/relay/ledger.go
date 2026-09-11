@@ -8,9 +8,21 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// providerOf resolves a candidate token to its provider, or "" if the token
+// does not parse. It is the one place Gates and appendEntryLocked's history
+// mirror agree on what a token's provider is.
+func providerOf(tok string) string {
+	r, err := candidate.ParseRef(tok)
+	if err != nil {
+		return ""
+	}
+	return r.Provider
+}
 
 // SpawnFailedCooldown is how long a spawn failure gates its candidate. A
 // constant, not config: a failed StartAgent is nearly always a pane race
@@ -43,49 +55,73 @@ func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error 
 	return ledger.Save(rt.LedgerPath, l)
 }
 
+// appendEntryLocked commits one observation: the ledger entry that gates,
+// then its mirror in the history that remembers (#61 step 7). The caller
+// holds the store lock. A history failure is printed and dropped -- the
+// ledger write is the one that matters, and it already happened.
+func appendEntryLocked(rt Runtime, e ledger.Entry) error {
+	if err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger { return l.Append(e) }); err != nil {
+		return err
+	}
+	h, err := history.Load(rt.HistoryPath)
+	if err == nil {
+		err = history.Save(rt.HistoryPath, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: could not record history: %v\n", err)
+	}
+	return nil
+}
+
 // recordSpawnFailureWith notes that relay failed to start token's process
-// for binding, committing the record through mutate -- mutateLedger (takes
-// the state lock) or mutateLedgerLocked (caller already holds it).
-// recordSpawnFailure and recordSpawnFailureLocked are this function with
-// each mutate function threaded through, so the two never drift on what a
+// for binding, committing the record through appendEntryLocked -- taking the
+// state lock itself when !locked, or running directly when the caller
+// already holds it. recordSpawnFailure and recordSpawnFailureLocked are this
+// function with locked threaded through, so the two never drift on what a
 // spawn failure looks like or on the never-returns-an-error rule.
 //
 // It never returns an error: a failed bookkeeping write must not mask the
 // spawn error the caller is about to return, so a write failure is printed
 // to stderr and dropped instead (spec §4.1).
-func recordSpawnFailureWith(rt Runtime, mutate func(Runtime, func(ledger.Ledger) ledger.Ledger) error, token, binding string, cause error) {
+func recordSpawnFailureWith(rt Runtime, locked bool, token, binding string, cause error) {
 	now := rt.Now()
-	err := mutate(rt, func(l ledger.Ledger) ledger.Ledger {
-		return l.Append(ledger.Entry{
-			Kind:    ledger.SpawnFailed,
-			Subject: token,
-			At:      now,
-			Until:   now.Add(SpawnFailedCooldown),
-			Note:    cause.Error(),
-			Source:  "relay",
-			Binding: binding,
-		})
-	})
+	entry := ledger.Entry{
+		Kind:    ledger.SpawnFailed,
+		Subject: token,
+		At:      now,
+		Until:   now.Add(SpawnFailedCooldown),
+		Note:    cause.Error(),
+		Source:  "relay",
+		Binding: binding,
+	}
+	commit := func() error { return appendEntryLocked(rt, entry) }
+
+	var err error
+	if locked {
+		err = commit()
+	} else {
+		err = rt.Store.WithLock(func(*store.Tx) error { return commit() })
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not record spawn failure: %v\n", err)
 	}
 }
 
 // recordSpawnFailure notes that relay failed to start token's process for
-// binding. It takes the state lock itself (via mutateLedger); a caller that
-// already holds it must use recordSpawnFailureLocked instead, or this
-// function deadlocks re-entering the lock (#61 step 6).
+// binding. It takes the state lock itself; a caller that already holds it
+// must use recordSpawnFailureLocked instead, or this function deadlocks
+// re-entering the lock (#61 step 6).
 func recordSpawnFailure(rt Runtime, token, binding string, cause error) {
-	recordSpawnFailureWith(rt, mutateLedger, token, binding, cause)
+	recordSpawnFailureWith(rt, false, token, binding, cause)
 }
 
 // recordSpawnFailureLocked is recordSpawnFailure for a caller that already
 // holds the state lock: switchBuilder, reached through resolveBuilder's tx
 // parameter when a switch's replacement spawn fails (#61 step 6). Same
-// record, same never-returns-an-error contract, just committed through
-// mutateLedgerLocked instead of re-taking Store.WithLock.
+// record, same never-returns-an-error contract, just committed directly
+// instead of re-taking Store.WithLock.
 func recordSpawnFailureLocked(rt Runtime, token, binding string, cause error) {
-	recordSpawnFailureWith(rt, mutateLedgerLocked, token, binding, cause)
+	recordSpawnFailureWith(rt, true, token, binding, cause)
 }
 
 // Unavailable records that token's provider is rate-limited, so every
@@ -102,16 +138,15 @@ func Unavailable(rt Runtime, token string, until time.Time, reason string) (prov
 	}
 
 	now := rt.Now()
-	if err := mutateLedger(rt, func(l ledger.Ledger) ledger.Ledger {
-		return l.Append(ledger.Entry{
-			Kind:    ledger.RateLimited,
-			Subject: ref.Provider,
-			At:      now,
-			Until:   until,
-			Note:    reason,
-			Source:  "planner",
-		})
-	}); err != nil {
+	entry := ledger.Entry{
+		Kind:    ledger.RateLimited,
+		Subject: ref.Provider,
+		At:      now,
+		Until:   until,
+		Note:    reason,
+		Source:  "planner",
+	}
+	if err := rt.Store.WithLock(func(*store.Tx) error { return appendEntryLocked(rt, entry) }); err != nil {
 		return "", err
 	}
 
@@ -156,14 +191,6 @@ func Gates(rt Runtime) []ledger.Gate {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not read ledger: %v\n", err)
 		return nil
-	}
-
-	providerOf := func(tok string) string {
-		r, err := candidate.ParseRef(tok)
-		if err != nil {
-			return ""
-		}
-		return r.Provider
 	}
 
 	return ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())

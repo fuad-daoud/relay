@@ -20,11 +20,12 @@ var baseTime = time.Unix(1757000000, 0).UTC()
 func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 	t.Helper()
 	return Runtime{
-		Herdr:      f,
-		Store:      store.New(t.TempDir()),
-		Candidates: candidateSet(t, testCandidatesJSON),
-		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
-		Now:        func() time.Time { return baseTime },
+		Herdr:       f,
+		Store:       store.New(t.TempDir()),
+		Candidates:  candidateSet(t, testCandidatesJSON),
+		LedgerPath:  filepath.Join(t.TempDir(), "ledger.json"),
+		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
+		Now:         func() time.Time { return baseTime },
 	}
 }
 

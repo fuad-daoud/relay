@@ -50,6 +50,9 @@ type Runtime struct {
 	Candidates *candidate.Set
 	LedgerPath string // the availability ledger file (#61 step 1)
 
+	// HistoryPath is the availability history file (#61 step 7).
+	HistoryPath string
+
 	// Policy is ~/.config/relay/policy.json: the planner's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so
 	// tests that do not set it behave as a machine with no policy file.

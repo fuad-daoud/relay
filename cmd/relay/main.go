@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -290,14 +291,15 @@ func newRuntime() (relay.Runtime, error) {
 	st := store.New(root)
 
 	return relay.Runtime{
-		Herdr:      herdr.NewClient("herdr", 30*time.Second),
-		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:      st,
-		Candidates: candidates,
-		LedgerPath: st.LedgerPath(),
-		Policy:     pol,
-		Now:        time.Now,
-		Hooks:      dispatcher,
+		Herdr:       herdr.NewClient("herdr", 30*time.Second),
+		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Store:       st,
+		Candidates:  candidates,
+		LedgerPath:  st.LedgerPath(),
+		HistoryPath: st.HistoryPath(),
+		Policy:      pol,
+		Now:         time.Now,
+		Hooks:       dispatcher,
 	}, nil
 }
 
@@ -372,6 +374,18 @@ func cmdCandidates(args []string) error {
 	return nil
 }
 
+// loadHistory reads the availability history for display, treating an
+// unreadable file as empty after one stderr line -- the same rule Gates
+// applies to the ledger.
+func loadHistory(rt relay.Runtime) history.History {
+	h, err := history.Load(rt.HistoryPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: could not read history: %v\n", err)
+		return history.History{}
+	}
+	return h.Prune(rt.Now())
+}
+
 func cmdPolicy(args []string) error {
 	fs := flag.NewFlagSet("policy", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {
@@ -383,7 +397,7 @@ func cmdPolicy(args []string) error {
 		return err
 	}
 
-	fmt.Print(relay.FormatPolicy(rt.Candidates, rt.Policy, relay.Gates(rt)))
+	fmt.Print(relay.FormatPolicy(rt.Candidates, rt.Policy, relay.Gates(rt), loadHistory(rt), rt.Now(), time.Local))
 	return nil
 }
 

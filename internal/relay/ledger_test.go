@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -24,6 +25,16 @@ func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
 		t.Fatalf("Load ledger: %v", err)
 	}
 	return l
+}
+
+// loadHistory reads the runtime's history for assertions.
+func loadHistory(t *testing.T, rt Runtime) history.History {
+	t.Helper()
+	h, err := history.Load(rt.HistoryPath)
+	if err != nil {
+		t.Fatalf("Load history: %v", err)
+	}
+	return h
 }
 
 func TestBindRecordsASpawnFailure(t *testing.T) {
@@ -493,6 +504,133 @@ func TestMutateLedgerPrunes(t *testing.T) {
 	}
 	if l.Entries[0].Subject != "test" {
 		t.Errorf("remaining entry subject = %q, want test", l.Entries[0].Subject)
+	}
+}
+
+func TestUnavailableRecordsHistory(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
+	}
+
+	h := loadHistory(t, rt)
+	if len(h.Events) != 1 {
+		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
+	}
+	want := history.Event{Kind: ledger.RateLimited, Provider: "test", Token: "", Source: "planner", Note: "5h window", At: baseTime}
+	if h.Events[0] != want {
+		t.Errorf("history event = %+v, want %+v", h.Events[0], want)
+	}
+}
+
+func TestSpawnFailureRecordsHistory(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", startErr: errors.New("agent start: exit 1")}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err == nil {
+		t.Fatal("expected Bind to fail when StartAgent fails")
+	}
+
+	h := loadHistory(t, rt)
+	if len(h.Events) != 1 {
+		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
+	}
+	e := h.Events[0]
+	if e.Kind != ledger.SpawnFailed || e.Provider != "test" || e.Token != testAgyRef || e.Binding != "webshop" || e.Source != "relay" {
+		t.Errorf("history event = %+v, want SpawnFailed for provider test, token %q, binding webshop, source relay", e, testAgyRef)
+	}
+	if !strings.Contains(e.Note, "agent start") {
+		t.Errorf("Note = %q, want it to contain %q", e.Note, "agent start")
+	}
+}
+
+// TestSwitchSpawnFailureRecordsHistory mirrors
+// TestRecordSpawnFailureLockedUnderHeldLock's already-held-lock setup, since
+// that is the daemon-switch path recordSpawnFailureLocked serves.
+func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- rt.Store.WithLock(func(*store.Tx) error {
+			recordSpawnFailureLocked(rt, testAgyRef, "webshop", errors.New("boom"))
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WithLock: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlocked")
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
+	}
+
+	h := loadHistory(t, rt)
+	if len(h.Events) != 1 {
+		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
+	}
+	if h.Events[0].Kind != ledger.SpawnFailed || h.Events[0].Token != testAgyRef {
+		t.Errorf("history event = %+v, want SpawnFailed for %q", h.Events[0], testAgyRef)
+	}
+}
+
+func TestAvailableLeavesHistory(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	if _, _, err := Available(rt, "test"); err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 0 {
+		t.Errorf("got %d ledger entries, want 0: %+v", len(l.Entries), l.Entries)
+	}
+
+	h := loadHistory(t, rt)
+	if len(h.Events) != 1 {
+		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
+	}
+}
+
+func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.HistoryPath = filepath.Join(blocker, "history.json")
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
 	}
 }
 
