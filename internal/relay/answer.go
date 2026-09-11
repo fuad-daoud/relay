@@ -65,6 +65,25 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 		if !ok {
 			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
 		}
+
+		// Refuse unless herdr still reports the builder blocked. relay sets
+		// NEEDS YOU and prints an answer instruction whenever herdr's screen
+		// detection fires, including on a false positive (#55), and the
+		// planner is a model following that instruction -- so the guard has to
+		// be here, where the keystrokes are, not in the prose.
+		//
+		// This deliberately uses the list fetched above rather than the
+		// daemon's snapshot: the window between the notification and the
+		// answer is unbounded, and a genuine block may have resolved itself
+		// while the human was reading.
+		//
+		// No --force. Anyone who really means to type into a running agent has
+		// `herdr agent send-keys <pane> <keys>`; relay does not need an escape
+		// hatch whose only purpose is to defeat the guard it just added.
+		if builder.Status != herdr.StatusBlocked {
+			return fmt.Errorf("binding %q (pane %s): herdr reports the builder %s: %w",
+				name, builder.PaneID, builder.Status, ErrBuilderNotBlocked)
+		}
 		locatedBuilder = true
 	}
 

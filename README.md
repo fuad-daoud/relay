@@ -174,7 +174,11 @@ inside every pane it manages, so it has to be run from inside one.
   builder that's blocked at a dialog, via `send-keys` rather than a typed
   prompt (herdr refuses `agent prompt` against a blocked agent). The binding
   is **required**: answering types a key into a live dialog, so relay will not
-  guess which builder you meant.
+  guess which builder you meant. relay also re-checks that herdr still reports
+  the builder `blocked` and refuses otherwise, because herdr's screen detection
+  can false-positive and the gap between the notice and your answer is
+  unbounded. If you genuinely mean to type into a running agent, that is
+  `herdr agent send-keys <pane> <keys>`, not relay.
 - `relay status [NAME|--name N] [--json]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, and anything pending. Naming a binding shows only that one.
 - `relay log NAME` — the binding's append-only round log.

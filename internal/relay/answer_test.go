@@ -12,6 +12,7 @@ import (
 func TestAnswerSendsKeysNotAPrompt(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := seedBound(t, f)
+	setBuilderStatus(f, herdr.StatusBlocked)
 	f.prompts = nil
 
 	if err := Answer(context.Background(), rt, b.Name, AnswerInput{Keys: "enter"}); err != nil {
@@ -29,6 +30,7 @@ func TestAnswerSendsKeysNotAPrompt(t *testing.T) {
 func TestAnswerChoiceBecomesADigitKey(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := seedBound(t, f)
+	setBuilderStatus(f, herdr.StatusBlocked)
 
 	if err := Answer(context.Background(), rt, b.Name, AnswerInput{Choice: 2}); err != nil {
 		t.Fatalf("Answer: %v", err)
@@ -41,6 +43,7 @@ func TestAnswerChoiceBecomesADigitKey(t *testing.T) {
 func TestAnswerLogsTheAnswer(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := seedBound(t, f)
+	setBuilderStatus(f, herdr.StatusBlocked)
 
 	if err := Answer(context.Background(), rt, b.Name, AnswerInput{Keys: "esc"}); err != nil {
 		t.Fatalf("Answer: %v", err)
@@ -71,6 +74,7 @@ func TestAnswerRequiresExactlyOneInput(t *testing.T) {
 func TestAnswerAddressesTheLocatedPane(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
+	setBuilderStatus(f, herdr.StatusBlocked)
 
 	if err := Answer(context.Background(), rt, "webshop", AnswerInput{Choice: 2}); err != nil {
 		t.Fatalf("Answer: %v", err)
