@@ -617,8 +617,13 @@ Read-only is a property of the role's configuration — the definition pins a
 read-only tool set and the candidate's `tree` decides where it runs — not
 something relay enforces. On agy the definition's `tools:` allowlist makes it
 a property the harness enforces: a write tool that is not listed is not
-offered. relay cannot observe writes; it reports what is in a tree and no
-more. Note also that `reviewer` is deliberately not the `researcher`
+offered. The list is also load-bearing the other way: a definition with no
+`tools:` gets no write or shell tool at all, and one naming a tool agy does
+not have does not start -- so every agy definition relay ships carries an
+explicit, verified list, and `relay doctor` warns when the installed agy
+copy differs from it (on claude and opencode the copy is yours to edit, and
+doctor leaves it alone). relay cannot observe writes; it reports what is in a tree
+and no more. Note also that `reviewer` is deliberately not the `researcher`
 role: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs in its own relay pane and hands
 back a file path.

@@ -77,6 +77,17 @@ mainAgent: true
 subagent: false
 model: inherit
 commandExecutionPolicy: auto
+tools:
+  - view_file
+  - grep_search
+  - find_by_name
+  - list_dir
+  - run_command
+  - write_to_file
+  - replace_file_content
+  - multi_replace_file_content
+  - invoke_subagent
+  - manage_subagents
 ---
 
 # System Prompt
@@ -170,3 +181,14 @@ Your final report must include:
 `invoke_subagent`. A plan-executor dispatched by another plan-executor is a
 second writer in one tree; relay forbids that in prose on every harness and
 by configuration on this one.
+
+# Why the tools list is this
+
+On agy a definition without `tools:` does not get every tool; it gets a
+read-mostly default with no write, no shell and no `invoke_subagent`, which
+is a builder that cannot build. The list above is the writer's set: read,
+search, edit, write, shell, and `invoke_subagent`/`manage_subagents` for
+dispatching and collecting `researcher` sub-agents. Nothing browser-, web-,
+or scheduling-shaped is offered because a plan never asks for it. An
+unknown name in this list stops the agent from starting at all, so every
+entry is one agy 1.2.1 resolves.

@@ -370,17 +370,30 @@ sub-agent by another plan-executor is a second writer in the tree. On claude
 and opencode this is prose in the definition; on agy it is a switch the
 harness enforces. The pin test keeps checking the prose too, on all three.
 
-### 7.4 researcher and reviewer carry a `tools` allowlist
+### 7.4 Every agy definition carries a `tools` allowlist
 
-The list is every read-only tool agy 1.2.1 exposes and no write, edit,
-delete, or `invoke_subagent` tool. The agy docs name `view_file`,
-`grep_search`, `run_command` in their example; the full read-only set is
-enumerated in plan step 1 from a live agy session, and the definitions use
-exactly those names. `run_command` is included with
-`commandExecutionPolicy: sandbox` because both roles need `git diff` and
-`git log`; step 1 also confirms sandbox mode refuses a write to the tree.
-Rationale: read-only by allowlist is the strongest form relay can get, and
-relay ships the strongest form it can get.
+- Observed on agy 1.2.1 (2026-09-11): a definition in
+  `~/.gemini/config/agents/` with no `tools:` gets a read-mostly default with
+  no write, no `run_command`, no `invoke_subagent` (#91). One with `tools:`
+  gets exactly that list plus `send_message` and `manage_task`. One naming a
+  tool the registry does not have fails at `failed to construct executor`,
+  so the agent never starts. A definition in a workspace `.agents/agents/`
+  directory ignores `tools:` entirely; relay does not install there.
+- Therefore all three definitions carry an explicit list. `plan-executor`
+  lists the writer's set (read, search, `write_to_file`,
+  `replace_file_content`, `multi_replace_file_content`, `run_command`,
+  `invoke_subagent`, `manage_subagents`). `researcher` and `reviewer` list
+  `view_file grep_search find_by_name list_dir run_command`;
+  `view_file_outline`, `view_code_item`, `command_status`, `read_terminal`
+  were in the original list and do not resolve.
+- `TestAgyAllowlistsResolve` pins every listed name to a set confirmed from
+  a live run; the stream-json `init` event's `tools` array is not that set.
+- `relay doctor` warns when an installed definition differs from the
+  shipped one, so a fix to a definition is not silently absent from the
+  machine, on agy only -- a kind whose definition relay owns because
+  `model:` must stay `inherit`. On claude and opencode the installed copy
+  is the user's to edit (the README tells them to repin `model:`), and
+  doctor does not compare it.
 
 ### 7.5 No preamble, on any kind, on any round
 
@@ -412,13 +425,24 @@ pure function that reads the embed FS and does not reach herdr.
   `plan-executor.agy.md`, this test fails.
 - `TestAgyDefinitionsFrontmatter`: for each agy doc, frontmatter has
   `name:` equal to the role, `model: inherit`; plan-executor has
-  `subagent: false`; researcher and reviewer have a non-empty `tools:` list
-  containing no entry matching `write|edit|delete|invoke_subagent`. Mutation:
-  add `write_to_file` to researcher's list, this test fails.
+  `subagent: false` and a `tools:` list containing `write_to_file`,
+  `replace_file_content`, `run_command`, `invoke_subagent`; researcher and
+  reviewer have a non-empty `tools:` list containing no entry matching
+  `write|edit|delete|invoke_subagent`. Mutation: add `write_to_file` to
+  researcher's list, this test fails.
+- `TestAgyAllowlistsResolve`: every name in every agy definition's `tools:`
+  list is in `agyKnownTools`. Mutation: add `view_file_outline` to
+  researcher's list, this test fails.
 - `doctor`: agy with all three files present and `inherit` -> three OK rows;
   one file pinning `pro` -> one Warn row naming the fix; version `1.2.1` ->
   OK; `1.1.5` -> Fail; `garbage` -> Warn; probe error -> Warn ProbeFailed.
-  claude and opencode get no version row.
+  claude and opencode get no version row. An agy role file whose installed
+  bytes differ from what relay ships -> one Warn row naming the drift and
+  the `agent print` fix; identical bytes, or identical bytes plus a
+  trailing newline, -> OK. A claude definition that differs from shipped
+  stays OK -- the drift check runs only when `Role.ExpectModel != ""`, so
+  it never applies to claude or opencode; drop that guard and this
+  subtest fails alongside `TestDoctorClaudeRoleNeverWarnsOnAPin`.
 - `composePrompt`: round 1 on an agy binding returns the bare plan prompt;
   a post-rebind binding likewise. The fake candidate set is not consulted
   (assert the fake's lookup count is zero, or drop the fake).
