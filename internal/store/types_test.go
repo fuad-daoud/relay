@@ -46,6 +46,43 @@ func TestBindingRoundClosedTreeJSON(t *testing.T) {
 	})
 }
 
+func TestBindingSwitchFieldsRoundTrip(t *testing.T) {
+	t.Run("round trip", func(t *testing.T) {
+		s := New(t.TempDir())
+		want := newBinding("webshop", "/repo")
+		want.RoundSwitches = 2
+		want.BuilderMissingSince = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+		if err := s.Save(want); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		got, err := s.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.RoundSwitches != want.RoundSwitches || !got.BuilderMissingSince.Equal(want.BuilderMissingSince) {
+			t.Errorf("switch fields mismatch: got %+v, want %+v", got, want)
+		}
+	})
+
+	// Only RoundSwitches is checked for omission at zero: encoding/json's
+	// omitempty never treats a zero-value struct (time.Time) as empty, so
+	// BuilderMissingSince always serialises regardless of the tag -- the same
+	// reason BuilderScreenAt/PlannerScreenAt above carry an inert omitempty,
+	// and the reason NudgedAt on Consult drops the tag rather than promise a
+	// disappearance that never happens.
+	t.Run("zero omits round_switches", func(t *testing.T) {
+		b := Binding{}
+		data, err := json.Marshal(b)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if bytes.Contains(data, []byte("round_switches")) {
+			t.Errorf("empty binding serialised \"round_switches\"; field needs omitempty, got JSON: %s", string(data))
+		}
+	})
+}
+
 func TestBindingWithoutConsultsSerialisesWithoutTheKeys(t *testing.T) {
 	// Every bind.json already on disk was written before consults existed.
 	// Loading and re-saving one must not add keys to it.

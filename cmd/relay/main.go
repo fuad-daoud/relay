@@ -428,6 +428,13 @@ func cmdUnavailable(args []string) error {
 	}
 
 	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relay.GateUntilText(until))
+
+	if bs, err := rt.Store.List(); err == nil {
+		if names := relay.BindingsOnProvider(bs, provider); len(names) > 0 {
+			fmt.Printf("the daemon will switch: %s\n", strings.Join(names, ", "))
+		}
+	}
+
 	return nil
 }
 

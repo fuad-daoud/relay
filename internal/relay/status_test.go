@@ -675,6 +675,26 @@ func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
 	}
 }
 
+func TestRenderStatusShowsSwitches(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Round: 3, Switches: 1,
+	}}}
+
+	if out := RenderStatus(r); !strings.Contains(out, "switched 1x") {
+		t.Errorf("RenderStatus output missing switched 1x:\n%s", out)
+	}
+}
+
+func TestRenderStatusOmitsSwitchedWhenZero(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Round: 3, Switches: 0,
+	}}}
+
+	if out := RenderStatus(r); strings.Contains(out, "switched") {
+		t.Errorf("rendered a zero switch count:\n%s", out)
+	}
+}
+
 func TestHideDoneRemovesOnlyDoneRows(t *testing.T) {
 	in := Report{
 		Bindings: []BindingStatus{

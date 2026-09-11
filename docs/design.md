@@ -175,10 +175,11 @@ nothing is ordered. Each resolution is a `pick` entry in the binding's
 
 ### `log.jsonl` entry
 
-`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick",
+`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
    path, delivered_at, confirmed: bool, note }`
 
 A `pick` entry is relay -> log only: which candidate a spawn resolved to and why.
+A `switch` entry is relay -> log only: the builder was replaced mid-round, and why.
 
 ## Message protocol
 
@@ -296,7 +297,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 
 | Failure | Behaviour |
 | --- | --- |
-| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay kills a pane only in `relay reap`, and only a consult pane it spawned itself. |
+| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay closes a pane only in `relay reap` (a consult pane it spawned) and in a mid-round builder switch (the replaced builder's pane). |
 | Builder wedged (`working` forever) | `round_timeout_ms` elapses -> `needs_you` + notification. Nothing killed. |
 | herdr reports `unknown` | Treated as "keep waiting", **never** as done (herdr documents that `unknown` does not prove completion). After a grace period -> `needs_you`. Most likely with `abuilder`; see prerequisites. |
 | `agent_prompt_stalled` | Retry once, then stop and flag. Never blind-refire — a double-submitted plan means two builders' worth of edits. |
@@ -304,6 +305,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
 | Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
 | Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relay pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
+| Builder gone for 30s, or its provider gated mid-round | The daemon switches to the next ungated candidate in `policy.json` order, bounded by `max_switches`; see `docs/specs/2026-09-11-builder-switching-design.md`. |
 
 ## Decisions and rationale
 

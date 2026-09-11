@@ -26,6 +26,24 @@ type Policy struct {
 	// first. A role absent here is unordered, and the resolver refuses to
 	// choose among several candidates that serve it.
 	Order map[string][]string `json:"order,omitempty"`
+
+	// MaxSwitches is how many times the daemon may replace a builder within
+	// one round before the binding goes NEEDS YOU; nil is DefaultMaxSwitches;
+	// 0 disables switching.
+	MaxSwitches *int `json:"max_switches,omitempty"`
+}
+
+// DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
+// replacements cover "the first pick was gated and the second failed to
+// spawn"; a third in one round is a pattern a human should see.
+const DefaultMaxSwitches = 2
+
+// SwitchLimit is MaxSwitches with the default applied.
+func (p Policy) SwitchLimit() int {
+	if p.MaxSwitches == nil {
+		return DefaultMaxSwitches
+	}
+	return *p.MaxSwitches
 }
 
 // Load reads and validates a policy file. A missing file is the zero Policy
@@ -48,6 +66,10 @@ func Load(path string) (Policy, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
 		return Policy{}, fmt.Errorf("%s: %v: %w", path, err, ErrBadPolicy)
+	}
+
+	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
+		return Policy{}, fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
 	}
 
 	roles := make([]string, 0, len(p.Order))

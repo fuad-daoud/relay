@@ -85,6 +85,10 @@ func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	b.RoundSwitches = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	got, err := reconcile(t, rt, b, agents)
@@ -101,6 +105,9 @@ func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
 	}
 	if got.HaltNotifiedRound != 0 {
 		t.Errorf("HaltNotifiedRound = %d, want 0 on a fresh round", got.HaltNotifiedRound)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 on a fresh round", got.RoundSwitches)
 	}
 
 	pending, found, err := rt.Store.PendingForPlanner("webshop")

@@ -55,6 +55,9 @@ type BindingStatus struct {
 	// Consults is how many consults are reserved or running on this binding.
 	// Terminal ones are omitted: they are a reap chore, not work in flight.
 	Consults int `json:"consults,omitempty"`
+	// Switches is builder switches in the current round (#61 step 6); zero is
+	// omitted.
+	Switches int `json:"switches,omitempty"`
 }
 
 // LastEvent is the most recent relayed message, carried as data rather than
@@ -168,6 +171,7 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         runningConsults(b),
+		Switches:         b.RoundSwitches,
 		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
@@ -373,8 +377,12 @@ func RenderStatus(r Report) string {
 		}
 		fmt.Fprintf(&sb, "  planner  %-14s %-8s %s%s\n",
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
-		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`\n",
+		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
 			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+		if b.Switches > 0 {
+			fmt.Fprintf(&sb, "   switched %dx", b.Switches)
+		}
+		fmt.Fprint(&sb, "\n")
 		for _, fa := range b.Foreign {
 			loc := ""
 			if fa.CWD != b.CWD {

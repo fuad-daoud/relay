@@ -129,6 +129,61 @@ func TestLoadErrors(t *testing.T) {
 	}
 }
 
+func TestSwitchLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		want     int
+		wantErr  bool
+		contains []string
+	}{
+		{name: "absent defaults", body: `{}`, want: DefaultMaxSwitches},
+		{name: "zero disables switching", body: `{"max_switches":0}`, want: 0},
+		{name: "positive", body: `{"max_switches":5}`, want: 5},
+		{
+			name:     "negative",
+			body:     `{"max_switches":-1}`,
+			wantErr:  true,
+			contains: []string{"max_switches", "must be >= 0"},
+		},
+		{
+			name:    "wrong type",
+			body:    `{"max_switches":"two"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := load(t, tt.body)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load: got nil error, want one wrapping ErrBadPolicy")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+				}
+				for _, want := range tt.contains {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.SwitchLimit(); got != tt.want {
+				t.Fatalf("SwitchLimit() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+
+	if got := (Policy{}).SwitchLimit(); got != DefaultMaxSwitches {
+		t.Fatalf("Policy{}.SwitchLimit() = %d, want %d", got, DefaultMaxSwitches)
+	}
+}
+
 func TestLoadEmptyOrderIsValid(t *testing.T) {
 	for _, body := range []string{`{"order":{}}`, `{}`} {
 		p, err := load(t, body)

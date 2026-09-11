@@ -160,7 +160,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 					"Check %s is really gone, then re-run with --assume-dead",
 				ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
 		}
-		builder, res, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
+		builder, res, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
@@ -242,7 +242,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
 	}
 
-	builder, res, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
+	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name, planner.PaneID)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -307,7 +307,18 @@ func builderAgentName(name string) (string, error) {
 // args to supply -- and for agy, their fish function already activated the
 // plan-executor role in that session. The second return is the resolution,
 // zero when adopting.
-func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, Resolution, error) {
+//
+// tx witnesses whether the caller already holds the state lock: nil means it
+// does not (create, resume, Add and Fork all call resolveBuilder before their
+// own WithLock, and pass nil), non-nil means it does (switchBuilder runs
+// inside Reconcile's WithLock and passes its tx). It decides nothing about
+// what resolveBuilder does -- the ledger file stays outside the store's
+// transaction -- it only selects which spawn-failure recorder is safe to
+// call: recordSpawnFailure takes Store.WithLock itself, which would deadlock
+// a caller that is already inside it, so a non-nil tx routes to
+// recordSpawnFailureLocked instead, which performs the same append without
+// re-taking the lock.
+func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name, plannerPane string) (store.Endpoint, Resolution, error) {
 	if opts.BuilderPane != "" {
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
@@ -340,7 +351,11 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 	}
 
 	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.Args); err != nil {
-		recordSpawnFailure(rt, c.Ref().String(), name, err)
+		if tx != nil {
+			recordSpawnFailureLocked(rt, c.Ref().String(), name, err)
+		} else {
+			recordSpawnFailure(rt, c.Ref().String(), name, err)
+		}
 		return store.Endpoint{}, Resolution{}, fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 

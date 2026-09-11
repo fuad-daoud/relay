@@ -192,6 +192,46 @@ func TestSpawnFailureDoesNotMaskTheError(t *testing.T) {
 	}
 }
 
+// TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock
+// the T2 round-2 report found: switchBuilder runs inside Reconcile's
+// Store.WithLock, and recordSpawnFailureLocked must be able to record a
+// failed replacement spawn from in there without trying to re-take that
+// (non-reentrant) lock. If it ever does, this test hangs until the 5s
+// timer fires instead of failing fast, which is why the assertion is a
+// select against a timer rather than a bare call.
+func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- rt.Store.WithLock(func(*store.Tx) error {
+			recordSpawnFailureLocked(rt, testAgyRef, "webshop", errors.New("boom"))
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WithLock: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlocked")
+	}
+
+	l := loadLedger(t, rt)
+	count := 0
+	for _, e := range l.Entries {
+		if e.Kind == ledger.SpawnFailed && e.Subject == testAgyRef {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("spawn_failed entries for %s = %d, want 1", testAgyRef, count)
+	}
+}
+
 func TestUnavailableRecordsTheProvider(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := newRuntime(t, f)
@@ -453,5 +493,46 @@ func TestMutateLedgerPrunes(t *testing.T) {
 	}
 	if l.Entries[0].Subject != "test" {
 		t.Errorf("remaining entry subject = %q, want test", l.Entries[0].Subject)
+	}
+}
+
+func TestBindingsOnProvider(t *testing.T) {
+	bindings := []store.Binding{
+		{
+			// active + open round on anthropic: in.
+			Name: "b-web", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// active + open round, but a different provider: out.
+			Name: "google-binding", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/google/gemini",
+		},
+		{
+			// active but no round open: out.
+			Name: "no-round", State: store.StateActive, RoundStartedAt: time.Time{},
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// open round on anthropic, but not active: out.
+			Name: "needs-you", State: store.StateNeedsYou, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// active + open round, but adopted (no candidate): out.
+			Name: "adopted", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "",
+		},
+		{
+			// active + open round on anthropic, named so the sort is checked: in.
+			Name: "a-api", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+	}
+
+	got := BindingsOnProvider(bindings, "anthropic")
+	want := []string{"a-api", "b-web"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("BindingsOnProvider() = %v, want %v", got, want)
 	}
 }

@@ -208,7 +208,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// resolved above -- res, from before the worktree was cut, is what the
 	// pick entry and ForkResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.NewName, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName, planner.PaneID)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
