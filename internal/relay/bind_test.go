@@ -155,8 +155,8 @@ func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	if b.Builder.PaneID != "w2:p8" {
 		t.Errorf("builder pane = %q, want w2:p8", b.Builder.PaneID)
 	}
-	if b.BuilderAlias != "" {
-		t.Errorf("BuilderAlias = %q, want empty for an adopted pane", b.BuilderAlias)
+	if b.BuilderCandidate != "" {
+		t.Errorf("BuilderAlias = %q, want empty for an adopted pane", b.BuilderCandidate)
 	}
 }
 
@@ -382,7 +382,7 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		BuilderScreenAt:   baseTime,
 		Planner:           store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
 		Builder:           store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
-		BuilderAlias:      "builder",
+		BuilderCandidate:  "builder",
 	}
 
 	t.Run("spawn replacement builder", func(t *testing.T) {
@@ -408,8 +408,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if got.Builder.PaneID != "w2:p9" || got.Builder.SessionID != "new-builder-sess" {
 			t.Errorf("Builder = %+v, want pane w2:p9 session new-builder-sess", got.Builder)
 		}
-		if got.BuilderAlias != "builder" {
-			t.Errorf("BuilderAlias = %q, want builder", got.BuilderAlias)
+		if got.BuilderCandidate != "builder" {
+			t.Errorf("BuilderAlias = %q, want builder", got.BuilderCandidate)
 		}
 		if !got.PreamblePending {
 			t.Errorf("PreamblePending = false, want true")
@@ -473,8 +473,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if got.Builder.PaneID != "w2:p8" || got.Builder.SessionID != "adopted-sess" {
 			t.Errorf("Builder = %+v, want pane w2:p8 session adopted-sess", got.Builder)
 		}
-		if got.BuilderAlias != "" {
-			t.Errorf("BuilderAlias = %q, want empty for adopted builder", got.BuilderAlias)
+		if got.BuilderCandidate != "" {
+			t.Errorf("BuilderAlias = %q, want empty for adopted builder", got.BuilderCandidate)
 		}
 		if !got.PreamblePending {
 			t.Errorf("PreamblePending = false, want true")
@@ -1238,14 +1238,14 @@ func TestBindResumeAllowsSessionlessRebindWhenRoundClosed(t *testing.T) {
 
 func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 	existing := store.Binding{
-		Name:            "webshop",
-		CWD:             "/repo",
-		Round:           3,
-		RoundClosedTree: "tree-closed-123",
-		State:           store.StateActive,
-		Planner:         store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:         store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
-		BuilderAlias:    "builder",
+		Name:             "webshop",
+		CWD:              "/repo",
+		Round:            3,
+		RoundClosedTree:  "tree-closed-123",
+		State:            store.StateActive,
+		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:          store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		BuilderCandidate: "builder",
 	}
 
 	t.Run("with alias", func(t *testing.T) {

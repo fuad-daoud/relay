@@ -31,16 +31,19 @@ type Endpoint struct {
 
 // Binding ties one planner pane to one builder pane over one working tree.
 type Binding struct {
-	Name           string    `json:"name"`
-	CWD            string    `json:"cwd"`
-	Planner        Endpoint  `json:"planner"`
-	Builder        Endpoint  `json:"builder"`
-	BuilderAlias   string    `json:"builder_alias"`
-	Round          int       `json:"round"`
-	State          State     `json:"state"`
-	RoundCap       int       `json:"round_cap"`
-	RoundTimeoutMS int       `json:"round_timeout_ms"`
-	RoundStartedAt time.Time `json:"round_started_at"`
+	Name    string   `json:"name"`
+	CWD     string   `json:"cwd"`
+	Planner Endpoint `json:"planner"`
+	Builder Endpoint `json:"builder"`
+	// BuilderCandidate is the harness/provider/model token the builder was
+	// started from (#80); empty for an adopted builder and for any binding
+	// written before the field existed.
+	BuilderCandidate string    `json:"builder_candidate,omitempty"`
+	Round            int       `json:"round"`
+	State            State     `json:"state"`
+	RoundCap         int       `json:"round_cap"`
+	RoundTimeoutMS   int       `json:"round_timeout_ms"`
+	RoundStartedAt   time.Time `json:"round_started_at"`
 	// HaltNotifiedRound is the round a halt notification has already been sent
 	// for. It is deliberately NOT derived from State: every earlier attempt to
 	// dedupe halt notices on State was defeated by a later step in the same

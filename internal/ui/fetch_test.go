@@ -12,13 +12,13 @@ import (
 
 func newTestBinding(name string) store.Binding {
 	return store.Binding{
-		Name:         name,
-		CWD:          "/tmp/test",
-		Planner:      store.Endpoint{PaneID: "w1:p1", SessionID: "planner-session", Kind: "claude"},
-		Builder:      store.Endpoint{AgentName: name + "-builder", PaneID: "w1:p2", Kind: "opencode"},
-		BuilderAlias: "agy",
-		Round:        2,
-		State:        store.StateActive,
+		Name:             name,
+		CWD:              "/tmp/test",
+		Planner:          store.Endpoint{PaneID: "w1:p1", SessionID: "planner-session", Kind: "claude"},
+		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w1:p2", Kind: "opencode"},
+		BuilderCandidate: "agy",
+		Round:            2,
+		State:            store.StateActive,
 	}
 }
 
@@ -121,7 +121,7 @@ func TestFetchTerminalBuilderAbsent(t *testing.T) {
 	name := "webshop"
 
 	b := newTestBinding(name)
-	b.BuilderAlias = "agy"
+	b.BuilderCandidate = "agy"
 	b.Builder.PaneID = "w2:p4"
 	b.Builder.AgentName = "webshop-builder"
 	b.Builder.SessionID = "builder-sess"
@@ -314,9 +314,9 @@ func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(store.Binding{
 		Name: "relay-ui", CWD: t.TempDir(),
-		Planner:      store.Endpoint{PaneID: "wM:p1", Kind: "claude"},
-		Builder:      store.Endpoint{AgentName: "relay-ui-builder", PaneID: "wM:p7", Kind: "agy"},
-		BuilderAlias: "abuilder", Round: 1, State: store.StateActive,
+		Planner:          store.Endpoint{PaneID: "wM:p1", Kind: "claude"},
+		Builder:          store.Endpoint{AgentName: "relay-ui-builder", PaneID: "wM:p7", Kind: "agy"},
+		BuilderCandidate: "abuilder", Round: 1, State: store.StateActive,
 	}); err != nil {
 		t.Fatal(err)
 	}

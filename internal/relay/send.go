@@ -70,7 +70,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		var ok bool
 		builder, ok = FindAgent(agents, hint.Builder)
 		if !ok {
-			return SendResult{}, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
+			return SendResult{}, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
 		}
 		locatedBuilder = true
 	}
@@ -100,7 +100,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
 		}
 		if !SameAgent(builder, b.Builder) {
-			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
 		}
 
 		planPath := rt.Store.PlanPath(name, b.Round)
@@ -199,11 +199,11 @@ func composePrompt(rt Runtime, b store.Binding, planPath, reportPath string) (st
 
 	// An adopted builder has no alias: the human started it with their own
 	// launcher, which already selected the role. Nothing to prepend.
-	if b.BuilderAlias == "" {
+	if b.BuilderCandidate == "" {
 		return text, nil
 	}
 
-	spec, err := rt.Aliases.Lookup(b.BuilderAlias)
+	spec, err := rt.Aliases.Lookup(b.BuilderCandidate)
 	if err != nil {
 		return "", err
 	}

@@ -125,7 +125,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 
 	alias := opts.Alias
 	if alias == "" {
-		alias = src.BuilderAlias
+		alias = src.BuilderCandidate
 	}
 	if alias == "" {
 		return ForkResult{}, ErrNoBuilderAlias
@@ -202,18 +202,18 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 
 	b := store.Binding{
-		Name:           opts.NewName,
-		CWD:            cwd,
-		Planner:        endpointOf(planner),
-		Builder:        builder,
-		BuilderAlias:   alias,
-		Round:          opts.Round + 1,
-		State:          store.StateActive,
-		RoundCap:       src.RoundCap,
-		RoundTimeoutMS: src.RoundTimeoutMS,
-		Worktree:       worktree,
-		ForkedFrom:     src.Name,
-		ForkedAtRound:  opts.Round,
+		Name:             opts.NewName,
+		CWD:              cwd,
+		Planner:          endpointOf(planner),
+		Builder:          builder,
+		BuilderCandidate: alias,
+		Round:            opts.Round + 1,
+		State:            store.StateActive,
+		RoundCap:         src.RoundCap,
+		RoundTimeoutMS:   src.RoundTimeoutMS,
+		Worktree:         worktree,
+		ForkedFrom:       src.Name,
+		ForkedAtRound:    opts.Round,
 	}
 
 	now := time.Now().UTC()

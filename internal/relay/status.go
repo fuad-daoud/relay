@@ -18,20 +18,20 @@ const agentGone = "gone"
 
 // BindingStatus is one row of relay status: stored binding plus live herdr state.
 type BindingStatus struct {
-	Name          string `json:"name"`
-	CWD           string `json:"cwd"`
-	Workspace     string `json:"workspace"`
-	Round         int    `json:"round"`
-	State         string `json:"state"`
-	Display       string `json:"display"`
-	BuilderAlias  string `json:"builder_alias"`
-	PlannerPane   string `json:"planner_pane"`
-	PlannerKind   string `json:"planner_kind"`
-	PlannerStatus string `json:"planner_status"`
-	PlannerFocus  bool   `json:"planner_focused"`
-	BuilderPane   string `json:"builder_pane"`
-	BuilderKind   string `json:"builder_kind"`
-	BuilderStatus string `json:"builder_status"`
+	Name             string `json:"name"`
+	CWD              string `json:"cwd"`
+	Workspace        string `json:"workspace"`
+	Round            int    `json:"round"`
+	State            string `json:"state"`
+	Display          string `json:"display"`
+	BuilderCandidate string `json:"builder_candidate"`
+	PlannerPane      string `json:"planner_pane"`
+	PlannerKind      string `json:"planner_kind"`
+	PlannerStatus    string `json:"planner_status"`
+	PlannerFocus     bool   `json:"planner_focused"`
+	BuilderPane      string `json:"builder_pane"`
+	BuilderKind      string `json:"builder_kind"`
+	BuilderStatus    string `json:"builder_status"`
 	// Detail explains an overloaded state where the display word cannot.
 	// Populated only for store.StateBroken, which covers three situations
 	// whose correct recoveries differ -- and in one of which the obvious
@@ -155,11 +155,11 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
-		BuilderAlias:  b.BuilderAlias,
-		ForkedFrom:    b.ForkedFrom,
-		ForkedAtRound: b.ForkedAtRound,
-		Consults:      runningConsults(b),
-		PlannerPane:   b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
+		BuilderCandidate: b.BuilderCandidate,
+		ForkedFrom:       b.ForkedFrom,
+		ForkedAtRound:    b.ForkedAtRound,
+		Consults:         runningConsults(b),
+		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
 
@@ -318,7 +318,7 @@ func RenderStatus(r Report) string {
 		fmt.Fprintf(&sb, "  planner  %-14s %-8s %s%s\n",
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
 		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`\n",
-			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderAlias)
+			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
 		for _, fa := range b.Foreign {
 			loc := ""
 			if fa.CWD != b.CWD {

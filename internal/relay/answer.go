@@ -63,7 +63,7 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 		var ok bool
 		builder, ok = FindAgent(agents, hint.Builder)
 		if !ok {
-			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderAlias, ErrBuilderGone)
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
 		}
 
 		// Refuse unless herdr still reports the builder blocked. relay sets
@@ -103,7 +103,7 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
 		}
 		if !SameAgent(builder, b.Builder) {
-			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderAlias, ErrBuilderGone)
+			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
 		}
 
 		if err := rt.Herdr.SendKeys(ctx, builder.PaneID, keys); err != nil {

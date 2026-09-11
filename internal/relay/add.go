@@ -170,14 +170,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// purpose: store.Save fills them in (internal/store/store.go:269-279), so a
 	// peer builder gets exactly the same defaults a plain `relay bind` does.
 	b := store.Binding{
-		Name:         opts.Name,
-		CWD:          cwd,
-		Planner:      endpointOf(planner),
-		Builder:      builder,
-		BuilderAlias: opts.Alias,
-		Round:        1,
-		State:        store.StateActive,
-		Worktree:     worktree,
+		Name:             opts.Name,
+		CWD:              cwd,
+		Planner:          endpointOf(planner),
+		Builder:          builder,
+		BuilderCandidate: opts.Alias,
+		Round:            1,
+		State:            store.StateActive,
+		Worktree:         worktree,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
