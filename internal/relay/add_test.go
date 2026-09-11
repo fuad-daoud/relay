@@ -167,8 +167,8 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
 	}
-	if fh.splits != 0 || len(fh.starts) != 0 {
-		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", fh.splits, len(fh.starts))
+	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
+		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(fh.tabs), len(fh.starts))
 	}
 	if !errors.Is(err, herdr.ErrInvalidAgentName) {
 		t.Fatalf("Add err = %v, want one wrapping herdr.ErrInvalidAgentName", err)

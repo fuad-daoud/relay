@@ -258,6 +258,8 @@ findings and does not deliver anything.
   `alias.ErrUnknownAlias`, `store.ErrNotFound`, wrapped herdr failures.
 - **Dependencies:** `rt.Herdr` (SplitPane/CreateTab/StartAgent/Prompt),
   `rt.Store`, `rt.Aliases`, `rt.Now`, and a random source for `ID`.
+- **Placement note (2026-09-12, #79):** `SplitPane` is gone; every spawn goes
+  through `CreateTab`. References to `SplitPane` below are historical.
 
 ### 4.2 `internal/relay/consult.go` (new)
 

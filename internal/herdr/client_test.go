@@ -48,15 +48,15 @@ func TestClientPromptDetectsBlocked(t *testing.T) {
 	}
 }
 
-func TestClientSplitPaneReturnsPaneID(t *testing.T) {
-	c := NewClient(stubHerdr(t, `{"result":{"pane":{"pane_id":"w2:p9"}}}`, 0), 5*time.Second)
+func TestClientCreateTabReturnsRootPaneID(t *testing.T) {
+	c := NewClient(stubHerdr(t, `{"result":{"root_pane":{"pane_id":"w2:pT"}}}`, 0), 5*time.Second)
 
-	id, err := c.SplitPane(context.Background(), "w2:p3", "right", "/tmp")
+	id, err := c.CreateTab(context.Background(), "w2", "/tmp", "webshop-builder")
 	if err != nil {
-		t.Fatalf("SplitPane: %v", err)
+		t.Fatalf("CreateTab: %v", err)
 	}
-	if id != "w2:p9" {
-		t.Fatalf("pane id = %q, want w2:p9", id)
+	if id != "w2:pT" {
+		t.Fatalf("pane id = %q, want w2:pT", id)
 	}
 }
 

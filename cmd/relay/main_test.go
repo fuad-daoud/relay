@@ -442,19 +442,19 @@ func TestParseFlagsAcceptsFlagsAfterPositionals(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	round := fs.Int("round", 0, "")
-	tab := fs.Bool("tab", false, "")
+	dry := fs.Bool("dry", false, "")
 
 	// This is the README's documented shape: the binding name first, its flags
 	// after. Go's flag package stops at the first bare word, so before #48 both
 	// flags below were silently dropped.
-	if err := parseFlags(fs, []string{"webshop", "--round", "2", "--tab"}); err != nil {
+	if err := parseFlags(fs, []string{"webshop", "--round", "2", "--dry"}); err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	if *round != 2 {
 		t.Errorf("--round after a positional must still parse, got %d", *round)
 	}
-	if !*tab {
-		t.Error("--tab after a positional must still parse")
+	if !*dry {
+		t.Error("--dry after a positional must still parse")
 	}
 	if got := fs.Args(); len(got) != 1 || got[0] != "webshop" {
 		t.Errorf("fs.Args() = %v, want [webshop]", got)
@@ -701,6 +701,23 @@ func TestIsPaneID(t *testing.T) {
 	for _, c := range cases {
 		if got := isPaneID(c.input); got != c.want {
 			t.Errorf("isPaneID(%q) = %v, want %v", c.input, got, c.want)
+		}
+	}
+}
+
+// TestBindRejectsTabFlag pins #79: placement is not a per-bind decision any
+// more, so the old --tab spelling must be an unknown flag, not a silent no-op.
+// It fails in parseFlags, before newRuntime, so it never reaches herdr.
+func TestBindRejectsTabFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"bind", "--tab"},
+		{"add", "--name", "x", "--tab"},
+		{"fork", "x", "--round", "1", "--new-name", "y", "--tab"},
+		{"ask", "--role", "reviewer", "--file", "q.md", "--new-tab"},
+	} {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("%v: got %v, want an unknown-flag error", args, err)
 		}
 	}
 }

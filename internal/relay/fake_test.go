@@ -22,10 +22,6 @@ type tabCall struct {
 	WorkspaceID, CWD, Label string
 }
 
-type splitCall struct {
-	Target, Direction, CWD string
-}
-
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
@@ -165,22 +161,20 @@ func TestFakeStartAgentRefusesAnInvalidName(t *testing.T) {
 
 // fakeHerdr is the in-memory Herdr used by every test in this package.
 type fakeHerdr struct {
-	agents     []herdr.Agent
-	prompts    []promptCall
-	keys       []keyCall
-	starts     []startCall
-	reads      []readCall
-	notices    []string
-	readOut    string
-	newPane    string
-	newTab     string
-	tabs       []tabCall
-	splitCalls []splitCall
-	splits     int
-	promptErr  error
-	stalls     int // when >0, Prompt returns ErrPromptStalled and decrements
-	listCalls  int
-	listErr    error // when set, every ListAgents call after the first fails
+	agents    []herdr.Agent
+	prompts   []promptCall
+	keys      []keyCall
+	starts    []startCall
+	reads     []readCall
+	notices   []string
+	readOut   string
+	newPane   string
+	newTab    string
+	tabs      []tabCall
+	promptErr error
+	stalls    int // when >0, Prompt returns ErrPromptStalled and decrements
+	listCalls int
+	listErr   error // when set, every ListAgents call after the first fails
 	// onList runs at the top of every ListAgents call. Tick makes that call
 	// after it has listed bindings and before it reconciles them, which is
 	// the one window a concurrent `relay unbind` has to land in.
@@ -191,8 +185,8 @@ type fakeHerdr struct {
 	closeErr error    // when set, ClosePane fails
 	onClose  func()
 
-	// onSplit runs at the top of SplitPane and CreateTab, before any other logic. Ask calls SplitPane/CreateTab as its first herdr call after releasing the lock, which is where a test proves the lock is free and where it can rewrite the reservation to simulate a slow spawn.
-	onSplit func()
+	// onSpawn runs at the top of CreateTab, before any other logic. Ask calls CreateTab as its first herdr call after releasing the lock, which is where a test proves the lock is free and where it can rewrite the reservation to simulate a slow spawn.
+	onSpawn func()
 
 	// startErr is returned by StartAgent when set, after recording the call. The strand-on-start path had no test because the fake could not fail a start.
 	startErr error
@@ -241,25 +235,16 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 	return f.readOut, nil
 }
 
-func (f *fakeHerdr) SplitPane(_ context.Context, target, direction, cwd string) (string, error) {
-	if f.onSplit != nil {
-		f.onSplit()
-	}
-	f.splits++
-	f.splitCalls = append(f.splitCalls, splitCall{Target: target, Direction: direction, CWD: cwd})
-	if f.newPane == "" {
-		return "", errors.New("pane split returned no pane id")
-	}
-	return f.newPane, nil
-}
-
 func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string) (string, error) {
-	if f.onSplit != nil {
-		f.onSplit()
+	if f.onSpawn != nil {
+		f.onSpawn()
 	}
 	f.tabs = append(f.tabs, tabCall{WorkspaceID: workspaceID, CWD: cwd, Label: label})
 	if f.newTab != "" {
 		return f.newTab, nil
+	}
+	if f.newPane == "" {
+		return "", errors.New("tab creation returned no pane id")
 	}
 	return f.newPane, nil
 }

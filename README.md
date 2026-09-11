@@ -145,7 +145,7 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
 From inside the planner's herdr pane, in the repository you want worked on:
 
 ```
-relay bind --builder claude/anthropic/sonnet     # split a builder pane and bind it to this tree
+relay bind --builder claude/anthropic/sonnet     # open a builder tab and bind it to this tree
 relay send --file plan.md         # hand it the plan; the builder starts working
 relay status                      # watch the round
 relay pull                        # print the report the builder wrote back
@@ -157,7 +157,7 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume] [--tab] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume] [--timeout D]`
   — start a binding between the calling planner pane (read from
   `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
   it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
@@ -190,10 +190,10 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
-- `relay add --name N [--builder CANDIDATE] [--tab] [--cwd DIR]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--tab] [--cwd DIR]` —
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`).
@@ -257,9 +257,10 @@ for you at `bind`. In particular:
 
 ### Where the builder appears
 
-By default `relay bind` splits the planner's pane, so you can watch the builder
-work beside you. `relay bind --tab` opens it in its own herdr tab instead —
-the planner keeps full width, at the cost of not seeing the builder live.
+Every agent relay spawns -- builders from `bind`, `add`, `fork` and consults
+from `ask` -- opens in its own herdr tab in the planner's workspace, labelled
+with the agent's name, without moving focus. There is no split option: side-
+by-side panes stop being readable at two or three builders, and tabs scale.
 
 ### Round budget
 
@@ -585,7 +586,7 @@ The planner runs, from its own pane:
 relay ask --role reviewer --file q.md webshop
 ```
 
-relay stages the question, splits a pane beside the planner, and starts the
+relay stages the question, opens a tab in the planner's workspace, and starts the
 role there. The consult reads the staged question, writes its findings to a
 file, and replies with only that path. Findings land under the binding's state
 directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —

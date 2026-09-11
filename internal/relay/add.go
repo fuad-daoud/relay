@@ -17,7 +17,6 @@ type AddOptions struct {
 	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
 	Repo        string // the repository the worktree is cut from; the caller's cwd
 
-	NewTab      bool // open the builder in its own tab
 	WorkspaceID string
 
 	// CWD binds the peer to a directory the human already prepared instead of
@@ -159,7 +158,6 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Candidate:   c.Ref().String(),
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
-		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already

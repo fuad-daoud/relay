@@ -34,7 +34,6 @@ type ForkOptions struct {
 	Candidate string
 
 	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
-	NewTab      bool   // open the builder in its own tab
 	WorkspaceID string
 
 	// CWD binds the fork to a directory the human already prepared instead of
@@ -200,7 +199,6 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Candidate:   c.Ref().String(),
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
-		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already

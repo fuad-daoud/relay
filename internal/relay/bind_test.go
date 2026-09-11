@@ -75,8 +75,8 @@ func TestBindRefusesABuilderNameHerdrWouldRefuse(t *testing.T) {
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: name, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
-	if f.splits != 0 || len(f.starts) != 0 {
-		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", f.splits, len(f.starts))
+	if len(f.starts) != 0 || len(f.tabs) != 0 {
+		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(f.tabs), len(f.starts))
 	}
 	if !errors.Is(err, herdr.ErrInvalidAgentName) {
 		t.Fatalf("Bind err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
@@ -183,8 +183,8 @@ func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
 	// builderPane and left a pane behind with nothing pointing at it -- the
 	// ~800 MB leak CLAUDE.md warns about. This is what pins the refusal's
 	// placement ahead of builderPane.
-	if f.splits != 0 {
-		t.Errorf("split %d panes; a refused bind must not create a pane it then abandons", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("created %d tabs; a refused bind must not create a pane it then abandons", len(f.tabs))
 	}
 }
 
@@ -241,8 +241,8 @@ func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
 	if len(f.starts) != 0 {
 		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
 	}
-	if f.splits != 0 {
-		t.Errorf("split %d panes; a refused bind must not create a pane it then abandons", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("created %d tabs; a refused bind must not create a pane it then abandons", len(f.tabs))
 	}
 }
 
@@ -379,8 +379,8 @@ func TestBindRefusesExistingName(t *testing.T) {
 	if len(f.starts) != 0 {
 		t.Errorf("no agent may be started, got %+v", f.starts)
 	}
-	if f.splits != 0 {
-		t.Errorf("no pane may be split, got %d", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("no tab may be created, got %d", len(f.tabs))
 	}
 
 	if !strings.Contains(err.Error(), "relay unbind webshop") {
@@ -522,8 +522,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rebind adopt: %v", err)
 		}
-		if len(f.starts) != 0 || f.splits != 0 {
-			t.Errorf("adopting must not split or start agents, splits=%d starts=%+v", f.splits, f.starts)
+		if len(f.starts) != 0 || len(f.tabs) != 0 {
+			t.Errorf("adopting must not create tabs or start agents, tabs=%d starts=%+v", len(f.tabs), f.starts)
 		}
 		if got.Builder.PaneID != "w2:p8" || got.Builder.SessionID != "adopted-sess" {
 			t.Errorf("Builder = %+v, want pane w2:p8 session adopted-sess", got.Builder)
@@ -573,8 +573,8 @@ func TestBindRebindRefusesLiveBuilder(t *testing.T) {
 		t.Fatalf("got err = %v, want ErrBuilderAlive", err)
 	}
 
-	if f.splits != 0 {
-		t.Errorf("no pane may be split when builder is alive, got %d splits", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("no tab may be created when builder is alive, got %d", len(f.tabs))
 	}
 	if len(f.starts) != 0 {
 		t.Errorf("no agent may be started when builder is alive, got %+v", f.starts)
@@ -660,8 +660,8 @@ func TestBindRebindIdentityRule(t *testing.T) {
 		if !errors.Is(err, ErrBuilderAlive) {
 			t.Fatalf("got err = %v, want ErrBuilderAlive", err)
 		}
-		if f.splits != 0 || len(f.starts) != 0 {
-			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		if len(f.tabs) != 0 || len(f.starts) != 0 {
+			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
 		}
 	})
 }
@@ -698,8 +698,8 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 		if got.Builder != existing.Builder {
 			t.Errorf("Builder = %+v, want %+v (untouched)", got.Builder, existing.Builder)
 		}
-		if f.splits != 0 || len(f.starts) != 0 {
-			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		if len(f.tabs) != 0 || len(f.starts) != 0 {
+			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
 		}
 	})
 
@@ -718,8 +718,8 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 		if !strings.Contains(err.Error(), wantMsg) {
 			t.Errorf("error = %q, want containing %q", err.Error(), wantMsg)
 		}
-		if f.splits != 0 || len(f.starts) != 0 {
-			t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+		if len(f.tabs) != 0 || len(f.starts) != 0 {
+			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
 		}
 	})
 }
@@ -734,25 +734,25 @@ func TestBindRebindNotFound(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("got err = %v, want store.ErrNotFound", err)
 	}
-	if f.splits != 0 || len(f.starts) != 0 {
-		t.Errorf("no pane may be split or agent started, splits=%d starts=%+v", f.splits, f.starts)
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
 	}
 }
 
-func TestBindOpensBuilderInItsOwnTabWhenAsked(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newTab: "w2:pT"}
+func TestBindOpensBuilderInItsOwnTab(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", newTab: "w2:pT"}
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
-		NewTab: true, WorkspaceID: "w2",
+		WorkspaceID: "w2",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
 	if len(f.tabs) != 1 {
-		t.Fatalf("got %d tab creations, want 1", len(f.tabs))
+		t.Fatalf("got %d tab creations, want 1: placement is tab-only (#79)", len(f.tabs))
 	}
 	if got := f.tabs[0]; got.WorkspaceID != "w2" || got.CWD != "/repo" || got.Label != "webshop-builder" {
 		t.Errorf("tab call = %+v", got)
@@ -762,25 +762,6 @@ func TestBindOpensBuilderInItsOwnTabWhenAsked(t *testing.T) {
 	}
 	if len(f.starts) != 1 || f.starts[0].Pane != "w2:pT" {
 		t.Errorf("agent must start in the tab's root pane, got %+v", f.starts)
-	}
-}
-
-func TestBindSplitsThePlannerPaneByDefault(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", newTab: "w2:pT"}
-	rt := newRuntime(t, f)
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	if len(f.tabs) != 0 {
-		t.Errorf("no tab may be created without --tab, got %+v", f.tabs)
-	}
-	if b.Builder.PaneID != "w2:p4" {
-		t.Errorf("builder pane = %q, want the split pane", b.Builder.PaneID)
 	}
 }
 
@@ -1118,8 +1099,8 @@ func TestBindResumeRefusesUnverifiableBuilder(t *testing.T) {
 	}
 
 	// The refusal must land before anything irreversible.
-	if f.splits != 0 {
-		t.Errorf("no pane may be split, got %d splits", f.splits)
+	if len(f.tabs) != 0 {
+		t.Errorf("no tab may be created, got %d", len(f.tabs))
 	}
 	if len(f.starts) != 0 {
 		t.Errorf("no agent may be started, got %+v", f.starts)
@@ -1246,8 +1227,8 @@ func TestAssumeDeadNeverOverridesBuilderAlive(t *testing.T) {
 	if !errors.Is(err, ErrBuilderAlive) {
 		t.Fatalf("got err = %v, want ErrBuilderAlive even with AssumeDead", err)
 	}
-	if f.splits != 0 || len(f.starts) != 0 {
-		t.Errorf("nothing may be spawned, splits=%d starts=%+v", f.splits, f.starts)
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("nothing may be spawned, tabs=%d starts=%+v", len(f.tabs), f.starts)
 	}
 }
 
