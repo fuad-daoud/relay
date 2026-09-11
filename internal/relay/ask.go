@@ -185,7 +185,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	pane, err := openTab(ctx, rt, opts.WorkspaceID, cwd, consult.Endpoint.AgentName)
 	if err != nil {
 		consult.State = store.ConsultSilent
-		consult.Note = "split failed: " + brief(err)
+		consult.Note = "spawn failed: " + brief(err)
 		spawnErr = err
 	} else {
 		consult.Endpoint.PaneID = pane
