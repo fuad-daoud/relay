@@ -40,6 +40,13 @@ type BindOptions struct {
 	CWD         string
 	Resume      bool
 
+	// Rebind, with Resume, replaces a builder that is gone by resolving a
+	// candidate through policy.json order and the ledger, exactly as a
+	// fresh bind with Candidate empty does (#92). Without it, an empty
+	// Candidate and BuilderPane on resume mean "planner-only: touch no
+	// builder". Ignored when Candidate or BuilderPane is set.
+	Rebind bool
+
 	// AssumeDead releases the ErrBuilderUnverified guard: the caller asserts a
 	// builder relay cannot verify is gone really is gone. It never overrides
 	// ErrBuilderAlive -- a builder relay can positively see is refused either
@@ -91,7 +98,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 }
 
 // resume re-points an existing binding at the calling planner pane, and -- when
-// the caller supplied a builder -- at a new builder as well.
+// the caller supplied a builder, or asked for one with Rebind -- at a new builder as well.
 //
 // Preconditions:  the binding exists. When a builder is supplied, the binding's
 //
@@ -115,7 +122,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
 // herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
-	rebinding := opts.Candidate != "" || opts.BuilderPane != ""
+	rebinding := opts.Rebind || opts.Candidate != "" || opts.BuilderPane != ""
 
 	var (
 		builder store.Endpoint

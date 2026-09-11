@@ -157,7 +157,7 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume [--rebind]] [--timeout D]`
   — start a binding between the calling planner pane (read from
   `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
   it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
@@ -794,13 +794,16 @@ direction.
 If the builder is gone, point the binding at a new builder:
 
 ```bash
-relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # spawn a fresh builder
+relay bind --resume --name N --rebind                                       # spawn a fresh builder, picked by policy order
+relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # spawn a fresh builder, naming it
 relay bind --resume --name N --builder w2:p4        # adopt an existing pane
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its role on the launch line,
-like any builder relay spawns. Relay does not automatically re-send the current
+like any builder relay spawns. With `--rebind` the candidate is resolved through
+`policy.json` order and the ledger, and the pick is logged, exactly as a fresh
+bind with `--builder` omitted. Relay does not automatically re-send the current
 plan: it prints the `relay send` command pointing at the staged plan so you can
 hand over the round when ready.
 

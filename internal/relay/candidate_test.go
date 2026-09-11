@@ -415,6 +415,36 @@ func TestExplainResolution(t *testing.T) {
 			want: "picked opencode/test/m for builder: unlisted, after order; skipped " + testAgyRef + " (spawn failed " + untilText + "), " + testClaudeRef + " (rate-limited until cleared)",
 		},
 		{
+			// #93: three `relay unavailable` calls on one provider are three
+			// ledger entries and three Skips, but one sentence.
+			name: "duplicate gates on one token render once",
+			role: "builder",
+			res: Resolution{
+				How:       HowOrder,
+				Position:  2,
+				Candidate: claude,
+				Skipped: []Skip{
+					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: ledger.RateLimited},
+				},
+			},
+			want: "picked claude/test/m for builder: order #2; skipped " + testAgyRef + " (rate-limited until cleared)",
+		},
+		{
+			name: "explicit with duplicate gates renders once",
+			role: "builder",
+			res: Resolution{
+				How:       HowExplicit,
+				Candidate: agy,
+				Gates: []Skip{
+					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: ledger.RateLimited},
+				},
+			},
+			want: "picked agy/test/m for builder: explicit, policy bypassed; gated: rate-limited until cleared",
+		},
+		{
 			name: "explicit",
 			role: "builder",
 			res:  Resolution{How: HowExplicit, Candidate: agy},

@@ -721,3 +721,12 @@ func TestBindRejectsTabFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestBindRebindNeedsResume pins #92: --rebind only means something on a
+// resume. It is refused before newRuntime, so no herdr is reached.
+func TestBindRebindNeedsResume(t *testing.T) {
+	err := run([]string{"bind", "--rebind", "--name", "x"})
+	if err == nil || !strings.Contains(err.Error(), "--rebind") || !strings.Contains(err.Error(), "--resume") {
+		t.Fatalf("got %v, want an error naming --rebind and --resume", err)
+	}
+}

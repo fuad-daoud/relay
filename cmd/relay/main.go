@@ -490,6 +490,8 @@ func cmdBind(args []string) error {
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	assumeDead := fs.Bool("assume-dead", false,
 		"confirm a builder relay cannot verify is gone really is gone")
+	rebind := fs.Bool("rebind", false,
+		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -498,6 +500,9 @@ func cmdBind(args []string) error {
 	// the floor and the binding lookup then fails on the empty name.
 	if *resume && *name == "" {
 		return fmt.Errorf("relay bind --resume needs --name NAME (a positional name is ignored)")
+	}
+	if *rebind && !*resume {
+		return fmt.Errorf("relay bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
 	}
 
 	rt, err := newRuntime()
@@ -515,6 +520,7 @@ func cmdBind(args []string) error {
 		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
 		CWD:          cwd,
 		Resume:       *resume,
+		Rebind:       *rebind,
 		AssumeDead:   *assumeDead,
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
@@ -527,7 +533,10 @@ func cmdBind(args []string) error {
 
 	adopted := *resume || opts.BuilderPane != ""
 	kind := ""
-	if adopted {
+	switch {
+	case *rebind && opts.BuilderPane == "":
+		kind = relay.CandidateKind(rt, opts.Candidate)
+	case adopted:
 		if *resume && *name != "" {
 			if existing, err := rt.Store.Load(*name); err == nil {
 				kind = existing.Builder.Kind
@@ -540,7 +549,7 @@ func cmdBind(args []string) error {
 				}
 			}
 		}
-	} else {
+	default:
 		kind = relay.CandidateKind(rt, opts.Candidate)
 	}
 
@@ -558,7 +567,7 @@ func cmdBind(args []string) error {
 		return err
 	}
 
-	if *resume && *builderAlias != "" {
+	if *resume && (*builderAlias != "" || *rebind) {
 		builderDesc := b.Builder.PaneID
 		if b.BuilderCandidate != "" {
 			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderCandidate)

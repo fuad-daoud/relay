@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -286,5 +287,44 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 	wantTail := "limited 1x around 21:00 (30d); spawn failed " + GateUntilText(until)
 	if !strings.Contains(got, wantTail) {
 		t.Errorf("FormatPolicy =\n%s\nwant a row containing %q", got, wantTail)
+	}
+}
+
+func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
+	// #93: `relay unavailable` three times without an `available` between
+	// leaves three live ledger entries on one token. The row says it once.
+	set := candidateSet(t, testCandidatesJSON)
+	pol := orderOf("builder", testAgyRef, testClaudeRef)
+	gates := []ledger.Gate{
+		{Token: testAgyRef, Kind: ledger.RateLimited},
+		{Token: testAgyRef, Kind: ledger.RateLimited},
+		{Token: testAgyRef, Kind: ledger.RateLimited},
+	}
+
+	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
+
+	wantRow := "  1  agy/test/m       order     rate-limited until cleared\n"
+	if !strings.Contains(got, wantRow) {
+		t.Errorf("FormatPolicy =\n%s\nwant a row exactly %q", got, wantRow)
+	}
+	if strings.Contains(got, "until cleared; rate-limited") {
+		t.Errorf("gate text repeated:\n%s", got)
+	}
+}
+
+func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
+	// The refusal text goes through the same renderer as the pick line.
+	set := candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+	gates := []ledger.Gate{
+		{Token: testAgyRef, Kind: ledger.RateLimited},
+		{Token: testAgyRef, Kind: ledger.RateLimited},
+	}
+
+	_, err := resolveCandidate(set, policy.Policy{}, gates, "", "builder")
+	if !errors.Is(err, ErrAllGated) {
+		t.Fatalf("got %v, want ErrAllGated", err)
+	}
+	if n := strings.Count(err.Error(), "rate-limited until cleared"); n != 1 {
+		t.Errorf("gate text appears %d times in %q, want 1", n, err.Error())
 	}
 }
