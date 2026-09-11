@@ -495,3 +495,44 @@ func TestMutateLedgerPrunes(t *testing.T) {
 		t.Errorf("remaining entry subject = %q, want test", l.Entries[0].Subject)
 	}
 }
+
+func TestBindingsOnProvider(t *testing.T) {
+	bindings := []store.Binding{
+		{
+			// active + open round on anthropic: in.
+			Name: "b-web", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// active + open round, but a different provider: out.
+			Name: "google-binding", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/google/gemini",
+		},
+		{
+			// active but no round open: out.
+			Name: "no-round", State: store.StateActive, RoundStartedAt: time.Time{},
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// open round on anthropic, but not active: out.
+			Name: "needs-you", State: store.StateNeedsYou, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+		{
+			// active + open round, but adopted (no candidate): out.
+			Name: "adopted", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "",
+		},
+		{
+			// active + open round on anthropic, named so the sort is checked: in.
+			Name: "a-api", State: store.StateActive, RoundStartedAt: baseTime,
+			BuilderCandidate: "agy/anthropic/sonnet",
+		},
+	}
+
+	got := BindingsOnProvider(bindings, "anthropic")
+	want := []string{"a-api", "b-web"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("BindingsOnProvider() = %v, want %v", got, want)
+	}
+}

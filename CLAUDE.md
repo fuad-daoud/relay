@@ -31,10 +31,16 @@ override the order.
 
 - Give each concurrent builder its own git worktree. Two builders committing in
   one worktree will race.
-- relay closes a pane only in `relay reap`, and only a terminal consult pane
-  it spawned. After an `unbind`, a mis-bind, or any `--assume-dead` rebind,
-  close the orphaned builder pane yourself with `herdr pane close <id>` or it
-  holds memory indefinitely (an idle opencode builder is roughly 800 MB).
+- relay closes a pane in exactly two places: `relay reap` (a terminal
+  consult pane it spawned) and a mid-round builder switch (the replaced
+  builder's pane, when it is still open). After an `unbind`, a
+  mis-bind, or any `--assume-dead` rebind, close the orphaned builder
+  pane yourself with `herdr pane close <id>` or it holds memory
+  indefinitely (an idle opencode builder is roughly 800 MB).
+- When a builder reports a usage limit mid-round, `relay unavailable
+  <token>` is enough: the daemon switches the binding to the next
+  ungated candidate and resends the round. Do not rebind by hand unless
+  `relay status` says `NEEDS YOU`.
 - Tell a builder to stop rather than improvise when a step is impossible as
   written or the plan conflicts with existing code. A halt that surfaces a
   design error is worth more than a green suite that bent a test to fit.

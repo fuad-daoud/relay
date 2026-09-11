@@ -3,6 +3,7 @@ package relay
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -216,4 +217,29 @@ func gatedNote(rt Runtime, token string) string {
 // after bind, add, fork and ask spawn successfully (T4).
 func GatedNote(rt Runtime, token string) string {
 	return gatedNote(rt, token)
+}
+
+// BindingsOnProvider names the active bindings with an open round whose
+// builder runs on provider, sorted: the ones the daemon will switch once
+// that provider is gated (spec §4.6). Pure, for cmdUnavailable's note.
+func BindingsOnProvider(bindings []store.Binding, provider string) []string {
+	var names []string
+	for _, b := range bindings {
+		if b.State != store.StateActive {
+			continue
+		}
+		if b.RoundStartedAt.IsZero() {
+			continue
+		}
+		if b.BuilderCandidate == "" {
+			continue
+		}
+		ref, err := candidate.ParseRef(b.BuilderCandidate)
+		if err != nil || ref.Provider != provider {
+			continue
+		}
+		names = append(names, b.Name)
+	}
+	sort.Strings(names)
+	return names
 }

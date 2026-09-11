@@ -458,7 +458,8 @@ candidates in, per role:
     "builder": ["agy/google/gemini-3.8-flash-high",
                 "claude/anthropic/sonnet",
                 "opencode/openrouter/z-ai/glm-5.3-flash"]
-  }
+  },
+  "max_switches": 2
 }
 ```
 
@@ -468,7 +469,9 @@ you add to `candidates.json` without adding it here is tried last, after
 everything listed. An entry here that names a candidate that is not
 configured, or one that does not serve the role, is skipped -- never an
 error, because removing a candidate must not stop every command -- and
-`relay policy` and `relay doctor` warn about it.
+`relay policy` and `relay doctor` warn about it. `max_switches` bounds
+how many times the daemon may replace a builder mid-round before the
+binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 
 `relay policy` shows what relay would do right now:
 
@@ -519,6 +522,40 @@ something is gated; `relay candidates` marks gated rows `unavailable:`;
 stderr when the candidate is gated and **proceed** -- you named it. With
 the token omitted they skip gated candidates and refuse when nothing
 ungated serves the role.
+
+#### Mid-round switching
+
+A builder relay spawned can be replaced by the daemon while a round is
+open, in two cases:
+
+- its pane is gone for 30 seconds (a detection flicker shorter than
+  that clears itself);
+- you gate its provider with `relay unavailable` -- which is how you
+  tell relay a running builder hit its limit. The command names the
+  bindings the daemon will switch.
+
+The daemon resolves `builder` again through `policy.json` order and the
+ledger (an omitted token, so the order applies even to a builder you
+named), closes the replaced pane if it is still open, starts the pick
+beside the planner in the **same** tree, and hands it the **same**
+round's plan. The round number does not change; the round clock
+restarts. The new builder inherits whatever the old one left in the
+tree. A `switch` entry in the log says what was tried and why:
+
+```
+switched builder (rate-limited: 5h window): picked opencode/openrouter/z-ai/glm-5.3-flash for builder: order #3; skipped claude/anthropic/sonnet (rate-limited until cleared)
+```
+
+`relay status` shows `switched 1x` on the builder line. After
+`max_switches` replacements in one round (default 2; set it in
+`policy.json`, `0` turns switching off), or when nothing ungated
+serves `builder`, the binding goes `NEEDS YOU` with the reason, and
+recovers on its own once `relay available` clears a provider. A
+failed replacement spawn counts as a switch and the daemon walks to
+the next candidate.
+
+Adopted builders (bound by pane id) are never switched; a builder
+gone between rounds is `BROKEN` as before -- `relay bind --resume`.
 
 An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in. relay selects a role only for agents it starts, with `--agent` on the launch line.
 
