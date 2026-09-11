@@ -55,6 +55,10 @@ type AskOptions struct {
 type AskResult struct {
 	Consult store.Consult
 	Binding string
+
+	// Candidate is the canonical token the consult was started from, for the
+	// CLI's gatedNote (#61 step 1).
+	Candidate string
 }
 
 // Ask spawns one read-only, one-shot consult beside a binding's builder and
@@ -184,6 +188,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		consult.Endpoint.PaneID = pane
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
 		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.Args); err != nil {
+			recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
 			consult.State = store.ConsultSilent
 			consult.Note = "start failed: " + brief(err)
 			spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
@@ -242,12 +247,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	})
 	if saveErr != nil {
 		if spawnErr != nil {
-			return AskResult{Consult: consult, Binding: opts.Name}, strandError(spawnErr, saveErr)
+			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, strandError(spawnErr, saveErr)
 		}
-		return AskResult{Consult: consult, Binding: opts.Name}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
+		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
 	}
 
-	return AskResult{Consult: consult, Binding: opts.Name}, spawnErr
+	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String()}, spawnErr
 }
 
 // consultPane makes somewhere for the consult to live: its own tab when asked,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -771,5 +772,120 @@ func TestStatusShowsWorkingUnderASubAgentSession(t *testing.T) {
 	}
 	if len(got.Foreign) != 0 {
 		t.Errorf("Foreign = %+v, want empty", got.Foreign)
+	}
+}
+
+func TestRenderStatusGatedBlock(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	r := Report{
+		Bindings: []BindingStatus{{
+			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+			PlannerPane: "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+			BuilderPane: "wM:p2", BuilderKind: "agy", BuilderStatus: "working",
+			BuilderCandidate: testAgyRef,
+		}},
+		Gated: []ledger.Gate{
+			{Token: testAgyRef, Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+			{Token: testClaudeRef, Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
+		},
+	}
+
+	out := RenderStatus(r)
+	if !strings.Contains(out, "candidates\n") {
+		t.Fatalf("missing candidates block:\n%s", out)
+	}
+	rest := out[strings.Index(out, "candidates\n")+len("candidates\n"):]
+	lines := strings.SplitN(rest, "\n", 3)
+	if len(lines) < 2 {
+		t.Fatalf("expected two gate rows, got:\n%s", rest)
+	}
+	wantUntil := "until " + now.Add(10*time.Minute).Local().Format("15:04")
+	if !strings.Contains(lines[0], testAgyRef) || !strings.Contains(lines[0], "spawn failed") || !strings.Contains(lines[0], wantUntil) {
+		t.Errorf("row 0 = %q", lines[0])
+	}
+	if !strings.Contains(lines[1], testClaudeRef) || !strings.Contains(lines[1], "rate-limited") || !strings.Contains(lines[1], "until cleared") {
+		t.Errorf("row 1 = %q", lines[1])
+	}
+}
+
+func TestRenderStatusNoGatesIsUnchanged(t *testing.T) {
+	r := Report{
+		Bindings: []BindingStatus{{
+			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
+			PlannerPane: "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+			BuilderPane: "wM:p2", BuilderKind: "agy", BuilderStatus: "working",
+			BuilderCandidate: testAgyRef,
+		}},
+		Gated: nil,
+	}
+
+	out := RenderStatus(r)
+	if strings.Contains(out, "candidates") {
+		t.Errorf("no gates must render no candidates block:\n%s", out)
+	}
+}
+
+func TestRenderStatusGatesWithNoBindings(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	r := Report{
+		Gated: []ledger.Gate{
+			{Token: testAgyRef, Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+		},
+	}
+
+	out := RenderStatus(r)
+	if !strings.HasPrefix(out, "no bindings\ncandidates\n") {
+		t.Errorf("out = %q, want it to start with %q", out, "no bindings\ncandidates\n")
+	}
+}
+
+func TestStatusPopulatesGated(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Gated) == 0 {
+		t.Fatalf("rep.Gated = %+v, want non-empty", rep.Gated)
+	}
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"gated"`) {
+		t.Errorf("expected \"gated\" key present, got %s", raw)
+	}
+
+	rawEmpty, err := json.Marshal(Report{})
+	if err != nil {
+		t.Fatalf("Marshal empty: %v", err)
+	}
+	if strings.Contains(string(rawEmpty), "gated") {
+		t.Errorf("empty report must omit gated, got %s", rawEmpty)
+	}
+}
+
+// TestHideDoneKeepsGated pins that hiding DONE bindings does not drop the
+// machine-wide gated block: cmdStatus applies HideDone between Status and
+// RenderStatus, so a gate lost here never reaches the terminal.
+func TestHideDoneKeepsGated(t *testing.T) {
+	in := Report{
+		Bindings: []BindingStatus{{Name: "old", State: string(store.StateDone)}},
+		Gated:    []ledger.Gate{{Token: "agy/test/m", Kind: ledger.RateLimited}},
+	}
+	out := HideDone(in)
+	if out.DoneHidden != 1 || len(out.Bindings) != 0 {
+		t.Fatalf("HideDone = %+v, want one hidden and no rows", out)
+	}
+	if len(out.Gated) != 1 || out.Gated[0].Token != "agy/test/m" {
+		t.Fatalf("Gated = %+v, want the gate carried through", out.Gated)
 	}
 }

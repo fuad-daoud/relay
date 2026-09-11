@@ -18,8 +18,11 @@ Use harnesses in this order, exhausting each before moving to the next:
 3. `opencode/openrouter/z-ai/glm-5.3-flash`
 
 Move down the list only when the current harness is unavailable -- usage limits
-as much as a crash. Do not assign different harnesses to different tasks as a
-way of parallelising.
+as much as a crash. When a builder reports a usage limit, run `relay
+unavailable <token> --reason '<what it said>'` before moving down, so `relay
+status` and `relay doctor` show why, and `relay available <provider>` when it
+lifts. Do not assign different harnesses to different tasks as a way of
+parallelising.
 
 Candidates are configured in `~/.config/relay/candidates.json`; `relay candidates`
 lists what this machine has. Pass the token to `--builder`, or omit it when only

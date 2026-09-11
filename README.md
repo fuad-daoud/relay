@@ -194,6 +194,11 @@ inside every pane it manages, so it has to be run from inside one.
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`).
 - `relay candidates` — list the configured candidates and the roles each serves.
+- `relay unavailable <harness/provider/model> [--for D] [--reason S]` — record
+  that a candidate's provider is rate-limited; gates every candidate on that
+  provider until `--for` elapses, or until `relay available` clears it.
+- `relay available <provider|harness/provider/model>` — clear a recorded rate
+  limit on a provider.
 - `relay done NAME|--name N` — mark a binding done; relaying stops.
 - `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first.
@@ -406,6 +411,35 @@ Any `extra_args` are appended verbatim after what relay renders. Because relay r
 ### Choosing a candidate
 
 Pass the token to `relay bind --builder claude/anthropic/sonnet`. With `--builder` omitted, relay uses the only configured candidate that serves `builder`; with several it refuses and lists them; with none it names the file. The same rule applies to `relay add`, `relay fork` (which first inherits the source's candidate) and `relay ask --candidate`. `relay candidates` prints the configured tokens with their roles. A `--builder` value containing `:` and no `/` is a herdr pane id to adopt.
+
+### Availability
+
+relay keeps a ledger of when a candidate could not be used: spawn failures it
+observed itself, rate limits you report. It shows the ledger; it does not
+(yet) act on it. The file is `~/.local/state/relay/ledger.json`.
+
+Report a limit with:
+
+```
+relay unavailable claude/anthropic/sonnet --reason "5-hour window"
+relay unavailable claude/anthropic/sonnet --for 2h
+relay available anthropic
+```
+
+A limit gates the **provider** (every candidate with `provider: anthropic`),
+because that is who enforces the quota, not the model. Without `--for` it
+stays gated until you run `relay available`, because relay does not know
+your provider's reset schedule.
+
+Spawn failures need no command: relay records one itself when starting an
+agent fails, gating that one candidate for ten minutes, and it expires on
+its own.
+
+Where it shows: `relay status` gains a `candidates` block only while
+something is gated; `relay candidates` marks gated rows `unavailable:`;
+`relay doctor` warns per gated candidate with the command that clears it.
+`bind`/`add`/`fork`/`ask` print a `note:` on stderr when they start a gated
+candidate and **proceed** -- refusing is a later step of #61.
 
 An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in.
 

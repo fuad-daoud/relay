@@ -59,6 +59,8 @@ Commands:
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   candidates   list the configured harness/provider/model candidates
+  unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
+  available    clear a recorded rate limit: relay available <provider|token>
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
   help      print this message
   version   print the relay version
@@ -207,6 +209,10 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "candidates":
 		return cmdCandidates(args[1:])
+	case "unavailable":
+		return cmdUnavailable(args[1:])
+	case "available":
+		return cmdAvailable(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
 	default:
@@ -272,11 +278,14 @@ func newRuntime() (relay.Runtime, error) {
 	}
 	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
 
+	st := store.New(root)
+
 	return relay.Runtime{
 		Herdr:      herdr.NewClient("herdr", 30*time.Second),
 		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:      store.New(root),
+		Store:      st,
 		Candidates: candidates,
+		LedgerPath: st.LedgerPath(),
 		Now:        time.Now,
 		Hooks:      dispatcher,
 	}, nil
@@ -311,6 +320,23 @@ func isPaneID(s string) bool {
 	return strings.Contains(s, ":") && !strings.Contains(s, "/")
 }
 
+// parseFor turns --for into an absolute expiry. Empty means "until cleared"
+// (a zero time); anything else must be a positive Go duration -- relay does
+// not know a provider's reset schedule, so it never invents one (spec §1).
+func parseFor(s string, now time.Time) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("--for %q: %w", s, err)
+	}
+	if d <= 0 {
+		return time.Time{}, fmt.Errorf("--for must be a positive duration, got %q", s)
+	}
+	return now.Add(d), nil
+}
+
 func cmdCandidates(args []string) error {
 	fs := flag.NewFlagSet("candidates", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {
@@ -322,7 +348,82 @@ func cmdCandidates(args []string) error {
 		return err
 	}
 
-	fmt.Print(relay.FormatCandidates(rt.Candidates))
+	fmt.Print(relay.FormatCandidates(rt.Candidates, relay.Gates(rt)))
+	return nil
+}
+
+func cmdUnavailable(args []string) error {
+	fs := flag.NewFlagSet("unavailable", flag.ContinueOnError)
+	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relay available`")
+	reason := fs.String("reason", "", "why, for the record")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	positional := fs.Args()
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: relay unavailable <harness/provider/model> [--for D] [--reason S]")
+	}
+	token := positional[0]
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	until, err := parseFor(*forFlag, rt.Now())
+	if err != nil {
+		return err
+	}
+
+	provider, err := relay.Unavailable(rt, token, until, *reason)
+	if err != nil {
+		return err
+	}
+
+	count := 0
+	for _, ref := range rt.Candidates.Refs() {
+		parsed, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		if parsed.Provider == provider {
+			count++
+		}
+	}
+
+	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relay.GateUntilText(until))
+	return nil
+}
+
+func cmdAvailable(args []string) error {
+	fs := flag.NewFlagSet("available", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	positional := fs.Args()
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: relay available <provider|harness/provider/model>")
+	}
+	subject := positional[0]
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	provider, removed, err := relay.Available(rt, subject)
+	if err != nil {
+		return err
+	}
+
+	if removed == 0 {
+		fmt.Printf("nothing was gating %s\n", provider)
+		return nil
+	}
+
+	fmt.Printf("cleared %s (%d entries)\n", provider, removed)
 	return nil
 }
 
@@ -417,6 +518,9 @@ func cmdBind(args []string) error {
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
 		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderCandidate, b.Round)
+	if n := relay.GatedNote(rt, b.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
@@ -479,6 +583,9 @@ func cmdFork(args []string) error {
 		fmt.Printf("forked %s to %s (round %d) at %s\n",
 			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
 	}
+	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
 	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
@@ -523,6 +630,9 @@ func cmdAdd(args []string) error {
 
 	fmt.Printf("added %s: builder %s in pane %s\n",
 		res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
+	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
 	if res.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
 	} else {
@@ -816,6 +926,9 @@ func cmdAsk(args []string) error {
 
 	fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
 		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
+	if n := relay.GatedNote(rt, res.Candidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
 	return nil
 }
 

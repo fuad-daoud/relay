@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -656,6 +657,32 @@ func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
 	named := scopeReport(relay.Report{Bindings: rep.Bindings[1:]}, "finished", false)
 	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
 		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
+	}
+}
+
+func TestParseFor(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+
+	if got, err := parseFor("", now); err != nil || !got.IsZero() {
+		t.Fatalf(`parseFor("", now) = %v, %v, want zero time, nil`, got, err)
+	}
+
+	if got, err := parseFor("2h", now); err != nil || !got.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("parseFor(2h, now) = %v, %v, want %v, nil", got, err, now.Add(2*time.Hour))
+	}
+
+	if got, err := parseFor("90m", now); err != nil || !got.Equal(now.Add(90*time.Minute)) {
+		t.Fatalf("parseFor(90m, now) = %v, %v, want %v, nil", got, err, now.Add(90*time.Minute))
+	}
+
+	if _, err := parseFor("0", now); err == nil {
+		t.Error(`parseFor("0", now) must be an error: a zero duration is not a gate`)
+	}
+	if _, err := parseFor("-5m", now); err == nil {
+		t.Error(`parseFor("-5m", now) must be an error: a negative duration is not a gate`)
+	}
+	if _, err := parseFor("soon", now); err == nil {
+		t.Error(`parseFor("soon", now) must be an error: not a Go duration`)
 	}
 }
 

@@ -534,3 +534,12 @@ func TestLoadIgnoresLegacyBuilderAlias(t *testing.T) {
 		t.Errorf("got.BuilderCandidate = %q, want empty", got.BuilderCandidate)
 	}
 }
+
+// LedgerPath sits at the state root beside .lock so writes can serialize under
+// WithLock (#61).
+func TestLedgerPath(t *testing.T) {
+	dir := t.TempDir()
+	if got, want := New(dir).LedgerPath(), filepath.Join(dir, "ledger.json"); got != want {
+		t.Errorf("LedgerPath = %q, want %q", got, want)
+	}
+}

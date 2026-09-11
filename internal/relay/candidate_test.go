@@ -169,7 +169,7 @@ func TestResolveCandidateIsDeterministic(t *testing.T) {
 }
 
 func TestCandidateKind(t *testing.T) {
-	rt := Runtime{Candidates: candidateSet(t, testCandidatesJSON)}
+	rt := Runtime{Candidates: candidateSet(t, testCandidatesJSON), LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
 	if got := CandidateKind(rt, testClaudeRef); got != "claude" {
 		t.Errorf("CandidateKind(%q) = %q, want claude", testClaudeRef, got)
 	}

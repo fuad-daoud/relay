@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -124,6 +126,37 @@ func TestAssembleKindsWithNoCandidatesUsesBindingsOnly(t *testing.T) {
 	}
 	if len(kinds) != 1 || kinds[0] != "claude" {
 		t.Fatalf("kinds = %v, want [claude]", kinds)
+	}
+}
+
+func TestLedgerChecks(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	gates := []ledger.Gate{
+		{Token: "claude/anthropic/sonnet", Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
+		{Token: "agy/google/m", Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+	}
+
+	checks := ledgerChecks(gates)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
+	}
+
+	if checks[0].Group != "claude" || checks[0].Name != "ledger" || checks[0].Severity != doctor.SevWarn {
+		t.Errorf("check 0 = %+v", checks[0])
+	}
+	if !strings.HasPrefix(checks[0].Fix, "relay available ") {
+		t.Errorf("check 0 Fix = %q, want prefix %q", checks[0].Fix, "relay available ")
+	}
+
+	if checks[1].Group != "agy" || checks[1].Name != "ledger" || checks[1].Severity != doctor.SevWarn {
+		t.Errorf("check 1 = %+v", checks[1])
+	}
+	if !strings.HasPrefix(checks[1].Fix, "wait until ") {
+		t.Errorf("check 1 Fix = %q, want prefix %q", checks[1].Fix, "wait until ")
+	}
+
+	if got := ledgerChecks(nil); len(got) != 0 {
+		t.Errorf("ledgerChecks(nil) = %+v, want empty", got)
 	}
 }
 
