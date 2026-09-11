@@ -49,7 +49,7 @@ func sentBindingWithBuilderSession(t *testing.T, f *fakeHerdr, sessionID string)
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -927,7 +927,7 @@ func TestBindRacesSessionLookupAndReconcileRecovers(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)

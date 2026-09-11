@@ -28,7 +28,7 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Alias: "abuilder", PlannerPane: "w2:p3", Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -77,16 +77,36 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 	}
 }
 
-func TestAddRequiresABuilderAlias(t *testing.T) {
+func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", PlannerPane: "w2:p3", Repo: addRepo(t),
+		Name: "frontend", Candidate: "", PlannerPane: "w2:p3", Repo: addRepo(t),
 	})
-	if !errors.Is(err, ErrAliasRequired) {
-		t.Fatalf("want ErrAliasRequired, got %v", err)
+	if !errors.Is(err, ErrAmbiguousCandidate) {
+		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
+	}
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("expected 0 addWorktreeCalls, got %d", len(fg.addWorktreeCalls))
+	}
+}
+
+func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+
+	res, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: "", PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if res.Binding.BuilderCandidate != "agy/test/m" {
+		t.Errorf("BuilderCandidate = %q, want agy/test/m", res.Binding.BuilderCandidate)
 	}
 }
 
@@ -97,13 +117,13 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 	repo := addRepo(t)
 
 	if _, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Alias: "abuilder", PlannerPane: "w2:p3", Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
 	}); err != nil {
 		t.Fatalf("first Add: %v", err)
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Alias: "abuilder", PlannerPane: "w2:p3", Repo: repo,
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
 	})
 	if err == nil {
 		t.Fatal("a name already in use must be refused")
@@ -118,7 +138,7 @@ func TestAddRollsBackTheWorktreeWhenTheBuilderFailsToStart(t *testing.T) {
 	rt := newForkRuntime(t, fh, fg, nil)
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Alias: "abuilder", PlannerPane: "w2:p3", Repo: addRepo(t),
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
 	})
 	if err == nil {
 		t.Fatal("expected the add to fail")
@@ -142,7 +162,7 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: name, Alias: "abuilder", PlannerPane: "w2:p3", Repo: addRepo(t),
+		Name: name, Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
 	})
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
@@ -165,7 +185,7 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 	prepared := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "legacy", Alias: "abuilder", PlannerPane: "w2:p3",
+		Name: "legacy", Candidate: testAgyRef, PlannerPane: "w2:p3",
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if err != nil {
@@ -196,7 +216,7 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 	}
 
 	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Alias: "abuilder", PlannerPane: "w2:p3",
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3",
 		Repo: addRepo(t), CWD: prepared,
 	})
 	if !errors.Is(err, store.ErrCWDTaken) {

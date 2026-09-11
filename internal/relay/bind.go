@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -30,16 +31,13 @@ var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abando
 // It refuses instead, until a human says the builder really is gone.
 var ErrBuilderUnverified = errors.New("builder was never session-identified")
 
-// ErrConsultAlias reports a bind or add naming a consult role. A consult is
-// ephemeral, read-only and one-shot; installing one as a binding's builder
-// would put a reader where the work happens.
-var ErrConsultAlias = errors.New("that alias is a consult role, not a builder")
-
 // BindOptions describes one bind request. BuilderPane adopts an existing pane;
-// leaving it empty spawns a new one from Alias.
+// leaving it empty spawns a new one from Candidate.
 type BindOptions struct {
-	Name        string
-	Alias       string
+	Name string
+	// Candidate is a harness/provider/model token; empty means resolve by role
+	// through resolveCandidate, except in resume, where empty means "not rebinding".
+	Candidate   string
 	BuilderPane string
 	PlannerPane string
 	CWD         string
@@ -112,9 +110,12 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
 // herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, error) {
-	rebinding := opts.Alias != "" || opts.BuilderPane != ""
+	rebinding := opts.Candidate != "" || opts.BuilderPane != ""
 
-	var builder store.Endpoint
+	var (
+		builder store.Endpoint
+		token   string
+	)
 	if rebinding {
 		// Refuse before anything is spawned.
 		b, err := rt.Store.Load(opts.Name)
@@ -149,7 +150,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 					"Check %s is really gone, then re-run with --assume-dead",
 				ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
 		}
-		builder, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
+		builder, token, err = resolveBuilder(ctx, rt, opts, opts.Name, planner.PaneID)
 		if err != nil {
 			return store.Binding{}, err
 		}
@@ -170,7 +171,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		b.State = store.StateActive
 		if rebinding {
 			b.Builder = builder
-			b.BuilderCandidate = opts.Alias // "" when adopting a pane
+			b.BuilderCandidate = token // "" when adopting a pane
 			b.PreamblePending = true
 			b.HaltNotifiedRound = 0
 			b.BuilderScreen = ""
@@ -226,7 +227,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
 	}
 
-	builder, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
+	builder, token, err := resolveBuilder(ctx, rt, opts, name, planner.PaneID)
 	if err != nil {
 		return store.Binding{}, err
 	}
@@ -236,7 +237,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		CWD:              opts.CWD,
 		Planner:          endpointOf(planner),
 		Builder:          builder,
-		BuilderCandidate: opts.Alias,
+		BuilderCandidate: token,
 		Round:            1,
 		State:            store.StateActive,
 	}
@@ -275,60 +276,48 @@ func builderAgentName(name string) (string, error) {
 }
 
 // resolveBuilder adopts an existing builder pane, or splits a sibling pane and
-// starts the aliased agent in it. Focus stays with the planner either way.
+// starts the candidate agent in it. Focus stays with the planner either way.
 //
-// The alias is looked up only on the spawn path. Adopting a pane needs no
-// alias: the human launched that agent themselves, so relay has no kind or
+// The candidate is resolved only on the spawn path. Adopting a pane needs no
+// candidate: the human launched that agent themselves, so relay has no kind or
 // args to supply -- and for agy, their fish function already activated the
 // plan-executor role in that session.
-func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, error) {
+func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, plannerPane string) (store.Endpoint, string, error) {
 	if opts.BuilderPane != "" {
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
-			return store.Endpoint{}, fmt.Errorf("list agents: %w", err)
+			return store.Endpoint{}, "", fmt.Errorf("list agents: %w", err)
 		}
 		found, ok := FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane})
 		if !ok {
-			return store.Endpoint{}, fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
+			return store.Endpoint{}, "", fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
 		}
-		return endpointOf(found), nil
+		return endpointOf(found), "", nil
 	}
 
-	// There is no default builder: which agent, model and role to spawn is a
-	// choice only the human can make, and guessing one would silently start
-	// the wrong (and possibly expensive) agent.
-	if opts.Alias == "" {
-		return store.Endpoint{}, fmt.Errorf(
-			"relay bind needs --builder: an alias to spawn (known: %v), or a herdr pane id to adopt",
-			rt.Aliases.Names())
-	}
-
-	spec, err := rt.Aliases.Lookup(opts.Alias)
+	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
 	if err != nil {
-		return store.Endpoint{}, err
+		return store.Endpoint{}, "", err
 	}
-
-	if spec.IsConsult() {
-		return store.Endpoint{}, fmt.Errorf(
-			"%q is a consult role; ask it with `relay ask --role %s`: %w",
-			opts.Alias, opts.Alias, ErrConsultAlias)
-	}
+	role, _ := harness.RoleByName("builder")
+	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
+	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
 
 	agentName, err := builderAgentName(name)
 	if err != nil {
-		return store.Endpoint{}, err
+		return store.Endpoint{}, "", err
 	}
 
 	paneID, err := builderPane(ctx, rt, opts, agentName, plannerPane)
 	if err != nil {
-		return store.Endpoint{}, err
+		return store.Endpoint{}, "", err
 	}
 
-	if err := rt.Herdr.StartAgent(ctx, agentName, spec.Kind, paneID, spec.Args); err != nil {
-		return store.Endpoint{}, fmt.Errorf("start builder %q: %w", agentName, err)
+	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.Args); err != nil {
+		return store.Endpoint{}, "", fmt.Errorf("start builder %q: %w", agentName, err)
 	}
 
-	ep := store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: spec.Kind}
+	ep := store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: l.Kind}
 
 	// Record the new agent's session id. It is what lets a later
 	// disappearance be told apart from a different agent taking over the same
@@ -346,7 +335,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		}
 	}
 
-	return ep, nil
+	return ep, c.Ref().String(), nil
 }
 
 // endpointOf projects a live herdr agent onto the store's durable endpoint

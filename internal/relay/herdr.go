@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -47,8 +48,11 @@ type Runtime struct {
 	Git     Git
 	Store   *store.Store
 	Aliases *alias.Table
-	Now     func() time.Time
-	Hooks   hooks.Dispatcher
+	// Candidates is the configured harness/provider/model triples (#80);
+	// Aliases remains only until T5–T7 move ask, names and doctor off it.
+	Candidates *candidate.Set
+	Now        func() time.Time
+	Hooks      hooks.Dispatcher
 
 	// HeldGrace is how long a focused planner's screen must be unchanged before
 	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by

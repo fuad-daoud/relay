@@ -58,3 +58,14 @@ func resolveCandidate(set *candidate.Set, token, role string) (candidate.Candida
 	}
 	return candidate.Candidate{}, fmt.Errorf("%d candidates serve %q: %v; name one with --builder or --candidate: %w", len(cs), role, refs, ErrAmbiguousCandidate)
 }
+
+// CandidateKind returns the harness kind a bind with this token would start,
+// for advisory preflight only; every error is reported as "" because the real
+// resolution happens inside Bind and says why.
+func CandidateKind(rt Runtime, token string) string {
+	c, err := resolveCandidate(rt.Candidates, token, "builder")
+	if err != nil {
+		return ""
+	}
+	return c.Harness
+}

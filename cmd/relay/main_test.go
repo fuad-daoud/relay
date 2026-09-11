@@ -428,15 +428,9 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"add", "--builder", "cbuilder"})
+	err := run([]string{"add", "--builder", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
-	}
-
-	// Missing --builder
-	err = run([]string{"add", "--name", "frontend"})
-	if err == nil || !strings.Contains(err.Error(), "--builder") {
-		t.Fatalf("expected an error about --builder, got %v", err)
 	}
 }
 
@@ -659,5 +653,24 @@ func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
 	named := scopeReport(relay.Report{Bindings: rep.Bindings[1:]}, "finished", false)
 	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
 		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
+	}
+}
+
+func TestIsPaneID(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"w2:p4", true},
+		{"claude/anthropic/sonnet", false},
+		{"opencode/openrouter/z-ai/glm-5.3-flash", false},
+		{"claude/anthropic/model:tag", false},
+		{"", false},
+	}
+
+	for _, c := range cases {
+		if got := isPaneID(c.input); got != c.want {
+			t.Errorf("isPaneID(%q) = %v, want %v", c.input, got, c.want)
+		}
 	}
 }
