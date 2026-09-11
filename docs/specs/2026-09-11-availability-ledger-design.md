@@ -150,8 +150,9 @@ type Gate struct {
     Kind   Kind
     Since  time.Time  // Entry.At
     Until  time.Time  // zero = until cleared
-    Note   string
-    Source string
+    Note    string
+    Source  string
+    Binding string     // Entry.Binding; "" for planner entries
 }
 
 func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Time) []Gate
