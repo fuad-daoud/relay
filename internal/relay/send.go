@@ -18,6 +18,12 @@ var ErrBuilderBlocked = errors.New("builder is blocked at a dialog; answer it wi
 // the live agents, so there is nothing to address.
 var ErrBuilderGone = errors.New("builder is gone; rebind before sending")
 
+// ErrBuilderNotBlocked is returned when `relay answer` is asked to type into a
+// builder that is not at a dialog. herdr's blocked-detection false-positives
+// (#55), and relay prints an instruction to answer whenever it fires, so the
+// guard has to live where the keystrokes are sent rather than in the prose.
+var ErrBuilderNotBlocked = errors.New("builder is not blocked; nothing to answer")
+
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relay reads off the terminal.
