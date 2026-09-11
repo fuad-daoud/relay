@@ -72,10 +72,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return AddResult{}, err
 	}
+	c := res.Candidate
 
 	agents, err := rt.Herdr.ListAgents(ctx)
 	if err != nil {

@@ -127,13 +127,14 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if token == "" {
 		token = src.BuilderCandidate
 	}
-	c, err := resolveCandidate(rt.Candidates, token, "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
 	if err != nil && token == "" {
 		return ForkResult{}, fmt.Errorf("%w (%v)", ErrNoBuilderCandidate, err)
 	}
 	if err != nil {
 		return ForkResult{}, err
 	}
+	c := res.Candidate
 
 	var (
 		cwd      string

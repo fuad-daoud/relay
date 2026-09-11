@@ -294,10 +294,11 @@ func resolveBuilder(ctx context.Context, rt Runtime, opts BindOptions, name, pla
 		return endpointOf(found), "", nil
 	}
 
-	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return store.Endpoint{}, "", err
 	}
+	c := res.Candidate
 	role, _ := harness.RoleByName("builder")
 	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
 	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)

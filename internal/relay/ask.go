@@ -107,10 +107,11 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if role.Shape != harness.ShapeConsult {
 		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)
 	}
-	c, err := resolveCandidate(rt.Candidates, opts.Candidate, opts.Role)
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, opts.Role)
 	if err != nil {
 		return AskResult{}, err
 	}
+	c := res.Candidate
 	if c.Tree == "none" {
 		return AskResult{}, fmt.Errorf("candidate %q declares tree \"none\": %w", c.Ref().String(), ErrTreelessUnsupported)
 	}
