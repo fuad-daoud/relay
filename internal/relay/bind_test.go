@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -19,10 +20,10 @@ var baseTime = time.Unix(1757000000, 0).UTC()
 func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 	t.Helper()
 	return Runtime{
-		Herdr:   f,
-		Store:   store.New(t.TempDir()),
-		Aliases: alias.DefaultTable(),
-		Now:     func() time.Time { return baseTime },
+		Herdr:      f,
+		Store:      store.New(t.TempDir()),
+		Candidates: candidateSet(t, testCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
 	}
 }
 
@@ -38,7 +39,7 @@ func TestBindSpawnsBuilderPane(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -70,7 +71,7 @@ func TestBindRefusesABuilderNameHerdrWouldRefuse(t *testing.T) {
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: name, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: name, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if f.splits != 0 || len(f.starts) != 0 {
 		t.Errorf("a refused name must touch no pane: splits = %d, starts = %d", f.splits, len(f.starts))
@@ -96,7 +97,7 @@ func TestBindSpawnRecordsBuilderSessionID(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -116,7 +117,7 @@ func TestBindSpawnToleratesPostStartListAgentsFailure(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind must not fail over a best-effort session lookup: %v", err)
@@ -160,17 +161,17 @@ func TestBindAdoptsExistingBuilderPane(t *testing.T) {
 	}
 }
 
-func TestBindRefusesAConsultAlias(t *testing.T) {
+func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
-	rt.Aliases = consultTable(t)
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"test","model":"m","roles":["reviewer"]}]`)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "reviewer", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testClaudeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 
-	if !errors.Is(err, ErrConsultAlias) {
-		t.Fatalf("want ErrConsultAlias, got %v", err)
+	if !errors.Is(err, ErrRoleNotServed) {
+		t.Fatalf("want ErrRoleNotServed, got %v", err)
 	}
 	if len(f.starts) != 0 {
 		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
@@ -190,45 +191,100 @@ func TestBindSpawnUnknownAliasFails(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "nope", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "claude/test/nope", PlannerPane: "w2:p3", CWD: "/repo",
 	})
-	if !errors.Is(err, alias.ErrUnknownAlias) {
-		t.Fatalf("got %v, want ErrUnknownAlias", err)
+	if !errors.Is(err, candidate.ErrUnknownCandidate) {
+		t.Fatalf("got %v, want ErrUnknownCandidate", err)
 	}
 	if len(f.starts) != 0 {
 		t.Errorf("an unknown alias must not start an agent, got %+v", f.starts)
 	}
 }
 
-// There is no default builder. A bare `relay bind` must say so rather than
-// pick one, and must not have split a pane before finding that out.
-func TestBindWithoutBuilderFails(t *testing.T) {
+func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--x"]}]`)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("starts = %+v, want 1 start", f.starts)
+	}
+	if f.starts[0].Kind != "agy" {
+		t.Errorf("Kind = %q, want agy", f.starts[0].Kind)
+	}
+	if !reflect.DeepEqual(f.starts[0].Args, []string{"--model", "m", "--x"}) {
+		t.Errorf("Args = %v, want [--model m --x]", f.starts[0].Args)
+	}
+	if b.BuilderCandidate != "agy/test/m" {
+		t.Errorf("BuilderCandidate = %q, want agy/test/m", b.BuilderCandidate)
+	}
+}
+
+func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
 	})
-	if err == nil {
-		t.Fatal("bind with no --builder and no pane to adopt must fail")
-	}
-	if !strings.Contains(err.Error(), "--builder") {
-		t.Errorf("error should name the missing flag, got: %v", err)
-	}
-	// The known aliases belong in the message: it is the only place a new user
-	// finds out what they can pass.
-	if !strings.Contains(err.Error(), "cbuilder") {
-		t.Errorf("error should list the known aliases, got: %v", err)
+	if !errors.Is(err, ErrAmbiguousCandidate) {
+		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
 	}
 	if len(f.starts) != 0 {
-		t.Errorf("nothing may be started without a builder, got %+v", f.starts)
+		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
+	}
+	if f.splits != 0 {
+		t.Errorf("split %d panes; a refused bind must not create a pane it then abandons", f.splits)
+	}
+}
+
+func TestBindWithNoCandidatesSaysSo(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, "[]")
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrNoCandidates) {
+		t.Fatalf("want ErrNoCandidates, got %v", err)
+	}
+}
+
+func TestResumeWithoutABuilderDoesNotSpawn(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "agy/test/m", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("seed Bind: %v", err)
+	}
+	f.starts = nil
+
+	_, err = Bind(context.Background(), rt, BindOptions{
+		Name: b.Name, Resume: true, Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("resume Bind: %v", err)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("resume without candidate must not spawn, got starts = %+v", f.starts)
 	}
 }
 
 func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
-	opts := BindOptions{Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo"}
+	opts := BindOptions{Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo"}
 	if _, err := Bind(context.Background(), rt, opts); err != nil {
 		t.Fatalf("first Bind: %v", err)
 	}
@@ -244,7 +300,7 @@ func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -310,7 +366,7 @@ func TestBindRefusesExistingName(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err == nil {
 		t.Fatal("binding an existing name must be refused")
@@ -382,7 +438,7 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		BuilderScreenAt:   baseTime,
 		Planner:           store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
 		Builder:           store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
-		BuilderCandidate:  "builder",
+		BuilderCandidate:  testOpencodeRef,
 	}
 
 	t.Run("spawn replacement builder", func(t *testing.T) {
@@ -399,7 +455,7 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		}
 
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("rebind: %v", err)
@@ -408,8 +464,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if got.Builder.PaneID != "w2:p9" || got.Builder.SessionID != "new-builder-sess" {
 			t.Errorf("Builder = %+v, want pane w2:p9 session new-builder-sess", got.Builder)
 		}
-		if got.BuilderCandidate != "builder" {
-			t.Errorf("BuilderAlias = %q, want builder", got.BuilderCandidate)
+		if got.BuilderCandidate != testOpencodeRef {
+			t.Errorf("BuilderCandidate = %q, want %s", got.BuilderCandidate, testOpencodeRef)
 		}
 		if !got.PreamblePending {
 			t.Errorf("PreamblePending = false, want true")
@@ -515,7 +571,7 @@ func TestBindRebindRefusesLiveBuilder(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if !errors.Is(err, ErrBuilderAlive) {
 		t.Fatalf("got err = %v, want ErrBuilderAlive", err)
@@ -566,7 +622,7 @@ func TestBindRebindIdentityRule(t *testing.T) {
 		}
 
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("rebind must succeed when builder session is gone: %v", err)
@@ -606,7 +662,7 @@ func TestBindRebindIdentityRule(t *testing.T) {
 		}
 
 		_, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		})
 		if !errors.Is(err, ErrBuilderAlive) {
 			t.Fatalf("got err = %v, want ErrBuilderAlive", err)
@@ -660,7 +716,7 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 			t.Fatalf("reset existing binding: %v", err)
 		}
 		_, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		})
 		if err == nil {
 			t.Fatal("rebind on done binding must be refused")
@@ -680,7 +736,7 @@ func TestBindRebindNotFound(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("got err = %v, want store.ErrNotFound", err)
@@ -695,7 +751,7 @@ func TestBindOpensBuilderInItsOwnTabWhenAsked(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		NewTab: true, WorkspaceID: "w2",
 	})
 	if err != nil {
@@ -721,7 +777,7 @@ func TestBindSplitsThePlannerPaneByDefault(t *testing.T) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -741,7 +797,7 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 		rt := newRuntime(t, f)
 
 		b, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 			RoundTimeout: 90 * time.Minute,
 		})
 		if err != nil {
@@ -757,7 +813,7 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 		rt := newRuntime(t, f)
 
 		b, err := Bind(context.Background(), rt, BindOptions{
-			Name: "kobe", Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo2",
+			Name: "kobe", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo2",
 		})
 		if err != nil {
 			t.Fatalf("Bind: %v", err)
@@ -1006,7 +1062,7 @@ func TestResumeRefusesRebindWhenSessionlessBuilderStillLives(t *testing.T) {
 	f.agents = []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
 	})
 	if !errors.Is(err, ErrBuilderAlive) {
 		t.Fatalf("err = %v, want ErrBuilderAlive", err)
@@ -1025,7 +1081,7 @@ func TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone(t *testing.T) {
 	f.newPane = "w2:p7"
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind resume: %v", err)
@@ -1059,7 +1115,7 @@ func TestBindResumeRefusesUnverifiableBuilder(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if !errors.Is(err, ErrBuilderUnverified) {
 		t.Fatalf("got err = %v, want ErrBuilderUnverified", err)
@@ -1106,7 +1162,7 @@ func TestBindResumeProceedsWithAssumeDead(t *testing.T) {
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3",
 		CWD: "/repo", AssumeDead: true,
 	})
 	if err != nil {
@@ -1136,7 +1192,7 @@ func TestBindResumeUnaffectedWhenSessionRecorded(t *testing.T) {
 	}
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -1162,7 +1218,7 @@ func TestBindResumeUnaffectedWhenNamedWithoutSession(t *testing.T) {
 	}
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -1194,7 +1250,7 @@ func TestAssumeDeadNeverOverridesBuilderAlive(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3",
 		CWD: "/repo", AssumeDead: true,
 	})
 	if !errors.Is(err, ErrBuilderAlive) {
@@ -1226,7 +1282,7 @@ func TestBindResumeAllowsSessionlessRebindWhenRoundClosed(t *testing.T) {
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind resume: %v", err)
@@ -1245,7 +1301,7 @@ func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 		State:            store.StateActive,
 		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
 		Builder:          store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
-		BuilderCandidate: "builder",
+		BuilderCandidate: testOpencodeRef,
 	}
 
 	t.Run("with alias", func(t *testing.T) {
@@ -1262,7 +1318,7 @@ func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 		}
 
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Alias: "builder", PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("Bind resume with alias: %v", err)

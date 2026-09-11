@@ -10,15 +10,10 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// ErrAliasRequired reports an add with no builder to spawn. Unlike a fork,
-// which can inherit its source's alias, a peer builder has nothing to inherit
-// from.
-var ErrAliasRequired = errors.New("relay add needs --builder ALIAS")
-
 // AddOptions describes one peer-builder request.
 type AddOptions struct {
 	Name        string // name for the new binding; required, must be free
-	Alias       string // builder alias to spawn; required
+	Candidate   string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
 	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
 	Repo        string // the repository the worktree is cut from; the caller's cwd
 
@@ -50,7 +45,7 @@ type AddResult struct {
 //
 // Preconditions:  opts.PlannerPane names a live agent pane; opts.Name is valid
 //
-//	and unused; opts.Alias is non-empty; opts.Repo is a git
+//	and unused; opts.Candidate is resolvable to builder; opts.Repo is a git
 //	repository unless opts.CWD is given.
 //
 // Postconditions: on success a new binding exists at round 1, in StateActive,
@@ -59,9 +54,9 @@ type AddResult struct {
 //	error, no binding exists and any worktree Add created has
 //	been removed.
 //
-// Errors: ErrAliasRequired, ErrGitRequired, store.ErrCWDTaken,
+// Errors: ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists,
 //
-//	git.ErrBranchExists, or a wrapped herdr failure.
+//	or a wrapped herdr failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if opts.PlannerPane == "" {
 		return AddResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
@@ -75,8 +70,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if _, err := builderAgentName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
-	if opts.Alias == "" {
-		return AddResult{}, ErrAliasRequired
+	// Resolve before AddWorktree for the same reason builderAgentName runs
+	// here -- a refused add must leave no worktree.
+	c, err := resolveCandidate(rt.Candidates, opts.Candidate, "builder")
+	if err != nil {
+		return AddResult{}, err
 	}
 
 	agents, err := rt.Herdr.ListAgents(ctx)
@@ -154,13 +152,13 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 
 	bindOpts := BindOptions{
 		Name:        opts.Name,
-		Alias:       opts.Alias,
+		Candidate:   c.Ref().String(),
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
 		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
-	builder, err := resolveBuilder(ctx, rt, bindOpts, opts.Name, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.Name, planner.PaneID)
 	if err != nil {
 		rollback()
 		return AddResult{}, err
@@ -174,7 +172,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		CWD:              cwd,
 		Planner:          endpointOf(planner),
 		Builder:          builder,
-		BuilderCandidate: opts.Alias,
+		BuilderCandidate: c.Ref().String(),
 		Round:            1,
 		State:            store.StateActive,
 		Worktree:         worktree,

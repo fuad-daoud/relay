@@ -15,9 +15,9 @@ import (
 // ErrRoundOutOfRange reports a --round outside the source binding's history.
 var ErrRoundOutOfRange = errors.New("round is outside the source binding's history")
 
-// ErrNoBuilderAlias reports a fork of an adopted-builder binding with no
+// ErrNoBuilderCandidate reports a fork of an adopted-builder binding with no
 // --builder to spawn from.
-var ErrNoBuilderAlias = errors.New("source binding has no builder alias; pass --builder")
+var ErrNoBuilderCandidate = errors.New("source binding has no builder candidate; pass --builder")
 
 // ErrGitRequired reports a fork that needs a worktree with no git available.
 var ErrGitRequired = errors.New("relay fork needs git; pass --cwd to bind a tree yourself")
@@ -28,10 +28,10 @@ type ForkOptions struct {
 	Round   int    // source round to copy through; required, 1..source.Round
 	NewName string // name for the fork; required, must be free
 
-	// Alias is the builder to spawn for the fork. Empty inherits the source's
-	// BuilderAlias; a source with no alias (an adopted builder) has none to
-	// inherit, so the fork must be given one explicitly.
-	Alias string
+	// Candidate is a harness/provider/model token; empty inherits the source's
+	// BuilderCandidate; a source with none (an adopted builder) falls through
+	// to resolveCandidate, so a one-candidate machine still forks without a flag.
+	Candidate string
 
 	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
 	NewTab      bool   // open the builder in its own tab
@@ -64,7 +64,7 @@ type ForkResult struct {
 //	StateActive, with a running builder and its own working tree.
 //	The source binding is byte-for-byte unchanged.
 //
-// Errors: store.ErrNotFound, ErrRoundOutOfRange, ErrNoBuilderAlias,
+// Errors: store.ErrNotFound, ErrRoundOutOfRange, ErrNoBuilderCandidate,
 //
 //	ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists, or a wrapped
 //	herdr failure. Rollback is described in §5.
@@ -123,12 +123,16 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		return ForkResult{}, err
 	}
 
-	alias := opts.Alias
-	if alias == "" {
-		alias = src.BuilderCandidate
+	token := opts.Candidate
+	if token == "" {
+		token = src.BuilderCandidate
 	}
-	if alias == "" {
-		return ForkResult{}, ErrNoBuilderAlias
+	c, err := resolveCandidate(rt.Candidates, token, "builder")
+	if err != nil && token == "" {
+		return ForkResult{}, fmt.Errorf("%w (%v)", ErrNoBuilderCandidate, err)
+	}
+	if err != nil {
+		return ForkResult{}, err
 	}
 
 	var (
@@ -189,13 +193,13 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 
 	bindOpts := BindOptions{
 		Name:        opts.NewName,
-		Alias:       alias,
+		Candidate:   c.Ref().String(),
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
 		NewTab:      opts.NewTab,
 		WorkspaceID: opts.WorkspaceID,
 	}
-	builder, err := resolveBuilder(ctx, rt, bindOpts, opts.NewName, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, bindOpts, opts.NewName, planner.PaneID)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
@@ -206,7 +210,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		CWD:              cwd,
 		Planner:          endpointOf(planner),
 		Builder:          builder,
-		BuilderCandidate: alias,
+		BuilderCandidate: c.Ref().String(),
 		Round:            opts.Round + 1,
 		State:            store.StateActive,
 		RoundCap:         src.RoundCap,

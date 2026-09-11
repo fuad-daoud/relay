@@ -21,8 +21,8 @@ human, whether the work is done, is a decision that stays with the planner
   and every single thing relay observes or controls goes through the `herdr`
   CLI. relay is useless without it.
 - **Two agent harnesses that herdr can drive** — one for the planner, one for
-  the builder. relay ships example aliases for `opencode`, `claude` and `agy`;
-  see [Builder aliases](#builder-aliases).
+  the builder. relay knows how to start `opencode`, `claude` and `agy`; you tell it
+  which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relay works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
 - **Go 1.22+**, to build from source. Not needed if you install a release
@@ -125,21 +125,23 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    for your own setup -- `relay doctor` reports the pin each installed definition
    carries.
 
-   `agy` has no `--agent` flag and selects its role from the alias preamble
+   `agy` has no `--agent` flag; relay prepends the role's preamble on the first prompt
    instead, so it has no definitions to install.
-5. Re-run `relay doctor` to confirm `0 failures`.
-6. Start the daemon (e.g. `relay daemon &` or `make service`).
-7. Bind your first agent from inside a herdr planner pane:
+5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
+6. Re-run `relay doctor` to confirm `0 failures`.
+7. Start the daemon (e.g. `relay daemon &` or `make service`).
+8. Bind your first agent from inside a herdr planner pane:
    ```
-   relay bind --builder cbuilder
+   relay bind --builder claude/anthropic/sonnet
    ```
+   (or, with one candidate, `relay bind`).
 
 ## Quick start
 
 From inside the planner's herdr pane, in the repository you want worked on:
 
 ```
-relay bind --builder cbuilder     # split a builder pane and bind it to this tree
+relay bind --builder claude/anthropic/sonnet     # split a builder pane and bind it to this tree
 relay send --file plan.md         # hand it the plan; the builder starts working
 relay status                      # watch the round
 relay pull                        # print the report the builder wrote back
@@ -151,10 +153,10 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder ALIAS|PANE_ID] [--resume] [--tab] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume] [--tab] [--timeout D]`
   — start a binding between the calling planner pane (read from
-  `$HERDR_PANE_ID`) and a builder. `--builder` is looked up as an alias unless
-  it contains `:`, in which case it is treated as a herdr pane id and that pane
+  `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
+  it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
   is **adopted** instead of spawned. A name that already exists is refused
   rather than reused: only `bind.json` would be rewritten, so a fresh round 1
   would collide with the previous session's round log. `--resume --name N`
@@ -184,13 +186,14 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
-- `relay add --name N --builder ALIAS [--tab] [--cwd DIR]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--tab] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
-- `relay fork <source> --round R --new-name N [--builder ALIAS] [--tab] [--cwd DIR]` —
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--tab] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`).
+- `relay candidates` — list the configured candidates and the roles each serves.
 - `relay done NAME|--name N` — mark a binding done; relaying stops.
 - `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first.
@@ -265,9 +268,9 @@ longer mistaken for a finished one.
 attaches more, each on its own git worktree, so they never contend for files:
 
 ```
-relay bind --builder cbuilder --name api
-relay add  --name frontend --builder cbuilder
-relay add  --name backend  --builder builder
+relay bind --builder claude/anthropic/sonnet --name api
+relay add  --name frontend --builder claude/anthropic/sonnet
+relay add  --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
 
 relay send --name frontend --file ui_plan.md
 relay send --name backend  --file api_plan.md
@@ -340,65 +343,73 @@ you to read and close yourself.
 `--name ai`). Neither resolves the current directory for you: a bare `relay done` once ended a live
 loop by accident, and the recovery is `relay bind --resume --name <name>`.
 
-## Builder aliases
+## Candidates
 
-An alias says how to start one builder: which herdr agent kind, and which
-native arguments to launch it with. `relay bind --builder cbuilder` spawns the
-`cbuilder` alias; there is no default, because guessing would silently start
-the wrong (and possibly expensive) agent.
+A candidate is one way to fill a role, named by the token `harness/provider/model`. `harness` and `provider` are single segments; `model` is the rest, so `opencode/openrouter/z-ai/glm-5.3-flash` is one token. **relay ships no candidates**: which model you are entitled to run is a fact about your accounts, not about relay.
 
-relay ships three aliases, and they are **worked examples, not a supported
-set**:
-
-| alias      | kind     | model                              | role selection |
-|------------|----------|-------------------------------------|----------------|
-| `builder`  | opencode | `openrouter/z-ai/glm-5.3-flash`     | `--agent plan-executor` |
-| `cbuilder` | claude   | `sonnet`                            | `--agent plan-executor` |
-| `abuilder` | agy      | `gemini-3.8-flash-high`             | preamble on the first prompt |
-
-Each one assumes things about the machine relay runs on: that the harness is
-installed, that its provider is configured for that model, and that a
-`plan-executor` role definition exists in it. Relay can now emit that role
-definition for you with `relay agent print --kind claude` or `--kind opencode`
-(see [First run on a clean machine](#first-run-on-a-clean-machine)), while `agy`
-selects its role via the preamble on the first prompt. Run `relay doctor` to
-check which ones are installed.
-
-> **Note on `abuilder`:** it passes `--dangerously-skip-permissions`, which
-> lets the builder act without approval prompts. That is what makes an
-> unattended relay loop work, and it is a real grant of trust. Keep it only for
-> a working tree you are willing to let an agent edit freely.
-
-Override or extend the table in `$XDG_CONFIG_HOME/relay/aliases.json`
-(default `~/.config/relay/aliases.json`). It is a JSON array
-layered over the built-ins, so an entry reusing a built-in name replaces it:
+Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `~/.config/relay/candidates.json`), a JSON array:
 
 ```json
 [
   {
-    "name": "builder",
-    "kind": "opencode",
-    "args": ["--agent", "plan-executor", "-m", "anthropic/claude-sonnet-5"]
+    "harness":  "claude",
+    "provider": "anthropic",
+    "model":    "sonnet",
+    "roles":    ["builder", "reviewer"]
   },
   {
-    "name": "local",
-    "kind": "opencode",
-    "args": ["-m", "ollama/qwen3-coder"],
-    "preamble": "Act as a plan execution specialist. Implement exactly what the plan specifies."
+    "harness":  "opencode",
+    "provider": "openrouter",
+    "model":    "z-ai/glm-5.3-flash",
+    "roles":    ["builder"],
+    "extra_args": ["--auto"]
+  },
+  {
+    "harness":    "agy",
+    "provider":   "google",
+    "model":      "gemini-3.8-flash-high",
+    "roles":      ["builder"],
+    "extra_args": ["--dangerously-skip-permissions"]
   }
 ]
 ```
 
-- `name` — what you pass to `relay bind --builder`. Required.
-- `kind` — the herdr agent kind (`herdr agent start --kind`). Required.
-- `args` — native arguments passed through to the harness.
-- `preamble` — prepended to round 1's prompt only, for harnesses with no way to
-  select a role at launch. `agy` has no `--agent` flag, which is why `abuilder`
-  uses one.
+- `harness` — a kind relay knows: `agy`, `claude`, `opencode`. Required.
+- `provider` — who enforces the quota; free text. Required.
+- `model` — passed to the harness as-is. Required.
+- `roles` — non-empty list of roles from `builder`, `reviewer`, `researcher`. Required.
+- `tree` — `binding` (the default) or `none` (which `relay ask` refuses today).
+- `extra_args` — appended verbatim after what relay renders.
 
-An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs
-no alias at all: you launched that agent yourself, so it is already in whatever
-role you put it in.
+A file that does not validate stops every relay command with a message naming the entry; a missing file is zero candidates.
+
+| Name | Shape | Definition |
+| --- | --- | --- |
+| `builder` | builder | `plan-executor` |
+| `reviewer` | consult | `reviewer` |
+| `researcher` | consult | `researcher` |
+
+A role is relay's name for a job; the harness definition it selects is what `relay agent print` emits.
+
+### How relay launches one
+
+| kind | args | preamble |
+| --- | --- | --- |
+| `claude` | `--model <model> --agent <role.Definition>` | `""` |
+| `opencode` | `--agent <role.Definition> -m <provider>/<model>` | `""` |
+| `agy` | `--model <model>` | `role.Preamble` |
+
+Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
+
+> **Note on `--dangerously-skip-permissions`:** it lets the builder act without approval prompts, which makes an unattended relay loop work, but it is a real grant of trust. It is an `extra_args` entry you add once you have watched a few rounds and trust the loop with that tree; relay never adds it.
+
+### Choosing a candidate
+
+Pass the token to `relay bind --builder claude/anthropic/sonnet`. With `--builder` omitted, relay uses the only configured candidate that serves `builder`; with several it refuses and lists them; with none it names the file. The same rule applies to `relay add`, `relay fork` (which first inherits the source's candidate) and `relay ask --candidate`. `relay candidates` prints the configured tokens with their roles. A `--builder` value containing `:` and no `/` is a herdr pane id to adopt.
+
+An **adopted** pane (bind by pane id, or `--resume`) gets no preamble and needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in.
+
+`aliases.json` from earlier versions is no longer read.
 
 ## Consults: asking a reviewer
 
@@ -438,43 +449,34 @@ relay agent print --kind opencode --role reviewer > ~/.config/opencode/agents/re
 ```
 
 `relay doctor` reports whether the definition landed. `agy` has no `--agent`
-flag, so a consult on `agy` selects its role from the alias preamble instead
-and needs no definition file.
+flag; relay prepends the role's preamble when the candidate is `agy`, so it
+needs no definition file.
 
 Read-only is a property of the role's configuration — the definition pins a
-read-only tool set and the alias decides where it runs — not something relay
-enforces. relay cannot observe writes; it reports what is in a tree and no
-more. Note also that `reviewer` is deliberately not the `researcher` role:
-`researcher` is dispatched by a builder's own plan-executor and returns
+read-only tool set and the candidate's `tree` decides where it runs — not
+something relay enforces. relay cannot observe writes; it reports what is in a
+tree and no more. Note also that `reviewer` is deliberately not the `researcher`
+role: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs in its own relay pane and hands
 back a file path.
 
-### The reviewer alias
+### Consult candidates
 
-`relay ask --role reviewer` resolves the role through the alias table, and no
-built-in alias is a consult. Add one to `$XDG_CONFIG_HOME/relay/aliases.json`
-(default `~/.config/relay/aliases.json`):
+`relay ask --role reviewer` resolves `reviewer` through the role table and then
+picks a candidate whose `roles` include it, by the same rule as `--builder`.
+
+In `~/.config/relay/candidates.json`:
 
 ```json
-[
-  {
-    "name": "reviewer",
-    "kind": "claude",
-    "args": ["--agent", "reviewer", "--model", "opus"],
-    "role": "consult",
-    "tree": "binding"
-  }
-]
+{"harness": "claude", "provider": "anthropic", "model": "opus", "roles": ["reviewer"]}
 ```
 
-Until you add that entry, `relay ask --role reviewer` fails with
-`alias.ErrUnknownAlias`. That is the honest failure: relay does not know what
-model you are entitled to run.
+```bash
+relay ask --role reviewer --candidate claude/anthropic/opus --file q.md webshop
+```
 
-One trap, because it bites silently: an entry replaces a spec **wholesale**
-rather than merging fields. Adding a **new** name is safe. Overriding an
-**existing** alias means repeating its full `args` list, or its role and model
-vanish.
+Until a candidate lists `reviewer`, `ask` fails with
+`no configured candidate serves role "reviewer"`.
 
 ## Display states
 
@@ -607,7 +609,7 @@ skip it entirely, add this to `~/.config/opencode/opencode.jsonc`:
 ```
 
 Substitute your real home directory: opencode does not expand `~` or `$HOME`
-in these patterns. Claude builders (`cbuilder`) have their own permission model
+in these patterns. Claude builders (`claude/anthropic/sonnet`) have their own permission model
 and are not covered by that entry.
 
 ## Recovering a broken binding
@@ -623,13 +625,13 @@ direction.
 If the builder is gone, point the binding at a new builder:
 
 ```bash
-relay bind --resume --name N --builder abuilder     # spawn a fresh builder
+relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # spawn a fresh builder
 relay bind --resume --name N --builder w2:p4        # adopt an existing pane
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. Because the replacement builder is a new session that has not seen the
-alias preamble, relay re-sends the preamble on the next prompt even after round 1.
+role's preamble, relay re-sends the preamble on the next prompt even after round 1.
 Relay does not automatically re-send the current plan: it prints the `relay send`
 command pointing at the staged plan so you can hand over the round when ready.
 

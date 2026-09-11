@@ -20,7 +20,7 @@ func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	rt := newRuntime(t, f)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Alias: "abuilder", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -107,6 +107,23 @@ func TestSendIncludesPreambleOnFirstRoundOnly(t *testing.T) {
 	}
 	if strings.Contains(f.prompts[1].Text, "plan-executor") {
 		t.Error("the preamble must not repeat after round 1")
+	}
+}
+
+func TestSendWithoutPreambleWhenCandidateWasRemoved(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	rt.Candidates = candidateSet(t, "[]")
+	src := writePlan(t, "x")
+
+	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
+		t.Fatalf("round 1 Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("got %d prompts, want 1", len(f.prompts))
+	}
+	if strings.Contains(f.prompts[0].Text, "plan-executor") {
+		t.Error("prompt must not carry preamble when candidate was removed")
 	}
 }
 

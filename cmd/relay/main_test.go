@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -337,7 +338,9 @@ func TestForkValidation(t *testing.T) {
 	}
 }
 
-func TestAliasConfigHome(t *testing.T) {
+// TestCandidatesConfigHome pins #42: relay config is composed through
+// userConfigRoot(), so XDG_CONFIG_HOME decides where candidates.json is read.
+func TestCandidatesConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
@@ -348,8 +351,8 @@ func TestAliasConfigHome(t *testing.T) {
 	if err := os.MkdirAll(relayDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	aliasContent := `[{"name":"custom-builder","kind":"dummy","args":["arg"]}]`
-	if err := os.WriteFile(filepath.Join(relayDir, "aliases.json"), []byte(aliasContent), 0o644); err != nil {
+	body := `[{"harness":"claude","provider":"test","model":"m","roles":["builder"]}]`
+	if err := os.WriteFile(filepath.Join(relayDir, "candidates.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -357,8 +360,8 @@ func TestAliasConfigHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRuntime: %v", err)
 	}
-	if _, err := rt.Aliases.Lookup("custom-builder"); err != nil {
-		t.Fatalf("rt.Aliases.Lookup(%q): %v", "custom-builder", err)
+	if _, err := rt.Candidates.Lookup(candidate.Ref{Harness: "claude", Provider: "test", Model: "m"}); err != nil {
+		t.Fatalf("rt.Candidates.Lookup: %v", err)
 	}
 }
 
@@ -428,15 +431,9 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"add", "--builder", "cbuilder"})
+	err := run([]string{"add", "--builder", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
-	}
-
-	// Missing --builder
-	err = run([]string{"add", "--name", "frontend"})
-	if err == nil || !strings.Contains(err.Error(), "--builder") {
-		t.Fatalf("expected an error about --builder, got %v", err)
 	}
 }
 
@@ -659,5 +656,24 @@ func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
 	named := scopeReport(relay.Report{Bindings: rep.Bindings[1:]}, "finished", false)
 	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
 		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
+	}
+}
+
+func TestIsPaneID(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"w2:p4", true},
+		{"claude/anthropic/sonnet", false},
+		{"opencode/openrouter/z-ai/glm-5.3-flash", false},
+		{"claude/anthropic/model:tag", false},
+		{"", false},
+	}
+
+	for _, c := range cases {
+		if got := isPaneID(c.input); got != c.want {
+			t.Errorf("isPaneID(%q) = %v, want %v", c.input, got, c.want)
+		}
 	}
 }

@@ -40,7 +40,7 @@ func cmdAgentPrint(args []string) error {
 	}
 
 	if *kind == "agy" {
-		fmt.Fprintln(os.Stderr, "agy selects its role with a preamble on the first prompt, not an agent file; see the abuilder alias in ~/.config/relay/aliases.json")
+		fmt.Fprintln(os.Stderr, "agy selects its role with a preamble on the first prompt, not an agent file; relay prepends it when it starts an agy candidate (see README \"Candidates\")")
 		return exitCodeErr{code: 2}
 	}
 

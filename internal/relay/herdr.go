@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -43,12 +43,12 @@ type Git interface {
 // Runtime carries relay's dependencies explicitly, so every command and the
 // daemon can be driven by a fake in tests.
 type Runtime struct {
-	Herdr   Herdr
-	Git     Git
-	Store   *store.Store
-	Aliases *alias.Table
-	Now     func() time.Time
-	Hooks   hooks.Dispatcher
+	Herdr      Herdr
+	Git        Git
+	Store      *store.Store
+	Candidates *candidate.Set
+	Now        func() time.Time
+	Hooks      hooks.Dispatcher
 
 	// HeldGrace is how long a focused planner's screen must be unchanged before
 	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by

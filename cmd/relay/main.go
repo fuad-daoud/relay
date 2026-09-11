@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -58,6 +58,7 @@ Commands:
   reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
+  candidates   list the configured harness/provider/model candidates
   agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
   help      print this message
   version   print the relay version
@@ -204,6 +205,8 @@ func run(args []string) error {
 		return cmdDaemon(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
+	case "candidates":
+		return cmdCandidates(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
 	default:
@@ -246,6 +249,7 @@ func resolveHooksConfig() (hooks.Config, error) {
 	}, nil
 }
 
+// newRuntime constructs the production runtime; aliases.json is never read (#80).
 func newRuntime() (relay.Runtime, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -257,7 +261,7 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
-	aliases, err := alias.LoadTable(filepath.Join(configDir, "relay", "aliases.json"))
+	candidates, err := candidate.Load(filepath.Join(configDir, "relay", "candidates.json"))
 	if err != nil {
 		return relay.Runtime{}, err
 	}
@@ -269,12 +273,12 @@ func newRuntime() (relay.Runtime, error) {
 	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
 
 	return relay.Runtime{
-		Herdr:   herdr.NewClient("herdr", 30*time.Second),
-		Git:     git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:   store.New(root),
-		Aliases: aliases,
-		Now:     time.Now,
-		Hooks:   dispatcher,
+		Herdr:      herdr.NewClient("herdr", 30*time.Second),
+		Git:        git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Store:      store.New(root),
+		Candidates: candidates,
+		Now:        time.Now,
+		Hooks:      dispatcher,
 	}, nil
 }
 
@@ -283,8 +287,8 @@ func newRuntime() (relay.Runtime, error) {
 // for -- so a later `relay ask` failing on the derived name is not a surprise
 // a day later. It is a note, not an error: a binding that can build is still
 // useful, and refusing would let the alias table dictate binding names.
-func noteConsultRolesTooLong(aliases *alias.Table, name string) {
-	roles := relay.ConsultRolesTooLong(aliases, name)
+func noteConsultRolesTooLong(name string) {
+	roles := relay.ConsultRolesTooLong(name)
 	if len(roles) == 0 {
 		return
 	}
@@ -300,10 +304,32 @@ func noteConsultRolesTooLong(aliases *alias.Table, name string) {
 		name, strings.Join(roles, ", "), herdr.MaxAgentNameLen-10-len(longest), longest)
 }
 
+// isPaneID tells a herdr pane id apart from a candidate token on the same
+// --builder flag: a pane id has a ':' and never a '/', a candidate token
+// always has a '/'. A model name may contain ':', so ':' alone is not enough.
+func isPaneID(s string) bool {
+	return strings.Contains(s, ":") && !strings.Contains(s, "/")
+}
+
+func cmdCandidates(args []string) error {
+	fs := flag.NewFlagSet("candidates", flag.ContinueOnError)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(relay.FormatCandidates(rt.Candidates))
+	return nil
+}
+
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn, or a pane id to adopt; omit when exactly one candidate serves builder")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	assumeDead := fs.Bool("assume-dead", false,
 		"confirm a builder relay cannot verify is gone really is gone")
@@ -338,11 +364,10 @@ func cmdBind(args []string) error {
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
 	}
-	// A value containing ':' is a herdr pane id, not an alias.
-	if strings.Contains(*builderAlias, ":") {
+	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
 	} else {
-		opts.Alias = *builderAlias
+		opts.Candidate = *builderAlias
 	}
 
 	adopted := *resume || opts.BuilderPane != ""
@@ -360,10 +385,8 @@ func cmdBind(args []string) error {
 				}
 			}
 		}
-	} else if opts.Alias != "" {
-		if spec, err := rt.Aliases.Lookup(opts.Alias); err == nil {
-			kind = spec.Kind
-		}
+	} else {
+		kind = relay.CandidateKind(rt, opts.Candidate)
 	}
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
@@ -398,7 +421,7 @@ func cmdBind(args []string) error {
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
 	if !adopted {
-		noteConsultRolesTooLong(rt.Aliases, b.Name)
+		noteConsultRolesTooLong(b.Name)
 	}
 	return nil
 }
@@ -408,7 +431,7 @@ func cmdFork(args []string) error {
 	name := fs.String("name", "", "source binding to fork from")
 	round := fs.Int("round", 0, "source round to copy history through")
 	newName := fs.String("new-name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "builder alias, or a pane id to adopt (default: inherits source)")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source)")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
@@ -417,7 +440,7 @@ func cmdFork(args []string) error {
 
 	source, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay fork <source> --round N --new-name NAME [--builder ALIAS] [--tab] [--cwd DIR]%s\n"+
+		return fmt.Errorf("usage: relay fork <source> --round N --new-name NAME [--builder CANDIDATE] [--tab] [--cwd DIR]%s\n"+
 			"fork branches a new binding from an earlier round; it needs the source binding name", bindingHint("fork"))
 	}
 
@@ -437,7 +460,7 @@ func cmdFork(args []string) error {
 		Source:      source,
 		Round:       *round,
 		NewName:     *newName,
-		Alias:       *builderAlias,
+		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		NewTab:      *newTab,
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
@@ -456,7 +479,7 @@ func cmdFork(args []string) error {
 		fmt.Printf("forked %s to %s (round %d) at %s\n",
 			source, res.Binding.Name, res.Binding.Round, res.Binding.CWD)
 	}
-	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
+	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
 }
@@ -464,7 +487,7 @@ func cmdFork(args []string) error {
 func cmdAdd(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "builder alias to spawn")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit when exactly one candidate serves builder")
 	newTab := fs.Bool("tab", false, "open the builder in its own tab instead of splitting this pane")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	if err := parseFlags(fs, args); err != nil {
@@ -473,9 +496,6 @@ func cmdAdd(args []string) error {
 
 	if *name == "" {
 		return fmt.Errorf("relay add requires --name NAME")
-	}
-	if *builderAlias == "" {
-		return fmt.Errorf("relay add requires --builder ALIAS")
 	}
 
 	rt, err := newRuntime()
@@ -490,7 +510,7 @@ func cmdAdd(args []string) error {
 
 	res, err := relay.Add(context.Background(), rt, relay.AddOptions{
 		Name:        *name,
-		Alias:       *builderAlias,
+		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		Repo:        repo,
 		NewTab:      *newTab,
@@ -509,7 +529,7 @@ func cmdAdd(args []string) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
-	noteConsultRolesTooLong(rt.Aliases, res.Binding.Name)
+	noteConsultRolesTooLong(res.Binding.Name)
 
 	return nil
 }
@@ -755,7 +775,8 @@ func cmdSend(args []string) error {
 
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	role := fs.String("role", "", "consult role to spawn")
+	role := fs.String("role", "", "consult role: reviewer, researcher")
+	cand := fs.String("candidate", "", "candidate harness/provider/model; omit when exactly one serves the role")
 	file := fs.String("file", "", "file containing the question")
 	nameFlag := fs.String("name", "", "binding name")
 	newTab := fs.Bool("new-tab", false, "open the consult in its own tab")
@@ -782,6 +803,7 @@ func cmdAsk(args []string) error {
 
 	res, err := relay.Ask(context.Background(), rt, relay.AskOptions{
 		Role:        *role,
+		Candidate:   *cand,
 		File:        *file,
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),

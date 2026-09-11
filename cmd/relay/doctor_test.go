@@ -9,16 +9,35 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+func testSet(t *testing.T, body string) *candidate.Set {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	return set
+}
+
+const threeKinds = `[
+  {"harness":"agy","provider":"t","model":"m","roles":["builder"]},
+  {"harness":"claude","provider":"t","model":"m","roles":["builder"]},
+  {"harness":"opencode","provider":"t","model":"m","roles":["builder"]}
+]`
+
 func TestAssembleKinds(t *testing.T) {
 	tempHome := t.TempDir()
 	st := store.New(filepath.Join(tempHome, "store"))
-	tbl := alias.DefaultTable()
+	tbl := testSet(t, threeKinds)
 
 	// Default table has agy, claude, opencode
 	kinds, err := assembleKinds(tbl, st)
@@ -71,7 +90,7 @@ func TestAssembleKindsSurfacesErrors(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	st := store.New(filePath)
-	tbl := alias.DefaultTable()
+	tbl := testSet(t, threeKinds)
 
 	kinds, err := assembleKinds(tbl, st)
 	if err == nil {
@@ -81,7 +100,30 @@ func TestAssembleKindsSurfacesErrors(t *testing.T) {
 	// to diagnose because one of its own inputs is unreadable is worse than one
 	// that reports the gap and checks the rest.
 	if len(kinds) == 0 {
-		t.Error("assembleKinds must still return the alias-derived kinds when the store is unreadable")
+		t.Error("assembleKinds must still return the candidate-derived kinds when the store is unreadable")
+	}
+}
+
+func TestAssembleKindsWithNoCandidatesUsesBindingsOnly(t *testing.T) {
+	tempHome := t.TempDir()
+	st := store.New(filepath.Join(tempHome, "store"))
+	b := store.Binding{
+		Name: "claude-binding",
+		CWD:  tempHome,
+		Builder: store.Endpoint{
+			Kind: "claude",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("st.Save: %v", err)
+	}
+
+	kinds, err := assembleKinds(testSet(t, "[]"), st)
+	if err != nil {
+		t.Fatalf("assembleKinds: %v", err)
+	}
+	if len(kinds) != 1 || kinds[0] != "claude" {
+		t.Fatalf("kinds = %v, want [claude]", kinds)
 	}
 }
 

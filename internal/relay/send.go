@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -70,7 +72,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		var ok bool
 		builder, ok = FindAgent(agents, hint.Builder)
 		if !ok {
-			return SendResult{}, fmt.Errorf("binding %q (pane %s, alias %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
+			return SendResult{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
 		}
 		locatedBuilder = true
 	}
@@ -100,7 +102,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
 		}
 		if !SameAgent(builder, b.Builder) {
-			return fmt.Errorf("binding %q (pane %s, alias %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
+			return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
 		}
 
 		planPath := rt.Store.PlanPath(name, b.Round)
@@ -188,7 +190,7 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error
 	return nil
 }
 
-// composePrompt prepends the alias preamble on round 1, and on any round where
+// composePrompt prepends the candidate preamble on round 1, and on any round where
 // a rebind left PreamblePending set: a replacement builder is a new session
 // that has never selected its role.
 func composePrompt(rt Runtime, b store.Binding, planPath, reportPath string) (string, error) {
@@ -196,20 +198,27 @@ func composePrompt(rt Runtime, b store.Binding, planPath, reportPath string) (st
 	if !(b.Round == 1 || b.PreamblePending) {
 		return text, nil
 	}
-
-	// An adopted builder has no alias: the human started it with their own
-	// launcher, which already selected the role. Nothing to prepend.
 	if b.BuilderCandidate == "" {
-		return text, nil
+		return text, nil // adopted, or a pre-#80 binding
 	}
-
-	spec, err := rt.Aliases.Lookup(b.BuilderCandidate)
+	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
 		return "", err
 	}
-	if spec.Preamble == "" {
+	c, err := rt.Candidates.Lookup(ref)
+	if errors.Is(err, candidate.ErrUnknownCandidate) {
+		// The builder is already running; the preamble is a round-1 courtesy,
+		// so a candidate removed from the file after bind must not fail the round (spec §4.7).
 		return text, nil
 	}
-
-	return spec.Preamble + "\n\n" + text, nil
+	if err != nil {
+		return "", err
+	}
+	role, _ := harness.RoleByName("builder")
+	h, _ := harness.Lookup(c.Harness)
+	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
+	if l.Preamble == "" {
+		return text, nil
+	}
+	return l.Preamble + "\n\n" + text, nil
 }

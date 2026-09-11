@@ -167,3 +167,13 @@ func TestResolveCandidateIsDeterministic(t *testing.T) {
 		t.Errorf("got %q and %q, want identical error string", errA1.Error(), errA2.Error())
 	}
 }
+
+func TestCandidateKind(t *testing.T) {
+	rt := Runtime{Candidates: candidateSet(t, testCandidatesJSON)}
+	if got := CandidateKind(rt, testClaudeRef); got != "claude" {
+		t.Errorf("CandidateKind(%q) = %q, want claude", testClaudeRef, got)
+	}
+	if got := CandidateKind(rt, "claude/test/nope"); got != "" {
+		t.Errorf("CandidateKind(unknown) = %q, want empty", got)
+	}
+}

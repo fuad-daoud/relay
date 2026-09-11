@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -25,22 +25,23 @@ const bindPreflightTimeout = 2 * time.Second
 // doctor needs, so the assertion in newDoctorEnv can never panic at runtime.
 var _ doctor.HerdrClient = (*herdr.Client)(nil)
 
-// assembleKinds is the scope: every kind named by the effective alias table,
+// assembleKinds is the scope: every kind named by a configured candidate,
 // plus every existing binding's builder kind. storeErr is returned rather than
 // aborting -- a diagnostic that refuses to diagnose because one of its own
 // inputs is unreadable is worse than one that reports the gap, so the caller
 // renders it as a row and checks the kinds it did find.
-func assembleKinds(aliases *alias.Table, st *store.Store) (kinds []string, storeErr error) {
+func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeErr error) {
 	seen := make(map[string]bool)
-	if aliases != nil {
-		for _, name := range aliases.Names() {
-			// Names() is the table's own key set, so Lookup cannot miss.
-			spec, err := aliases.Lookup(name)
+	if set != nil {
+		for _, ref := range set.Refs() {
+			// Refs() is the set's own canonical keys, so ParseRef cannot fail.
+			parsed, _ := candidate.ParseRef(ref)
+			c, err := set.Lookup(parsed)
 			if err != nil {
 				continue
 			}
-			if spec.Kind != "" {
-				seen[spec.Kind] = true
+			if c.Harness != "" {
+				seen[c.Harness] = true
 			}
 		}
 	}
@@ -140,7 +141,7 @@ func cmdDoctor(args []string) error {
 		return err
 	}
 
-	kinds, storeErr := assembleKinds(rt.Aliases, rt.Store)
+	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
 	hc, ok := rt.Herdr.(doctor.HerdrClient)
 	if !ok {
 		return fmt.Errorf("herdr client does not support the probes doctor needs")
@@ -153,6 +154,14 @@ func cmdDoctor(args []string) error {
 			Severity:    doctor.SevWarn,
 			Detail:      storeErr.Error(),
 			ProbeFailed: true,
+		})
+	}
+	if rt.Candidates.Len() == 0 {
+		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
+			Name:     "candidates",
+			Severity: doctor.SevWarn,
+			Detail:   "none configured",
+			Fix:      "write ~/.config/relay/candidates.json; see README \"Candidates\"",
 		})
 	}
 

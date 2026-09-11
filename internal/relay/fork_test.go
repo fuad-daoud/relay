@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/alias"
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -32,12 +32,12 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 		g = fg
 	}
 	return Runtime{
-		Herdr:   f,
-		Git:     g,
-		Store:   store.New(t.TempDir()),
-		Aliases: alias.DefaultTable(),
-		Now:     func() time.Time { return baseTime },
-		Hooks:   hd,
+		Herdr:      f,
+		Git:        g,
+		Store:      store.New(t.TempDir()),
+		Candidates: candidateSet(t, testCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+		Hooks:      hd,
 	}
 }
 
@@ -48,7 +48,7 @@ func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Bind
 		CWD:              cwd,
 		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess", Kind: "claude"},
 		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
-		BuilderCandidate: "builder",
+		BuilderCandidate: testOpencodeRef,
 		Round:            4,
 		State:            store.StateActive,
 		RoundCap:         20,
@@ -333,9 +333,9 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		}
 	})
 
-	t.Run("no builder alias", func(t *testing.T) {
+	t.Run("no builder candidate", func(t *testing.T) {
 		_, _, rt, srcCWD := setup(t)
-		// Update source to have no builder alias
+		// Update source to have no builder candidate
 		src, _ := rt.Store.Load("source")
 		src.BuilderCandidate = ""
 		_ = rt.Store.Save(src)
@@ -343,10 +343,28 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 		_, err := Fork(ctx, rt, ForkOptions{
 			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
 		})
-		if !errors.Is(err, ErrNoBuilderAlias) {
-			t.Fatalf("got %v, want ErrNoBuilderAlias", err)
+		if !errors.Is(err, ErrNoBuilderCandidate) {
+			t.Fatalf("got %v, want ErrNoBuilderCandidate", err)
 		}
 		_ = srcCWD
+	})
+
+	t.Run("no builder candidate inherits via single candidate", func(t *testing.T) {
+		_, _, rt, _ := setup(t)
+		rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+		src, _ := rt.Store.Load("source")
+		src.BuilderCandidate = ""
+		_ = rt.Store.Save(src)
+
+		res, err := Fork(ctx, rt, ForkOptions{
+			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+		})
+		if err != nil {
+			t.Fatalf("Fork: %v", err)
+		}
+		if res.Binding.BuilderCandidate != "agy/test/m" {
+			t.Errorf("BuilderCandidate = %q, want agy/test/m", res.Binding.BuilderCandidate)
+		}
 	})
 }
 
@@ -406,6 +424,28 @@ func TestForkRollback(t *testing.T) {
 	})
 
 	t.Run("resolveBuilder failure removes worktree", func(t *testing.T) {
+		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5", startErr: errors.New("start failed")}
+		fg := &fakeGit{headCommitID: "commit-123"}
+		rt := newForkRuntime(t, fh, fg, nil)
+		srcCWD := filepath.Join(t.TempDir(), "repo")
+		_ = os.MkdirAll(srcCWD, 0o755)
+		seedFourRoundBinding(t, rt, "source", srcCWD)
+
+		_, err := Fork(ctx, rt, ForkOptions{
+			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Candidate: testClaudeRef,
+		})
+		if err == nil {
+			t.Fatal("expected error on start failure")
+		}
+		if len(fg.removeWorktreeCalls) != 1 {
+			t.Fatalf("RemoveWorktree calls = %d, want 1 (rollback)", len(fg.removeWorktreeCalls))
+		}
+		if !fg.removeWorktreeCalls[0].Force {
+			t.Error("rollback must pass force: true")
+		}
+	})
+
+	t.Run("unknown candidate cuts no worktree", func(t *testing.T) {
 		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 		fg := &fakeGit{headCommitID: "commit-123"}
 		rt := newForkRuntime(t, fh, fg, nil)
@@ -413,18 +453,14 @@ func TestForkRollback(t *testing.T) {
 		_ = os.MkdirAll(srcCWD, 0o755)
 		seedFourRoundBinding(t, rt, "source", srcCWD)
 
-		// Ask for unknown alias to fail resolveBuilder
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Alias: "nonexistent-builder",
+			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Candidate: "claude/test/nope",
 		})
-		if err == nil {
-			t.Fatal("expected error on unknown alias")
+		if !errors.Is(err, candidate.ErrUnknownCandidate) {
+			t.Fatalf("got %v, want ErrUnknownCandidate", err)
 		}
-		if len(fg.removeWorktreeCalls) != 1 {
-			t.Fatalf("RemoveWorktree calls = %d, want 1 (rollback)", len(fg.removeWorktreeCalls))
-		}
-		if !fg.removeWorktreeCalls[0].Force {
-			t.Error("rollback must pass force: true")
+		if len(fg.addWorktreeCalls) != 0 {
+			t.Fatalf("AddWorktree calls = %d, want 0", len(fg.addWorktreeCalls))
 		}
 	})
 
