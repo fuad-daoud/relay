@@ -65,9 +65,12 @@ cp go.mod /tmp/gm; cp go.sum /tmp/gs; go mod tidy; cmp go.mod /tmp/gm && cmp go.
 **Files:**
 - Create: `internal/relay/switch.go`, `internal/relay/switch_test.go`
 - Modify: `internal/relay/reconcile.go` (`Reconcile` only)
+- Modify: `internal/relay/ledger.go` (`mutateLedgerLocked`, `recordSpawnFailureLocked`), `internal/relay/ledger_test.go`
+- Modify: `internal/relay/bind.go` (`resolveBuilder` gains `tx`), `internal/relay/add.go`, `internal/relay/fork.go` (callers pass `nil`)
 
-**Interfaces consumed:** `FindAgent`, `haltBinding`, `resolveBuilder(ctx,
-rt, BindOptions, name, plannerPane) (store.Endpoint, Resolution, error)`,
+**Interfaces consumed:** `FindAgent`, `haltBinding`, `resolveBuilder` (which
+step 1b changes to `(ctx, rt, tx *store.Tx, BindOptions, name, plannerPane)
+(store.Endpoint, Resolution, error)`),
 `resolveCandidate(set, pol, gates, "", "builder")`, `Gates(rt)`,
 `ExplainResolution`, `composePrompt(b, planPath, reportPath)`,
 `promptWithRetry(ctx, rt, target, text)`, `rt.Store.PlanPath/ReportPath`,
@@ -180,6 +183,51 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
   Run: `go test ./internal/relay/ -run 'Gone|Gated'`. Expected: FAIL to
   compile.
 
+- [ ] **Step 1b: `resolveBuilder` under a held lock** (spec §4.3 "The lock")
+
+  `Reconcile` runs inside `Store.WithLock`; `recordSpawnFailure` takes that
+  same non-reentrant lock via `mutateLedger`. So before `switchBuilder`
+  can call `resolveBuilder`, the spawn-failure record needs a lock-free
+  variant. (Your round-2 report found this; this step is the fix.)
+
+  `internal/relay/ledger.go`: split `mutateLedger` into
+
+  ```go
+  // mutateLedgerLocked is mutateLedger for a caller that already holds the
+  // store lock (Reconcile and everything it calls). The lock is not
+  // reentrant, so taking it again here would hang the daemon.
+  func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error   // load, prune, fn, save -- no WithLock
+  func mutateLedger(rt Runtime, fn ...) error                                        // WithLock(func(*store.Tx) error { return mutateLedgerLocked(rt, fn) })
+  ```
+
+  and split `recordSpawnFailure` the same way: the entry construction and
+  the stderr-on-error rule move into `recordSpawnFailureWith(rt, mutate
+  func(Runtime, func(ledger.Ledger) ledger.Ledger) error, token, binding,
+  cause)`; `recordSpawnFailure` calls it with `mutateLedger`,
+  `recordSpawnFailureLocked` with `mutateLedgerLocked`. Doc comments say
+  which lock state each expects.
+
+  `internal/relay/bind.go`: `resolveBuilder(ctx, rt, tx *store.Tx, opts,
+  name, plannerPane)`. Doc: `tx` is a witness that the caller holds the
+  store lock -- `nil` from the CLI paths, the reconcile transaction from
+  the daemon -- and decides which spawn-failure recorder runs; the ledger
+  is not written through the `Tx`. The `StartAgent` error branch becomes
+  `if tx != nil { recordSpawnFailureLocked(...) } else { recordSpawnFailure(...) }`.
+  Update the four callers (`create`, `resume`, `Add`, `Fork`) to pass
+  `nil` -- each calls it outside its own `WithLock`, which is why `nil` is
+  right there.
+
+  Test in `ledger_test.go`: `TestRecordSpawnFailureLockedUnderHeldLock`:
+  run `rt.Store.WithLock(func(*store.Tx) error {
+  recordSpawnFailureLocked(rt, testAgyRef, "webshop", errors.New("boom"));
+  return nil })` in a goroutine, select on its completion against a 5s
+  timer (fail with "deadlocked" on the timer), then assert one
+  `spawn_failed` entry. The existing spawn-failure tests keep covering
+  the unlocked path.
+
+  Run: `go build ./... && go test -count=1 ./internal/relay/ -run 'SpawnFailure'`.
+  Expected: green.
+
 - [ ] **Step 2: `switch.go`** (spec §3.5, §4.2–4.4)
 
   Create `internal/relay/switch.go`:
@@ -189,7 +237,8 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
     b.BuilderCandidate && Kind == ledger.RateLimited`. Doc: a running
     builder is not a failed spawn, so `SpawnFailed` is ignored.
   - `switchEntry`: exactly spec §4.4.
-  - `switchBuilder`: exactly spec §4.3's pseudocode, in this order:
+  - `switchBuilder`: exactly spec §4.3's pseudocode (passing its `tx` to
+    `resolveBuilder` -- step 1b), in this order:
     limit check → resolve → `closeOld` close → `resolveBuilder` →
     mutate `b` → `tx.AppendLog(switchEntry)` → prompt → `RoundStartedAt`
     → `Notify` (error only `slog.Warn`ed) → `slog.Info("builder
