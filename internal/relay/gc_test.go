@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 		t.Fatalf("save broken: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{})
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 	}
 }
 
-func TestGCArchiveKeepsTheRoundLog(t *testing.T) {
+func TestGCArchivesByDefault(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := newRuntime(t, f)
 	seedDone(t, rt, "finished", "/repo-done")
@@ -93,7 +94,7 @@ func TestGCArchiveKeepsTheRoundLog(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{Archive: true})
+	got, err := GC(context.Background(), rt, GCOptions{})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -116,9 +117,10 @@ func TestGCWorktreeTeardown(t *testing.T) {
 
 	seedDone(t, rt, "ordinary", "/repo-ordinary")
 
+	wt := t.TempDir()
 	forked := store.Binding{
-		Name: "forked", CWD: "/state/.worktrees/forked",
-		Worktree: "/state/.worktrees/forked",
+		Name: "forked", CWD: wt,
+		Worktree: wt,
 		State:    store.StateDone, Round: 2,
 		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
@@ -144,8 +146,8 @@ func TestGCWorktreeTeardown(t *testing.T) {
 		}
 		if r.Name == "forked" {
 			foundForked = true
-			if r.WorktreeRemoved != "/state/.worktrees/forked" {
-				t.Errorf("WorktreeRemoved = %q, want /state/.worktrees/forked", r.WorktreeRemoved)
+			if r.WorktreeRemoved != wt {
+				t.Errorf("WorktreeRemoved = %q, want %q", r.WorktreeRemoved, wt)
 			}
 		}
 	}
@@ -177,9 +179,10 @@ func TestGCWorktreeDryRun(t *testing.T) {
 
 	seedDone(t, rt, "ordinary", "/repo-ordinary")
 
+	wt := t.TempDir()
 	forked := store.Binding{
-		Name: "forked", CWD: "/state/.worktrees/forked",
-		Worktree: "/state/.worktrees/forked",
+		Name: "forked", CWD: wt,
+		Worktree: wt,
 		State:    store.StateDone, Round: 2,
 		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
@@ -199,7 +202,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	}
 
 	for _, r := range res {
-		if r.Name == "forked" && r.WorktreeRemoved != "/state/.worktrees/forked" {
+		if r.Name == "forked" && r.WorktreeRemoved != wt {
 			t.Errorf("dry-run should report WorktreeRemoved, got %q", r.WorktreeRemoved)
 		}
 	}
@@ -228,9 +231,10 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
+	wt := t.TempDir()
 	forked := store.Binding{
-		Name: "forked-dirty-err", CWD: "/state/.worktrees/forked-dirty-err",
-		Worktree: "/state/.worktrees/forked-dirty-err",
+		Name: "forked-dirty-err", CWD: wt,
+		Worktree: wt,
 		State:    store.StateDone, Round: 2,
 		Planner: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
@@ -238,7 +242,7 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{})
+	res, err := GC(context.Background(), rt, GCOptions{Delete: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -252,8 +256,8 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	if r.WorktreeRemoved != "" {
 		t.Errorf("WorktreeRemoved = %q, want empty", r.WorktreeRemoved)
 	}
-	if r.WorktreeKept != "/state/.worktrees/forked-dirty-err" {
-		t.Errorf("WorktreeKept = %q, want /state/.worktrees/forked-dirty-err", r.WorktreeKept)
+	if r.WorktreeKept != wt {
+		t.Errorf("WorktreeKept = %q, want %q", r.WorktreeKept, wt)
 	}
 	if r.KeptReason != "dirty check failed: git lock busy" {
 		t.Errorf("KeptReason = %q, want 'dirty check failed: git lock busy'", r.KeptReason)
@@ -268,5 +272,76 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	// Verify binding deleted from store
 	if _, err := rt.Store.Load("forked-dirty-err"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding state should be deleted, got err = %v", err)
+	}
+}
+
+func TestGCDeleteRemovesTheDirectory(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	seedDone(t, rt, "finished", "/repo-done")
+
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(got))
+	}
+	if !got[0].Deleted {
+		t.Errorf("Deleted = false, want true")
+	}
+	if got[0].ArchivedTo != "" {
+		t.Errorf("ArchivedTo = %q, want empty", got[0].ArchivedTo)
+	}
+
+	if _, err := rt.Store.Load("finished"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding state still exists in store: %v", err)
+	}
+
+	archiveDir := rt.Store.ArchiveDir()
+	if entries, err := os.ReadDir(archiveDir); err == nil && len(entries) > 0 {
+		t.Errorf("expected no tarball in archive dir, found %d entries", len(entries))
+	}
+}
+
+func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
+	fg := &fakeGit{}
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	rt.Git = fg
+
+	missingWT := filepath.Join(t.TempDir(), "nonexistent-worktree")
+	b := store.Binding{
+		Name:     "finished-gone",
+		CWD:      "/repo-done",
+		Worktree: missingWT,
+		Planner:  store.Endpoint{PaneID: "w1:p1"},
+		Builder:  store.Endpoint{PaneID: "w1:p2"},
+		Round:    3,
+		State:    store.StateDone,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := GC(context.Background(), rt, GCOptions{})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(got))
+	}
+	r := got[0]
+	if r.WorktreeGone != missingWT {
+		t.Errorf("WorktreeGone = %q, want %q", r.WorktreeGone, missingWT)
+	}
+	if r.WorktreeKept != "" {
+		t.Errorf("WorktreeKept = %q, want empty", r.WorktreeKept)
+	}
+	if fg.dirtyCalls != 0 {
+		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
+	}
+	if r.ArchivedTo == "" || r.Deleted {
+		t.Errorf("binding was not archived: %+v", r)
 	}
 }
