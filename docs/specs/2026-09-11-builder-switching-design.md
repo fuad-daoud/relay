@@ -79,6 +79,8 @@ internal/store/types.go                 Binding.RoundSwitches, Binding.BuilderMi
 internal/store/log.go                   KindSwitch
 internal/relay/reconcile.go             gone/gated triggers in Reconcile; queueReport resets RoundSwitches
 internal/relay/switch.go                switchGrace, switchBuilder, gatedBuilder, switchEntry   (new)
+internal/relay/bind.go                  resolveBuilder takes tx *store.Tx (nil = caller holds no lock); callers pass nil
+internal/relay/ledger.go                recordSpawnFailureLocked, mutateLedgerLocked
 internal/relay/switch_test.go           the trigger and switch matrix against fakeHerdr           (new)
 internal/relay/status.go                BindingStatus.Switches; RenderStatus "switched Nx"
 internal/relay/status_test.go
@@ -215,7 +217,7 @@ if closeOld:
     if err := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); err != nil:
         return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder %s; could not close its pane %s to replace it: %v", b.Name, reason, b.Builder.PaneID, err))
     -- the agent name <name>-builder is free only once the old agent is gone
-ep, _, err := resolveBuilder(ctx, rt, BindOptions{Candidate: res.Token(), CWD: b.CWD}, b.Name, b.Planner.PaneID)
+ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{Candidate: res.Token(), CWD: b.CWD}, b.Name, b.Planner.PaneID)
 if err != nil:
     -- resolveBuilder already recorded spawn_failed for the pick, which gates
     -- it for the next resolution. Count the attempt, leave the binding for
@@ -240,7 +242,21 @@ return b, nil
 
 Why `resolveBuilder`: it already does launch rendering, the split beside
 the planner, `StartAgent`, `recordSpawnFailure` on error, and the
-best-effort session lookup. Its own `Resolution` is `explicit` (we hand it
+best-effort session lookup.
+
+**The lock.** `Reconcile` runs inside `Store.WithLock`, and
+`recordSpawnFailure` takes that same non-reentrant lock through
+`mutateLedger` -- so `switchBuilder` calling today's `resolveBuilder` would
+deadlock the daemon on the first failed replacement spawn (found by the T2
+builder, goroutine dump in its round-2 report). `resolveBuilder` therefore
+gains a `tx *store.Tx` parameter: `nil` means the caller holds no lock and
+the spawn-failure record locks as today; non-nil means the caller holds it
+and the record is written through `recordSpawnFailureLocked`, which is the
+same append without the `WithLock`. `create`, `resume`, `Add` and `Fork`
+pass `nil` (they call it before their own `WithLock`); `switchBuilder`
+passes its `tx`. The `Tx` is a witness that the lock is held, not something
+the ledger writes through -- the ledger file stays outside the store's
+transaction. Its own `Resolution` is `explicit` (we hand it
 the token) and is discarded; the recorded one is `res`, exactly as `Add`
 and `Fork` do (policy-order spec §4.3).
 
