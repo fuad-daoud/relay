@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -93,4 +95,35 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	b.Builder.StartedAt = h.StartedAt.Unix()
 	b.Builder.LogPath = logPath
 	return b, nil
+}
+
+// logTailLines is how much of a builder log the exit entry carries: enough
+// to see why it died, not enough to flood the round log (spec §3.8).
+const logTailLines = 20
+
+// logTail is the last n lines of the file at path, without a trailing
+// newline, or "" when the file is absent or empty. It is text for humans --
+// the exit entry's payload, the status snippet -- and is never parsed
+// (spec §1: relay reads no builder output for meaning).
+func logTail(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	s := strings.TrimRight(string(data), "\n")
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// clearProcess is the endpoint between rounds: no pid, no start time, no
+// log. Identity -- name, kind, mode -- is untouched.
+func clearProcess(e store.Endpoint) store.Endpoint {
+	e.PID, e.StartedAt, e.LogPath = 0, 0, ""
+	return e
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,5 +301,143 @@ func TestSendPanePathIsUntouchedByHeadless(t *testing.T) {
 	}
 	if len(f.prompts) != 1 {
 		t.Errorf("pane send must still Prompt once: %d", len(f.prompts))
+	}
+}
+
+func TestLogTailReturnsTheLastLines(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "003-builder.log")
+	if err := os.WriteFile(p, []byte("a\nb\nc\nd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := logTail(p, 2); got != "c\nd" {
+		t.Errorf("logTail(2) = %q, want \"c\\nd\"", got)
+	}
+	if got := logTail(p, 10); got != "a\nb\nc\nd" {
+		t.Errorf("logTail(10) = %q, want the whole file without the trailing newline", got)
+	}
+	if got := logTail(filepath.Join(dir, "absent.log"), 3); got != "" {
+		t.Errorf("logTail(absent) = %q, want empty", got)
+	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := logTail(p, 3); got != "" {
+		t.Errorf("logTail(empty) = %q, want empty", got)
+	}
+}
+
+func TestClearProcessKeepsIdentity(t *testing.T) {
+	e := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 7, StartedAt: 9, LogPath: "/l"}
+	got := clearProcess(e)
+	want := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless}
+	if got != want {
+		t.Errorf("clearProcess = %+v, want %+v", got, want)
+	}
+}
+
+// sentHeadless is seedHeadless plus one Send: round 1 open, one process
+// started on fr.
+func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+	t.Helper()
+	rt, _ := seedHeadless(t, f, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return rt, b
+}
+
+// switchHeadless runs switchBuilder on b inside the lock, the way Reconcile does.
+func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, closeOld bool) (store.Binding, error) {
+	t.Helper()
+	var out store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		out, err = switchBuilder(context.Background(), rt, tx, b, reason, closeOld)
+		return err
+	})
+	return out, err
+}
+
+func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	// Order claude first so the switch lands on a different candidate.
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	oldPID := b.Builder.PID
+
+	got, err := switchHeadless(t, rt, b, "exited (code 3) without a report", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 || len(f.closed) != 0 {
+		t.Fatalf("a headless switch must touch no pane: tabs=%d starts=%d prompts=%d closed=%d", len(f.tabs), len(f.starts), len(f.prompts), len(f.closed))
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Fatalf("want a second Start on claude, specs = %+v", fr.specs)
+	}
+	if !got.Builder.Headless() || got.Builder.PID != fr.handles[1].PID || got.Builder.PID == oldPID {
+		t.Errorf("new endpoint = %+v, want headless with the new pid %d", got.Builder, fr.handles[1].PID)
+	}
+	if got.Builder.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
+		t.Errorf("LogPath = %q, want round 1's log", got.Builder.LogPath)
+	}
+	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Round != 1 || got.State != store.StateActive {
+		t.Errorf("bookkeeping: cand=%q switches=%d round=%d state=%s", got.BuilderCandidate, got.RoundSwitches, got.Round, got.State)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "switched builder to "+testClaudeRef) {
+		t.Errorf("notices = %+v", f.notices)
+	}
+	// The prompt handed to the new process is the same round's prompt.
+	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PlanPath("webshop", 1)) {
+		t.Errorf("new process prompt lacks the round's plan path: %q", fr.specs[1].Argv[2])
+	}
+}
+
+func TestSwitchBuilderHeadlessCloseOldKillsTheProcess(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	old := handleOf(b.Builder)
+
+	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != old {
+		t.Errorf("kills = %+v, want the old handle %+v", fr.kills, old)
+	}
+	if len(f.closed) != 0 {
+		t.Errorf("no pane to close: %+v", f.closed)
+	}
+}
+
+func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.startErr = errors.New("claude: not found")
+
+	got, err := switchHeadless(t, rt, b, "exited", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you when the replacement cannot start", got.State)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("pid = %d, want 0", got.Builder.PID)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "could not start") {
+		t.Errorf("notices = %+v, want one saying the round could not be started", f.notices)
 	}
 }
