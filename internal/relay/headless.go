@@ -290,3 +290,43 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error)
 	}
 	return e.PID, nil
 }
+
+// statusTailLines is how much of the log `relay status` shows under a
+// headless builder line (spec §4.8).
+const statusTailLines = 3
+
+// headlessStatus is what `relay status` says about a headless endpoint: the
+// status word that sits where a pane's herdr status sits, and the process
+// details. Idle between rounds; otherwise a live Alive check -- the same
+// cost class as the herdr list pane rows pay -- then, for an exited
+// process, the trailer's code. No Runner means relay cannot say.
+func headlessStatus(ctx context.Context, rt Runtime, e store.Endpoint) (string, *HeadlessInfo) {
+	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
+	if e.StartedAt != 0 {
+		info.StartedAt = time.Unix(e.StartedAt, 0)
+	}
+	if e.LogPath != "" {
+		if tail := logTail(e.LogPath, statusTailLines); tail != "" {
+			info.Tail = strings.Split(tail, "\n")
+		}
+	}
+	if e.PID == 0 {
+		return "idle", info
+	}
+	if rt.Runner == nil {
+		return "unknown", info
+	}
+	alive, err := rt.Runner.Alive(ctx, handleOf(e))
+	if err != nil {
+		return "unknown", info
+	}
+	if alive {
+		return "working", info
+	}
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), e.LogPath); ok {
+		info.ExitCode = strconv.Itoa(code)
+		return "exited " + info.ExitCode, info
+	}
+	info.ExitCode = "unknown"
+	return "exited", info
+}
