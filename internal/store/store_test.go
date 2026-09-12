@@ -582,3 +582,15 @@ func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
 		t.Errorf("legacy builder must have zero process fields: %+v", got.Builder)
 	}
 }
+
+func TestBuilderLogPathIsARoundFileBesideTheReport(t *testing.T) {
+	s := New("/state")
+	if got, want := s.BuilderLogPath("webshop", 3), filepath.Join("/state", "webshop", "003-builder.log"); got != want {
+		t.Errorf("BuilderLogPath = %q, want %q", got, want)
+	}
+	// roundOfFile is what ForkState uses to decide which files to copy; the
+	// log must be one of them.
+	if r, ok := roundOfFile(filepath.Base(s.BuilderLogPath("webshop", 12))); !ok || r != 12 {
+		t.Errorf("roundOfFile(012-builder.log) = %d, %v; want 12, true", r, ok)
+	}
+}

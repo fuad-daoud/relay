@@ -44,6 +44,7 @@ const (
 	KindFork     Kind = "fork"
 	KindPick     Kind = "pick"   // relay -> log only: which candidate a spawn resolved to and why (#61 step 2)
 	KindSwitch   Kind = "switch" // relay -> log only: the builder was replaced mid-round, and why (#61 step 6)
+	KindExit     Kind = "exit"   // relay -> log only: a headless builder exited without a report (#99)
 
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path
