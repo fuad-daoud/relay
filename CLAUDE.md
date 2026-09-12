@@ -33,10 +33,18 @@ override the order.
   one worktree will race.
 - relay closes a pane in exactly two places: `relay reap` (a terminal
   consult pane it spawned) and a mid-round builder switch (the replaced
-  builder's pane, when it is still open). After an `unbind`, a
-  mis-bind, or any `--assume-dead` rebind, close the orphaned builder
-  pane yourself with `herdr pane close <id>` or it holds memory
-  indefinitely (an idle opencode builder is roughly 800 MB).
+  builder's pane, when it is still open). It stops a *process* in exactly
+  three: `relay done` and `relay unbind` on a headless binding whose
+  round is running, and a mid-round switch of a headless builder whose
+  provider you gated with `relay unavailable`. After an `unbind`, a
+  mis-bind, or any `--assume-dead` rebind of a pane builder, close the
+  orphaned builder pane yourself with `herdr pane close <id>` or it holds
+  memory indefinitely (an idle opencode builder is roughly 800 MB).
+- Prefer `--headless` on `add` for peers nobody will watch: no tab, no idle
+  harness in memory, and the round log is at
+  `~/.local/state/relay/<name>/NNN-builder.log`. A headless builder takes
+  no dialogs (`relay answer` is refused) and has no memory across rounds,
+  so its plans must be round-complete -- which relay plans already are.
 - When a builder reports a usage limit mid-round, `relay unavailable
   <token>` is enough: the daemon switches the binding to the next
   ungated candidate and resends the round. Do not rebind by hand unless

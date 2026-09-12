@@ -2,9 +2,11 @@
 
 **Issue:** headless half of #6 (split; the remote half is its own issue)
 **Depends on:** nothing open. #79 (tab-only placement, #96) and #92 (`--rebind`, #97) landed.
-**Amends:** CLAUDE.md "Working with builders" (relay now stops one more kind of
-builder: a headless process it started, on `done`/`unbind`); README "Where the
-builder appears", "Command surface", "Recovery"
+**Amends (applied at step 8):** CLAUDE.md "Working with builders" (relay now
+stops one more kind of builder: a headless process it started, on
+`done`/`unbind`); README "Command surface", "Panes are yours, always", "Where
+the builder appears" (+ new "Headless builders"), "Running several builders at
+once", "Recovering a broken binding"
 
 ## 1. System overview
 
