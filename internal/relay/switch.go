@@ -50,6 +50,10 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 // RoundStartedAt is restarted, so the replacement gets its own startGrace
 // before a nudge and its own round budget, exactly like a fresh handoff.
 //
+// For a headless binding the replacement is a new process started on the
+// same round's prompt; closeOld kills the old process instead of closing
+// a pane.
+//
 // closeOld must close the replaced pane before the replacement is spawned:
 // herdr agent names are unique, the replacement is again named
 // "<name>-builder", and StartAgent refuses that name while the old agent
@@ -83,7 +87,18 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	if closeOld {
-		if err := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); err != nil {
+		if b.Builder.Headless() {
+			// The one place besides done/unbind where relay stops a process
+			// it started (#99): the planner gated the provider while the
+			// round's process was still running.
+			if b.Builder.PID != 0 && rt.Runner != nil {
+				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+					return haltBinding(ctx, rt, b, fmt.Sprintf(
+						"%s: builder %s; could not stop its process %d to replace it: %v",
+						b.Name, reason, b.Builder.PID, err))
+				}
+			}
+		} else if err := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); err != nil {
 			return haltBinding(ctx, rt, b, fmt.Sprintf(
 				"%s: builder %s; could not close its pane %s to replace it: %v",
 				b.Name, reason, b.Builder.PaneID, err))
@@ -93,7 +108,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
 
-	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{Candidate: res.Token(), CWD: b.CWD}, b.Name, b.Planner.PaneID)
+	// The replacement inherits the mode (spec §5.4): a headless binding gets
+	// a headless endpoint, which startRound below fills in.
+	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{Candidate: res.Token(), CWD: b.CWD, Headless: b.Builder.Headless()}, b.Name, b.Planner.PaneID)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which
 		// gates it for the next resolution. Count the attempt and leave the
@@ -119,7 +136,15 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round))
-	if err := promptWithRetry(ctx, rt, ep.PaneID, text); err != nil {
+	if b.Builder.Headless() {
+		started, err := startRound(ctx, rt, b, text)
+		if err != nil {
+			return haltBinding(ctx, rt, b, fmt.Sprintf(
+				"%s: switched builder to %s but could not start round %d: %v",
+				b.Name, res.Token(), b.Round, err))
+		}
+		b = started
+	} else if err := promptWithRetry(ctx, rt, ep.PaneID, text); err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: switched builder to %s but could not hand it round %d: %v",
 			b.Name, res.Token(), b.Round, err))
