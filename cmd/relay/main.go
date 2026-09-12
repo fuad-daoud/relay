@@ -54,7 +54,6 @@ Commands:
   answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
   status    one row per binding: round, state, live pane status, what is pending [--all]
   log       print a binding's append-only round log
-  watch     status, redrawn on a timer [--all]
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
@@ -202,8 +201,6 @@ func run(args []string) error {
 		return cmdStatus(args[1:])
 	case "log":
 		return cmdLog(args[1:])
-	case "watch":
-		return cmdWatch(args[1:])
 	case "ui":
 		return cmdUI(args[1:])
 	case "done":
@@ -1273,44 +1270,6 @@ func cmdLog(args []string) error {
 			e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
 	}
 	return nil
-}
-
-func cmdWatch(args []string) error {
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relay gc clears them)")
-	interval := fs.Duration("interval", 2*time.Second, "refresh interval")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	ticker := time.NewTicker(*interval)
-	defer ticker.Stop()
-
-	for {
-		rep, err := relay.Status(ctx, rt)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil // Ctrl-C landed mid-query; that is a clean exit
-			}
-			return err
-		}
-		rep = scopeReport(rep, "", *all)
-		fmt.Print("\033[H\033[2J", relay.RenderStatus(rep))
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-	}
 }
 
 func cmdUI(args []string) error {
