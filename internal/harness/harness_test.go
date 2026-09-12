@@ -3,7 +3,9 @@ package harness
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestHarnessRules(t *testing.T) {
@@ -279,5 +281,114 @@ func TestSubAgentsSetOnEveryKind(t *testing.T) {
 		if !valid[h.SubAgents] {
 			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
 		}
+	}
+}
+
+func TestLaunchPrintPerKind(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	tests := []struct {
+		kind       string
+		extra      []string
+		wantPrint  []string
+		wantPrompt int
+	}{
+		{
+			kind: "agy",
+			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+				"--output-format", "text", "--print-timeout", BudgetPlaceholder},
+			wantPrompt: 1,
+		},
+		{
+			kind: "agy", extra: []string{"--dangerously-skip-permissions"},
+			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+				"--output-format", "text", "--print-timeout", BudgetPlaceholder, "--dangerously-skip-permissions"},
+			wantPrompt: 1,
+		},
+		{
+			kind:       "claude",
+			wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "text"},
+			wantPrompt: 1,
+		},
+		{
+			kind:       "opencode",
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor"},
+			wantPrompt: 1,
+		},
+		{
+			kind: "opencode", extra: []string{"--auto"},
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--auto"},
+			wantPrompt: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind+" "+strings.Join(tt.extra, " "), func(t *testing.T) {
+			h, ok := Lookup(tt.kind)
+			if !ok {
+				t.Fatalf("Lookup(%q) not found", tt.kind)
+			}
+			got := h.Launch("prov", "m/x", tt.extra, builder)
+			if !reflect.DeepEqual(got.Print, tt.wantPrint) {
+				t.Errorf("Print = %v, want %v", got.Print, tt.wantPrint)
+			}
+			if got.PromptAt != tt.wantPrompt {
+				t.Errorf("PromptAt = %d, want %d", got.PromptAt, tt.wantPrompt)
+			}
+			if got.Print[got.PromptAt] != PromptPlaceholder {
+				t.Errorf("Print[PromptAt] = %q, want the placeholder", got.Print[got.PromptAt])
+			}
+		})
+	}
+
+	unknown := Harness{Kind: "unknown"}
+	got := unknown.Launch("prov", "m/x", []string{"--z"}, builder)
+	if len(got.Print) != 0 || got.PromptAt != -1 {
+		t.Errorf("unknown kind: Print = %v PromptAt = %d; want empty and -1", got.Print, got.PromptAt)
+	}
+}
+
+func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
+	builder, _ := RoleByName("builder")
+	h, _ := Lookup("agy")
+	extra := []string{"--dangerously-skip-permissions"}
+	l := h.Launch("prov", "m/x", extra, builder)
+	before := append([]string(nil), l.Print...)
+
+	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
+	got := l.PrintArgs(prompt, 90*time.Minute)
+	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
+		"--output-format", "text", "--print-timeout", "1h30m0s", "--dangerously-skip-permissions"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("PrintArgs = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(l.Print, before) {
+		t.Errorf("PrintArgs mutated Print: %v", l.Print)
+	}
+	if !reflect.DeepEqual(extra, []string{"--dangerously-skip-permissions"}) {
+		t.Errorf("extra was modified: %v", extra)
+	}
+	got[0] = "changed"
+	if l.Print[0] != "-p" {
+		t.Error("PrintArgs must return a fresh slice, not alias Print")
+	}
+
+	// A kind with no budget flag ignores the budget; the prompt still lands.
+	c, _ := Lookup("claude")
+	cl := c.Launch("prov", "m/x", nil, builder)
+	got = cl.PrintArgs("hello", time.Hour)
+	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "text"}) {
+		t.Errorf("claude PrintArgs = %v", got)
+	}
+	for _, a := range got {
+		if a == BudgetPlaceholder || a == PromptPlaceholder {
+			t.Errorf("placeholder survived substitution: %v", got)
+		}
+	}
+
+	// Unknown kind: empty in, empty out, no panic.
+	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute); len(got) != 0 {
+		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
 	}
 }

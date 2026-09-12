@@ -1,6 +1,9 @@
 package harness
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 // RoleShape distinguishes persistent writers from ephemeral consults.
 type RoleShape string
@@ -197,10 +200,28 @@ func (h Harness) CanServe(role string) bool {
 	return found
 }
 
-// Launch describes how to start an agent process for a specific role and model.
+// Placeholders that stand in Launch.Print for the values only the caller
+// knows at send time. PrintArgs replaces them; they are exported so a test
+// or a caller can recognise them, never so a caller can build argv by hand.
+const (
+	PromptPlaceholder = "<prompt>"
+	BudgetPlaceholder = "<budget>"
+)
+
+// Launch describes how to start an agent process for a specific role and
+// model, in both of its forms.
+//
+// Args is the interactive form herdr starts in a pane. Print is the
+// non-interactive form a headless builder runs (#99): one prompt in, the
+// process exits when it is done. Print holds PromptPlaceholder and, for kinds
+// with a timeout flag, BudgetPlaceholder as their own elements; PrintArgs
+// fills them. PromptAt is the index of PromptPlaceholder in Print, -1 when
+// the kind is unknown and Print is empty.
 type Launch struct {
-	Kind string
-	Args []string
+	Kind     string
+	Args     []string
+	Print    []string
+	PromptAt int
 }
 
 // Launch renders the command-line arguments needed to run the given role on
@@ -208,23 +229,64 @@ type Launch struct {
 // (candidates spec §1 point 2): with a verbatim args list in config, the
 // model would be a label relay could not check against what it launched.
 // Every kind selects its role with --agent; there is no other mechanism (#85).
+//
+// The print form per kind (headless spec §3.5), before extra:
+//
+//	agy       -p <prompt> --model M --agent <def> --output-format text --print-timeout <budget>
+//	claude    -p <prompt> --model M --agent <def> --output-format text
+//	opencode  run <prompt> -m P/M --agent <def>
+//
+// agy gets the budget because its default print timeout (5m) would kill any
+// real round; claude and opencode have no such flag.
 func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) Launch {
-	var base []string
+	var base, print []string
+	promptAt := -1
 
 	switch h.Kind {
 	case "claude":
 		base = []string{"--model", model, "--agent", role.Definition}
+		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition, "--output-format", "text"}
+		promptAt = 1
 	case "opencode":
 		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
+		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition}
+		promptAt = 1
 	case "agy":
 		base = []string{"--model", model, "--agent", role.Definition}
+		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
+			"--output-format", "text", "--print-timeout", BudgetPlaceholder}
+		promptAt = 1
 	}
 
 	args := append(append([]string(nil), base...), extra...)
-	return Launch{
-		Kind: h.Kind,
-		Args: args,
+	if print != nil {
+		print = append(print, extra...)
 	}
+	return Launch{
+		Kind:     h.Kind,
+		Args:     args,
+		Print:    print,
+		PromptAt: promptAt,
+	}
+}
+
+// PrintArgs is Print with the prompt and the round budget filled in: a fresh
+// slice, so neither Print nor the caller's extra is touched. The budget is
+// rendered as a Go duration ("1h30m0s"), which is what agy's --print-timeout
+// parses. A kind whose Print has no BudgetPlaceholder ignores budget.
+func (l Launch) PrintArgs(prompt string, budget time.Duration) []string {
+	out := make([]string, 0, len(l.Print))
+	for _, a := range l.Print {
+		switch a {
+		case PromptPlaceholder:
+			out = append(out, prompt)
+		case BudgetPlaceholder:
+			out = append(out, budget.String())
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // Lookup returns the entry for a kind. ok is false for a kind relay was not
