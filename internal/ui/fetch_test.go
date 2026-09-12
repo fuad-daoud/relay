@@ -2,6 +2,9 @@ package ui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -340,5 +343,65 @@ func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
 	if got := fh.readTargets[0]; got != "wM:p7" {
 		t.Fatalf("ReadAgent addressed %q; want the located agent's pane %q "+
 			"(a recorded agent name herdr has forgotten is unusable)", got, "wM:p7")
+	}
+}
+
+func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+
+	logPath := filepath.Join(t.TempDir(), "002-builder.log")
+	if err := os.WriteFile(logPath, []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := newTestBinding("webshop")
+	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 4242, StartedAt: 1_700_000_000, LogPath: logPath}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), rt, "webshop", 3)()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tMsg.content.err != nil || tMsg.content.empty != "" {
+		t.Fatalf("content = %+v, want a body", tMsg.content)
+	}
+	if tMsg.content.body != "c\nd\ne" {
+		t.Errorf("body = %q, want the last three lines", tMsg.content.body)
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("a headless builder has no pane to read: readCalls = %d", fh.readCalls)
+	}
+}
+
+func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+
+	b := newTestBinding("webshop")
+	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	tMsg := fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	if tMsg.content.empty != "headless builder; no round is running, so there is no log yet" {
+		t.Errorf("idle: empty = %q", tMsg.content.empty)
+	}
+
+	b.Builder.PID = 4242
+	b.Builder.LogPath = filepath.Join(t.TempDir(), "absent.log")
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	tMsg = fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
+		t.Errorf("missing log: empty = %q", tMsg.content.empty)
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("readCalls = %d, want 0", fh.readCalls)
 	}
 }
