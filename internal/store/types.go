@@ -20,14 +20,45 @@ const (
 	StateDone     State = "done"      // planner declared the work verified
 )
 
+// Mode is the shape of a builder: a herdr pane relay watches, or a process
+// relay runs itself (#99). "" reads as pane so every binding written before
+// the field existed is unchanged.
+type Mode string
+
+const (
+	ModePane     Mode = "pane"
+	ModeHeadless Mode = "headless"
+)
+
 // Endpoint is one side of a binding. PaneID moves when a pane is moved between
 // workspaces; SessionID does not, so it is the durable identity.
+//
+// A headless builder (#99) has no pane and no session: Mode is ModeHeadless,
+// PaneID and SessionID are "", and the process fields below describe the
+// current round's process -- PID 0 between rounds. Every one of them is
+// omitempty so a pane endpoint's JSON is byte-identical to what it was.
 type Endpoint struct {
 	AgentName string `json:"agent_name,omitempty"`
 	PaneID    string `json:"pane_id"`
 	SessionID string `json:"session_id,omitempty"`
 	Kind      string `json:"kind"`
+
+	Mode Mode `json:"mode,omitempty"`
+	// PID is the headless supervisor's pid; 0 when no process is running.
+	PID int `json:"pid,omitempty"`
+	// StartedAt is the process's start time as the OS reports it, in Unix
+	// seconds, for pid-reuse defence. Seconds, not time.Time: encoding/json
+	// never omits a struct, and the OS reports start time at one-second
+	// resolution anyway.
+	StartedAt int64 `json:"started_at,omitempty"`
+	// LogPath is the current round's builder log (Store.BuilderLogPath);
+	// "" between rounds.
+	LogPath string `json:"log_path,omitempty"`
 }
+
+// Headless reports whether this endpoint is a process relay runs rather than
+// a pane it watches. "" is pane.
+func (e Endpoint) Headless() bool { return e.Mode == ModeHeadless }
 
 // Binding ties one planner pane to one builder pane over one working tree.
 type Binding struct {

@@ -158,3 +158,71 @@ func TestSameBindingCatchesAConsultStateChange(t *testing.T) {
 		t.Error("a consult moving running -> done compares same; the daemon would never persist the transition")
 	}
 }
+
+func TestEndpointHeadless(t *testing.T) {
+	cases := []struct {
+		name string
+		mode Mode
+		want bool
+	}{
+		{"empty mode reads as pane", "", false},
+		{"explicit pane", ModePane, false},
+		{"headless", ModeHeadless, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := Endpoint{Kind: "agy", Mode: c.mode}
+			if got := e.Headless(); got != c.want {
+				t.Errorf("Headless() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
+	// A pane endpoint written by today's relay carries none of the new keys.
+	pane := Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"}
+	data, err := json.Marshal(pane)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{"mode", "pid", "started_at", "log_path"} {
+		if bytes.Contains(data, []byte(`"`+key+`"`)) {
+			t.Errorf("pane endpoint JSON carries %q: %s", key, data)
+		}
+	}
+
+	// A headless endpoint carries all four and reads back equal.
+	want := Endpoint{
+		AgentName: "webshop-builder",
+		Kind:      "agy",
+		Mode:      ModeHeadless,
+		PID:       4242,
+		StartedAt: 1789000000,
+		LogPath:   "/state/webshop/003-builder.log",
+	}
+	data, err = json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Endpoint
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got != want {
+		t.Errorf("round trip: got %+v, want %+v", got, want)
+	}
+	if !got.Headless() {
+		t.Error("decoded headless endpoint reports Headless() false")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal map: %v", err)
+	}
+	if decoded["mode"] != "headless" || decoded["log_path"] != want.LogPath {
+		t.Errorf("JSON keys: %s", data)
+	}
+	if decoded["pid"] != float64(4242) || decoded["started_at"] != float64(1789000000) {
+		t.Errorf("pid/started_at must be JSON numbers: %s", data)
+	}
+}

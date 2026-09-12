@@ -113,7 +113,11 @@ Endpoint
   Kind      string   (existing; harness kind)
   Mode      Mode     "pane" | "headless"; "" reads as "pane" so every stored binding is unchanged
   PID       int      headless only; 0 when no process (between rounds, or never started)
-  StartedAt time.Time headless only; the process's start time as the OS reports it, for pid-reuse defence
+  StartedAt int64     headless only; the process's start time as the OS reports it, Unix seconds, for
+                      pid-reuse defence. (Amended at step 1: seconds rather than time.Time, because
+                      encoding/json never omits a struct and a time.Time here would rewrite every
+                      planner and consult endpoint on its next save. ProcHandle.StartedAt stays
+                      time.Time; the conversion is time.Unix(e.StartedAt, 0).)
   LogPath   string   headless only; absolute path of the current round's log; "" between rounds
 ```
 

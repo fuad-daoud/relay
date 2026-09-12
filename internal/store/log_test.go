@@ -209,3 +209,17 @@ func TestAppendLogTakesLockOnlyOnce(t *testing.T) {
 		t.Fatalf("got %d entries, want 1", len(got))
 	}
 }
+
+func TestKindExitIsDistinct(t *testing.T) {
+	kinds := []Kind{KindPlan, KindReport, KindQuestion, KindAnswer, KindDiff, KindDrift, KindFork, KindPick, KindSwitch, KindAsk, KindFindings, KindExit}
+	seen := map[Kind]bool{}
+	for _, k := range kinds {
+		if seen[k] {
+			t.Errorf("duplicate kind %q", k)
+		}
+		seen[k] = true
+	}
+	if KindExit != "exit" {
+		t.Errorf("KindExit = %q, want exit", KindExit)
+	}
+}

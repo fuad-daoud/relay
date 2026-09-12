@@ -136,6 +136,14 @@ func (s *Store) ReportPath(name string, round int) string {
 	return s.roundFile(name, round, "report", ".md")
 }
 
+// BuilderLogPath is where a headless builder's stdout and stderr for a round
+// are appended (#99). A round file like the plan and the report, so fork
+// copies it with the history and gc archives it with the directory.
+// Layout: <binding dir>/NNN-builder.log
+func (s *Store) BuilderLogPath(name string, round int) string {
+	return s.roundFile(name, round, "builder", ".log")
+}
+
 // QuestionPath is where a captured blocking dialog is stored.
 func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")

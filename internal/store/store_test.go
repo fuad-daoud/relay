@@ -2,6 +2,7 @@ package store
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"io"
@@ -552,5 +553,44 @@ func TestLedgerPath(t *testing.T) {
 	dir := t.TempDir()
 	if got, want := New(dir).LedgerPath(), filepath.Join(dir, "ledger.json"); got != want {
 		t.Errorf("LedgerPath = %q, want %q", got, want)
+	}
+}
+
+func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/home/dev/projects/webshop")
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(s.Dir("webshop"), "bind.json"))
+	if err != nil {
+		t.Fatalf("read bind.json: %v", err)
+	}
+	for _, key := range []string{`"mode"`, `"pid"`, `"started_at"`, `"log_path"`} {
+		if bytes.Contains(before, []byte(key)) {
+			t.Errorf("a pane binding's bind.json must not carry %s:\n%s", key, before)
+		}
+	}
+	got, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Builder.Headless() || got.Builder.Mode != "" {
+		t.Errorf("legacy builder must read as pane with empty Mode: %+v", got.Builder)
+	}
+	if got.Builder.PID != 0 || got.Builder.StartedAt != 0 || got.Builder.LogPath != "" {
+		t.Errorf("legacy builder must have zero process fields: %+v", got.Builder)
+	}
+}
+
+func TestBuilderLogPathIsARoundFileBesideTheReport(t *testing.T) {
+	s := New("/state")
+	if got, want := s.BuilderLogPath("webshop", 3), filepath.Join("/state", "webshop", "003-builder.log"); got != want {
+		t.Errorf("BuilderLogPath = %q, want %q", got, want)
+	}
+	// roundOfFile is what ForkState uses to decide which files to copy; the
+	// log must be one of them.
+	if r, ok := roundOfFile(filepath.Base(s.BuilderLogPath("webshop", 12))); !ok || r != 12 {
+		t.Errorf("roundOfFile(012-builder.log) = %d, %v; want 12, true", r, ok)
 	}
 }
