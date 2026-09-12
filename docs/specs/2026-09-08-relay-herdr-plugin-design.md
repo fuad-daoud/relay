@@ -98,7 +98,7 @@ relay/
     plugin-fetch.sh            # [[build]] download + checksum verify
     plugin-build.sh            # [[build]] go build
     plugin-daemon-check.sh     # [[startup]]
-    plugin-open-ui.sh          # open-ui action
+    plugin-open-pane.sh        # open-ui action (and the pick-* actions, #15)
     plugin-install-service.sh  # install-service action
 ```
 
@@ -138,7 +138,7 @@ command = ["sh", "scripts/plugin-daemon-check.sh"]
 [[actions]]
 id = "open-ui"
 title = "Open relay reader"
-command = ["sh", "scripts/plugin-open-ui.sh"]
+command = ["sh", "scripts/plugin-open-pane.sh", "ui"]
 
 [[actions]]
 id = "install-service"

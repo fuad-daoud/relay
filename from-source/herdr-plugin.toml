@@ -17,7 +17,7 @@ command = ["sh", "../scripts/plugin-daemon-check.sh"]
 [[actions]]
 id = "open-ui"
 title = "Open relay reader"
-command = ["sh", "../scripts/plugin-open-ui.sh"]
+command = ["sh", "../scripts/plugin-open-pane.sh", "ui"]
 
 [[actions]]
 id = "install-service"
