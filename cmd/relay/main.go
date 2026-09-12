@@ -345,6 +345,15 @@ func isPaneID(s string) bool {
 	return strings.Contains(s, ":") && !strings.Contains(s, "/")
 }
 
+// builderWhere is how the bound/added lines name the builder's place: its
+// pane id, or "headless" for a process relay runs itself (#99).
+func builderWhere(ep store.Endpoint) string {
+	if ep.Headless() {
+		return "headless"
+	}
+	return ep.PaneID
+}
+
 // parseFor turns --for into an absolute expiry. Empty means "until cleared"
 // (a zero time); anything else must be a positive Go duration -- relay does
 // not know a provider's reset schedule, so it never invents one (spec §1).
@@ -496,6 +505,8 @@ func cmdBind(args []string) error {
 	rebind := fs.Bool("rebind", false,
 		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
+	headless := fs.Bool("headless", false,
+		"run the builder as a process per round instead of a pane; not with --resume or a pane id in --builder")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -506,6 +517,12 @@ func cmdBind(args []string) error {
 	}
 	if *rebind && !*resume {
 		return fmt.Errorf("relay bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
+	}
+	if *headless && *resume {
+		return fmt.Errorf("relay bind --headless cannot be combined with --resume: a binding's mode is fixed at creation (unbind and bind again)")
+	}
+	if *headless && isPaneID(*builderAlias) {
+		return fmt.Errorf("relay bind --headless spawns a process; it cannot adopt pane %s (drop --builder or name a candidate)", *builderAlias)
 	}
 
 	rt, err := newRuntime()
@@ -527,6 +544,7 @@ func cmdBind(args []string) error {
 		AssumeDead:   *assumeDead,
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
+		Headless:     *headless,
 	}
 	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
@@ -584,7 +602,7 @@ func cmdBind(args []string) error {
 	}
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
-		b.Name, b.Planner.PaneID, b.Builder.PaneID, b.BuilderCandidate, b.Round)
+		b.Name, b.Planner.PaneID, builderWhere(b.Builder), b.BuilderCandidate, b.Round)
 	if n := relay.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
@@ -605,6 +623,7 @@ func cmdFork(args []string) error {
 	newName := fs.String("new-name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
+	headless := fs.Bool("headless", false, "run the fork's builder as a process per round instead of a pane")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -635,6 +654,7 @@ func cmdFork(args []string) error {
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
+		Headless:    *headless,
 	}
 
 	res, err := relay.Fork(context.Background(), rt, opts)
@@ -663,6 +683,7 @@ func cmdAdd(args []string) error {
 	name := fs.String("name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -688,13 +709,18 @@ func cmdAdd(args []string) error {
 		Repo:        repo,
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
+		Headless:    *headless,
 	})
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("added %s: builder %s in pane %s\n",
-		res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
+	if res.Binding.Builder.Headless() {
+		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
+	} else {
+		fmt.Printf("added %s: builder %s in pane %s\n",
+			res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
+	}
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}

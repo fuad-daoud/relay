@@ -764,3 +764,38 @@ func TestPickRejectsAnswerFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestBindHeadlessConflictsFailBeforeNewRuntime pins headless spec §6: the
+// two flag conflicts are usage errors, refused before relay talks to herdr.
+// CI runners have no herdr binary, so reaching newRuntime would be a
+// different failure with a different message.
+func TestBindHeadlessConflictsFailBeforeNewRuntime(t *testing.T) {
+	cases := []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"bind", "--headless", "--resume", "--name", "x"}, []string{"--headless", "--resume"}},
+		{[]string{"bind", "--headless", "--builder", "w2:p4"}, []string{"--headless", "pane"}},
+	}
+	for _, c := range cases {
+		err := run(c.args)
+		if err == nil {
+			t.Errorf("%v: want an error", c.args)
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%v: error %q does not mention %q", c.args, err, w)
+			}
+		}
+	}
+}
+
+func TestBuilderWhere(t *testing.T) {
+	if got := builderWhere(store.Endpoint{PaneID: "w2:p4"}); got != "w2:p4" {
+		t.Errorf("pane: %q", got)
+	}
+	if got := builderWhere(store.Endpoint{Mode: store.ModeHeadless, AgentName: "x-builder"}); got != "headless" {
+		t.Errorf("headless: %q", got)
+	}
+}
