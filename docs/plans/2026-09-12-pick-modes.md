@@ -25,8 +25,9 @@ import `internal/ui`; the two helpers it shares with `ui` (`listWindow`,
 `renderError`/`wrapLine`) are copied, per spec §4 and §8.
 
 **Tech stack:** Go 1.22, bubbletea v1.3.4, bubbles v0.20.0 (`textinput`,
-`viewport` -- already required by `go.mod`, so `go mod tidy` must not change
-`go.sum`), lipgloss v1.0.0. Verification is `make check`.
+`viewport`; `textinput` pulls `github.com/atotto/clipboard` indirectly, so
+Task 3 runs `go mod tidy` once -- one `// indirect` line and two `go.sum`
+lines), lipgloss v1.0.0. Verification is `make check`.
 
 ## Where you are working
 
@@ -377,6 +378,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -462,7 +464,8 @@ func blockedAgent(name string) herdr.Agent {
 }
 
 // testRuntime seeds a store with the given bindings and returns a runtime
-// over it and the fake herdr.
+// over it and the fake herdr. Now is set because relay.Answer stamps its log
+// entry with it; a nil clock panics.
 func testRuntime(t *testing.T, fh *fakeHerdr, bindings ...store.Binding) relay.Runtime {
 	t.Helper()
 	st := store.New(t.TempDir())
@@ -471,7 +474,7 @@ func testRuntime(t *testing.T, fh *fakeHerdr, bindings ...store.Binding) relay.R
 			t.Fatalf("Save %s: %v", b.Name, err)
 		}
 	}
-	return relay.Runtime{Store: st, Herdr: fh}
+	return relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
 }
 
 // rowsMsg builds the statusMsg the list would receive for these rows.
@@ -1763,7 +1766,11 @@ In `View`, add:
 		return m.answerView()
 ```
 
-- [ ] **Step 5: Run the pick tests**
+- [ ] **Step 5: Add the module checksums textinput needs, then run the pick tests**
+
+Run `go mod tidy`. Expected delta, and nothing else: `go.mod` gains
+`github.com/atotto/clipboard v0.1.4 // indirect`; `go.sum` gains its two
+checksum lines. Then:
 
 Run: `go test ./internal/pick`
 Expected: PASS, including every test in `answer_test.go`. If
@@ -1777,7 +1784,7 @@ Run: `make check`
 Expected: green.
 
 ```bash
-git add internal/pick
+git add internal/pick go.mod go.sum
 git commit -m "feat(pick): answer screen -- live dialog above, one typed line below (#15 task 3)"
 ```
 
@@ -2102,8 +2109,8 @@ the positional before `--pick` is parsed, the error still comes from
 - [ ] **Step 9: Verify and commit**
 
 Run: `make check`
-Expected: green. `go mod tidy` must leave `go.mod`/`go.sum` untouched
-(`textinput` and `viewport` live in the already-required bubbles module).
+Expected: green. `go mod tidy` is a no-op after Task 3's commit; `make check`
+enforces it.
 
 ```bash
 git add internal/pick/pick.go internal/pick/pick_test.go cmd/relay/main.go cmd/relay/main_test.go
