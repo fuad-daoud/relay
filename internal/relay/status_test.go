@@ -586,7 +586,7 @@ func TestRenderStatusOmitsForeignLineWhenNone(t *testing.T) {
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
 	}}})
-	if strings.Contains(out, "foreign") {
+	if strings.Contains(out, "  foreign ") {
 		t.Errorf("unexpected foreign line:\n%s", out)
 	}
 }
@@ -614,7 +614,7 @@ func TestRenderStatusForeignOmitsCWDAtTreeRoot(t *testing.T) {
 		},
 	}}})
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, "foreign") {
+		if !strings.Contains(line, "  foreign ") {
 			continue
 		}
 		if strings.Contains(line, "/repo") {
@@ -631,7 +631,7 @@ func TestRenderStatusShowsEveryForeignAgent(t *testing.T) {
 			{PaneID: "w9:p2", Kind: "agy", Status: "working", CWD: "/repo"},
 		},
 	}}})
-	if n := strings.Count(out, "foreign"); n != 2 {
+	if n := strings.Count(out, "  foreign "); n != 2 {
 		t.Errorf("got %d foreign lines, want 2:\n%s", n, out)
 	}
 }
@@ -907,5 +907,86 @@ func TestHideDoneKeepsGated(t *testing.T) {
 	}
 	if len(out.Gated) != 1 || out.Gated[0].Token != "agy/test/m" {
 		t.Fatalf("Gated = %+v, want the gate carried through", out.Gated)
+	}
+}
+
+func TestRenderStatusCoverageRowPerKind(t *testing.T) {
+	base := func(kind, vis string) BindingStatus {
+		return BindingStatus{
+			Name: "b", CWD: "/repo", Round: 1, Display: "ACTIVE",
+			PlannerPane: "wM:p1", PlannerKind: "claude", PlannerStatus: "idle",
+			BuilderPane: "wM:p2", BuilderKind: kind, BuilderStatus: "working",
+			BuilderCandidate: testAgyRef,
+			SubAgents:        vis,
+			Foreign: []ForeignAgent{{
+				PaneID: "wM:p9", Kind: "claude", Status: "working", CWD: "/repo", Title: "researcher",
+			}},
+			Detail: "something to say",
+		}
+	}
+
+	t.Run("claude prints no coverage row", func(t *testing.T) {
+		out := RenderStatus(Report{Bindings: []BindingStatus{base("claude", "separate")}})
+		if strings.Contains(out, "coverage") {
+			t.Errorf("claude binding must not print a coverage row:\n%s", out)
+		}
+	})
+
+	for _, tc := range []struct{ kind, vis, want string }{
+		{"agy", "foreground", "  coverage sub-agents hidden: agy runs them in the builder pane; no foreign rows above does not mean the tree is clear\n"},
+		{"opencode", "hidden", "  coverage sub-agents hidden: opencode runs them in-process, herdr lists only the pane; no foreign rows above does not mean the tree is clear\n"},
+		{"gemini", "", "  coverage sub-agents unverified for kind \"gemini\"; no foreign rows above does not mean the tree is clear\n"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			out := RenderStatus(Report{Bindings: []BindingStatus{base(tc.kind, tc.vis)}})
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("coverage row missing or reworded; want %q in:\n%s", tc.want, out)
+			}
+			// It sits after the last foreign row and before detail: the
+			// reader has just scanned the foreign rows and this is the
+			// sentence about what that scan proved.
+			foreignAt := strings.Index(out, "  foreign ")
+			coverageAt := strings.Index(out, "  coverage ")
+			detailAt := strings.Index(out, "  detail ")
+			if !(foreignAt < coverageAt && coverageAt < detailAt) {
+				t.Errorf("coverage must follow foreign and precede detail, got:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestStatusRowCopiesHarnessSubAgents(t *testing.T) {
+	for _, tc := range []struct{ kind, want string }{
+		{"claude", "separate"},
+		{"agy", "foreground"},
+		{"opencode", "hidden"},
+		{"gemini", ""},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			f := &fakeHerdr{}
+			rt, b := sentBinding(t, f)
+			b.Builder.Kind = tc.kind
+			if err := rt.Store.Save(b); err != nil {
+				t.Fatal(err)
+			}
+			rep, err := Status(context.Background(), rt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rep.Bindings[0].SubAgents; got != tc.want {
+				t.Errorf("SubAgents = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBindingStatusSubAgentsJSON(t *testing.T) {
+	withValue, _ := json.Marshal(BindingStatus{Name: "b", SubAgents: "hidden"})
+	if !strings.Contains(string(withValue), `"sub_agents":"hidden"`) {
+		t.Errorf("sub_agents missing from %s", withValue)
+	}
+	empty, _ := json.Marshal(BindingStatus{Name: "b"})
+	if strings.Contains(string(empty), "sub_agents") {
+		t.Errorf("empty SubAgents must be omitted, got %s", empty)
 	}
 }
