@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -34,8 +35,11 @@ const startGrace = 30 * time.Second
 // simply still being written.
 const nudgeGrace = 60 * time.Second
 
-const nudgePrompt = `You went idle without writing your report.
-Write it to %s now, then reply with only that path.`
+// nudgePrompt is the one reminder relay sends when a builder went idle without
+// finishing. It names both files: the report and the completion marker.
+const nudgePrompt = `You went idle without finishing.
+Write your report to %s if you have not, then create the empty file %s as
+your last action, and reply with only the report path.`
 
 func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 	if rt.Hooks == nil {
@@ -214,6 +218,21 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, err
 	}
 
+	// The builder's completion marker closes the round on any tick, whatever
+	// herdr says the pane is doing: the marker is written last, so what is
+	// left of the builder's turn is just its reply (spec §4.2). Idle status
+	// matters only on the fallback path below, when there is no marker.
+	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+		next, closed, err := closeOnMarker(ctx, rt, tx, b, entries)
+		if err != nil {
+			return b, err
+		}
+		if closed {
+			return deliverAndSettle(ctx, rt, tx, next, agents)
+		}
+	}
+
 	var next store.Binding
 	switch effectiveStatus(b.Builder, builder) {
 	case herdr.StatusIdle, herdr.StatusDone:
@@ -321,6 +340,44 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.
 	return next, true, err
 }
 
+// closeOnMarker closes an open round when the builder's completion marker
+// (Store.DonePath) exists. It is the one place both the pane and the headless
+// path decide "the builder says it is finished", so they cannot disagree.
+//
+// Preconditions: the round is open -- a plan was sent for b.Round and no
+// report has been queued for it.
+// Postconditions:
+//   - marker absent: closed is false, b is returned unchanged, nothing written.
+//   - marker and report present: the round closes normally (note "").
+//   - marker present, report absent: the round closes with note "noreport" and
+//     a payload saying so. The terminal is never read: the builder said it
+//     was done, and a scrape would be a worse artefact than an honest gap.
+//
+// Errors are queueReport's, wrapped; the round stays open and the next tick
+// retries, since the marker is still on disk.
+func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
+	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
+		return b, false, nil
+	}
+	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	if _, err := os.Stat(reportPath); err == nil {
+		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath), "")
+		if err != nil {
+			return b, false, fmt.Errorf("close round on marker: %w", err)
+		}
+		return next, true, nil
+	}
+	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
+		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath), "noreport")
+	if err != nil {
+		return b, false, fmt.Errorf("close round on marker: %w", err)
+	}
+	return next, true, nil
+}
+
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
 // a labelled screen scrape.
 //
@@ -336,10 +393,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
-	if _, err := os.Stat(reportPath); err == nil {
-		payload := fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)
-		return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "")
-	}
+	donePath := rt.Store.DonePath(b.Name, b.Round)
 
 	nudgedAt, ok := nudgeTime(entries, b.Round)
 	if !ok {
@@ -349,7 +403,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if rt.Now().UTC().Sub(b.RoundStartedAt) < startGrace {
 			return b, nil
 		}
-		return nudgeBuilder(ctx, rt, tx, b, reportPath)
+		return nudgeBuilder(ctx, rt, tx, b, reportPath, donePath)
 	}
 
 	next, quiescent, err := builderQuiescent(ctx, rt, b, nudgedAt)
@@ -364,9 +418,18 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return next, nil
 	}
 
-	// Once per round: the report scrapeReport queues ends this path.
-	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round,
-		"quiet", rt.Now().UTC().Sub(next.BuilderScreenAt).Truncate(time.Second))
+	// Once per round: whichever close runs below ends this path. The builder
+	// never wrote its marker, so relay cannot know the tree is final; it
+	// delivers the best artefact it has and names the omission (spec §4.3).
+	quiet := rt.Now().UTC().Sub(next.BuilderScreenAt).Truncate(time.Second)
+	if _, err := os.Stat(reportPath); err == nil {
+		slog.Warn("builder quiescent with a report but no marker", "binding", next.Name, "round", next.Round, "quiet", quiet, "note", "unmarked")
+		payload := fmt.Sprintf(
+			"Builder finished round %d but never confirmed completion (no %s). Report: %s. The diff may be premature.",
+			next.Round, filepath.Base(donePath), reportPath)
+		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked")
+	}
+	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)
 	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
 }
 
@@ -430,8 +493,8 @@ func builderQuiescent(ctx context.Context, rt Runtime, b store.Binding, nudgedAt
 	return b, true, nil
 }
 
-func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
-	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath)); err != nil {
+func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath, donePath string) (store.Binding, error) {
+	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, donePath)); err != nil {
 		return b, fmt.Errorf("nudge builder: %w", err)
 	}
 

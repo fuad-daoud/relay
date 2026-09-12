@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -197,15 +198,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, b, agents)
 	}
 
-	reportPath := rt.Store.ReportPath(b.Name, b.Round)
-	if _, err := os.Stat(reportPath); err == nil {
-		// The report is the contract (spec §1): the process is done with
-		// whatever it exits as, and it exits on its own. Never Kill here.
-		payload := fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, "")
-		if err != nil {
-			return b, err
-		}
+	// The marker is the contract (completion-marker spec §4.4): the process
+	// is done with whatever it exits as, and it exits on its own. Never Kill
+	// here. A report without a marker is a process still working.
+	next, closed, err := closeOnMarker(ctx, rt, tx, b, entries)
+	if err != nil {
+		return b, err
+	}
+	if closed {
 		next.Builder = clearProcess(next.Builder)
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
@@ -250,11 +250,30 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
-	// Exited without a report.
+	// Exited. The exit code is read once for both outcomes below.
 	codeText := "unknown"
 	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), b.Builder.LogPath); ok {
 		codeText = strconv.Itoa(code)
 	}
+
+	// Exited after writing a report but without the marker: an exited
+	// process cannot be mid-write, so the report is trusted and the
+	// omission noted (spec §4.4).
+	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	if _, err := os.Stat(reportPath); err == nil {
+		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
+		payload := fmt.Sprintf(
+			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
+			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), reportPath)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, "unmarked")
+		if err != nil {
+			return b, err
+		}
+		next.Builder = clearProcess(next.Builder)
+		return deliverAndSettle(ctx, rt, tx, next, agents)
+	}
+
+	// Exited without a report.
 	now := rt.Now().UTC()
 	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText)); err != nil {
 		return b, err

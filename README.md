@@ -166,6 +166,12 @@ relay pull                        # print the report the builder wrote back
 relay done <name>                 # stop relaying when you are satisfied
 ```
 
+The builder writes `NNN-report.md` when it has finished and then creates an
+empty `NNN-done` as its last action; relay closes the round on that marker.
+A builder that goes idle without the marker is nudged once, then its report
+is delivered flagged `unmarked` (or its terminal scraped if there is no
+report at all).
+
 `relay bind` reads the planner's pane from `$HERDR_PANE_ID`, which herdr sets
 inside every pane it manages, so it has to be run from inside one.
 
@@ -302,8 +308,10 @@ pane builder would be typed, appends its stdout and stderr to
 `~/.local/state/relay/<name>/NNN-builder.log` beside the round's plan and
 report, and returns. The process exits when it has written the report, or when
 it fails; between rounds a headless binding has no process and is idle, not
-broken. The report file is the whole contract: a process that wrote its report
-and then exited non-zero has done its job.
+broken. The completion marker is the contract: a process that wrote its report and
+created `NNN-done`, then exited non-zero, has done its job. A process that
+exits with a report but no marker closes the round too, flagged `unmarked`;
+one that exits with neither is the "exited without a report" case below.
 
 What is different from a pane builder:
 

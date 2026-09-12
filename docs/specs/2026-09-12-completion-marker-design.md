@@ -9,6 +9,7 @@ headless branch is one of the two gates this design changes.
 two files); `docs/design.md` command table ("report is the contract" becomes
 "report plus marker"); #37 (triggers) should gate its "artifact appears" edge
 on `NNN-done`, not `NNN-report.md`, when it is specced.
+**Status:** implemented by `docs/plans/2026-09-12-completion-marker.md`.
 
 ## 1. System overview
 

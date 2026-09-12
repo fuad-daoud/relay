@@ -80,6 +80,7 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 	if err := os.WriteFile(reportPath, []byte("round 1 report"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 
 	agents := []herdr.Agent{
 		plannerAgent(),

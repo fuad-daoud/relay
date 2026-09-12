@@ -79,12 +79,13 @@ func reconcile(t *testing.T, rt Runtime, b store.Binding, agents []herdr.Agent) 
 	return out, err
 }
 
-func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
+func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	b.RoundSwitches = 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -132,8 +133,9 @@ func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 	if got.Round != 1 {
 		t.Errorf("a nudge must not advance the round, got %d", got.Round)
 	}
-	if len(f.prompts) != 1 || !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("webshop", 1)) {
-		t.Fatalf("expected one nudge naming the report path, got %+v", f.prompts)
+	if len(f.prompts) != 1 || !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("webshop", 1)) ||
+		!strings.Contains(f.prompts[0].Text, rt.Store.DonePath("webshop", 1)) {
+		t.Fatalf("expected one nudge naming the report and marker paths, got %+v", f.prompts)
 	}
 	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
 		t.Error("a nudge must not queue anything for the planner")
@@ -517,6 +519,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	got, err := reconcile(t, rt, b, agents)
@@ -527,7 +530,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
 	}
 	if len(f.prompts) != 0 {
-		t.Fatalf("expected zero prompts when report file is present, got %+v", f.prompts)
+		t.Fatalf("expected zero prompts when the marker is present, got %+v", f.prompts)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
@@ -613,6 +616,7 @@ func TestReconcileRecoveredBindingProceedsNormally(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	b.State = store.StateBroken
 
 	agents := []herdr.Agent{
@@ -701,6 +705,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 	if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
@@ -985,6 +990,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
 		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 		got, err := reconcile(t, rt, b, agents)
@@ -1030,6 +1036,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
 		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 		got, err := reconcile(t, rt, b, agents)
@@ -1058,6 +1065,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		if err := os.WriteFile(reportFile, []byte("report content"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
 		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 		got, err := reconcile(t, rt, b, agents)
@@ -1103,5 +1111,253 @@ func TestEffectiveStatus(t *testing.T) {
 				t.Errorf("effectiveStatus() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// closeOnMarkerUnderLock calls closeOnMarker the way Reconcile does: inside
+// the store lock, with the binding's current log.
+func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool) {
+	t.Helper()
+	var out store.Binding
+	var closed bool
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		entries, err := tx.ReadLog(b.Name)
+		if err != nil {
+			return err
+		}
+		out, closed, err = closeOnMarker(context.Background(), rt, tx, b, entries)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("closeOnMarker: %v", err)
+	}
+	return out, closed
+}
+
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("touch %s: %v", path, err)
+	}
+}
+
+func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "" {
+		t.Errorf("note = %q, want empty on a marked close", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: "+rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("payload = %q", pending.Payload)
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("a marked close never reads the terminal: %+v", f.reads)
+	}
+}
+
+// TestCloseOnMarkerWithoutReportIsNoreport pins §4.1: the builder said it was
+// done, so relay closes on that and says the report is missing, instead of
+// waiting for idle and scraping a worse artefact. Mutation: fall through to
+// scrapeReport -> f.reads is non-empty and the note is "scraped".
+func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
+	f := &fakeHerdr{readOut: "some terminal text"}
+	rt, b := sentBinding(t, f)
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("entry must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "noreport" {
+		t.Errorf("note = %q, want noreport", pending.Note)
+	}
+	want := "Builder wrote its completion marker for round 1 but no report at " + rt.Store.ReportPath("webshop", 1) + "."
+	if !strings.Contains(pending.Payload, want) {
+		t.Errorf("payload = %q, want it to contain %q", pending.Payload, want)
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("no scrape on a marker-only close: %+v", f.reads)
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); err == nil {
+		t.Error("relay must not write a report file of its own on a noreport close")
+	}
+}
+
+func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if closed || got.Round != 1 {
+		t.Fatalf("closed=%v round=%d, want untouched: a report alone is not a close", closed, got.Round)
+	}
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; no marker means no I/O", len(before), len(after))
+	}
+}
+
+// TestReconcileClosesOnMarkerWhileBuilderStillWorking pins §4.2: the marker
+// is checked every tick, before herdr's status is consulted. Mutation: move
+// the closeOnMarker call inside the idle branch -> this fails because the
+// builder is reported working.
+func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: the marker closes the round regardless of status", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("no nudge on a marked round: %+v", f.prompts)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found || pending.Note != "" {
+		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
+	}
+}
+
+// TestReconcileReportWithoutMarkerIsNotAClose pins §4.3: a report on disk is
+// not evidence the builder is finished. Mutation: gate on the report instead
+// of the marker -> the round advances on the first tick.
+func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("half-written"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("round = %d, want 1: a report without a marker must not close the round", got.Round)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+		t.Error("nothing may be queued before the marker or the fallback")
+	}
+	// Idle past the start grace with no marker: the one nudge, naming both files.
+	if len(f.prompts) != 1 {
+		t.Fatalf("want exactly one nudge, got %+v", f.prompts)
+	}
+	if !strings.Contains(f.prompts[0].Text, rt.Store.ReportPath("webshop", 1)) ||
+		!strings.Contains(f.prompts[0].Text, rt.Store.DonePath("webshop", 1)) {
+		t.Errorf("nudge must name the report and the marker, got %q", f.prompts[0].Text)
+	}
+}
+
+// TestReconcileQuiescentWithReportClosesUnmarked pins the fallback: after the
+// nudge and a still screen, the report that exists is delivered with the
+// omission named, never scraped over. Mutation: drop the "unmarked" note ->
+// fails; scrape instead of queueing the report -> the body check fails.
+func TestReconcileQuiescentWithReportClosesUnmarked(t *testing.T) {
+	f := &fakeHerdr{readOut: "still screen"}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("the builder's own words"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	clock.Advance(nudgeGrace + time.Second)
+	got, err := reconcile(t, rt, b, agents) // quiescent
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the unmarked close", got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "never confirmed completion (no 001-done)") ||
+		!strings.Contains(pending.Payload, "The diff may be premature.") ||
+		!strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("payload = %q", pending.Payload)
+	}
+	body, err := os.ReadFile(rt.Store.ReportPath("webshop", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "the builder's own words" {
+		t.Errorf("the builder's report must be delivered as written, got %q", body)
+	}
+}
+
+// TestReconcileQuiescentWithoutReportStillScrapes is the regression pin for
+// the scrape path: no report and no marker after quiescence is exactly what
+// it was before the marker existed.
+func TestReconcileQuiescentWithoutReportStillScrapes(t *testing.T) {
+	f := &fakeHerdr{readOut: "I did the thing but wrote nothing."}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	clock.Advance(nudgeGrace + time.Second)
+	got, err := reconcile(t, rt, b, agents) // scrape
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found || got.Round != 2 {
+		t.Fatalf("scrape must close the round: round=%d found=%v err=%v", got.Round, found, err)
+	}
+	if pending.Note != "scraped" {
+		t.Errorf("note = %q, want scraped", pending.Note)
 	}
 }

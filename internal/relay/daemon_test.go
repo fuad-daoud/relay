@@ -21,6 +21,7 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
@@ -131,6 +132,7 @@ func TestTickContinuesPastFailingBinding(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("kobe", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("kobe", 1))
 
 	f.agents = []herdr.Agent{
 		plannerWith(herdr.StatusWorking, false), // "webshop" planner

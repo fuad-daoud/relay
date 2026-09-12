@@ -194,8 +194,9 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	spec := fr.specs[0]
 	planPath := rt.Store.PlanPath("webshop", 1)
 	reportPath := rt.Store.ReportPath("webshop", 1)
+	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(b, planPath, reportPath)
+	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
 	if spec.Argv[2] != wantPrompt {
 		t.Errorf("prompt handed to the process:\n%q\nwant the pane path's composePrompt:\n%q", spec.Argv[2], wantPrompt)
 	}
@@ -484,39 +485,6 @@ func TestReconcileHeadlessIdleIsNotBroken(t *testing.T) {
 	}
 }
 
-func TestReconcileHeadlessReportFinishesTheRoundAndClearsTheHandle(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Errorf("round = %d, want 2 after a report", got.Round)
-	}
-	if got.Builder.PID != 0 || got.Builder.StartedAt != 0 || got.Builder.LogPath != "" {
-		t.Errorf("process fields must clear with the round: %+v", got.Builder)
-	}
-	if !got.Builder.Headless() || got.Builder.AgentName != "webshop-builder" {
-		t.Errorf("identity must survive: %+v", got.Builder)
-	}
-	if len(fr.kills) != 0 {
-		t.Errorf("a builder that wrote its report is never killed: %+v", fr.kills)
-	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found || !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
-		t.Errorf("report must be queued: found=%v payload=%q err=%v", found, pending.Payload, err)
-	}
-	if len(exits(t, rt)) != 0 {
-		t.Error("a report is the record; no exit entry")
-	}
-}
-
 func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
@@ -526,8 +494,12 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 		t.Fatal(err)
 	}
 	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil || got.Round != 2 || len(exits(t, rt)) != 0 || len(fr.specs) != 1 {
-		t.Errorf("round=%d exits=%d specs=%d err=%v; want the report to finish the round with no exit entry and no switch", got.Round, len(exits(t, rt)), len(fr.specs), err)
+	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	if err != nil || got.Round != 2 || len(exits(t, rt)) != 0 || len(fr.specs) != 1 || perr != nil || !found {
+		t.Fatalf("round=%d exits=%d specs=%d err=%v found=%v; want the report to finish the round with no exit entry and no switch", got.Round, len(exits(t, rt)), len(fr.specs), err, found)
+	}
+	if pending.Note != "unmarked" || !strings.Contains(pending.Payload, "exited (code 1)") {
+		t.Errorf("note=%q payload=%q, want an unmarked close naming the exit code", pending.Note, pending.Payload)
 	}
 }
 
@@ -801,6 +773,7 @@ func TestReconcilePanePathUntouchedByHeadless(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	got, err := reconcile(t, rt, b, []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)})
 	if err != nil || got.Round != 2 {
 		t.Fatalf("pane report path: round=%d err=%v", got.Round, err)
@@ -1045,5 +1018,96 @@ func TestStatusPaneRowHasNoHeadlessInfo(t *testing.T) {
 	}
 	if rep.Bindings[0].Headless != nil || rep.Bindings[0].BuilderPane != "w2:p4" {
 		t.Errorf("pane row = %+v", rep.Bindings[0])
+	}
+}
+
+// TestReconcileHeadlessAliveWithReportButNoMarkerWaits is the headless half
+// of the fix: a running process that has written a report is still running.
+// Mutation: stat the report instead of the marker -> round 2, PID cleared.
+func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("draft"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 || got.Builder.PID != b.Builder.PID {
+		t.Errorf("round=%d pid=%d, want round 1 and the same pid: the process is still running", got.Round, got.Builder.PID)
+	}
+	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
+		t.Error("nothing is queued while the process runs without a marker")
+	}
+	if len(fr.kills) != 0 || len(exits(t, rt)) != 0 {
+		t.Errorf("kills=%d exits=%d, want none", len(fr.kills), len(exits(t, rt)))
+	}
+}
+
+// TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked: exit is a
+// hard fact, so the report is trusted with the omission noted (spec §4.4).
+func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 || got.Builder.PID != 0 || got.Builder.LogPath != "" {
+		t.Errorf("round=%d builder=%+v, want round 2 with process fields cleared", got.Round, got.Builder)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "exited (code 0) after writing its report but never confirmed completion (no 001-done)") ||
+		!strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("payload = %q", pending.Payload)
+	}
+	if len(exits(t, rt)) != 0 || len(fr.specs) != 1 {
+		t.Errorf("exits=%d specs=%d, want no exit entry and no switch: the report is the record", len(exits(t, rt)), len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessMarkerClosesAndClearsTheHandle: the marker closes the
+// round the same way for a process as for a pane, and the handle goes with it.
+func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 || got.Builder.PID != 0 || got.Builder.StartedAt != 0 || got.Builder.LogPath != "" {
+		t.Errorf("round=%d builder=%+v, want round 2 with process fields cleared", got.Round, got.Builder)
+	}
+	if !got.Builder.Headless() || got.Builder.AgentName != "webshop-builder" {
+		t.Errorf("identity must survive: %+v", got.Builder)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found || pending.Note != "" {
+		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("a builder that wrote its marker is never killed: %+v", fr.kills)
 	}
 }

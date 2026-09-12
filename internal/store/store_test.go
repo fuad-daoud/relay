@@ -133,6 +133,9 @@ func TestPathsAreZeroPaddedUnderBindingDir(t *testing.T) {
 	if got, want := s.ReportPath("webshop", 12), filepath.Join("/state", "webshop", "012-report.md"); got != want {
 		t.Errorf("ReportPath = %q, want %q", got, want)
 	}
+	if got, want := s.DonePath("webshop", 7), filepath.Join("/state", "webshop", "007-done"); got != want {
+		t.Errorf("DonePath = %q, want %q", got, want)
+	}
 }
 
 func TestValidName(t *testing.T) {
