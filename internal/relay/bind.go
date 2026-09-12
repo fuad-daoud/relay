@@ -500,6 +500,11 @@ type UnbindResult struct {
 	WorktreeKept    string // worktree relay refused to remove, or ""
 	KeptReason      string // why it was kept; "" when nothing was kept
 	WorktreeGone    string // recorded worktree whose directory no longer exists, or ""
+	// ProcessStopped is the headless builder process relay stopped, or 0
+	// (#99). ProcessErr is why a stop failed; "" when it did not. Both
+	// zero for a pane binding and for a headless one between rounds.
+	ProcessStopped int
+	ProcessErr     string
 }
 
 // Unbind clears away one binding's state, leaving its herdr panes untouched.
@@ -516,6 +521,16 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	}
 
 	var res UnbindResult
+	// Stop a live headless round before touching its tree (#99, spec §4.6):
+	// a builder still writing would dirty the worktree relay is about to
+	// judge clean or not. A failed stop is reported, never fatal -- the
+	// unbind is the human's decision and it proceeds.
+	if pid, err := stopProcess(ctx, rt, b.Builder); err != nil {
+		res.ProcessErr = fmt.Sprintf("pid %d: %v", pid, err)
+	} else if pid != 0 {
+		res.ProcessStopped = pid
+	}
+
 	outcome := worktreeTeardown(ctx, rt, b, false)
 	res.WorktreeRemoved = outcome.Removed
 	res.WorktreeKept = outcome.Kept

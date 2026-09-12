@@ -266,3 +266,27 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false)
 }
+
+// ErrStopFailed reports that relay marked a binding done or unbound but
+// could not stop its headless process (spec §4.6). The state change stands;
+// the pid stays on the endpoint (done) or in the result (unbind) so the
+// human can find the process.
+var ErrStopFailed = errors.New("could not stop the builder process")
+
+// stopProcess kills a headless endpoint's live process, if it has one. It
+// returns the pid it addressed -- 0 when there was nothing to stop -- and
+// Kill's error. A pane endpoint, or a headless one between rounds, is a
+// no-op. Runner nil with a pid recorded is an error: relay cannot say the
+// process is stopped.
+func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error) {
+	if !e.Headless() || e.PID == 0 {
+		return 0, nil
+	}
+	if rt.Runner == nil {
+		return e.PID, ErrRunnerUnavailable
+	}
+	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
+		return e.PID, err
+	}
+	return e.PID, nil
+}

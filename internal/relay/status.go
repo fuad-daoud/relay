@@ -467,6 +467,16 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 		oldState := b.State
 		b.State = store.StateDone
 
+		// A headless round's process is stopped here (#99, spec §4.6): the
+		// planner has declared the work finished, so a builder still
+		// editing the tree is now the wrong thing. Failure is reported
+		// after DONE is saved -- the state change stands either way -- and
+		// the pid stays on the endpoint so the human can find it.
+		pid, stopErr := stopProcess(ctx, rt, b.Builder)
+		if stopErr == nil {
+			b.Builder = clearProcess(b.Builder)
+		}
+
 		if err := tx.Save(b); err != nil {
 			return err
 		}
@@ -482,6 +492,9 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 			})
 		}
 
+		if stopErr != nil {
+			return fmt.Errorf("%s marked done, but its builder process %d is still running: %v: %w", b.Name, pid, stopErr, ErrStopFailed)
+		}
 		return nil
 	})
 }

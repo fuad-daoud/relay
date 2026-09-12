@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -806,5 +807,109 @@ func TestReconcilePanePathUntouchedByHeadless(t *testing.T) {
 	}
 	if len(fr.specs) != 0 || len(fr.kills) != 0 {
 		t.Errorf("pane path touched the Runner: specs=%d kills=%d", len(fr.specs), len(fr.kills))
+	}
+}
+
+func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	h := handleOf(b.Builder)
+
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != h {
+		t.Errorf("kills = %+v, want the round's process %+v", fr.kills, h)
+	}
+	got, _ := rt.Store.Load("webshop")
+	if got.State != store.StateDone || got.Builder.PID != 0 || got.Builder.LogPath != "" {
+		t.Errorf("after done: state=%s builder=%+v; want done with process fields cleared", got.State, got.Builder)
+	}
+}
+
+func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("no process, no kill: %+v", fr.kills)
+	}
+}
+
+func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("SIGTERM: operation not permitted")
+
+	err := Done(context.Background(), rt, "webshop")
+	if !errors.Is(err, ErrStopFailed) || !strings.Contains(err.Error(), "marked done") {
+		t.Fatalf("err = %v, want ErrStopFailed saying the binding is still marked done", err)
+	}
+	got, _ := rt.Store.Load("webshop")
+	if got.State != store.StateDone {
+		t.Errorf("state = %s, want done even when the kill failed", got.State)
+	}
+	if got.Builder.PID == 0 {
+		t.Error("a process relay could not stop must stay recorded, so the human can find it")
+	}
+}
+
+func TestDonePaneNeverTouchesTheRunner(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	fr := newFakeRunner()
+	rt.Runner = fr
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("pane done killed something: %+v", fr.kills)
+	}
+}
+
+func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	pid := b.Builder.PID
+
+	res, err := Unbind(context.Background(), rt, "webshop", false)
+	if err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0].PID != pid {
+		t.Errorf("kills = %+v, want pid %d", fr.kills, pid)
+	}
+	if res.ProcessStopped != pid || res.ProcessErr != "" {
+		t.Errorf("result = %+v, want ProcessStopped=%d", res, pid)
+	}
+	if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding still loads: %v", err)
+	}
+	text := UnbindText("webshop", res)
+	if !strings.Contains(text, fmt.Sprintf("stopped builder process %d", pid)) {
+		t.Errorf("UnbindText = %q, want the stopped line", text)
+	}
+}
+
+func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("SIGTERM: operation not permitted")
+
+	res, err := Unbind(context.Background(), rt, "webshop", true)
+	if err != nil {
+		t.Fatalf("Unbind must still succeed: %v", err)
+	}
+	if res.ProcessStopped != 0 || !strings.Contains(res.ProcessErr, "operation not permitted") {
+		t.Errorf("result = %+v, want ProcessErr set and ProcessStopped 0", res)
+	}
+	text := UnbindText("webshop", res)
+	if !strings.Contains(text, fmt.Sprintf("could not stop builder process (pid %d", b.Builder.PID)) {
+		t.Errorf("UnbindText = %q, want the failure line", text)
+	}
+	if res.ArchivedTo == "" {
+		t.Error("the archive still happens")
 	}
 }
