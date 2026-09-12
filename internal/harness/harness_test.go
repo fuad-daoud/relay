@@ -45,6 +45,7 @@ func TestTableExactValues(t *testing.T) {
 			Binary:      "agy",
 			Integration: "antigravity-cli",
 			MinVersion:  "1.1.6",
+			SubAgents:   SubAgentsForeground,
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -55,6 +56,7 @@ func TestTableExactValues(t *testing.T) {
 			Kind:        "claude",
 			Binary:      "claude",
 			Integration: "claude",
+			SubAgents:   SubAgentsSeparate,
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -65,6 +67,7 @@ func TestTableExactValues(t *testing.T) {
 			Kind:        "opencode",
 			Binary:      "opencode",
 			Integration: "opencode",
+			SubAgents:   SubAgentsHidden,
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
@@ -261,5 +264,20 @@ func TestLaunch(t *testing.T) {
 	launchUnknown.Args = append(launchUnknown.Args, "--c")
 	if !reflect.DeepEqual(extra, []string{"--a"}) {
 		t.Errorf("extra was modified on unknown harness: got %v, want [--a]", extra)
+	}
+}
+
+// TestSubAgentsSetOnEveryKind pins the rule that "" is not a visibility
+// state: an unknown kind yields "" downstream, and a known kind never may.
+func TestSubAgentsSetOnEveryKind(t *testing.T) {
+	valid := map[SubAgentVisibility]bool{
+		SubAgentsSeparate:   true,
+		SubAgentsForeground: true,
+		SubAgentsHidden:     true,
+	}
+	for _, h := range All() {
+		if !valid[h.SubAgents] {
+			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
+		}
 	}
 }

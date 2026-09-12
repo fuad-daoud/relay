@@ -19,6 +19,26 @@ type RoleSpec struct {
 	Definition string
 }
 
+// SubAgentVisibility records what `herdr agent list` shows while a builder
+// of this kind is running a sub-agent. It is a property of the harness and
+// herdr's integration for it, observed live; the observation behind each
+// value is recorded on the knownHarnesses entry that carries it. relay
+// reports what herdr reports, and this says how much that covers.
+type SubAgentVisibility string
+
+const (
+	// SubAgentsSeparate: a sub-agent is a separate herdr agent in its own
+	// pane. ForeignAgents reports it as a foreign row.
+	SubAgentsSeparate SubAgentVisibility = "separate"
+	// SubAgentsForeground: a sub-agent takes over the builder pane's session
+	// slot. herdr lists no extra agent; relay's name match keeps the builder
+	// known (#66) but has nothing to report for the sub-agent.
+	SubAgentsForeground SubAgentVisibility = "foreground"
+	// SubAgentsHidden: a sub-agent runs inside the builder's process and
+	// herdr lists only the pane. Nothing observable.
+	SubAgentsHidden SubAgentVisibility = "hidden"
+)
+
 // roleTable defines relay's built-in roles: a role is relay's name for a job
 // (builder, reviewer), with a shape relay's loop depends on and the harness
 // agent definition that implements it. The candidate that runs it is a separate
@@ -89,6 +109,10 @@ type Harness struct {
 	// unchecked. agy's floor is the release that added Markdown agent
 	// definitions, without which --agent has nothing to select.
 	MinVersion string
+	// SubAgents is what herdr shows for this kind's sub-agents. Never "" on
+	// a known kind; TestSubAgentsSetOnEveryKind enforces it. The status layer
+	// prints a coverage row for anything but SubAgentsSeparate.
+	SubAgents SubAgentVisibility
 }
 
 var knownHarnesses = map[string]Harness{
@@ -97,6 +121,11 @@ var knownHarnesses = map[string]Harness{
 		Binary:      "agy",
 		Integration: "antigravity-cli",
 		MinVersion:  "1.1.6",
+		// Observed 2026-09-11, herdr 0.9.0, antigravity-cli integration (#66):
+		// while a builder waits on a sub-agent, `herdr agent list` returns the
+		// sub-agent's session id on the builder's pane and no extra agent.
+		// The integration reports whichever agy session is in the foreground.
+		SubAgents: SubAgentsForeground,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -107,6 +136,10 @@ var knownHarnesses = map[string]Harness{
 		Kind:        "claude",
 		Binary:      "claude",
 		Integration: "claude",
+		// Observed 2026-09-10, herdr 0.9.0, claude integration: a researcher
+		// dispatched by a plan-executor surfaced as its own herdr pane and was
+		// reported as a foreign row (foreign-agent spec §7.2).
+		SubAgents: SubAgentsSeparate,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -117,6 +150,14 @@ var knownHarnesses = map[string]Harness{
 		Kind:        "opencode",
 		Binary:      "opencode",
 		Integration: "opencode",
+		// Observed 2026-09-10, herdr 0.9.0, opencode integration v11: a
+		// researcher dispatched by a plan-executor rendered as a card inside
+		// the builder's TUI; `herdr agent list` showed no extra agent. Stable
+		// by design: the integration (herdr-agent-state.js) tracks child
+		// sessions by parentID and folds them into the pane's root session so
+		// they "cannot replace the pane's root session"; only a child's
+		// permission/question prompt bubbles up, as the root's blocked state.
+		SubAgents: SubAgentsHidden,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
