@@ -45,17 +45,31 @@ checksum. To build from source instead, which needs a Go toolchain:
 Either way you get:
 
 - a `relay` overlay pane running `relay ui`, opened by the `open-ui` action
+- three popup pickers -- `pick-done`, `pick-unbind`, `pick-answer` -- each
+  an action that opens `relay <verb> --pick` in a popup: choose the binding
+  from a list, and for `answer`, read the builder's dialog and type the
+  answer there
 - an `install-service` action that installs the binary to `~/.local/bin/relay`
   and registers the daemon with systemd or launchd
 - a startup check that tells you if the reconciler is not running
 
-Bind the reader to a key in herdr's `config.toml`:
+Bind the reader and the pickers to keys in herdr's `config.toml`:
 
     [[keys.command]]
     key = "prefix+r"
     type = "plugin_action"
     command = "fuad-daoud.relay.open-ui"
     description = "open relay"
+
+    [[keys.command]]
+    key = "prefix+a"
+    type = "plugin_action"
+    command = "fuad-daoud.relay.pick-answer"
+    description = "answer the blocked builder"
+
+`pick-done` and `pick-unbind` bind the same way. A picker exits 0 when the
+verb ran, 1 when you cancelled, nothing was listed, or the verb failed; the
+result stays on screen until you press a key, then the popup closes.
 
 herdr does not sandbox plugins, and its install preview lists the commands that
 will run but not their contents. The scripts are `scripts/plugin-*.sh` in this
@@ -185,6 +199,10 @@ inside every pane it manages, so it has to be run from inside one.
   can false-positive and the gap between the notice and your answer is
   unbounded. If you genuinely mean to type into a running agent, that is
   `herdr agent send-keys <pane> <keys>`, not relay.
+  `--pick` instead of a name opens a popup-friendly picker: the blocked
+  builders in a list (skipped when there is exactly one), the dialog text
+  above, one input line below; a number is a `--choice`, `enter`/`esc`/`tab`/
+  `up`/`down`/`space` are `--keys`, anything else is `--text`.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
@@ -206,9 +224,10 @@ inside every pane it manages, so it has to be run from inside one.
   provider until `--for` elapses, or until `relay available` clears it.
 - `relay available <provider|harness/provider/model>` — clear a recorded rate
   limit on a provider.
-- `relay done NAME|--name N` — mark a binding done; relaying stops.
-- `relay unbind NAME|--name N [--archive]` — forget a binding, deleting its directory or
-  packing it into `.archive/` first.
+- `relay done NAME|--name N|--pick` — mark a binding done; relaying stops.
+  `--pick` chooses from a list in the terminal.
+- `relay unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
+  packing it into `.archive/` first. `--pick` chooses from a list in the terminal.
 
 - `relay gc [--dry-run] [--delete]` — clear every binding the planner marked
   `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relay gc --archive` is accepted as a no-op).
@@ -353,8 +372,11 @@ you to read and close yourself.
 ### done and unbind are the destructive verbs
 
 `relay done` and `relay unbind` both require a binding name (`relay done ai`, or
-`--name ai`). Neither resolves the current directory for you: a bare `relay done` once ended a live
+`--name ai`) or `--pick`, which lists the bindings and runs the verb on the one
+you choose. Neither resolves the current directory for you: a bare `relay done` once ended a live
 loop by accident, and the recovery is `relay bind --resume --name <name>`.
+`--pick` is explicit for the same reason -- a bare verb never opens a picker,
+so the planner agent, whose pane is also a terminal, can never fall into one.
 
 ## Candidates
 
