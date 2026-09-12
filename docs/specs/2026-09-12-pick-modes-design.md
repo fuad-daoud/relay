@@ -65,7 +65,10 @@ relay answer --pick
 ```
 
 - `--pick` with `--name` or a positional is a usage error: "`--pick` chooses
-  the binding; do not also name one".
+  the binding; do not also name one". `answer --pick` with `--keys`, `--choice`
+  or `--text` is likewise refused: the screen supplies the answer, so a flag
+  would either be ignored or override what the human typed, and neither is
+  acceptable silently.
 - `--pick` needs a terminal on stdout, checked the way `ui.Run` checks
   (`os.Stdout.Stat` is a character device). When it is not, the error is
   "`--pick` needs a terminal; name the binding instead".
@@ -124,8 +127,8 @@ An empty list is a message, not a blank screen: "no bindings to mark done" /
 
 The result screen then prints exactly the lines the CLI prints for the same
 call -- the three `fmt.Printf` blocks in `cmdDone`, `cmdUnbind` and `cmdAnswer`
-are extracted into pure functions (`doneText(name)`, `unbindText(name, res)`,
-`answerText(name)`) that both paths render, so the popup and the terminal can
+are extracted into pure functions in `internal/relay` (`DoneText(name)`,
+`UnbindText(name, res)`, `AnswerText(name)`) that both paths render, so the popup and the terminal can
 never say different things. On error the screen prints the error wrapped to
 the terminal width, capped like `ui.renderError`. Either way the last line is
 `press any key`, and the key exits with the status from §3.
@@ -237,11 +240,11 @@ internal/pick/
   bindings.go    the list model (§4): rows, cursor, window, filter per verb
   answer.go      the answer screen (§6): fetch, viewport, input
   result.go      the result screen (§5): text, wrap, wait for key
-  keys.go        key bindings, one place
   fake_test.go   fakeHerdr, the internal/ui pattern
   *_test.go
 internal/relay/answer.go     + ParseAnswer
-cmd/relay/main.go            --pick on done/unbind/answer; doneText/unbindText/answerText
+internal/relay/text.go       DoneText/UnbindText/AnswerText, shared by cmd and pick
+cmd/relay/main.go            --pick on done/unbind/answer
 cmd/relay/main_test.go       flag validation only (no herdr)
 scripts/plugin-open-pane.sh  renamed from plugin-open-ui.sh, takes $1
 herdr-plugin.toml, from-source/herdr-plugin.toml
