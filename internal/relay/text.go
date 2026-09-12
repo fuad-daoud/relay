@@ -21,7 +21,7 @@ func AnswerText(name string) string {
 }
 
 // UnbindText is what `relay unbind` says on success: one line for the
-// binding, then at most one for its worktree.
+// binding, then at most one for its worktree, then at most one for a headless process.
 func UnbindText(name string, res UnbindResult) string {
 	var lines []string
 	if res.ArchivedTo != "" {
@@ -37,6 +37,12 @@ func UnbindText(name string, res UnbindResult) string {
 			res.WorktreeKept, res.KeptReason, res.WorktreeKept, res.WorktreeKept))
 	case res.WorktreeGone != "":
 		lines = append(lines, fmt.Sprintf("worktree %s was already gone", res.WorktreeGone))
+	}
+	switch {
+	case res.ProcessStopped != 0:
+		lines = append(lines, fmt.Sprintf("stopped builder process %d", res.ProcessStopped))
+	case res.ProcessErr != "":
+		lines = append(lines, fmt.Sprintf("could not stop builder process (%s); check for it yourself", res.ProcessErr))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -43,3 +43,18 @@ func TestUnbindText(t *testing.T) {
 		}
 	}
 }
+
+func TestUnbindTextProcessLines(t *testing.T) {
+	got := UnbindText("x", UnbindResult{ProcessStopped: 4242})
+	if got != "unbound x (panes left untouched)\nstopped builder process 4242" {
+		t.Errorf("stopped: %q", got)
+	}
+	got = UnbindText("x", UnbindResult{ArchivedTo: "/a/x.tgz", ProcessErr: "pid 4242: SIGTERM: operation not permitted"})
+	if got != "archived x to /a/x.tgz (panes left untouched)\ncould not stop builder process (pid 4242: SIGTERM: operation not permitted); check for it yourself" {
+		t.Errorf("failed: %q", got)
+	}
+	// No process, no line: existing output is unchanged.
+	if got := UnbindText("x", UnbindResult{}); got != "unbound x (panes left untouched)" {
+		t.Errorf("plain: %q", got)
+	}
+}

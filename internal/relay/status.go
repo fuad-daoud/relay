@@ -34,6 +34,10 @@ type BindingStatus struct {
 	BuilderPane      string `json:"builder_pane"`
 	BuilderKind      string `json:"builder_kind"`
 	BuilderStatus    string `json:"builder_status"`
+	// Headless is set for a headless builder (#99): its process state and
+	// log. BuilderPane reads "headless" and BuilderStatus is one of idle,
+	// working, exited N, exited, unknown. Nil for a pane builder.
+	Headless *HeadlessInfo `json:"headless,omitempty"`
 	// Detail explains an overloaded state where the display word cannot.
 	// Populated only for store.StateBroken, which covers three situations
 	// whose correct recoveries differ -- and in one of which the obvious
@@ -65,6 +69,19 @@ type BindingStatus struct {
 	// Switches is builder switches in the current round (#61 step 6); zero is
 	// omitted.
 	Switches int `json:"switches,omitempty"`
+}
+
+// HeadlessInfo is the process half of a headless builder's status row
+// (#99, spec §4.8). Nil on a pane row.
+type HeadlessInfo struct {
+	PID       int       `json:"pid,omitempty"`
+	StartedAt time.Time `json:"started_at"` // zero when idle
+	LogPath   string    `json:"log_path,omitempty"`
+	// ExitCode is "3", or "unknown" when the process is gone without a
+	// trailer; "" while running or idle.
+	ExitCode string `json:"exit_code,omitempty"`
+	// Tail is the log's last few lines, for the human. Never parsed.
+	Tail []string `json:"tail,omitempty"`
 }
 
 // LastEvent is the most recent relayed message, carried as data rather than
@@ -153,7 +170,7 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 
 	rows := make([]BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(rt, b, agents, known)
+		row, err := statusRow(ctx, rt, b, agents, known)
 		if err != nil {
 			return Report{}, err
 		}
@@ -170,7 +187,7 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
-func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint) (BindingStatus, error) {
+func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint) (BindingStatus, error) {
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
@@ -190,7 +207,10 @@ func statusRow(rt Runtime, b store.Binding, agents []herdr.Agent, known []store.
 		row.PlannerPane = a.PaneID
 		row.Workspace = a.WorkspaceID
 	}
-	if a, ok := FindAgent(agents, b.Builder); ok {
+	if b.Builder.Headless() {
+		row.BuilderPane = "headless"
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b.Builder)
+	} else if a, ok := FindAgent(agents, b.Builder); ok {
 		row.BuilderStatus = effectiveStatus(b.Builder, a)
 		row.BuilderPane = a.PaneID
 	}
@@ -388,12 +408,28 @@ func RenderStatus(r Report) string {
 		}
 		fmt.Fprintf(&sb, "  planner  %-14s %-8s %s%s\n",
 			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
-		fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
-			b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+		if b.Headless != nil {
+			// spec §4.8: builder  headless  <kind>  <status>  [pid P since HH:MM]  `<token>`
+			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", "headless", b.BuilderKind, b.BuilderStatus)
+			if b.Headless.PID != 0 {
+				fmt.Fprintf(&sb, " pid %d since %s ", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))
+			} else {
+				fmt.Fprint(&sb, " ")
+			}
+			fmt.Fprintf(&sb, "`%s`", b.BuilderCandidate)
+		} else {
+			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
+				b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+		}
 		if b.Switches > 0 {
 			fmt.Fprintf(&sb, "   switched %dx", b.Switches)
 		}
 		fmt.Fprint(&sb, "\n")
+		if b.Headless != nil {
+			for _, line := range b.Headless.Tail {
+				fmt.Fprintf(&sb, "  log      %s\n", line)
+			}
+		}
 		for _, fa := range b.Foreign {
 			loc := ""
 			if fa.CWD != b.CWD {
@@ -467,6 +503,16 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 		oldState := b.State
 		b.State = store.StateDone
 
+		// A headless round's process is stopped here (#99, spec §4.6): the
+		// planner has declared the work finished, so a builder still
+		// editing the tree is now the wrong thing. Failure is reported
+		// after DONE is saved -- the state change stands either way -- and
+		// the pid stays on the endpoint so the human can find it.
+		pid, stopErr := stopProcess(ctx, rt, b.Builder)
+		if stopErr == nil {
+			b.Builder = clearProcess(b.Builder)
+		}
+
 		if err := tx.Save(b); err != nil {
 			return err
 		}
@@ -482,6 +528,9 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 			})
 		}
 
+		if stopErr != nil {
+			return fmt.Errorf("%s marked done, but its builder process %d is still running: %v: %w", b.Name, pid, stopErr, ErrStopFailed)
+		}
 		return nil
 	})
 }

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -806,5 +807,243 @@ func TestReconcilePanePathUntouchedByHeadless(t *testing.T) {
 	}
 	if len(fr.specs) != 0 || len(fr.kills) != 0 {
 		t.Errorf("pane path touched the Runner: specs=%d kills=%d", len(fr.specs), len(fr.kills))
+	}
+}
+
+func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	h := handleOf(b.Builder)
+
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != h {
+		t.Errorf("kills = %+v, want the round's process %+v", fr.kills, h)
+	}
+	got, _ := rt.Store.Load("webshop")
+	if got.State != store.StateDone || got.Builder.PID != 0 || got.Builder.LogPath != "" {
+		t.Errorf("after done: state=%s builder=%+v; want done with process fields cleared", got.State, got.Builder)
+	}
+}
+
+func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("no process, no kill: %+v", fr.kills)
+	}
+}
+
+func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("SIGTERM: operation not permitted")
+
+	err := Done(context.Background(), rt, "webshop")
+	if !errors.Is(err, ErrStopFailed) || !strings.Contains(err.Error(), "marked done") {
+		t.Fatalf("err = %v, want ErrStopFailed saying the binding is still marked done", err)
+	}
+	got, _ := rt.Store.Load("webshop")
+	if got.State != store.StateDone {
+		t.Errorf("state = %s, want done even when the kill failed", got.State)
+	}
+	if got.Builder.PID == 0 {
+		t.Error("a process relay could not stop must stay recorded, so the human can find it")
+	}
+}
+
+func TestDonePaneNeverTouchesTheRunner(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	fr := newFakeRunner()
+	rt.Runner = fr
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("pane done killed something: %+v", fr.kills)
+	}
+}
+
+func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	pid := b.Builder.PID
+
+	res, err := Unbind(context.Background(), rt, "webshop", false)
+	if err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0].PID != pid {
+		t.Errorf("kills = %+v, want pid %d", fr.kills, pid)
+	}
+	if res.ProcessStopped != pid || res.ProcessErr != "" {
+		t.Errorf("result = %+v, want ProcessStopped=%d", res, pid)
+	}
+	if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding still loads: %v", err)
+	}
+	text := UnbindText("webshop", res)
+	if !strings.Contains(text, fmt.Sprintf("stopped builder process %d", pid)) {
+		t.Errorf("UnbindText = %q, want the stopped line", text)
+	}
+}
+
+func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("SIGTERM: operation not permitted")
+
+	res, err := Unbind(context.Background(), rt, "webshop", true)
+	if err != nil {
+		t.Fatalf("Unbind must still succeed: %v", err)
+	}
+	if res.ProcessStopped != 0 || !strings.Contains(res.ProcessErr, "operation not permitted") {
+		t.Errorf("result = %+v, want ProcessErr set and ProcessStopped 0", res)
+	}
+	text := UnbindText("webshop", res)
+	if !strings.Contains(text, fmt.Sprintf("could not stop builder process (pid %d", b.Builder.PID)) {
+		t.Errorf("UnbindText = %q, want the failure line", text)
+	}
+	if res.ArchivedTo == "" {
+		t.Error("the archive still happens")
+	}
+}
+
+func TestAnswerRefusesAHeadlessBuilderBeforeAskingHerdr(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+
+	err := Answer(context.Background(), rt, "webshop", AnswerInput{Keys: "enter"})
+	if !errors.Is(err, ErrHeadlessNoDialog) {
+		t.Fatalf("err = %v, want ErrHeadlessNoDialog", err)
+	}
+	if !strings.Contains(err.Error(), b.Builder.LogPath) {
+		t.Errorf("the refusal must point at the log: %v", err)
+	}
+	if len(f.keys) != 0 || f.listCalls != 0 {
+		t.Errorf("nothing may reach herdr: keys=%d listCalls=%d", len(f.keys), f.listCalls)
+	}
+
+	// Between rounds there is no log to point at; the refusal still stands.
+	rt2, _ := seedHeadless(t, &fakeHerdr{}, newFakeRunner())
+	err = Answer(context.Background(), rt2, "webshop", AnswerInput{Keys: "enter"})
+	if !errors.Is(err, ErrHeadlessNoDialog) || !strings.Contains(err.Error(), "no round is running") {
+		t.Errorf("idle headless: err = %v", err)
+	}
+}
+
+func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	if err := os.MkdirAll(filepath.Dir(b.Builder.LogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b.Builder.LogPath, []byte("l1\nl2\nl3\nl4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.BuilderPane != "headless" || row.BuilderKind != "agy" || row.BuilderStatus != "working" {
+		t.Errorf("row = pane %q kind %q status %q; want headless/agy/working", row.BuilderPane, row.BuilderKind, row.BuilderStatus)
+	}
+	if row.Headless == nil {
+		t.Fatal("Headless info missing")
+	}
+	if row.Headless.PID != b.Builder.PID || row.Headless.LogPath != b.Builder.LogPath || row.Headless.ExitCode != "" {
+		t.Errorf("info = %+v", *row.Headless)
+	}
+	if !row.Headless.StartedAt.Equal(time.Unix(b.Builder.StartedAt, 0)) {
+		t.Errorf("StartedAt = %s, want %s", row.Headless.StartedAt, time.Unix(b.Builder.StartedAt, 0))
+	}
+	if !reflect.DeepEqual(row.Headless.Tail, []string{"l2", "l3", "l4"}) {
+		t.Errorf("Tail = %q, want the last three lines", row.Headless.Tail)
+	}
+
+	text := RenderStatus(rep)
+	for _, want := range []string{"  builder  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`" + testAgyRef + "`", "  log      l2\n  log      l3\n  log      l4\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("RenderStatus lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestStatusHeadlessIdle(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.BuilderStatus != "idle" || row.Headless == nil || row.Headless.PID != 0 || len(row.Headless.Tail) != 0 {
+		t.Errorf("row = %q %+v; want idle with no pid and no tail", row.BuilderStatus, row.Headless)
+	}
+	text := RenderStatus(rep)
+	if strings.Contains(text, "pid ") || strings.Contains(text, "  log ") {
+		t.Errorf("idle must show no pid and no log lines:\n%s", text)
+	}
+	if !strings.Contains(text, "  builder  headless       agy      idle") {
+		t.Errorf("RenderStatus:\n%s", text)
+	}
+}
+
+func TestStatusHeadlessExited(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	row := rep.Bindings[0]
+	if row.BuilderStatus != "exited 3" || row.Headless.ExitCode != "3" {
+		t.Errorf("status = %q info = %+v; want exited 3", row.BuilderStatus, row.Headless)
+	}
+
+	// No trailer: exited, code unknown.
+	fr2 := newFakeRunner()
+	rt2, b2 := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr2)
+	fr2.script(b2.Builder.PID, false)
+	rep2, _ := Status(context.Background(), rt2)
+	if rep2.Bindings[0].BuilderStatus != "exited" || rep2.Bindings[0].Headless.ExitCode != "unknown" {
+		t.Errorf("no trailer: status = %q info = %+v", rep2.Bindings[0].BuilderStatus, rep2.Bindings[0].Headless)
+	}
+}
+
+func TestStatusHeadlessWithoutRunnerIsUnknown(t *testing.T) {
+	rt, _ := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, newFakeRunner())
+	rt.Runner = nil
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].BuilderStatus != "unknown" {
+		t.Errorf("status = %q, want unknown when no Runner can answer", rep.Bindings[0].BuilderStatus)
+	}
+}
+
+func TestStatusPaneRowHasNoHeadlessInfo(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	rt.Runner = newFakeRunner()
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Bindings[0].Headless != nil || rep.Bindings[0].BuilderPane != "w2:p4" {
+		t.Errorf("pane row = %+v", rep.Bindings[0])
 	}
 }

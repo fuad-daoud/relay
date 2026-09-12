@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -126,7 +127,8 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 	}
 }
 
-// fetchTerminal resolves the builder agent and reads its recent output.
+// fetchTerminal resolves the builder agent and reads its recent output, or --
+// for a headless builder -- the tail of its round log.
 func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
@@ -140,6 +142,44 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				content: tabContent{
 					loaded: true,
 					err:    err,
+				},
+			}
+		}
+
+		// A headless builder (#99) has no pane; its output is the round's
+		// log file. Shown, never parsed.
+		if b.Builder.Headless() {
+			if b.Builder.LogPath == "" {
+				return tabMsg{
+					name: name,
+					t:    tabTerminal,
+					content: tabContent{
+						loaded: true,
+						empty:  "headless builder; no round is running, so there is no log yet",
+					},
+				}
+			}
+			data, err := os.ReadFile(b.Builder.LogPath)
+			if err != nil {
+				return tabMsg{
+					name: name,
+					t:    tabTerminal,
+					content: tabContent{
+						loaded: true,
+						empty:  "log not written yet: " + b.Builder.LogPath,
+					},
+				}
+			}
+			body := strings.TrimRight(string(data), "\n")
+			if all := strings.Split(body, "\n"); len(all) > lines {
+				body = strings.Join(all[len(all)-lines:], "\n")
+			}
+			return tabMsg{
+				name: name,
+				t:    tabTerminal,
+				content: tabContent{
+					loaded: true,
+					body:   body,
 				},
 			}
 		}

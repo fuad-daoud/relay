@@ -266,3 +266,67 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false)
 }
+
+// ErrStopFailed reports that relay marked a binding done or unbound but
+// could not stop its headless process (spec §4.6). The state change stands;
+// the pid stays on the endpoint (done) or in the result (unbind) so the
+// human can find the process.
+var ErrStopFailed = errors.New("could not stop the builder process")
+
+// stopProcess kills a headless endpoint's live process, if it has one. It
+// returns the pid it addressed -- 0 when there was nothing to stop -- and
+// Kill's error. A pane endpoint, or a headless one between rounds, is a
+// no-op. Runner nil with a pid recorded is an error: relay cannot say the
+// process is stopped.
+func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error) {
+	if !e.Headless() || e.PID == 0 {
+		return 0, nil
+	}
+	if rt.Runner == nil {
+		return e.PID, ErrRunnerUnavailable
+	}
+	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
+		return e.PID, err
+	}
+	return e.PID, nil
+}
+
+// statusTailLines is how much of the log `relay status` shows under a
+// headless builder line (spec §4.8).
+const statusTailLines = 3
+
+// headlessStatus is what `relay status` says about a headless endpoint: the
+// status word that sits where a pane's herdr status sits, and the process
+// details. Idle between rounds; otherwise a live Alive check -- the same
+// cost class as the herdr list pane rows pay -- then, for an exited
+// process, the trailer's code. No Runner means relay cannot say.
+func headlessStatus(ctx context.Context, rt Runtime, e store.Endpoint) (string, *HeadlessInfo) {
+	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
+	if e.StartedAt != 0 {
+		info.StartedAt = time.Unix(e.StartedAt, 0)
+	}
+	if e.LogPath != "" {
+		if tail := logTail(e.LogPath, statusTailLines); tail != "" {
+			info.Tail = strings.Split(tail, "\n")
+		}
+	}
+	if e.PID == 0 {
+		return "idle", info
+	}
+	if rt.Runner == nil {
+		return "unknown", info
+	}
+	alive, err := rt.Runner.Alive(ctx, handleOf(e))
+	if err != nil {
+		return "unknown", info
+	}
+	if alive {
+		return "working", info
+	}
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), e.LogPath); ok {
+		info.ExitCode = strconv.Itoa(code)
+		return "exited " + info.ExitCode, info
+	}
+	info.ExitCode = "unknown"
+	return "exited", info
+}
