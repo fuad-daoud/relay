@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -392,10 +393,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
-	if _, err := os.Stat(reportPath); err == nil {
-		payload := fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)
-		return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "")
-	}
+	donePath := rt.Store.DonePath(b.Name, b.Round)
 
 	nudgedAt, ok := nudgeTime(entries, b.Round)
 	if !ok {
@@ -405,7 +403,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if rt.Now().UTC().Sub(b.RoundStartedAt) < startGrace {
 			return b, nil
 		}
-		return nudgeBuilder(ctx, rt, tx, b, reportPath)
+		return nudgeBuilder(ctx, rt, tx, b, reportPath, donePath)
 	}
 
 	next, quiescent, err := builderQuiescent(ctx, rt, b, nudgedAt)
@@ -420,9 +418,18 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return next, nil
 	}
 
-	// Once per round: the report scrapeReport queues ends this path.
-	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round,
-		"quiet", rt.Now().UTC().Sub(next.BuilderScreenAt).Truncate(time.Second))
+	// Once per round: whichever close runs below ends this path. The builder
+	// never wrote its marker, so relay cannot know the tree is final; it
+	// delivers the best artefact it has and names the omission (spec §4.3).
+	quiet := rt.Now().UTC().Sub(next.BuilderScreenAt).Truncate(time.Second)
+	if _, err := os.Stat(reportPath); err == nil {
+		slog.Warn("builder quiescent with a report but no marker", "binding", next.Name, "round", next.Round, "quiet", quiet, "note", "unmarked")
+		payload := fmt.Sprintf(
+			"Builder finished round %d but never confirmed completion (no %s). Report: %s. The diff may be premature.",
+			next.Round, filepath.Base(donePath), reportPath)
+		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked")
+	}
+	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)
 	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
 }
 
@@ -486,8 +493,8 @@ func builderQuiescent(ctx context.Context, rt Runtime, b store.Binding, nudgedAt
 	return b, true, nil
 }
 
-func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
-	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, rt.Store.DonePath(b.Name, b.Round))); err != nil {
+func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath, donePath string) (store.Binding, error) {
+	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, donePath)); err != nil {
 		return b, fmt.Errorf("nudge builder: %w", err)
 	}
 

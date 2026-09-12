@@ -802,6 +802,7 @@ func TestReconcilePanePathUntouchedByHeadless(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	got, err := reconcile(t, rt, b, []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)})
 	if err != nil || got.Round != 2 {
 		t.Fatalf("pane report path: round=%d err=%v", got.Round, err)
