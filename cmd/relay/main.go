@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/pick"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -49,13 +50,13 @@ Commands:
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
-  answer    answer a builder that is blocked at a dialog
+  answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
   status    one row per binding: round, state, live pane status, what is pending [--all]
   log       print a binding's append-only round log
   watch     status, redrawn on a timer [--all]
   ui        interactive reader: report, terminal, diff and log tabs
-  done      mark a binding done; relaying stops
-  unbind    forget a binding, deleting or archiving its directory
+  done      mark a binding done; relaying stops (--pick to choose it on screen)
+  unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
@@ -711,13 +712,21 @@ func cmdUnbind(args []string) error {
 	fs := flag.NewFlagSet("unbind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding to unbind")
 	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
+	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
+	if *pickFlag {
+		if err := pickNamesNothing(*name, fs.Args()); err != nil {
+			return err
+		}
+		return runPick(pick.Options{Verb: pick.VerbUnbind, Archive: *archive})
+	}
+
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay unbind <name> [--archive]  (or --name <name>)%s\n"+
+		return fmt.Errorf("usage: relay unbind <name> | --pick [--archive]  (or --name <name>)%s\n"+
 			"unbind removes a binding; it will not guess which one you meant", bindingHint("unbind"))
 	}
 
@@ -1100,8 +1109,19 @@ func cmdAnswer(args []string) error {
 	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
 	text := fs.String("text", "", "literal text to send")
 	choice := fs.Int("choice", 0, "numbered dialog option to pick")
+	pickFlag := fs.Bool("pick", false, "choose the blocked builder from a list and type the answer there (needs a terminal)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	if *pickFlag {
+		if err := pickNamesNothing(*name, fs.Args()); err != nil {
+			return err
+		}
+		if *keys != "" || *text != "" || *choice != 0 {
+			return errors.New("--pick takes the answer from the screen; drop --keys, --choice and --text")
+		}
+		return runPick(pick.Options{Verb: pick.VerbAnswer})
 	}
 
 	// answer presses a key into a live dialog, and with peer builders the cwd
@@ -1111,7 +1131,7 @@ func cmdAnswer(args []string) error {
 	// refusing to guess.
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S)  (or --name <name>)%s\n"+
+		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S) | --pick  (or --name <name>)%s\n"+
 			"answer types into a live dialog; it will not guess which one you meant",
 			bindingHint("answer"))
 	}
@@ -1285,16 +1305,57 @@ func cmdUI(args []string) error {
 	})
 }
 
+// runPick opens the interactive picker for one verb (#15). The three
+// non-zero outcomes have already been shown on screen, so they exit 1
+// silently: a second "relay: ..." line would go to the plugin log, not to
+// the human (spec §3). Anything else is a startup failure and prints.
+func runPick(opts pick.Options) error {
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err = pick.Run(ctx, rt, opts)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, pick.ErrCancelled), errors.Is(err, pick.ErrNothingToPick), errors.Is(err, pick.ErrVerbFailed):
+		return exitCodeErr{code: 1}
+	default:
+		return err
+	}
+}
+
+// pickNamesNothing is the spec §3 rule shared by the three verbs: --pick and
+// a binding name are mutually exclusive.
+func pickNamesNothing(nameFlag string, positional []string) error {
+	if nameFlag != "" || len(positional) > 0 {
+		return errors.New("--pick chooses the binding; do not also name one")
+	}
+	return nil
+}
+
 func cmdDone(args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
 	name := fs.String("name", "", "binding to mark done")
+	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
+	if *pickFlag {
+		if err := pickNamesNothing(*name, fs.Args()); err != nil {
+			return err
+		}
+		return runPick(pick.Options{Verb: pick.VerbDone})
+	}
+
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay done <name>  (or --name <name>)%s\n"+
+		return fmt.Errorf("usage: relay done <name> | --pick  (or --name <name>)%s\n"+
 			"done stops relaying for a binding; it will not guess which one you meant",
 			bindingHint("done"))
 	}
