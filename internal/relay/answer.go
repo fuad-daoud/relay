@@ -97,7 +97,7 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 			if hint.Builder.LogPath != "" {
 				where = "read " + hint.Builder.LogPath
 			}
-			return fmt.Errorf("%s's builder is headless and takes no dialogs; %s: %w", name, where, ErrHeadlessNoDialog)
+			return fmt.Errorf("%s's %w; %s", name, ErrHeadlessNoDialog, where)
 		}
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
