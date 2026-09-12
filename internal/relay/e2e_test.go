@@ -13,7 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // e2eSession is a private, detached herdr session the test owns (spec §3.1).
@@ -141,6 +144,9 @@ func (s *e2eSession) stop(t *testing.T) {
 
 // startShim opens a tab and starts the shim as agent `name` of `kind` in it
 // (spec §4.2). Returns the pane id.
+// After any prompt the shim reads as "done" (it flashes a working line, then
+// erases it); relay treats done as idle, and the cases never assert "idle" on
+// a prompted builder.
 func (s *e2eSession) startShim(t *testing.T, name, kind, cwd string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -214,4 +220,126 @@ func TestE2E(t *testing.T) {
 			t.Errorf("planner must be unfocused so delivery injects instead of holding")
 		}
 	})
+
+	clock := &fakeClock{now: baseTime}
+	rt := e2eRuntime(t, clock)
+
+	t.Run("marker_closes_round", func(t *testing.T) {
+		b := s.bindBuilder(t, rt, "marker", planner)
+		sendAt(t, rt, clock, 0, "marker")
+		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+
+		if err := os.WriteFile(rt.Store.ReportPath("marker", 1), []byte("builder's words"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("marker", 1))
+		b, _ = rt.Store.Load("marker")
+
+		b = reconcileAt(t, s, rt, clock, 5*time.Second, b)
+		if b.Round != 2 {
+			t.Fatalf("round = %d, want 2: the marker closes the round on a real pane", b.Round)
+		}
+		if _, pending, _ := rt.Store.PendingForPlanner("marker"); pending {
+			t.Errorf("report still pending: the planner shim is idle and unfocused, so deliverAndSettle must inject on the same tick")
+		}
+		s.waitScreen(t, planner, "you said: Builder finished round 1")
+		if e := reportEntry(t, rt, "marker", 1); e.Note != "" {
+			t.Errorf("note = %q, want empty on a marked close", e.Note)
+		}
+	})
+}
+
+const e2eCandidateJSON = `[{"harness":"agy","provider":"e2e","model":"shim","roles":["builder"]}]`
+const e2eCandidate = "agy/e2e/shim"
+
+// e2eRuntime is real everywhere but the clock and the state root (spec §3.4).
+func e2eRuntime(t *testing.T, clock *fakeClock) Runtime {
+	t.Helper()
+	root := t.TempDir()
+	candPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candPath, []byte(e2eCandidateJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatalf("load candidates: %v", err)
+	}
+	return Runtime{
+		Herdr:       herdr.NewClient("herdr", 30*time.Second),
+		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Store:       store.New(filepath.Join(root, "state")),
+		Candidates:  set,
+		LedgerPath:  filepath.Join(root, "ledger.json"),
+		HistoryPath: filepath.Join(root, "history.json"),
+		Now:         clock.Now,
+	}
+}
+
+// bindBuilder binds a fresh builder through the real Bind: a real tab, a real
+// `agent start` of the shim (spec §4.3).
+func (s *e2eSession) bindBuilder(t *testing.T, rt Runtime, name, plannerPane string) store.Binding {
+	t.Helper()
+	repo := t.TempDir()
+	init := exec.Command("git", "init", "-q", repo)
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Candidate: e2eCandidate, PlannerPane: plannerPane, CWD: repo,
+	})
+	if err != nil {
+		t.Fatalf("Bind %s: %v", name, err)
+	}
+	s.waitScreen(t, b.Builder.PaneID, "shim ready")
+	loaded, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("Load %s: %v", name, err)
+	}
+	return loaded
+}
+
+// reconcileAt sets the clock to baseTime+at and runs one Reconcile the way
+// the daemon does: under the lock, with a fresh real agent list (spec §3.5).
+func reconcileAt(t *testing.T, s *e2eSession, rt Runtime, clock *fakeClock, at time.Duration, b store.Binding) store.Binding {
+	t.Helper()
+	clock.now = baseTime.Add(at)
+	agents := s.agents(t)
+	var out store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		out, err = Reconcile(context.Background(), rt, tx, b, agents)
+		if err != nil {
+			return err
+		}
+		return tx.Save(out)
+	})
+	if err != nil {
+		t.Fatalf("Reconcile at T+%s: %v", at, err)
+	}
+	return out
+}
+
+// sendAt runs Send with the clock at baseTime+at.
+func sendAt(t *testing.T, rt Runtime, clock *fakeClock, at time.Duration, name string) {
+	t.Helper()
+	clock.now = baseTime.Add(at)
+	if _, err := Send(context.Background(), rt, name, writePlan(t, "do the thing")); err != nil {
+		t.Fatalf("Send %s: %v", name, err)
+	}
+}
+
+// reportEntry is the round's queued-or-delivered report entry.
+func reportEntry(t *testing.T, rt Runtime, name string, round int) store.LogEntry {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			return e
+		}
+	}
+	t.Fatalf("no report entry for %s round %d", name, round)
+	return store.LogEntry{}
 }
