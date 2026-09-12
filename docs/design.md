@@ -192,24 +192,37 @@ relay: assign round N, copy to <state>/NNN-plan.md
        herdr agent prompt <builder> "
          Round N from the planner.
          Read:  <state>/NNN-plan.md
-         When done, write your report to <state>/NNN-report.md
-         Reply here with only that path."
+         When you are done, write your report to: <state>/NNN-report.md
+         Then, as the very last thing you do -- after every edit, test and
+         commit -- create this empty file: <state>/NNN-done
+         Reply here with only the report path."
        append log entry, return immediately
 ```
 
 ### Builder → planner
 
 ```
-relayd observes builder -> idle|done
-  if <state>/NNN-report.md exists:
-      payload = "Builder finished round N. Report: <path>"
+relayd, every tick while the round is open (pane or headless):
+  if <state>/NNN-done exists:
+      if NNN-report.md exists: payload = "Builder finished round N. Report: <path>"
+      else:                    payload = "...marker but no report at <path>."   note noreport
+      close the round
+
+relayd observes builder -> idle|done, no marker:
+  nudge once: "You went idle without finishing. Write your report to <path>
+               if you have not, then create the empty file <done> as your
+               last action, and reply with only the report path."
+  wait for the screen to stay still for the nudge grace
+  if NNN-report.md exists:
+      payload = "Builder finished round N but never confirmed completion
+                 (no NNN-done). Report: <path>. The diff may be premature."  note unmarked
   else:
-      nudge once: "You did not write the report file. Write it to <path> now."
-      wait for idle again
-      if still missing:
-          scrape = herdr agent read --source recent-unwrapped --lines 200
-          write to NNN-report.md marked SCRAPED (may be truncated)
-          payload = report + explicit unreliability warning
+      scrape = herdr agent read --source recent-unwrapped --lines 200
+      write to NNN-report.md marked SCRAPED (may be truncated)
+      payload = report + explicit unreliability warning                       note scraped
+
+headless: a process that exited with a report but no marker closes unmarked;
+          with neither, "exited without a report" (see headless spec).
 
   deliver(payload) -> planner        # see delivery rule below
 ```
