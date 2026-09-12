@@ -362,33 +362,27 @@ decide whether to report a fact. relay cannot distinguish a reader from a
 writer, so it reports occupancy and shows the title; the *human* reads the
 title and draws the conclusion. That division is the whole design.
 
-**Whether it surfaces at all is harness-specific.** Observed 2026-09-10 against
-herdr 0.9.0, opencode integration v11: two `builder`-alias builders were run in
-relay worktrees, and one dispatched a `researcher` sub-agent. It rendered as a
-labelled card *inside* the builder's own opencode TUI. `herdr agent list`
-reported three agents -- the planner and the two builders -- and no researcher.
-So on opencode the sub-agent produced **no** `foreign` row.
+**Whether it surfaces at all is harness-specific, and relay says so.** The
+per-kind record is `harness.Harness.SubAgents` in
+`internal/harness/harness.go`: `separate` (claude -- own pane, shows as a
+foreign row), `foreground` (agy -- takes over the builder pane's session slot,
+#66), `hidden` (opencode -- in-process, herdr lists only the pane). Each
+entry's comment carries the date, herdr version, and integration version it
+was observed at. That table is the one record; this section does not restate
+it.
 
-Do not read that as the quieter, better case. It is the worse one. A row you did
-not want is noise you can dismiss; a sub-agent herdr cannot see is occupancy
-relay cannot report, and `ForeignAgents` will stay silent about it whether it
-reads or writes. Detection covers agents herdr knows about, which is not the
-same set as agents touching the tree -- and the gap is invisible from
-`relay status` by construction.
+The opencode case is by design, not chance: herdr's opencode integration
+tracks child sessions by parent id and folds them into the pane's root session
+so they cannot replace it. herdr's model is one agent per pane, and an
+in-process sub-agent has no pane to be listed under.
 
-Two consequences for the reader of this spec:
-
-- A user on the `builder` (opencode) alias who sees no `researcher` rows has not
-  verified that nothing else is in the tree. They have verified that herdr
-  reported nothing else.
-- The claude observation above and this opencode one are both single
-  observations, on one machine, at one integration version. Neither generalises
-  to "this harness always does X". Treat the vocabulary as: relay reports what
-  herdr reports, and how much that covers varies by harness.
-
-This changes nothing in the implementation. It is recorded because §7.2
-previously read as though noisy `researcher` rows were the universal outcome,
-which would leave an opencode user drawing a false conclusion from silence.
+`relay status` prints a `coverage` row for any binding whose builder kind is
+not `separate`, after the foreign rows: "no foreign rows above does not mean
+the tree is clear". A claude binding prints none. See
+`docs/specs/2026-09-12-subagent-coverage-design.md`. Detection still covers
+agents herdr knows about, which is not the same set as agents touching the
+tree; the row exists so that the gap is visible from the output instead of
+only from this spec.
 
 ### 7.3 Containment, one direction
 
