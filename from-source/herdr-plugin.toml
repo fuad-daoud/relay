@@ -17,7 +17,7 @@ command = ["sh", "../scripts/plugin-daemon-check.sh"]
 [[actions]]
 id = "open-ui"
 title = "Open relay reader"
-command = ["sh", "../scripts/plugin-open-ui.sh"]
+command = ["sh", "../scripts/plugin-open-pane.sh", "ui"]
 
 [[actions]]
 id = "install-service"
@@ -29,3 +29,37 @@ id = "ui"
 title = "relay"
 placement = "overlay"
 command = ["./relay", "ui"]
+
+[[panes]]
+id = "pick-done"
+title = "relay done"
+placement = "popup"
+command = ["./relay", "done", "--pick"]
+
+[[panes]]
+id = "pick-unbind"
+title = "relay unbind"
+placement = "popup"
+command = ["./relay", "unbind", "--pick"]
+
+[[panes]]
+id = "pick-answer"
+title = "relay answer"
+placement = "popup"
+command = ["./relay", "answer", "--pick"]
+
+[[actions]]
+id = "pick-done"
+title = "Mark a binding done"
+command = ["sh", "../scripts/plugin-open-pane.sh", "pick-done"]
+
+[[actions]]
+id = "pick-unbind"
+title = "Unbind a binding"
+command = ["sh", "../scripts/plugin-open-pane.sh", "pick-unbind"]
+
+[[actions]]
+id = "pick-answer"
+title = "Answer the blocked builder"
+command = ["sh", "../scripts/plugin-open-pane.sh", "pick-answer"]
+
