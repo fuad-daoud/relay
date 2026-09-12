@@ -377,6 +377,9 @@ you choose. Neither resolves the current directory for you: a bare `relay done` 
 loop by accident, and the recovery is `relay bind --resume --name <name>`.
 `--pick` is explicit for the same reason -- a bare verb never opens a picker,
 so the planner agent, whose pane is also a terminal, can never fall into one.
+And because a popup takes focus the instant it opens, `Enter` on a binding
+that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
+-- and only `y` proceeds; any other key returns to the list.
 
 ## Candidates
 
