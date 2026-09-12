@@ -730,3 +730,37 @@ func TestBindRebindNeedsResume(t *testing.T) {
 		t.Fatalf("got %v, want an error naming --rebind and --resume", err)
 	}
 }
+
+// TestPickRejectsAName pins spec §3: --pick chooses the binding, so naming
+// one as well is a usage error. Each case fails before newRuntime, so no
+// herdr is reached.
+func TestPickRejectsAName(t *testing.T) {
+	for _, args := range [][]string{
+		{"done", "--pick", "x"},
+		{"done", "--pick", "--name", "x"},
+		{"unbind", "--pick", "x"},
+		{"unbind", "--pick", "--name", "x", "--archive"},
+		{"answer", "--pick", "x"},
+		{"answer", "--pick", "--name", "x"},
+	} {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "--pick chooses the binding") {
+			t.Errorf("%v: got %v, want the --pick usage error", args, err)
+		}
+	}
+}
+
+// TestPickRejectsAnswerFlags: the answer comes from the screen, so --keys,
+// --choice and --text have nothing to apply to. Fails before newRuntime.
+func TestPickRejectsAnswerFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"answer", "--pick", "--keys", "enter"},
+		{"answer", "--pick", "--choice", "2"},
+		{"answer", "--pick", "--text", "yes"},
+	} {
+		err := run(args)
+		if err == nil || !strings.Contains(err.Error(), "--pick takes the answer from the screen") {
+			t.Errorf("%v: got %v, want the answer-flags usage error", args, err)
+		}
+	}
+}

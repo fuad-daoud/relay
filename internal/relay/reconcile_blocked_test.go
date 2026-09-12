@@ -35,8 +35,8 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 	// the scrollback recent-unwrapped reads. Reading the wrong source would
 	// capture empty or unrelated text, and the planner's whole answer decision
 	// rests on this file.
-	if len(f.reads) != 1 || f.reads[0].Source != dialogSource {
-		t.Fatalf("dialog reads = %+v, want one %q read", f.reads, dialogSource)
+	if len(f.reads) != 1 || f.reads[0].Source != DialogSource {
+		t.Fatalf("dialog reads = %+v, want one %q read", f.reads, DialogSource)
 	}
 
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
