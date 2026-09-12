@@ -26,11 +26,15 @@ var ErrBuilderNotBlocked = errors.New("builder is not blocked; nothing to answer
 
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
-// file rather than something relay reads off the terminal.
+// file rather than something relay reads off the terminal. The marker is the
+// builder's own "the tree is final": relay closes the round on it, not on the
+// report appearing (spec 2026-09-12-completion-marker §1).
 const builderPrompt = `Round %d from the planner.
 Read: %s
 When you are done, write your report to: %s
-Reply here with only that path.`
+Then, as the very last thing you do -- after every edit, test and commit --
+create this empty file: %s
+Reply here with only the report path.`
 
 // Target is the herdr target for an endpoint: its pane id, which Reconcile
 // keeps current by refreshing every endpoint it locates. AgentName is
@@ -129,11 +133,12 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 
 		planPath := rt.Store.PlanPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
+		donePath := rt.Store.DonePath(name, b.Round)
 		if err := os.WriteFile(planPath, body, 0o644); err != nil {
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
-		text := composePrompt(b, planPath, reportPath)
+		text := composePrompt(b, planPath, reportPath, donePath)
 
 		if b.Builder.Headless() {
 			started, err := startRound(ctx, rt, b, text)
@@ -222,8 +227,7 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error
 }
 
 // composePrompt renders the builder prompt for this round. Nothing is
-// prepended on any round: every kind selects its role with --agent at
-// launch (#85), so there is no first-prompt courtesy left to pay.
-func composePrompt(b store.Binding, planPath, reportPath string) string {
-	return fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath)
+// interpolated except the round number and the three paths.
+func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
+	return fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath, donePath)
 }

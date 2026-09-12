@@ -34,8 +34,11 @@ const startGrace = 30 * time.Second
 // simply still being written.
 const nudgeGrace = 60 * time.Second
 
-const nudgePrompt = `You went idle without writing your report.
-Write it to %s now, then reply with only that path.`
+// nudgePrompt is the one reminder relay sends when a builder went idle without
+// finishing. It names both files: the report and the completion marker.
+const nudgePrompt = `You went idle without finishing.
+Write your report to %s if you have not, then create the empty file %s as
+your last action, and reply with only the report path.`
 
 func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 	if rt.Hooks == nil {
@@ -431,7 +434,7 @@ func builderQuiescent(ctx context.Context, rt Runtime, b store.Binding, nudgedAt
 }
 
 func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath string) (store.Binding, error) {
-	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath)); err != nil {
+	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, rt.Store.DonePath(b.Name, b.Round))); err != nil {
 		return b, fmt.Errorf("nudge builder: %w", err)
 	}
 

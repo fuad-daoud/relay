@@ -626,3 +626,27 @@ func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 		t.Errorf("RoundClosedTree = %q, want empty after successful send", b.RoundClosedTree)
 	}
 }
+
+// TestComposePromptNamesPlanReportAndMarkerInOrder pins the handoff contract:
+// the builder is told the plan, the report and the completion marker, in that
+// order, and told the marker is its last action (spec §3.3).
+func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
+	b := store.Binding{Name: "webshop", Round: 3}
+	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+
+	plan := strings.Index(got, "/s/003-plan.md")
+	report := strings.Index(got, "/s/003-report.md")
+	done := strings.Index(got, "/s/003-done")
+	if plan < 0 || report < 0 || done < 0 || !(plan < report && report < done) {
+		t.Fatalf("paths must appear plan < report < marker, got:\n%s", got)
+	}
+	if !strings.HasPrefix(got, "Round 3 from the planner.") {
+		t.Errorf("prompt must open with the round, got:\n%s", got)
+	}
+	if !strings.Contains(got, "as the very last thing you do") {
+		t.Errorf("prompt must say the marker is the last action, got:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "Reply here with only the report path.") {
+		t.Errorf("prompt must end with the reply instruction, got:\n%s", got)
+	}
+}
