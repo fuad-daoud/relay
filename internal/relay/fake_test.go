@@ -325,3 +325,75 @@ func TestFindAgentFallsBackToPane(t *testing.T) {
 		t.Fatal("matched a pane that is not present")
 	}
 }
+
+// fakeRunner is the in-memory Runner (#99). It records every Start and
+// Kill, answers Alive from a per-pid script (the last answer repeats; an
+// unscripted pid is alive until killed), and reports the exit code a test
+// set with exit(). Nothing here runs a process.
+type fakeRunner struct {
+	specs   []ProcSpec
+	handles []ProcHandle
+	kills   []ProcHandle
+
+	startErr error
+	aliveErr error
+	killErr  error
+
+	alive   map[int][]bool
+	exits   map[int]int
+	nextPID int
+}
+
+func newFakeRunner() *fakeRunner {
+	return &fakeRunner{alive: map[int][]bool{}, exits: map[int]int{}, nextPID: 4000}
+}
+
+// script sets the sequence Alive returns for pid; the last answer repeats.
+func (f *fakeRunner) script(pid int, answers ...bool) {
+	f.alive[pid] = append([]bool(nil), answers...)
+}
+
+// exit sets the code ExitCode reports for pid.
+func (f *fakeRunner) exit(pid, code int) { f.exits[pid] = code }
+
+func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
+	if f.startErr != nil {
+		return ProcHandle{}, f.startErr
+	}
+	f.nextPID++
+	h := ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
+	f.specs = append(f.specs, spec)
+	f.handles = append(f.handles, h)
+	if _, scripted := f.alive[h.PID]; !scripted {
+		f.alive[h.PID] = []bool{true}
+	}
+	return h, nil
+}
+
+func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
+	if f.aliveErr != nil {
+		return false, f.aliveErr
+	}
+	seq := f.alive[h.PID]
+	if len(seq) == 0 {
+		return false, nil
+	}
+	if len(seq) > 1 {
+		f.alive[h.PID] = seq[1:]
+	}
+	return seq[0], nil
+}
+
+func (f *fakeRunner) ExitCode(_ context.Context, h ProcHandle, _ string) (int, bool) {
+	code, ok := f.exits[h.PID]
+	return code, ok
+}
+
+func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
+	if f.killErr != nil {
+		return f.killErr
+	}
+	f.kills = append(f.kills, h)
+	f.alive[h.PID] = []bool{false}
+	return nil
+}
