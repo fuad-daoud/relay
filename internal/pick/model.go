@@ -14,6 +14,7 @@ const (
 	screenList screen = iota
 	screenAnswer
 	screenResult
+	screenConfirm
 )
 
 // statusMsg is the list's rows, or why there are none.
@@ -28,7 +29,7 @@ type verbDoneMsg struct {
 	err  error
 }
 
-// Model is the whole picker: one of three screens at a time. Every herdr
+// Model is the whole picker: one of four screens at a time. Every herdr
 // and store call runs in a tea.Cmd and comes back as a message, so Update
 // is pure and tests drive it with messages.
 type Model struct {
@@ -47,6 +48,9 @@ type Model struct {
 
 	result resultModel
 	answer answerModel
+	// confirm is the row a done/unbind is waiting on a `y` for (#103).
+	// Meaningful only while screen == screenConfirm.
+	confirm relay.BindingStatus
 
 	// outcome is what Run returns: nil after a verb succeeded, else one of
 	// the sentinels in verb.go. Set exactly once, by quit.
@@ -137,6 +141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.answerKeys(msg)
 		case screenResult:
 			return m.resultKeys(msg)
+		case screenConfirm:
+			return m.confirmKeys(msg)
 		}
 	default:
 		if m.screen == screenAnswer {
@@ -189,17 +195,41 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// pick acts on the chosen row. done and unbind run at once; answer needs
-// its own screen first (spec §6).
+// pick acts on the chosen row. done and unbind run at once on a DONE row and
+// stop for a `y` on any other (#103, needsConfirm); answer needs its own
+// screen first (spec §6).
 func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
-		m.screen = screenResult
-		m.result = resultModel{pending: true}
-		return m, runVerb(m.ctx, m.rt, m.opts, r.Name, relay.AnswerInput{})
+		if needsConfirm(m.opts.Verb, r) {
+			m.screen = screenConfirm
+			m.confirm = r
+			return m, nil
+		}
+		return m.run(r.Name)
 	case VerbAnswer:
 		return m.enterAnswer(r.Name)
 	}
+	return m, nil
+}
+
+// run moves to a pending result screen and starts the verb on name. It is
+// what Enter did before #103; the confirm screen's `y` reaches it now.
+func (m Model) run(name string) (tea.Model, tea.Cmd) {
+	m.screen = screenResult
+	m.result = resultModel{pending: true}
+	return m, runVerb(m.ctx, m.rt, m.opts, name, relay.AnswerInput{})
+}
+
+// confirmKeys: only a lowercase y proceeds. Every other key -- Enter
+// included, since a stray Enter is the whole reason this screen exists --
+// returns to the list with the cursor where it was. ctrl+c is handled
+// before this in Update and still cancels the picker.
+func (m Model) confirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "y" {
+		return m.run(m.confirm.Name)
+	}
+	m.screen = screenList
 	return m, nil
 }
 
@@ -216,6 +246,8 @@ func (m Model) View() string {
 		return m.answerView()
 	case screenResult:
 		return m.resultView()
+	case screenConfirm:
+		return m.confirmView()
 	default:
 		return m.listView()
 	}

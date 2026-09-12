@@ -61,3 +61,24 @@ func TestEmptyTextPerVerb(t *testing.T) {
 		}
 	}
 }
+
+func TestNeedsConfirmOnlyForLiveRowsUnderDestructiveVerbs(t *testing.T) {
+	live := []string{"ACTIVE", "NEEDS YOU", "HELD"}
+	for _, d := range live {
+		if !needsConfirm(VerbDone, row("a", d, "working")) {
+			t.Errorf("done on %s row: needsConfirm = false, want true", d)
+		}
+		if !needsConfirm(VerbUnbind, row("a", d, "working")) {
+			t.Errorf("unbind on %s row: needsConfirm = false, want true", d)
+		}
+		if needsConfirm(VerbAnswer, row("a", d, "blocked")) {
+			t.Errorf("answer on %s row: needsConfirm = true, want false", d)
+		}
+	}
+	if needsConfirm(VerbUnbind, row("a", "DONE", "idle")) {
+		t.Error("unbind on a DONE row must run at once")
+	}
+	if needsConfirm(VerbDone, row("a", "DONE", "idle")) {
+		t.Error("done never lists DONE rows; the rule still says no confirm for one")
+	}
+}

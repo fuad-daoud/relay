@@ -50,9 +50,12 @@ Out of scope:
 - **Implicit entry.** `relay done` with no name still prints usage and refuses.
   "stdin is a TTY" is exactly the condition inside a herdr agent pane, so an
   implicit picker would catch the planner agent, which cannot drive one.
-- **A confirm step.** The list shows each row's state, which is what a confirm
-  dialog would repeat. `unbind` is already reversible through
-  `relay bind --resume`.
+- ~~**A confirm step.**~~ **Reversed by #103.** The original reasoning -- the
+  list shows each row's state, which is what a confirm dialog would repeat --
+  holds only while a human is looking at the list. A popup opened by a key
+  or an action takes focus the instant it opens, and a keystroke already in
+  flight lands on it as Enter. `done --pick` and `unbind --pick` now stop for
+  a `y` on any row that is not `DONE`; see §5.
 - Pickers for `send --name`, `nudge`, `reset`, `switch`. Same mechanism; add
   them when someone binds a key for them.
 
@@ -124,6 +127,22 @@ An empty list is a message, not a blank screen: "no bindings to mark done" /
 | `done` | `relay.Done(ctx, rt, name)` |
 | `unbind` | `relay.Unbind(ctx, rt, name, archive)` |
 | `answer` | `relay.Answer(ctx, rt, name, in)` (from the answer screen, §6) |
+
+**Confirm (#103).** For `done` and `unbind`, `Enter` on a row whose display is
+anything but `DONE` does not run the verb; it opens a confirm screen:
+
+```
+mark webshop done?  it is ACTIVE in round 5
+
+y confirm  any other key cancels
+```
+
+(`unbind webshop?` for `unbind`.) Only a lowercase `y` runs the verb. Any
+other key -- Enter included -- returns to the list with the cursor where it
+was; `Ctrl+C` still cancels the picker. `unbind` on a `DONE` row runs at once,
+as before. `answer` has no confirm: its answer screen already needs typed
+input before anything is sent. The rule is `needsConfirm(verb, row)` in
+`internal/pick/verb.go`.
 
 The result screen then prints exactly the lines the CLI prints for the same
 call -- the three `fmt.Printf` blocks in `cmdDone`, `cmdUnbind` and `cmdAnswer`

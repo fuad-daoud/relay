@@ -72,3 +72,18 @@ func emptyText(verb Verb) string {
 		return "nothing bound"
 	}
 }
+
+// needsConfirm is the #103 rule: done and unbind stop for a `y` before
+// acting on any row that is not DONE. A herdr popup takes focus the instant
+// it opens, so a keystroke already in flight lands on it -- and the most
+// common such key is Enter. The list showed the row's state; nobody had
+// read it yet. DONE rows under unbind are what gc clears anyway and run at
+// once. answer needs typed input on its own screen and is never confirmed.
+func needsConfirm(verb Verb, r relay.BindingStatus) bool {
+	switch verb {
+	case VerbDone, VerbUnbind:
+		return r.Display != "DONE"
+	default:
+		return false
+	}
+}
