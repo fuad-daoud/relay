@@ -154,11 +154,17 @@ ProcHandle
 
 ```
 Launch
-  Kind  string    (existing)
-  Args  []string  (existing; the interactive argv, after the binary)
-  Print []string  the non-interactive argv, after the binary, with <prompt> as its own element
-                  at the index PromptAt
-  PromptAt int
+  Kind     string    (existing)
+  Args     []string  (existing; the interactive argv, after the binary)
+  Print    []string  the non-interactive argv, after the binary, with harness.PromptPlaceholder
+                     ("<prompt>") and, where the kind has a timeout flag, harness.BudgetPlaceholder
+                     ("<budget>") as their own elements
+  PromptAt int       index of PromptPlaceholder in Print; -1 for an unknown kind
+
+func (l Launch) PrintArgs(prompt string, budget time.Duration) []string
+                     Print with both placeholders filled (budget as a Go duration string), a fresh
+                     slice. Amended at step 2: the substitution lives here, so no other package
+                     learns where a kind puts its prompt or its budget.
 ```
 
 Rendered per kind, `extra` appended to both forms exactly as today:
@@ -221,8 +227,7 @@ Kill(ctx, ProcHandle) error
 
 ### 4.2 `relay.headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Duration, prompt string) ([]string, error)`
 
-Renders `[binary] + Launch.Print` with `<prompt>` substituted at `PromptAt`
-and the budget applied. Pure. Errors: unknown kind (cannot happen after
+Renders `[binary] + Launch.PrintArgs(prompt, budget)`. Pure. Errors: unknown kind (cannot happen after
 `Load` validated the set; returned, not panicked).
 
 ### 4.3 `relay.startRound(ctx, rt, tx, b) (store.Binding, error)`
