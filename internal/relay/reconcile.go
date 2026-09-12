@@ -142,6 +142,13 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
+	// A headless builder (#99) is a process, not an agent herdr lists;
+	// everything below this line looks for a pane. Spec §5.1 is its own
+	// tick.
+	if b.Builder.Headless() {
+		return reconcileHeadless(ctx, rt, tx, b, agents)
+	}
+
 	// Two triggers replace this binding's builder mid-round instead of just
 	// marking it broken: the builder cannot be located for switchGrace
 	// ("gone"), or the ledger holds a live rate-limit gate on its own

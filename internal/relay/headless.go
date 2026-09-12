@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -126,4 +129,140 @@ func logTail(path string, n int) string {
 func clearProcess(e store.Endpoint) store.Endpoint {
 	e.PID, e.StartedAt, e.LogPath = 0, 0, ""
 	return e
+}
+
+// exitEntry is the log record of a headless builder that exited without a
+// report (spec §3.8): relay → log only, Confirmed, never a pending payload.
+// codeText is the exit code, or "unknown" when the supervisor's trailer is
+// missing (killed, or the log unreadable). The payload is the log's last
+// logTailLines lines, for the human; relay reads nothing out of it.
+func exitEntry(now time.Time, round int, logPath, codeText string) store.LogEntry {
+	return store.LogEntry{
+		TS:        now,
+		Round:     round,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindExit,
+		Path:      logPath,
+		Note:      fmt.Sprintf("builder exited (code %s) without a report", codeText),
+		Payload:   logTail(logPath, logTailLines),
+		Confirmed: true,
+	}
+}
+
+// reconcileHeadless is one tick of a headless binding (spec §5.1). Reconcile
+// hands off here right after the DONE gate; the pane path never runs for a
+// headless endpoint and this never runs for a pane one.
+//
+// Order mirrors the pane path: refresh the planner, halt on the round cap,
+// then decide. A report file finishes the round whatever the process did
+// (the report is the contract). Otherwise: a gated candidate is switched
+// with its process killed; a live process is left alone, its budget the
+// only thing that can halt it; a process that exited is logged with its
+// code and log tail and the builder is switched, up to max_switches. No
+// round open means idle -- never BROKEN -- and a process lingering with no
+// round is a stray relay stops.
+func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+	if planner, ok := FindAgent(agents, b.Planner); ok {
+		b.Planner = refreshEndpoint(b.Planner, planner)
+	}
+	if b.Round > b.RoundCap {
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
+	}
+
+	entries, err := tx.ReadLog(b.Name)
+	if err != nil {
+		return b, err
+	}
+	roundOpen := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+
+	if !roundOpen {
+		// Idle is normal (spec §5.1): between rounds there is no process.
+		// One with no round is a stray -- a send whose round closed some
+		// other way -- and relay stops it rather than let it edit a tree
+		// nobody is watching.
+		if b.Builder.PID != 0 {
+			if rt.Runner != nil {
+				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
+				} else {
+					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
+				}
+			}
+			b.Builder = clearProcess(b.Builder)
+		}
+		if b.State == store.StateBroken {
+			b.State = store.StateActive
+		}
+		return deliverAndSettle(ctx, rt, tx, b, agents)
+	}
+
+	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	if _, err := os.Stat(reportPath); err == nil {
+		// The report is the contract (spec §1): the process is done with
+		// whatever it exits as, and it exits on its own. Never Kill here.
+		payload := fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, "")
+		if err != nil {
+			return b, err
+		}
+		next.Builder = clearProcess(next.Builder)
+		return deliverAndSettle(ctx, rt, tx, next, agents)
+	}
+
+	if b.Builder.PID == 0 {
+		// Round open, no process, no report: a send whose Start failed.
+		// Send already put the binding in NEEDS YOU and the ledger has the
+		// spawn_failed; nothing to observe until the human acts.
+		return b, nil
+	}
+	if rt.Runner == nil {
+		slog.Warn("headless binding but no Runner configured", "binding", b.Name)
+		return b, nil
+	}
+
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	if switchable {
+		if g, gated := gatedBuilder(rt, b); gated {
+			reason := "rate-limited"
+			if g.Note != "" {
+				reason = "rate-limited: " + g.Note
+			}
+			return switchBuilder(ctx, rt, tx, b, reason, true)
+		}
+	}
+
+	alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+	if err != nil {
+		// An OS hiccup is not evidence the builder stopped: treat it as
+		// alive this tick and say so (spec §6).
+		slog.Warn("headless liveness check failed; treating as alive", "binding", b.Name, "pid", b.Builder.PID, "err", err)
+		alive = true
+	}
+	if alive {
+		next, halted, err := checkRoundTimeout(ctx, rt, b)
+		if halted {
+			return next, err // a halt does not deliver, as in the pane path
+		}
+		if err != nil {
+			return b, err
+		}
+		return deliverAndSettle(ctx, rt, tx, next, agents)
+	}
+
+	// Exited without a report.
+	codeText := "unknown"
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), b.Builder.LogPath); ok {
+		codeText = strconv.Itoa(code)
+	}
+	now := rt.Now().UTC()
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText)); err != nil {
+		return b, err
+	}
+	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
+	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
+	if !switchable {
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, b.Builder.LogPath))
+	}
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false)
 }
