@@ -1105,3 +1105,113 @@ func TestEffectiveStatus(t *testing.T) {
 		})
 	}
 }
+
+// closeOnMarkerUnderLock calls closeOnMarker the way Reconcile does: inside
+// the store lock, with the binding's current log.
+func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool) {
+	t.Helper()
+	var out store.Binding
+	var closed bool
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		entries, err := tx.ReadLog(b.Name)
+		if err != nil {
+			return err
+		}
+		out, closed, err = closeOnMarker(context.Background(), rt, tx, b, entries)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("closeOnMarker: %v", err)
+	}
+	return out, closed
+}
+
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("touch %s: %v", path, err)
+	}
+}
+
+func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "" {
+		t.Errorf("note = %q, want empty on a marked close", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: "+rt.Store.ReportPath("webshop", 1)) {
+		t.Errorf("payload = %q", pending.Payload)
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("a marked close never reads the terminal: %+v", f.reads)
+	}
+}
+
+// TestCloseOnMarkerWithoutReportIsNoreport pins §4.1: the builder said it was
+// done, so relay closes on that and says the report is missing, instead of
+// waiting for idle and scraping a worse artefact. Mutation: fall through to
+// scrapeReport -> f.reads is non-empty and the note is "scraped".
+func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
+	f := &fakeHerdr{readOut: "some terminal text"}
+	rt, b := sentBinding(t, f)
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("entry must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "noreport" {
+		t.Errorf("note = %q, want noreport", pending.Note)
+	}
+	want := "Builder wrote its completion marker for round 1 but no report at " + rt.Store.ReportPath("webshop", 1) + "."
+	if !strings.Contains(pending.Payload, want) {
+		t.Errorf("payload = %q, want it to contain %q", pending.Payload, want)
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("no scrape on a marker-only close: %+v", f.reads)
+	}
+	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); err == nil {
+		t.Error("relay must not write a report file of its own on a noreport close")
+	}
+}
+
+func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if closed || got.Round != 1 {
+		t.Fatalf("closed=%v round=%d, want untouched: a report alone is not a close", closed, got.Round)
+	}
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; no marker means no I/O", len(before), len(after))
+	}
+}

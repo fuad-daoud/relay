@@ -324,6 +324,44 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.
 	return next, true, err
 }
 
+// closeOnMarker closes an open round when the builder's completion marker
+// (Store.DonePath) exists. It is the one place both the pane and the headless
+// path decide "the builder says it is finished", so they cannot disagree.
+//
+// Preconditions: the round is open -- a plan was sent for b.Round and no
+// report has been queued for it.
+// Postconditions:
+//   - marker absent: closed is false, b is returned unchanged, nothing written.
+//   - marker and report present: the round closes normally (note "").
+//   - marker present, report absent: the round closes with note "noreport" and
+//     a payload saying so. The terminal is never read: the builder said it
+//     was done, and a scrape would be a worse artefact than an honest gap.
+//
+// Errors are queueReport's, wrapped; the round stays open and the next tick
+// retries, since the marker is still on disk.
+func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
+	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
+		return b, false, nil
+	}
+	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	if _, err := os.Stat(reportPath); err == nil {
+		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath), "")
+		if err != nil {
+			return b, false, fmt.Errorf("close round on marker: %w", err)
+		}
+		return next, true, nil
+	}
+	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
+		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath), "noreport")
+	if err != nil {
+		return b, false, fmt.Errorf("close round on marker: %w", err)
+	}
+	return next, true, nil
+}
+
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
 // a labelled screen scrape.
 //
