@@ -223,3 +223,33 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 		t.Fatalf("want ErrCWDTaken, got %v", err)
 	}
 }
+
+func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo, Headless: true,
+	})
+	if err != nil {
+		t.Fatalf("Add --headless: %v", err)
+	}
+	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
+		t.Fatalf("headless add must open no tab and start no agent: tabs=%d starts=%d", len(fh.tabs), len(fh.starts))
+	}
+	if len(fg.addWorktreeCalls) != 1 {
+		t.Fatalf("the worktree is still cut: addWorktreeCalls = %+v", fg.addWorktreeCalls)
+	}
+	ep := got.Binding.Builder
+	if !ep.Headless() || ep.AgentName != "frontend-builder" || ep.Kind != "agy" {
+		t.Errorf("builder = %+v, want headless frontend-builder/agy", ep)
+	}
+	if ep.PaneID != "" || ep.PID != 0 || ep.LogPath != "" {
+		t.Errorf("spec §3.1 invariants broken: %+v", ep)
+	}
+	if got.Binding.BuilderCandidate != testAgyRef || got.Binding.Round != 1 {
+		t.Errorf("candidate/round = %q/%d", got.Binding.BuilderCandidate, got.Binding.Round)
+	}
+}

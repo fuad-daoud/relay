@@ -588,3 +588,41 @@ func TestForkWriteForkCleanupOnSaveFailure(t *testing.T) {
 		t.Errorf("destination directory %s should not exist after failed writeFork, got err: %v", dstDir, err)
 	}
 }
+
+func TestForkHeadlessSpawnsNothing(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+
+	res, err := Fork(context.Background(), rt, ForkOptions{
+		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Headless: true,
+	})
+	if err != nil {
+		t.Fatalf("Fork --headless: %v", err)
+	}
+	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
+		t.Fatalf("headless fork must open no tab and start no agent: tabs=%d starts=%d", len(fh.tabs), len(fh.starts))
+	}
+	if len(fg.addWorktreeCalls) != 1 {
+		t.Fatalf("the worktree is still cut: %+v", fg.addWorktreeCalls)
+	}
+	ep := res.Binding.Builder
+	if !ep.Headless() || ep.AgentName != "alt-builder" || ep.PaneID != "" || ep.PID != 0 {
+		t.Errorf("builder = %+v, want a headless alt-builder", ep)
+	}
+	if res.Binding.Round != 3 || res.Binding.ForkedFrom != "source" {
+		t.Errorf("fork bookkeeping: round=%d from=%q", res.Binding.Round, res.Binding.ForkedFrom)
+	}
+	// The source's pane builder is untouched: a fork inherits the candidate,
+	// not the mode.
+	src, _ := rt.Store.Load("source")
+	if src.Builder.Headless() || src.Builder.PaneID != "w2:p4" {
+		t.Errorf("source builder changed: %+v", src.Builder)
+	}
+}

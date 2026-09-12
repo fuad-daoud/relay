@@ -23,6 +23,10 @@ type AddOptions struct {
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
 	CWD string
+
+	// Headless makes the peer's builder a process relay runs per round
+	// instead of a pane (#99). Passed through to resolveBuilder.
+	Headless bool
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -159,6 +163,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
 		WorkspaceID: opts.WorkspaceID,
+		Headless:    opts.Headless,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate

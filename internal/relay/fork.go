@@ -40,6 +40,11 @@ type ForkOptions struct {
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
 	CWD string
+
+	// Headless makes the fork's builder a process relay runs per round
+	// instead of a pane (#99). Not inherited from the source: the mode is a
+	// property of this binding, chosen at its creation.
+	Headless bool
 }
 
 // ForkResult is what a fork produced, so the CLI can tell the human where the
@@ -200,6 +205,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
 		WorkspaceID: opts.WorkspaceID,
+		Headless:    opts.Headless,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
