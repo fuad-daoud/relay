@@ -46,6 +46,7 @@ type Model struct {
 	top    int
 
 	result resultModel
+	answer answerModel
 
 	// outcome is what Run returns: nil after a verb succeeded, else one of
 	// the sentinels in verb.go. Set exactly once, by quit.
@@ -108,6 +109,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.top = listWindow(m.top, m.cursor, m.listRows(), len(m.rows))
+		m.answer.vp.Width = msg.Width
+		m.answer.vp.Height = bodyHeight(msg.Height)
 		return m, nil
 
 	case statusMsg:
@@ -120,6 +123,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case dialogMsg:
+		return m.onDialog(msg)
+
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m.quit(ErrCancelled)
@@ -127,8 +133,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenList:
 			return m.listKeys(msg)
+		case screenAnswer:
+			return m.answerKeys(msg)
 		case screenResult:
 			return m.resultKeys(msg)
+		}
+	default:
+		if m.screen == screenAnswer {
+			var cmd tea.Cmd
+			m.answer.input, cmd = m.answer.input.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -146,6 +160,9 @@ func (m Model) onStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenResult
 		m.result = resultModel{text: emptyText(m.opts.Verb), outcome: ErrNothingToPick}
 		return m, nil
+	}
+	if m.opts.Verb == VerbAnswer && len(m.rows) == 1 {
+		return m.enterAnswer(m.rows[0].Name)
 	}
 	return m, nil
 }
@@ -173,13 +190,15 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // pick acts on the chosen row. done and unbind run at once; answer needs
-// its own screen first (spec §6), added with the answer screen.
+// its own screen first (spec §6).
 func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
 		m.screen = screenResult
 		m.result = resultModel{pending: true}
 		return m, runVerb(m.ctx, m.rt, m.opts, r.Name, relay.AnswerInput{})
+	case VerbAnswer:
+		return m.enterAnswer(r.Name)
 	}
 	return m, nil
 }
@@ -193,6 +212,8 @@ func (m Model) resultKeys(_ tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	switch m.screen {
+	case screenAnswer:
+		return m.answerView()
 	case screenResult:
 		return m.resultView()
 	default:

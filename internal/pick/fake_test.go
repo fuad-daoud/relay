@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -89,7 +90,8 @@ func blockedAgent(name string) herdr.Agent {
 }
 
 // testRuntime seeds a store with the given bindings and returns a runtime
-// over it and the fake herdr.
+// over it and the fake herdr. Now is set because relay.Answer stamps its log
+// entry with it; a nil clock panics.
 func testRuntime(t *testing.T, fh *fakeHerdr, bindings ...store.Binding) relay.Runtime {
 	t.Helper()
 	st := store.New(t.TempDir())
@@ -98,7 +100,7 @@ func testRuntime(t *testing.T, fh *fakeHerdr, bindings ...store.Binding) relay.R
 			t.Fatalf("Save %s: %v", b.Name, err)
 		}
 	}
-	return relay.Runtime{Store: st, Herdr: fh}
+	return relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
 }
 
 // rowsMsg builds the statusMsg the list would receive for these rows.
