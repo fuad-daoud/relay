@@ -171,7 +171,7 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--resume [--rebind]] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D]`
   — start a binding between the calling planner pane (read from
   `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
   it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
@@ -180,8 +180,15 @@ inside every pane it manages, so it has to be run from inside one.
   would collide with the previous session's round log. `--resume --name N`
   re-points that existing binding's planner side at the calling pane without
   touching the builder; `relay unbind N` is the other way out.
+  `--headless` makes the builder a process relay runs itself, one fresh
+  process per round, instead of a pane it watches (see "Headless builders"
+  below). It cannot adopt a pane and cannot be added to an existing binding
+  with `--resume`: a binding's shape is fixed when it is created.
 - `relay send [NAME|--name N] --file PATH` — stage the file as the current round's
-  plan and prompt the builder with it.
+  plan and hand it to the builder: typed into its pane, or, for a headless
+  binding, as the prompt of a fresh process started in the binding's tree.
+  A headless binding whose previous round's process is still running refuses
+  the send; wait for its report or `relay done` it.
 - `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
@@ -203,15 +210,18 @@ inside every pane it manages, so it has to be run from inside one.
   builders in a list (skipped when there is exactly one), the dialog text
   above, one input line below; a number is a `--choice`, `enter`/`esc`/`tab`/
   `up`/`down`/`space` are `--keys`, anything else is `--text`.
+  A headless builder takes no dialogs; `answer` is refused and points at the
+  round's log.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
 - `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
-- `relay add --name N [--builder CANDIDATE] [--cwd DIR]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--cwd DIR]` —
+  `--headless` applies as for `bind`.
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`).
@@ -264,7 +274,8 @@ Opening a binding displays four full-width tabs:
 ### Panes are yours, always
 
 relay never opens, closes or kills a pane except the one builder pane it spawns
-for you at `bind`. In particular:
+for you at `bind`. The one process it stops is a *headless* builder it started
+itself (below). For pane builders:
 
 - `done` and `unbind` leave the builder running. Its terminal is often the only
   record of *why* a round went wrong, and throwing that away automatically is
@@ -276,10 +287,47 @@ for you at `bind`. In particular:
 
 ### Where the builder appears
 
-Every agent relay spawns -- builders from `bind`, `add`, `fork` and consults
-from `ask` -- opens in its own herdr tab in the planner's workspace, labelled
-with the agent's name, without moving focus. There is no split option: side-
-by-side panes stop being readable at two or three builders, and tabs scale.
+Every agent relay spawns as a pane -- builders from `bind`, `add`, `fork` and
+consults from `ask` -- opens in its own herdr tab in the planner's workspace,
+labelled with the agent's name, without moving focus. There is no split option:
+side-by-side panes stop being readable at two or three builders, and tabs scale.
+
+### Headless builders
+
+`relay bind --headless` (also `add --headless`, `fork --headless`) makes the
+builder a process instead of a pane. Nothing is opened at bind. Each
+`relay send` starts the harness's non-interactive form -- `agy -p …`,
+`claude -p …`, `opencode run …` -- in the binding's tree with the same prompt a
+pane builder would be typed, appends its stdout and stderr to
+`~/.local/state/relay/<name>/NNN-builder.log` beside the round's plan and
+report, and returns. The process exits when it has written the report, or when
+it fails; between rounds a headless binding has no process and is idle, not
+broken. The report file is the whole contract: a process that wrote its report
+and then exited non-zero has done its job.
+
+What is different from a pane builder:
+
+- **No dialogs.** The process runs with stdin closed. `relay answer` is refused.
+  If a harness needs permission prompts answered, use a pane builder or its
+  `--dangerously-skip-permissions`/`--auto` extra arg in `candidates.json`.
+- **No memory across rounds.** Every round is a fresh process. relay plans
+  already carry their own context (worktree table, conventions, "stop rather
+  than improvise"); headless makes that a hard requirement.
+- **`relay status`** shows `builder  headless  <kind>  <idle|working|exited N>
+  pid P since HH:MM` and the log's last three lines as `log` rows.
+  `relay ui`'s terminal tab shows the log file.
+- **Exit without a report** is logged as an `exit` entry (exit code and the
+  log's last 20 lines) and the daemon switches builders, up to `max_switches`,
+  exactly as a vanished pane does; then `NEEDS YOU`.
+- **`done` and `unbind` stop the process** if a round is running. A stop that
+  fails is reported, and the binding is still done or unbound. The round budget
+  never kills anything, for headless as for panes: it flags `NEEDS YOU` and
+  leaves the process alone.
+- **`relay unavailable`** on the provider mid-round kills the running process
+  and starts the next candidate on the same round.
+
+Rate limits are still yours to declare: relay shows the log, it never reads it
+for meaning.
 
 ### Round budget
 
@@ -320,6 +368,10 @@ integrates the results — relay only carries plans out and reports back.
 round history through a chosen round and starts at the round after it. A peer
 starts at round 1 with an empty log, because it is not a continuation of
 anything.
+
+Headless builders are the cheap way to run several: no tab per builder, no
+idle harness holding memory. `relay add --name api --headless` gives a peer its
+own worktree and no pane.
 
 ### Forking a binding
 
@@ -835,6 +887,13 @@ hand over the round when ready.
 If only the planner moved or restarted, `relay bind --resume --name N` re-points
 the planner without touching the builder. If you want to start over from scratch,
 use `relay unbind N` and bind fresh.
+
+A headless binding is never `BROKEN` for lack of a process: between rounds
+there is none. If its process died mid-round the daemon already switched or
+halted it (see "Headless builders"). To move a headless binding to a fresh
+process by hand, `relay send` the staged plan again once `relay status` shows
+the builder `exited`; `--resume --headless` is refused, so changing a pane
+binding into a headless one is `relay unbind` and a fresh `relay bind --headless`.
 
 ## Platform support
 
