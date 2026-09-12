@@ -215,7 +215,6 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
-- `relay watch [--interval D] [--all]` — `status`, redrawn on a timer, default 2s.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
 - `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
@@ -257,9 +256,10 @@ the other two end one — and they refuse to guess (see below).
 
 ### Interactive reader: relay ui
 
-`relay ui` is a full-screen terminal reader for live bindings. `relay watch`
-remains the tool for shell pipes and scripts; `relay ui` is the interactive
-sibling that lets you inspect substance instead of just state.
+`relay ui` is a full-screen terminal reader for live bindings. `relay status`
+remains the tool for shell pipes and scripts (`watch -n2 relay status` for a
+ticker); `relay ui` is the interactive sibling that lets you inspect substance
+instead of just state.
 
 It is strictly **read-only**: it never mutates state, never types into panes,
 and never appends to round logs. It holds the state lock only for the duration

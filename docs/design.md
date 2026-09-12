@@ -85,7 +85,7 @@ relay CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, s
                  relay unbind [<name>]
                  relay status [--json]
                  relay log <name>
-                 relay watch
+                 relay ui
 
 relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
                  1. builder -> idle    : deliver its report to the planner
@@ -287,7 +287,7 @@ Three display states cover everything: **ACTIVE** (someone is working), **NEEDS 
   while the planner is mid-turn.
 - `relay log <name>` — every relayed message: round, direction, file, timestamp. The audit
   trail for "what did the planner actually tell the builder".
-- `relay watch` — live tail of the same.
+- `relay ui` — interactive reader over the same: report, terminal, diff and log tabs.
 - `relay status --json` — feeds `~/.claude/statusline.py` so any pane can show `⇄ upjo r3`.
 
 All agent rows are derived live from herdr on each call. Relay holds no truth herdr already
@@ -388,4 +388,5 @@ so the next send is silent. It self-heals after one round.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
 - A TUI in the original scope: `relay status` / `relay watch` were enough. Superseded by
   [`docs/specs/2026-09-08-relay-tui-design.md`](specs/2026-09-08-relay-tui-design.md), which
-  designs `relay ui` as a read-only reader beside `watch` rather than a replacement for it.
+  designs `relay ui` as a read-only reader. `relay watch` (status on a ticker) was dropped in
+  favour of `watch -n2 relay status` once `ui` existed (#114).
