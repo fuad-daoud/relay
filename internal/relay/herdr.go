@@ -43,8 +43,12 @@ type Git interface {
 // Runtime carries relay's dependencies explicitly, so every command and the
 // daemon can be driven by a fake in tests.
 type Runtime struct {
-	Herdr      Herdr
-	Git        Git
+	Herdr Herdr
+	Git   Git
+	// Runner starts and stops headless builder processes (#99). cmd/relay
+	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
+	// can run, and reports ErrRunnerUnavailable.
+	Runner     Runner
 	Store      *store.Store
 	Candidates *candidate.Set
 	LedgerPath string // the availability ledger file (#61 step 1)
