@@ -913,3 +913,27 @@ func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
 		t.Error("the archive still happens")
 	}
 }
+
+func TestAnswerRefusesAHeadlessBuilderBeforeAskingHerdr(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+
+	err := Answer(context.Background(), rt, "webshop", AnswerInput{Keys: "enter"})
+	if !errors.Is(err, ErrHeadlessNoDialog) {
+		t.Fatalf("err = %v, want ErrHeadlessNoDialog", err)
+	}
+	if !strings.Contains(err.Error(), b.Builder.LogPath) {
+		t.Errorf("the refusal must point at the log: %v", err)
+	}
+	if len(f.keys) != 0 || f.listCalls != 0 {
+		t.Errorf("nothing may reach herdr: keys=%d listCalls=%d", len(f.keys), f.listCalls)
+	}
+
+	// Between rounds there is no log to point at; the refusal still stands.
+	rt2, _ := seedHeadless(t, &fakeHerdr{}, newFakeRunner())
+	err = Answer(context.Background(), rt2, "webshop", AnswerInput{Keys: "enter"})
+	if !errors.Is(err, ErrHeadlessNoDialog) || !strings.Contains(err.Error(), "no round is running") {
+		t.Errorf("idle headless: err = %v", err)
+	}
+}

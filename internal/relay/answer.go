@@ -11,6 +11,10 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// ErrHeadlessNoDialog: a headless builder (#99) runs with stdin closed and
+// no terminal; there is no dialog to answer. What it printed is in its log.
+var ErrHeadlessNoDialog = errors.New("builder is headless and takes no dialogs")
+
 // AnswerInput is how the planner answers a builder's dialog. Exactly one field
 // must be set.
 type AnswerInput struct {
@@ -88,6 +92,13 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 	var builder herdr.Agent
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
+		if hint.Builder.Headless() {
+			where := "no round is running"
+			if hint.Builder.LogPath != "" {
+				where = "read " + hint.Builder.LogPath
+			}
+			return fmt.Errorf("%s's builder is headless and takes no dialogs; %s: %w", name, where, ErrHeadlessNoDialog)
+		}
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
 			return fmt.Errorf("list agents: %w", err)
