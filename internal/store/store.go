@@ -120,7 +120,7 @@ func ValidName(name string) error {
 func (s *Store) Dir(name string) string { return filepath.Join(s.root, name) }
 
 func (s *Store) roundFile(name string, round int, suffix, ext string) string {
-	if !strings.HasPrefix(ext, ".") {
+	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
 	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s%s", round, suffix, ext))
@@ -134,6 +134,13 @@ func (s *Store) PlanPath(name string, round int) string {
 // ReportPath is where the builder is told to write its report for a round.
 func (s *Store) ReportPath(name string, round int) string {
 	return s.roundFile(name, round, "report", ".md")
+}
+
+// DonePath is the builder's completion marker for a round: an empty file it
+// creates as its last action (spec 2026-09-12-completion-marker §1). relay
+// only ever stats it.
+func (s *Store) DonePath(name string, round int) string {
+	return s.roundFile(name, round, "done", "")
 }
 
 // BuilderLogPath is where a headless builder's stdout and stderr for a round
