@@ -25,6 +25,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/pick"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -294,6 +295,7 @@ func newRuntime() (relay.Runtime, error) {
 	return relay.Runtime{
 		Herdr:       herdr.NewClient("herdr", 30*time.Second),
 		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Runner:      proc.New(),
 		Store:       st,
 		Candidates:  candidates,
 		LedgerPath:  st.LedgerPath(),
