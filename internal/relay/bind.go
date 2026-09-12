@@ -28,6 +28,15 @@ var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abando
 // It refuses instead, until a human says the builder really is gone.
 var ErrBuilderUnverified = errors.New("builder was never session-identified")
 
+// ErrHeadlessAdopt: --headless describes a process relay will run; a pane
+// the human already started is the opposite of that (headless spec §3.6).
+var ErrHeadlessAdopt = errors.New("--headless spawns a process; it cannot adopt a pane (drop --builder <pane>)")
+
+// ErrHeadlessResume: a binding's mode is fixed at creation. Changing it
+// under a live round would leave the old shape's state (pane id, or pid and
+// log) meaning nothing (headless spec §1, scope boundary).
+var ErrHeadlessResume = errors.New("--headless cannot change an existing binding's mode; unbind and bind again")
+
 // BindOptions describes one bind request. BuilderPane adopts an existing pane;
 // leaving it empty spawns a new one from Candidate.
 type BindOptions struct {
@@ -59,6 +68,10 @@ type BindOptions struct {
 	// RoundTimeout overrides the binding's round budget. Zero keeps the
 	// store's default.
 	RoundTimeout time.Duration
+
+	// Headless makes the builder a process relay runs per round instead of
+	// a pane it watches (#99). Refused with BuilderPane and with Resume.
+	Headless bool
 }
 
 // BindResolved ties the calling planner pane to a builder over one working
@@ -70,6 +83,13 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	}
 	if opts.CWD == "" {
 		return store.Binding{}, Resolution{}, errors.New("no working directory")
+	}
+
+	if opts.Headless && opts.BuilderPane != "" {
+		return store.Binding{}, Resolution{}, ErrHeadlessAdopt
+	}
+	if opts.Headless && opts.Resume {
+		return store.Binding{}, Resolution{}, ErrHeadlessResume
 	}
 
 	agents, err := rt.Herdr.ListAgents(ctx)
@@ -301,8 +321,10 @@ func builderAgentName(name string) (string, error) {
 	return agentName, nil
 }
 
-// resolveBuilder adopts an existing builder pane, or opens a tab and starts
-// the candidate agent in its root pane. Focus stays with the planner either way.
+// resolveBuilder adopts an existing builder pane, opens a tab and starts the
+// candidate agent in its root pane, or -- with opts.Headless -- records a
+// headless endpoint and spawns nothing (#99). Focus stays with the planner
+// either way.
 //
 // The candidate is resolved only on the spawn path. Adopting a pane needs no
 // candidate: the human launched that agent themselves, so relay has no kind or
@@ -338,14 +360,22 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 		return store.Endpoint{}, Resolution{}, err
 	}
 	c := res.Candidate
-	role, _ := harness.RoleByName("builder")
-	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
-	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
-
 	agentName, err := builderAgentName(name)
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
+
+	// Headless (#99): the builder is a process relay starts on each send,
+	// not a pane. Nothing to open, nothing to start, nothing to strand; the
+	// endpoint records the mode, the name and the kind, and Send fills in
+	// the process fields per round (spec §5.3).
+	if opts.Headless {
+		return store.Endpoint{AgentName: agentName, Kind: c.Harness, Mode: store.ModeHeadless}, res, nil
+	}
+
+	role, _ := harness.RoleByName("builder")
+	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
+	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
 
 	paneID, err := openTab(ctx, rt, opts.WorkspaceID, opts.CWD, agentName)
 	if err != nil {

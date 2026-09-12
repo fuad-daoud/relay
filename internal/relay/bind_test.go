@@ -1472,3 +1472,82 @@ func TestResumeRebindRefusesALiveBuilder(t *testing.T) {
 		t.Errorf("a refused rebind must spawn nothing: starts=%+v tabs=%+v", f.starts, f.tabs)
 	}
 }
+
+func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	b, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind --headless: %v", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Fatalf("headless must open no tab and start no agent: tabs=%d starts=%d", len(f.tabs), len(f.starts))
+	}
+	ep := b.Builder
+	if !ep.Headless() || ep.Mode != store.ModeHeadless {
+		t.Errorf("Mode = %q, want headless", ep.Mode)
+	}
+	if ep.AgentName != "webshop-builder" || ep.Kind != "opencode" {
+		t.Errorf("AgentName/Kind = %q/%q, want webshop-builder/opencode", ep.AgentName, ep.Kind)
+	}
+	if ep.PaneID != "" || ep.SessionID != "" || ep.PID != 0 || ep.LogPath != "" || ep.StartedAt != 0 {
+		t.Errorf("spec §3.1 invariants broken: %+v", ep)
+	}
+	if b.BuilderCandidate != testOpencodeRef || res.Token() != testOpencodeRef {
+		t.Errorf("candidate = %q / %q, want %q", b.BuilderCandidate, res.Token(), testOpencodeRef)
+	}
+	if b.Round != 1 || b.State != store.StateActive {
+		t.Errorf("round/state = %d/%s, want 1/active", b.Round, b.State)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil || len(entries) != 1 || entries[0].Kind != store.KindPick {
+		t.Errorf("a fresh headless binding logs its pick and nothing else: %+v (%v)", entries, err)
+	}
+	// The stored binding reads back headless too.
+	stored, err := rt.Store.Load("webshop")
+	if err != nil || !stored.Builder.Headless() {
+		t.Errorf("stored builder: %+v (%v)", stored.Builder, err)
+	}
+}
+
+func TestBindHeadlessRefusesAdoptAndResumeBeforeListingAgents(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", BuilderPane: "w2:p4", PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	})
+	if !errors.Is(err, ErrHeadlessAdopt) {
+		t.Errorf("headless + adopt: err = %v, want ErrHeadlessAdopt", err)
+	}
+	_, err = Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	})
+	if !errors.Is(err, ErrHeadlessResume) {
+		t.Errorf("headless + resume: err = %v, want ErrHeadlessResume", err)
+	}
+	if f.listCalls != 0 {
+		t.Errorf("refusals must happen before herdr is asked anything: listCalls = %d", f.listCalls)
+	}
+	if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a refused bind must save nothing: %v", err)
+	}
+}
+
+func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
+	// The agent name is validated even though no herdr agent is started:
+	// the name is what status, log and a later pane-mode rebind identify
+	// the builder by, and the limit must not depend on the mode.
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "builder agent name") {
+		t.Fatalf("err = %v, want the agent-name refusal", err)
+	}
+}
