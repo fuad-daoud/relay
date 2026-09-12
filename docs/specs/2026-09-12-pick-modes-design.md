@@ -286,8 +286,8 @@ do, and the picker adds no decision of its own.
   the single-blocked-row shortcut; cursor bounds; empty-list message per
   verb; the answer screen's fallback order (live read, then question file,
   then error line); empty input refused; `Enter` on the result screen exits
-  with the right status; the rendered result text equals `doneText` /
-  `unbindText` / `answerText` output.
+  with the right status; the rendered result text equals `relay.DoneText` /
+  `relay.UnbindText` / `relay.AnswerText` output.
 - `internal/relay`: `TestParseAnswer` over the §6 table, including `0`, `-1`,
   ` enter `, `ENTER`, and free text.
 - `cmd/relay`: `--pick` plus a name is a usage error, for all three verbs. The
