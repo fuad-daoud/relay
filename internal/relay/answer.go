@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -16,6 +17,37 @@ type AnswerInput struct {
 	Keys   string
 	Text   string
 	Choice int
+}
+
+// DialogSource and DialogLines are how relay reads a blocking dialog. A TUI
+// approval prompt is drawn on the alternate screen, which never reaches the
+// scrollback recent-unwrapped reads, so the dialog has to come from detection
+// instead. The daemon's blocked handler and the answer picker use the same
+// pair so the human sees what the daemon saw.
+const (
+	DialogSource = "detection"
+	DialogLines  = 200
+)
+
+// logicalKeys are the key names herdr send-keys accepts by name. Anything
+// else typed at the answer picker is literal text.
+var logicalKeys = map[string]bool{
+	"enter": true, "esc": true, "tab": true, "up": true, "down": true, "space": true,
+}
+
+// ParseAnswer turns one typed line into an AnswerInput (spec §6). A positive
+// integer is a numbered dialog option; a logical key name is a key; anything
+// else is text as typed, trimmed. Zero and negatives are not options and fall
+// through to text -- AnswerInput.resolve treats Choice 0 as unset.
+func ParseAnswer(s string) AnswerInput {
+	s = strings.TrimSpace(s)
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return AnswerInput{Choice: n}
+	}
+	if k := strings.ToLower(s); logicalKeys[k] {
+		return AnswerInput{Keys: k}
+	}
+	return AnswerInput{Text: s}
 }
 
 func (a AnswerInput) resolve() (string, error) {

@@ -731,20 +731,7 @@ func cmdUnbind(args []string) error {
 		return err
 	}
 
-	if res.ArchivedTo != "" {
-		fmt.Printf("archived %s to %s (panes left untouched)\n", target, res.ArchivedTo)
-	} else {
-		fmt.Printf("unbound %s (panes left untouched)\n", target)
-	}
-
-	if res.WorktreeRemoved != "" {
-		fmt.Printf("removed worktree %s\n", res.WorktreeRemoved)
-	} else if res.WorktreeKept != "" {
-		fmt.Printf("kept worktree %s (%s)\n  remove by hand: git -C %s worktree remove %s\n",
-			res.WorktreeKept, res.KeptReason, res.WorktreeKept, res.WorktreeKept)
-	} else if res.WorktreeGone != "" {
-		fmt.Printf("worktree %s was already gone\n", res.WorktreeGone)
-	}
+	fmt.Println(relay.UnbindText(target, res))
 
 	return nil
 }
@@ -1139,7 +1126,7 @@ func cmdAnswer(args []string) error {
 		return err
 	}
 
-	fmt.Printf("answered %s's builder\n", target)
+	fmt.Println(relay.AnswerText(target))
 	return nil
 }
 
@@ -1320,7 +1307,7 @@ func cmdDone(args []string) error {
 		return err
 	}
 
-	fmt.Printf("%s marked done; relaying stopped (relay gc archives it when you are finished with it)\n", target)
+	fmt.Println(relay.DoneText(target))
 	return nil
 }
 

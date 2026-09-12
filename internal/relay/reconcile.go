@@ -34,11 +34,6 @@ const startGrace = 30 * time.Second
 // simply still being written.
 const nudgeGrace = 60 * time.Second
 
-// dialogSource is the herdr read source for a blocking dialog. A TUI approval
-// prompt is drawn on the alternate screen, which never reaches the scrollback
-// recent-unwrapped reads, so the dialog has to come from detection instead.
-const dialogSource = "detection"
-
 const nudgePrompt = `You went idle without writing your report.
 Write it to %s now, then reply with only that path.`
 
@@ -264,7 +259,7 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		return b, nil
 	}
 
-	dialog, err := rt.Herdr.ReadAgentSource(ctx, Target(b.Builder), dialogSource, scrapeLines)
+	dialog, err := rt.Herdr.ReadAgentSource(ctx, Target(b.Builder), DialogSource, DialogLines)
 	if err != nil {
 		return b, fmt.Errorf("read blocking dialog: %w", err)
 	}
