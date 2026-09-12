@@ -513,14 +513,17 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // TestRowsForFiltersPerVerb pins the spec §4 table.
 func TestRowsForFiltersPerVerb(t *testing.T) {
+	// State is what HideDone keys on; Display is derived from it in a real
+	// report, so the fixture sets both.
 	rep := relay.Report{Bindings: []relay.BindingStatus{
-		{Name: "active", Display: "ACTIVE", BuilderStatus: herdr.StatusWorking},
-		{Name: "blocked", Display: "NEEDS YOU", BuilderStatus: herdr.StatusBlocked},
-		{Name: "finished", Display: "DONE", BuilderStatus: herdr.StatusIdle},
+		{Name: "active", State: string(store.StateActive), Display: "ACTIVE", BuilderStatus: herdr.StatusWorking},
+		{Name: "blocked", State: string(store.StateNeedsYou), Display: "NEEDS YOU", BuilderStatus: herdr.StatusBlocked},
+		{Name: "finished", State: string(store.StateDone), Display: "DONE", BuilderStatus: herdr.StatusIdle},
 	}}
 	names := func(rows []relay.BindingStatus) []string {
 		var out []string
