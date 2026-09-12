@@ -217,6 +217,21 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, err
 	}
 
+	// The builder's completion marker closes the round on any tick, whatever
+	// herdr says the pane is doing: the marker is written last, so what is
+	// left of the builder's turn is just its reply (spec §4.2). Idle status
+	// matters only on the fallback path below, when there is no marker.
+	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+		next, closed, err := closeOnMarker(ctx, rt, tx, b, entries)
+		if err != nil {
+			return b, err
+		}
+		if closed {
+			return deliverAndSettle(ctx, rt, tx, next, agents)
+		}
+	}
+
 	var next store.Binding
 	switch effectiveStatus(b.Builder, builder) {
 	case herdr.StatusIdle, herdr.StatusDone:

@@ -79,12 +79,13 @@ func reconcile(t *testing.T, rt Runtime, b store.Binding, agents []herdr.Agent) 
 	return out, err
 }
 
-func TestReconcileQueuesReportWhenBuilderIdleAndFileExists(t *testing.T) {
+func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	b.RoundSwitches = 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -517,6 +518,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	touch(t, rt.Store.DonePath("webshop", 1))
 	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
 	got, err := reconcile(t, rt, b, agents)
@@ -527,7 +529,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
 	}
 	if len(f.prompts) != 0 {
-		t.Fatalf("expected zero prompts when report file is present, got %+v", f.prompts)
+		t.Fatalf("expected zero prompts when the marker is present, got %+v", f.prompts)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
@@ -1213,5 +1215,34 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("log grew from %d to %d entries; no marker means no I/O", len(before), len(after))
+	}
+}
+
+// TestReconcileClosesOnMarkerWhileBuilderStillWorking pins §4.2: the marker
+// is checked every tick, before herdr's status is consulted. Mutation: move
+// the closeOnMarker call inside the idle branch -> this fails because the
+// builder is reported working.
+func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: the marker closes the round regardless of status", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("no nudge on a marked round: %+v", f.prompts)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found || pending.Note != "" {
+		t.Errorf("want a normal report queued: found=%v note=%q err=%v", found, pending.Note, err)
 	}
 }
