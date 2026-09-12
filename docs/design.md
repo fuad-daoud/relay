@@ -332,6 +332,12 @@ here. relay reports that something is there and shows its title; the reader
 draws the conclusion. Rows are never filtered by title, which would mean relay
 trusting a string any agent can set.
 
+How much that covers depends on the builder's harness: claude runs sub-agents
+in their own panes, which herdr lists; agy and opencode do not, and herdr
+lists nothing extra. For those bindings `relay status` prints a `coverage` row
+after the foreign rows saying that no foreign rows does not mean the tree is
+clear. The per-harness record is `harness.Harness.SubAgents`.
+
 An agent is foreign when no binding references it, not merely when it is not
 this binding's builder -- a second binding's planner may legitimately share a
 tree, and relay knows about it. Agents in subdirectories of the tree count;
