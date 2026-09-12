@@ -46,8 +46,10 @@ type SendResult struct {
 	Drift string // the drift line for stdout, or "" when there is nothing to say
 }
 
-// Send copies the planner's plan into relay state and hands it to the builder.
-// It returns a SendResult describing the round and any between-rounds drift.
+// Send copies the planner's plan into relay state and hands it to the builder:
+// typed into its pane, or -- for a headless binding (#99) -- as the prompt of
+// a fresh process started in the binding's tree. It returns a SendResult
+// describing the round and any between-rounds drift.
 func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error) {
 	// Read the caller's file before taking the lock; it is the one input that
 	// does not depend on binding state.
@@ -63,16 +65,20 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 	if hint, err := rt.Store.Load(name); err == nil {
 		baseline = CaptureBaseline(ctx, rt, hint)
 		hintRound = hint.Round
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return SendResult{}, fmt.Errorf("list agents: %w", err)
+		// A headless builder (#99) is a process relay starts per round; there
+		// is no herdr agent to find. Its liveness check is under the lock.
+		if !hint.Builder.Headless() {
+			agents, err := rt.Herdr.ListAgents(ctx)
+			if err != nil {
+				return SendResult{}, fmt.Errorf("list agents: %w", err)
+			}
+			var ok bool
+			builder, ok = FindAgent(agents, hint.Builder)
+			if !ok {
+				return SendResult{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
+			}
+			locatedBuilder = true
 		}
-		var ok bool
-		builder, ok = FindAgent(agents, hint.Builder)
-		if !ok {
-			return SendResult{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
-		}
-		locatedBuilder = true
 	}
 
 	var round int
@@ -96,11 +102,29 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		// The pre-lock load and this locked load are two separate acquisitions
 		// of the state lock, so a binding can appear between them. An unlocated
 		// builder must never fall through to an empty target.
-		if !locatedBuilder {
-			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
-		}
-		if !SameAgent(builder, b.Builder) {
-			return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
+		if b.Builder.Headless() {
+			// One process per round (headless spec §5.2): a previous round's
+			// process still running means the human is early, not that
+			// relay should start a second builder in the same tree.
+			if b.Builder.PID != 0 {
+				if rt.Runner == nil {
+					return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+				}
+				alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+				if err != nil {
+					return fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+				}
+				if alive {
+					return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+				}
+			}
+		} else {
+			if !locatedBuilder {
+				return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+			}
+			if !SameAgent(builder, b.Builder) {
+				return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
+			}
 		}
 
 		planPath := rt.Store.PlanPath(name, b.Round)
@@ -111,7 +135,21 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 
 		text := composePrompt(b, planPath, reportPath)
 
-		if err := promptWithRetry(ctx, rt, builder.PaneID, text); err != nil {
+		if b.Builder.Headless() {
+			started, err := startRound(ctx, rt, b, text)
+			if err != nil {
+				// The plan is staged and the round is open; nothing was
+				// started. NEEDS YOU says so in status, and the ledger's
+				// spawn_failed (written by startRound) gates the candidate
+				// for the next pick, as a pane spawn failure would.
+				b.State = store.StateNeedsYou
+				if saveErr := tx.Save(b); saveErr != nil {
+					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
+				}
+				return err
+			}
+			b = started
+		} else if err := promptWithRetry(ctx, rt, builder.PaneID, text); err != nil {
 			if errors.Is(err, herdr.ErrAgentBlocked) {
 				return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
 			}

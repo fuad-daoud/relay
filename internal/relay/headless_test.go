@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ func seedHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Bi
 	if err != nil {
 		t.Fatalf("Bind --headless: %v", err)
 	}
+	f.listCalls = 0
 	return rt, b
 }
 
@@ -162,5 +164,140 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 	rt.Runner = nil
 	if _, err := startRound(context.Background(), rt, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
 		t.Errorf("err = %v, want ErrRunnerUnavailable", err)
+	}
+}
+
+func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, f, fr)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# do the thing"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("a headless send must not Prompt: %+v", f.prompts)
+	}
+	if f.listCalls != 0 {
+		t.Errorf("a headless send has no agent to look up: listCalls = %d", f.listCalls)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	planPath := rt.Store.PlanPath("webshop", 1)
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	b, _ := rt.Store.Load("webshop")
+	wantPrompt := composePrompt(b, planPath, reportPath)
+	if spec.Argv[2] != wantPrompt {
+		t.Errorf("prompt handed to the process:\n%q\nwant the pane path's composePrompt:\n%q", spec.Argv[2], wantPrompt)
+	}
+	if spec.Dir != "/repo" || spec.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
+		t.Errorf("spec = %+v", spec)
+	}
+
+	// The endpoint carries the handle; the round is stamped as today.
+	if b.Builder.PID != fr.handles[0].PID || b.Builder.LogPath != spec.LogPath {
+		t.Errorf("stored endpoint = %+v", b.Builder)
+	}
+	if b.RoundStartedAt.IsZero() || b.State != store.StateActive {
+		t.Errorf("round not stamped: startedAt=%v state=%s", b.RoundStartedAt, b.State)
+	}
+	entries, _ := rt.Store.ReadLog("webshop")
+	var plans int
+	for _, e := range entries {
+		if e.Kind == store.KindPlan && e.Round == 1 && e.Path == planPath {
+			plans++
+		}
+	}
+	if plans != 1 {
+		t.Errorf("want exactly one plan entry for round 1, log = %+v", entries)
+	}
+}
+
+func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one")); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	// Unscripted, the fake reports the process alive forever.
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one again"))
+	if !errors.Is(err, ErrBuilderBusy) {
+		t.Fatalf("second Send: err = %v, want ErrBuilderBusy", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send must start nothing: specs = %d", len(fr.specs))
+	}
+	plan, _ := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	if string(plan) != "round one" {
+		t.Errorf("a refused send must not restage the plan: %q", plan)
+	}
+}
+
+func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one")); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	fr.script(fr.handles[0].PID, false) // exited between the two sends
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one, corrected")); err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if len(fr.specs) != 2 || len(fr.handles) != 2 || fr.handles[1].PID == fr.handles[0].PID {
+		t.Fatalf("want a second, distinct process: specs=%d handles=%+v", len(fr.specs), fr.handles)
+	}
+	b, _ := rt.Store.Load("webshop")
+	if b.Builder.PID != fr.handles[1].PID {
+		t.Errorf("endpoint pid = %d, want the new process %d", b.Builder.PID, fr.handles[1].PID)
+	}
+}
+
+func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
+	fr := newFakeRunner()
+	fr.startErr = errors.New("agy: not found on PATH")
+	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	if err == nil || !errors.Is(err, fr.startErr) {
+		t.Fatalf("err = %v, want the Start error wrapped", err)
+	}
+	b, _ := rt.Store.Load("webshop")
+	if b.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", b.State)
+	}
+	if b.Builder.PID != 0 {
+		t.Errorf("pid = %d, want 0 after a failed start", b.Builder.PID)
+	}
+	entries, _ := rt.Store.ReadLog("webshop")
+	for _, e := range entries {
+		if e.Kind == store.KindPlan {
+			t.Errorf("no plan entry may be logged for a round that never started: %+v", e)
+		}
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); err != nil {
+		t.Errorf("the plan stays staged so the human can retry: %v", err)
+	}
+}
+
+func TestSendPanePathIsUntouchedByHeadless(t *testing.T) {
+	// A pane binding with a Runner configured never touches it.
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedBound(t, f)
+	rt.Runner = fr
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("pane send started a process: %+v", fr.specs)
+	}
+	if len(f.prompts) != 1 {
+		t.Errorf("pane send must still Prompt once: %d", len(f.prompts))
 	}
 }
