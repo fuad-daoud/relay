@@ -457,8 +457,18 @@ Two preconditions: `relay` must be on the `PATH` of the Claude Code process,
 and Claude Code must be started inside a herdr pane, so `HERDR_PANE_ID` is
 inherited.
 
+Claude Code renders a few cells less than `COLUMNS`; relay subtracts 4 by
+default (measured on the fullscreen TUI). If the right-hand `age · STATE`
+cell is clipped or sits short of the edge, measure yours and set
+`RELAY_STATUSLINE_MARGIN` in the environment Claude Code starts from. To
+measure, put this in `statusLine.command` for one refresh and count the
+cells before Claude Code's `…`:
+
+    sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
+
 Each row is `○ name  rN · builder · what relay is waiting on  …  age · STATE`,
-where `age` is time since the last relayed message.
+where `builder` is the harness segment of the candidate token, and `age` is
+time since the last plan, report, question or answer crossed.
 
 ## Candidates
 
