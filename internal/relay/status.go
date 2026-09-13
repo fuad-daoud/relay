@@ -42,9 +42,15 @@ type BindingStatus struct {
 	// Populated only for store.StateBroken, which covers three situations
 	// whose correct recoveries differ -- and in one of which the obvious
 	// recovery orphans a builder that is still running.
-	Detail  string       `json:"detail,omitempty"`
-	Last    *LastEvent   `json:"last,omitempty"`
-	Pending *PendingInfo `json:"pending,omitempty"`
+	Detail string     `json:"detail,omitempty"`
+	Last   *LastEvent `json:"last,omitempty"`
+	// LastPayload is the most recent plan/report/question/answer entry --
+	// the four kinds that cross between planner and builder -- as opposed to
+	// Last, which is the most recent entry of any kind including relay's own
+	// bookkeeping (drift, pick, switch, exit, diff). Nil when the log has
+	// none.
+	LastPayload *LastEvent   `json:"last_payload,omitempty"`
+	Pending     *PendingInfo `json:"pending,omitempty"`
 	// Nudge is set while the current round has been nudged and no report has
 	// arrived: when relay nudged, and how long the builder's terminal has been
 	// unchanged against the grace after which relay scrapes it. Nil otherwise.
@@ -238,6 +244,16 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 			Note: last.Note,
 		}
 	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if e := entries[i]; isPayloadKind(e.Kind) {
+			row.LastPayload = &LastEvent{
+				TS: e.TS, Round: e.Round,
+				Direction: e.Direction, Kind: e.Kind,
+				Note: e.Note,
+			}
+			break
+		}
+	}
 
 	// What relay acts on is what it shows: the clock starts where
 	// builderQuiescent starts it -- at the last fingerprint, falling back to
@@ -283,6 +299,18 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 
 	return row, nil
+}
+
+// isPayloadKind reports whether k is one of the four kinds that cross
+// between planner and builder (plan, report, question, answer) -- the ones
+// LastPayload tracks, as opposed to relay's own bookkeeping kinds.
+func isPayloadKind(k store.Kind) bool {
+	switch k {
+	case store.KindPlan, store.KindReport, store.KindQuestion, store.KindAnswer:
+		return true
+	default:
+		return false
+	}
 }
 
 // displayState collapses six stored states into the three the human cares
