@@ -33,6 +33,9 @@ const (
 	e2eBootTimeout   = 10 * time.Second
 	e2eScreenTimeout = 5 * time.Second
 	e2ePoll          = 200 * time.Millisecond
+	// e2eEchoTimeout bounds waitEcho: the shim spends one real second per
+	// prompt line, and builderPrompt is six lines.
+	e2eEchoTimeout = 15 * time.Second
 )
 
 // startSession launches `herdr --session relay-e2e-<pid>` with no tty. The
@@ -187,6 +190,42 @@ func (s *e2eSession) waitScreen(t *testing.T, target, substr string) {
 	t.Fatalf("screen of %s never contained %q within %s; last screen:\n%s", target, substr, e2eScreenTimeout, last)
 }
 
+// The shim echoes every line it is given, one real second apart, and herdr
+// reports it working until the last one. A tick that expects an idle builder
+// must first wait for the echo of the prompt's last line.
+const (
+	promptLastLine = "Reply here with only the report path."
+	nudgeLastLine  = "your last action, and reply with only the report path."
+)
+
+// waitEcho waits until target has echoed lastLine -- the shim has consumed
+// the whole prompt -- AND herdr's agent list no longer reports it working.
+// herdr's status lags the screen by a few hundred milliseconds; a tick taken
+// in that window sees `working` and never reaches the idle path.
+func (s *e2eSession) waitEcho(t *testing.T, target, lastLine string) {
+	t.Helper()
+	want := "you said: " + lastLine
+	deadline := time.Now().Add(e2eEchoTimeout)
+	var last, status string
+	for time.Now().Before(deadline) {
+		last = s.screen(t, target)
+		if strings.Contains(last, want) {
+			status = ""
+			for _, a := range s.agents(t) {
+				if a.PaneID == target {
+					status = a.Status
+				}
+			}
+			if status != "" && status != herdr.StatusWorking {
+				return
+			}
+		}
+		time.Sleep(e2ePoll)
+	}
+	t.Fatalf("target %s: echo of %q seen=%v, last status %q, within %s; last screen:\n%s",
+		target, want, strings.Contains(last, want), status, e2eEchoTimeout, last)
+}
+
 // e2eAgents is the current `herdr agent list`, fatal on error.
 func (s *e2eSession) agents(t *testing.T) []herdr.Agent {
 	t.Helper()
@@ -221,6 +260,15 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	t.Run("prompt_last_lines", func(t *testing.T) {
+		if !strings.HasSuffix(builderPrompt, promptLastLine) {
+			t.Errorf("promptLastLine %q is not the last line of builderPrompt", promptLastLine)
+		}
+		if !strings.HasSuffix(nudgePrompt, nudgeLastLine) {
+			t.Errorf("nudgeLastLine %q is not the last line of nudgePrompt", nudgeLastLine)
+		}
+	})
+
 	clock := &fakeClock{now: baseTime}
 	rt := e2eRuntime(t, clock)
 
@@ -228,6 +276,7 @@ func TestE2E(t *testing.T) {
 		b := s.bindBuilder(t, rt, "marker", planner)
 		sendAt(t, rt, clock, 0, "marker")
 		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		if err := os.WriteFile(rt.Store.ReportPath("marker", 1), []byte("builder's words"), 0o644); err != nil {
 			t.Fatal(err)
@@ -245,6 +294,81 @@ func TestE2E(t *testing.T) {
 		s.waitScreen(t, planner, "you said: Builder finished round 1")
 		if e := reportEntry(t, rt, "marker", 1); e.Note != "" {
 			t.Errorf("note = %q, want empty on a marked close", e.Note)
+		}
+	})
+
+	var nudged store.Binding // shared by the next two subtests (spec §5.2 -> §5.3)
+
+	t.Run("idle_without_marker_nudges_once", func(t *testing.T) {
+		b := s.bindBuilder(t, rt, "nudge", planner)
+		sendAt(t, rt, clock, 0, "nudge")
+		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
+
+		b = reconcileAt(t, s, rt, clock, 5*time.Second, b) // inside startGrace
+		if b.Round != 1 {
+			t.Fatalf("round = %d, want 1", b.Round)
+		}
+		if strings.Contains(s.screen(t, b.Builder.PaneID), "You went idle") {
+			t.Fatal("nudged inside startGrace")
+		}
+
+		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b)
+		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
+		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
+		screen := s.screen(t, b.Builder.PaneID)
+		for _, want := range []string{rt.Store.ReportPath("nudge", 1), rt.Store.DonePath("nudge", 1)} {
+			if !strings.Contains(screen, want) {
+				t.Errorf("nudge must name %s; screen:\n%s", want, screen)
+			}
+		}
+		entries, err := rt.Store.ReadLog("nudge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		nudges := 0
+		for _, e := range entries {
+			if e.Round == 1 && e.Note == nudgeNote {
+				nudges++
+			}
+		}
+		if nudges != 1 {
+			t.Errorf("nudge entries = %d, want exactly 1", nudges)
+		}
+		if b.BuilderScreen == "" || !b.BuilderScreenAt.Equal(baseTime.Add(startGrace+5*time.Second)) {
+			t.Errorf("fingerprint must be taken at nudge time: screen=%q at=%s", b.BuilderScreen, b.BuilderScreenAt)
+		}
+		nudged = b
+	})
+
+	t.Run("still_screen_closes_unmarked", func(t *testing.T) {
+		if nudged.Name == "" {
+			t.Skip("depends on idle_without_marker_nudges_once")
+		}
+		b := nudged
+		if err := os.WriteFile(rt.Store.ReportPath("nudge", 1), []byte("the builder's own words"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b)
+		if b.Round != 1 {
+			t.Fatalf("round = %d, want 1: one second is inside nudgeGrace", b.Round)
+		}
+
+		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second+nudgeGrace+10*time.Second, b)
+		if b.Round != 2 {
+			t.Fatalf("round = %d, want 2 after a still screen for nudgeGrace", b.Round)
+		}
+		e := reportEntry(t, rt, "nudge", 1)
+		if e.Note != "unmarked" {
+			t.Errorf("note = %q, want unmarked", e.Note)
+		}
+		if !strings.Contains(e.Payload, "never confirmed completion (no 001-done)") {
+			t.Errorf("payload = %q", e.Payload)
+		}
+		body, err := os.ReadFile(rt.Store.ReportPath("nudge", 1))
+		if err != nil || string(body) != "the builder's own words" {
+			t.Errorf("report must be delivered as written, got %q err=%v", body, err)
 		}
 	})
 }
@@ -299,15 +423,20 @@ func (s *e2eSession) bindBuilder(t *testing.T, rt Runtime, name, plannerPane str
 }
 
 // reconcileAt sets the clock to baseTime+at and runs one Reconcile the way
-// the daemon does: under the lock, with a fresh real agent list (spec §3.5).
+// the daemon does: under the lock, on the binding as stored (Send and earlier
+// ticks have written to it; the caller's copy may be stale), with a fresh
+// real agent list (spec §3.5).
 func reconcileAt(t *testing.T, s *e2eSession, rt Runtime, clock *fakeClock, at time.Duration, b store.Binding) store.Binding {
 	t.Helper()
 	clock.now = baseTime.Add(at)
 	agents := s.agents(t)
 	var out store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		out, err = Reconcile(context.Background(), rt, tx, b, agents)
+		fresh, err := tx.Load(b.Name)
+		if err != nil {
+			return err
+		}
+		out, err = Reconcile(context.Background(), rt, tx, fresh, agents)
 		if err != nil {
 			return err
 		}
