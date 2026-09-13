@@ -58,8 +58,8 @@ func statuslineFixture(now time.Time) Report {
 				Name:             "api",
 				Round:            3,
 				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				Last: &LastEvent{
+				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+				LastPayload: &LastEvent{
 					TS:        now.Add(-12 * time.Minute),
 					Kind:      store.KindPlan,
 					Direction: store.DirToBuilder,
@@ -69,9 +69,9 @@ func statuslineFixture(now time.Time) Report {
 				Name:             "client",
 				Round:            1,
 				Display:          "NEEDS YOU",
-				BuilderCandidate: "opencode",
+				BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
 				Detail:           "builder pane gone",
-				Last: &LastEvent{
+				LastPayload: &LastEvent{
 					TS:   now.Add(-4 * time.Minute),
 					Kind: store.KindPlan,
 				},
@@ -80,7 +80,7 @@ func statuslineFixture(now time.Time) Report {
 				Name:             "docs",
 				Round:            2,
 				Display:          "HELD",
-				BuilderCandidate: "agy",
+				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
 				Pending: &PendingInfo{
 					Round: 2,
 					Kind:  store.KindReport,
@@ -89,7 +89,7 @@ func statuslineFixture(now time.Time) Report {
 						GraceMS: 60000,
 					},
 				},
-				Last: &LastEvent{
+				LastPayload: &LastEvent{
 					TS:        now.Add(-23 * time.Second),
 					Kind:      store.KindReport,
 					Direction: store.DirToPlanner,
@@ -235,7 +235,7 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				Display:          "ACTIVE",
 				BuilderCandidate: "agy",
 				Nudge:            &NudgeInfo{QuietMS: 23000, GraceMS: 60000},
-				Last:             &LastEvent{Kind: store.KindPlan},
+				LastPayload:      &LastEvent{Kind: store.KindPlan},
 			},
 			expectMid: "nudged · quiet 23s of 1m0s",
 		},
@@ -246,20 +246,31 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				Round:            1,
 				Display:          "ACTIVE",
 				BuilderCandidate: "agy",
-				Last:             &LastEvent{Kind: store.KindReport, Note: "unmarked"},
+				LastPayload:      &LastEvent{Kind: store.KindReport, Note: "unmarked"},
 			},
 			expectMid: "report in (unmarked)",
 		},
 		{
-			name: "switch",
+			name: "question",
 			binding: BindingStatus{
 				Name:             "api",
 				Round:            1,
 				Display:          "ACTIVE",
 				BuilderCandidate: "agy",
-				Last:             &LastEvent{Kind: store.KindSwitch},
+				LastPayload:      &LastEvent{Kind: store.KindQuestion},
 			},
-			expectMid: "r1 · agy · switch",
+			expectMid: "question in",
+		},
+		{
+			name: "answer",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindAnswer},
+			},
+			expectMid: "answered",
 		},
 		{
 			name: "last nil",
@@ -268,7 +279,7 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				Round:            1,
 				Display:          "ACTIVE",
 				BuilderCandidate: "agy",
-				Last:             nil,
+				LastPayload:      nil,
 			},
 			expectMid:   "no plan yet",
 			expectRight: "-- · ",
@@ -280,10 +291,21 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				Round:            1,
 				Display:          "ACTIVE",
 				BuilderCandidate: "",
-				Last:             &LastEvent{Kind: store.KindPlan},
+				LastPayload:      &LastEvent{Kind: store.KindPlan},
 			},
 			expectMid:   "r1 · plan sent",
 			noSeparator: true,
+		},
+		{
+			name: "candidate with no slash",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindPlan},
+			},
+			expectMid: "r1 · agy · plan sent",
 		},
 	}
 
@@ -306,6 +328,40 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				t.Errorf("line %q contains empty separator", plain)
 			}
 		})
+	}
+}
+
+// TestRenderStatusLineIgnoresBookkeepingLast pins that the statusline reads
+// LastPayload, not relay's own bookkeeping entries (Last): a binding whose
+// most recent log entry is a drift note must still show the plan, and the
+// age of that plan, not the age of the drift note.
+func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
+	now := baseTime
+	rep := Report{Bindings: []BindingStatus{
+		{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			Last:             &LastEvent{Kind: store.KindDrift, TS: now.Add(-1 * time.Second)},
+			LastPayload:      &LastEvent{Kind: store.KindPlan, TS: now.Add(-12 * time.Minute)},
+		},
+	}}
+
+	out := RenderStatusLine(rep, now, 80)
+	lines := splitLines(out)
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1", len(lines))
+	}
+	plain := stripSGR(lines[0])
+	if !strings.Contains(plain, "plan sent") {
+		t.Errorf("line %q does not contain %q", plain, "plan sent")
+	}
+	if strings.Contains(plain, "drift") {
+		t.Errorf("line %q must not mention drift: %q", plain, plain)
+	}
+	if !strings.HasSuffix(plain, " 12m · ACTIVE") {
+		t.Errorf("line %q does not have right cell beginning %q", plain, "12m · ")
 	}
 }
 

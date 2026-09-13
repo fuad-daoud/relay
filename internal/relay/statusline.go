@@ -63,7 +63,7 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 
 		mid := "r" + strconv.Itoa(b.Round)
 		if b.BuilderCandidate != "" {
-			mid += " · " + b.BuilderCandidate
+			mid += " · " + harnessSegment(b.BuilderCandidate)
 		}
 		mid += " · " + waiting(b)
 
@@ -104,27 +104,48 @@ func waiting(b BindingStatus) string {
 	if b.Nudge != nil {
 		return "nudged · " + NudgeText(*b.Nudge)
 	}
-	if b.Last == nil {
+	if b.LastPayload == nil {
 		return "no plan yet"
 	}
-	switch b.Last.Kind {
+	switch b.LastPayload.Kind {
 	case store.KindPlan:
 		return "plan sent"
 	case store.KindReport:
-		if b.Last.Note != "" {
-			return fmt.Sprintf("report in (%s)", b.Last.Note)
+		if b.LastPayload.Note != "" {
+			return fmt.Sprintf("report in (%s)", b.LastPayload.Note)
 		}
 		return "report in"
-	default:
-		return string(b.Last.Kind)
+	case store.KindQuestion:
+		return "question in"
+	case store.KindAnswer:
+		return "answered"
 	}
+	return ""
 }
 
 func age(b BindingStatus, now time.Time) string {
-	if b.Last == nil {
+	if b.LastPayload == nil {
 		return "--"
 	}
-	return AgeText(now.Sub(b.Last.TS))
+	return AgeText(now.Sub(b.LastPayload.TS))
+}
+
+// harnessSegment is the harness segment of a candidate token: the part
+// before its first "/" (agy, claude, opencode). A token with no "/" is
+// returned whole.
+//
+// Named harnessSegment rather than the plan's harness: this package already
+// imports internal/harness (see status.go et al.), and a package-level func
+// harness collides with that import identifier across every file in this
+// package (a Go package-block conflict, confirmed by the compiler) --
+// renaming the import instead would have touched files well outside this
+// task's declared scope. Deviation flagged in the report per plan
+// instructions.
+func harnessSegment(token string) string {
+	if i := strings.IndexByte(token, '/'); i >= 0 {
+		return token[:i]
+	}
+	return token
 }
 
 func truncate(s string, w int) string {
