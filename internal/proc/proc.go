@@ -37,9 +37,12 @@ const DefaultKillGrace = 5 * time.Second
 // the builder inherits it. Under memory pressure the kernel then prefers a
 // builder over `relay daemon` (#120). The write fails silently where there
 // is no /proc (macOS) or it is refused, and the builder runs as before.
+// The redirection sits inside a group so the shell's own "No such file"
+// for a missing /proc is silenced too, not only echo's stderr: sh applies
+// redirections left to right, and the open fails before 2>/dev/null.
 // The builder stays a child of this sh (no exec) so an OOM kill of the
 // builder still leaves a trailer.
-const supervisorScript = `echo 500 > /proc/self/oom_score_adj 2>/dev/null || true; "$@" </dev/null; echo "` + ExitTrailer + `$?"`
+const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true; "$@" </dev/null; echo "` + ExitTrailer + `$?"`
 
 // Runner is the local relay.Runner.
 type Runner struct {
