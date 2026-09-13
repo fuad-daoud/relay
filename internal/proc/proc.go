@@ -32,7 +32,14 @@ const DefaultKillGrace = 5 * time.Second
 // supervisorScript runs the builder with stdin closed and, whatever happens
 // to it, appends the trailer. Plain sh: no bash-isms. "$@" is the argv the
 // runner passes after the script name.
-const supervisorScript = `"$@" </dev/null; echo "` + ExitTrailer + `$?"`
+//
+// Before the builder starts, the supervisor raises its own oom_score_adj;
+// the builder inherits it. Under memory pressure the kernel then prefers a
+// builder over `relay daemon` (#120). The write fails silently where there
+// is no /proc (macOS) or it is refused, and the builder runs as before.
+// The builder stays a child of this sh (no exec) so an OOM kill of the
+// builder still leaves a trailer.
+const supervisorScript = `echo 500 > /proc/self/oom_score_adj 2>/dev/null || true; "$@" </dev/null; echo "` + ExitTrailer + `$?"`
 
 // Runner is the local relay.Runner.
 type Runner struct {
