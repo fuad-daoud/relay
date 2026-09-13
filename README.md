@@ -441,6 +441,25 @@ And because a popup takes focus the instant it opens, `Enter` on a binding
 that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 -- and only `y` proceeds; any other key returns to the list.
 
+## Status line
+
+`relay statusline` shows this planner's live bindings, one row each, under
+the Claude Code prompt; it shows nothing outside herdr, nothing on error, and
+never probes herdr.
+
+Add this to `~/.claude/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "relay statusline", "refreshInterval": 1 }
+```
+
+Two preconditions: `relay` must be on the `PATH` of the Claude Code process,
+and Claude Code must be started inside a herdr pane, so `HERDR_PANE_ID` is
+inherited.
+
+Each row is `○ name  rN · builder · what relay is waiting on  …  age · STATE`,
+where `age` is time since the last relayed message.
+
 ## Candidates
 
 A candidate is one way to fill a role, named by the token `harness/provider/model`. `harness` and `provider` are single segments; `model` is the rest, so `opencode/openrouter/z-ai/glm-5.3-flash` is one token. **relay ships no candidates**: which model you are entitled to run is a fact about your accounts, not about relay.

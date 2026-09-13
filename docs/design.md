@@ -301,7 +301,7 @@ Three display states cover everything: **ACTIVE** (someone is working), **NEEDS 
 - `relay log <name>` — every relayed message: round, direction, file, timestamp. The audit
   trail for "what did the planner actually tell the builder".
 - `relay ui` — interactive reader over the same: report, terminal, diff and log tabs.
-- `relay status --json` — feeds `~/.claude/statusline.py` so any pane can show `⇄ upjo r3`.
+- `relay statusline` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes herdr (spec `docs/specs/2026-09-13-statusline-design.md`).
 
 All agent rows are derived live from herdr on each call. Relay holds no truth herdr already
 has, except bindings and the round log, so `status` cannot disagree with reality.
