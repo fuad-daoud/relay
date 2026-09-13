@@ -8,11 +8,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +55,7 @@ Commands:
   diff      print a round's captured patch to stdout
   answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
   status    one row per binding: round, state, live pane status, what is pending [--all]
+  statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
@@ -199,6 +202,8 @@ func run(args []string) error {
 		return cmdAnswer(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
+	case "statusline":
+		return cmdStatusline(args[1:])
 	case "log":
 		return cmdLog(args[1:])
 	case "ui":
@@ -1240,6 +1245,33 @@ func cmdStatus(args []string) error {
 	}
 
 	fmt.Print(relay.RenderStatus(rep))
+	return nil
+}
+
+func cmdStatusline(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("usage: relay statusline")
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		return nil
+	}
+	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+	if err != nil || columns <= 0 {
+		columns = 0
+	}
+	rt, err := newRuntime()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay statusline: %v\n", err)
+		return nil
+	}
+	rep, err := relay.PlannerStatus(context.Background(), rt, pane)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay statusline: %v\n", err)
+		return nil
+	}
+	fmt.Print(relay.RenderStatusLine(rep, rt.Now(), columns))
 	return nil
 }
 
