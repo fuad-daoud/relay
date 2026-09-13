@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -461,6 +462,49 @@ func TestPlannerStatusEmptyPaneIsEmpty(t *testing.T) {
 	}
 	if len(rep.Bindings) != 0 {
 		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
+	}
+}
+
+func TestStatusLineWidth(t *testing.T) {
+	tests := []struct {
+		columns  int
+		override string
+		want     int
+	}{
+		{146, "", 142},
+		{146, "0", 146},
+		{146, "10", 136},
+		{146, "x", 142},
+		{146, "-1", 142},
+		{0, "", 0},
+		{-5, "0", 0},
+		{3, "", 1},
+	}
+
+	for _, tt := range tests {
+		got := StatusLineWidth(tt.columns, tt.override)
+		if got != tt.want {
+			t.Errorf("StatusLineWidth(%d, %q) = %d, want %d", tt.columns, tt.override, got, tt.want)
+		}
+	}
+}
+
+func TestShouldDrainStdin(t *testing.T) {
+	tests := []struct {
+		mode os.FileMode
+		want bool
+	}{
+		{os.ModeCharDevice, false},
+		{os.FileMode(0), true},
+		{os.ModeNamedPipe, true},
+		{os.ModeCharDevice | os.ModeDevice, false},
+	}
+
+	for _, tt := range tests {
+		got := ShouldDrainStdin(tt.mode)
+		if got != tt.want {
+			t.Errorf("ShouldDrainStdin(%v) = %v, want %v", tt.mode, got, tt.want)
+		}
 	}
 }
 

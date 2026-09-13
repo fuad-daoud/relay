@@ -4,6 +4,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// claudeCodeMargin is the number of cells Claude Code's chrome takes from
+// COLUMNS: measured 2026-09-14, 141 of 146 rendered before its own ellipsis
+// (#155).
+const claudeCodeMargin = 4
 
 var (
 	ansiDim      = "\x1b[38;5;245m"
@@ -165,6 +171,34 @@ func pad(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", w-n)
+}
+
+// StatusLineWidth is the row width the verb lays out to: columns, Claude
+// Code's own COLUMNS, minus its chrome. columns <= 0 means "not under Claude
+// Code" and returns 0, the renderer's own default-to-80 case. The margin is
+// override parsed as a non-negative integer when it parses as one, else
+// claudeCodeMargin. The result is never less than 1.
+func StatusLineWidth(columns int, override string) int {
+	if columns <= 0 {
+		return 0
+	}
+	margin := claudeCodeMargin
+	if n, err := strconv.Atoi(override); err == nil && n >= 0 {
+		margin = n
+	}
+	if w := columns - margin; w > 1 {
+		return w
+	}
+	return 1
+}
+
+// ShouldDrainStdin reports whether the verb should drain stdin before
+// rendering: true for anything that is not a character device (a pipe,
+// Claude Code's common case, or a regular file), false for a tty, so a
+// human running the verb by hand gets it back at once instead of blocking
+// on EOF that will never come.
+func ShouldDrainStdin(mode os.FileMode) bool {
+	return mode&os.ModeCharDevice == 0
 }
 
 // PlannerStatus filters stored bindings to one planner pane and builds rows
