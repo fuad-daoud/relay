@@ -93,6 +93,26 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 	}
 }
 
+// The supervisor raises its own oom_score_adj before running the builder,
+// and the builder inherits it, so under memory pressure the kernel takes a
+// builder before `relay daemon` (spec 2026-09-13-headless-recovery §4.2).
+func TestStartedProcessInheritsRaisedOOMScore(t *testing.T) {
+	if _, err := os.Stat("/proc/self/oom_score_adj"); err != nil {
+		t.Skip("no /proc/self/oom_score_adj on this platform")
+	}
+	r := New()
+	h, log := start(t, r, "cat", "/proc/self/oom_score_adj")
+	waitGone(t, r, h, 5*time.Second)
+
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if got, want := string(data), "500\n"+ExitTrailer+"0\n"; got != want {
+		t.Errorf("log = %q, want %q (builder must see oom_score_adj 500)", got, want)
+	}
+}
+
 func TestStartedProcessIsInItsOwnGroupAndKillReturnsWithinGrace(t *testing.T) {
 	r := New()
 	r.KillGrace = 2 * time.Second

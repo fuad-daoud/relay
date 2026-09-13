@@ -10,9 +10,15 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/relay daemon --interval 2s
 Restart=on-failure
 RestartSec=5
-# The daemon holds no long-lived state of its own; it rebuilds from
-# ~/.local/state/relay and a live herdr query on every start.
-MemoryMax=128M
+# No MemoryMax: headless builders (relay add --headless) are children of
+# the daemon and share this unit's cgroup. A cap sized for the daemon
+# (once 128M) OOM-killed a single `claude -p`, and the default
+# OOMPolicy=stop then took the daemon down with it (#120).
+# An OOM-killed builder is an exited builder: the daemon sees it on the
+# next tick and switches or halts as policy says. The daemon itself
+# holds no long-lived state; it rebuilds from ~/.local/state/relay and a
+# live herdr query on every start.
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target
