@@ -164,6 +164,10 @@ func Status(ctx context.Context, rt Runtime) (Report, error) {
 		return Report{}, fmt.Errorf("list agents: %w", err)
 	}
 
+	return buildReport(ctx, rt, bindings, agents)
+}
+
+func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agents []herdr.Agent) (Report, error) {
 	// Computed once, not per binding: it spans every binding, so it does not
 	// vary across rows.
 	known := knownEndpoints(bindings)

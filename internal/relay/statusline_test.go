@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -305,5 +306,122 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				t.Errorf("line %q contains empty separator", plain)
 			}
 		})
+	}
+}
+
+func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
+	t.Helper()
+	rt := newRuntime(t, f)
+	bindings := []store.Binding{
+		{
+			Name:             "zeta",
+			CWD:              "/a",
+			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "alpha",
+			CWD:              "/b",
+			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "other",
+			CWD:              "/c",
+			Planner:          store.Endpoint{PaneID: "w9:p1"},
+			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "finished",
+			CWD:              "/d",
+			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateDone,
+		},
+	}
+	for _, b := range bindings {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save(%s): %v", b.Name, err)
+		}
+	}
+	return rt
+}
+
+func TestPlannerStatusFiltersToOnePane(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := setupPlannerStatusStore(t, f)
+	ctx := context.Background()
+
+	rep, err := PlannerStatus(ctx, rt, "w2:p3")
+	if err != nil {
+		t.Fatalf("PlannerStatus: %v", err)
+	}
+	if len(rep.Bindings) != 2 {
+		t.Fatalf("got %d bindings, want 2", len(rep.Bindings))
+	}
+	if rep.Bindings[0].Name != "alpha" || rep.Bindings[1].Name != "zeta" {
+		t.Errorf("got bindings [%s, %s], want [alpha, zeta]", rep.Bindings[0].Name, rep.Bindings[1].Name)
+	}
+	for i, b := range rep.Bindings {
+		if b.PlannerPane != "w2:p3" {
+			t.Errorf("row %d PlannerPane = %q, want %q", i, b.PlannerPane, "w2:p3")
+		}
+		if b.PlannerStatus != "gone" {
+			t.Errorf("row %d PlannerStatus = %q, want gone", i, b.PlannerStatus)
+		}
+		if len(b.Foreign) != 0 {
+			t.Errorf("row %d Foreign not empty: %+v", i, b.Foreign)
+		}
+	}
+
+	repOther, err := PlannerStatus(ctx, rt, "w9:p1")
+	if err != nil {
+		t.Fatalf("PlannerStatus(w9:p1): %v", err)
+	}
+	if len(repOther.Bindings) != 1 || repOther.Bindings[0].Name != "other" {
+		t.Errorf("got %d bindings for w9:p1, want only 'other'", len(repOther.Bindings))
+	}
+}
+
+func TestPlannerStatusEmptyPaneIsEmpty(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := setupPlannerStatusStore(t, f)
+	ctx := context.Background()
+
+	rep, err := PlannerStatus(ctx, rt, "")
+	if err != nil {
+		t.Fatalf("PlannerStatus: %v", err)
+	}
+	if len(rep.Bindings) != 0 {
+		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
+	}
+}
+
+func TestPlannerStatusNeverProbesHerdr(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := setupPlannerStatusStore(t, f)
+	ctx := context.Background()
+
+	f.onList = func() { t.Fatal("PlannerStatus called ListAgents") }
+	rep, err := PlannerStatus(ctx, rt, "w2:p3")
+	if err != nil {
+		t.Fatalf("PlannerStatus: %v", err)
+	}
+	if len(rep.Bindings) != 2 {
+		t.Errorf("got %d bindings, want 2", len(rep.Bindings))
+	}
+	if f.listCalls != 0 {
+		t.Errorf("f.listCalls = %d, want 0", f.listCalls)
 	}
 }

@@ -2,6 +2,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -143,4 +144,23 @@ func pad(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", w-n)
+}
+
+// PlannerStatus filters stored bindings to one planner pane and builds rows
+// through buildReport from the store alone per spec §4.1. It never probes herdr.
+func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error) {
+	if pane == "" {
+		return Report{}, nil
+	}
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return Report{}, err
+	}
+	var kept []store.Binding
+	for _, b := range bindings {
+		if b.Planner.PaneID == pane && b.State != store.StateDone {
+			kept = append(kept, b)
+		}
+	}
+	return buildReport(ctx, rt, kept, nil)
 }
