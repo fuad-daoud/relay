@@ -418,7 +418,7 @@ func TestE2E(t *testing.T) {
 		}
 		s.waitEcho(t, b.Builder.PaneID, "keep talking")
 
-		moved := startGrace + 6*time.Second + nudgeGrace - 5*time.Second // would be quiescent had the screen not moved
+		moved := startGrace + 6*time.Second + nudgeGrace + 5*time.Second // past nudgeGrace: quiescent, had the screen not moved
 		b = reconcileAt(t, s, rt, clock, moved, b)
 		if b.Round != 1 {
 			t.Fatalf("round = %d, want 1: a screen that moved since the fingerprint is not quiescent", b.Round)
