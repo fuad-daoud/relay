@@ -926,6 +926,12 @@ record, not maintained against the code.
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
 stdlib-only, write the test, and make sure `make check` passes.
 
+`make e2e` runs one relay round -- bind, send, reconcile, delivery -- against
+a private herdr session it creates and deletes, with two shell scripts
+standing in for the agents. It needs `herdr` on PATH and skips otherwise; it
+is not part of `make check` and does not run in CI. `RELAY_E2E_KEEP=1` leaves
+the session up for a look.
+
 ## License
 
 [MIT](LICENSE) © Fuad Daoud
