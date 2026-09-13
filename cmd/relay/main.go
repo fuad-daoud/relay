@@ -1252,7 +1252,9 @@ func cmdStatusline(args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("usage: relay statusline")
 	}
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	if fi, err := os.Stdin.Stat(); err != nil || relay.ShouldDrainStdin(fi.Mode()) {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	}
 	pane := os.Getenv("HERDR_PANE_ID")
 	if pane == "" {
 		return nil
@@ -1261,6 +1263,7 @@ func cmdStatusline(args []string) error {
 	if err != nil || columns <= 0 {
 		columns = 0
 	}
+	columns = relay.StatusLineWidth(columns, os.Getenv("RELAY_STATUSLINE_MARGIN"))
 	rt, err := newRuntime()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay statusline: %v\n", err)

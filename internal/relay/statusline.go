@@ -4,6 +4,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// claudeCodeMargin is the number of cells Claude Code's chrome takes from
+// COLUMNS: measured 2026-09-14, 141 of 146 rendered before its own ellipsis
+// (#155).
+const claudeCodeMargin = 4
 
 var (
 	ansiDim      = "\x1b[38;5;245m"
@@ -63,7 +69,7 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 
 		mid := "r" + strconv.Itoa(b.Round)
 		if b.BuilderCandidate != "" {
-			mid += " · " + b.BuilderCandidate
+			mid += " · " + harnessSegment(b.BuilderCandidate)
 		}
 		mid += " · " + waiting(b)
 
@@ -104,27 +110,48 @@ func waiting(b BindingStatus) string {
 	if b.Nudge != nil {
 		return "nudged · " + NudgeText(*b.Nudge)
 	}
-	if b.Last == nil {
+	if b.LastPayload == nil {
 		return "no plan yet"
 	}
-	switch b.Last.Kind {
+	switch b.LastPayload.Kind {
 	case store.KindPlan:
 		return "plan sent"
 	case store.KindReport:
-		if b.Last.Note != "" {
-			return fmt.Sprintf("report in (%s)", b.Last.Note)
+		if b.LastPayload.Note != "" {
+			return fmt.Sprintf("report in (%s)", b.LastPayload.Note)
 		}
 		return "report in"
-	default:
-		return string(b.Last.Kind)
+	case store.KindQuestion:
+		return "question in"
+	case store.KindAnswer:
+		return "answered"
 	}
+	return ""
 }
 
 func age(b BindingStatus, now time.Time) string {
-	if b.Last == nil {
+	if b.LastPayload == nil {
 		return "--"
 	}
-	return AgeText(now.Sub(b.Last.TS))
+	return AgeText(now.Sub(b.LastPayload.TS))
+}
+
+// harnessSegment is the harness segment of a candidate token: the part
+// before its first "/" (agy, claude, opencode). A token with no "/" is
+// returned whole.
+//
+// Named harnessSegment rather than the plan's harness: this package already
+// imports internal/harness (see status.go et al.), and a package-level func
+// harness collides with that import identifier across every file in this
+// package (a Go package-block conflict, confirmed by the compiler) --
+// renaming the import instead would have touched files well outside this
+// task's declared scope. Deviation flagged in the report per plan
+// instructions.
+func harnessSegment(token string) string {
+	if i := strings.IndexByte(token, '/'); i >= 0 {
+		return token[:i]
+	}
+	return token
 }
 
 func truncate(s string, w int) string {
@@ -144,6 +171,34 @@ func pad(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", w-n)
+}
+
+// StatusLineWidth is the row width the verb lays out to: columns, Claude
+// Code's own COLUMNS, minus its chrome. columns <= 0 means "not under Claude
+// Code" and returns 0, the renderer's own default-to-80 case. The margin is
+// override parsed as a non-negative integer when it parses as one, else
+// claudeCodeMargin. The result is never less than 1.
+func StatusLineWidth(columns int, override string) int {
+	if columns <= 0 {
+		return 0
+	}
+	margin := claudeCodeMargin
+	if n, err := strconv.Atoi(override); err == nil && n >= 0 {
+		margin = n
+	}
+	if w := columns - margin; w > 1 {
+		return w
+	}
+	return 1
+}
+
+// ShouldDrainStdin reports whether the verb should drain stdin before
+// rendering: true for anything that is not a character device (a pipe,
+// Claude Code's common case, or a regular file), false for a tty, so a
+// human running the verb by hand gets it back at once instead of blocking
+// on EOF that will never come.
+func ShouldDrainStdin(mode os.FileMode) bool {
+	return mode&os.ModeCharDevice == 0
 }
 
 // PlannerStatus filters stored bindings to one planner pane and builds rows

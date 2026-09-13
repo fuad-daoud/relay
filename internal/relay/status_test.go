@@ -980,6 +980,86 @@ func TestStatusRowCopiesHarnessSubAgents(t *testing.T) {
 	}
 }
 
+// TestStatusLastPayloadSkipsBookkeepingKinds pins that LastPayload walks the
+// log for the last plan/report/question/answer entry, skipping relay's own
+// bookkeeping kinds (drift, diff, ...) that Last does not skip.
+func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	// Log now reads: plan (from sentBinding), then drift.
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindDrift,
+	}); err != nil {
+		t.Fatalf("AppendLog drift: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got := rep.Bindings[0]
+	if got.Last == nil || got.Last.Kind != store.KindDrift {
+		t.Fatalf("Last = %+v, want KindDrift", got.Last)
+	}
+	if got.LastPayload == nil || got.LastPayload.Kind != store.KindPlan {
+		t.Fatalf("LastPayload = %+v, want KindPlan", got.LastPayload)
+	}
+
+	// Log now reads: plan, drift, diff, report (with a note).
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindDiff,
+	}); err != nil {
+		t.Fatalf("AppendLog diff: %v", err)
+	}
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindReport, Note: "unmarked",
+	}); err != nil {
+		t.Fatalf("AppendLog report: %v", err)
+	}
+
+	rep, err = Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got = rep.Bindings[0]
+	if got.Last == nil || got.Last.Kind != store.KindReport {
+		t.Fatalf("Last = %+v, want KindReport", got.Last)
+	}
+	if got.LastPayload == nil || got.LastPayload.Kind != store.KindReport {
+		t.Fatalf("LastPayload = %+v, want KindReport", got.LastPayload)
+	}
+	if got.LastPayload.Note != "unmarked" {
+		t.Errorf("LastPayload.Note = %q, want %q", got.LastPayload.Note, "unmarked")
+	}
+
+	// A fresh binding with no Send has no log entries at all.
+	f2 := &fakeHerdr{}
+	rt2, _ := seedBound(t, f2)
+	f2.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	rep2, err := Status(context.Background(), rt2)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	// NOTE (deviation from the plan text): the plan says this binding's Last
+	// should also be nil. It is not: seedBound's Bind call passes an explicit
+	// Candidate, and create() (bind.go) unconditionally logs a KindPick entry
+	// for HowExplicit resolutions, regardless of Send. That logging is
+	// existing, out-of-scope behaviour this plan does not touch. LastPayload
+	// is unaffected -- KindPick is not a payload kind -- so the assertion
+	// that matters to this plan (LastPayload nil on an unsent binding) still
+	// holds and is checked below.
+	got2 := rep2.Bindings[0]
+	if got2.Last == nil || got2.Last.Kind != store.KindPick {
+		t.Errorf("Last = %+v, want the KindPick entry Bind logs for an explicit candidate", got2.Last)
+	}
+	if got2.LastPayload != nil {
+		t.Errorf("LastPayload = %+v, want nil", got2.LastPayload)
+	}
+}
+
 func TestBindingStatusSubAgentsJSON(t *testing.T) {
 	withValue, _ := json.Marshal(BindingStatus{Name: "b", SubAgents: "hidden"})
 	if !strings.Contains(string(withValue), `"sub_agents":"hidden"`) {

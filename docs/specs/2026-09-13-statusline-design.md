@@ -13,6 +13,7 @@ the settings snippet); the #114 command-surface freeze, by exactly one verb
 (claude.ai/code/artifact/7faf7517-5a15-42cc-82ce-6c54b669d5b9) against
 Claude Code's own subagent list; the decisions below are the ones taken
 there.
+**Amended by:** docs/specs/2026-09-14-statusline-edges-design.md (§3.2, §3.3, §4.4, §5, §6).
 **Status:** draft; plan to follow at `docs/plans/2026-09-13-statusline.md`.
 
 ## 1. System overview
