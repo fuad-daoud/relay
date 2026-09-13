@@ -371,6 +371,66 @@ func TestE2E(t *testing.T) {
 			t.Errorf("report must be delivered as written, got %q err=%v", body, err)
 		}
 	})
+
+	t.Run("still_screen_scrapes", func(t *testing.T) {
+		b := s.bindBuilder(t, rt, "scrape", planner)
+		sendAt(t, rt, clock, 0, "scrape")
+		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
+
+		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
+		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
+		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
+		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b) // fingerprint after the echo
+		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second+nudgeGrace+10*time.Second, b)
+		if b.Round != 2 {
+			t.Fatalf("round = %d, want 2 after the scrape", b.Round)
+		}
+		if e := reportEntry(t, rt, "scrape", 1); e.Note != "scraped" {
+			t.Errorf("note = %q, want scraped", e.Note)
+		}
+		body, err := os.ReadFile(rt.Store.ReportPath("scrape", 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(body), "<!-- SCRAPED") {
+			t.Errorf("scraped report must be labelled, got %q", body)
+		}
+		if !strings.Contains(string(body), "I implemented the guard clause") {
+			t.Errorf("scrape must contain the real pane's text, got %q", body)
+		}
+	})
+
+	t.Run("screen_movement_resets_grace", func(t *testing.T) {
+		b := s.bindBuilder(t, rt, "moving", planner)
+		sendAt(t, rt, clock, 0, "moving")
+		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
+
+		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
+		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
+		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
+		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b) // fingerprint after the echo
+
+		// Something else talks to the builder: the screen moves.
+		if err := s.herdr.Prompt(context.Background(), b.Builder.PaneID, "keep talking"); err != nil {
+			t.Fatalf("prompt: %v", err)
+		}
+		s.waitEcho(t, b.Builder.PaneID, "keep talking")
+
+		moved := startGrace + 6*time.Second + nudgeGrace - 5*time.Second // would be quiescent had the screen not moved
+		b = reconcileAt(t, s, rt, clock, moved, b)
+		if b.Round != 1 {
+			t.Fatalf("round = %d, want 1: a screen that moved since the fingerprint is not quiescent", b.Round)
+		}
+		b = reconcileAt(t, s, rt, clock, moved+nudgeGrace+5*time.Second, b)
+		if b.Round != 2 {
+			t.Fatalf("round = %d, want 2: still for nudgeGrace after the move", b.Round)
+		}
+		if e := reportEntry(t, rt, "moving", 1); e.Note != "scraped" {
+			t.Errorf("note = %q, want scraped", e.Note)
+		}
+	})
 }
 
 const e2eCandidateJSON = `[{"harness":"agy","provider":"e2e","model":"shim","roles":["builder"]}]`
