@@ -1537,6 +1537,132 @@ func TestBindHeadlessRefusesAdoptAndResumeBeforeListingAgents(t *testing.T) {
 	}
 }
 
+// A binding's mode is fixed at creation. Rebinding a headless binding whose
+// process is gone must produce another headless endpoint, not a pane (#119).
+func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   4,
+		State:   store.StateBroken,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{
+			AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless,
+			PID: 4321, StartedAt: 1_700_000_000, LogPath: "/state/webshop/004-builder.log",
+		},
+		BuilderCandidate: testOpencodeRef,
+	}
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	rt := newRuntime(t, f)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+	fr := newFakeRunner()
+	fr.script(4321, false) // the old process is gone
+	rt.Runner = fr
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Fatalf("a headless rebind must open no tab and start no agent: tabs=%+v starts=%+v", f.tabs, f.starts)
+	}
+	ep := got.Builder
+	if !ep.Headless() || ep.Mode != store.ModeHeadless {
+		t.Errorf("Mode = %q, want headless", ep.Mode)
+	}
+	if ep.PaneID != "" || ep.SessionID != "" || ep.PID != 0 || ep.LogPath != "" || ep.StartedAt != 0 {
+		t.Errorf("rebound endpoint must be a fresh headless endpoint with nothing running: %+v", ep)
+	}
+	if got.BuilderCandidate != testAgyRef || res.How != HowOrder {
+		t.Errorf("candidate = %q (%+v), want the order's first, %s", got.BuilderCandidate, res, testAgyRef)
+	}
+	if got.State != store.StateActive || got.Round != 4 {
+		t.Errorf("state/round = %s/%d, want active/4", got.State, got.Round)
+	}
+	stored, err := rt.Store.Load("webshop")
+	if err != nil || !stored.Builder.Headless() {
+		t.Errorf("stored builder: %+v (%v)", stored.Builder, err)
+	}
+}
+
+// herdr's agent list cannot see a process, so a headless binding's liveness
+// is the Runner's answer. A live process refuses the rebind (§4.3).
+func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   4,
+		State:   store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder: store.Endpoint{
+			AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless,
+			PID: 4321, StartedAt: 1_700_000_000, LogPath: "/state/webshop/004-builder.log",
+		},
+		BuilderCandidate: testOpencodeRef,
+	}
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	rt := newRuntime(t, f)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+	fr := newFakeRunner()
+	fr.script(4321, true) // still running
+	rt.Runner = fr
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrBuilderAlive) {
+		t.Fatalf("err = %v, want ErrBuilderAlive", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("a refused rebind must spawn nothing: tabs=%+v starts=%+v", f.tabs, f.starts)
+	}
+	stored, err := rt.Store.Load("webshop")
+	if err != nil || stored.Builder.PID != 4321 || !stored.Builder.Headless() {
+		t.Errorf("a refused rebind must leave the binding untouched: %+v (%v)", stored.Builder, err)
+	}
+}
+
+// A pane cannot replace a process builder; the mode is fixed at creation.
+func TestBindResumeRefusesAPaneForAHeadlessBinding(t *testing.T) {
+	existing := store.Binding{
+		Name:             "webshop",
+		CWD:              "/repo",
+		Round:            4,
+		State:            store.StateBroken,
+		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:          store.Endpoint{AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless},
+		BuilderCandidate: testOpencodeRef,
+	}
+	f := &fakeHerdr{agents: []herdr.Agent{
+		plannerAgent(),
+		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w2:p9", CWD: "/repo", Session: herdr.Session{Value: "stray-sess"}},
+	}}
+	rt := newRuntime(t, f)
+	rt.Runner = newFakeRunner()
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, BuilderPane: "w2:p9", PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if !errors.Is(err, ErrHeadlessAdopt) {
+		t.Fatalf("err = %v, want ErrHeadlessAdopt", err)
+	}
+	stored, err := rt.Store.Load("webshop")
+	if err != nil || !stored.Builder.Headless() || stored.Builder.PaneID != "" {
+		t.Errorf("a refused rebind must leave the binding untouched: %+v (%v)", stored.Builder, err)
+	}
+}
+
 func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
 	// The agent name is validated even though no herdr agent is started:
 	// the name is what status, log and a later pane-mode rebind identify

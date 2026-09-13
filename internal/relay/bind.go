@@ -126,6 +126,9 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	builder would abandon a round mid-flight and strand its pane.
 //	A binding whose builder cannot be found by session identity is
 //	treated as gone, even if another agent now occupies its former pane.
+//	A headless binding's builder is a process; it is alive when
+//	the Runner says so, and a pane can never replace it
+//	(ErrHeadlessAdopt).
 //
 // Postconditions: Planner points at the caller. A rebind of a DONE binding is
 //
@@ -138,9 +141,11 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	a tree that changed hands says nothing about a builder that no
 //	longer exists. Round, CWD, Name, RoundBaselineTree and the round
 //	log are untouched.
+//	The binding's mode is untouched too: a headless binding
+//	rebinds to a headless endpoint, a pane binding to a pane.
 //
-// Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; a wrapped
-// herdr failure.
+// Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; ErrHeadlessAdopt;
+// ErrRunnerUnavailable; a wrapped herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
 	rebinding := opts.Rebind || opts.Candidate != "" || opts.BuilderPane != ""
 
@@ -157,30 +162,53 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if b.State == store.StateDone {
 			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-		}
-		if _, alive := FindAgent(agents, b.Builder); alive {
-			return store.Binding{}, Resolution{}, ErrBuilderAlive
-		}
-		// Reached only when the builder was NOT located. Without a recorded
-		// session that miss is ambiguous: the pane id it would match on is the
-		// one a workspace move invalidates.
-		//
-		// Only refuse when a round is open. That is where #21's harm lives --
-		// orphaning a builder "still running the round" -- and it is what
-		// keeps #20's recovery (PR #22) working: a session-less builder with
-		// nothing in flight still rebinds without ceremony.
-		//
-		// Keyed on live evidence rather than b.State so the guard does not
-		// depend on whether the daemon has ticked since the pane went away.
-		d := DiagnoseBuilder(b)
-		if !d.Identified && d.RoundOpen && !opts.AssumeDead {
-			return store.Binding{}, Resolution{}, fmt.Errorf(
-				"%w: relay cannot tell a dead builder for %q from a moved pane. "+
-					"Check %s is really gone, then re-run with --assume-dead",
-				ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
+		if b.Builder.Headless() {
+			// A binding's mode is fixed at creation (#119). The old builder
+			// is a process, so herdr's agent list says nothing about it:
+			// ask the Runner. A PID has no "moved pane" ambiguity, so the
+			// DiagnoseBuilder guard below does not apply.
+			if opts.BuilderPane != "" {
+				return store.Binding{}, Resolution{}, ErrHeadlessAdopt
+			}
+			if rt.Runner == nil {
+				return store.Binding{}, Resolution{}, ErrRunnerUnavailable
+			}
+			if b.Builder.PID != 0 {
+				alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+				if err != nil {
+					return store.Binding{}, Resolution{}, fmt.Errorf("check builder process: %w", err)
+				}
+				if alive {
+					return store.Binding{}, Resolution{}, ErrBuilderAlive
+				}
+			}
+			opts.Headless = true
+		} else {
+			agents, err := rt.Herdr.ListAgents(ctx)
+			if err != nil {
+				return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
+			}
+			if _, alive := FindAgent(agents, b.Builder); alive {
+				return store.Binding{}, Resolution{}, ErrBuilderAlive
+			}
+			// Reached only when the builder was NOT located. Without a recorded
+			// session that miss is ambiguous: the pane id it would match on is the
+			// one a workspace move invalidates.
+			//
+			// Only refuse when a round is open. That is where #21's harm lives --
+			// orphaning a builder "still running the round" -- and it is what
+			// keeps #20's recovery (PR #22) working: a session-less builder with
+			// nothing in flight still rebinds without ceremony.
+			//
+			// Keyed on live evidence rather than b.State so the guard does not
+			// depend on whether the daemon has ticked since the pane went away.
+			d := DiagnoseBuilder(b)
+			if !d.Identified && d.RoundOpen && !opts.AssumeDead {
+				return store.Binding{}, Resolution{}, fmt.Errorf(
+					"%w: relay cannot tell a dead builder for %q from a moved pane. "+
+						"Check %s is really gone, then re-run with --assume-dead",
+					ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
+			}
 		}
 		builder, res, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
 		if err != nil {
