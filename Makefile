@@ -31,6 +31,13 @@ check:
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t"; done
 
+# e2e runs one relay round against a private, detached herdr session with
+# scripted agents (docs/specs/2026-09-12-e2e-real-herdr-design.md). Local
+# only: it needs herdr on PATH and skips otherwise. Not part of check.
+e2e:
+	go vet -tags e2e ./internal/relay
+	go test -tags e2e -count=1 -run TestE2E ./internal/relay -v
+
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay
 
