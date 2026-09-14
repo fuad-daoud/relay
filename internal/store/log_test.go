@@ -252,4 +252,3 @@ func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
 		t.Errorf("round trip: got %+v, want %+v", out, in)
 	}
 }
-

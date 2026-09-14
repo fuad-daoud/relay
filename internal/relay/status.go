@@ -49,7 +49,7 @@ type BindingStatus struct {
 	// Last, which is the most recent entry of any kind including relay's own
 	// bookkeeping (drift, pick, switch, exit, diff). Nil when the log has
 	// none.
-	LastPayload *LastEvent   `json:"last_payload,omitempty"`
+	LastPayload *LastEvent `json:"last_payload,omitempty"`
 	// LastClose is the newest diff entry's commit facts; nil when the log
 	// has no diff entry.
 	LastClose *CloseInfo `json:"last_close,omitempty"`
@@ -57,8 +57,8 @@ type BindingStatus struct {
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
 	// the expected state.
-	Dirty bool `json:"dirty"`
-	Pending     *PendingInfo `json:"pending,omitempty"`
+	Dirty   bool         `json:"dirty"`
+	Pending *PendingInfo `json:"pending,omitempty"`
 	// Nudge is set while the current round has been nudged and no report has
 	// arrived: when relay nudged, and how long the builder's terminal has been
 	// unchanged against the grace after which relay scrapes it. Nil otherwise.

@@ -266,4 +266,3 @@ func TestBindingCommitFactFieldsRoundTripAndAreOmittedWhenEmpty(t *testing.T) {
 		}
 	})
 }
-

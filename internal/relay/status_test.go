@@ -1191,4 +1191,3 @@ func TestRenderStatusOmitsDirtyWhenClean(t *testing.T) {
 		t.Errorf("rendered dirty from LastClose instead of Dirty:\n%s", out)
 	}
 }
-

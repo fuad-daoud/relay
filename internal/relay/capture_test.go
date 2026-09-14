@@ -515,5 +515,3 @@ func TestDiffTextWithCommitFacts(t *testing.T) {
 		})
 	}
 }
-
-
