@@ -1111,3 +1111,57 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 		t.Errorf("a builder that wrote its marker is never killed: %+v", fr.kills)
 	}
 }
+
+func TestAppendLogMarker(t *testing.T) {
+	t.Run("appends in order", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "builder.log")
+		if err := os.WriteFile(p, []byte("first line\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t1 := time.Date(2026, 9, 14, 10, 15, 30, 0, time.UTC)
+		t2 := time.Date(2026, 9, 14, 10, 16, 45, 0, time.UTC)
+		appendLogMarker(p, t1, "stopped: done")
+		appendLogMarker(p, t2, "switched to x/y/z (why)")
+
+		want := fmt.Sprintf("first line\n--- relay %s: stopped: done ---\n--- relay %s: switched to x/y/z (why) ---\n",
+			t1.Local().Format("15:04:05"),
+			t2.Local().Format("15:04:05"),
+		)
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("got %q, want %q", string(got), want)
+		}
+	})
+
+	t.Run("creates the file", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "builder.log")
+		t1 := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+		appendLogMarker(p, t1, "stopped: done")
+
+		want := fmt.Sprintf("--- relay %s: stopped: done ---\n", t1.Local().Format("15:04:05"))
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("got %q, want %q", string(got), want)
+		}
+	})
+
+	t.Run("empty path is a no-op and unwritable path does not panic", func(t *testing.T) {
+		appendLogMarker("", time.Now(), "stopped: done")
+
+		dir := t.TempDir()
+		appendLogMarker(dir, time.Now(), "stopped: done")
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() {
+			t.Errorf("%s is no longer a directory", dir)
+		}
+	})
+}
