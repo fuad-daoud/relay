@@ -329,8 +329,9 @@ What is different from a pane builder:
   pid P since HH:MM` and the log's last three lines as `log` rows.
   `relay ui`'s terminal tab shows the log file.
 - **Exit without a report** is logged as an `exit` entry (exit code and the
-  log's last 20 lines) and the daemon switches builders, up to `max_switches`,
-  exactly as a vanished pane does; then `NEEDS YOU`.
+  log's last 20 lines) and the daemon switches builders, up to `max_switches`
+  (a switch caused by a rate-limit gate is not counted), exactly as a
+  vanished pane does; then `NEEDS YOU`.
 - **`done` and `unbind` stop the process** if a round is running. A stop that
   fails is reported, and the binding is still done or unbound. The round budget
   never kills anything, for headless as for panes: it flags `NEEDS YOU` and
@@ -338,8 +339,13 @@ What is different from a pane builder:
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 
-Rate limits are still yours to declare: relay shows the log, it never reads it
-for meaning.
+When a round stops -- exit without the marker, a quiescent pane, or the
+round budget -- relay scans the builder's last output for the harness's
+rate-limit text and records a `rate_limited` gate (`source relay`, the
+matched line) on a match, parsing the line's own reset time when it names
+one (`Resets in 2h48m52s`, `resets 7pm`) or using `limit_gate_default_ms`
+otherwise, then switches uncounted toward `max_switches`. `relay
+unavailable` still overrides; `relay available` undoes a false positive.
 
 ### Round budget
 
@@ -511,6 +517,7 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 - `roles` — non-empty list of roles from `builder`, `reviewer`, `researcher`. Required.
 - `tree` — `binding` (the default) or `none` (which `relay ask` refuses today).
 - `extra_args` — appended verbatim after what relay renders.
+- `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
 
 A file that does not validate stops every relay command with a message naming the entry; a missing file is zero candidates.
 
@@ -578,7 +585,8 @@ candidates in, per role:
                 "claude/anthropic/sonnet",
                 "opencode/openrouter/z-ai/glm-5.3-flash"]
   },
-  "max_switches": 2
+  "max_switches": 2,
+  "limit_gate_default_ms": 3600000
 }
 ```
 
@@ -591,6 +599,9 @@ error, because removing a candidate must not stop every command -- and
 `relay policy` and `relay doctor` warn about it. `max_switches` bounds
 how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
+`limit_gate_default_ms` is how long a rate limit relay detects itself
+gates the provider when the matched line names no reset time; absent
+defaults to one hour.
 
 `relay policy` shows what relay would do right now:
 
