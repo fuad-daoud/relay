@@ -444,6 +444,90 @@ func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
 	}
 }
 
+func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+
+	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
+	if data, err := os.ReadFile(logPath); err == nil {
+		if strings.Contains(string(data), "--- relay") {
+			t.Fatalf("log already contains relay marker before switch: %s", string(data))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error reading log before switch: %v", err)
+	}
+
+	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantSuffix := ": switched to " + testClaudeRef + " (rate-limited) ---"
+	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
+		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "--- relay ") {
+		t.Errorf("last line = %q, want prefix --- relay ", lines[len(lines)-1])
+	}
+}
+
+func TestSwitchBuilderPaneWritesNoLog(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentSwitchable(t, f)
+
+	got, err := reconcile(t, rt, b, gone())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got, err = reconcile(t, at(rt, 31*time.Second), got, gone())
+	if err != nil {
+		t.Fatalf("Reconcile at +31s: %v", err)
+	}
+	if got.RoundSwitches != 1 {
+		t.Fatalf("RoundSwitches = %d, want 1", got.RoundSwitches)
+	}
+	logPath := rt.Store.BuilderLogPath(got.Name, got.Round)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("pane switch created a log file: %s", logPath)
+	}
+}
+
+func TestSwitchBuilderHeadlessMarkerSurvivesStartFailure(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.startErr = errors.New("claude: not found")
+
+	got, err := switchHeadless(t, rt, b, "exited", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+
+	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantSuffix := ": switched to " + testClaudeRef + " (exited) ---"
+	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
+		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "--- relay ") {
+		t.Errorf("last line = %q, want prefix --- relay ", lines[len(lines)-1])
+	}
+}
+
 // exits returns the exit entries in webshop's log.
 func exits(t *testing.T, rt Runtime) []store.LogEntry {
 	t.Helper()

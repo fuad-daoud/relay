@@ -135,6 +135,10 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, err
 	}
 
+	if b.Builder.Headless() {
+		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "switched to "+res.Token()+" ("+reason+")")
+	}
+
 	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 	if b.Builder.Headless() {
 		started, err := startRound(ctx, rt, b, text)
