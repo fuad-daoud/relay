@@ -228,7 +228,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			if g.Note != "" {
 				reason = "rate-limited: " + g.Note
 			}
-			return switchBuilder(ctx, rt, tx, b, reason, true)
+			return switchBuilder(ctx, rt, tx, b, reason, true, false)
 		}
 	}
 
@@ -283,7 +283,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if !switchable {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, b.Builder.LogPath))
 	}
-	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false)
+	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
 }
 
 // ErrStopFailed reports that relay marked a binding done or unbound but

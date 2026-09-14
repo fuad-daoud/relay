@@ -170,7 +170,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		}
 		b.State = store.StateBroken
 		if switchable && now.Sub(b.BuilderMissingSince) >= switchGrace {
-			return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("gone for %s", now.Sub(b.BuilderMissingSince).Truncate(time.Second)), false)
+			return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("gone for %s", now.Sub(b.BuilderMissingSince).Truncate(time.Second)), false, true)
 		}
 		// Whether it just switched (above) or is still waiting out the grace,
 		// a switch tick delivers nothing else to this binding: like a halt,
@@ -198,7 +198,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			if g.Note != "" {
 				reason = "rate-limited: " + g.Note
 			}
-			return switchBuilder(ctx, rt, tx, b, reason, true)
+			return switchBuilder(ctx, rt, tx, b, reason, true, false)
 		}
 	}
 

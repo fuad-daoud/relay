@@ -359,7 +359,7 @@ func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, cl
 	var out store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		out, err = switchBuilder(context.Background(), rt, tx, b, reason, closeOld)
+		out, err = switchBuilder(context.Background(), rt, tx, b, reason, closeOld, true)
 		return err
 	})
 	return out, err
@@ -769,8 +769,8 @@ func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
 	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
 		t.Fatalf("want a claude replacement: %+v", fr.specs)
 	}
-	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Builder.PID != fr.handles[1].PID {
-		t.Errorf("bookkeeping: cand=%q switches=%d pid=%d", got.BuilderCandidate, got.RoundSwitches, got.Builder.PID)
+	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 0 || got.Builder.PID != fr.handles[1].PID {
+		t.Errorf("bookkeeping: cand=%q switches=%d (want 0; a gated switch is uncounted) pid=%d", got.BuilderCandidate, got.RoundSwitches, got.Builder.PID)
 	}
 	if len(f.closed) != 0 {
 		t.Errorf("no pane to close: %+v", f.closed)
