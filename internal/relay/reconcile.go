@@ -544,6 +544,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
 		result := CaptureRoundDiff(ctx, rt, b)
+		facts := CommitFacts(ctx, rt, b)
 		closed = result.EndTree
 		diffEntry := store.LogEntry{
 			TS:        rt.Now().UTC(),
@@ -551,13 +552,20 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			Direction: store.DirToPlanner,
 			Kind:      store.KindDiff,
 			Path:      result.Path,
-			Note:      DiffSummary(result, CommitResult{}),
+			Note:      DiffSummary(result, facts),
 			Confirmed: true,
+		}
+		if facts.Known {
+			diffEntry.Commits = facts.Commits
+			diffEntry.Tree = "clean"
+			if facts.Dirty {
+				diffEntry.Tree = "dirty"
+			}
 		}
 		if err := tx.AppendLog(b.Name, diffEntry); err != nil {
 			return b, err
 		}
-		if line := DiffLine(result, CommitResult{}, ""); line != "" {
+		if line := DiffLine(result, facts, b.Branch); line != "" {
 			payload = payload + "\n" + line
 		}
 	}
@@ -586,6 +594,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// A switch counted against the old round says nothing about the new one.
 	b.RoundSwitches = 0
 	b.RoundBaselineTree = ""
+	b.RoundBaselineHead = ""
 	b.RoundClosedTree = closed
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
