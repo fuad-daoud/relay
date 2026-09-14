@@ -188,6 +188,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Round:            1,
 		State:            store.StateActive,
 		Worktree:         worktree,
+		Branch:           branch,
+		Base:             base,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

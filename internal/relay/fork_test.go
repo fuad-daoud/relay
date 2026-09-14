@@ -165,6 +165,14 @@ func TestForkSuccess(t *testing.T) {
 		t.Errorf("Base = %q, want commit-head-123", res.Base)
 	}
 
+	storedFork, err := rt.Store.Load("alt")
+	if err != nil {
+		t.Fatalf("Load alt: %v", err)
+	}
+	if storedFork.Branch != "relay/alt" || storedFork.Base != "commit-head-123" {
+		t.Errorf("stored branch/base = (%q, %q), want (relay/alt, commit-head-123)", storedFork.Branch, storedFork.Base)
+	}
+
 	// Git calls
 	if len(fg.addWorktreeCalls) != 1 {
 		t.Fatalf("AddWorktree calls = %d, want 1", len(fg.addWorktreeCalls))
@@ -544,6 +552,9 @@ func TestForkWithCustomCWD(t *testing.T) {
 	}
 	if res.Binding.Worktree != "" {
 		t.Errorf("Binding.Worktree = %q, want empty", res.Binding.Worktree)
+	}
+	if res.Binding.Branch != "" || res.Binding.Base != "" {
+		t.Errorf("--cwd created no branch, so none may be recorded: (%q, %q)", res.Binding.Branch, res.Binding.Base)
 	}
 }
 

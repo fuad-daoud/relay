@@ -50,6 +50,14 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 		t.Errorf("base = %q, want the repo HEAD", got.Base)
 	}
 
+	stored, err := rt.Store.Load("frontend")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Branch != "relay/frontend" || stored.Base != "commit-head-123" {
+		t.Errorf("stored branch/base = (%q, %q), want (relay/frontend, commit-head-123)", stored.Branch, stored.Base)
+	}
+
 	want := rt.Store.WorktreePath("frontend")
 	if got.Worktree != want || got.Binding.CWD != want {
 		t.Errorf("worktree = %q, cwd = %q, want both %q", got.Worktree, got.Binding.CWD, want)
@@ -199,6 +207,9 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 	}
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("--cwd must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
+	}
+	if got.Binding.Branch != "" || got.Binding.Base != "" {
+		t.Errorf("--cwd created no branch, so none may be recorded: (%q, %q)", got.Binding.Branch, got.Binding.Base)
 	}
 }
 
