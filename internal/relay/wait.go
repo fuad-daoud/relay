@@ -1,0 +1,88 @@
+// Package relay wait: relay wait's polling loop and exit classification, per
+// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §3.3-4.7.
+package relay
+
+import (
+	"github.com/fuad-daoud/relay/internal/store"
+)
+
+// WaitResult is what `relay wait` reports once it stops polling.
+type WaitResult struct {
+	Code int    // one of the Wait* exit constants below; meaningful only when Done
+	Line string // stdout line: report path, "-" (noreport), or the Waiting line
+	Done bool   // false while the round is open and nothing needs a human
+}
+
+const (
+	// WaitClosed is the exit code for a round that closed with a marked report.
+	WaitClosed = 0
+	// WaitUnmarked is the exit code for a round that closed without a marked
+	// report (unmarked, scraped, or noreport).
+	WaitUnmarked = 2
+	// WaitNeedsYou is the exit code for a binding WaitingOn classified as
+	// needing a human.
+	WaitNeedsYou = 3
+	// WaitGone is the exit code for a binding that is DONE, or was unbound
+	// while Wait was polling it.
+	WaitGone = 4
+	// WaitTimeout is the exit code for a wait whose --timeout elapsed.
+	WaitTimeout = 124
+)
+
+// reportEntry returns the last to_planner/report log entry for round, if one
+// exists.
+func reportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
+	var last store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			last, found = e, true
+		}
+	}
+	return last, found
+}
+
+// DefaultWaitRound is the round `relay wait` waits on when --round is not
+// given: the highest round among to_builder/plan entries (a nudge is not a
+// send, so entries noted nudgeNote are excluded, as HasEntry excludes them);
+// b.Round when there is none (spec §4.5, decision 7).
+func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
+	round := 0
+	for _, e := range entries {
+		if e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote && e.Round > round {
+			round = e.Round
+		}
+	}
+	if round == 0 {
+		return b.Round
+	}
+	return round
+}
+
+// WaitOutcome classifies one binding's round into a WaitResult, per spec
+// §4.6. Pure apart from questionOf. The report entry for round is checked
+// before State == done and before WaitingOn, so an earlier round's close is
+// reported regardless of what the binding is doing now.
+func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
+	if e, ok := reportEntry(entries, round); ok {
+		code := WaitClosed
+		if e.Note != "" {
+			code = WaitUnmarked
+		}
+		line := e.Path
+		if e.Note == "noreport" {
+			line = "-"
+		}
+		return WaitResult{Code: code, Line: line, Done: true}
+	}
+
+	if b.State == store.StateDone {
+		return WaitResult{Code: WaitGone, Done: true}
+	}
+
+	if w, ok := WaitingOn(b, entries, questionOf); ok {
+		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
+	}
+
+	return WaitResult{}
+}
