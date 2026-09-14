@@ -315,7 +315,7 @@ func appendLogMarker(path string, now time.Time, text string) {
 // Kill's error. A pane endpoint, or a headless one between rounds, is a
 // no-op. Runner nil with a pid recorded is an error: relay cannot say the
 // process is stopped.
-func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error) {
+func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) (int, error) {
 	if !e.Headless() || e.PID == 0 {
 		return 0, nil
 	}
@@ -325,6 +325,7 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error)
 	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
 		return e.PID, err
 	}
+	appendLogMarker(e.LogPath, rt.Now(), "stopped: "+why)
 	return e.PID, nil
 }
 

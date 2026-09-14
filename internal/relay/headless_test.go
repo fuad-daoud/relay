@@ -800,6 +800,88 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	}
 }
 
+func TestDoneHeadlessMarksTheLog(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	logPath := b.Builder.LogPath
+
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantLast := fmt.Sprintf("--- relay %s: stopped: done ---", rt.Now().Local().Format("15:04:05"))
+	if lines[len(lines)-1] != wantLast {
+		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
+	}
+}
+
+func TestStopProcessMarksUnbind(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	logPath := b.Builder.LogPath
+
+	pid, err := stopProcess(context.Background(), rt, b.Builder, "unbind")
+	if err != nil {
+		t.Fatalf("stopProcess: %v", err)
+	}
+	if pid != b.Builder.PID {
+		t.Errorf("pid = %d, want %d", pid, b.Builder.PID)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantLast := fmt.Sprintf("--- relay %s: stopped: unbind ---", rt.Now().Local().Format("15:04:05"))
+	if lines[len(lines)-1] != wantLast {
+		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
+	}
+}
+
+func TestStopProcessKillFailureWritesNoMarker(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("boom")
+
+	_, err := stopProcess(context.Background(), rt, b.Builder, "done")
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	data, err := os.ReadFile(b.Builder.LogPath)
+	if err == nil {
+		if strings.Contains(string(data), "--- relay") {
+			t.Errorf("log contains relay marker after failed kill: %s", string(data))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error reading log: %v", err)
+	}
+}
+
+func TestStopProcessIdleWritesNoMarker(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+
+	pid, err := stopProcess(context.Background(), rt, b.Builder, "done")
+	if err != nil {
+		t.Fatalf("stopProcess: %v", err)
+	}
+	if pid != 0 {
+		t.Errorf("pid = %d, want 0", pid)
+	}
+	if b.Builder.LogPath != "" {
+		if _, err := os.Stat(b.Builder.LogPath); !os.IsNotExist(err) {
+			t.Errorf("log file should not exist for idle endpoint: %v", err)
+		}
+	}
+	if _, err := os.Stat(rt.Store.BuilderLogPath(b.Name, b.Round)); !os.IsNotExist(err) {
+		t.Errorf("log file should not exist for idle endpoint: %v", err)
+	}
+}
+
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
