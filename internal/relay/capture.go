@@ -148,6 +148,60 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResu
 	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
 }
 
+// CommitResult is what one round-end commit-facts capture produced (#130).
+// Known is all-or-nothing: either both facts were captured or neither was,
+// and Reason names the step that failed ("" for a non-repository, which is
+// not worth a sentence).
+type CommitResult struct {
+	Known   bool   // both facts were captured
+	Commits int    // rev-list --count RoundBaselineHead..HEAD; 0 when Known is false
+	Dirty   bool   // uncommitted or untracked changes; false when Known is false
+	Reason  string // why Known is false; "" when it is true
+}
+
+// CommitFacts captures how many commits b's current round added and whether
+// its tree is dirty, for the round that is closing. It NEVER returns an
+// error: the facts are informational and a round advance must not be blocked
+// by them. Runs under the state lock, like CaptureRoundDiff.
+//
+// Preconditions:  none.
+// Postconditions: Known is false with an empty Reason when rt.Git is nil or
+//
+//	the tree is not a repository; false with a Reason naming the
+//	step when RoundBaselineHead is empty or a git call failed; true
+//	with both facts otherwise. The sequence HeadCommit, RevListCount,
+//	Dirty stops at the first failure.
+func CommitFacts(ctx context.Context, rt Runtime, b store.Binding) CommitResult {
+	if rt.Git == nil {
+		return CommitResult{}
+	}
+	if b.RoundBaselineHead == "" {
+		return CommitResult{Reason: "no baseline"}
+	}
+	head, err := rt.Git.HeadCommit(ctx, b.CWD)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "head: " + brief(err)}
+	}
+	n, err := rt.Git.RevListCount(ctx, b.CWD, b.RoundBaselineHead, head)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "rev-list: " + brief(err)}
+	}
+	dirty, err := rt.Git.Dirty(ctx, b.CWD)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "dirty check: " + brief(err)}
+	}
+	return CommitResult{Known: true, Commits: n, Dirty: dirty}
+}
+
 // DiffLine renders the report-payload line for a result, or "" when the result
 // says nothing worth telling the planner (rt.Git off, or not a repository).
 func DiffLine(res DiffResult) string {

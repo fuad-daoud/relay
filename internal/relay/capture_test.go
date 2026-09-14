@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -367,3 +368,84 @@ func TestCaptureRoundDiff_EndTree(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitFacts(t *testing.T) {
+	ctx := context.Background()
+	s := store.New(t.TempDir())
+	newRT := func(g Git) Runtime {
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	}
+	withHead := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"}
+
+	t.Run("nil git", func(t *testing.T) {
+		got := CommitFacts(ctx, newRT(nil), withHead)
+		if got.Known || got.Reason != "" {
+			t.Fatalf("got %+v, want Known=false, Reason empty", got)
+		}
+	})
+
+	t.Run("no baseline head", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "h"}
+		got := CommitFacts(ctx, newRT(fg), store.Binding{Name: "webshop", CWD: "/repo", Round: 1})
+		if got.Known || got.Reason != "no baseline" {
+			t.Fatalf("got %+v, want Reason \"no baseline\"", got)
+		}
+		if fg.headCalls != 0 || fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+			t.Fatalf("git was called without a baseline: %+v", fg)
+		}
+	})
+
+	t.Run("head fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitErr: errors.New("boom: head")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "head: boom: head" {
+			t.Fatalf("got %+v, want Reason \"head: boom: head\"", got)
+		}
+		if fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+			t.Fatalf("sequence did not stop at the first failure: %+v", fg)
+		}
+	})
+
+	t.Run("rev-list fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListErr: errors.New("boom: rev-list")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "rev-list: boom: rev-list" {
+			t.Fatalf("got %+v, want Reason \"rev-list: boom: rev-list\"", got)
+		}
+		if fg.dirtyCalls != 0 {
+			t.Fatalf("Dirty called after rev-list failed: %+v", fg)
+		}
+	})
+
+	t.Run("dirty check fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListCount: 2, dirtyErr: errors.New("boom: status")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "dirty check: boom: status" {
+			t.Fatalf("got %+v, want Reason \"dirty check: boom: status\"", got)
+		}
+	})
+
+	t.Run("not a repository is silent", func(t *testing.T) {
+		fg := &fakeGit{headCommitErr: fmt.Errorf("%w: nope", git.ErrNotRepo)}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "" {
+			t.Fatalf("got %+v, want Known=false with empty Reason", got)
+		}
+	})
+
+	t.Run("all succeed", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListCount: 3, dirtyResult: true}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		want := CommitResult{Known: true, Commits: 3, Dirty: true}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+		if fg.lastRevListDir != "/repo" || fg.lastRevListFrom != "head-start" || fg.lastRevListTo != "head-end" {
+			t.Fatalf("rev-list range: dir=%q from=%q to=%q", fg.lastRevListDir, fg.lastRevListFrom, fg.lastRevListTo)
+		}
+		if fg.lastDirtyDir != "/repo" {
+			t.Fatalf("Dirty dir = %q, want /repo", fg.lastDirtyDir)
+		}
+	})
+}
+
