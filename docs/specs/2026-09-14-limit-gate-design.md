@@ -189,9 +189,11 @@ Pure. Two forms, tried in this order, on the matched line only:
    `now`, add 24h. `7pm` -> 19:00; `00:26` -> 00:26 next day when now is
    23:13.
 
-Either result must lie in `(now, now+24h]`; anything else is `ok=false`
+Either result must lie in `(now, now+7d]`; anything else is `ok=false`
 (garbage in a line that happened to match the limit pattern must not gate
-a provider for a week). The returned time is UTC.
+a provider indefinitely). Seven days, not one: the round this spec was
+built by hit agy's quota with `Resets in 95h4m16s` (2026-09-14), a real
+four-day window. The returned time is UTC.
 
 ### 4.4 `gateOnLimit(ctx, rt Runtime, tx *store.Tx, b store.Binding, text string, closeOld bool) (next store.Binding, m LimitMatch, handled bool, err error)`
 
@@ -271,7 +273,7 @@ Rules that hold at every point:
 | `limit_gate_default_ms <= 0` | `policy.Load` refuses with `ErrBadPolicy` |
 | ledger/history write fails on match | stderr line, switch proceeds (§4.4) |
 | screen read fails at a pane point | Warn, no match, existing path |
-| reset time parses outside `(now, now+24h]` | treated as unparsed: default window, `Parsed=false` |
+| reset time parses outside `(now, now+7d]` | treated as unparsed: default window, `Parsed=false` |
 | replacement spawn fails after a match | `switchBuilder`'s existing path: `spawn_failed` recorded, binding BROKEN, next tick walks on; `RoundSwitches` not advanced |
 | every candidate gated after a match | `switchBuilder` halts with "cannot switch" -- the binding is NEEDS YOU with the ledger showing why |
 
@@ -300,8 +302,8 @@ All pure or fake-backed, in the packages named in §2; no test under
   agy fixture from `history.json` matches and parses `2h48m52s`; a
   `resets 7pm` line parses to today/tomorrow 19:00 in the fixture's zone;
   a `resets ~00:26` line at 23:13 parses to next-day 00:26; a line with
-  no time uses the fallback with `Parsed=false`; `try again in 400h` falls
-  back (out of range).
+  no time uses the fallback with `Parsed=false`; `Resets in 95h4m16s`
+  parses; `try again in 400h` falls back (out of range).
 - `gateOnLimit`: match -> one `rate_limited` entry with `source relay`,
   `binding` set, `until` as parsed; no match -> ledger untouched, `handled`
   false; match with report present -> entry written, `handled` false, no

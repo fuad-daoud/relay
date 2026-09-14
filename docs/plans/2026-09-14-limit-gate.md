@@ -39,6 +39,15 @@ bool`; every rate-limit switch passes `false`. `checkRoundTimeout` gains a
 
 `pwd` is the worktree. Prefer paths relative to it.
 
+## Resuming a round another builder started
+
+The branch may already carry commits from an earlier builder on this same
+round. Before Task 1, run `git log --oneline main..HEAD`. A task whose
+commit message is already there is **done**: run its Step 4 command to
+confirm it is green, tick it, and continue with the next task. Do not redo
+it, do not amend it. An untracked or modified file from an unfinished task
+is yours to finish or replace as that task's steps say.
+
 ## Stop rather than improvise
 
 If a step is impossible as written, or the plan contradicts what you find in
@@ -75,7 +84,7 @@ reconcile in `internal/relay`, `internal/harness`, `internal/candidate` or
   check at the top of `switchBuilder` is untouched.
 - The budget points scan only when `b.HaltNotifiedRound != b.Round` (§5).
 - `matchLimit` returns the **last** matching line of the text (§4.2).
-- `parseReset` results outside `(now, now+24h]` are unparsed (§4.3).
+- `parseReset` results outside `(now, now+7d]` are unparsed (§4.3).
 - Ledger entries use `Source: "relay"` and `Binding: b.Name` (§3.5); a
   ledger write failure is printed to stderr and dropped, never returned.
 - Read failures at a pane point are `slog.Warn`ed and treated as no text.
@@ -149,7 +158,7 @@ git commit -m "feat(config): limit_patterns per candidate, limit_gate_default_ms
 **Interfaces:**
 - Produces: `type LimitMatch struct { Line string; Until time.Time; Parsed bool }` (§3.4).
 - Produces: `func matchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback time.Duration) (LimitMatch, bool)` (§4.2): last matching line wins; `Line` is `strings.TrimSpace`d and capped at 200 runes; `Until` is UTC.
-- Produces: `func parseReset(line string, now time.Time) (time.Time, bool)` (§4.3): duration form first, then clock form; result must be in `(now, now+24h]`; returned in UTC.
+- Produces: `func parseReset(line string, now time.Time) (time.Time, bool)` (§4.3): duration form first, then clock form; result must be in `(now, now+7d]`; returned in UTC.
 - Produces: `const limitScanLines = 40`.
 
 - [ ] **Step 1: Write the tests** as one table each for `parseReset` and `matchLimit`, with `now := time.Date(2026, 9, 13, 23, 13, 0, 0, time.FixedZone("EEST", 3*3600))`:
@@ -161,6 +170,7 @@ git commit -m "feat(config): limit_patterns per candidate, limit_gate_default_ms
   | `limit · resets 7pm` | 2026-09-14 19:00 EEST | true |
   | `individual quota reached (resets ~00:26)` | 2026-09-14 00:26 EEST | true |
   | `Resets at 23:30` | 2026-09-13 23:30 EEST | true |
+  | `error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 95h4m16s.` | now+95h4m16s | true |
   | `try again in 5 min` | now+5m | true |
   | `retry after 30s` | now+30s | true |
   | `You've hit your limit` | -- | false |
@@ -177,7 +187,7 @@ git commit -m "feat(config): limit_patterns per candidate, limit_gate_default_ms
 
 - [ ] **Step 2: Run to verify they fail** -- `go test -count=1 ./internal/relay -run 'TestParseReset|TestMatchLimit'`: compile errors.
 
-- [ ] **Step 3: Implement** in `limit.go`, package `relay`, with a file header comment naming the issue and the two rules (decision points only; last line wins). The duration and clock regexes are package-level compiled vars. Duration components sum `h|hr|hours?`, `m|min|minutes?`, `s|sec|seconds?`. Clock: hour 0-23 (12 with am/pm: `12am`=0, `12pm`=12; `pm` adds 12 for 1-11), minute 0-59, else unparsed; build in `now.Location()` on `now`'s date; if `!t.After(now)` add 24h. Apply the `(now, now+24h]` bound to both forms.
+- [ ] **Step 3: Implement** in `limit.go`, package `relay`, with a file header comment naming the issue and the two rules (decision points only; last line wins). The duration and clock regexes are package-level compiled vars. Duration components sum `h|hr|hours?`, `m|min|minutes?`, `s|sec|seconds?`. Clock: hour 0-23 (12 with am/pm: `12am`=0, `12pm`=12; `pm` adds 12 for 1-11), minute 0-59, else unparsed; build in `now.Location()` on `now`'s date; if `!t.After(now)` add 24h. Apply the `(now, now+7d]` bound to both forms.
 
 - [ ] **Step 4: Run** `go test -count=1 ./internal/relay -run 'TestParseReset|TestMatchLimit'`. Expected: PASS.
 
