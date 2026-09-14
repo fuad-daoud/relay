@@ -34,9 +34,9 @@ const (
 	WaitTimeout = 124
 )
 
-// reportEntry returns the last to_planner/report log entry for round, if one
+// lastReportEntry returns the last to_planner/report log entry for round, if one
 // exists.
-func reportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
+func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
 	var last store.LogEntry
 	found := false
 	for _, e := range entries {
@@ -69,7 +69,7 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 // before State == done and before WaitingOn, so an earlier round's close is
 // reported regardless of what the binding is doing now.
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
-	if e, ok := reportEntry(entries, round); ok {
+	if e, ok := lastReportEntry(entries, round); ok {
 		code := WaitClosed
 		if e.Note != "" {
 			code = WaitUnmarked
