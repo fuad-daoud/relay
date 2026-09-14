@@ -93,6 +93,46 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	if len(f.notices) != 1 {
 		t.Errorf("got %d notices, want 1; a still-timed-out binding must not renotify", len(f.notices))
 	}
+	if len(f.reads) != 1 {
+		t.Errorf("reads = %d, want exactly one limit scan, on the halting tick", len(f.reads))
+	}
+}
+
+// TestReconcileTimeoutOnLimitSwitchesInsteadOfHalting checks the pane
+// budget's decision point (spec §5): the halting tick scans first, and a
+// match switches the builder instead of halting.
+func TestReconcileTimeoutOnLimitSwitchesInsteadOfHalting(t *testing.T) {
+	f := &fakeHerdr{readOut: "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s."}
+	rt, b := sentSwitchable(t, f)
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
+	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active", got.State)
+	}
+	if len(f.closed) != 1 || f.closed[0] != "w2:p4" {
+		t.Fatalf("closed = %+v, want [w2:p4]", f.closed)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("starts = %+v, want one", f.starts)
+	}
+	var switched, timedOut bool
+	for _, n := range f.notices {
+		if strings.Contains(n, "switched builder") {
+			switched = true
+		}
+		if strings.Contains(n, "run past") {
+			timedOut = true
+		}
+	}
+	if !switched || timedOut {
+		t.Errorf("notices = %+v, want a switch notice and no timeout notice", f.notices)
+	}
 }
 
 func TestReconcileStopsAtRoundCap(t *testing.T) {

@@ -430,6 +430,12 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return next, nil
 	}
 
+	text := limitText(ctx, rt, next)
+	gated, m, handled, err := gateOnLimit(ctx, rt, tx, next, text, true)
+	if handled {
+		return gated, err
+	}
+
 	// Once per round: whichever close runs below ends this path. The builder
 	// never wrote its marker, so relay cannot know the tree is final; it
 	// delivers the best artefact it has and names the omission (spec §4.3).
@@ -439,6 +445,9 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		payload := fmt.Sprintf(
 			"Builder finished round %d but never confirmed completion (no %s). Report: %s. The diff may be premature.",
 			next.Round, filepath.Base(donePath), reportPath)
+		if m.Line != "" {
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
+		}
 		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked")
 	}
 	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)
