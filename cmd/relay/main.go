@@ -57,6 +57,7 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
+  wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
@@ -206,6 +207,8 @@ func run(args []string) error {
 		return cmdStatusline(args[1:])
 	case "log":
 		return cmdLog(args[1:])
+	case "wait":
+		return cmdWait(args[1:])
 	case "ui":
 		return cmdUI(args[1:])
 	case "done":
@@ -600,6 +603,7 @@ func cmdBind(args []string) error {
 			"  relay send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
 		notePick("builder", res)
+		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
 
@@ -615,6 +619,7 @@ func cmdBind(args []string) error {
 	if !adopted {
 		noteConsultRolesTooLong(b.Name)
 	}
+	warnWaitingOnYou(rt, b.Name)
 	return nil
 }
 
@@ -676,6 +681,7 @@ func cmdFork(args []string) error {
 	}
 	notePick("builder", res.Resolution)
 	noteConsultRolesTooLong(res.Binding.Name)
+	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
 }
@@ -734,6 +740,7 @@ func cmdAdd(args []string) error {
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
 	noteConsultRolesTooLong(res.Binding.Name)
+	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
 }
@@ -771,6 +778,7 @@ func cmdUnbind(args []string) error {
 	}
 
 	fmt.Println(relay.UnbindText(target, res))
+	warnWaitingOnYou(rt, target)
 
 	return nil
 }
@@ -969,6 +977,7 @@ func cmdSend(args []string) error {
 		fmt.Println(res.Drift)
 	}
 	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1177,6 +1186,7 @@ func cmdAnswer(args []string) error {
 	}
 
 	fmt.Println(relay.AnswerText(target))
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1307,6 +1317,67 @@ func cmdLog(args []string) error {
 	return nil
 }
 
+// cmdWait blocks until a round closes or needs a human, per spec
+// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
+// relay's own state only: newRuntime's herdr client is constructed but never
+// called.
+func cmdWait(args []string) error {
+	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	anyFlag := fs.Bool("any", false, "wait on every named binding; the first to close or need you wins, its name printed first")
+	round := fs.Int("round", 0, "round to wait on (default: the newest round sent; an earlier round answers from the log)")
+	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait before giving up")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("relay wait --timeout must be positive")
+	}
+	if *round < 0 {
+		return fmt.Errorf("relay wait --round must be >= 0")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	var names []string
+	if *anyFlag {
+		if *name != "" || len(fs.Args()) == 0 {
+			return fmt.Errorf("usage: relay wait --any NAME [NAME...]  (--any takes one or more positional names, not --name)")
+		}
+		names = fs.Args()
+	} else {
+		target, err := resolveBinding(rt, *name, fs.Args())
+		if err != nil {
+			return err
+		}
+		names = []string{target}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	resName, res, err := relay.Wait(ctx, rt, relay.WaitOptions{
+		Names: names, Round: *round, Timeout: *timeout, Interval: time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *anyFlag && resName != "" {
+		fmt.Println(resName)
+	}
+	if res.Line != "" {
+		fmt.Println(res.Line)
+	}
+	if res.Code == 0 {
+		return nil
+	}
+	return exitCodeErr{res.Code}
+}
+
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	interval := fs.Duration("interval", 0, "refresh interval")
@@ -1391,6 +1462,7 @@ func cmdDone(args []string) error {
 	}
 
 	fmt.Println(relay.DoneText(target))
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1531,4 +1603,19 @@ func resolveBinding(rt relay.Runtime, nameFlag string, positional []string) (str
 	}
 
 	return b.Name, nil
+}
+
+// warnWaitingOnYou prints one stderr line per other binding that is waiting
+// on a human, per spec §4.9. except is the binding the verb just acted on.
+// It never changes the caller's return value or exit code: a WaitingOnYou
+// error is itself only a stderr warning.
+func warnWaitingOnYou(rt relay.Runtime, except string) {
+	lines, err := relay.WaitingOnYou(rt, except)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: waiting-on-you check: %v\n", err)
+		return
+	}
+	for _, l := range lines {
+		fmt.Fprintln(os.Stderr, l)
+	}
 }

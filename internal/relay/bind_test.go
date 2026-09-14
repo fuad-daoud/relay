@@ -436,6 +436,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		RoundBaselineTree: "tree-abc",
 		State:             store.StateBroken,
 		HaltNotifiedRound: 5,
+		Halt:              "round 5 has run past 24h0m0s",
+		HaltAt:            baseTime,
 		BuilderScreen:     "some terminal output",
 		BuilderScreenAt:   baseTime,
 		Planner:           store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
@@ -478,6 +480,12 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		if got.HaltNotifiedRound != 0 {
 			t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
 		}
+		if got.Halt != "" {
+			t.Errorf("Halt = %q, want empty", got.Halt)
+		}
+		if !got.HaltAt.IsZero() {
+			t.Errorf("HaltAt = %v, want zero", got.HaltAt)
+		}
 		if got.State != store.StateActive {
 			t.Errorf("State = %s, want active", got.State)
 		}
@@ -497,7 +505,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		}
 		if saved.Builder.PaneID != "w2:p9" || saved.Builder.SessionID != "new-builder-sess" ||
 			saved.BuilderScreen != "" || !saved.BuilderScreenAt.IsZero() ||
-			saved.HaltNotifiedRound != 0 || saved.Round != 5 || saved.RoundBaselineTree != "tree-abc" {
+			saved.HaltNotifiedRound != 0 || saved.Halt != "" || !saved.HaltAt.IsZero() ||
+			saved.Round != 5 || saved.RoundBaselineTree != "tree-abc" {
 			t.Errorf("saved binding does not reflect rebind updates: %+v", saved)
 		}
 	})
@@ -536,6 +545,9 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		}
 		if got.HaltNotifiedRound != 0 {
 			t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+		}
+		if got.Halt != "" || !got.HaltAt.IsZero() {
+			t.Errorf("Halt/HaltAt not cleared: halt=%q at=%v", got.Halt, got.HaltAt)
 		}
 	})
 }

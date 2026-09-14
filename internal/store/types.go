@@ -81,6 +81,18 @@ type Binding struct {
 	// tick rewriting State, which turned one notice into one per poll.
 	HaltNotifiedRound int `json:"halt_notified_round,omitempty"`
 
+	// Halt is why the binding is NEEDS YOU when neither a blocked dialog nor a
+	// missing pane explains it, and HaltAt is when relay decided so. Halt is
+	// the sentence haltBinding already composes for the toast, minus the
+	// leading "<name>: " prefix (the reader knows the name). Written by
+	// haltBinding and Send's headless spawn-failure branch; cleared at round
+	// close, by a successful Send, and by `bind --resume --rebind`.
+	// Meaningful only while State == needs_you; readers check the state
+	// first, so a stale value is harmless. A binding written before this
+	// field existed has Halt == "".
+	Halt   string    `json:"halt,omitempty"`
+	HaltAt time.Time `json:"halt_at,omitempty"`
+
 	// RoundSwitches counts builder switches in the current round (#61 step
 	// 6). Reset when the round advances. Compared against
 	// policy.Policy.SwitchLimit().

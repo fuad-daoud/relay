@@ -404,6 +404,12 @@ func TestExhaustionHalts(t *testing.T) {
 	if got.HaltNotifiedRound != 1 {
 		t.Errorf("HaltNotifiedRound = %d, want 1", got.HaltNotifiedRound)
 	}
+	if !strings.Contains(got.Halt, "max_switches") {
+		t.Errorf("Halt = %q, want it to contain %q", got.Halt, "max_switches")
+	}
+	if got.HaltAt.IsZero() {
+		t.Error("HaltAt is zero, want set")
+	}
 
 	var haltMsg string
 	count := 0

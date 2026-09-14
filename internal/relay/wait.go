@@ -1,0 +1,169 @@
+// Package relay wait: relay wait's polling loop and exit classification, per
+// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §3.3-4.7.
+package relay
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/store"
+)
+
+// WaitResult is what `relay wait` reports once it stops polling.
+type WaitResult struct {
+	Code int    // one of the Wait* exit constants below; meaningful only when Done
+	Line string // stdout line: report path, "-" (noreport), or the Waiting line
+	Done bool   // false while the round is open and nothing needs a human
+}
+
+const (
+	// WaitClosed is the exit code for a round that closed with a marked report.
+	WaitClosed = 0
+	// WaitUnmarked is the exit code for a round that closed without a marked
+	// report (unmarked, scraped, or noreport).
+	WaitUnmarked = 2
+	// WaitNeedsYou is the exit code for a binding WaitingOn classified as
+	// needing a human.
+	WaitNeedsYou = 3
+	// WaitGone is the exit code for a binding that is DONE, or was unbound
+	// while Wait was polling it.
+	WaitGone = 4
+	// WaitTimeout is the exit code for a wait whose --timeout elapsed.
+	WaitTimeout = 124
+)
+
+// lastReportEntry returns the last to_planner/report log entry for round, if one
+// exists.
+func lastReportEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
+	var last store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			last, found = e, true
+		}
+	}
+	return last, found
+}
+
+// DefaultWaitRound is the round `relay wait` waits on when --round is not
+// given: the highest round among to_builder/plan entries (a nudge is not a
+// send, so entries noted nudgeNote are excluded, as HasEntry excludes them);
+// b.Round when there is none (spec §4.5, decision 7).
+func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
+	round := 0
+	for _, e := range entries {
+		if e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote && e.Round > round {
+			round = e.Round
+		}
+	}
+	if round == 0 {
+		return b.Round
+	}
+	return round
+}
+
+// WaitOutcome classifies one binding's round into a WaitResult, per spec
+// §4.6. Pure apart from questionOf. The report entry for round is checked
+// before State == done and before WaitingOn, so an earlier round's close is
+// reported regardless of what the binding is doing now.
+func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
+	if e, ok := lastReportEntry(entries, round); ok {
+		code := WaitClosed
+		if e.Note != "" {
+			code = WaitUnmarked
+		}
+		line := e.Path
+		if e.Note == "noreport" {
+			line = "-"
+		}
+		return WaitResult{Code: code, Line: line, Done: true}
+	}
+
+	if b.State == store.StateDone {
+		return WaitResult{Code: WaitGone, Done: true}
+	}
+
+	if w, ok := WaitingOn(b, entries, questionOf); ok {
+		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
+	}
+
+	return WaitResult{}
+}
+
+// WaitOptions configures Wait.
+type WaitOptions struct {
+	Names    []string      // one name, or several for --any; len >= 1
+	Round    int           // 0 = DefaultWaitRound per binding, resolved once at start
+	Timeout  time.Duration // > 0; the CLI defaults 10m
+	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
+}
+
+// Wait polls the store (never herdr) until one of opts.Names closes its
+// round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
+//
+// Every name is loaded once up front, so a name that does not exist is an
+// error before the loop starts (exit 1 from cmd/relay); a name that
+// disappears mid-wait is WaitGone instead. The first pass always runs before
+// any sleep, so a round that already closed returns immediately.
+func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res WaitResult, err error) {
+	if len(opts.Names) == 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: at least one name is required")
+	}
+	if opts.Timeout <= 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: timeout must be positive")
+	}
+	if opts.Interval <= 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: interval must be positive")
+	}
+
+	rounds := make(map[string]int, len(opts.Names))
+	for _, n := range opts.Names {
+		b, err := rt.Store.Load(n)
+		if err != nil {
+			return "", WaitResult{}, err
+		}
+		entries, err := rt.Store.ReadLog(n)
+		if err != nil {
+			return "", WaitResult{}, err
+		}
+		round := opts.Round
+		if round == 0 {
+			round = DefaultWaitRound(b, entries)
+		}
+		rounds[n] = round
+	}
+
+	qf := questionFirstLine(rt)
+	start := rt.Now()
+
+	for {
+		for _, n := range opts.Names {
+			b, err := rt.Store.Load(n)
+			if errors.Is(err, store.ErrNotFound) {
+				return n, WaitResult{Code: WaitGone, Done: true}, nil
+			}
+			if err != nil {
+				return n, WaitResult{}, err
+			}
+			entries, err := rt.Store.ReadLog(n)
+			if err != nil {
+				return n, WaitResult{}, err
+			}
+			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
+				return n, r, nil
+			}
+		}
+
+		if rt.Now().Sub(start) >= opts.Timeout {
+			return "", WaitResult{Code: WaitTimeout, Done: true}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", WaitResult{}, ctx.Err()
+		case <-time.After(opts.Interval):
+		}
+	}
+}

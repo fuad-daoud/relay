@@ -278,6 +278,15 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	if b.Builder.PID != 0 {
 		t.Errorf("pid = %d, want 0 after a failed start", b.Builder.PID)
 	}
+	if !strings.HasPrefix(b.Halt, "builder spawn failed: ") {
+		t.Errorf("Halt = %q, want prefix %q", b.Halt, "builder spawn failed: ")
+	}
+	if !strings.Contains(b.Halt, "not found on PATH") {
+		t.Errorf("Halt = %q, want it to contain %q", b.Halt, "not found on PATH")
+	}
+	if b.HaltAt.IsZero() {
+		t.Error("HaltAt is zero, want set")
+	}
 	entries, _ := rt.Store.ReadLog("webshop")
 	for _, e := range entries {
 		if e.Kind == store.KindPlan {
@@ -286,6 +295,38 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	}
 	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); err != nil {
 		t.Errorf("the plan stays staged so the human can retry: %v", err)
+	}
+}
+
+// TestSendClearsAStaleHalt pins Send's success path: a binding that was
+// halted for an earlier round must not carry that halt into a round it just
+// successfully handed over.
+func TestSendClearsAStaleHalt(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.Halt = "round 1 has run past 1s"
+	b.HaltAt = rt.Now()
+	b.State = store.StateNeedsYou
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Halt != "" {
+		t.Errorf("Halt = %q, want empty", got.Halt)
+	}
+	if !got.HaltAt.IsZero() {
+		t.Errorf("HaltAt = %v, want zero", got.HaltAt)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("State = %s, want active", got.State)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -148,6 +149,8 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 				// spawn_failed (written by startRound) gates the candidate
 				// for the next pick, as a pane spawn failure would.
 				b.State = store.StateNeedsYou
+				b.Halt = "builder spawn failed: " + err.Error()
+				b.HaltAt = rt.Now().UTC()
 				if saveErr := tx.Save(b); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
 				}
@@ -194,6 +197,8 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		b.RoundClosedTree = ""
 		b.RoundStartedAt = rt.Now().UTC()
 		b.State = store.StateActive
+		b.Halt = ""
+		b.HaltAt = time.Time{}
 
 		return tx.Save(b)
 	})

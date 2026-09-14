@@ -162,6 +162,7 @@ From inside the planner's herdr pane, in the repository you want worked on:
 relay bind --builder claude/anthropic/sonnet     # open a builder tab and bind it to this tree
 relay send --file plan.md         # hand it the plan; the builder starts working
 relay status                      # watch the round
+relay wait                        # block until the round closes or needs you
 relay pull                        # print the report the builder wrote back
 relay done <name>                 # stop relaying when you are satisfied
 ```
@@ -221,6 +222,14 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
 - `relay log NAME` — the binding's append-only round log.
+- `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
+  until the round closes or the binding needs you, reading relay's own state only
+  (never herdr). Exit 0: closed on the marker, stdout is the report path. 2: closed
+  without it (`unmarked`, `scraped`, `noreport` — verify before trusting), report
+  path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
+  the binding is DONE or was unbound. 124: `--timeout` (default 10m) elapsed.
+  `--any` waits on several and prints the winner's name first. A pane planner
+  that does not want the report typed afterwards runs `relay wait N && relay pull N`.
 - `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
 - `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
@@ -377,6 +386,13 @@ relay send --name backend  --file api_plan.md
 Each peer is an ordinary binding: its own round counter, round log, captured
 diffs and budget. `relay status` lists them all, and every verb that acts on a
 binding takes `--name`.
+
+Every mutating verb (`bind`, `add`, `fork`, `send`, `answer`, `done`, `unbind`)
+ends by listing, on stderr, every *other* binding that is waiting on a human —
+a blocked dialog, a halt, a dead builder, a lost planner — with how long and
+the verb that resolves it, e.g. `waiting on you: api round 4 blocked 23m --
+Do you want to proceed? > 1. Yes  (relay answer --name api)`. The exit code is
+unchanged; it is a reminder, not a refusal.
 
 Relay does not sequence them and does not merge their trees. The planner
 decides how many builders it needs, which run in parallel and which wait, and

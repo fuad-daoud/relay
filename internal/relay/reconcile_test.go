@@ -1248,10 +1248,18 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
+	b.Halt = "stale"
+	b.HaltAt = rt.Now()
 
 	got, closed := closeOnMarkerUnderLock(t, rt, b)
 	if !closed || got.Round != 2 {
 		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if got.Halt != "" {
+		t.Errorf("Halt = %q, want empty after a round close", got.Halt)
+	}
+	if !got.HaltAt.IsZero() {
+		t.Errorf("HaltAt = %v, want zero after a round close", got.HaltAt)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
