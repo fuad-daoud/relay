@@ -69,16 +69,23 @@ func DiffSummary(res DiffResult) string {
 // Preconditions:  none.
 // Postconditions: "" whenever rt.Git is nil, b.CWD is not a repository, or git
 //
-//	failed for any reason; a tree id otherwise.
-func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) string {
+//	failed for any reason; a tree id otherwise. head is HEAD's commit id when
+//	the snapshot succeeded and HeadCommit did; "" otherwise. A tree without a
+//	head is normal (unborn HEAD) and the round then reports commits unknown
+//	(no baseline).
+func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, head string) {
 	if rt.Git == nil || b.CWD == "" {
-		return ""
+		return "", ""
 	}
-	treeID, err := rt.Git.SnapshotTree(ctx, b.CWD)
+	tree, err := rt.Git.SnapshotTree(ctx, b.CWD)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return treeID
+	head, err = rt.Git.HeadCommit(ctx, b.CWD)
+	if err != nil {
+		return tree, ""
+	}
+	return tree, head
 }
 
 // CaptureRoundDiff closes out the diff for b's current round: it snapshots the

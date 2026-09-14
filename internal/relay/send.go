@@ -62,12 +62,12 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		return SendResult{}, fmt.Errorf("read plan %s: %w", file, err)
 	}
 
-	var baseline string
+	var baseline, baselineHead string
 	var hintRound int
 	var builder herdr.Agent
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
-		baseline = CaptureBaseline(ctx, rt, hint)
+		baseline, baselineHead = CaptureBaseline(ctx, rt, hint)
 		hintRound = hint.Round
 		// A headless builder (#99) is a process relay starts per round; there
 		// is no herdr agent to find. Its liveness check is under the lock.
@@ -190,6 +190,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		round = b.Round
 		driftLineOut = driftLine
 		b.RoundBaselineTree = baseline
+		b.RoundBaselineHead = baselineHead
 		b.RoundClosedTree = ""
 		b.RoundStartedAt = rt.Now().UTC()
 		b.State = store.StateActive

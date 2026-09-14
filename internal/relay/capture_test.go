@@ -185,26 +185,30 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 func TestCaptureBaseline(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
-	fg := &fakeGit{snapshotTreeID: "tree-base"}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
-
-	tree := CaptureBaseline(ctx, rt, b)
-	if tree != "tree-base" {
-		t.Fatalf("got tree %q, want tree-base", tree)
+	newRT := func(g Git) Runtime {
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
 	}
 
-	// With nil git
-	treeNil := CaptureBaseline(ctx, Runtime{Store: s, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}, b)
-	if treeNil != "" {
-		t.Fatalf("got %q with nil git, want empty string", treeNil)
+	tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitID: "head-base"}), b)
+	if tree != "tree-base" || head != "head-base" {
+		t.Fatalf("got (%q, %q), want (tree-base, head-base)", tree, head)
 	}
 
-	// With error
-	fgErr := &fakeGit{snapshotTreeErr: errors.New("fail")}
-	treeErr := CaptureBaseline(ctx, Runtime{Store: s, Git: fgErr, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}, b)
-	if treeErr != "" {
-		t.Fatalf("got %q with failing git, want empty string", treeErr)
+	if tree, head := CaptureBaseline(ctx, newRT(nil), b); tree != "" || head != "" {
+		t.Fatalf("nil git: got (%q, %q), want both empty", tree, head)
+	}
+
+	fgSnap := &fakeGit{snapshotTreeErr: errors.New("fail"), headCommitID: "head-base"}
+	if tree, head := CaptureBaseline(ctx, newRT(fgSnap), b); tree != "" || head != "" {
+		t.Fatalf("snapshot failure: got (%q, %q), want both empty", tree, head)
+	}
+	if fgSnap.headCalls != 0 {
+		t.Fatalf("HeadCommit called %d times after a failed snapshot, want 0", fgSnap.headCalls)
+	}
+
+	if tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitErr: errors.New("unborn")}), b); tree != "tree-base" || head != "" {
+		t.Fatalf("head failure: got (%q, %q), want (tree-base, \"\")", tree, head)
 	}
 }
 
