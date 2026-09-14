@@ -170,7 +170,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		}
 		b.State = store.StateBroken
 		if switchable && now.Sub(b.BuilderMissingSince) >= switchGrace {
-			return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("gone for %s", now.Sub(b.BuilderMissingSince).Truncate(time.Second)), false)
+			return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("gone for %s", now.Sub(b.BuilderMissingSince).Truncate(time.Second)), false, true)
 		}
 		// Whether it just switched (above) or is still waiting out the grace,
 		// a switch tick delivers nothing else to this binding: like a halt,
@@ -198,7 +198,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			if g.Note != "" {
 				reason = "rate-limited: " + g.Note
 			}
-			return switchBuilder(ctx, rt, tx, b, reason, true)
+			return switchBuilder(ctx, rt, tx, b, reason, true, false)
 		}
 	}
 
@@ -241,7 +241,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		next, err = handleBlockedBuilder(ctx, rt, tx, b, entries)
 	default:
 		var halted bool
-		next, halted, err = checkRoundTimeout(ctx, rt, b)
+		next, halted, err = checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
 			return next, err // a halt does not deliver; see the comment above
 		}
@@ -324,7 +324,11 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 // the round cap does. It is returned rather than inferred from the state,
 // because a binding can arrive here already NeedsYou for an unrelated reason
 // and must still have its pending payload delivered.
-func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.Binding, bool, error) {
+//
+// The halting tick scans for a rate limit first (spec §5): a match switches
+// the builder instead of halting, and the switch does not count toward
+// max_switches.
+func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
 	if b.RoundStartedAt.IsZero() || b.RoundTimeoutMS <= 0 {
 		return b, false, nil
 	}
@@ -332,6 +336,14 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.
 	budget := time.Duration(b.RoundTimeoutMS) * time.Millisecond
 	if rt.Now().UTC().Sub(b.RoundStartedAt) < budget {
 		return b, false, nil
+	}
+
+	if b.HaltNotifiedRound != b.Round {
+		text := limitText(ctx, rt, b)
+		next, _, handled, err := gateOnLimit(ctx, rt, tx, b, text, true)
+		if handled {
+			return next, true, err
+		}
 	}
 
 	next, err := haltBinding(ctx, rt, b,
@@ -418,6 +430,12 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return next, nil
 	}
 
+	text := limitText(ctx, rt, next)
+	gated, m, handled, err := gateOnLimit(ctx, rt, tx, next, text, true)
+	if handled {
+		return gated, err
+	}
+
 	// Once per round: whichever close runs below ends this path. The builder
 	// never wrote its marker, so relay cannot know the tree is final; it
 	// delivers the best artefact it has and names the omission (spec §4.3).
@@ -427,6 +445,9 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		payload := fmt.Sprintf(
 			"Builder finished round %d but never confirmed completion (no %s). Report: %s. The diff may be premature.",
 			next.Round, filepath.Base(donePath), reportPath)
+		if m.Line != "" {
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
+		}
 		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked")
 	}
 	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)

@@ -1461,3 +1461,93 @@ func TestReconcileQuiescentWithoutReportStillScrapes(t *testing.T) {
 		t.Errorf("note = %q, want scraped", pending.Note)
 	}
 }
+
+// TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping checks the pane
+// quiescence decision point (spec §5): a match on the screen switches the
+// builder uncounted instead of scraping a report.
+func TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping(t *testing.T) {
+	f := &fakeHerdr{readOut: "…\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\n"}
+	rt, b := sentSwitchable(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	clock.Advance(nudgeGrace + time.Second)
+	got, err := reconcile(t, rt, b, agents) // gate, switch
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	if len(f.closed) != 1 || f.closed[0] != "w2:p4" {
+		t.Fatalf("closed = %+v, want [w2:p4]", f.closed)
+	}
+	if len(f.starts) != 1 || f.starts[0].Kind != "claude" {
+		t.Fatalf("starts = %+v, want one claude start", f.starts)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1: a switch does not close the round", got.Round)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || found {
+		t.Errorf("PendingForPlanner: found=%v err=%v, want no pending payload", found, err)
+	}
+	rl := rateLimitedEntries(loadLedger(t, rt))
+	if len(rl) != 1 || rl[0].Subject != "other" {
+		t.Errorf("rate_limited entries = %+v", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 1 {
+		t.Errorf("switch entries = %+v, want 1", sw)
+	}
+}
+
+// TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked checks that
+// a report already on disk still wins over the gate (spec §4.4): the gate is
+// recorded, but the round closes unmarked instead of switching.
+func TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked(t *testing.T) {
+	f := &fakeHerdr{readOut: "…\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\n"}
+	rt, b := sentSwitchable(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	b, err := reconcile(t, rt, b, agents) // nudge
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	clock.Advance(nudgeGrace + time.Second)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconcile(t, rt, b, agents); err != nil { // gate, close unmarked
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, err)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "Provider rate-limited:") {
+		t.Errorf("payload = %q, want the rate-limit sentence", pending.Payload)
+	}
+	rl := rateLimitedEntries(loadLedger(t, rt))
+	if len(rl) != 1 {
+		t.Errorf("rate_limited entries = %+v, want 1", rl)
+	}
+	if len(f.closed) != 0 {
+		t.Errorf("closed = %+v, want none", f.closed)
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("starts = %+v, want none", f.starts)
+	}
+}

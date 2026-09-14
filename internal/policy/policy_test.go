@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func load(t *testing.T, body string) (Policy, error) {
@@ -193,5 +194,60 @@ func TestLoadEmptyOrderIsValid(t *testing.T) {
 		if got := p.OrderFor("builder"); got != nil {
 			t.Fatalf("Load(%q): OrderFor(%q) = %v, want nil", body, "builder", got)
 		}
+	}
+}
+
+func TestLimitGateDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		want     time.Duration
+		wantErr  bool
+		contains []string
+	}{
+		{name: "absent defaults", body: `{}`, want: DefaultLimitGate},
+		{name: "custom duration", body: `{"limit_gate_default_ms":1800000}`, want: 30 * time.Minute},
+		{
+			name:     "zero",
+			body:     `{"limit_gate_default_ms":0}`,
+			wantErr:  true,
+			contains: []string{"limit_gate_default_ms", "must be > 0"},
+		},
+		{
+			name:     "negative",
+			body:     `{"limit_gate_default_ms":-5}`,
+			wantErr:  true,
+			contains: []string{"limit_gate_default_ms", "must be > 0"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := load(t, tt.body)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load: got nil error, want one wrapping ErrBadPolicy")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+				}
+				for _, want := range tt.contains {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.LimitGateDefault(); got != tt.want {
+				t.Fatalf("LimitGateDefault() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if got := (Policy{}).LimitGateDefault(); got != DefaultLimitGate {
+		t.Fatalf("Policy{}.LimitGateDefault() = %v, want %v", got, DefaultLimitGate)
 	}
 }

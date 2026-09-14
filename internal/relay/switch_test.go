@@ -217,8 +217,8 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	if got.Round != 1 {
 		t.Errorf("Round = %d, want 1", got.Round)
 	}
-	if got.RoundSwitches != 1 {
-		t.Errorf("RoundSwitches = %d, want 1", got.RoundSwitches)
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0; a gated switch is uncounted", got.RoundSwitches)
 	}
 
 	sw := switches(t, rt)
@@ -231,6 +231,58 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	}
 	if len(f.notices) != 1 {
 		t.Errorf("notices = %+v, want exactly one", f.notices)
+	}
+}
+
+// TestGatedSwitchDoesNotCount checks the two halves of §4.5 together: a
+// gated switch does not advance RoundSwitches, but the >= limit check at
+// the top of switchBuilder still applies to it -- a binding already at the
+// limit still halts instead of switching again.
+func TestGatedSwitchDoesNotCount(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentSwitchable(t, f)
+	limit := rt.Policy.SwitchLimit()
+	b.RoundSwitches = limit - 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b, present())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("starts = %+v, want one", f.starts)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 {
+		t.Fatalf("switch entries = %d, want 1", len(sw))
+	}
+	if got.RoundSwitches != limit-1 {
+		t.Errorf("RoundSwitches = %d, want %d; a gated switch does not advance the count", got.RoundSwitches, limit-1)
+	}
+
+	f2 := &fakeHerdr{}
+	rt2, b2 := sentSwitchable(t, f2)
+	b2.RoundSwitches = rt2.Policy.SwitchLimit()
+	if err := rt2.Store.Save(b2); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Unavailable(rt2, "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	got2, err := reconcile(t, rt2, b2, present())
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if got2.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you; the limit check still applies to a gated switch", got2.State)
+	}
+	if len(f2.starts) != 0 {
+		t.Errorf("starts = %+v, want none", f2.starts)
 	}
 }
 
@@ -428,8 +480,8 @@ func TestSpawnFailureWalksOn(t *testing.T) {
 	if got.State != store.StateBroken {
 		t.Errorf("state = %s, want broken", got.State)
 	}
-	if got.RoundSwitches != 1 {
-		t.Errorf("RoundSwitches = %d, want 1", got.RoundSwitches)
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0; the failed switch was gated, and a gated switch does not advance the count (spec §6)", got.RoundSwitches)
 	}
 	if len(f.closed) != 1 || f.closed[0] != "w2:p4" {
 		t.Fatalf("closed = %+v, want [w2:p4]", f.closed)
@@ -467,8 +519,8 @@ func TestSpawnFailureWalksOn(t *testing.T) {
 	if len(f.starts) != 2 || f.starts[1].Kind != "opencode" {
 		t.Fatalf("starts = %+v, want a second start with Kind opencode (claude is now gated by its spawn failure)", f.starts)
 	}
-	if got.RoundSwitches != 2 {
-		t.Errorf("RoundSwitches = %d, want 2", got.RoundSwitches)
+	if got.RoundSwitches != 1 {
+		t.Errorf("RoundSwitches = %d, want 1; the first (gated) switch attempt did not count, only this one (a \"gone\" switch) does", got.RoundSwitches)
 	}
 	if got.State != store.StateActive {
 		t.Errorf("state = %s, want active", got.State)

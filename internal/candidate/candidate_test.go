@@ -199,6 +199,11 @@ func TestLoadValidation(t *testing.T) {
 			body:          `not json`,
 			wantSubstring: "decode candidates",
 		},
+		{
+			name:          "invalid limit pattern regex",
+			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"limit_patterns":["(unclosed"]}]`,
+			wantSubstring: "limit_patterns[0]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -250,5 +255,36 @@ func TestLoadAcceptsExtraArgsAndTree(t *testing.T) {
 	}
 	if c.Tree != "binding" {
 		t.Errorf("Tree = %q, want \"binding\"", c.Tree)
+	}
+}
+
+func TestLoadAcceptsLimitPatterns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[
+		{
+			"harness": "agy",
+			"provider": "google",
+			"model": "gemini-3.8-flash-high",
+			"roles": ["builder"],
+			"limit_patterns": ["(?i)quota"]
+		}
+	]`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	set, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() unexpected err: %v", err)
+	}
+
+	c, err := set.Lookup(Ref{"agy", "google", "gemini-3.8-flash-high"})
+	if err != nil {
+		t.Fatalf("Lookup() err: %v", err)
+	}
+
+	wantPatterns := []string{"(?i)quota"}
+	if !reflect.DeepEqual(c.LimitPatterns, wantPatterns) {
+		t.Errorf("LimitPatterns = %v, want %v", c.LimitPatterns, wantPatterns)
 	}
 }

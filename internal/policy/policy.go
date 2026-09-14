@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
@@ -31,6 +32,11 @@ type Policy struct {
 	// one round before the binding goes NEEDS YOU; nil is DefaultMaxSwitches;
 	// 0 disables switching.
 	MaxSwitches *int `json:"max_switches,omitempty"`
+
+	// LimitGateDefaultMS is how long a matched limit gates the provider when
+	// no reset time can be parsed from the matched line. nil is
+	// DefaultLimitGate; a present value must be > 0.
+	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
 }
 
 // DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
@@ -38,12 +44,25 @@ type Policy struct {
 // spawn"; a third in one round is a pattern a human should see.
 const DefaultMaxSwitches = 2
 
+// DefaultLimitGate is how long a matched limit gates the provider when no
+// reset time can be parsed from the matched line and LimitGateDefaultMS is nil.
+const DefaultLimitGate = time.Hour
+
 // SwitchLimit is MaxSwitches with the default applied.
 func (p Policy) SwitchLimit() int {
 	if p.MaxSwitches == nil {
 		return DefaultMaxSwitches
 	}
 	return *p.MaxSwitches
+}
+
+// LimitGateDefault is LimitGateDefaultMS converted to time.Duration with the
+// default applied.
+func (p Policy) LimitGateDefault() time.Duration {
+	if p.LimitGateDefaultMS == nil {
+		return DefaultLimitGate
+	}
+	return time.Duration(*p.LimitGateDefaultMS) * time.Millisecond
 }
 
 // Load reads and validates a policy file. A missing file is the zero Policy
@@ -70,6 +89,10 @@ func Load(path string) (Policy, error) {
 
 	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
 		return Policy{}, fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
+	}
+
+	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
 	}
 
 	roles := make([]string, 0, len(p.Order))

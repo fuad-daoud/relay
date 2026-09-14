@@ -71,7 +71,16 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 // A switch tick returns without deliverAndSettle, like the halt paths in
 // Reconcile: replacing a builder is the only thing that tick does to this
 // binding.
-func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld bool) (store.Binding, error) {
+//
+// counted controls whether the switch advances b.RoundSwitches. A rate-limit
+// switch -- whether the gate came from a pattern match or from a human's
+// `relay unavailable` -- passes false: max_switches counts builders that
+// fail, not providers that close, and counting one trigger but not the
+// other would make the halt depend on who noticed the gate first. The
+// `>= limit` check above is unaffected either way: `0` still disables
+// switching, and a binding already at the limit still halts instead of
+// switching again.
+func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld, counted bool) (store.Binding, error) {
 	limit := rt.Policy.SwitchLimit()
 	if b.RoundSwitches >= limit {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
@@ -117,7 +126,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// binding for the next tick: with the old pane closed (or already
 		// gone) the gone trigger fires again after switchGrace and walks on
 		// to the next candidate.
-		b.RoundSwitches++
+		if counted {
+			b.RoundSwitches++
+		}
 		b.State = store.StateBroken
 		slog.Warn("builder switch failed", "binding", b.Name, "round", b.Round, "pick", res.Token(), "err", err)
 		return b, nil
@@ -125,7 +136,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.Builder = ep
 	b.BuilderCandidate = res.Token()
-	b.RoundSwitches++
+	if counted {
+		b.RoundSwitches++
+	}
 	b.BuilderMissingSince = time.Time{}
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -48,6 +49,11 @@ func TestTableExactValues(t *testing.T) {
 			Integration: "antigravity-cli",
 			MinVersion:  "1.1.6",
 			SubAgents:   SubAgentsForeground,
+			LimitPatterns: []string{
+				`(?i)individual quota reached`,
+				`(?i)RESOURCE_EXHAUSTED`,
+				`(?i)quota exceeded`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -59,6 +65,12 @@ func TestTableExactValues(t *testing.T) {
 			Binary:      "claude",
 			Integration: "claude",
 			SubAgents:   SubAgentsSeparate,
+			LimitPatterns: []string{
+				`(?i)you've hit your .*limit`,
+				`(?i)usage limit reached`,
+				`(?i)rate limit reached`,
+				`(?i)limit .*resets`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -70,6 +82,12 @@ func TestTableExactValues(t *testing.T) {
 			Binary:      "opencode",
 			Integration: "opencode",
 			SubAgents:   SubAgentsHidden,
+			LimitPatterns: []string{
+				`(?i)rate.?limit(ed)? (reached|exceeded)`,
+				`(?i)quota (exceeded|reached)`,
+				`(?i)insufficient (credits|quota)`,
+				`(?i)RESOURCE_EXHAUSTED`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
@@ -281,6 +299,39 @@ func TestSubAgentsSetOnEveryKind(t *testing.T) {
 		if !valid[h.SubAgents] {
 			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
 		}
+	}
+}
+
+func TestLimitPatternsSetOnEveryKind(t *testing.T) {
+	for _, h := range All() {
+		if len(h.LimitPatterns) < 1 {
+			t.Errorf("harness %q: len(LimitPatterns) = %d, want >= 1", h.Kind, len(h.LimitPatterns))
+		}
+		for _, pat := range h.LimitPatterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				t.Errorf("harness %q: pattern %q failed to compile: %v", h.Kind, pat, err)
+			}
+		}
+	}
+
+	agy, ok := Lookup("agy")
+	if !ok {
+		t.Fatal("Lookup(\"agy\") not found")
+	}
+	fixture := "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s."
+	matched := false
+	for _, pat := range agy.LimitPatterns {
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
+		if re.MatchString(fixture) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Errorf("agy LimitPatterns did not match fixture %q", fixture)
 	}
 }
 

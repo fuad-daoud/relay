@@ -116,6 +116,11 @@ type Harness struct {
 	// a known kind; TestSubAgentsSetOnEveryKind enforces it. The status layer
 	// prints a coverage row for anything but SubAgentsSeparate.
 	SubAgents SubAgentVisibility
+	// LimitPatterns are default regexes for the text this harness prints when
+	// its provider closes the session on quota. Every default must compile;
+	// TestLimitPatternsSetOnEveryKind enforces it. Case-insensitivity is
+	// written into the pattern with (?i).
+	LimitPatterns []string
 }
 
 var knownHarnesses = map[string]Harness{
@@ -129,6 +134,13 @@ var knownHarnesses = map[string]Harness{
 		// sub-agent's session id on the builder's pane and no extra agent.
 		// The integration reports whichever agy session is in the foreground.
 		SubAgents: SubAgentsForeground,
+		// Observed 2026-09-12 in history.json ("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.");
+		// the others from Google API error strings, unverified against a pane; replace with the observed line when one is seen.
+		LimitPatterns: []string{
+			`(?i)individual quota reached`,
+			`(?i)RESOURCE_EXHAUSTED`,
+			`(?i)quota exceeded`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -143,6 +155,13 @@ var knownHarnesses = map[string]Harness{
 		// dispatched by a plan-executor surfaced as its own herdr pane and was
 		// reported as a foreign row (foreign-agent spec §7.2).
 		SubAgents: SubAgentsSeparate,
+		// Claude Code's own limit banner and API error text; unverified against a pane; replace with the observed line when one is seen.
+		LimitPatterns: []string{
+			`(?i)you've hit your .*limit`,
+			`(?i)usage limit reached`,
+			`(?i)rate limit reached`,
+			`(?i)limit .*resets`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -161,6 +180,13 @@ var knownHarnesses = map[string]Harness{
 		// they "cannot replace the pane's root session"; only a child's
 		// permission/question prompt bubbles up, as the root's blocked state.
 		SubAgents: SubAgentsHidden,
+		// OpenRouter 429/402 bodies and the Google strings opencode relays; unverified against a pane; replace with the observed line when one is seen.
+		LimitPatterns: []string{
+			`(?i)rate.?limit(ed)? (reached|exceeded)`,
+			`(?i)quota (exceeded|reached)`,
+			`(?i)insufficient (credits|quota)`,
+			`(?i)RESOURCE_EXHAUSTED`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
