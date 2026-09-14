@@ -57,6 +57,7 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
+  wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
@@ -206,6 +207,8 @@ func run(args []string) error {
 		return cmdStatusline(args[1:])
 	case "log":
 		return cmdLog(args[1:])
+	case "wait":
+		return cmdWait(args[1:])
 	case "ui":
 		return cmdUI(args[1:])
 	case "done":
@@ -1305,6 +1308,67 @@ func cmdLog(args []string) error {
 			e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
 	}
 	return nil
+}
+
+// cmdWait blocks until a round closes or needs a human, per spec
+// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
+// relay's own state only: newRuntime's herdr client is constructed but never
+// called.
+func cmdWait(args []string) error {
+	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
+	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	anyFlag := fs.Bool("any", false, "wait on every named binding; the first to close or need you wins, its name printed first")
+	round := fs.Int("round", 0, "round to wait on (default: the newest round sent; an earlier round answers from the log)")
+	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait before giving up")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("relay wait --timeout must be positive")
+	}
+	if *round < 0 {
+		return fmt.Errorf("relay wait --round must be >= 0")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	var names []string
+	if *anyFlag {
+		if *name != "" || len(fs.Args()) == 0 {
+			return fmt.Errorf("usage: relay wait --any NAME [NAME...]  (--any takes one or more positional names, not --name)")
+		}
+		names = fs.Args()
+	} else {
+		target, err := resolveBinding(rt, *name, fs.Args())
+		if err != nil {
+			return err
+		}
+		names = []string{target}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	resName, res, err := relay.Wait(ctx, rt, relay.WaitOptions{
+		Names: names, Round: *round, Timeout: *timeout, Interval: time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *anyFlag && resName != "" {
+		fmt.Println(resName)
+	}
+	if res.Line != "" {
+		fmt.Println(res.Line)
+	}
+	if res.Code == 0 {
+		return nil
+	}
+	return exitCodeErr{res.Code}
 }
 
 func cmdUI(args []string) error {
