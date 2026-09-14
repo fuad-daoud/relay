@@ -223,3 +223,33 @@ func TestKindExitIsDistinct(t *testing.T) {
 		t.Errorf("KindExit = %q, want exit", KindExit)
 	}
 }
+
+func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
+	data, err := json.Marshal(LogEntry{Kind: KindDiff})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	for _, key := range []string{"commits", "tree"} {
+		if _, ok := decoded[key]; ok {
+			t.Errorf("expected %s to be omitted when unknown, got JSON: %s", key, data)
+		}
+	}
+
+	in := LogEntry{Kind: KindDiff, Commits: 3, Tree: "clean"}
+	data, err = json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var out LogEntry
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.Commits != 3 || out.Tree != "clean" {
+		t.Errorf("round trip: got %+v, want %+v", out, in)
+	}
+}
+
