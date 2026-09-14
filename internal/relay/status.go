@@ -540,7 +540,7 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 		// editing the tree is now the wrong thing. Failure is reported
 		// after DONE is saved -- the state change stands either way -- and
 		// the pid stays on the endpoint so the human can find it.
-		pid, stopErr := stopProcess(ctx, rt, b.Builder)
+		pid, stopErr := stopProcess(ctx, rt, b.Builder, "done")
 		if stopErr == nil {
 			b.Builder = clearProcess(b.Builder)
 		}

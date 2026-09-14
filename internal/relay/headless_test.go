@@ -444,6 +444,90 @@ func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
 	}
 }
 
+func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+
+	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
+	if data, err := os.ReadFile(logPath); err == nil {
+		if strings.Contains(string(data), "--- relay") {
+			t.Fatalf("log already contains relay marker before switch: %s", string(data))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error reading log before switch: %v", err)
+	}
+
+	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantSuffix := ": switched to " + testClaudeRef + " (rate-limited) ---"
+	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
+		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "--- relay ") {
+		t.Errorf("last line = %q, want prefix --- relay ", lines[len(lines)-1])
+	}
+}
+
+func TestSwitchBuilderPaneWritesNoLog(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentSwitchable(t, f)
+
+	got, err := reconcile(t, rt, b, gone())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got, err = reconcile(t, at(rt, 31*time.Second), got, gone())
+	if err != nil {
+		t.Fatalf("Reconcile at +31s: %v", err)
+	}
+	if got.RoundSwitches != 1 {
+		t.Fatalf("RoundSwitches = %d, want 1", got.RoundSwitches)
+	}
+	logPath := rt.Store.BuilderLogPath(got.Name, got.Round)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("pane switch created a log file: %s", logPath)
+	}
+}
+
+func TestSwitchBuilderHeadlessMarkerSurvivesStartFailure(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.startErr = errors.New("claude: not found")
+
+	got, err := switchHeadless(t, rt, b, "exited", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+
+	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantSuffix := ": switched to " + testClaudeRef + " (exited) ---"
+	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
+		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "--- relay ") {
+		t.Errorf("last line = %q, want prefix --- relay ", lines[len(lines)-1])
+	}
+}
+
 // exits returns the exit entries in webshop's log.
 func exits(t *testing.T, rt Runtime) []store.LogEntry {
 	t.Helper()
@@ -800,6 +884,88 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	}
 }
 
+func TestDoneHeadlessMarksTheLog(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	logPath := b.Builder.LogPath
+
+	if err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantLast := fmt.Sprintf("--- relay %s: stopped: done ---", rt.Now().Local().Format("15:04:05"))
+	if lines[len(lines)-1] != wantLast {
+		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
+	}
+}
+
+func TestStopProcessMarksUnbind(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	logPath := b.Builder.LogPath
+
+	pid, err := stopProcess(context.Background(), rt, b.Builder, "unbind")
+	if err != nil {
+		t.Fatalf("stopProcess: %v", err)
+	}
+	if pid != b.Builder.PID {
+		t.Errorf("pid = %d, want %d", pid, b.Builder.PID)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", logPath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	wantLast := fmt.Sprintf("--- relay %s: stopped: unbind ---", rt.Now().Local().Format("15:04:05"))
+	if lines[len(lines)-1] != wantLast {
+		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
+	}
+}
+
+func TestStopProcessKillFailureWritesNoMarker(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.killErr = errors.New("boom")
+
+	_, err := stopProcess(context.Background(), rt, b.Builder, "done")
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	data, err := os.ReadFile(b.Builder.LogPath)
+	if err == nil {
+		if strings.Contains(string(data), "--- relay") {
+			t.Errorf("log contains relay marker after failed kill: %s", string(data))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error reading log: %v", err)
+	}
+}
+
+func TestStopProcessIdleWritesNoMarker(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+
+	pid, err := stopProcess(context.Background(), rt, b.Builder, "done")
+	if err != nil {
+		t.Fatalf("stopProcess: %v", err)
+	}
+	if pid != 0 {
+		t.Errorf("pid = %d, want 0", pid)
+	}
+	if b.Builder.LogPath != "" {
+		if _, err := os.Stat(b.Builder.LogPath); !os.IsNotExist(err) {
+			t.Errorf("log file should not exist for idle endpoint: %v", err)
+		}
+	}
+	if _, err := os.Stat(rt.Store.BuilderLogPath(b.Name, b.Round)); !os.IsNotExist(err) {
+		t.Errorf("log file should not exist for idle endpoint: %v", err)
+	}
+}
+
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
@@ -1110,4 +1276,58 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 	if len(fr.kills) != 0 {
 		t.Errorf("a builder that wrote its marker is never killed: %+v", fr.kills)
 	}
+}
+
+func TestAppendLogMarker(t *testing.T) {
+	t.Run("appends in order", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "builder.log")
+		if err := os.WriteFile(p, []byte("first line\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t1 := time.Date(2026, 9, 14, 10, 15, 30, 0, time.UTC)
+		t2 := time.Date(2026, 9, 14, 10, 16, 45, 0, time.UTC)
+		appendLogMarker(p, t1, "stopped: done")
+		appendLogMarker(p, t2, "switched to x/y/z (why)")
+
+		want := fmt.Sprintf("first line\n--- relay %s: stopped: done ---\n--- relay %s: switched to x/y/z (why) ---\n",
+			t1.Local().Format("15:04:05"),
+			t2.Local().Format("15:04:05"),
+		)
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("got %q, want %q", string(got), want)
+		}
+	})
+
+	t.Run("creates the file", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "builder.log")
+		t1 := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+		appendLogMarker(p, t1, "stopped: done")
+
+		want := fmt.Sprintf("--- relay %s: stopped: done ---\n", t1.Local().Format("15:04:05"))
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("got %q, want %q", string(got), want)
+		}
+	})
+
+	t.Run("empty path is a no-op and unwritable path does not panic", func(t *testing.T) {
+		appendLogMarker("", time.Now(), "stopped: done")
+
+		dir := t.TempDir()
+		appendLogMarker(dir, time.Now(), "stopped: done")
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() {
+			t.Errorf("%s is no longer a directory", dir)
+		}
+	})
 }

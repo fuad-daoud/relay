@@ -41,7 +41,9 @@ const DefaultKillGrace = 5 * time.Second
 // for a missing /proc is silenced too, not only echo's stderr: sh applies
 // redirections left to right, and the open fails before 2>/dev/null.
 // The builder stays a child of this sh (no exec) so an OOM kill of the
-// builder still leaves a trailer.
+// builder still leaves a trailer. A group kill from Kill takes the sh with
+// it and leaves none; relay writes its own marker line for every process it
+// stops (relay.appendLogMarker).
 const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true; "$@" </dev/null; echo "` + ExitTrailer + `$?"`
 
 // Runner is the local relay.Runner.

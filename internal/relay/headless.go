@@ -292,12 +292,30 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 // human can find the process.
 var ErrStopFailed = errors.New("could not stop the builder process")
 
+// appendLogMarker writes a single relay marker line to a builder's log file
+// without ever failing the caller (spec §4.1).
+func appendLogMarker(path string, now time.Time, text string) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		slog.Warn("builder log marker", "path", path, "err", err)
+		return
+	}
+	defer f.Close()
+	line := "--- relay " + now.Local().Format("15:04:05") + ": " + text + " ---\n"
+	if _, err := f.WriteString(line); err != nil {
+		slog.Warn("builder log marker", "path", path, "err", err)
+	}
+}
+
 // stopProcess kills a headless endpoint's live process, if it has one. It
 // returns the pid it addressed -- 0 when there was nothing to stop -- and
 // Kill's error. A pane endpoint, or a headless one between rounds, is a
 // no-op. Runner nil with a pid recorded is an error: relay cannot say the
 // process is stopped.
-func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error) {
+func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) (int, error) {
 	if !e.Headless() || e.PID == 0 {
 		return 0, nil
 	}
@@ -307,6 +325,7 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint) (int, error)
 	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
 		return e.PID, err
 	}
+	appendLogMarker(e.LogPath, rt.Now(), "stopped: "+why)
 	return e.PID, nil
 }
 
