@@ -45,21 +45,66 @@ func brief(err error) string {
 	return s
 }
 
-// DiffSummary returns the human summary for the diff log entry.
-func DiffSummary(res DiffResult) string {
-	if !res.Available {
-		if res.Reason != "" {
-			return fmt.Sprintf("unavailable: %s", res.Reason)
+// commitClause renders the commit facts for a diff note (forLine false) or
+// the planner's Diff: line (forLine true), or "" when there is nothing to
+// say: unknown facts with no reason.
+func commitClause(facts CommitResult, branch string, forLine bool) string {
+	if !facts.Known {
+		if facts.Reason == "" {
+			return ""
 		}
-		return "unavailable"
+		return "commits unknown (" + facts.Reason + ")"
 	}
-	if res.Stat.Empty() {
+	tree := "clean"
+	if facts.Dirty {
+		tree = "dirty"
+	}
+	if !forLine {
+		if facts.Commits == 0 {
+			return "no commits, " + tree
+		}
+		return fmt.Sprintf("%s, %s", formatCommits(facts.Commits), tree)
+	}
+	if facts.Commits == 0 {
+		if facts.Dirty {
+			return "no commits; changes are uncommitted in the worktree"
+		}
+		return "no commits, tree clean"
+	}
+	on := ""
+	if branch != "" {
+		on = " on " + branch
+	}
+	return fmt.Sprintf("%s%s, tree %s", formatCommits(facts.Commits), on, tree)
+}
+
+func formatCommits(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	return fmt.Sprintf("%d commits", n)
+}
+
+// DiffSummary returns the human summary for the diff log entry, with the
+// round's commit facts appended after "; " unless the diff is empty.
+func DiffSummary(res DiffResult, facts CommitResult) string {
+	var base string
+	switch {
+	case !res.Available && res.Reason != "":
+		base = fmt.Sprintf("unavailable: %s", res.Reason)
+	case !res.Available:
+		base = "unavailable"
+	case res.Stat.Empty():
 		return "no changes"
+	case res.Truncated:
+		base = "truncated"
+	default:
+		base = fmt.Sprintf("%s, +%d -%d", formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
 	}
-	if res.Truncated {
-		return "truncated"
+	if clause := commitClause(facts, "", false); clause != "" {
+		return base + "; " + clause
 	}
-	return fmt.Sprintf("%s, +%d -%d", formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
+	return base
 }
 
 // CaptureBaseline returns the tree a round starts from, or "" when no snapshot
@@ -69,16 +114,23 @@ func DiffSummary(res DiffResult) string {
 // Preconditions:  none.
 // Postconditions: "" whenever rt.Git is nil, b.CWD is not a repository, or git
 //
-//	failed for any reason; a tree id otherwise.
-func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) string {
+//	failed for any reason; a tree id otherwise. head is HEAD's commit id when
+//	the snapshot succeeded and HeadCommit did; "" otherwise. A tree without a
+//	head is normal (unborn HEAD) and the round then reports commits unknown
+//	(no baseline).
+func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, head string) {
 	if rt.Git == nil || b.CWD == "" {
-		return ""
+		return "", ""
 	}
-	treeID, err := rt.Git.SnapshotTree(ctx, b.CWD)
+	tree, err := rt.Git.SnapshotTree(ctx, b.CWD)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return treeID
+	head, err = rt.Git.HeadCommit(ctx, b.CWD)
+	if err != nil {
+		return tree, ""
+	}
+	return tree, head
 }
 
 // CaptureRoundDiff closes out the diff for b's current round: it snapshots the
@@ -141,24 +193,84 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResu
 	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
 }
 
+// CommitResult is what one round-end commit-facts capture produced (#130).
+// Known is all-or-nothing: either both facts were captured or neither was,
+// and Reason names the step that failed ("" for a non-repository, which is
+// not worth a sentence).
+type CommitResult struct {
+	Known   bool   // both facts were captured
+	Commits int    // rev-list --count RoundBaselineHead..HEAD; 0 when Known is false
+	Dirty   bool   // uncommitted or untracked changes; false when Known is false
+	Reason  string // why Known is false; "" when it is true
+}
+
+// CommitFacts captures how many commits b's current round added and whether
+// its tree is dirty, for the round that is closing. It NEVER returns an
+// error: the facts are informational and a round advance must not be blocked
+// by them. Runs under the state lock, like CaptureRoundDiff.
+//
+// Preconditions:  none.
+// Postconditions: Known is false with an empty Reason when rt.Git is nil or
+//
+//	the tree is not a repository; false with a Reason naming the
+//	step when RoundBaselineHead is empty or a git call failed; true
+//	with both facts otherwise. The sequence HeadCommit, RevListCount,
+//	Dirty stops at the first failure.
+func CommitFacts(ctx context.Context, rt Runtime, b store.Binding) CommitResult {
+	if rt.Git == nil {
+		return CommitResult{}
+	}
+	if b.RoundBaselineHead == "" {
+		return CommitResult{Reason: "no baseline"}
+	}
+	head, err := rt.Git.HeadCommit(ctx, b.CWD)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "head: " + brief(err)}
+	}
+	n, err := rt.Git.RevListCount(ctx, b.CWD, b.RoundBaselineHead, head)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "rev-list: " + brief(err)}
+	}
+	dirty, err := rt.Git.Dirty(ctx, b.CWD)
+	if errors.Is(err, git.ErrNotRepo) {
+		return CommitResult{}
+	}
+	if err != nil {
+		return CommitResult{Reason: "dirty check: " + brief(err)}
+	}
+	return CommitResult{Known: true, Commits: n, Dirty: dirty}
+}
+
 // DiffLine renders the report-payload line for a result, or "" when the result
 // says nothing worth telling the planner (rt.Git off, or not a repository).
-func DiffLine(res DiffResult) string {
-	if !res.Available {
-		if res.Reason == "" {
-			return ""
-		}
-		return fmt.Sprintf("Diff: unavailable (%s)", res.Reason)
-	}
-	if res.Stat.Empty() {
+// The commit facts follow " -- " unless the diff is empty; branch names the
+// binding's branch in the clause, or is "" for a tree relay did not create.
+func DiffLine(res DiffResult, facts CommitResult, branch string) string {
+	var base string
+	switch {
+	case !res.Available && res.Reason == "":
+		return ""
+	case !res.Available:
+		base = fmt.Sprintf("Diff: unavailable (%s)", res.Reason)
+	case res.Stat.Empty():
 		return "Diff: no file changes"
-	}
-	if res.Truncated {
-		return fmt.Sprintf("Diff: %s, +%d -%d (patch omitted, over the 4 MiB cap)",
+	case res.Truncated:
+		base = fmt.Sprintf("Diff: %s, +%d -%d (patch omitted, over the 4 MiB cap)",
 			formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
+	default:
+		base = fmt.Sprintf("Diff: %s (%s, +%d -%d)",
+			res.Path, formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
 	}
-	return fmt.Sprintf("Diff: %s (%s, +%d -%d)",
-		res.Path, formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
+	if clause := commitClause(facts, branch, true); clause != "" {
+		return base + " -- " + clause
+	}
+	return base
 }
 
 // ReadDiff returns the stored patch for one round, and whether one exists.

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func TestCaptureRoundDiff_NilGit(t *testing.T) {
 	if res.Available {
 		t.Fatal("expected Available=false with nil Git")
 	}
-	if line := DiffLine(res); line != "" {
+	if line := DiffLine(res, CommitResult{}, ""); line != "" {
 		t.Fatalf("expected empty line for nil Git, got %q", line)
 	}
 }
@@ -37,7 +38,7 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 	if res.Available {
 		t.Fatal("expected Available=false for ErrNotRepo")
 	}
-	if line := DiffLine(res); line != "" {
+	if line := DiffLine(res, CommitResult{}, ""); line != "" {
 		t.Fatalf("expected empty line for ErrNotRepo, got %q", line)
 	}
 }
@@ -57,7 +58,7 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 		t.Fatalf("unexpected Reason: %q", res.Reason)
 	}
 	wantLine := "Diff: unavailable (boom: git broken)"
-	if line := DiffLine(res); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -83,7 +84,7 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 		t.Fatalf("expected no patch file written, got err %v", err)
 	}
 	wantLine := "Diff: no file changes"
-	if line := DiffLine(res); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -115,7 +116,7 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 		t.Fatalf("expected no patch file written, got err %v", err)
 	}
 	wantLine := "Diff: 312 files, +48120 -9033 (patch omitted, over the 4 MiB cap)"
-	if line := DiffLine(res); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -156,7 +157,7 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 	}
 
 	wantLine := "Diff: " + expectedPath + " (7 files, +214 -38)"
-	if line := DiffLine(res); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 
@@ -185,26 +186,30 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 func TestCaptureBaseline(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
-	fg := &fakeGit{snapshotTreeID: "tree-base"}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
-
-	tree := CaptureBaseline(ctx, rt, b)
-	if tree != "tree-base" {
-		t.Fatalf("got tree %q, want tree-base", tree)
+	newRT := func(g Git) Runtime {
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
 	}
 
-	// With nil git
-	treeNil := CaptureBaseline(ctx, Runtime{Store: s, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}, b)
-	if treeNil != "" {
-		t.Fatalf("got %q with nil git, want empty string", treeNil)
+	tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitID: "head-base"}), b)
+	if tree != "tree-base" || head != "head-base" {
+		t.Fatalf("got (%q, %q), want (tree-base, head-base)", tree, head)
 	}
 
-	// With error
-	fgErr := &fakeGit{snapshotTreeErr: errors.New("fail")}
-	treeErr := CaptureBaseline(ctx, Runtime{Store: s, Git: fgErr, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}, b)
-	if treeErr != "" {
-		t.Fatalf("got %q with failing git, want empty string", treeErr)
+	if tree, head := CaptureBaseline(ctx, newRT(nil), b); tree != "" || head != "" {
+		t.Fatalf("nil git: got (%q, %q), want both empty", tree, head)
+	}
+
+	fgSnap := &fakeGit{snapshotTreeErr: errors.New("fail"), headCommitID: "head-base"}
+	if tree, head := CaptureBaseline(ctx, newRT(fgSnap), b); tree != "" || head != "" {
+		t.Fatalf("snapshot failure: got (%q, %q), want both empty", tree, head)
+	}
+	if fgSnap.headCalls != 0 {
+		t.Fatalf("HeadCommit called %d times after a failed snapshot, want 0", fgSnap.headCalls)
+	}
+
+	if tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitErr: errors.New("unborn")}), b); tree != "tree-base" || head != "" {
+		t.Fatalf("head failure: got (%q, %q), want (tree-base, \"\")", tree, head)
 	}
 }
 
@@ -359,6 +364,153 @@ func TestCaptureRoundDiff_EndTree(t *testing.T) {
 			}
 			if tc.assertCalls != nil && fg != nil {
 				tc.assertCalls(t, fg)
+			}
+		})
+	}
+}
+
+func TestCommitFacts(t *testing.T) {
+	ctx := context.Background()
+	s := store.New(t.TempDir())
+	newRT := func(g Git) Runtime {
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	}
+	withHead := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"}
+
+	t.Run("nil git", func(t *testing.T) {
+		got := CommitFacts(ctx, newRT(nil), withHead)
+		if got.Known || got.Reason != "" {
+			t.Fatalf("got %+v, want Known=false, Reason empty", got)
+		}
+	})
+
+	t.Run("no baseline head", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "h"}
+		got := CommitFacts(ctx, newRT(fg), store.Binding{Name: "webshop", CWD: "/repo", Round: 1})
+		if got.Known || got.Reason != "no baseline" {
+			t.Fatalf("got %+v, want Reason \"no baseline\"", got)
+		}
+		if fg.headCalls != 0 || fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+			t.Fatalf("git was called without a baseline: %+v", fg)
+		}
+	})
+
+	t.Run("head fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitErr: errors.New("boom: head")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "head: boom: head" {
+			t.Fatalf("got %+v, want Reason \"head: boom: head\"", got)
+		}
+		if fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+			t.Fatalf("sequence did not stop at the first failure: %+v", fg)
+		}
+	})
+
+	t.Run("rev-list fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListErr: errors.New("boom: rev-list")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "rev-list: boom: rev-list" {
+			t.Fatalf("got %+v, want Reason \"rev-list: boom: rev-list\"", got)
+		}
+		if fg.dirtyCalls != 0 {
+			t.Fatalf("Dirty called after rev-list failed: %+v", fg)
+		}
+	})
+
+	t.Run("dirty check fails", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListCount: 2, dirtyErr: errors.New("boom: status")}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "dirty check: boom: status" {
+			t.Fatalf("got %+v, want Reason \"dirty check: boom: status\"", got)
+		}
+	})
+
+	t.Run("not a repository is silent", func(t *testing.T) {
+		fg := &fakeGit{headCommitErr: fmt.Errorf("%w: nope", git.ErrNotRepo)}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		if got.Known || got.Reason != "" {
+			t.Fatalf("got %+v, want Known=false with empty Reason", got)
+		}
+	})
+
+	t.Run("all succeed", func(t *testing.T) {
+		fg := &fakeGit{headCommitID: "head-end", revListCount: 3, dirtyResult: true}
+		got := CommitFacts(ctx, newRT(fg), withHead)
+		want := CommitResult{Known: true, Commits: 3, Dirty: true}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+		if fg.lastRevListDir != "/repo" || fg.lastRevListFrom != "head-start" || fg.lastRevListTo != "head-end" {
+			t.Fatalf("rev-list range: dir=%q from=%q to=%q", fg.lastRevListDir, fg.lastRevListFrom, fg.lastRevListTo)
+		}
+		if fg.lastDirtyDir != "/repo" {
+			t.Fatalf("Dirty dir = %q, want /repo", fg.lastDirtyDir)
+		}
+	})
+}
+
+func TestDiffTextWithCommitFacts(t *testing.T) {
+	normal := DiffResult{Available: true, Path: "/p/007-diff.patch", Stat: git.Stat{FilesChanged: 6, Insertions: 120, Deletions: 30}}
+	empty := DiffResult{Available: true}
+	truncated := DiffResult{Available: true, Truncated: true, Stat: git.Stat{FilesChanged: 312, Insertions: 48120, Deletions: 9033}}
+	unavailable := DiffResult{Available: false, Reason: "no baseline"}
+	silent := DiffResult{Available: false}
+
+	cases := []struct {
+		name        string
+		res         DiffResult
+		facts       CommitResult
+		branch      string
+		wantSummary string
+		wantLine    string
+	}{
+		{"commits clean with branch", normal, CommitResult{Known: true, Commits: 3}, "relay/api-auth",
+			"6 files, +120 -30; 3 commits, clean",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits on relay/api-auth, tree clean"},
+		{"one commit singular", normal, CommitResult{Known: true, Commits: 1}, "relay/api-auth",
+			"6 files, +120 -30; 1 commit, clean",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 1 commit on relay/api-auth, tree clean"},
+		{"commits dirty with branch", normal, CommitResult{Known: true, Commits: 3, Dirty: true}, "relay/api-auth",
+			"6 files, +120 -30; 3 commits, dirty",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits on relay/api-auth, tree dirty"},
+		{"commits clean without branch", normal, CommitResult{Known: true, Commits: 3}, "",
+			"6 files, +120 -30; 3 commits, clean",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits, tree clean"},
+		{"no commits dirty", normal, CommitResult{Known: true, Commits: 0, Dirty: true}, "relay/api-auth",
+			"6 files, +120 -30; no commits, dirty",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- no commits; changes are uncommitted in the worktree"},
+		{"no commits clean", normal, CommitResult{Known: true}, "relay/api-auth",
+			"6 files, +120 -30; no commits, clean",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- no commits, tree clean"},
+		{"unknown with reason", normal, CommitResult{Reason: "rev-list: boom"}, "relay/api-auth",
+			"6 files, +120 -30; commits unknown (rev-list: boom)",
+			"Diff: /p/007-diff.patch (6 files, +120 -30) -- commits unknown (rev-list: boom)"},
+		{"unknown silent", normal, CommitResult{}, "relay/api-auth",
+			"6 files, +120 -30",
+			"Diff: /p/007-diff.patch (6 files, +120 -30)"},
+		{"empty diff gains nothing", empty, CommitResult{Known: true, Commits: 2}, "relay/api-auth",
+			"no changes",
+			"Diff: no file changes"},
+		{"truncated keeps the clause", truncated, CommitResult{Known: true, Dirty: true}, "",
+			"truncated; no commits, dirty",
+			"Diff: 312 files, +48120 -9033 (patch omitted, over the 4 MiB cap) -- no commits; changes are uncommitted in the worktree"},
+		{"unavailable keeps the clause", unavailable, CommitResult{Known: true, Commits: 2}, "relay/api-auth",
+			"unavailable: no baseline; 2 commits, clean",
+			"Diff: unavailable (no baseline) -- 2 commits on relay/api-auth, tree clean"},
+		{"unavailable and unknown", unavailable, CommitResult{Reason: "no baseline"}, "",
+			"unavailable: no baseline; commits unknown (no baseline)",
+			"Diff: unavailable (no baseline) -- commits unknown (no baseline)"},
+		{"silent diff stays silent", silent, CommitResult{Known: true, Commits: 2}, "relay/api-auth",
+			"unavailable; 2 commits, clean",
+			""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DiffSummary(tc.res, tc.facts); got != tc.wantSummary {
+				t.Errorf("DiffSummary = %q, want %q", got, tc.wantSummary)
+			}
+			if got := DiffLine(tc.res, tc.facts, tc.branch); got != tc.wantLine {
+				t.Errorf("DiffLine = %q, want %q", got, tc.wantLine)
 			}
 		})
 	}

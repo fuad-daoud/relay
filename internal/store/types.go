@@ -105,6 +105,12 @@ type Binding struct {
 	// two describe different instants, and the round advance clears one while
 	// setting the other.
 	RoundClosedTree string `json:"round_closed_tree,omitempty"`
+	// RoundBaselineHead is the commit HEAD pointed at when the CURRENT round
+	// was sent, written by Send next to RoundBaselineTree and cleared with it
+	// by queueReport. Empty means no commit count is possible for the round:
+	// a non-git tree, an unborn HEAD, git unavailable, or a round sent before
+	// the field existed (#130).
+	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
 	// BuilderScreen is a fingerprint of the builder's terminal as relay last
 	// observed it, and BuilderScreenAt is when that observation was taken. They
 	// exist to tell a builder that has STOPPED from one that is merely quiet:
@@ -149,6 +155,14 @@ type Binding struct {
 
 	// ForkedAtRound is the source round this binding's history was copied through.
 	ForkedAtRound int `json:"forked_at_round,omitempty"`
+
+	// Branch is the branch relay created for this binding's worktree
+	// (relay/<name>), and Base the commit it was cut at. Written once by add
+	// and fork; empty for a --cwd binding, an adopted bind, and every
+	// bind.json written before the fields existed. Display and provenance
+	// today; the branch-integration verbs key on them (#130).
+	Branch string `json:"branch,omitempty"`
+	Base   string `json:"base,omitempty"`
 
 	// Consults are the read-only one-shot agents attached to this binding,
 	// running and awaiting-reap alike. omitempty keeps every bind.json written

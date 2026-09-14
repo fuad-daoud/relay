@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -537,5 +538,57 @@ func TestHeadCommit_BranchExists_Dirty(t *testing.T) {
 	}
 	if dirty {
 		t.Fatal("repo with only ignored untracked file reported as dirty")
+	}
+}
+
+func TestRevListCount(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	runGit(t, repo, "commit", "-m", "first")
+	base, err := client.HeadCommit(ctx, repo)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+
+	// same commit -> 0
+	n, err := client.RevListCount(ctx, repo, base, base)
+	if err != nil || n != 0 {
+		t.Fatalf("RevListCount(base..base) = %d, %v; want 0, nil", n, err)
+	}
+
+	// two more commits -> 2
+	for i, name := range []string{"b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", name)
+		runGit(t, repo, "commit", "-m", fmt.Sprintf("commit %d", i+2))
+	}
+	head, err := client.HeadCommit(ctx, repo)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	n, err = client.RevListCount(ctx, repo, base, head)
+	if err != nil || n != 2 {
+		t.Fatalf("RevListCount(base..head) = %d, %v; want 2, nil", n, err)
+	}
+
+	// unresolvable ref -> error
+	if _, err := client.RevListCount(ctx, repo, "0123456789abcdef0123456789abcdef01234567", head); err == nil {
+		t.Fatal("RevListCount with an unresolvable ref returned nil error")
+	}
+
+	// not a repository -> ErrNotRepo
+	if _, err := client.RevListCount(ctx, t.TempDir(), base, head); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("RevListCount outside a repo: err = %v, want ErrNotRepo", err)
 	}
 }

@@ -71,6 +71,13 @@ type fakeGit struct {
 	dirtyErr     error
 	dirtyCalls   int
 	lastDirtyDir string
+
+	revListCount    int
+	revListErr      error
+	revListCalls    int
+	lastRevListDir  string
+	lastRevListFrom string
+	lastRevListTo   string
 }
 
 func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
@@ -139,6 +146,17 @@ func (f *fakeGit) Dirty(ctx context.Context, dir string) (bool, error) {
 		return false, f.dirtyErr
 	}
 	return f.dirtyResult, nil
+}
+
+func (f *fakeGit) RevListCount(ctx context.Context, dir, from, to string) (int, error) {
+	f.revListCalls++
+	f.lastRevListDir = dir
+	f.lastRevListFrom = from
+	f.lastRevListTo = to
+	if f.revListErr != nil {
+		return 0, f.revListErr
+	}
+	return f.revListCount, nil
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {

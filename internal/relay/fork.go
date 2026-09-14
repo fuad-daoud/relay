@@ -232,6 +232,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		RoundCap:         src.RoundCap,
 		RoundTimeoutMS:   src.RoundTimeoutMS,
 		Worktree:         worktree,
+		Branch:           branch,
+		Base:             base,
 		ForkedFrom:       src.Name,
 		ForkedAtRound:    opts.Round,
 	}

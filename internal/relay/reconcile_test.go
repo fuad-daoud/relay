@@ -789,6 +789,106 @@ func TestReconcileDiffCapture(t *testing.T) {
 	}
 }
 
+func TestQueueReportRecordsCommitFacts(t *testing.T) {
+	closeRound := func(t *testing.T, fg *fakeGit, head string) (store.Binding, []store.LogEntry) {
+		t.Helper()
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		rt.Git = fg
+		b.RoundBaselineTree = "tree-start"
+		b.RoundBaselineHead = head
+		b.Branch = "relay/webshop"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("report content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		got, err := reconcile(t, rt, b, agents)
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got, entries
+	}
+	diffAndReport := func(t *testing.T, entries []store.LogEntry) (store.LogEntry, store.LogEntry) {
+		t.Helper()
+		var diff, report store.LogEntry
+		for _, e := range entries {
+			if e.Round != 1 {
+				continue
+			}
+			switch e.Kind {
+			case store.KindDiff:
+				diff = e
+			case store.KindReport:
+				report = e
+			}
+		}
+		if diff.Kind == "" || report.Kind == "" {
+			t.Fatalf("missing diff or report entry in %+v", entries)
+		}
+		return diff, report
+	}
+	changed := git.Diff{Stat: git.Stat{FilesChanged: 2, Insertions: 10, Deletions: 3}, Patch: []byte("diff content")}
+
+	t.Run("commits and clean", func(t *testing.T) {
+		fg := &fakeGit{snapshotTreeID: "tree-end", diffResult: changed, headCommitID: "head-end", revListCount: 3}
+		got, entries := closeRound(t, fg, "head-start")
+		diff, report := diffAndReport(t, entries)
+		if diff.Commits != 3 || diff.Tree != "clean" {
+			t.Errorf("diff entry facts = (%d, %q), want (3, clean)", diff.Commits, diff.Tree)
+		}
+		if diff.Note != "2 files, +10 -3; 3 commits, clean" {
+			t.Errorf("diff note = %q", diff.Note)
+		}
+		if !strings.Contains(report.Payload, " -- 3 commits on relay/webshop, tree clean") {
+			t.Errorf("payload %q lacks the commit clause", report.Payload)
+		}
+		if got.RoundBaselineHead != "" || got.RoundBaselineTree != "" {
+			t.Errorf("baseline not cleared: head=%q tree=%q", got.RoundBaselineHead, got.RoundBaselineTree)
+		}
+		if fg.lastRevListFrom != "head-start" || fg.lastRevListTo != "head-end" {
+			t.Errorf("rev-list range %q..%q", fg.lastRevListFrom, fg.lastRevListTo)
+		}
+	})
+
+	t.Run("none and dirty", func(t *testing.T) {
+		fg := &fakeGit{snapshotTreeID: "tree-end", diffResult: changed, headCommitID: "head-start", dirtyResult: true}
+		_, entries := closeRound(t, fg, "head-start")
+		diff, report := diffAndReport(t, entries)
+		if diff.Commits != 0 || diff.Tree != "dirty" {
+			t.Errorf("diff entry facts = (%d, %q), want (0, dirty)", diff.Commits, diff.Tree)
+		}
+		if !strings.Contains(report.Payload, " -- no commits; changes are uncommitted in the worktree") {
+			t.Errorf("payload %q lacks the dirty clause", report.Payload)
+		}
+	})
+
+	t.Run("no baseline head", func(t *testing.T) {
+		fg := &fakeGit{snapshotTreeID: "tree-end", diffResult: changed, headCommitID: "head-end", revListCount: 3}
+		_, entries := closeRound(t, fg, "")
+		diff, report := diffAndReport(t, entries)
+		if diff.Tree != "" || diff.Commits != 0 {
+			t.Errorf("diff entry facts = (%d, %q), want unknown", diff.Commits, diff.Tree)
+		}
+		if !strings.Contains(diff.Note, "; commits unknown (no baseline)") {
+			t.Errorf("diff note = %q", diff.Note)
+		}
+		if !strings.Contains(report.Payload, " -- commits unknown (no baseline)") {
+			t.Errorf("payload %q", report.Payload)
+		}
+		if fg.revListCalls != 0 {
+			t.Errorf("rev-list called without a baseline head")
+		}
+	})
+}
+
 func TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)

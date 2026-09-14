@@ -267,6 +267,22 @@ func (c *Client) HeadCommit(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RevListCount returns the number of commits reachable from to and not from
+// from: `git rev-list --count from..to`. 0 when they are the same commit.
+// Errors: ErrNotRepo, ErrGitUnavailable, or a wrapped git failure --
+// including a ref that no longer resolves.
+func (c *Client) RevListCount(ctx context.Context, dir, from, to string) (int, error) {
+	out, err := c.run(ctx, dir, nil, "rev-list", "--count", from+".."+to)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count: parse %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	return n, nil
+}
+
 // BranchExists reports whether branch resolves in dir's repository.
 // Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure.
 func (c *Client) BranchExists(ctx context.Context, dir, branch string) (bool, error) {

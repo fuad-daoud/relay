@@ -196,7 +196,7 @@ func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
 func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
-	fg := &fakeGit{snapshotTreeID: "tree-abc123"}
+	fg := &fakeGit{snapshotTreeID: "tree-abc123", headCommitID: "head-abc123"}
 	rt.Git = fg
 
 	src := writePlan(t, "# test plan")
@@ -215,8 +215,28 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 	if b.RoundBaselineTree != "tree-abc123" {
 		t.Errorf("RoundBaselineTree = %q, want tree-abc123", b.RoundBaselineTree)
 	}
+	if b.RoundBaselineHead != "head-abc123" {
+		t.Errorf("RoundBaselineHead = %q, want head-abc123", b.RoundBaselineHead)
+	}
 	if fg.snapshotCalls != 1 {
 		t.Errorf("snapshotCalls = %d, want 1", fg.snapshotCalls)
+	}
+}
+
+func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# test plan")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "tree-abc123" || b.RoundBaselineHead != "" {
+		t.Errorf("baseline = (%q, %q), want (tree-abc123, \"\")", b.RoundBaselineTree, b.RoundBaselineHead)
 	}
 }
 

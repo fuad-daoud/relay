@@ -226,3 +226,43 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 		t.Errorf("pid/started_at must be JSON numbers: %s", data)
 	}
 }
+
+func TestBindingCommitFactFieldsRoundTripAndAreOmittedWhenEmpty(t *testing.T) {
+	t.Run("empty omits the keys", func(t *testing.T) {
+		data, err := json.Marshal(Binding{})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		for _, key := range []string{"branch", "base", "round_baseline_head"} {
+			if _, ok := decoded[key]; ok {
+				t.Errorf("expected %s to be omitted when empty, got JSON: %s", key, data)
+			}
+		}
+	})
+
+	t.Run("set values round-trip", func(t *testing.T) {
+		in := Binding{Branch: "relay/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"}
+		data, err := json.Marshal(in)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var out Binding
+		if err := json.Unmarshal(data, &out); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if out.Branch != in.Branch || out.Base != in.Base || out.RoundBaselineHead != in.RoundBaselineHead {
+			t.Errorf("round trip: got %+v, want %+v", out, in)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if decoded["branch"] != "relay/api-auth" || decoded["base"] != "c0ffee" || decoded["round_baseline_head"] != "beef" {
+			t.Errorf("JSON keys: %s", data)
+		}
+	})
+}
