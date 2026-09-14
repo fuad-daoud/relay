@@ -84,10 +84,18 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	if len(f.notices) == 0 {
 		t.Error("a timeout must notify")
 	}
+	if want := "round 1 has run past 30m0s"; got.Halt != want {
+		t.Errorf("Halt = %q, want %q", got.Halt, want)
+	}
+	if !got.HaltAt.Equal(rt.Now().UTC()) {
+		t.Errorf("HaltAt = %v, want %v", got.HaltAt, rt.Now().UTC())
+	}
+	haltAt := got.HaltAt
 
 	// A second tick against the same already-halted binding must not notify
 	// again: haltBinding's guard is per-transition, not per-tick.
-	if _, err := reconcile(t, rt, got, agents); err != nil {
+	second, err := reconcile(t, rt, got, agents)
+	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if len(f.notices) != 1 {
@@ -95,6 +103,19 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	}
 	if len(f.reads) != 1 {
 		t.Errorf("reads = %d, want exactly one limit scan, on the halting tick", len(f.reads))
+	}
+	if !second.HaltAt.Equal(haltAt) {
+		t.Errorf("HaltAt = %v after a second tick, want unchanged %v", second.HaltAt, haltAt)
+	}
+
+	// Even once the clock has moved on, a still-halted binding's HaltAt must
+	// stay pinned to the halting tick, not drift to a later poll.
+	third, err := reconcile(t, at(rt, time.Minute), second, agents)
+	if err != nil {
+		t.Fatalf("third Reconcile: %v", err)
+	}
+	if !third.HaltAt.Equal(haltAt) {
+		t.Errorf("HaltAt = %v after a later tick, want unchanged %v", third.HaltAt, haltAt)
 	}
 }
 

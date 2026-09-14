@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -265,6 +266,9 @@ func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message strin
 		if err := rt.Herdr.Notify(ctx, message); err != nil {
 			return b, fmt.Errorf("notify halt: %w", err)
 		}
+
+		b.Halt = strings.TrimPrefix(message, b.Name+": ")
+		b.HaltAt = rt.Now().UTC()
 
 		// Shares the notify's once-per-round dedup.
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
@@ -612,6 +616,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// A halt notified for the old round says nothing about the new one, so the
 	// next round that goes wrong gets its own single notification.
 	b.HaltNotifiedRound = 0
+	b.Halt = ""
+	b.HaltAt = time.Time{}
 	// A switch counted against the old round says nothing about the new one.
 	b.RoundSwitches = 0
 	b.RoundBaselineTree = ""
