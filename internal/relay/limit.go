@@ -6,10 +6,19 @@
 package relay
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // limitScanLines is how many trailing lines of a builder's output a
@@ -151,4 +160,114 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 // inLimitWindow is parseReset's (now, now+7d] bound.
 func inLimitWindow(t, now time.Time) bool {
 	return t.After(now) && !t.After(now.Add(7*24*time.Hour))
+}
+
+// limitPatterns is the harness defaults for token's kind followed by the
+// candidate's own limit_patterns, each compiled. Empty when token does not
+// resolve to a configured candidate (an adopted builder) -- and then no
+// decision point matches anything. Compiled on each call; decision points
+// fire at most once per round, so caching buys nothing.
+//
+// A candidate pattern that fails to compile here cannot happen -- Load
+// already refused the file -- so a pattern that somehow doesn't compile is
+// skipped defensively rather than panicking.
+func limitPatterns(rt Runtime, token string) []*regexp.Regexp {
+	if rt.Candidates == nil {
+		return nil
+	}
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return nil
+	}
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		return nil
+	}
+
+	var raw []string
+	if h, ok := harness.Lookup(c.Harness); ok {
+		raw = append(raw, h.LimitPatterns...)
+	}
+	raw = append(raw, c.LimitPatterns...)
+
+	var compiled []*regexp.Regexp
+	for _, p := range raw {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			continue
+		}
+		compiled = append(compiled, re)
+	}
+	return compiled
+}
+
+// limitText is the text a decision point scans for rate-limit patterns: the
+// tail of the log for a headless builder, or a screen read for a pane one. A
+// pane read failure is Warned and treated as no text (spec §6), the same
+// rule builderQuiescent's scrape already follows.
+func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
+	if b.Builder.Headless() {
+		return logTail(b.Builder.LogPath, limitScanLines)
+	}
+	text, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
+	if err != nil {
+		slog.Warn("limit scan: builder screen unreadable", "binding", b.Name, "round", b.Round, "err", err)
+		return ""
+	}
+	return text
+}
+
+// gateOnLimit is the one helper every decision point calls (spec §4.4).
+// Preconditions: the round is open and the caller holds the store lock.
+//
+// It applies the switchable guard itself -- the same one the existing
+// gatedBuilder triggers use -- and returns handled=false without reading the
+// ledger when it fails: an adopted builder is never gated by relay, and no
+// call site has to repeat the check.
+//
+// On a match it records one rate_limited ledger entry (source relay), warns,
+// marks a headless builder's log, then checks whether this round already has
+// a report on disk: if so the gate is recorded but the round is left for the
+// caller to close as it would have (handled=false, m.Line set); otherwise it
+// switches the builder uncounted (handled=true) and returns the replacement.
+func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, closeOld bool) (next store.Binding, m LimitMatch, handled bool, err error) {
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	if !switchable {
+		return b, LimitMatch{}, false, nil
+	}
+
+	now := rt.Now()
+	patterns := limitPatterns(rt, b.BuilderCandidate)
+	m, ok := matchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
+	if !ok {
+		return b, LimitMatch{}, false, nil
+	}
+
+	entry := ledger.Entry{
+		Kind:    ledger.RateLimited,
+		Subject: providerOf(b.BuilderCandidate),
+		At:      now,
+		Until:   m.Until,
+		Note:    m.Line,
+		Source:  "relay",
+		Binding: b.Name,
+	}
+	if err := appendEntryLocked(rt, entry); err != nil {
+		fmt.Fprintf(os.Stderr, "relay: could not record rate limit gate: %v\n", err)
+	}
+
+	slog.Warn("provider rate-limited",
+		"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+		"until", m.Until, "parsed", m.Parsed, "line", m.Line)
+
+	if b.Builder.Headless() {
+		appendLogMarker(b.Builder.LogPath, now, "rate-limited: "+m.Line)
+	}
+
+	if _, err := os.Stat(rt.Store.ReportPath(b.Name, b.Round)); err == nil {
+		return b, m, false, nil
+	}
+
+	next, err = switchBuilder(ctx, rt, tx, b, "rate-limited: "+m.Line, closeOld, false)
+	return next, m, true, err
 }
