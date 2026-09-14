@@ -146,10 +146,12 @@ existing summary, separated by `"; "`:
 | known, 0, clean | `no commits, clean` |
 | unknown | `commits unknown (<reason>)` |
 
-The clause is appended in every case except an empty diff (`no changes`),
-where there is nothing to commit and the clause would be noise. The
-`unavailable` summary keeps the clause: the diff and the facts fail
-independently.
+The clause is appended in every case except two: an empty diff (`no
+changes`), where there is nothing to commit and the clause would be noise;
+and unknown facts with an empty `Reason` (git off, or not a repository),
+where the diff is equally silent. The `unavailable` summary keeps the
+clause: the diff and the facts fail independently. The same two
+exceptions apply to `DiffLine` below.
 
 Examples: `6 files, +120 -30; 3 commits, clean` ·
 `truncated; no commits, dirty` · `unavailable: no baseline; commits
