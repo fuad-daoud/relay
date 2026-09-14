@@ -50,6 +50,14 @@ type BindingStatus struct {
 	// bookkeeping (drift, pick, switch, exit, diff). Nil when the log has
 	// none.
 	LastPayload *LastEvent   `json:"last_payload,omitempty"`
+	// LastClose is the newest diff entry's commit facts; nil when the log
+	// has no diff entry.
+	LastClose *CloseInfo `json:"last_close,omitempty"`
+	// Dirty is the rendered rule: the newest close left the tree dirty and
+	// no newer round has been sent, so the uncommitted work is still what
+	// the tree holds. False once a round is running -- a dirty tree is then
+	// the expected state.
+	Dirty bool `json:"dirty"`
 	Pending     *PendingInfo `json:"pending,omitempty"`
 	// Nudge is set while the current round has been nudged and no report has
 	// arrived: when relay nudged, and how long the builder's terminal has been
@@ -102,6 +110,15 @@ type LastEvent struct {
 	// the builder and a scrape is a report entry to the planner, so without
 	// it the last line after either reads exactly like the ordinary case.
 	Note string `json:"note,omitempty"`
+}
+
+// CloseInfo is the newest round close's commit facts, from its diff log
+// entry (#130). Tree is "clean", "dirty", or "" when the entry predates the
+// facts or git could not answer.
+type CloseInfo struct {
+	Round   int    `json:"round"`
+	Commits int    `json:"commits"`
+	Tree    string `json:"tree"`
 }
 
 // PendingInfo describes a payload waiting on the planner.
@@ -254,6 +271,13 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 			break
 		}
 	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if e := entries[i]; e.Kind == store.KindDiff {
+			row.LastClose = &CloseInfo{Round: e.Round, Commits: e.Commits, Tree: e.Tree}
+			break
+		}
+	}
+	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
 
 	// What relay acts on is what it shows: the clock starts where
 	// builderQuiescent starts it -- at the last fingerprint, falling back to
@@ -428,6 +452,9 @@ func RenderStatus(r Report) string {
 	for _, b := range r.Bindings {
 		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
 			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
+		if b.Dirty {
+			fmt.Fprint(&sb, " dirty")
+		}
 		// Zero stays out of the row entirely: +0c on every healthy binding
 		// would be noise, not information.
 		if b.Consults > 0 {

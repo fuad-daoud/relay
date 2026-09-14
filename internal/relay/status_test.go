@@ -1070,3 +1070,125 @@ func TestBindingStatusSubAgentsJSON(t *testing.T) {
 		t.Errorf("empty SubAgents must be omitted, got %s", empty)
 	}
 }
+
+// seedClosedRound appends a diff entry for round 1 with the given facts and
+// returns the binding as the daemon leaves it after queueReport: round 2,
+// not yet sent (RoundStartedAt zero).
+func seedClosedRound(t *testing.T, tree string, commits int) (Runtime, store.Binding) {
+	t.Helper()
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Confirmed: true,
+		Commits: commits, Tree: tree,
+	}); err != nil {
+		t.Fatalf("AppendLog diff: %v", err)
+	}
+	b.Round = 2
+	b.RoundStartedAt = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	return rt, b
+}
+
+func TestStatusLastCloseAndDirty(t *testing.T) {
+	t.Run("dirty close, next round not sent", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "dirty", 0)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Round != 1 || got.LastClose.Tree != "dirty" || got.LastClose.Commits != 0 {
+			t.Fatalf("LastClose = %+v, want round 1, dirty, 0 commits", got.LastClose)
+		}
+		if !got.Dirty {
+			t.Error("Dirty = false, want true")
+		}
+	})
+
+	t.Run("clean close", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "clean", 3)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "clean" || got.LastClose.Commits != 3 {
+			t.Fatalf("LastClose = %+v, want clean, 3 commits", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true, want false")
+		}
+	})
+
+	t.Run("dirty close but the next round is sent", func(t *testing.T) {
+		rt, b := seedClosedRound(t, "dirty", 0)
+		b.RoundStartedAt = time.Now().UTC()
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "dirty" {
+			t.Fatalf("LastClose = %+v, want dirty", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true while a round is running, want false")
+		}
+	})
+
+	t.Run("pre-field diff entry", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "", 0)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "" {
+			t.Fatalf("LastClose = %+v, want present with unknown tree", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true for an unknown tree, want false")
+		}
+	})
+
+	t.Run("no diff entry", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, _ := sentBinding(t, f)
+		f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if got := rep.Bindings[0]; got.LastClose != nil || got.Dirty {
+			t.Errorf("LastClose = %+v, Dirty = %v; want nil, false", got.LastClose, got.Dirty)
+		}
+	})
+}
+
+func TestRenderStatusShowsDirty(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2, Dirty: true, Consults: 1,
+	}}}
+	out := RenderStatus(r)
+	if !strings.Contains(out, "round 2   ACTIVE dirty +1c") {
+		t.Errorf("RenderStatus output missing 'dirty' after the display word:\n%s", out)
+	}
+}
+
+func TestRenderStatusOmitsDirtyWhenClean(t *testing.T) {
+	r := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
+		LastClose: &CloseInfo{Round: 1, Tree: "dirty"}, // the raw fact, without the rule applied
+	}}}
+	if out := RenderStatus(r); strings.Contains(out, "dirty") {
+		t.Errorf("rendered dirty from LastClose instead of Dirty:\n%s", out)
+	}
+}
+
