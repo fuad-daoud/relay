@@ -306,7 +306,11 @@ builder a process instead of a pane. Nothing is opened at bind. Each
 `claude -p …`, `opencode run …` -- in the binding's tree with the same prompt a
 pane builder would be typed, appends its stdout and stderr to
 `~/.local/state/relay/<name>/NNN-builder.log` beside the round's plan and
-report, and returns. The process exits when it has written the report, or when
+report, and returns. When relay itself stops or replaces that process -- a
+mid-round switch, `relay done`, `relay unbind` -- it appends one line to the
+same log saying so (`--- relay 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
+so two builders' output in one round is never ambiguous. The process exits when
+it has written the report, or when
 it fails; between rounds a headless binding has no process and is idle, not
 broken. The completion marker is the contract: a process that wrote its report and
 created `NNN-done`, then exited non-zero, has done its job. A process that
