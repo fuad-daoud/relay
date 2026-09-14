@@ -233,6 +233,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			b.Builder = builder
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.HaltNotifiedRound = 0
+			b.Halt = ""
+			b.HaltAt = time.Time{}
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
 			b.RoundClosedTree = ""
