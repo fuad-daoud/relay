@@ -34,6 +34,7 @@ type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
 	HeadCommit(ctx context.Context, dir string) (string, error)
+	RevListCount(ctx context.Context, dir, from, to string) (int, error)
 	BranchExists(ctx context.Context, dir, branch string) (bool, error)
 	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
