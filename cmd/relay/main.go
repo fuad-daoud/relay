@@ -603,6 +603,7 @@ func cmdBind(args []string) error {
 			"  relay send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
 		notePick("builder", res)
+		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
 
@@ -618,6 +619,7 @@ func cmdBind(args []string) error {
 	if !adopted {
 		noteConsultRolesTooLong(b.Name)
 	}
+	warnWaitingOnYou(rt, b.Name)
 	return nil
 }
 
@@ -679,6 +681,7 @@ func cmdFork(args []string) error {
 	}
 	notePick("builder", res.Resolution)
 	noteConsultRolesTooLong(res.Binding.Name)
+	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
 }
@@ -737,6 +740,7 @@ func cmdAdd(args []string) error {
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
 	noteConsultRolesTooLong(res.Binding.Name)
+	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
 }
@@ -774,6 +778,7 @@ func cmdUnbind(args []string) error {
 	}
 
 	fmt.Println(relay.UnbindText(target, res))
+	warnWaitingOnYou(rt, target)
 
 	return nil
 }
@@ -972,6 +977,7 @@ func cmdSend(args []string) error {
 		fmt.Println(res.Drift)
 	}
 	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1180,6 +1186,7 @@ func cmdAnswer(args []string) error {
 	}
 
 	fmt.Println(relay.AnswerText(target))
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1455,6 +1462,7 @@ func cmdDone(args []string) error {
 	}
 
 	fmt.Println(relay.DoneText(target))
+	warnWaitingOnYou(rt, target)
 	return nil
 }
 
@@ -1595,4 +1603,19 @@ func resolveBinding(rt relay.Runtime, nameFlag string, positional []string) (str
 	}
 
 	return b.Name, nil
+}
+
+// warnWaitingOnYou prints one stderr line per other binding that is waiting
+// on a human, per spec §4.9. except is the binding the verb just acted on.
+// It never changes the caller's return value or exit code: a WaitingOnYou
+// error is itself only a stderr warning.
+func warnWaitingOnYou(rt relay.Runtime, except string) {
+	lines, err := relay.WaitingOnYou(rt, except)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: waiting-on-you check: %v\n", err)
+		return
+	}
+	for _, l := range lines {
+		fmt.Fprintln(os.Stderr, l)
+	}
 }
