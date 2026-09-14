@@ -777,6 +777,173 @@ func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
 	}
 }
 
+func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, f, fr)
+	oldPID := b.Builder.PID
+	fr.script(oldPID, false)
+	fr.exit(oldPID, 1)
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "starting\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\nrelay-exit:1\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ex := exits(t, rt)
+	if len(ex) != 1 {
+		t.Fatalf("exit entries = %d, want 1 (the exit is still logged)", len(ex))
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "switched builder (rate-limited: Individual quota reached") {
+		t.Errorf("switch entries = %+v", sw)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Errorf("BuilderCandidate = %q, want %q", got.BuilderCandidate, testClaudeRef)
+	}
+	rl := rateLimitedEntries(loadLedger(t, rt))
+	if len(rl) != 1 || rl[0].Source != "relay" || rl[0].Subject != "other" {
+		t.Errorf("rate_limited entries = %+v", rl)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("kills = %+v, want none: the process already exited", fr.kills)
+	}
+}
+
+func TestReconcileHeadlessBudgetOnLimitKillsAndSwitches(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, f, fr)
+	b.RoundTimeoutMS = 1000
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	old := handleOf(b.Builder)
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "working\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, 2*time.Second), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != old {
+		t.Errorf("kills = %+v, want the old process %+v", fr.kills, old)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Fatalf("want a claude replacement: %+v", fr.specs)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active", got.State)
+	}
+	var switchNotices, timeoutNotices int
+	for _, n := range f.notices {
+		if strings.Contains(n, "switched builder") {
+			switchNotices++
+		}
+		if strings.Contains(n, "run past") {
+			timeoutNotices++
+		}
+	}
+	if switchNotices != 1 || timeoutNotices != 0 {
+		t.Errorf("notices = %+v, want exactly one switch notice and no timeout notice", f.notices)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+	}
+}
+
+func TestReconcileHeadlessBudgetWithoutLimitStillHalts(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, f, fr)
+	b.RoundTimeoutMS = 1000
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("working hard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, 2*time.Second), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "run past") {
+		t.Errorf("notices = %+v, want the budget halt", f.notices)
+	}
+	if len(fr.kills) != 0 || got.Builder.PID != b.Builder.PID {
+		t.Errorf("the budget never kills: kills=%+v pid=%d", fr.kills, got.Builder.PID)
+	}
+	if l := loadLedger(t, rt); len(l.Entries) != 0 {
+		t.Errorf("ledger entries = %+v, want none", l.Entries)
+	}
+}
+
+func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, f, fr)
+	oldPID := b.Builder.PID
+	fr.script(oldPID, false)
+	fr.exit(oldPID, 1)
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	if err := os.WriteFile(reportPath, []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "starting\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\nrelay-exit:1\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, err)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
+	}
+	if !strings.Contains(pending.Payload, "Provider rate-limited: Individual quota reached") {
+		t.Errorf("payload = %q, want it to contain the rate-limit sentence", pending.Payload)
+	}
+	rl := rateLimitedEntries(loadLedger(t, rt))
+	if len(rl) != 1 {
+		t.Errorf("rate_limited entries = %+v, want 1", rl)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %+v, want none", sw)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("fr.specs = %+v, want 1: no replacement spawned", fr.specs)
+	}
+}
+
 func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, &fakeHerdr{}, fr) // no round open

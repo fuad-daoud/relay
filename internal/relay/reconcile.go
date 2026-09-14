@@ -241,7 +241,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		next, err = handleBlockedBuilder(ctx, rt, tx, b, entries)
 	default:
 		var halted bool
-		next, halted, err = checkRoundTimeout(ctx, rt, b)
+		next, halted, err = checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
 			return next, err // a halt does not deliver; see the comment above
 		}
@@ -324,7 +324,11 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 // the round cap does. It is returned rather than inferred from the state,
 // because a binding can arrive here already NeedsYou for an unrelated reason
 // and must still have its pending payload delivered.
-func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.Binding, bool, error) {
+//
+// The halting tick scans for a rate limit first (spec §5): a match switches
+// the builder instead of halting, and the switch does not count toward
+// max_switches.
+func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
 	if b.RoundStartedAt.IsZero() || b.RoundTimeoutMS <= 0 {
 		return b, false, nil
 	}
@@ -332,6 +336,14 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, b store.Binding) (store.
 	budget := time.Duration(b.RoundTimeoutMS) * time.Millisecond
 	if rt.Now().UTC().Sub(b.RoundStartedAt) < budget {
 		return b, false, nil
+	}
+
+	if b.HaltNotifiedRound != b.Round {
+		text := limitText(ctx, rt, b)
+		next, _, handled, err := gateOnLimit(ctx, rt, tx, b, text, true)
+		if handled {
+			return next, true, err
+		}
 	}
 
 	next, err := haltBinding(ctx, rt, b,

@@ -240,7 +240,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		alive = true
 	}
 	if alive {
-		next, halted, err := checkRoundTimeout(ctx, rt, b)
+		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
 			return next, err // a halt does not deliver, as in the pane path
 		}
@@ -261,10 +261,17 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+		if err != nil {
+			return b, err
+		}
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
 			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
 			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), reportPath)
+		if m.Line != "" {
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
+		}
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, "unmarked")
 		if err != nil {
 			return b, err
@@ -280,6 +287,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
+
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+	if handled {
+		return next, err
+	}
+
 	if !switchable {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, b.Builder.LogPath))
 	}
