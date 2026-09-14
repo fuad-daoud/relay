@@ -3,6 +3,11 @@
 package relay
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -85,4 +90,80 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	}
 
 	return WaitResult{}
+}
+
+// WaitOptions configures Wait.
+type WaitOptions struct {
+	Names    []string      // one name, or several for --any; len >= 1
+	Round    int           // 0 = DefaultWaitRound per binding, resolved once at start
+	Timeout  time.Duration // > 0; the CLI defaults 10m
+	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
+}
+
+// Wait polls the store (never herdr) until one of opts.Names closes its
+// round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
+//
+// Every name is loaded once up front, so a name that does not exist is an
+// error before the loop starts (exit 1 from cmd/relay); a name that
+// disappears mid-wait is WaitGone instead. The first pass always runs before
+// any sleep, so a round that already closed returns immediately.
+func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res WaitResult, err error) {
+	if len(opts.Names) == 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: at least one name is required")
+	}
+	if opts.Timeout <= 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: timeout must be positive")
+	}
+	if opts.Interval <= 0 {
+		return "", WaitResult{}, fmt.Errorf("wait: interval must be positive")
+	}
+
+	rounds := make(map[string]int, len(opts.Names))
+	for _, n := range opts.Names {
+		b, err := rt.Store.Load(n)
+		if err != nil {
+			return "", WaitResult{}, err
+		}
+		entries, err := rt.Store.ReadLog(n)
+		if err != nil {
+			return "", WaitResult{}, err
+		}
+		round := opts.Round
+		if round == 0 {
+			round = DefaultWaitRound(b, entries)
+		}
+		rounds[n] = round
+	}
+
+	qf := questionFirstLine(rt)
+	start := rt.Now()
+
+	for {
+		for _, n := range opts.Names {
+			b, err := rt.Store.Load(n)
+			if errors.Is(err, store.ErrNotFound) {
+				return n, WaitResult{Code: WaitGone, Done: true}, nil
+			}
+			if err != nil {
+				return n, WaitResult{}, err
+			}
+			entries, err := rt.Store.ReadLog(n)
+			if err != nil {
+				return n, WaitResult{}, err
+			}
+			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
+				return n, r, nil
+			}
+		}
+
+		if rt.Now().Sub(start) >= opts.Timeout {
+			return "", WaitResult{Code: WaitTimeout, Done: true}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", WaitResult{}, ctx.Err()
+		case <-time.After(opts.Interval):
+		}
+	}
 }
