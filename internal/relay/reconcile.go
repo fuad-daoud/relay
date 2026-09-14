@@ -551,13 +551,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			Direction: store.DirToPlanner,
 			Kind:      store.KindDiff,
 			Path:      result.Path,
-			Note:      DiffSummary(result),
+			Note:      DiffSummary(result, CommitResult{}),
 			Confirmed: true,
 		}
 		if err := tx.AppendLog(b.Name, diffEntry); err != nil {
 			return b, err
 		}
-		if line := DiffLine(result); line != "" {
+		if line := DiffLine(result, CommitResult{}, ""); line != "" {
 			payload = payload + "\n" + line
 		}
 	}
