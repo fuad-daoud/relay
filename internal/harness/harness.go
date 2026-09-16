@@ -20,6 +20,12 @@ type RoleSpec struct {
 	Name       string
 	Shape      RoleShape
 	Definition string
+	// Definitions is every definition a harness must have installed to
+	// run the role: Definition first, then what it dispatches to. The
+	// builder's plan-executor sends its research sub-agents to
+	// researcher, so a builder-only harness needs both; a consult role
+	// needs only its own. Doctor checks these and nothing else (#166).
+	Definitions []string
 }
 
 // SubAgentVisibility records what `herdr agent list` shows while a builder
@@ -48,19 +54,22 @@ const (
 // choice (#80).
 var roleTable = []RoleSpec{
 	{
-		Name:       "builder",
-		Shape:      ShapeBuilder,
-		Definition: "plan-executor",
+		Name:        "builder",
+		Shape:       ShapeBuilder,
+		Definition:  "plan-executor",
+		Definitions: []string{"plan-executor", "researcher"},
 	},
 	{
-		Name:       "reviewer",
-		Shape:      ShapeConsult,
-		Definition: "reviewer",
+		Name:        "reviewer",
+		Shape:       ShapeConsult,
+		Definition:  "reviewer",
+		Definitions: []string{"reviewer"},
 	},
 	{
-		Name:       "researcher",
-		Shape:      ShapeConsult,
-		Definition: "researcher",
+		Name:        "researcher",
+		Shape:       ShapeConsult,
+		Definition:  "researcher",
+		Definitions: []string{"researcher"},
 	},
 }
 
@@ -222,8 +231,12 @@ func (h Harness) CanServe(role string) bool {
 	if !ok {
 		return false
 	}
-	_, found := h.Role(spec.Definition)
-	return found
+	for _, d := range spec.Definitions {
+		if _, found := h.Role(d); !found {
+			return false
+		}
+	}
+	return true
 }
 
 // Placeholders that stand in Launch.Print for the values only the caller

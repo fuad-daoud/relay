@@ -177,6 +177,54 @@ func TestCanServe(t *testing.T) {
 	}
 }
 
+func TestRoleDefinitionsIncludeDispatchTargets(t *testing.T) {
+	want := map[string][]string{
+		"builder":    {"plan-executor", "researcher"},
+		"reviewer":   {"reviewer"},
+		"researcher": {"researcher"},
+	}
+	for role, defs := range want {
+		spec, ok := RoleByName(role)
+		if !ok {
+			t.Fatalf("RoleByName(%q) not found", role)
+		}
+		if !reflect.DeepEqual(spec.Definitions, defs) {
+			t.Errorf("%s Definitions = %v, want %v", role, spec.Definitions, defs)
+		}
+		if spec.Definitions[0] != spec.Definition {
+			t.Errorf("%s Definitions[0] = %q, want Definition %q", role, spec.Definitions[0], spec.Definition)
+		}
+	}
+}
+
+// The builder needs researcher installed because its own definition
+// dispatches to it. Pin the reason, not just the table.
+func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
+	for _, h := range All() {
+		doc, err := AgentDoc("plan-executor", h.Kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(plan-executor, %s): %v", h.Kind, err)
+		}
+		if !strings.Contains(string(doc), "researcher") {
+			t.Errorf("%s plan-executor does not mention researcher; Definitions for builder is wrong", h.Kind)
+		}
+	}
+}
+
+func TestCanServeRequiresEveryDefinition(t *testing.T) {
+	h := Harness{Kind: "partial", Roles: []Role{{Name: "plan-executor"}}}
+	if h.CanServe("builder") {
+		t.Error("a harness shipping plan-executor but not researcher must not serve builder")
+	}
+	h.Roles = append(h.Roles, Role{Name: "researcher"})
+	if !h.CanServe("builder") {
+		t.Error("plan-executor + researcher must serve builder")
+	}
+	if h.CanServe("reviewer") {
+		t.Error("no reviewer definition must not serve reviewer")
+	}
+}
+
 func TestLaunch(t *testing.T) {
 	builder, ok := RoleByName("builder")
 	if !ok {
