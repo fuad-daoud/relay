@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,33 @@ func TestAssembleKindsWithNoCandidatesUsesBindingsOnly(t *testing.T) {
 	}
 	if len(kinds) != 1 || kinds[0] != "claude" {
 		t.Fatalf("kinds = %v, want [claude]", kinds)
+	}
+}
+
+func TestAssembleDefinitionsFollowsCandidateRoles(t *testing.T) {
+	set := testSet(t, `[
+	  {"harness":"agy","provider":"t","model":"m","roles":["builder"]},
+	  {"harness":"claude","provider":"t","model":"m","roles":["reviewer"]},
+	  {"harness":"claude","provider":"t","model":"n","roles":["builder"]}
+	]`)
+
+	got := assembleDefinitions(set, []string{"agy", "claude", "opencode"})
+
+	want := map[string][]string{
+		"agy":      {"plan-executor", "researcher"},
+		"claude":   {"plan-executor", "researcher", "reviewer"},
+		"opencode": {"plan-executor", "researcher"}, // binding-only kind: builder's set
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("assembleDefinitions = %v, want %v", got, want)
+	}
+}
+
+func TestAssembleDefinitionsNilSet(t *testing.T) {
+	got := assembleDefinitions(nil, []string{"claude"})
+	want := map[string][]string{"claude": {"plan-executor", "researcher"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("assembleDefinitions(nil) = %v, want %v", got, want)
 	}
 }
 
@@ -428,6 +456,24 @@ func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
 	}
 	if strings.Contains(normal, "integration") {
 		t.Errorf("a missing binary must still suppress the rest of that harness: %s", normal)
+	}
+}
+
+func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
+	env := &stubDoctorEnv{
+		ver:       herdr.MinVersion,
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current"}},
+		statErr:   os.ErrNotExist, // no role file exists
+	}
+	lines := bindPreflight(context.Background(), env, "claude", false)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "plan-executor") || !strings.Contains(joined, "researcher") {
+		t.Errorf("preflight must warn about the builder's definitions, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "reviewer") {
+		t.Errorf("preflight must not warn about reviewer on a bind, got:\n%s", joined)
 	}
 }
 

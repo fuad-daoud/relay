@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -64,6 +65,58 @@ func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeEr
 	}
 	sort.Strings(kinds)
 	return kinds, storeErr
+}
+
+// builderDefinitions is what a builder needs installed on its harness:
+// the plan-executor and the researcher it dispatches to (#166 §3).
+func builderDefinitions() []string {
+	spec, _ := harness.RoleByName("builder")
+	return append([]string(nil), spec.Definitions...)
+}
+
+// assembleDefinitions is doctor's per-kind role scope: the definitions
+// some candidate on that harness would load, given its roles. A kind in
+// kinds that no candidate names reached doctor through a binding, and a
+// binding is always a builder.
+func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string {
+	seen := make(map[string]map[string]bool)
+	add := func(kind string, defs []string) {
+		if seen[kind] == nil {
+			seen[kind] = make(map[string]bool)
+		}
+		for _, d := range defs {
+			seen[kind][d] = true
+		}
+	}
+	if set != nil {
+		for _, ref := range set.Refs() {
+			parsed, _ := candidate.ParseRef(ref)
+			c, err := set.Lookup(parsed)
+			if err != nil {
+				continue
+			}
+			for _, role := range c.Roles {
+				if spec, ok := harness.RoleByName(role); ok {
+					add(c.Harness, spec.Definitions)
+				}
+			}
+		}
+	}
+	for _, kind := range kinds {
+		if seen[kind] == nil {
+			add(kind, builderDefinitions())
+		}
+	}
+	out := make(map[string][]string, len(seen))
+	for kind, defs := range seen {
+		list := make([]string, 0, len(defs))
+		for d := range defs {
+			list = append(list, d)
+		}
+		sort.Strings(list)
+		out[kind] = list
+	}
+	return out
 }
 
 func renderReport(w io.Writer, rep doctor.Report) {
@@ -149,7 +202,7 @@ func cmdDoctor(args []string) error {
 		return fmt.Errorf("herdr client does not support the probes doctor needs")
 	}
 	env := doctor.NewEnv(hc, rt.Store)
-	rep := doctor.Run(context.Background(), env, kinds)
+	rep := doctor.Run(context.Background(), env, kinds, doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",
@@ -248,7 +301,7 @@ func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
 func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
 	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
 	defer cancel()
-	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted)))
+	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: builderDefinitions()})))
 }
 
 func bindWarningLines(rep doctor.Report) []string {
