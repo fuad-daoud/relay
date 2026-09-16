@@ -123,14 +123,17 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
 4. Emit the builder's role definitions directly into your harness's config directory:
    ```
    # agy
+   mkdir -p ~/.gemini/config/agents
    relay agent print --kind agy --role plan-executor > ~/.gemini/config/agents/plan-executor.md
    relay agent print --kind agy --role researcher    > ~/.gemini/config/agents/researcher.md
 
    # claude
+   mkdir -p ~/.claude/agents
    relay agent print --kind claude --role plan-executor > ~/.claude/agents/plan-executor.md
    relay agent print --kind claude --role researcher    > ~/.claude/agents/researcher.md
 
    # opencode
+   mkdir -p ~/.config/opencode/agents
    relay agent print --kind opencode --role plan-executor > ~/.config/opencode/agents/plan-executor.md
    relay agent print --kind opencode --role researcher    > ~/.config/opencode/agents/researcher.md
    ```
@@ -146,9 +149,13 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    doctor` reports the pin each installed definition carries, and warns when an
    agy copy pins a tier.
 5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
-6. Re-run `relay doctor` to confirm `0 failures`.
-7. Start the daemon (e.g. `relay daemon &` or `make service`).
-8. Bind your first agent from inside a herdr planner pane:
+6. If more than one candidate serves `builder`, write `~/.config/relay/policy.json`
+   with the order to try them in (see [Policy](#policy)); `relay policy` shows
+   what relay would pick and says `would refuse` until you do. `relay doctor`
+   warns about this too and prints a starter file built from your candidates.
+7. Re-run `relay doctor` to confirm `0 failures`.
+8. Start the daemon (e.g. `relay daemon &` or `make service`).
+9. Bind your first agent from inside a herdr planner pane:
    ```
    relay bind --builder claude/anthropic/sonnet
    ```
@@ -612,7 +619,9 @@ you add to `candidates.json` without adding it here is tried last, after
 everything listed. An entry here that names a candidate that is not
 configured, or one that does not serve the role, is skipped -- never an
 error, because removing a candidate must not stop every command -- and
-`relay policy` and `relay doctor` warn about it. `max_switches` bounds
+`relay policy` and `relay doctor` warn about it. Both also say when several
+candidates serve a role and no order is set, since an omitted `--builder`
+refuses in that state. `max_switches` bounds
 how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 `limit_gate_default_ms` is how long a rate limit relay detects itself
