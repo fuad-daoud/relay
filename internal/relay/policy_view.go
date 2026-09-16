@@ -93,6 +93,71 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 	return out
 }
 
+// RoleRefusal is one role for which an omitted candidate would be refused
+// right now, computed by the same resolveCandidate call bind makes.
+type RoleRefusal struct {
+	Role    string
+	Text    string   // the words after "would refuse:" in relay policy
+	NoOrder bool     // true for the ambiguous case, false for the all-gated case
+	Serving []string // tokens serving the role, in Set.ForRole order
+	Gated   []string // providers with a gate on a serving token, deduplicated, in Serving order; nil when NoOrder
+}
+
+// RoleRefusals lists, in harness.RoleNames() order, every role with at
+// least one serving candidate that resolveCandidate would refuse with no
+// token named. It is the one source of doctor's policy rows and relay
+// policy's "would refuse" lines (#165).
+func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []RoleRefusal {
+	if set == nil || set.Len() == 0 {
+		return nil
+	}
+	var out []RoleRefusal
+	for _, role := range harness.RoleNames() {
+		serving := set.ForRole(role)
+		if len(serving) == 0 {
+			continue
+		}
+		_, err := resolveCandidate(set, pol, gates, "", role)
+		if r, ok := refusalFromErr(role, serving, gates, err); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// refusalFromErr maps resolveCandidate's error for role to a RoleRefusal.
+// FormatPolicy and RoleRefusals both go through here, so relay policy and
+// relay doctor print the same words for the same state.
+func refusalFromErr(role string, serving []candidate.Candidate, gates []ledger.Gate, err error) (RoleRefusal, bool) {
+	tokens := make([]string, 0, len(serving))
+	for _, c := range serving {
+		tokens = append(tokens, c.Ref().String())
+	}
+	switch {
+	case errors.Is(err, ErrAmbiguousCandidate):
+		return RoleRefusal{
+			Role:    role,
+			Text:    fmt.Sprintf("%d candidates serve %s and no order is set", len(serving), role),
+			NoOrder: true,
+			Serving: tokens,
+		}, true
+	case errors.Is(err, ErrAllGated):
+		var providers []string
+		for _, c := range serving {
+			if len(skipsFor(gates, c.Ref().String())) > 0 {
+				providers = append(providers, c.Ref().Provider)
+			}
+		}
+		return RoleRefusal{
+			Role:    role,
+			Text:    fmt.Sprintf("every candidate serving %s is gated", role),
+			Serving: tokens,
+			Gated:   uniqStrings(providers),
+		}, true
+	}
+	return RoleRefusal{}, false
+}
+
 // FormatPolicy renders, per role, what resolveCandidate would do right now
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks (spec §4.7). It is a listing, not a check:
@@ -174,11 +239,8 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 			sb.WriteString(strings.TrimRight(row, " ") + "\n")
 		}
 
-		switch {
-		case errors.Is(err, ErrAmbiguousCandidate):
-			sb.WriteString(fmt.Sprintf("  would refuse: %d candidates serve %s and no order is set\n", len(serving), role))
-		case errors.Is(err, ErrAllGated):
-			sb.WriteString(fmt.Sprintf("  would refuse: every candidate serving %s is gated\n", role))
+		if r, ok := refusalFromErr(role, serving, gates, err); ok {
+			sb.WriteString("  would refuse: " + r.Text + "\n")
 		}
 	}
 

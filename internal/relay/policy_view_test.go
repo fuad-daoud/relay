@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -326,5 +327,54 @@ func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
 	}
 	if n := strings.Count(err.Error(), "rate-limited until cleared"); n != 1 {
 		t.Errorf("gate text appears %d times in %q, want 1", n, err.Error())
+	}
+}
+
+func TestRoleRefusalsNoOrder(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+
+	got := RoleRefusals(set, policy.Policy{}, nil)
+
+	want := []RoleRefusal{{
+		Role:    "builder",
+		Text:    "3 candidates serve builder and no order is set",
+		NoOrder: true,
+		Serving: []string{testAgyRef, testClaudeRef, testOpencodeRef},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("RoleRefusals = %+v, want %+v", got, want)
+	}
+}
+
+func TestRoleRefusalsNoneWhenOrderedOrSole(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
+
+	if got := RoleRefusals(set, pol, nil); len(got) != 0 {
+		t.Errorf("RoleRefusals with order = %+v, want none (reviewer is sole, researcher unserved)", got)
+	}
+}
+
+func TestRoleRefusalsAllGated(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
+	gates := []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
+
+	got := RoleRefusals(set, pol, gates)
+
+	want := []RoleRefusal{
+		{Role: "builder", Text: "every candidate serving builder is gated",
+			Serving: []string{testAgyRef, testClaudeRef, testOpencodeRef}, Gated: []string{"test"}},
+		{Role: "reviewer", Text: "every candidate serving reviewer is gated",
+			Serving: []string{testClaudeRef}, Gated: []string{"test"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("RoleRefusals = %+v, want %+v", got, want)
+	}
+}
+
+func TestRoleRefusalsEmptySet(t *testing.T) {
+	if got := RoleRefusals(nil, policy.Policy{}, nil); got != nil {
+		t.Errorf("RoleRefusals(nil) = %+v, want nil", got)
 	}
 }
