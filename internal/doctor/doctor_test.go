@@ -582,8 +582,9 @@ func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
 	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
-	if !strings.Contains(c.Fix, "--role researcher") {
-		t.Errorf("fix must name the role, got %q", c.Fix)
+	want := "mkdir -p ~/.claude/agents && relay agent print --kind claude --role researcher > ~/.claude/agents/researcher.md"
+	if c.Fix != want {
+		t.Errorf("fix = %q, want %q", c.Fix, want)
 	}
 }
 
@@ -788,7 +789,7 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 	report := Run(context.Background(), env, []string{"agy"})
 	c := findCheck(report, "agy", "reviewer")
 	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
-		c.Fix != "relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
+		c.Fix != "mkdir -p ~/.gemini/config/agents && relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
 		t.Errorf("row = %+v", c)
 	}
 }
@@ -905,4 +906,3 @@ func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
 		}
 	}
 }
-

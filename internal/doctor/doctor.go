@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
@@ -211,11 +212,14 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 		}
 	}
 	if env.Stat(fullPath) != nil {
+		// The fix must work on a machine that has never run this harness
+		// as a sub-agent host: none of the agents/ directories exist yet
+		// (#166 §1), and a redirect into a missing directory fails.
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix: fmt.Sprintf("relay agent print --kind %s --role %s > %s",
-				kind, r.Name, homeRel),
+			Fix: fmt.Sprintf("mkdir -p %s && relay agent print --kind %s --role %s > %s",
+				path.Dir(homeRel), kind, r.Name, homeRel),
 		}
 	}
 
