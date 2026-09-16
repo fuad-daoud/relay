@@ -32,7 +32,21 @@ fi
 echo "plugin-build: building relay from $repo_root"
 cd "$repo_root"
 
-version=$(git describe --tags --always --dirty 2>/dev/null || echo devel)
+# Stamp a version a human can place against a release. herdr's plugin
+# clone has no tags, so a bare `git describe --always` printed a lone hash
+# (#166 §4): fetch tags when none are reachable, and if there are still
+# none, fall back to the manifest's version plus the hash.
+if ! version=$(git describe --tags --dirty 2>/dev/null); then
+	git fetch --tags --quiet 2>/dev/null || true
+	if ! version=$(git describe --tags --dirty 2>/dev/null); then
+		if hash=$(git rev-parse --short HEAD 2>/dev/null); then
+			manifest=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$plugin_root/herdr-plugin.toml" 2>/dev/null)
+			version="${manifest:-devel}+$hash"
+		else
+			version=devel
+		fi
+	fi
+fi
 CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$version" -o "$plugin_root/relay" ./cmd/relay
 
 echo "plugin-build: installed relay $version"
