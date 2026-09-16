@@ -126,7 +126,8 @@ func semverAtLeast(v, floor string) (bool, error) {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	adopted bool
+	adopted     bool
+	definitions map[string][]string
 }
 
 // WithAdopted scopes the per-kind checks to an adopted pane: the user launched
@@ -137,6 +138,31 @@ func WithAdopted(adopted bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.adopted = adopted
 	}
+}
+
+// WithDefinitions limits the role rows for each kind to the named
+// definitions: the ones some candidate on that harness would actually
+// load (#166). A kind absent from the map keeps every shipped
+// definition, which is what a caller with no candidate knowledge wants.
+func WithDefinitions(defs map[string][]string) RunOption {
+	return func(cfg *runConfig) {
+		cfg.definitions = defs
+	}
+}
+
+// wants reports whether the role row for definition name on kind is in
+// scope under cfg.definitions.
+func (cfg runConfig) wants(kind, name string) bool {
+	defs, limited := cfg.definitions[kind]
+	if !limited {
+		return true
+	}
+	for _, d := range defs {
+		if d == name {
+			return true
+		}
+	}
+	return false
 }
 
 // frontmatterModel returns the value of a `model:` key in the leading `---`
@@ -456,7 +482,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 
 		if !cfg.adopted {
-			// Role checks: one row per shipped role. Every known kind has rows (#85).
+			// Role checks: one row per shipped role in scope (see WithDefinitions). Every known kind has rows (#85).
 			switch {
 			case !known:
 				checks = append(checks, Check{
@@ -468,6 +494,9 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 				})
 			default:
 				for _, r := range h.Roles {
+					if !cfg.wants(kind, r.Name) {
+						continue
+					}
 					checks = append(checks, roleCheck(env, kind, r))
 				}
 			}

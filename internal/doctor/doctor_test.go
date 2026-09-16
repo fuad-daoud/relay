@@ -869,3 +869,40 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 		}
 	})
 }
+
+func TestDoctorChecksOnlyTheDefinitionsGiven(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	// No role files installed at all.
+	env.existingFiles = map[string]bool{}
+
+	report := Run(context.Background(), env, []string{"claude"},
+		WithDefinitions(map[string][]string{"claude": {"plan-executor", "researcher"}}))
+
+	for _, name := range []string{"plan-executor", "researcher"} {
+		c := findCheck(report, "claude", name)
+		if c == nil {
+			t.Fatalf("no %s row for claude", name)
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("%s severity = %v, want warn (file missing)", name, c.Severity)
+		}
+	}
+	if c := findCheck(report, "claude", "reviewer"); c != nil {
+		t.Errorf("reviewer row present although no candidate on claude can select it: %+v", *c)
+	}
+}
+
+func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{}
+
+	report := Run(context.Background(), env, []string{"claude"},
+		WithDefinitions(map[string][]string{"opencode": {"plan-executor"}}))
+
+	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+		if findCheck(report, "claude", name) == nil {
+			t.Errorf("no %s row for claude; a kind absent from the map must keep every shipped definition", name)
+		}
+	}
+}
+
