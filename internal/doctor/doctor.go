@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
@@ -53,6 +54,13 @@ type Report struct {
 	// on PATH and its integration installed. It is meaningless in adopted mode,
 	// where the binary is deliberately not probed, so nothing reads it there.
 	UsableBuilder bool
+
+	// NoCandidates and BuilderRefusal are verdict inputs the caller sets
+	// from configuration Run does not see (candidates.json, policy.json,
+	// the ledger). Run leaves them zero. The footer reads them in the
+	// order failures, NoCandidates, !UsableBuilder, BuilderRefusal.
+	NoCandidates   bool
+	BuilderRefusal string // RoleRefusal.Text for builder, "" when bind would pick
 }
 
 // Failures counts checks with SevFail.
@@ -126,7 +134,8 @@ func semverAtLeast(v, floor string) (bool, error) {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	adopted bool
+	adopted     bool
+	definitions map[string][]string
 }
 
 // WithAdopted scopes the per-kind checks to an adopted pane: the user launched
@@ -137,6 +146,31 @@ func WithAdopted(adopted bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.adopted = adopted
 	}
+}
+
+// WithDefinitions limits the role rows for each kind to the named
+// definitions: the ones some candidate on that harness would actually
+// load (#166). A kind absent from the map keeps every shipped
+// definition, which is what a caller with no candidate knowledge wants.
+func WithDefinitions(defs map[string][]string) RunOption {
+	return func(cfg *runConfig) {
+		cfg.definitions = defs
+	}
+}
+
+// wants reports whether the role row for definition name on kind is in
+// scope under cfg.definitions.
+func (cfg runConfig) wants(kind, name string) bool {
+	defs, limited := cfg.definitions[kind]
+	if !limited {
+		return true
+	}
+	for _, d := range defs {
+		if d == name {
+			return true
+		}
+	}
+	return false
 }
 
 // frontmatterModel returns the value of a `model:` key in the leading `---`
@@ -185,11 +219,14 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 		}
 	}
 	if env.Stat(fullPath) != nil {
+		// The fix must work on a machine that has never run this harness
+		// as a sub-agent host: none of the agents/ directories exist yet
+		// (#166 §1), and a redirect into a missing directory fails.
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix: fmt.Sprintf("relay agent print --kind %s --role %s > %s",
-				kind, r.Name, homeRel),
+			Fix: fmt.Sprintf("mkdir -p %s && relay agent print --kind %s --role %s > %s",
+				path.Dir(homeRel), kind, r.Name, homeRel),
 		}
 	}
 
@@ -456,7 +493,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 
 		if !cfg.adopted {
-			// Role checks: one row per shipped role. Every known kind has rows (#85).
+			// Role checks: one row per shipped role in scope (see WithDefinitions). Every known kind has rows (#85).
 			switch {
 			case !known:
 				checks = append(checks, Check{
@@ -468,6 +505,9 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 				})
 			default:
 				for _, r := range h.Roles {
+					if !cfg.wants(kind, r.Name) {
+						continue
+					}
 					checks = append(checks, roleCheck(env, kind, r))
 				}
 			}

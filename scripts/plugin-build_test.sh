@@ -34,5 +34,32 @@ elif [ -e "$work/sub/relay" ]; then
 	echo "FAIL: missing go left a binary behind"; fail=1
 fi
 
+# 3. A tagless clone with a reachable remote fetches tags and describes.
+git clone -q --no-tags "$root" "$work/withremote"
+mkdir -p "$work/withremote/from-source"
+if (cd "$work/withremote/from-source" && sh ../scripts/plugin-build.sh >/dev/null 2>&1); then
+	v=$("$work/withremote/from-source/relay" version); v=${v#relay }
+	case "$v" in
+		v[0-9]*) ;;
+		*) echo "FAIL: tagless clone with remote printed '$v', want a tag-relative describe"; fail=1 ;;
+	esac
+else
+	echo "FAIL: build in tagless clone with remote exited non-zero"; fail=1
+fi
+
+# 4. No tags and no remote: manifest version plus the short hash, never a bare hash.
+git clone -q --no-tags "$root" "$work/noremote"
+(cd "$work/noremote" && git remote remove origin)
+mkdir -p "$work/noremote/from-source"
+if (cd "$work/noremote/from-source" && sh ../scripts/plugin-build.sh >/dev/null 2>&1); then
+	v=$("$work/noremote/from-source/relay" version); v=${v#relay }
+	case "$v" in
+		[0-9]*.[0-9]*.[0-9]*+[0-9a-f]*) ;;
+		*) echo "FAIL: tagless clone without remote printed '$v', want <manifest>+<hash>"; fail=1 ;;
+	esac
+else
+	echo "FAIL: build in tagless clone without remote exited non-zero"; fail=1
+fi
+
 [ "$fail" -eq 0 ] && echo "plugin-build: ok"
 exit "$fail"

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -66,6 +68,58 @@ func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeEr
 	return kinds, storeErr
 }
 
+// builderDefinitions is what a builder needs installed on its harness:
+// the plan-executor and the researcher it dispatches to (#166 §3).
+func builderDefinitions() []string {
+	spec, _ := harness.RoleByName("builder")
+	return append([]string(nil), spec.Definitions...)
+}
+
+// assembleDefinitions is doctor's per-kind role scope: the definitions
+// some candidate on that harness would load, given its roles. A kind in
+// kinds that no candidate names reached doctor through a binding, and a
+// binding is always a builder.
+func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string {
+	seen := make(map[string]map[string]bool)
+	add := func(kind string, defs []string) {
+		if seen[kind] == nil {
+			seen[kind] = make(map[string]bool)
+		}
+		for _, d := range defs {
+			seen[kind][d] = true
+		}
+	}
+	if set != nil {
+		for _, ref := range set.Refs() {
+			parsed, _ := candidate.ParseRef(ref)
+			c, err := set.Lookup(parsed)
+			if err != nil {
+				continue
+			}
+			for _, role := range c.Roles {
+				if spec, ok := harness.RoleByName(role); ok {
+					add(c.Harness, spec.Definitions)
+				}
+			}
+		}
+	}
+	for _, kind := range kinds {
+		if seen[kind] == nil {
+			add(kind, builderDefinitions())
+		}
+	}
+	out := make(map[string][]string, len(seen))
+	for kind, defs := range seen {
+		list := make([]string, 0, len(defs))
+		for d := range defs {
+			list = append(list, d)
+		}
+		sort.Strings(list)
+		out[kind] = list
+	}
+	return out
+}
+
 func renderReport(w io.Writer, rep doctor.Report) {
 	// 1. Global rows
 	for _, c := range rep.Checks {
@@ -115,11 +169,15 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 
 	if failCount == 0 {
-		if !rep.UsableBuilder {
+		if rep.NoCandidates {
+			fmt.Fprintf(w, "%s, %s -- no candidates configured; write ~/.config/relay/candidates.json first.\n", warnPart, failPart)
+		} else if !rep.UsableBuilder {
 			// Say why. Every row can be `ok` and still leave no usable builder --
 			// a machine whose only alias names a kind relay was not taught reads
 			// as entirely healthy, so a bare verdict would point at nothing.
 			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has both its binary on PATH and its integration installed.\n", warnPart, failPart)
+		} else if rep.BuilderRefusal != "" {
+			fmt.Fprintf(w, "%s, %s -- relay cannot pick a builder: %s.\n", warnPart, failPart, rep.BuilderRefusal)
 		} else {
 			fmt.Fprintf(w, "%s, %s -- relay can run.\n", warnPart, failPart)
 		}
@@ -149,7 +207,7 @@ func cmdDoctor(args []string) error {
 		return fmt.Errorf("herdr client does not support the probes doctor needs")
 	}
 	env := doctor.NewEnv(hc, rt.Store)
-	rep := doctor.Run(context.Background(), env, kinds)
+	rep := doctor.Run(context.Background(), env, kinds, doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",
@@ -159,16 +217,25 @@ func cmdDoctor(args []string) error {
 		})
 	}
 	if rt.Candidates.Len() == 0 {
+		rep.NoCandidates = true
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:     "candidates",
 			Severity: doctor.SevWarn,
 			Detail:   "none configured",
-			Fix:      "write ~/.config/relay/candidates.json; see README \"Candidates\"",
+			Fix:      `write ~/.config/relay/candidates.json, e.g. [{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`,
 		})
 	}
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
+	refusals := relay.RoleRefusals(rt.Candidates, rt.Policy, relay.Gates(rt))
+	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
+	for _, r := range refusals {
+		if r.Role == "builder" {
+			rep.BuilderRefusal = r.Text
+			break
+		}
+	}
 
 	renderReport(os.Stdout, rep)
 
@@ -226,6 +293,44 @@ func policyChecks(warnings []relay.PolicyWarning) []doctor.Check {
 	return checks
 }
 
+// refusalChecks turns the roles an omitted candidate would be refused for
+// into doctor rows. Warnings, not failures: the machine is fine, the
+// configuration is not (#165). The fix is a literal policy.json built
+// from the tokens that serve the role, so it can be pasted as is.
+func refusalChecks(refusals []relay.RoleRefusal) []doctor.Check {
+	checks := make([]doctor.Check, 0, len(refusals))
+	for _, r := range refusals {
+		detail := r.Text + " -- ask --role " + r.Role + " without --candidate would refuse"
+		if r.Role == "builder" {
+			detail = r.Text + " -- add/bind without --builder would refuse"
+		}
+		fix := "write ~/.config/relay/policy.json, e.g. " + policyExample(r.Role, r.Serving)
+		if !r.NoOrder {
+			provider := "<provider>"
+			if len(r.Gated) > 0 {
+				provider = r.Gated[0]
+			}
+			fix = "relay available " + provider
+		}
+		checks = append(checks, doctor.Check{
+			Group:    "",
+			Name:     "policy",
+			Severity: doctor.SevWarn,
+			Detail:   detail,
+			Fix:      fix,
+		})
+	}
+	return checks
+}
+
+func policyExample(role string, serving []string) string {
+	// json.Marshal cannot fail on a map of string slices.
+	b, _ := json.Marshal(map[string]map[string][]string{
+		"order": {role: serving},
+	})
+	return string(b)
+}
+
 // insertGlobalCheck puts c after the last global row, so render order stays
 // "globals first, then one block per kind".
 func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
@@ -248,7 +353,7 @@ func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
 func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
 	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
 	defer cancel()
-	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted)))
+	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: builderDefinitions()})))
 }
 
 func bindWarningLines(rep doctor.Report) []string {

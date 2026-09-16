@@ -582,8 +582,9 @@ func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
 	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
-	if !strings.Contains(c.Fix, "--role researcher") {
-		t.Errorf("fix must name the role, got %q", c.Fix)
+	want := "mkdir -p ~/.claude/agents && relay agent print --kind claude --role researcher > ~/.claude/agents/researcher.md"
+	if c.Fix != want {
+		t.Errorf("fix = %q, want %q", c.Fix, want)
 	}
 }
 
@@ -788,7 +789,7 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 	report := Run(context.Background(), env, []string{"agy"})
 	c := findCheck(report, "agy", "reviewer")
 	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
-		c.Fix != "relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
+		c.Fix != "mkdir -p ~/.gemini/config/agents && relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
 		t.Errorf("row = %+v", c)
 	}
 }
@@ -868,4 +869,40 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 			t.Errorf("row = %+v, want SevOK", c)
 		}
 	})
+}
+
+func TestDoctorChecksOnlyTheDefinitionsGiven(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	// No role files installed at all.
+	env.existingFiles = map[string]bool{}
+
+	report := Run(context.Background(), env, []string{"claude"},
+		WithDefinitions(map[string][]string{"claude": {"plan-executor", "researcher"}}))
+
+	for _, name := range []string{"plan-executor", "researcher"} {
+		c := findCheck(report, "claude", name)
+		if c == nil {
+			t.Fatalf("no %s row for claude", name)
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("%s severity = %v, want warn (file missing)", name, c.Severity)
+		}
+	}
+	if c := findCheck(report, "claude", "reviewer"); c != nil {
+		t.Errorf("reviewer row present although no candidate on claude can select it: %+v", *c)
+	}
+}
+
+func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
+	env := newFakeEnvForKind(t, "claude")
+	env.existingFiles = map[string]bool{}
+
+	report := Run(context.Background(), env, []string{"claude"},
+		WithDefinitions(map[string][]string{"opencode": {"plan-executor"}}))
+
+	for _, name := range []string{"plan-executor", "researcher", "reviewer"} {
+		if findCheck(report, "claude", name) == nil {
+			t.Errorf("no %s row for claude; a kind absent from the map must keep every shipped definition", name)
+		}
+	}
 }
