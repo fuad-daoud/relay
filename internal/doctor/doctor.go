@@ -54,6 +54,13 @@ type Report struct {
 	// on PATH and its integration installed. It is meaningless in adopted mode,
 	// where the binary is deliberately not probed, so nothing reads it there.
 	UsableBuilder bool
+
+	// NoCandidates and BuilderRefusal are verdict inputs the caller sets
+	// from configuration Run does not see (candidates.json, policy.json,
+	// the ledger). Run leaves them zero. The footer reads them in the
+	// order failures, NoCandidates, !UsableBuilder, BuilderRefusal.
+	NoCandidates   bool
+	BuilderRefusal string // RoleRefusal.Text for builder, "" when bind would pick
 }
 
 // Failures counts checks with SevFail.

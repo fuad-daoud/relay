@@ -218,6 +218,40 @@ func TestPolicyChecks(t *testing.T) {
 	}
 }
 
+func TestRefusalChecks(t *testing.T) {
+	refusals := []relay.RoleRefusal{
+		{Role: "builder", Text: "3 candidates serve builder and no order is set", NoOrder: true,
+			Serving: []string{"agy/test/m", "claude/test/m", "opencode/test/m"}},
+		{Role: "reviewer", Text: "every candidate serving reviewer is gated",
+			Serving: []string{"claude/test/m"}, Gated: []string{"test"}},
+	}
+
+	checks := refusalChecks(refusals)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
+	}
+	for i, c := range checks {
+		if c.Group != "" || c.Name != "policy" || c.Severity != doctor.SevWarn {
+			t.Errorf("check %d = %+v", i, c)
+		}
+	}
+	if want := "3 candidates serve builder and no order is set -- add/bind without --builder would refuse"; checks[0].Detail != want {
+		t.Errorf("builder Detail = %q, want %q", checks[0].Detail, want)
+	}
+	if want := `write ~/.config/relay/policy.json, e.g. {"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}`; checks[0].Fix != want {
+		t.Errorf("builder Fix = %q, want %q", checks[0].Fix, want)
+	}
+	if want := "every candidate serving reviewer is gated -- ask --role reviewer without --candidate would refuse"; checks[1].Detail != want {
+		t.Errorf("reviewer Detail = %q, want %q", checks[1].Detail, want)
+	}
+	if want := "relay available test"; checks[1].Fix != want {
+		t.Errorf("reviewer Fix = %q, want %q", checks[1].Fix, want)
+	}
+	if got := refusalChecks(nil); len(got) != 0 {
+		t.Errorf("refusalChecks(nil) = %+v, want empty", got)
+	}
+}
+
 // The unreadable-store gap is reported as a global row, positioned with the
 // other global rows rather than after the per-kind blocks.
 func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
@@ -297,6 +331,53 @@ func TestRenderReportVerdict(t *testing.T) {
 	outUnverified := buf.String()
 	if !strings.Contains(outUnverified, "could not establish a usable builder: no checked harness") {
 		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
+	}
+}
+
+func TestRenderReportFooterPrecedence(t *testing.T) {
+	healthy := []doctor.Check{
+		{Name: "herdr", Severity: doctor.SevOK, Detail: "0.9.0 (floor 0.8.2)"},
+		{Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
+		{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
+		{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+	}
+	cases := []struct {
+		name string
+		rep  doctor.Report
+		want string
+	}{
+		{"refusal beats can run",
+			doctor.Report{Checks: healthy, UsableBuilder: true, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			"0 warnings, 0 failures -- relay cannot pick a builder: 3 candidates serve builder and no order is set."},
+		{"no usable builder beats refusal",
+			doctor.Report{Checks: healthy, UsableBuilder: false, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			"could not establish a usable builder"},
+		{"no candidates beats no usable builder",
+			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
+			"0 warnings, 0 failures -- no candidates configured; write ~/.config/relay/candidates.json first."},
+		{"a failure beats everything",
+			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Name: "herdr", Severity: doctor.SevFail, Detail: "x"}), NoCandidates: true, BuilderRefusal: "y"},
+			"Fix the failure above."},
+		{"clean machine can run",
+			doctor.Report{Checks: healthy, UsableBuilder: true},
+			"0 warnings, 0 failures -- relay can run."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			renderReport(&buf, tc.rep)
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("footer missing %q in:\n%s", tc.want, buf.String())
+			}
+		})
+	}
+}
+
+func TestPolicyExample(t *testing.T) {
+	got := policyExample("builder", []string{"agy/test/m", "claude/test/m"})
+	want := `{"order":{"builder":["agy/test/m","claude/test/m"]}}`
+	if got != want {
+		t.Errorf("policyExample = %s, want %s", got, want)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -168,11 +169,15 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 
 	if failCount == 0 {
-		if !rep.UsableBuilder {
+		if rep.NoCandidates {
+			fmt.Fprintf(w, "%s, %s -- no candidates configured; write ~/.config/relay/candidates.json first.\n", warnPart, failPart)
+		} else if !rep.UsableBuilder {
 			// Say why. Every row can be `ok` and still leave no usable builder --
 			// a machine whose only alias names a kind relay was not taught reads
 			// as entirely healthy, so a bare verdict would point at nothing.
 			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has both its binary on PATH and its integration installed.\n", warnPart, failPart)
+		} else if rep.BuilderRefusal != "" {
+			fmt.Fprintf(w, "%s, %s -- relay cannot pick a builder: %s.\n", warnPart, failPart, rep.BuilderRefusal)
 		} else {
 			fmt.Fprintf(w, "%s, %s -- relay can run.\n", warnPart, failPart)
 		}
@@ -212,16 +217,25 @@ func cmdDoctor(args []string) error {
 		})
 	}
 	if rt.Candidates.Len() == 0 {
+		rep.NoCandidates = true
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:     "candidates",
 			Severity: doctor.SevWarn,
 			Detail:   "none configured",
-			Fix:      "write ~/.config/relay/candidates.json; see README \"Candidates\"",
+			Fix:      `write ~/.config/relay/candidates.json, e.g. [{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`,
 		})
 	}
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
+	refusals := relay.RoleRefusals(rt.Candidates, rt.Policy, relay.Gates(rt))
+	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
+	for _, r := range refusals {
+		if r.Role == "builder" {
+			rep.BuilderRefusal = r.Text
+			break
+		}
+	}
 
 	renderReport(os.Stdout, rep)
 
@@ -277,6 +291,44 @@ func policyChecks(warnings []relay.PolicyWarning) []doctor.Check {
 		})
 	}
 	return checks
+}
+
+// refusalChecks turns the roles an omitted candidate would be refused for
+// into doctor rows. Warnings, not failures: the machine is fine, the
+// configuration is not (#165). The fix is a literal policy.json built
+// from the tokens that serve the role, so it can be pasted as is.
+func refusalChecks(refusals []relay.RoleRefusal) []doctor.Check {
+	checks := make([]doctor.Check, 0, len(refusals))
+	for _, r := range refusals {
+		detail := r.Text + " -- ask --role " + r.Role + " without --candidate would refuse"
+		if r.Role == "builder" {
+			detail = r.Text + " -- add/bind without --builder would refuse"
+		}
+		fix := "write ~/.config/relay/policy.json, e.g. " + policyExample(r.Role, r.Serving)
+		if !r.NoOrder {
+			provider := "<provider>"
+			if len(r.Gated) > 0 {
+				provider = r.Gated[0]
+			}
+			fix = "relay available " + provider
+		}
+		checks = append(checks, doctor.Check{
+			Group:    "",
+			Name:     "policy",
+			Severity: doctor.SevWarn,
+			Detail:   detail,
+			Fix:      fix,
+		})
+	}
+	return checks
+}
+
+func policyExample(role string, serving []string) string {
+	// json.Marshal cannot fail on a map of string slices.
+	b, _ := json.Marshal(map[string]map[string][]string{
+		"order": {role: serving},
+	})
+	return string(b)
 }
 
 // insertGlobalCheck puts c after the last global row, so render order stays
