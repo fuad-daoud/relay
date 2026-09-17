@@ -149,6 +149,7 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    doctor` reports the pin each installed definition carries, and warns when an
    agy copy pins a tier.
 5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
+   (Optional) Emit the planner's definition too -- see [The planner: architect](#the-planner-architect).
 6. If more than one candidate serves `builder`, write `~/.config/relay/policy.json`
    with the order to try them in (see [Policy](#policy)); `relay policy` shows
    what relay would pick and says `would refuse` until you do. `relay doctor`
@@ -807,6 +808,42 @@ relay ask --role reviewer --candidate claude/anthropic/opus --file q.md webshop
 
 Until a candidate lists `reviewer`, `ask` fails with
 `no configured candidate serves role "reviewer"`.
+
+## The planner: architect
+
+relay ships one more definition it never launches: `architect`, the planner's
+persona. The planner is the session you drive -- the pane you run `relay bind`
+and `relay ask` from -- and relay does not pick its harness or start it. What
+relay provides is the definition, so the same architect runs on any kind:
+
+```
+# agy
+relay agent print --kind agy      --role architect > ~/.gemini/config/agents/architect.md
+# claude
+relay agent print --kind claude   --role architect > ~/.claude/agents/architect.md
+# opencode
+relay agent print --kind opencode --role architect > ~/.config/opencode/agents/architect.md
+```
+
+Then start the planner with the harness's own `--agent` flag, for example:
+
+```
+claude   --agent architect --model opus
+opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
+```
+
+The architect designs and never implements: it produces a system overview,
+file structure, data structures, interface contracts, pseudocode, an error
+handling strategy and ordered implementation steps -- the plan a builder's
+plan-executor takes as written. Its agy copy pins `model: inherit` and a
+read-plus-`write_to_file` tool set, enough to read the tree and write the plan
+and nothing more; the claude and opencode copies leave `model:` unset so the
+launch line's flag decides.
+
+`architect` is not a relay role: it is absent from the role table, so
+`relay ask --role architect` is refused, candidates cannot list it, and
+`relay doctor` does not check for it -- doctor reports only the definitions
+some candidate would load, and no candidate loads the planner.
 
 ## Display states
 
