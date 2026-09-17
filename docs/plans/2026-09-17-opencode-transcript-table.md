@@ -187,8 +187,10 @@ switch str(state["status"]):
   default:     return [unknown(obj)]        // rule 5: a status the capture did not show
 ```
 
-A `text` event whose `part.text` is the empty string renders as one empty
-line, the same as claude's empty text block; do not special-case it.
+A `text` event whose `part.text` is the empty string renders as nothing,
+the same as the claude table's empty text block (`claude.go` drops it);
+opencode emits such events in JSON mode for a turn with an empty preamble
+before its tool calls.
 
 - [ ] **Step 5: replace the provisional unit test.** In
 `internal/transcript/transcript_test.go`, rename

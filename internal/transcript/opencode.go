@@ -8,8 +8,10 @@ func renderOpencode(obj map[string]any) []string {
 	case "step_start", "step_finish":
 		return nil
 	case "text":
-		part := asMap(obj["part"])
-		return []string{str(part["text"])}
+		if t := str(asMap(obj["part"])["text"]); t != "" {
+			return []string{t}
+		}
+		return nil
 	case "tool_use":
 		part := asMap(obj["part"])
 		state := asMap(part["state"])

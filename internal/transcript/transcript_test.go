@@ -234,6 +234,10 @@ func TestOpencodeTable(t *testing.T) {
 			`{"part":{"type":"text","text":"hi"}}`,
 			[]string{"[?]"},
 		},
+		"empty text is nothing, as in the claude table": {
+			`{"type":"text","part":{"type":"text","text":""}}`,
+			nil,
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
