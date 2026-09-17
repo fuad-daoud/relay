@@ -171,6 +171,56 @@ func TestGCWorktreeTeardown(t *testing.T) {
 	}
 }
 
+func TestGCAfterDoneReportsGone(t *testing.T) {
+	fg := &fakeGit{dirtyResult: false}
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	rt.Git = fg
+
+	wt := t.TempDir()
+	b := store.Binding{
+		Name:     "webshop",
+		CWD:      wt,
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateActive,
+		Round:    1,
+		Planner:  store.Endpoint{PaneID: "w1:p1"},
+		Builder:  store.Endpoint{PaneID: "w1:p2"},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, "webshop")
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeRemoved != wt {
+		t.Fatalf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
+	}
+
+	// The temp dir still exists on disk because fakeGit removes nothing --
+	// so before GC, do os.RemoveAll(wt) to model what real git did.
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	gcRes, err := GC(context.Background(), rt, GCOptions{})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(gcRes) != 1 {
+		t.Fatalf("GC results = %d, want 1", len(gcRes))
+	}
+	if gcRes[0].WorktreeGone != wt {
+		t.Errorf("GC WorktreeGone = %q, want %q", gcRes[0].WorktreeGone, wt)
+	}
+	if gcRes[0].ArchivedTo == "" {
+		t.Error("GC ArchivedTo is empty, want archive path")
+	}
+}
+
 func TestGCWorktreeDryRun(t *testing.T) {
 	fg := &fakeGit{}
 	f := &fakeHerdr{}

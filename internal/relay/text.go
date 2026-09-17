@@ -10,9 +10,27 @@ import (
 // terminal does. Each returns the exact bytes cmd/relay printed before #15,
 // without a trailing newline; the caller adds one.
 
-// DoneText is what `relay done` says on success.
-func DoneText(name string) string {
-	return fmt.Sprintf("%s marked done; relaying stopped (relay gc archives it when you are finished with it)", name)
+// DoneText is what `relay done` says on success: one line for the binding,
+// then at most one for its worktree.
+func DoneText(name string, res ...DoneResult) string {
+	var r DoneResult
+	if len(res) > 0 {
+		r = res[0]
+	}
+	lines := []string{
+		fmt.Sprintf("%s marked done; relaying stopped (relay gc archives it when you are finished with it)", name),
+	}
+	switch {
+	case r.WorktreeRemoved != "" && r.Branch != "":
+		lines = append(lines, fmt.Sprintf("removed worktree %s (branch %s is free to check out)", r.WorktreeRemoved, r.Branch))
+	case r.WorktreeRemoved != "":
+		lines = append(lines, fmt.Sprintf("removed worktree %s", r.WorktreeRemoved))
+	case r.WorktreeKept != "":
+		lines = append(lines, fmt.Sprintf("kept worktree %s (%s); relay gc retries when it is clean", r.WorktreeKept, r.KeptReason))
+	case r.WorktreeGone != "":
+		lines = append(lines, fmt.Sprintf("worktree %s was already gone", r.WorktreeGone))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // AnswerText is what `relay answer` says on success.

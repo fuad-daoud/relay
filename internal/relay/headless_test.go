@@ -1366,7 +1366,7 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
 	h := handleOf(b.Builder)
 
-	if err := Done(context.Background(), rt, "webshop"); err != nil {
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 	if len(fr.kills) != 1 || fr.kills[0] != h {
@@ -1383,7 +1383,7 @@ func TestDoneHeadlessMarksTheLog(t *testing.T) {
 	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
 	logPath := b.Builder.LogPath
 
-	if err := Done(context.Background(), rt, "webshop"); err != nil {
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 	data, err := os.ReadFile(logPath)
@@ -1463,7 +1463,7 @@ func TestStopProcessIdleWritesNoMarker(t *testing.T) {
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
-	if err := Done(context.Background(), rt, "webshop"); err != nil {
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 	if len(fr.kills) != 0 {
@@ -1476,7 +1476,7 @@ func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
 	rt, _ := sentHeadless(t, &fakeHerdr{}, fr)
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
 
-	err := Done(context.Background(), rt, "webshop")
+	_, err := Done(context.Background(), rt, "webshop")
 	if !errors.Is(err, ErrStopFailed) || !strings.Contains(err.Error(), "marked done") {
 		t.Fatalf("err = %v, want ErrStopFailed saying the binding is still marked done", err)
 	}
@@ -1489,12 +1489,61 @@ func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
 	}
 }
 
+func TestDoneHeadlessKillFailureKeepsWorktree(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fr.killErr = errors.New("SIGTERM: operation not permitted")
+
+	wt := t.TempDir()
+	b.Worktree = wt
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, "webshop")
+	if !errors.Is(err, ErrStopFailed) {
+		t.Fatalf("err = %v, want ErrStopFailed", err)
+	}
+	if res.WorktreeKept != wt {
+		t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, wt)
+	}
+	if res.KeptReason != "builder process still running" {
+		t.Errorf("KeptReason = %q, want 'builder process still running'", res.KeptReason)
+	}
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
+	}
+}
+
+func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fg := &fakeGit{dirtyResult: false}
+	rt.Git = fg
+
+	wt := t.TempDir()
+	b.Worktree = wt
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, "webshop")
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeRemoved != wt {
+		t.Errorf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
+	}
+}
+
 func TestDonePaneNeverTouchesTheRunner(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := sentBinding(t, f)
 	fr := newFakeRunner()
 	rt.Runner = fr
-	if err := Done(context.Background(), rt, "webshop"); err != nil {
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fr.kills) != 0 {

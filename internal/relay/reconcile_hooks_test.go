@@ -150,7 +150,7 @@ func TestDone_EmitsStateChanged(t *testing.T) {
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 
-	if err := Done(context.Background(), rt, b.Name); err != nil {
+	if _, err := Done(context.Background(), rt, b.Name); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 

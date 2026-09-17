@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -291,7 +292,7 @@ func TestDoneStopsRelaying(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
 
-	if err := Done(context.Background(), rt, b.Name); err != nil {
+	if _, err := Done(context.Background(), rt, b.Name); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
 
@@ -301,6 +302,151 @@ func TestDoneStopsRelaying(t *testing.T) {
 	}
 	if got.State != store.StateDone {
 		t.Errorf("state = %s, want done", got.State)
+	}
+}
+
+func TestDoneReleasesCleanWorktree(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{dirtyResult: false}
+	rt.Git = fg
+
+	b.Worktree = t.TempDir()
+	b.Branch = "relay/webshop"
+	b.RoundStartedAt = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, b.Name)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeRemoved != b.Worktree {
+		t.Errorf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, b.Worktree)
+	}
+	if res.Branch != "relay/webshop" {
+		t.Errorf("Branch = %q, want relay/webshop", res.Branch)
+	}
+	if len(fg.removeWorktreeCalls) != 1 {
+		t.Fatalf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
+	}
+	call := fg.removeWorktreeCalls[0]
+	if call.Dir != b.CWD || call.Path != b.Worktree || call.Force != false {
+		t.Errorf("RemoveWorktreeCall = %+v, want Dir=%q, Path=%q, Force=false", call, b.CWD, b.Worktree)
+	}
+	got, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateDone {
+		t.Errorf("state = %s, want done", got.State)
+	}
+}
+
+func TestDoneKeepsDirtyWorktree(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{dirtyResult: true}
+	rt.Git = fg
+
+	b.Worktree = t.TempDir()
+	b.Branch = "relay/webshop"
+	b.RoundStartedAt = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, b.Name)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeKept != b.Worktree {
+		t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, b.Worktree)
+	}
+	if res.KeptReason != "uncommitted changes" {
+		t.Errorf("KeptReason = %q, want 'uncommitted changes'", res.KeptReason)
+	}
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
+	}
+}
+
+func TestDoneKeepsWorktreeWhileRoundOpen(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+
+	b.Worktree = t.TempDir()
+	b.Branch = "relay/webshop"
+	b.RoundStartedAt = rt.Now()
+	b.Round = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, b.Name)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeKept != b.Worktree {
+		t.Errorf("WorktreeKept = %q, want %q", res.WorktreeKept, b.Worktree)
+	}
+	wantReason := "round 1 open; the builder may still write"
+	if res.KeptReason != wantReason {
+		t.Errorf("KeptReason = %q, want %q", res.KeptReason, wantReason)
+	}
+	if fg.dirtyCalls != 0 {
+		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
+	}
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
+	}
+}
+
+func TestDoneNoWorktreeIsZeroResult(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+
+	b.Worktree = ""
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, b.Name)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	want := DoneResult{Branch: b.Branch}
+	if res != want {
+		t.Errorf("res = %+v, want %+v", res, want)
+	}
+	if fg.dirtyCalls != 0 {
+		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
+	}
+}
+
+func TestDoneReportsGoneWorktree(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+
+	b.Worktree = filepath.Join(t.TempDir(), "missing")
+	b.RoundStartedAt = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Done(context.Background(), rt, b.Name)
+	if err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if res.WorktreeGone != b.Worktree {
+		t.Errorf("WorktreeGone = %q, want %q", res.WorktreeGone, b.Worktree)
 	}
 }
 
