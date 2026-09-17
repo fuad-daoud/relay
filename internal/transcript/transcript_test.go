@@ -135,3 +135,73 @@ func TestOneLineCutsOnARuneBoundary(t *testing.T) {
 		t.Errorf("oneLine = %q, want the first line", got)
 	}
 }
+
+func TestAgyTable(t *testing.T) {
+	cases := map[string]struct {
+		line string
+		want []string
+	}{
+		"tool active with several params": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_name":"run_command","tool_info":{"parameters":{"Cwd":"/repo","CommandLine":"go test ./..."}}}}`,
+			[]string{"run_command go test ./..."},
+		},
+		"tool name falls back to tool_info.name": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/x"}}}}`,
+			[]string{"view_file /x"},
+		},
+		"tool done": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"view_file"}}`,
+			[]string{"  -> ok"},
+		},
+		"tool error without message": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"ERROR","tool_name":"view_file","tool_info":{"error":{"type":"TOOL_ERROR"}}}}`,
+			[]string{"  -> error"},
+		},
+		"tool in an unknown state": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"PAUSED","tool_name":"view_file"}}`,
+			[]string{"[step_update]"},
+		},
+		"agent_response step is noise": {
+			`{"event":"step_update","step_update":{"step_type":"agent_response","state":"DONE"}}`,
+			nil,
+		},
+		"init is noise": {`{"event":"init","init":{}}`, nil},
+		"result failure with response": {
+			`{"event":"result","result":{"status":"ERROR","response":"could not continue","denied_actions":[]}}`,
+			[]string{"result: ERROR", "could not continue"},
+		},
+		"denied action without display name": {
+			`{"event":"result","result":{"status":"SUCCESS","response":"","denied_actions":[{"action":"run_command"}]}}`,
+			[]string{"denied: run_command"},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Render("agy", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// opencode's table is provisional (spec §1 scope boundary): only its error
+// event was captured live. Everything else is rule 5 until a capture pins it.
+func TestOpencodeTableProvisional(t *testing.T) {
+	cases := map[string]struct {
+		line string
+		want []string
+	}{
+		"error": {
+			`{"type":"error","timestamp":1789589781193,"sessionID":"ses_1","error":{"type":"provider.no-route","message":"Model unavailable: openrouter/z-ai/glm-5.3-flash"}}`,
+			[]string{"  -> error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
+		},
+		"anything else is its type": {`{"type":"text","part":{"text":"hi"}}`, []string{"[text]"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Render("opencode", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}

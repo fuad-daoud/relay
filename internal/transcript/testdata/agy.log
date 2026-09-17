@@ -1,0 +1,3 @@
+view_file /etc/hostname
+  -> error: permission check failed for read_file "/etc/hostname": user denied permission for read_file(/etc/hostname)
+denied: read_file (ViewFile)
