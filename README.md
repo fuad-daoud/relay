@@ -320,9 +320,16 @@ side-by-side panes stop being readable at two or three builders, and tabs scale.
 builder a process instead of a pane. Nothing is opened at bind. Each
 `relay send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the same prompt a
-pane builder would be typed, appends its stdout and stderr to
-`~/.local/state/relay/<name>/NNN-builder.log` beside the round's plan and
-report, and returns. When relay itself stops or replaces that process -- a
+pane builder would be typed, writes the harness's streamed JSON events to
+`~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
+`NNN-builder.log`, both beside the round's plan and report, and returns.
+The daemon renders the stream into the `.log` as it grows -- one line per
+tool call (`Bash go test ./...`), its result with the first line of what it printed (`  -> ok: ok  github.com/… 0.4s`, `  -> error: …`),
+the builder's text, any denied permission, and the final answer -- so
+`relay ui`'s terminal tab, `relay status` and `tail -f` on the `.log` show
+the round live, about two seconds behind. Between rounds the tab keeps
+the last round's log. The `.jsonl` is the raw record;
+relay never reads it for meaning. When relay itself stops or replaces that process -- a
 mid-round switch, `relay done`, `relay unbind` -- it appends one line to the
 same log saying so (`--- relay 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
 so two builders' output in one round is never ambiguous. The process exits when

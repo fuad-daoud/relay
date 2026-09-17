@@ -9,7 +9,7 @@ boundary ("No live log streaming" struck), §3.3 (one more round file), §3.4
 two files and what each holds.
 **Unblocks:** #135 (its headless "output grew" signal is the size of a file
 that today grows once), #142 (usage is in the stream's final event).
-**Status:** draft; plan at `docs/plans/2026-09-17-headless-transcript.md`.
+**Status:** implemented by this plan; opencode table provisional until step 6 runs; plan at `docs/plans/2026-09-17-headless-transcript.md`.
 
 ## 1. System overview
 
@@ -227,7 +227,7 @@ Vocabulary (every kind renders into the same shapes):
 |---|---|
 | tool call | `<name> <main argument>` -- the name as the harness spells it (`Bash`, `view_file`); the argument on one line, truncated to 200 bytes with `...` |
 | tool call, no argument | `<name>` |
-| tool result, ok | `  -> ok` |
+| tool result, ok | `  -> ok: <first line of the tool's output>`, or `  -> ok` when there is none (claude: `tool_result` content; agy: `tool_info.output`) |
 | tool result, error | `  -> error: <first line of the message>` |
 | assistant text | the text, verbatim |
 | denied action | `denied: <what the harness names>` |
@@ -240,6 +240,7 @@ only parameter if there is exactly one string parameter; then the first
 string-valued parameter in sorted key order (JSON objects decode without
 order); else none. Table-driven
 per kind only where the event shapes differ; the argument pick is shared.
+`oneLine` also strips a trailing `\r`: agy's command output is CRLF.
 
 **claude** (`type`):
 
@@ -248,7 +249,7 @@ per kind only where the event shapes differ; the argument pick is shared.
 | `assistant`, content block `tool_use` | tool call: `name`, `input` |
 | `assistant`, content block `text` | assistant text |
 | `assistant`, content block `thinking` | noise |
-| `user`, content block `tool_result` | tool result; error iff `is_error`; message is `content` when a string, else the first `text` element |
+| `user`, content block `tool_result` | tool result; error iff `is_error`; the message (error) or output (ok) is `content` when a string, else the first `text` element |
 | `result` | `denied: <tool_name>` per `permission_denials` entry; `result: <subtype>` when `is_error`; then `result` text verbatim when non-empty |
 | `system` (every subtype), `rate_limit_event` | noise |
 
@@ -261,7 +262,7 @@ block is rendered in order. Fixture: `testdata/claude.jsonl` from the
 | event | render |
 |---|---|
 | `step_update`, `step_type: tool`, `state: ACTIVE` | tool call: `tool_name`, `tool_info.parameters` |
-| `step_update`, `step_type: tool`, `state: DONE` | `  -> ok` |
+| `step_update`, `step_type: tool`, `state: DONE` | `  -> ok: <tool_info.output first line>` |
 | `step_update`, `step_type: tool`, `state: ERROR` | `  -> error: <tool_info.error.message>` |
 | `step_update`, any other `step_type` | noise |
 | `result` | `denied: <action> (<display_name>)` per `denied_actions` entry; `result: <status>` when `status != "SUCCESS"`; then `response` verbatim when non-empty |
@@ -358,6 +359,14 @@ path`) -- the trailer has nowhere to go.
 ### 4.6 `harness.Launch` (existing; table change)
 
 §3.5. `PrintArgs` is unchanged; the placeholders sit where they did.
+
+### 4.7 `ui.fetchTerminal` (existing; one fallback)
+
+`clearProcess` blanks `Builder.LogPath` at round close, so the terminal
+tab of a headless binding went blank the moment a round closed. Between
+rounds the tab shows the log of `Builder.StreamRound` -- the last round
+that had a process (§3.4) -- and says "no round has run yet" only when
+that is 0. The tab reads; it never renders or writes.
 
 ## 5. High-level pseudocode
 

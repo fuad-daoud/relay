@@ -21,9 +21,9 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
-// ExitTrailer prefixes the one line the supervisor appends to the log when
+// ExitTrailer prefixes the one line the supervisor appends to the stream when
 // the builder exits: "relay-exit:<code>". It is the only thing relay ever
-// reads out of a builder log.
+// reads out of a builder stream.
 const ExitTrailer = "relay-exit:"
 
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
@@ -44,7 +44,11 @@ const DefaultKillGrace = 5 * time.Second
 // builder still leaves a trailer. A group kill from Kill takes the sh with
 // it and leaves none; relay writes its own marker line for every process it
 // stops (relay.appendLogMarker).
-const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true; "$@" </dev/null; echo "` + ExitTrailer + `$?"`
+// The trailer is printed with a leading newline so a builder that died
+// mid-line leaves it on a line of its own; the blank line before it is
+// rendered as nothing (transcript rule 1). It goes to stdout -- the stream
+// file -- so the stream is the complete raw record and ExitCode reads one file.
+const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true; "$@" </dev/null; printf '\nrelay-exit:%s\n' "$?"`
 
 // Runner is the local relay.Runner.
 type Runner struct {
@@ -69,11 +73,14 @@ func (r *Runner) grace() time.Duration {
 // ending (a CLI exiting) must not kill a builder relay meant to leave
 // running. Setsid puts the supervisor in its own session and process group,
 // so it neither dies with relay's terminal nor shares a group Kill could
-// hit by accident. Checks that can fail run before the log is created, so a
+// hit by accident. Checks that can fail run before either file is created, so a
 // refused Start leaves nothing behind.
 func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
 	if len(spec.Argv) == 0 {
 		return relay.ProcHandle{}, errors.New("proc: empty argv")
+	}
+	if spec.StreamPath == "" {
+		return relay.ProcHandle{}, errors.New("proc: empty stream path")
 	}
 	info, err := os.Stat(spec.Dir)
 	if err != nil {
@@ -91,13 +98,18 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 		return relay.ProcHandle{}, fmt.Errorf("proc: log: %w", err)
 	}
 	defer logf.Close()
+	streamf, err := os.OpenFile(spec.StreamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return relay.ProcHandle{}, fmt.Errorf("proc: stream: %w", err)
+	}
+	defer streamf.Close()
 
 	argv := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", bin}, spec.Argv[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
 	cmd.Env = append(os.Environ(), spec.Env...)
 	cmd.Stdin = nil
-	cmd.Stdout = logf
+	cmd.Stdout = streamf
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -143,8 +155,8 @@ func (r *Runner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
 	return diff <= time.Second, nil
 }
 
-// ExitCode reads the trailer the supervisor appended, if it is the log's
-// last line. The handle is unused: the log is the record.
+// ExitCode reads the trailer the supervisor appended, if it is the stream's
+// last line. The handle is unused: the stream is the record.
 func (r *Runner) ExitCode(_ context.Context, _ relay.ProcHandle, logPath string) (int, bool) {
 	line, ok := lastLine(logPath)
 	if !ok || !strings.HasPrefix(line, ExitTrailer) {

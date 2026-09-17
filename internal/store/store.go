@@ -143,12 +143,22 @@ func (s *Store) DonePath(name string, round int) string {
 	return s.roundFile(name, round, "done", "")
 }
 
-// BuilderLogPath is where a headless builder's stdout and stderr for a round
+// BuilderLogPath is where a headless builder's stderr and the rendered stream (#168) for a round
 // are appended (#99). A round file like the plan and the report, so fork
 // copies it with the history and gc archives it with the directory.
 // Layout: <binding dir>/NNN-builder.log
 func (s *Store) BuilderLogPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".log")
+}
+
+// BuilderStreamPath is where a headless builder's raw stdout for a round --
+// the harness's streamed JSON, one event per line -- and the supervisor's
+// relay-exit trailer are appended (#168). A round file like the log, so
+// fork copies it and gc archives it. relay renders it into the log for
+// humans (relay.drainStream) and never reads it for meaning.
+// Layout: <binding dir>/NNN-builder.jsonl
+func (s *Store) BuilderStreamPath(name string, round int) string {
+	return s.roundFile(name, round, "builder", ".jsonl")
 }
 
 // QuestionPath is where a captured blocking dialog is stored.

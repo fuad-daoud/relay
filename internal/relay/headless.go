@@ -1,9 +1,11 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/transcript"
 )
 
 // ErrBuilderBusy reports a send against a headless binding whose previous
@@ -68,10 +71,10 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Du
 // Preconditions:  b.Builder.Headless(); no live process on the endpoint
 // (Send checks with Runner.Alive first); rt.Runner non-nil.
 // Postconditions: on success PID, StartedAt and LogPath describe the new
-// process. On failure the endpoint is returned as it was, PID 0, and the
-// candidate's spawn_failed is in the ledger -- the same record a pane spawn
-// failure leaves, because it is the same failure: the candidate could not
-// be launched. The caller decides the binding's state.
+// process. On failure the endpoint is returned as it was (cursor moved to this
+// round), PID 0, and the candidate's spawn_failed is in the ledger -- the same
+// record a pane spawn failure leaves, because it is the same failure: the
+// candidate could not be launched. The caller decides the binding's state.
 func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
 		return b, ErrRunnerUnavailable
@@ -89,8 +92,17 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	if err != nil {
 		return b, err
 	}
+	if b.Builder.StreamRound != b.Round {
+		// A new round is a new stream file; a mid-round switch (same
+		// round) keeps rendering the file both processes append to.
+		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
+	}
 	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
-	h, err := rt.Runner.Start(ctx, ProcSpec{Dir: b.CWD, Argv: argv, LogPath: logPath})
+	h, err := rt.Runner.Start(ctx, ProcSpec{
+		Dir: b.CWD, Argv: argv,
+		LogPath:    logPath,
+		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
+	})
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
 		return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
@@ -99,6 +111,86 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	b.Builder.StartedAt = h.StartedAt.Unix()
 	b.Builder.LogPath = logPath
 	return b, nil
+}
+
+// drainStream brings the round's builder log up to date with its stream
+// (transcript spec §4.2): every complete line of the stream file past the
+// endpoint's cursor is rendered with transcript.Render and appended to the
+// log in one write, and the cursor moves past the last newline consumed.
+// A trailing partial line waits for the next tick. The cursor is keyed on
+// StreamRound, not b.Round, so a round that closed on its marker while the
+// builder was still flushing keeps draining until the next round starts.
+//
+// It never fails the tick: every problem is a slog.Warn and an unchanged
+// binding, and the cursor advances only after the append succeeded, so a
+// failed write renders the same lines again next tick rather than dropping
+// them. Nothing here is read for meaning (headless spec §1).
+func drainStream(rt Runtime, b store.Binding) store.Binding {
+	round := b.Builder.StreamRound
+	if round == 0 {
+		return b
+	}
+	streamPath := rt.Store.BuilderStreamPath(b.Name, round)
+	info, err := os.Stat(streamPath)
+	if err != nil {
+		return b // not started yet, or gone with the round: nothing to drain
+	}
+	off := b.Builder.StreamOffset
+	if off > info.Size() {
+		slog.Warn("builder transcript: cursor past end of stream; rendering from the start",
+			"binding", b.Name, "round", round, "offset", off, "size", info.Size())
+		off = 0
+	}
+	if off == info.Size() {
+		return b
+	}
+	data, err := readFrom(streamPath, off)
+	if err != nil {
+		slog.Warn("builder transcript", "binding", b.Name, "round", round, "err", err)
+		return b
+	}
+	end := bytes.LastIndexByte(data, '\n')
+	if end < 0 {
+		return b
+	}
+	var out []string
+	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
+		out = append(out, transcript.Render(b.Builder.Kind, line)...)
+	}
+	if len(out) > 0 {
+		if err := appendLines(rt.Store.BuilderLogPath(b.Name, round), out); err != nil {
+			slog.Warn("builder transcript", "binding", b.Name, "round", round, "err", err)
+			return b
+		}
+	}
+	b.Builder.StreamOffset = off + int64(end) + 1
+	return b
+}
+
+// readFrom is the file's bytes from off to its end.
+func readFrom(path string, off int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(f)
+}
+
+// appendLines appends lines, each newline-terminated, to the file at path
+// in one write, the same discipline as appendLogMarker: O_APPEND writes of
+// one buffer interleave with the supervisor's stderr at line boundaries.
+func appendLines(path string, lines []string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
+	return err
 }
 
 // logTailLines is how much of a builder log the exit entry carries: enough
@@ -169,6 +261,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if b.Round > b.RoundCap {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
 	}
+
+	// Render what the builder has streamed since the last tick before
+	// anything below reads the log: the exit entry's tail, the limit scan
+	// and the status snippet all see a log that is current (transcript
+	// spec §4.3).
+	b = drainStream(rt, b)
 
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {
@@ -250,9 +348,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
-	// Exited. The exit code is read once for both outcomes below.
+	// Exited. The exit code is read once, from the stream's trailer.
 	codeText := "unknown"
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), b.Builder.LogPath); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
 		codeText = strconv.Itoa(code)
 	}
 

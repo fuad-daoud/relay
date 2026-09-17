@@ -54,6 +54,14 @@ type Endpoint struct {
 	// LogPath is the current round's builder log (Store.BuilderLogPath);
 	// "" between rounds.
 	LogPath string `json:"log_path,omitempty"`
+	// StreamRound is the round whose builder stream (Store.BuilderStreamPath)
+	// the daemon is rendering into that round's log, and StreamOffset how
+	// many bytes of it are rendered (#168). They belong to the round's file,
+	// not to the process or to Binding.Round: a mid-round switch keeps them,
+	// clearProcess keeps them, finishRound's Round++ keeps them, and only
+	// startRound on a later round moves them. 0 means no stream was started.
+	StreamRound  int   `json:"stream_round,omitempty"`
+	StreamOffset int64 `json:"stream_offset,omitempty"`
 }
 
 // Headless reports whether this endpoint is a process relay runs rather than

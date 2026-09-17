@@ -271,12 +271,16 @@ type Launch struct {
 //
 // The print form per kind (headless spec §3.5), before extra:
 //
-//	agy       -p <prompt> --model M --agent <def> --output-format text --print-timeout <budget>
-//	claude    -p <prompt> --model M --agent <def> --output-format text
-//	opencode  run <prompt> -m P/M --agent <def>
+//	agy       -p <prompt> --model M --agent <def> --output-format stream-json --print-timeout <budget>
+//	claude    -p <prompt> --model M --agent <def> --output-format stream-json --verbose
+//	opencode  run <prompt> -m P/M --agent <def> --format json
 //
 // agy gets the budget because its default print timeout (5m) would kill any
-// real round; claude and opencode have no such flag.
+// real round; claude and opencode have no such flag. Every kind streams
+// (#168, transcript spec §3.5): one JSON event per line on stdout as the
+// turn runs, rendered into the builder log by the daemon. claude refuses
+// stream-json in print mode without --verbose. No
+// --include-partial-messages: token deltas add nothing a human line needs.
 func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) Launch {
 	var base, print []string
 	promptAt := -1
@@ -284,16 +288,17 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) L
 	switch h.Kind {
 	case "claude":
 		base = []string{"--model", model, "--agent", role.Definition}
-		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition, "--output-format", "text"}
+		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
+			"--output-format", "stream-json", "--verbose"}
 		promptAt = 1
 	case "opencode":
 		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
-		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition}
+		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json"}
 		promptAt = 1
 	case "agy":
 		base = []string{"--model", model, "--agent", role.Definition}
 		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
-			"--output-format", "text", "--print-timeout", BudgetPlaceholder}
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder}
 		promptAt = 1
 	}
 

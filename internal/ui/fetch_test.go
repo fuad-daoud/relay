@@ -388,7 +388,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	tMsg := fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
-	if tMsg.content.empty != "headless builder; no round is running, so there is no log yet" {
+	if tMsg.content.empty != "headless builder; no round has run yet, so there is no log" {
 		t.Errorf("idle: empty = %q", tMsg.content.empty)
 	}
 
@@ -400,6 +400,39 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	tMsg = fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
 	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
 		t.Errorf("missing log: empty = %q", tMsg.content.empty)
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("readCalls = %d, want 0", fh.readCalls)
+	}
+}
+
+func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+
+	b := newTestBinding("webshop")
+	b.Round = 3 // round 2 closed; nothing sent yet
+	// Between rounds: no process, LogPath cleared, but the cursor still
+	// names round 2 (transcript spec §3.4).
+	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless, StreamRound: 2, StreamOffset: 100}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	logPath := st.BuilderLogPath("webshop", 2)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("Bash go test ./...\n  -> ok: ok\nrelay-exit:0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tMsg := fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	if tMsg.content.empty != "" || tMsg.content.err != nil {
+		t.Fatalf("between rounds the last log must show: %+v", tMsg.content)
+	}
+	if tMsg.content.body != "Bash go test ./...\n  -> ok: ok\nrelay-exit:0" {
+		t.Errorf("body = %q", tMsg.content.body)
 	}
 	if fh.readCalls != 0 {
 		t.Errorf("readCalls = %d, want 0", fh.readCalls)

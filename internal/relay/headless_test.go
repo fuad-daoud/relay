@@ -75,9 +75,9 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		want  []string
 	}{
 		{testAgyRef, []string{"agy", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor",
-			"--output-format", "text", "--print-timeout", "2h0m0s", "--dangerously-skip-permissions"}},
-		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "text"}},
-		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor"}},
+			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--dangerously-skip-permissions"}},
+		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}},
+		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
 	}
 	for _, c := range cases {
 		got, err := headlessLaunch(lookup(c.token), role, 2*time.Hour, "PROMPT")
@@ -109,6 +109,12 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	if spec.Dir != "/repo" || spec.LogPath != wantLog {
 		t.Errorf("spec Dir/LogPath = %q/%q, want /repo/%q", spec.Dir, spec.LogPath, wantLog)
 	}
+	if want := rt.Store.BuilderStreamPath("webshop", 1); spec.StreamPath != want {
+		t.Errorf("spec StreamPath = %q, want %q", spec.StreamPath, want)
+	}
+	if got.Builder.StreamRound != 1 || got.Builder.StreamOffset != 0 {
+		t.Errorf("cursor after a fresh start = round %d offset %d; want 1, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
+	}
 	if spec.Argv[0] != "agy" || spec.Argv[1] != "-p" || spec.Argv[2] != "the prompt" {
 		t.Errorf("argv = %v; want the agy print form with the prompt at index 2", spec.Argv)
 	}
@@ -121,6 +127,51 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 	if !got.Builder.Headless() || got.Builder.PaneID != "" {
 		t.Errorf("mode or pane changed: %+v", got.Builder)
+	}
+}
+
+func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
+	got, err := startRound(context.Background(), rt, b, "again")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if got.Builder.StreamRound != b.Round || got.Builder.StreamOffset != 512 {
+		t.Errorf("cursor = round %d offset %d; a same-round start must keep it at %d/512", got.Builder.StreamRound, got.Builder.StreamOffset, b.Round)
+	}
+}
+
+func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	b.Round = 2
+	b.Builder.StreamRound, b.Builder.StreamOffset = 1, 512
+	got, err := startRound(context.Background(), rt, b, "round two")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if got.Builder.StreamRound != 2 || got.Builder.StreamOffset != 0 {
+		t.Errorf("cursor = round %d offset %d; want 2, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
+	}
+	if fr.specs[0].StreamPath != rt.Store.BuilderStreamPath("webshop", 2) {
+		t.Errorf("StreamPath = %q, want round 2's", fr.specs[0].StreamPath)
+	}
+}
+
+func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != rt.Store.BuilderStreamPath("webshop", 1) {
+		t.Errorf("ExitCode was asked about %v; want the round-1 stream %s", fr.exitPaths, rt.Store.BuilderStreamPath("webshop", 1))
 	}
 }
 
@@ -371,11 +422,246 @@ func TestLogTailReturnsTheLastLines(t *testing.T) {
 }
 
 func TestClearProcessKeepsIdentity(t *testing.T) {
-	e := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 7, StartedAt: 9, LogPath: "/l"}
+	e := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 7, StartedAt: 9, LogPath: "/l", StreamRound: 3, StreamOffset: 99}
 	got := clearProcess(e)
-	want := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless}
+	want := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, StreamRound: 3, StreamOffset: 99}
 	if got != want {
 		t.Errorf("clearProcess = %+v, want %+v", got, want)
+	}
+}
+
+// streamWrite appends raw to webshop's round-1 stream file, creating it.
+func streamWrite(t *testing.T, rt Runtime, raw string) {
+	t.Helper()
+	p := rt.Store.BuilderStreamPath("webshop", 1)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(raw); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// readLog is webshop's round-1 builder log, "" when absent.
+func readLog(t *testing.T, rt Runtime) string {
+	t.Helper()
+	data, err := os.ReadFile(rt.Store.BuilderLogPath("webshop", 1))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+const (
+	agyToolActive = `{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"go test ./..."}}}}` + "\n"
+	agyToolDone   = `{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command"}}` + "\n"
+	agyResult     = `{"event":"result","result":{"status":"SUCCESS","response":"all done","denied_actions":[]}}` + "\n"
+)
+
+func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr) // round 1 open, cursor at 1/0
+	streamWrite(t, rt, agyToolActive+agyToolDone)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if want := "run_command go test ./...\n  -> ok\n"; readLog(t, rt) != want {
+		t.Errorf("log = %q, want %q", readLog(t, rt), want)
+	}
+	if got.Builder.StreamOffset != int64(len(agyToolActive+agyToolDone)) {
+		t.Errorf("offset = %d, want the whole file %d", got.Builder.StreamOffset, len(agyToolActive+agyToolDone))
+	}
+
+	// Nothing new: nothing appended.
+	again, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil || readLog(t, rt) != "run_command go test ./...\n  -> ok\n" || again.Builder.StreamOffset != got.Builder.StreamOffset {
+		t.Errorf("a tick with no new stream data must change nothing: log=%q offset=%d err=%v", readLog(t, rt), again.Builder.StreamOffset, err)
+	}
+
+	// More arrives: appended after, in order.
+	streamWrite(t, rt, agyResult)
+	got, err = reconcile(t, rt, again, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if want := "run_command go test ./...\n  -> ok\nall done\n"; readLog(t, rt) != want {
+		t.Errorf("log = %q, want %q", readLog(t, rt), want)
+	}
+}
+
+func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	whole := strings.TrimSuffix(agyToolActive, "\n")
+	streamWrite(t, rt, whole[:40]) // mid-event, no newline yet
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if readLog(t, rt) != "" || got.Builder.StreamOffset != 0 {
+		t.Errorf("a partial line must not be rendered or consumed: log=%q offset=%d", readLog(t, rt), got.Builder.StreamOffset)
+	}
+	streamWrite(t, rt, whole[40:]+"\n")
+	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if readLog(t, rt) != "run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
+		t.Errorf("completed line: log=%q offset=%d", readLog(t, rt), got.Builder.StreamOffset)
+	}
+}
+
+func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	streamWrite(t, rt, agyToolActive)
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.Save(got) }); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Builder.StreamRound != 1 || loaded.Builder.StreamOffset != int64(len(agyToolActive)) {
+		t.Fatalf("cursor after reload = %d/%d", loaded.Builder.StreamRound, loaded.Builder.StreamOffset)
+	}
+	// A daemon restarted from that state renders nothing twice.
+	if _, err := reconcile(t, rt, loaded, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatal(err)
+	}
+	if readLog(t, rt) != "run_command go test ./...\n" {
+		t.Errorf("log after reload tick = %q; the line was rendered twice", readLog(t, rt))
+	}
+}
+
+func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	streamWrite(t, rt, agyToolActive)
+	b.Builder.StreamOffset = 10_000 // a state file rewritten by hand
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if readLog(t, rt) != "run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
+		t.Errorf("log=%q offset=%d; want rendered from 0 and the cursor at EOF", readLog(t, rt), got.Builder.StreamOffset)
+	}
+}
+
+func TestDrainStreamNoiseAdvancesWithoutWriting(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	noise := `{"event":"init","init":{}}` + "\n"
+	streamWrite(t, rt, noise)
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, statErr := os.Stat(rt.Store.BuilderLogPath("webshop", 1)); statErr == nil {
+		t.Error("all-noise input must not create the log")
+	}
+	if got.Builder.StreamOffset != int64(len(noise)) {
+		t.Errorf("offset = %d, want %d", got.Builder.StreamOffset, len(noise))
+	}
+}
+
+func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+	// stderr went straight to the log; stdout and the trailer to the stream,
+	// all before this tick (the process is gone).
+	if err := os.MkdirAll(filepath.Dir(b.Builder.LogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b.Builder.LogPath, []byte("jetski: starting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	streamWrite(t, rt, agyToolActive+agyToolDone+agyResult+"\nrelay-exit:0\n")
+
+	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ex := exits(t, rt)
+	if len(ex) != 1 {
+		t.Fatalf("exit entries = %d, want 1", len(ex))
+	}
+	want := "jetski: starting\nrun_command go test ./...\n  -> ok\nall done\nrelay-exit:0"
+	if ex[0].Payload != want {
+		t.Errorf("payload = %q, want the drained log %q", ex[0].Payload, want)
+	}
+	if !strings.Contains(ex[0].Note, "(code 0)") {
+		t.Errorf("note = %q; the code must still come from the trailer", ex[0].Note)
+	}
+}
+
+func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	streamWrite(t, rt, agyToolActive)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 || got.Builder.PID != 0 {
+		t.Fatalf("round=%d pid=%d; want the marker to close round 1", got.Round, got.Builder.PID)
+	}
+	if got.Builder.StreamRound != 1 {
+		t.Fatalf("StreamRound = %d after the close; the cursor must stay on round 1's file", got.Builder.StreamRound)
+	}
+	// The builder flushes its result after relay saw the marker.
+	streamWrite(t, rt, agyResult+"\nrelay-exit:0\n")
+	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if want := "run_command go test ./...\nall done\nrelay-exit:0\n"; readLog(t, rt) != want {
+		t.Errorf("round 1 log after the close = %q, want %q", readLog(t, rt), want)
+	}
+}
+
+func TestDrainStreamIsANoopBeforeAnyRound(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr) // bound, never sent: StreamRound 0
+	got := drainStream(rt, b)
+	if !reflect.DeepEqual(got, b) {
+		t.Errorf("drainStream changed a binding with no stream: %+v", got.Builder)
+	}
+}
+
+func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	if err := os.MkdirAll(rt.Store.BuilderLogPath("webshop", 1), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	streamWrite(t, rt, agyToolActive)
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.StreamOffset != 0 {
+		t.Errorf("StreamOffset = %d on write failure; want 0 (cursor must not advance)", got.Builder.StreamOffset)
 	}
 }
 
