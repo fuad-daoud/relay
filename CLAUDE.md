@@ -40,6 +40,10 @@ override the order.
   mis-bind, or any `--assume-dead` rebind of a pane builder, close the
   orphaned builder pane yourself with `herdr pane close <id>` or it holds
   memory indefinitely (an idle opencode builder is roughly 800 MB).
+- `relay done` releases a clean worktree (the branch survives) so you can
+  `gh pr checkout` in the main repo without `gc`; a dirty tree or an open
+  pane round is kept and `gc` retries. `relay bind --resume` restores a
+  released worktree; rebind a DONE binding only after that restore.
 - Prefer `--headless` on `add` for peers nobody will watch: no tab, no idle
   harness in memory, and the round log is at
   `~/.local/state/relay/<name>/NNN-builder.log`. A headless builder takes

@@ -360,8 +360,11 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 //
 // Preconditions:  path does not exist; branch exists.
 // Postconditions: path is a working tree on branch; dir's own working tree,
+//
 //	index and HEAD are unchanged.
+//
 // Errors: ErrBranchCheckedOut, ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+//
 //	On any error nothing is left behind at path.
 func (c *Client) CheckoutWorktree(ctx context.Context, dir, path, branch string) (retErr error) {
 	absPath := path
