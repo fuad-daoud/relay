@@ -37,75 +37,6 @@ func TestListWindow(t *testing.T) {
 	}
 }
 
-func TestListRowsRenderFixedGoldenWidth(t *testing.T) {
-	b1 := relay.BindingStatus{
-		Name:             "relay-fork",
-		Workspace:        "wM",
-		Round:            3,
-		Display:          "ACTIVE",
-		BuilderCandidate: "agy",
-		BuilderStatus:    "idle",
-		Pending:          &relay.PendingInfo{Round: 2, Kind: store.KindReport},
-	}
-	b2 := relay.BindingStatus{
-		Name:             "relay-quiesce",
-		Workspace:        "wM",
-		Round:            2,
-		Display:          "DONE",
-		BuilderCandidate: "agy",
-		BuilderStatus:    "gone",
-		Pending:          nil,
-	}
-	b3 := relay.BindingStatus{
-		Name:             "relay-rebind",
-		Workspace:        "wM",
-		Round:            3,
-		Display:          "NEEDS YOU",
-		BuilderCandidate: "agy",
-		BuilderStatus:    "blocked",
-		Pending:          &relay.PendingInfo{Round: 3, Kind: store.KindQuestion},
-	}
-
-	want1 := " relay-fork     wM  r3  " + styleDisplay("ACTIVE") + " builder agy idle    pending report r2"
-	want2 := " relay-quiesce  wM  r2  " + styleDisplay("DONE") + " builder agy gone    pending --"
-	want3 := cursorStyle.Render(">") + "relay-rebind   wM  r3  " + styleDisplay("NEEDS YOU") + " builder agy blocked pending question"
-
-	r1 := renderListRow(b1, false)
-	r2 := renderListRow(b2, false)
-	r3 := renderListRow(b3, true)
-
-	if r1 != want1 {
-		t.Fatalf("row 1 mismatch:\ngot:  %q\nwant: %q", r1, want1)
-	}
-	if r2 != want2 {
-		t.Fatalf("row 2 mismatch:\ngot:  %q\nwant: %q", r2, want2)
-	}
-	if r3 != want3 {
-		t.Fatalf("row 3 mismatch:\ngot:  %q\nwant: %q", r3, want3)
-	}
-}
-
-func TestRenderListRowShowsHoldClock(t *testing.T) {
-	b := relay.BindingStatus{
-		Name: "relay-held", Workspace: "wM", Round: 3, Display: "HELD",
-		BuilderCandidate: "agy", BuilderStatus: "idle",
-		Pending: &relay.PendingInfo{
-			Round: 3, Kind: store.KindReport,
-			Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000},
-		},
-	}
-	got := renderListRow(b, false)
-	if !strings.HasSuffix(got, "pending report r3, held: quiet 23s of 1m0s") {
-		t.Errorf("row = %q", got)
-	}
-
-	b.Pending.Hold = nil
-	got = renderListRow(b, false)
-	if !strings.HasSuffix(got, "pending report r3, held: waiting for the planner's screen") {
-		t.Errorf("row = %q", got)
-	}
-}
-
 func TestListRowsBudget(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
@@ -116,24 +47,24 @@ func TestListRowsBudget(t *testing.T) {
 
 	m.height = 24
 	m.err = nil
-	if got := m.listRows(); got != 22 {
-		t.Errorf("height 24, no error: listRows() = %d, want 22", got)
+	if got := m.bodyRows(); got != 21 {
+		t.Errorf("height 24, no error: bodyRows() = %d, want 21", got)
 	}
 
 	m.err = errors.New("line one\nline two")
-	if got := m.listRows(); got != 20 {
-		t.Errorf("height 24, two-line error: listRows() = %d, want 20", got)
+	if got := m.bodyRows(); got != 19 {
+		t.Errorf("height 24, two-line error: bodyRows() = %d, want 19", got)
 	}
 
 	m.height = 2
 	m.err = nil
-	if got := m.listRows(); got != 1 {
-		t.Errorf("height 2: listRows() = %d, want 1", got)
+	if got := m.bodyRows(); got != 0 {
+		t.Errorf("height 2: bodyRows() = %d, want 0", got)
 	}
 
 	m.height = 0
-	if got := m.listRows(); got != 0 {
-		t.Errorf("height 0: listRows() = %d, want 0", got)
+	if got := m.bodyRows(); got != 0 {
+		t.Errorf("height 0: bodyRows() = %d, want 0", got)
 	}
 }
 
@@ -175,17 +106,13 @@ func press(t *testing.T, m Model, r rune) Model {
 func assertCursorVisible(t *testing.T, m Model, name string) {
 	t.Helper()
 	view := m.View()
-	// renderListRow puts the cursor glyph (rendered by cursorStyle) directly
-	// before the binding name, so build the needle with the same function the
-	// way TestListRowsRenderFixedGoldenWidth builds its expected rows; a plain
-	// "> name" needle would miss escape codes if lipgloss emitted them.
-	if !strings.Contains(view, cursorStyle.Render(">")+name) {
-		t.Errorf("view must show the cursor row for %s, got:\n%s", name, view)
+	if !strings.Contains(plain(view), "▎ "+name) {
+		t.Errorf("view must show the cursor card for %s, got:\n%s", name, view)
 	}
-	if !strings.Contains(view, "+- relay") {
-		t.Errorf("view must contain the header border, got:\n%s", view)
+	if !strings.Contains(plain(view), "relay") {
+		t.Errorf("view must contain the header, got:\n%s", view)
 	}
-	if !strings.Contains(view, "enter open") {
+	if !strings.Contains(view, "open") {
 		t.Errorf("view must contain the footer, got:\n%s", view)
 	}
 	if got := strings.Count(m.View(), "\n"); got != m.height-1 {
@@ -195,7 +122,7 @@ func assertCursorVisible(t *testing.T, m Model, name string) {
 }
 
 func TestListViewKeepsCursorVisibleWhenScrollingDown(t *testing.T) {
-	m := tenBindings(t, 6)
+	m := tenBindings(t, 15)
 	for i := 1; i <= 9; i++ {
 		m = press(t, m, 'j')
 		assertCursorVisible(t, m, fmt.Sprintf("b%02d", i))
@@ -203,7 +130,7 @@ func TestListViewKeepsCursorVisibleWhenScrollingDown(t *testing.T) {
 }
 
 func TestListViewKeepsCursorVisibleWhenScrollingUp(t *testing.T) {
-	m := tenBindings(t, 6)
+	m := tenBindings(t, 15)
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
@@ -225,7 +152,7 @@ func TestListViewKeepsCursorVisibleWhenScrollingUp(t *testing.T) {
 }
 
 func TestListViewRewindowsOnResize(t *testing.T) {
-	m := tenBindings(t, 6)
+	m := tenBindings(t, 15)
 	for i := 0; i < 7; i++ {
 		m = press(t, m, 'j')
 	}
@@ -238,7 +165,7 @@ func TestListViewRewindowsOnResize(t *testing.T) {
 }
 
 func TestListViewRewindowsWhenBindingRemoved(t *testing.T) {
-	m := tenBindings(t, 6)
+	m := tenBindings(t, 15)
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
@@ -449,18 +376,9 @@ func TestStateStylesDistinguishable(t *testing.T) {
 	if stateStyle("HELD").Render("HELD") == normalStyle.Render("HELD") {
 		t.Fatalf("HELD must be styled, not left as normalStyle (that was the old regression)")
 	}
-
-	b := relay.BindingStatus{
-		Name:             "webshop",
-		Round:            1,
-		Display:          "ACTIVE",
-		BuilderCandidate: "agy",
-		BuilderStatus:    "idle",
-	}
-	rowSelected := renderListRow(b, true)
-	if !strings.Contains(rowSelected, cursorStyle.Render(">")) {
-		t.Fatalf("selected row cursor must be styled with cursorStyle, got %q", rowSelected)
-	}
+	// The selected-card gutter styling is pinned by TestCardLinesShapes'
+	// "blocked" case ("▎ webshop"); renderListRow/cursorStyle are gone
+	// (Task 3).
 }
 
 func TestListScreenThreeStates(t *testing.T) {

@@ -38,6 +38,13 @@ type Model struct {
 
 	width, height int
 	ready         bool // set on the first WindowSizeMsg
+
+	// sort is true for attention order (the default); s toggles it. Lives
+	// for the process only -- persisting it is #143's sidecar question.
+	sort bool
+	// now is the clock every age on screen is measured against. time.Now
+	// in production; fixed in tests so "2m ago" is deterministic.
+	now func() time.Time
 }
 
 func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
@@ -47,7 +54,16 @@ func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
 		opts:           opts,
 		screen:         screenList,
 		statusInFlight: true,
+		sort:           true,
+		now:            time.Now,
 	}
+}
+
+// rows is the report's bindings in display order. Every index in the
+// model -- list.cursor, list.top -- indexes THIS slice, never
+// report.Bindings directly.
+func (m Model) rows() []relay.BindingStatus {
+	return relay.SortRows(m.report.Bindings, m.sort)
 }
 
 // tick re-arms the poll. It is the ONLY timer; there is no goroutine.
@@ -142,7 +158,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			vpHeight = 0
 		}
 		m.detail.vp.Height = vpHeight
-		m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
+		m.list.top = m.railTop()
 		return m, nil
 
 	case tickMsg:
@@ -171,8 +187,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusLoaded = true
 		m.err = nil
 		m.report = msg.report
-		m.list.resolveSticky(m.report)
-		m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
+		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
+		m.list.top = m.railTop()
 		var cmd tea.Cmd
 		m, cmd = m.maybeInvalidate()
 		return m, cmd

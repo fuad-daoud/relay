@@ -12,24 +12,24 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.list.cursor > 0 {
 				m.list.cursor--
-				if len(m.report.Bindings) > 0 {
-					m.list.sticky = m.report.Bindings[m.list.cursor].Name
+				if len(m.rows()) > 0 {
+					m.list.sticky = m.rows()[m.list.cursor].Name
 				}
 			}
-			m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
+			m.list.top = m.railTop()
 			return m, nil
 		case "down", "j":
-			if m.list.cursor < len(m.report.Bindings)-1 {
+			if m.list.cursor < len(m.rows())-1 {
 				m.list.cursor++
-				m.list.sticky = m.report.Bindings[m.list.cursor].Name
+				m.list.sticky = m.rows()[m.list.cursor].Name
 			}
-			m.list.top = listWindow(m.list.top, m.list.cursor, m.listRows(), len(m.report.Bindings))
+			m.list.top = m.railTop()
 			return m, nil
 		case "enter":
-			if len(m.report.Bindings) == 0 {
+			if len(m.rows()) == 0 {
 				return m, nil
 			}
-			row := m.report.Bindings[m.list.cursor]
+			row := m.rows()[m.list.cursor]
 			vpHeight := m.height - chromeHeight
 			if vpHeight < 0 {
 				vpHeight = 0

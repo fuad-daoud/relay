@@ -56,9 +56,8 @@ func pillStyle(display string) lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(fg).Padding(0, 1)
 }
 
-// Removed in Task 3/4; kept so the old renderers compile until then.
+// Removed in Task 4 once detail.go stops using them.
 var (
 	headerStyle = fgStyle
 	footerStyle = dimStyle
-	cursorStyle = accentStyle
 )

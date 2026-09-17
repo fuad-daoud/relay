@@ -1,12 +1,10 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
 type listModel struct {
@@ -18,31 +16,9 @@ type listModel struct {
 	top int
 }
 
-// listWindow returns where the first rendered row must be for cursor to be
-// visible in a window of rows rows over n items, moving top as little as
-// possible. rows <= 0 means no limit: the answer is 0 and every row renders.
+// listWindow is railWindow for a one-line cursor; kept for its tests.
 func listWindow(top, cursor, rows, n int) int {
-	// Rule 1: no row budget or everything fits — render from the top.
-	if rows <= 0 || n <= rows {
-		return 0
-	}
-	// Rule 2: clamp top into [0, n-rows].
-	if top > n-rows {
-		top = n - rows
-	}
-	if top < 0 {
-		top = 0
-	}
-	// Rule 3: cursor scrolled above the window — pull the window up to it.
-	if cursor < top {
-		top = cursor
-	}
-	// Rule 4: cursor scrolled below the window — push the window down to it.
-	if cursor >= top+rows {
-		top = cursor - rows + 1
-	}
-	// Rule 5: top now keeps cursor visible and moved as little as possible.
-	return top
+	return railWindow(top, cursor, cursor, rows, n)
 }
 
 // errorRows is the line count of renderError(m.err, m.width) when m.err !=
@@ -52,21 +28,6 @@ func (m Model) errorRows() int {
 		return 0
 	}
 	return strings.Count(renderError(m.err, m.width), "\n") + 1
-}
-
-// listRows is how many binding rows the list screen can show: the terminal
-// height less the header, the footer, and whatever the error block takes.
-// Zero before the first WindowSizeMsg, which listWindow reads as no limit.
-// Never less than one once a height is known, so the cursor row is always
-// drawn even on an absurdly short terminal.
-func (m Model) listRows() int {
-	if m.height <= 0 {
-		return 0
-	}
-	if rows := m.height - 2 - m.errorRows(); rows >= 1 {
-		return rows
-	}
-	return 1
 }
 
 // resolveSticky re-points cursor at the binding named by sticky after the
@@ -121,42 +82,6 @@ func renderBorder(title string, width int) string {
 		return "+- " + tr.String() + " " + strings.Repeat("-", rem) + "+"
 	}
 	return prefix + strings.Repeat("-", width-prefixWidth-1) + "+"
-}
-
-func styleDisplay(display string) string {
-	switch display {
-	case "NEEDS YOU":
-		return stateNeedsYouStyle.Render(fmt.Sprintf("%-9s", display))
-	case "DONE":
-		return stateDoneStyle.Render(fmt.Sprintf("%-9s", display))
-	case "ACTIVE":
-		return stateActiveStyle.Render(fmt.Sprintf("%-9s", display))
-	default:
-		return fmt.Sprintf("%-9s", display)
-	}
-}
-
-func renderListRow(b relay.BindingStatus, selected bool) string {
-	var cursorStr string
-	if selected {
-		cursorStr = cursorStyle.Render(">")
-	} else {
-		cursorStr = " "
-	}
-	pending := "--"
-	if b.Pending != nil {
-		if b.Pending.Kind == store.KindReport {
-			pending = fmt.Sprintf("report r%d", b.Pending.Round)
-		} else {
-			pending = string(b.Pending.Kind)
-		}
-		if hold := relay.HoldText(b); hold != "" {
-			pending += ", held: " + hold
-		}
-	}
-	disp := styleDisplay(b.Display)
-	return strings.TrimRight(fmt.Sprintf("%s%-14s %-3s r%-2d %s builder %-3s %-7s pending %s",
-		cursorStr, b.Name, b.Workspace, b.Round, disp, b.BuilderCandidate, b.BuilderStatus, pending), " ")
 }
 
 const maxErrorLines = 8
@@ -257,38 +182,24 @@ func wrapLine(line string, width int) []string {
 	return lines
 }
 
+// headerView and footerView are temporary here; Task 5 replaces both with
+// the real header (counts, gates, clock) and footer (contextual keys,
+// notices, refresh age). This reproduces today's text so existing footer
+// tests keep passing until then. headerView returns two lines -- bar and
+// blank -- to honour headerRows = 2.
+func (m Model) headerView() string { return fit(headerBar.Render(" relay "), m.width) + "\n" }
+func (m Model) footerView() string { return dimStyle.Render(m.footer()) }
+
 func (m Model) listView() string {
 	var b strings.Builder
-	b.WriteString(headerStyle.Render(renderBorder("relay", m.width)))
+	b.WriteString(m.headerView())
 	b.WriteByte('\n')
-
 	if m.err != nil {
 		b.WriteString(renderError(m.err, m.width))
 		b.WriteByte('\n')
 	}
-
-	if !m.statusLoaded && m.err != nil {
-		b.WriteString("cannot reach herdr — see the error above\n")
-	} else if !m.statusLoaded {
-		b.WriteString("loading…\n")
-	} else if len(m.report.Bindings) == 0 {
-		b.WriteString("no bindings\n")
-	} else {
-		// Recompute the window here on purpose: a render can never hide the cursor even if an Update path forgets to re-window.
-		n := len(m.report.Bindings)
-		rows := m.listRows()
-		start := listWindow(m.list.top, m.list.cursor, rows, n)
-		end := n
-		if rows > 0 && start+rows < n {
-			end = start + rows
-		}
-		for i := start; i < end; i++ {
-			selected := i == m.list.cursor
-			b.WriteString(renderListRow(m.report.Bindings[i], selected))
-			b.WriteByte('\n')
-		}
-	}
-
-	b.WriteString(footerStyle.Render(renderBorder(m.footer(), m.width)))
+	b.WriteString(m.railView(m.width))
+	b.WriteByte('\n')
+	b.WriteString(m.footerView())
 	return b.String()
 }
