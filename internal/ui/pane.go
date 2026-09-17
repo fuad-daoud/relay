@@ -145,6 +145,9 @@ func colourDiff(patch string) string {
 
 // sourceLine says, in one faint line, what the viewport is showing.
 func (m Model) sourceLine() string {
+	if m.detail.name == "" {
+		return ""
+	}
 	c := m.detail.cache[m.detail.active]
 	if !c.loaded {
 		return faintStyle.Render("loading…")

@@ -155,7 +155,7 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 }
 
 func (m Model) maybeInvalidate() (Model, tea.Cmd) {
-	if !m.paneVisible() {
+	if !m.paneVisible() || m.detail.name == "" {
 		return m, nil
 	}
 	r := row(m.report, m.detail.name)

@@ -1,0 +1,40 @@
+ relay   1 bindings                                                                                                                   14:02 
+
+ ACTIVE  1                        │ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  round 1   ACTIVE                                              
+▎  xxxxxxxxxxxxxxxxxxxxxxxxxxxxr1 │ planner                                                                                                 
+   working                        │ builder       agy       working                                                                         
+   agy                            │ tree                                                                                                    
+                                  │                                                                                                         
+                                  │  1 report   2 terminal   3 diff   4 log                                                                 
+                                  │ ────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │  · captured 0s ago · 2 lines                                                                            
+                                  │                                                                                                         
+                                  │ $ go test ./...                                                                                         
+                                  │ ok      github.com/fuad-daoud/relay/internal/ui    1.2s                                                 
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   q quit                                              refreshed 0s ago
