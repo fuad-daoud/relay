@@ -9,7 +9,7 @@ boundary ("No live log streaming" struck), §3.3 (one more round file), §3.4
 two files and what each holds.
 **Unblocks:** #135 (its headless "output grew" signal is the size of a file
 that today grows once), #142 (usage is in the stream's final event).
-**Status:** draft; plan at `docs/plans/2026-09-17-headless-transcript.md`.
+**Status:** implemented by this plan; opencode table provisional until step 6 runs; plan at `docs/plans/2026-09-17-headless-transcript.md`.
 
 ## 1. System overview
 

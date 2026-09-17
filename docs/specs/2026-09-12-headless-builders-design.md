@@ -21,7 +21,9 @@ This design adds a second builder shape, chosen per binding with `--headless`
 on `bind`, `add` and `fork`. A headless builder is a **process relay runs
 directly**, one fresh process per round, in the binding's working tree:
 `relay send` launches `<harness> -p <prompt>` (each harness's non-interactive
-form), stdout and stderr go to a log file beside the round's plan and report,
+form), stderr goes to a log file beside the round's plan and report
+and stdout, streamed as JSON events, to a stream file the daemon renders
+into that log (amended by `2026-09-17-headless-transcript-design.md`),
 and the process exits when the report is written or when it fails. The
 report file was already the round's contract; headless makes it the only
 contract. Between rounds a headless binding has no process and is idle, not
@@ -59,8 +61,8 @@ Principles kept:
   reinterpretation of `SessionID`.
 - No mode change on an existing binding: `--resume --headless` is refused.
   Unbind and bind again.
-- No live log streaming. `relay ui` polls the log file the way it polls a
-  pane today.
+- Live log: struck by `2026-09-17-headless-transcript-design.md`; the
+  daemon renders the stream into the log each tick.
 - `relay answer` is builder-only and pane-only. A headless builder does not
   take dialogs; the command is refused on a headless binding.
 
@@ -91,7 +93,7 @@ internal/harness/
   harness_test.go    Argv per kind, both forms (modified)
 
 internal/store/
-  types.go           Endpoint.Mode, PID, StartedAt, LogPath; Store.BuilderLogPath (modified)
+  types.go           Endpoint.Mode, PID, StartedAt, LogPath; Store.BuilderLogPath (modified), StreamRound, StreamOffset (#168)
 
 internal/ui/
   terminal tab reads the log file for headless bindings (modified)
@@ -121,6 +123,7 @@ Endpoint
                       planner and consult endpoint on its next save. ProcHandle.StartedAt stays
                       time.Time; the conversion is time.Unix(e.StartedAt, 0).)
   LogPath   string   headless only; absolute path of the current round's log; "" between rounds
+  StreamRound int / StreamOffset int64  the transcript cursor; see the 2026-09-17 spec §3.4
 ```
 
 Invariants: `Mode == headless` ⇒ `PaneID == ""` and `SessionID == ""`.
@@ -141,15 +144,17 @@ func (e Endpoint) Headless() bool   // Mode == ModeHeadless
 
 `<state>/<name>/NNN-builder.log`, beside `PlanPath` and `ReportPath`, so
 `gc` archives it with the round and `fork` copies it with the history.
+`BuilderStreamPath(name, round)` is `NNN-builder.jsonl` beside it: raw stdout plus the exit trailer (2026-09-17 spec §3.1).
 
 ### 3.4 `relay.ProcSpec`, `relay.ProcHandle`
 
 ```
 ProcSpec
-  Dir     string     working directory (the binding's CWD)
-  Argv    []string   Argv[0] is the binary name, resolved on PATH by the runner
-  Env     []string   additions to the parent environment; nil for none
-  LogPath string     stdout and stderr, appended, created if absent
+  Dir        string     working directory (the binding's CWD)
+  Argv       []string   Argv[0] is the binary name, resolved on PATH by the runner
+  Env        []string   additions to the parent environment; nil for none
+  LogPath    string     stderr, appended, created if absent
+  StreamPath string     stdout and the exit trailer, appended, created if absent
 
 ProcHandle
   PID       int
@@ -177,9 +182,11 @@ Rendered per kind, `extra` appended to both forms exactly as today:
 
 | kind | Print (before extra) |
 |---|---|
-| agy | `-p <prompt> --model M --agent <def> --output-format text --print-timeout <budget>` |
-| claude | `-p <prompt> --model M --agent <def> --output-format text` |
-| opencode | `run <prompt> -m P/M --agent <def>` |
+| agy | `-p <prompt> --model M --agent <def> --output-format stream-json --print-timeout <budget>` |
+| claude | `-p <prompt> --model M --agent <def> --output-format stream-json --verbose` |
+| opencode | `run <prompt> -m P/M --agent <def> --format json` |
+
+Every kind streams (2026-09-17 spec §3.5); claude needs `--verbose` for it.
 
 `<budget>` is the binding's round budget rendered as a Go duration; agy's
 default of 5m would kill any real round.
@@ -214,8 +221,8 @@ binding. Knows nothing about rounds, reports or harnesses.
 Start(ctx, ProcSpec) (ProcHandle, error)
   pre:  Dir exists; Argv non-empty; LogPath's directory exists
   post: a detached supervisor (own session and process group, stdin closed) runs Argv with
-        stdout+stderr appended to LogPath and, when Argv exits, appends one final line
-        `relay-exit:<code>` to LogPath. The handle is the supervisor's pid; the caller never
+        stderr appended to LogPath, stdout to StreamPath, and, when Argv exits, one final line
+        `relay-exit:<code>` to StreamPath. The handle is the supervisor's pid; the caller never
         waits on it. Returns as soon as the pid exists. The supervisor is `sh -c` (no bash-isms).
   err:  binary not found on PATH (the runner checks with exec.LookPath before starting, so the
         error is immediate and not a `relay-exit:127` in the log); Dir missing; log unwritable
@@ -243,7 +250,7 @@ Called by `Send` in place of `Herdr.Prompt` when `b.Builder.Headless()`.
 - pre: round is open (Send already staged the plan and bumped the round); `b.Builder.PID == 0`
   (a live process from a previous round is a bug: Send refuses with `ErrBuilderBusy`)
 - does: composes the prompt exactly as the pane path does; `Runner.Start` with
-  `Dir=b.CWD`, `LogPath=BuilderLogPath(name, round)`; records `PID`, `StartedAt`, `LogPath`
+  `Dir=b.CWD`, `LogPath=BuilderLogPath(name, round)`, `StreamPath=BuilderStreamPath(name, round)`; records `PID`, `StartedAt`, `LogPath`
 - post: binding saved with the handle; `KindPlan` entry as today
 - err: `Start` failure → the round stays open with `PID == 0`, the binding goes `NEEDS YOU`
   with the error as note, and `recordSpawnFailure` writes the ledger `spawn_failed` entry
@@ -302,7 +309,7 @@ if b.Builder.Headless():
             budget check as today → NEEDS YOU, never Kill
             return
         -- exited without a report
-        code, ok := Runner.ExitCode(handle, LogPath)  -- the supervisor's trailer line; "unknown" if !ok
+        code, ok := Runner.ExitCode(handle, BuilderStreamPath(name, round))  -- the supervisor's trailer line; "unknown" if !ok
         append KindExit entry "builder exited (code N) without a report" + logTail(LogPath, 20)
         b.Builder.PID = 0
         hand to the mid-round switch exactly as "builder gone" does today:
