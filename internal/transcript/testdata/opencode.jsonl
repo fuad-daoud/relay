@@ -1,0 +1,7 @@
+{"type":"step_start","timestamp":1789589781193,"sessionID":"ses_1","part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"step-start"}}
+{"type":"tool_use","timestamp":1789589781193,"sessionID":"ses_1","part":{"partID":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"tool","id":"call-1","tool":"read","state":{"status":"completed","input":{"path":"./probe.txt"},"output":"Read file ./probe.txt, lines 1-1\n1: probe-file-contents","title":"read"}}}
+{"type":"tool_use","timestamp":1789589781193,"sessionID":"ses_1","part":{"partID":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"tool","id":"call-1","tool":"shell","state":{"status":"completed","input":{"command":"echo probe"},"output":"probe\n","title":"shell"}}}
+{"type":"step_finish","timestamp":1789589781193,"sessionID":"ses_1","part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"step-finish","reason":"tool-calls","cost":0,"tokens":{"input":121449,"output":49,"reasoning":57,"cache":{"read":0,"write":0}}}}
+{"type":"text","timestamp":1789589781193,"sessionID":"ses_1","part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"text","text":"done"}}
+{"type":"error","timestamp":1789589781193,"sessionID":"ses_1","error":{"type":"aborted","message":"Session interrupted: shutdown"}}
+{"type":"tool_use","timestamp":1789589781193,"sessionID":"ses_1","part":{"partID":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"tool","id":"call-1","tool":"read","state":{"status":"error","input":{"path":"/etc/hostname"},"error":"The user declined this tool call"}}}

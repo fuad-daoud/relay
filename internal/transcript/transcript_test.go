@@ -207,9 +207,9 @@ func TestAgyTable(t *testing.T) {
 	}
 }
 
-// opencode's table is provisional (spec §1 scope boundary): only its error
-// event was captured live. Everything else is rule 5 until a capture pins it.
-func TestOpencodeTableProvisional(t *testing.T) {
+// opencode's table is pinned from the 2026-09-17 capture (#173). This test
+// covers the branches the fixture cannot (the fixture covers the happy shapes).
+func TestOpencodeTable(t *testing.T) {
 	cases := map[string]struct {
 		line string
 		want []string
@@ -218,7 +218,26 @@ func TestOpencodeTableProvisional(t *testing.T) {
 			`{"type":"error","timestamp":1789589781193,"sessionID":"ses_1","error":{"type":"provider.no-route","message":"Model unavailable: openrouter/z-ai/glm-5.3-flash"}}`,
 			[]string{"  -> error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
 		},
-		"anything else is its type": {`{"type":"text","part":{"text":"hi"}}`, []string{"[text]"}},
+		"tool_use in an unknown status is rule 5": {
+			`{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"status":"running","input":{"path":"a"}}}}`,
+			[]string{"[tool_use]"},
+		},
+		"tool_use with no argument": {
+			`{"type":"tool_use","part":{"type":"tool","tool":"todoread","state":{"status":"completed","input":{},"output":""}}}`,
+			[]string{"todoread", "  -> ok"},
+		},
+		"unknown type is its type": {
+			`{"type":"session_compacted","part":{}}`,
+			[]string{"[session_compacted]"},
+		},
+		"missing type is ?": {
+			`{"part":{"type":"text","text":"hi"}}`,
+			[]string{"[?]"},
+		},
+		"empty text is nothing, as in the claude table": {
+			`{"type":"text","part":{"type":"text","text":""}}`,
+			nil,
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -9,7 +9,7 @@ boundary ("No live log streaming" struck), §3.3 (one more round file), §3.4
 two files and what each holds.
 **Unblocks:** #135 (its headless "output grew" signal is the size of a file
 that today grows once), #142 (usage is in the stream's final event).
-**Status:** implemented by this plan; opencode table provisional until step 6 runs; plan at `docs/plans/2026-09-17-headless-transcript.md`.
+**Status:** implemented by this plan; opencode table pinned 2026-09-17 (#173); plan at `docs/plans/2026-09-17-headless-transcript.md`.
 
 ## 1. System overview
 
@@ -88,11 +88,6 @@ already ticks; a cursor and a file are the whole mechanism.
 - No change to `make e2e`. That suite pins the pane fallback path against a
   real herdr; this design does not touch `reconcile.go`'s nudge, fingerprint
   or scrape path. A real process is exercised by `proc_test` (§7).
-- opencode's rendering table is **provisional**: its flag is verified, its
-  event shapes are not (no working provider on the machine this was written
-  on). The plan captures a live run before pinning the table; until then
-  every opencode event renders as `[type]` (the unknown-event rule), which
-  is noise, not silence.
 - `relay status` and `relay ui` do not drain. Only the daemon writes
   rendered lines, so there is exactly one writer of the cursor.
 
@@ -102,7 +97,7 @@ already ticks; a cursor and a file are the whole mechanism.
 internal/transcript/transcript.go      Render (new package; kind + raw line -> human lines)
 internal/transcript/claude.go          claude table
 internal/transcript/agy.go             agy table
-internal/transcript/opencode.go        opencode table (provisional)
+internal/transcript/opencode.go        opencode table
 internal/transcript/transcript_test.go fixtures in testdata/<kind>.jsonl + testdata/<kind>.log
 internal/harness/harness.go            Launch: print form per kind (§3.5 of the headless spec)
 internal/relay/runner.go               ProcSpec.StreamPath; Runner.ExitCode reads it
@@ -273,9 +268,24 @@ agy does not stream assistant text between tool steps; the only text is
 2026-09-16 probe, which is the exact failure #168 was filed on (a tool
 denied under headless permissions, `response` empty).
 
-**opencode** (`type`), provisional: `error` renders as
-`  -> error: <error.message>` (the one shape verified); everything else
-falls to rule 5 until the plan's capture step pins the table.
+**opencode** (`type`):
+
+| event | render |
+|---|---|
+| `tool_use`, `part.state.status: completed` | tool call: `part.tool`, `part.state.input`; then `  -> ok: <part.state.output first line>` -- two lines from one event |
+| `tool_use`, `part.state.status: error` | tool call as above; then `  -> error: <part.state.error first line>` |
+| `tool_use`, any other status | rule 5 |
+| `text` | `part.text` verbatim |
+| `error` | `  -> error: <error.message>` (session-level: `aborted`, `provider.auth`, `provider.no-route` seen) |
+| `step_start`, `step_finish` | noise |
+
+opencode emits one `tool_use` per call, after the tool has finished, with
+the call and its result in the same event; the table renders both lines
+from it. A permission `run` auto-rejects is not a denial list but a
+`tool_use` in status `error` with the message `The user declined this tool
+call`, so it renders as a tool error, not a `denied:` line. Fixture:
+`testdata/opencode.jsonl` from the 2026-09-17 probe against
+`opencode/nemotron-3.5-lightning-free` (#173).
 
 ### 4.2 `drainStream` (new, `headless.go`)
 
@@ -433,7 +443,7 @@ The transcript is a courtesy to the reader.
 ## 7. Ordered implementation steps
 
 1. **`internal/transcript`**: `Render` with the shared argument pick, the
-   claude and agy tables, and the provisional opencode table; fixtures
+   claude and agy tables, and the opencode table; fixtures
    from the 2026-09-16 probes as `testdata/{claude,agy}.jsonl` with the
    expected `.log` beside each; unit tests for rules 1, 2 and 5 and for
    each table row. Mutation: drop the `is_error` branch, the claude
@@ -460,6 +470,4 @@ The transcript is a courtesy to the reader.
 5. **Spec amendments and README**: strike the scope boundary line in the
    headless spec, update §3.3/§3.4/§3.5 by reference to this document,
    README "Headless builders" names both files.
-6. **opencode capture** (needs a working provider): run the `run --format
-   json` probe, add `testdata/opencode.jsonl` and pin its table; until
-   then the step is recorded as open in the plan, not silently skipped.
+6. **opencode capture**: done 2026-09-17 (#173); fixture and table pinned.
