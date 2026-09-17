@@ -211,8 +211,14 @@ Runs first, before the `rebinding` block, on the loaded binding:
 - If `restore` and `b.Branch == ""`: return `fmt.Errorf("binding %q: worktree
   %s is gone and no branch is recorded; relay add to start fresh", name,
   b.Worktree)`.
-- If `restore`: `rt.Git == nil` -> error `git unavailable`; else
-  `rt.Git.CheckoutWorktree(ctx, b.CWD, b.Worktree, b.Branch)`;
+- If `restore`: `rt.Git == nil` -> error `git unavailable`. The repository
+  to check out from is **`opts.CWD`, the caller's cwd** -- an `add`
+  binding's `b.CWD` is the worktree itself (the directory that is gone) and
+  the repository it was cut from is not recorded. So first
+  `rt.Git.BranchExists(ctx, opts.CWD, b.Branch)`: an error is wrapped
+  `restore worktree: %w`; `false` refuses with `binding %q: branch %s is
+  not in %s; run resume from the repository the worktree was cut from`.
+  Then `rt.Git.CheckoutWorktree(ctx, opts.CWD, b.Worktree, b.Branch)`;
   `ErrBranchCheckedOut` -> `fmt.Errorf("binding %q: branch %s is checked out
   in another worktree (git worktree list); free it, then resume", ...)`,
   other errors wrapped as `restore worktree: %w`. On success
@@ -290,7 +296,9 @@ resume(ctx, rt, opts, planner):
   if restore:
     if b.Branch == "": return error "no branch is recorded"
     if rt.Git == nil:  return error "git unavailable"
-    err := rt.Git.CheckoutWorktree(ctx, b.CWD, b.Worktree, b.Branch)
+    exists := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)   -- opts.CWD: b.CWD is the gone worktree
+    !exists -> "run resume from the repository the worktree was cut from"
+    err := rt.Git.CheckoutWorktree(ctx, opts.CWD, b.Worktree, b.Branch)
     ErrBranchCheckedOut -> "checked out in another worktree" error; other -> wrap
     res.RestoredWorktree, res.RestoredBranch = b.Worktree, b.Branch
     if !b.Builder.Headless(): res.OrphanedPane = b.Builder.PaneID
@@ -311,7 +319,7 @@ the restore-only `Resolution`.
 | category | example | recoverable | surfaces as |
 | --- | --- | --- | --- |
 | release refused | dirty tree, open pane round, failed headless stop, git missing | yes -- `gc` retries | `DoneResult.WorktreeKept` + reason; printed; never an error |
-| restore precondition | no `Branch`; `rt.Git == nil` | no | `resume` error before any spawn; exit non-zero |
+| restore precondition | no `Branch`; `rt.Git == nil`; branch not in the caller's repo | no | `resume` error before any spawn; exit non-zero |
 | restore refused by git | branch checked out elsewhere | yes -- free it and re-run | `ErrBranchCheckedOut` wrapped with the `git worktree list` hint |
 | restore failed | any other `CheckoutWorktree` error | no | wrapped `restore worktree: <err>`; `AddWorktree`-style cleanup of a half-made path |
 | existing | `ErrStopFailed`, `ErrBuilderAlive`, `ErrHeadlessAdopt`, `ErrRunnerUnavailable`, `store.ErrNotFound` | as today | unchanged |
@@ -337,13 +345,18 @@ exists; a joined-but-uncreated path is "gone"):
 7. recorded path missing: `WorktreeGone`.
 8. `gc` after (1): the gc row reports `WorktreeGone`, the binding is
    archived; `gc` output text unchanged for it.
-9. resume, tree missing, `Branch` set, planner-only: one
-   `CheckoutWorktree` call `{b.CWD, b.Worktree, b.Branch}`;
+9. resume, tree missing, `Branch` set, planner-only, seeded in the real
+   shape (`CWD == Worktree`): one `CheckoutWorktree` call `{opts.CWD,
+   b.Worktree, b.Branch}` after `BranchExists(opts.CWD, b.Branch)`;
    `Resolution.RestoredWorktree`/`RestoredBranch` set; pane binding ->
    `OrphanedPane == old pane id`; headless -> `OrphanedPane == ""`; State
    Active.
 10. resume, tree missing, `Branch == ""`: error mentions `no branch is
     recorded`; no git call; state unchanged.
+10b. resume, tree missing, `BranchExists(opts.CWD, ...)` false: error
+    mentions `run resume from the repository`; no checkout call; state
+    unchanged. (Found by the live smoke test: the fakes had been seeded
+    with `CWD: "/repo"`, which is not an `add` binding's shape.)
 11. resume, `checkoutWorktreeErr = git.ErrBranchCheckedOut`: error mentions
     `git worktree list`; no tab, no start.
 12. resume, tree present: no `CheckoutWorktree` call; existing behaviour.

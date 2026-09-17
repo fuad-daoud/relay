@@ -742,11 +742,12 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
@@ -793,13 +794,14 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
 	fr := newFakeRunner()
 	rt.Runner = fr
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
@@ -829,11 +831,12 @@ func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "",
 		State:    store.StateDone,
@@ -862,16 +865,58 @@ func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
 	}
 }
 
-func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
+func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
 	rt := newRuntime(t, f)
-	fg := &fakeGit{checkoutWorktreeErr: git.ErrBranchCheckedOut}
+	fg := &fakeGit{} // branchExists stays false: the caller's cwd has no relay/webshop
 	rt.Git = fg
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt,
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/elsewhere",
+	})
+	if err == nil || !strings.Contains(err.Error(), "run resume from the repository") {
+		t.Fatalf("err = %v, want 'run resume from the repository'", err)
+	}
+	if fg.lastBranchDir != "/elsewhere" || fg.lastBranchName != "relay/webshop" {
+		t.Errorf("BranchExists asked (%q, %q), want (/elsewhere, relay/webshop)", fg.lastBranchDir, fg.lastBranchName)
+	}
+	if len(fg.checkoutWorktreeCalls) != 0 {
+		t.Errorf("checkoutWorktreeCalls = %d, want 0", len(fg.checkoutWorktreeCalls))
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != store.StateDone {
+		t.Errorf("state = %s, want done (unchanged)", loaded.State)
+	}
+}
+
+func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{checkoutWorktreeErr: git.ErrBranchCheckedOut}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
@@ -898,11 +943,12 @@ func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
 
 	wt := t.TempDir()
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateActive,
@@ -942,11 +988,12 @@ func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
 		Name:     "webshop",
-		CWD:      "/repo",
+		CWD:      wt, // an add binding's CWD is its worktree
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		Round:    4,

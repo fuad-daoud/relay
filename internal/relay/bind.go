@@ -168,7 +168,18 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if rt.Git == nil {
 			return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot restore worktree")
 		}
-		if err := rt.Git.CheckoutWorktree(ctx, b.CWD, b.Worktree, b.Branch); err != nil {
+		// An add binding's CWD is the worktree itself (add.go), which is the
+		// directory that is gone; the repository it was cut from is not
+		// recorded. The caller's cwd is where add ran, so restore from there
+		// once the branch is confirmed to live in it.
+		exists, err := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)
+		if err != nil {
+			return store.Binding{}, Resolution{}, fmt.Errorf("restore worktree: %w", err)
+		}
+		if !exists {
+			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is not in %s; run resume from the repository the worktree was cut from", opts.Name, b.Branch, opts.CWD)
+		}
+		if err := rt.Git.CheckoutWorktree(ctx, opts.CWD, b.Worktree, b.Branch); err != nil {
 			if errors.Is(err, git.ErrBranchCheckedOut) {
 				return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is checked out in another worktree (git worktree list); free it, then resume", opts.Name, b.Branch)
 			}
