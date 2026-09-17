@@ -120,36 +120,31 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    ```
    herdr integration install claude
    ```
-4. Emit the builder's role definitions directly into your harness's config directory:
+4. Install the role definitions into each harness on `PATH` (the plugin
+   does this for you at install and update):
    ```
-   # agy
-   mkdir -p ~/.gemini/config/agents
-   relay agent print --kind agy --role plan-executor > ~/.gemini/config/agents/plan-executor.md
-   relay agent print --kind agy --role researcher    > ~/.gemini/config/agents/researcher.md
-
-   # claude
-   mkdir -p ~/.claude/agents
-   relay agent print --kind claude --role plan-executor > ~/.claude/agents/plan-executor.md
-   relay agent print --kind claude --role researcher    > ~/.claude/agents/researcher.md
-
-   # opencode
-   mkdir -p ~/.config/opencode/agents
-   relay agent print --kind opencode --role plan-executor > ~/.config/opencode/agents/plan-executor.md
-   relay agent print --kind opencode --role researcher    > ~/.config/opencode/agents/researcher.md
+   relay agent install
    ```
+   One line per file says `wrote`, `kept (identical)` or `kept (differs;
+   --force to overwrite)`. Pass `--kind` to name a harness that is not on
+   `PATH` yet, `--role` for one definition, `--dry-run` to look first.
+   This writes `plan-executor`, `researcher`, `reviewer` and `architect`
+   for every kind; `relay agent print --kind <k> --role <r>` still emits
+   one to stdout.
 
    `researcher` is the read-only role the builder's own sub-agents run as. It
    exists because exactly one agent may write to a working tree: research can fan
    out safely, implementation cannot. The claude and opencode definitions pin a
    `model:` in their front matter as a worked example, chosen so neither needs a
    provider the rest of relay does not already assume; that line is the first
-   thing to change for your own setup. The agy definitions pin `model: inherit`
+   thing to change for your own setup, and a plain `relay agent install`
+   keeps your edit. The agy definitions pin `model: inherit`
    and that is not an example: on agy the key is a tier (`inherit`, `flash`,
    `pro`) that would override the `--model` relay passes at launch. `relay
-   doctor` reports the pin each installed definition carries, and warns when an
-   agy copy pins a tier.
+   doctor` reports the pin each installed definition carries, warns when an
+   agy copy pins a tier or differs from what relay ships, and names the
+   `relay agent install ... --force` that restores it.
 5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
-   (Optional) Emit the planner's definition too -- see [The planner: architect](#the-planner-architect).
 6. If more than one candidate serves `builder`, write `~/.config/relay/policy.json`
    with the order to try them in (see [Policy](#policy)); `relay policy` shows
    what relay would pick and says `would refuse` until you do. `relay doctor`
@@ -762,16 +757,11 @@ consult's pane stays open until you run `relay reap [NAME] [--dry-run]`, which
 closes the panes of finished consults and drops their records. Terminal ones
 are a reap chore, not work in flight, so the count does not include them.
 
-Emit the definitions into the harness's agent directory the same way as the
-other roles:
+`relay agent install` writes the reviewer definition with the other
+roles; to install just this one:
 
 ```
-# agy
-relay agent print --kind agy      --role reviewer > ~/.gemini/config/agents/reviewer.md
-# claude
-relay agent print --kind claude   --role reviewer > ~/.claude/agents/reviewer.md
-# opencode
-relay agent print --kind opencode --role reviewer > ~/.config/opencode/agents/reviewer.md
+relay agent install --role reviewer
 ```
 
 `relay doctor` reports whether the definition landed, on every kind.
@@ -817,13 +807,10 @@ and `relay ask` from -- and relay does not pick its harness or start it. What
 relay provides is the definition, so the same architect runs on any kind:
 
 ```
-# agy
-relay agent print --kind agy      --role architect > ~/.gemini/config/agents/architect.md
-# claude
-relay agent print --kind claude   --role architect > ~/.claude/agents/architect.md
-# opencode
-relay agent print --kind opencode --role architect > ~/.config/opencode/agents/architect.md
+relay agent install --role architect
 ```
+
+(`relay agent install` with no flags writes it too.)
 
 Then start the planner with the harness's own `--agent` flag, for example:
 

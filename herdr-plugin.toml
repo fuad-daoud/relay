@@ -11,6 +11,9 @@ command = ["sh", "scripts/plugin-fetch.sh"]
 [[build]]
 command = ["./relay", "version"]
 
+[[build]]
+command = ["./relay", "agent", "install"]
+
 [[startup]]
 command = ["sh", "scripts/plugin-daemon-check.sh"]
 
