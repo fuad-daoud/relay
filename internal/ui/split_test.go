@@ -88,12 +88,6 @@ func TestPaneFollowsCursor(t *testing.T) {
 	if m.detail.scroll[tabDiff] != 0 || m.detail.cache[tabDiff].loaded {
 		t.Error("parked scrolls and caches must be cleared")
 	}
-	// A stale reply for webshop is discarded.
-	res, _ = m.Update(tabMsg{name: "webshop", round: 3, t: tabDiff, content: tabContent{loaded: true, body: "old"}})
-	m = res.(Model)
-	if m.detail.cache[tabDiff].loaded {
-		t.Error("stale tabMsg for the previous binding must be discarded")
-	}
 	// With a fetch in flight, a second move issues none.
 	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
@@ -102,6 +96,16 @@ func TestPaneFollowsCursor(t *testing.T) {
 	}
 	if m.detail.name != "docs" {
 		t.Errorf("pane must still re-point: %q", m.detail.name)
+	}
+	// The reply for the binding the cursor left arrives: discarded, and
+	// the guard is released so the next tick can fetch for docs.
+	res, _ = m.Update(tabMsg{name: "webshop", round: 3, t: tabDiff, content: tabContent{loaded: true, body: "old"}})
+	m = res.(Model)
+	if m.detail.cache[tabDiff].loaded {
+		t.Error("stale tabMsg for a previous binding must be discarded")
+	}
+	if m.tabInFlight {
+		t.Error("a stale reply still completes the fetch; the guard must be released")
 	}
 }
 
@@ -171,11 +175,18 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(f, " "), "refreshed 2s ago") {
 		t.Errorf("footer must end with the refresh age: %q", f)
 	}
-	// The right side wins when they would overlap.
-	m.width = 60
+	// The right side wins when they would overlap: at the narrowest split
+	// width the six keys plus the notice do not fit on one line.
+	m.width = splitMinWidth
 	f = stripANSI(m.footerView())
-	if lipgloss.Width(f) > 60 || !strings.Contains(f, "NEEDS YOU") {
-		t.Errorf("at 60 columns the notice must survive and the line must fit: %q", f)
+	if lipgloss.Width(f) > splitMinWidth {
+		t.Errorf("footer wider than the terminal: %q", f)
+	}
+	if !strings.Contains(f, "webshop NEEDS YOU") || !strings.Contains(f, "refreshed 2s ago") {
+		t.Errorf("the notice and the age must survive the squeeze: %q", f)
+	}
+	if strings.Contains(f, "q quit") {
+		t.Errorf("the key list must be the side that gives way: %q", f)
 	}
 }
 

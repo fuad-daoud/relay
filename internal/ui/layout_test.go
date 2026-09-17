@@ -2,15 +2,17 @@ package ui
 
 import "testing"
 
+// TestLayoutThreshold pins spec §3.1's number with literals on purpose:
+// a test that reads splitMinWidth cannot notice it changing.
 func TestLayoutThreshold(t *testing.T) {
 	m := Model{height: 40}
-	m.width = splitMinWidth - 1
+	m.width = 109
 	if m.layout() != layoutStack {
-		t.Errorf("%d columns: want stack", m.width)
+		t.Errorf("109 columns: want stack")
 	}
-	m.width = splitMinWidth
+	m.width = 110
 	if m.layout() != layoutSplit {
-		t.Errorf("%d columns: want split", m.width)
+		t.Errorf("110 columns: want split")
 	}
 }
 
