@@ -1,13 +1,30 @@
 package transcript
 
-// renderOpencode is the table for `opencode run --format json`. It is
-// provisional (spec §1 scope boundary): the flag is verified, the event
-// shapes are not -- only an error event was captured live. Every other
-// event falls to rule 5, which is noise, not silence, until a live capture
-// pins the table (spec §7 step 6).
+// renderOpencode is the table for `opencode run --format json`. It was
+// pinned from the 2026-09-17 capture (#173). A tool_use event carries call
+// and result in one event.
 func renderOpencode(obj map[string]any) []string {
-	if str(obj["type"]) == "error" {
+	switch str(obj["type"]) {
+	case "step_start", "step_finish":
+		return nil
+	case "text":
+		part := asMap(obj["part"])
+		return []string{str(part["text"])}
+	case "tool_use":
+		part := asMap(obj["part"])
+		state := asMap(part["state"])
+		call := toolLine(str(part["tool"]), asMap(state["input"]))
+		switch str(state["status"]) {
+		case "completed":
+			return []string{call, okLine(str(state["output"]))}
+		case "error":
+			return []string{call, errLine(str(state["error"]))}
+		default:
+			return []string{unknown(obj)}
+		}
+	case "error":
 		return []string{errLine(str(asMap(obj["error"])["message"]))}
+	default:
+		return []string{unknown(obj)}
 	}
-	return []string{unknown(obj)}
 }

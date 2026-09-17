@@ -1,0 +1,8 @@
+read ./probe.txt
+  -> ok: Read file ./probe.txt, lines 1-1
+shell echo probe
+  -> ok: probe
+done
+  -> error: Session interrupted: shutdown
+read /etc/hostname
+  -> error: The user declined this tool call
