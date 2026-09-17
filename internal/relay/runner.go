@@ -6,12 +6,14 @@ import (
 	"time"
 )
 
-// ProcSpec is one process a headless builder round runs (#99, spec §3.4).
+// ProcSpec is one process a headless builder round runs (#99, spec §3.4;
+// #168 split the output).
 type ProcSpec struct {
-	Dir     string   // working directory: the binding's CWD
-	Argv    []string // Argv[0] is the binary name, resolved on PATH by the runner
-	Env     []string // additions to the parent environment; nil for none
-	LogPath string   // stdout and stderr, appended, created if absent
+	Dir        string   // working directory: the binding's CWD
+	Argv       []string // Argv[0] is the binary name, resolved on PATH by the runner
+	Env        []string // additions to the parent environment; nil for none
+	LogPath    string   // stderr, appended, created if absent
+	StreamPath string   // stdout and the exit trailer, appended, created if absent
 }
 
 // ProcHandle names a running process well enough to tell it from a later
@@ -29,9 +31,10 @@ type ProcHandle struct {
 // Alive is true iff a process with the handle's pid exists AND its start
 // time matches within one second -- a reused pid is false, and a missing
 // pid is (false, nil), not an error. ExitCode reports the code the runner's
-// supervisor left as the log's last line, ok false when there is none (the
-// process is still running, or was killed before it could write one). Kill
-// stops the process group, escalating after a grace; not alive is nil.
+// supervisor left as the stream's last line (the caller passes the stream path),
+// ok false when there is none (the process is still running, or was killed
+// before it could write one). Kill stops the process group, escalating after a
+// grace; not alive is nil.
 type Runner interface {
 	Start(ctx context.Context, spec ProcSpec) (ProcHandle, error)
 	Alive(ctx context.Context, h ProcHandle) (bool, error)
