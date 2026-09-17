@@ -12,11 +12,7 @@ import (
 
 // DoneText is what `relay done` says on success: one line for the binding,
 // then at most one for its worktree.
-func DoneText(name string, res ...DoneResult) string {
-	var r DoneResult
-	if len(res) > 0 {
-		r = res[0]
-	}
+func DoneText(name string, r DoneResult) string {
 	lines := []string{
 		fmt.Sprintf("%s marked done; relaying stopped (relay gc archives it when you are finished with it)", name),
 	}
