@@ -553,4 +553,3 @@ func TestOSInstallEnvRoundTrip(t *testing.T) {
 		t.Error("expected error for non-existent binary, got nil")
 	}
 }
-

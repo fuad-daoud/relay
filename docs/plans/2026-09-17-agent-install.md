@@ -58,7 +58,7 @@ constituents of `make check` directly, in this order, and say so in your
 report:
 
 ```bash
-test -z "$(gofmt -l .)" || gofmt -l .
+test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 go vet ./...
 go test -race -count=1 ./...
 cp go.mod /tmp/gm; cp go.sum /tmp/gs; go mod tidy; cmp go.mod /tmp/gm && cmp go.sum /tmp/gs

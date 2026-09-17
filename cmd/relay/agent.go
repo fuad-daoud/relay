@@ -101,4 +101,3 @@ func cmdAgentInstall(args []string) error {
 	}
 	return nil
 }
-

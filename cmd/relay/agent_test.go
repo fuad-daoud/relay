@@ -404,4 +404,3 @@ func TestAgentInstallWriteFailureExits1(t *testing.T) {
 		t.Errorf("expected stdout to have line %q, got %q", wantResearcher, outStr)
 	}
 }
-
