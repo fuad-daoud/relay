@@ -155,14 +155,6 @@ func wrapLine(line string, width int) []string {
 	return lines
 }
 
-// headerView and footerView are temporary here; Task 5 replaces both with
-// the real header (counts, gates, clock) and footer (contextual keys,
-// notices, refresh age). This reproduces today's text so existing footer
-// tests keep passing until then. headerView returns two lines -- bar and
-// blank -- to honour headerRows = 2.
-func (m Model) headerView() string { return fit(headerBar.Render(" relay "), m.width) + "\n" }
-func (m Model) footerView() string { return dimStyle.Render(m.footer()) }
-
 func (m Model) listView() string {
 	var b strings.Builder
 	b.WriteString(m.headerView())

@@ -3,9 +3,12 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
@@ -45,6 +48,9 @@ type Model struct {
 	// now is the clock every age on screen is measured against. time.Now
 	// in production; fixed in tests so "2m ago" is deterministic.
 	now func() time.Time
+	// statusAt is when the newest good statusMsg arrived; the footer's
+	// "refreshed Ns ago".
+	statusAt time.Time
 }
 
 func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
@@ -87,8 +93,15 @@ func row(rep relay.Report, name string) *relay.BindingStatus {
 	return nil
 }
 
+// paneVisible: the pane is on screen in split layout always, and in
+// stack layout only on the detail screen. visibleTabFetch and the tick
+// both defer to it (old spec §6 rule 2).
+func (m Model) paneVisible() bool {
+	return m.layout() == layoutSplit || m.screen == screenDetail
+}
+
 func (m Model) visibleTabFetch() tea.Cmd {
-	if m.screen != screenDetail {
+	if !m.paneVisible() {
 		return nil
 	}
 	lines := m.detail.vp.Height
@@ -105,14 +118,53 @@ func (m Model) visibleTabFetch() tea.Cmd {
 	return nil
 }
 
+// pointDetailAt re-targets the pane at the binding named: name, round
+// (row.Round - 1), lastLogTS from row.Last, every cache cleared, every
+// parked scroll zeroed. The active tab is kept -- a human reading diffs
+// across bindings stays on diff. It issues the visible-tab fetch only if
+// tabInFlight is clear; a fetch already in flight for the previous
+// binding is discarded on arrival by tabMsg's name check, which exists
+// for exactly this. A no-op when the pane already shows name.
+func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
+	if m.detail.name == name {
+		return m, nil
+	}
+	r := row(m.report, name)
+	if r == nil {
+		return m, nil
+	}
+	vp := viewport.New(m.paneWidth(), m.viewportHeight())
+	vp.SetContent(bodyOf(m.detail.active, tabContent{}))
+	m.detail = detailModel{
+		name:   name,
+		round:  r.Round - 1,
+		active: m.detail.active,
+		vp:     vp,
+	}
+	if r.Last != nil {
+		m.detail.lastLogTS = r.Last.TS
+	}
+	if m.tabInFlight {
+		return m, nil
+	}
+	if cmd := m.visibleTabFetch(); cmd != nil {
+		m.tabInFlight = true
+		return m, cmd
+	}
+	return m, nil
+}
+
 func (m Model) maybeInvalidate() (Model, tea.Cmd) {
-	if m.screen != screenDetail {
+	if !m.paneVisible() {
 		return m, nil
 	}
 	r := row(m.report, m.detail.name)
 	if r == nil {
 		m.screen = screenList
 		m.notice = fmt.Sprintf("%s is gone", m.detail.name)
+		if m.layout() == layoutSplit && len(m.rows()) > 0 {
+			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+		}
 		return m, nil
 	}
 	if r.Last == nil {
@@ -155,6 +207,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.vp.Width = m.paneWidth()
 		m.detail.vp.Height = m.viewportHeight()
 		m.list.top = m.railTop()
+		if m.layout() == layoutSplit && m.statusLoaded && len(m.rows()) > 0 {
+			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+		}
 		return m, nil
 
 	case tickMsg:
@@ -183,15 +238,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusLoaded = true
 		m.err = nil
 		m.report = msg.report
+		m.statusAt = m.now()
 		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
 		m.list.top = m.railTop()
+		var cmds []tea.Cmd
+		if m.layout() == layoutSplit && len(m.rows()) > 0 && m.detail.name != m.rows()[m.list.cursor].Name {
+			var cmd tea.Cmd
+			m, cmd = m.pointDetailAt(m.rows()[m.list.cursor].Name)
+			cmds = append(cmds, cmd)
+		}
 		var cmd tea.Cmd
 		m, cmd = m.maybeInvalidate()
-		return m, cmd
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
 
 	case tabMsg:
 		m.tabInFlight = false
-		if m.screen != screenDetail {
+		if !m.paneVisible() {
 			return m, nil
 		}
 		if msg.name != m.detail.name {
@@ -222,36 +285,116 @@ func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
 	}
+	if m.layout() == layoutSplit {
+		return m.splitView()
+	}
 	switch m.screen {
-	case screenList:
-		return m.listView()
 	case screenDetail:
 		return m.detailView()
 	default:
-		return ""
+		return m.listView()
 	}
 }
 
-func (m Model) footer() string {
-	var keys string
-	switch m.screen {
-	case screenList:
-		keys = "enter open · q quit"
-	case screenDetail:
-		keys = "esc back · tab next pane · q quit"
+// splitView is the one screen: header, error block, rail │ pane, footer.
+func (m Model) splitView() string {
+	var b strings.Builder
+	b.WriteString(m.headerView())
+	b.WriteByte('\n')
+	if m.err != nil {
+		b.WriteString(renderError(m.err, m.width))
+		b.WriteByte('\n')
 	}
+	rail := strings.Split(m.railView(railWidth), "\n")
+	pane := strings.Split(m.paneView(m.paneWidth()), "\n")
+	bar := ruleStyle.Render("│") + " "
+	for i := 0; i < m.bodyRows(); i++ {
+		r, p := "", ""
+		if i < len(rail) {
+			r = rail[i]
+		}
+		if i < len(pane) {
+			p = pane[i]
+		}
+		b.WriteString(fit(r, railWidth) + bar + p)
+		b.WriteByte('\n')
+	}
+	b.WriteString(m.footerView())
+	return b.String()
+}
+
+// headerView is the reversed bar and the blank under it (headerRows).
+func (m Model) headerView() string {
+	left := lipgloss.NewStyle().Bold(true).Render(" relay ")
+	switch {
+	case !m.statusLoaded:
+		left += "  "
+	case len(m.report.Bindings) == 0:
+		left += "  no bindings"
+	default:
+		counts := map[string]int{}
+		for _, b := range m.report.Bindings {
+			counts[b.Display]++
+		}
+		left += fmt.Sprintf("  %d bindings", len(m.report.Bindings))
+		if n := counts["NEEDS YOU"]; n > 0 {
+			left += " · " + stateNeedsYouStyle.Render(fmt.Sprintf("%d needs you", n))
+		}
+		if n := counts["HELD"]; n > 0 {
+			left += fmt.Sprintf(" · %d held", n)
+		}
+	}
+	var right []string
+	for _, g := range m.report.Gated {
+		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relay.GateUntilText(g.Until))))
+	}
+	right = append(right, dimStyle.Render(m.now().Local().Format("15:04")+" "))
+	bar := headerBar.Render(fit(spread(left, strings.Join(right, "  ·  "), m.width), m.width))
+	return bar + "\n"
+}
+
+// footerView: keys for the current focus on the left, notices and the
+// refresh age on the right. The right side wins when they would overlap:
+// a notice is the part a human must not miss.
+func (m Model) footerView() string {
+	key := func(k, v string) string { return fgStyle.Render(k) + " " + dimStyle.Render(v) }
+	order := "attention"
+	if !m.sort {
+		order = "name"
+	}
+	var keys []string
+	switch {
+	case m.layout() == layoutSplit && m.screen == screenList:
+		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), key("q", "quit")}
+	case m.layout() == layoutSplit:
+		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), key("q", "quit")}
+	case m.screen == screenList:
+		keys = []string{key("↑↓", "move"), key("⏎", "open"), key("s", "sort: "+order), key("q", "quit")}
+	default:
+		keys = []string{key("esc", "back"), key("tab", "next pane"), key("1-4", "pane"), key("q", "quit")}
+	}
+	left := strings.Join(keys, "   ")
+
+	var notes []string
 	if m.notice != "" {
-		keys += "  ! " + m.notice
+		notes = append(notes, stateNeedsYouStyle.Render(m.notice))
 	}
 	if m.err != nil {
-		keys += "  ! refresh failed (retrying)"
+		notes = append(notes, errorStyle.Render("! refresh failed (retrying)"))
 	}
-	if m.screen == screenDetail {
+	if m.paneVisible() {
 		for _, b := range m.report.Bindings {
 			if b.Name != m.detail.name && b.Display == "NEEDS YOU" {
-				keys += "  ! " + b.Name + " NEEDS YOU"
+				notes = append(notes, stateNeedsYouStyle.Render(b.Name+" NEEDS YOU"))
 			}
 		}
 	}
-	return keys
+	if !m.statusAt.IsZero() {
+		notes = append(notes, faintStyle.Render("refreshed "+ago(m.statusAt, m.now())+" ago"))
+	}
+	right := strings.Join(notes, "   ")
+	if lipgloss.Width(left)+1+lipgloss.Width(right) > m.width {
+		left = lipgloss.NewStyle().MaxWidth(m.width - lipgloss.Width(right) - 1).Render(left)
+	}
+	return fit(spread(left, right, m.width), m.width)
 }

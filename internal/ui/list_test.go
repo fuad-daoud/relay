@@ -461,7 +461,7 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	}
 
 	// 4. Footer contains the marker "! refresh failed (retrying)" but not the error text
-	footer := m.footer()
+	footer := stripANSI(m.footerView())
 	if !strings.Contains(footer, "! refresh failed (retrying)") {
 		t.Errorf("footer must contain '! refresh failed (retrying)', got %q", footer)
 	}

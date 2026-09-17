@@ -1,85 +1,86 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relay/internal/relay"
 )
 
 func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch m.screen {
-	case screenList:
+	// Keys that work from either focus.
+	switch msg.String() {
+	case "s":
+		m.sort = !m.sort
+		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
+		m.list.top = m.railTop()
+		return m, nil
+	case "1", "2", "3", "4":
+		if m.paneVisible() {
+			return m.switchTab(tab(msg.String()[0] - '1'))
+		}
+	}
+	railFocused := m.screen == screenList
+	if railFocused {
 		switch msg.String() {
 		case "up", "k":
-			if m.list.cursor > 0 {
-				m.list.cursor--
-				if len(m.rows()) > 0 {
-					m.list.sticky = m.rows()[m.list.cursor].Name
-				}
-			}
-			m.list.top = m.railTop()
-			return m, nil
+			return m.moveCursor(-1)
 		case "down", "j":
-			if m.list.cursor < len(m.rows())-1 {
-				m.list.cursor++
-				m.list.sticky = m.rows()[m.list.cursor].Name
-			}
-			m.list.top = m.railTop()
-			return m, nil
+			return m.moveCursor(+1)
 		case "enter":
 			if len(m.rows()) == 0 {
 				return m, nil
 			}
-			row := m.rows()[m.list.cursor]
-			vp := viewport.New(m.paneWidth(), m.viewportHeight())
-			vp.SetContent(bodyOf(tabReport, tabContent{}))
-			m.detail = detailModel{
-				name:   row.Name,
-				round:  row.Round - 1,
-				active: tabReport,
-				vp:     vp,
-			}
-			if row.Last != nil {
-				m.detail.lastLogTS = row.Last.TS
-			}
 			m.screen = screenDetail
-			if !m.tabInFlight {
-				m.tabInFlight = true
-				return m, fetchReport(m.ctx, m.rt, row.Name)
+			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+		}
+		if m.layout() == layoutSplit {
+			if msg.Type == tea.KeyTab || msg.Type == tea.KeyShiftTab || msg.String() == "tab" || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+				return m.cycleTab(msg)
 			}
-			return m, nil
 		}
-
-	case screenDetail:
-		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyBackspace || msg.String() == "esc" || msg.String() == "backspace" {
-			m.screen = screenList
-			return m, nil
-		}
-		if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
-			next := (m.detail.active - 1 + tabCount) % tabCount
-			return m.switchTab(next)
-		}
-		if msg.Type == tea.KeyTab || msg.String() == "tab" {
-			next := (m.detail.active + 1) % tabCount
-			return m.switchTab(next)
-		}
-
-		switch msg.String() {
-		case "1":
-			return m.switchTab(tabReport)
-		case "2":
-			return m.switchTab(tabTerminal)
-		case "3":
-			return m.switchTab(tabDiff)
-		case "4":
-			return m.switchTab(tabLog)
-		default:
-			var cmd tea.Cmd
-			m.detail.vp, cmd = m.detail.vp.Update(msg)
-			return m, cmd
-		}
+		return m, nil
 	}
+	// Pane focused (split) or detail screen (stack).
+	if msg.Type == tea.KeyEsc || msg.Type == tea.KeyBackspace || msg.String() == "esc" || msg.String() == "backspace" {
+		m.screen = screenList
+		return m, nil
+	}
+	if msg.Type == tea.KeyTab || msg.Type == tea.KeyShiftTab || msg.String() == "tab" || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+		return m.cycleTab(msg)
+	}
+	var cmd tea.Cmd
+	m.detail.vp, cmd = m.detail.vp.Update(msg)
+	return m, cmd
+}
 
+// moveCursor moves the rail cursor by delta, clamped, re-windows, and in
+// split layout points the pane at the new binding.
+func (m Model) moveCursor(delta int) (tea.Model, tea.Cmd) {
+	rows := m.rows()
+	if len(rows) == 0 {
+		return m, nil
+	}
+	c := m.list.cursor + delta
+	if c < 0 {
+		c = 0
+	}
+	if c > len(rows)-1 {
+		c = len(rows) - 1
+	}
+	m.list.cursor = c
+	m.list.sticky = rows[c].Name
+	m.list.top = m.railTop()
+	if m.layout() == layoutSplit {
+		return m.pointDetailAt(rows[c].Name)
+	}
 	return m, nil
+}
+
+// cycleTab is tab / shift+tab.
+func (m Model) cycleTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+		return m.switchTab((m.detail.active - 1 + tabCount) % tabCount)
+	}
+	return m.switchTab((m.detail.active + 1) % tabCount)
 }
 
 func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
