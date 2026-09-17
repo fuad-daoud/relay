@@ -1,0 +1,10 @@
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
+{"type":"system","subtype":"init","cwd":"/repo","session_id":"sess-1","tools":["Bash","Read","Edit"],"model":"claude-haiku-4-5-20251001"}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"session_id":"sess-1"}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"session_id":"sess-1"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"sig"}]},"session_id":"sess-1"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_1","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo probe","description":"Run echo probe"}}]},"session_id":"sess-1"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"probe","is_error":false}]},"session_id":"sess-1"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"sig"}]},"session_id":"sess-1"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"done"}]},"session_id":"sess-1"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"done","session_id":"sess-1","total_cost_usd":0.0299,"usage":{"input_tokens":18,"output_tokens":249},"permission_denials":[]}
