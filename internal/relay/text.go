@@ -33,6 +33,20 @@ func DoneText(name string, res ...DoneResult) string {
 	return strings.Join(lines, "\n")
 }
 
+// RestoreText is what `relay bind --resume` prints when a missing worktree was restored.
+func RestoreText(res Resolution) string {
+	if res.RestoredWorktree == "" {
+		return ""
+	}
+	lines := []string{
+		fmt.Sprintf("restored worktree %s on %s", res.RestoredWorktree, res.RestoredBranch),
+	}
+	if res.OrphanedPane != "" {
+		lines = append(lines, fmt.Sprintf("old builder pane %s is in the removed directory; close it: herdr pane close %s", res.OrphanedPane, res.OrphanedPane))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // AnswerText is what `relay answer` says on success.
 func AnswerText(name string) string {
 	return fmt.Sprintf("answered %s's builder", name)

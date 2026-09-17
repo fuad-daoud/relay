@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -147,19 +148,46 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; ErrHeadlessAdopt;
 // ErrRunnerUnavailable; a wrapped herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
+	b, err := rt.Store.Load(opts.Name)
+	if err != nil {
+		return store.Binding{}, Resolution{}, err
+	}
+
+	var res Resolution
+	restore := false
+	if b.Worktree != "" {
+		if _, err := os.Stat(b.Worktree); errors.Is(err, os.ErrNotExist) {
+			restore = true
+		}
+	}
+
+	if restore {
+		if b.Branch == "" {
+			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: worktree %s is gone and no branch is recorded; relay add to start fresh", opts.Name, b.Worktree)
+		}
+		if rt.Git == nil {
+			return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot restore worktree")
+		}
+		if err := rt.Git.CheckoutWorktree(ctx, b.CWD, b.Worktree, b.Branch); err != nil {
+			if errors.Is(err, git.ErrBranchCheckedOut) {
+				return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is checked out in another worktree (git worktree list); free it, then resume", opts.Name, b.Branch)
+			}
+			return store.Binding{}, Resolution{}, fmt.Errorf("restore worktree: %w", err)
+		}
+		res.RestoredWorktree = b.Worktree
+		res.RestoredBranch = b.Branch
+		if !b.Builder.Headless() && b.Builder.PaneID != "" {
+			res.OrphanedPane = b.Builder.PaneID
+		}
+	}
+
 	rebinding := opts.Rebind || opts.Candidate != "" || opts.BuilderPane != ""
 
 	var (
 		builder store.Endpoint
-		res     Resolution
 	)
 	if rebinding {
-		// Refuse before anything is spawned.
-		b, err := rt.Store.Load(opts.Name)
-		if err != nil {
-			return store.Binding{}, Resolution{}, err
-		}
-		if b.State == store.StateDone {
+		if b.State == store.StateDone && !restore {
 			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
 		if b.Builder.Headless() {
@@ -184,46 +212,55 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			}
 			opts.Headless = true
 		} else {
-			agents, err := rt.Herdr.ListAgents(ctx)
-			if err != nil {
-				return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-			}
-			if _, alive := FindAgent(agents, b.Builder); alive {
-				return store.Binding{}, Resolution{}, ErrBuilderAlive
-			}
-			// Reached only when the builder was NOT located. Without a recorded
-			// session that miss is ambiguous: the pane id it would match on is the
-			// one a workspace move invalidates.
-			//
-			// Only refuse when a round is open. That is where #21's harm lives --
-			// orphaning a builder "still running the round" -- and it is what
-			// keeps #20's recovery (PR #22) working: a session-less builder with
-			// nothing in flight still rebinds without ceremony.
-			//
-			// Keyed on live evidence rather than b.State so the guard does not
-			// depend on whether the daemon has ticked since the pane went away.
-			d := DiagnoseBuilder(b)
-			if !d.Identified && d.RoundOpen && !opts.AssumeDead {
-				return store.Binding{}, Resolution{}, fmt.Errorf(
-					"%w: relay cannot tell a dead builder for %q from a moved pane. "+
-						"Check %s is really gone, then re-run with --assume-dead",
-					ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
+			// A pane builder whose worktree was released is gone by definition --
+			// its cwd is a deleted inode even after the path is recreated (§1).
+			if !restore {
+				agents, err := rt.Herdr.ListAgents(ctx)
+				if err != nil {
+					return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
+				}
+				if _, alive := FindAgent(agents, b.Builder); alive {
+					return store.Binding{}, Resolution{}, ErrBuilderAlive
+				}
+				// Reached only when the builder was NOT located. Without a recorded
+				// session that miss is ambiguous: the pane id it would match on is the
+				// one a workspace move invalidates.
+				//
+				// Only refuse when a round is open. That is where #21's harm lives --
+				// orphaning a builder "still running the round" -- and it is what
+				// keeps #20's recovery (PR #22) working: a session-less builder with
+				// nothing in flight still rebinds without ceremony.
+				//
+				// Keyed on live evidence rather than b.State so the guard does not
+				// depend on whether the daemon has ticked since the pane went away.
+				d := DiagnoseBuilder(b)
+				if !d.Identified && d.RoundOpen && !opts.AssumeDead {
+					return store.Binding{}, Resolution{}, fmt.Errorf(
+						"%w: relay cannot tell a dead builder for %q from a moved pane. "+
+							"Check %s is really gone, then re-run with --assume-dead",
+						ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
+				}
 			}
 		}
-		builder, res, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
+		var res2 Resolution
+		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
+		res2.RestoredWorktree = res.RestoredWorktree
+		res2.RestoredBranch = res.RestoredBranch
+		res2.OrphanedPane = res.OrphanedPane
+		res = res2
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
 	}
 
 	var out store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
 		if err != nil {
 			return err
 		}
-		if rebinding && b.State == store.StateDone {
+		if rebinding && b.State == store.StateDone && !restore {
 			return fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
 

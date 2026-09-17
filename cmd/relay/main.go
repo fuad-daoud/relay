@@ -592,6 +592,9 @@ func cmdBind(args []string) error {
 	if err != nil {
 		return err
 	}
+	if t := relay.RestoreText(res); t != "" {
+		fmt.Println(t)
+	}
 
 	if *resume && (*builderAlias != "" || *rebind) {
 		builderDesc := b.Builder.PaneID

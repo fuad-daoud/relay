@@ -75,3 +75,23 @@ func TestUnbindTextProcessLines(t *testing.T) {
 		t.Errorf("plain: %q", got)
 	}
 }
+
+func TestRestoreText(t *testing.T) {
+	cases := []struct {
+		name string
+		res  Resolution
+		want string
+	}{
+		{"zero result", Resolution{},
+			""},
+		{"restored", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x"},
+			"restored worktree /w on relay/x"},
+		{"restored with orphaned pane", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x", OrphanedPane: "w2:p4"},
+			"restored worktree /w on relay/x\nold builder pane w2:p4 is in the removed directory; close it: herdr pane close w2:p4"},
+	}
+	for _, c := range cases {
+		if got := RestoreText(c.res); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}
