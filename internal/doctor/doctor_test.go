@@ -582,7 +582,7 @@ func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
 	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
-	want := "mkdir -p ~/.claude/agents && relay agent print --kind claude --role researcher > ~/.claude/agents/researcher.md"
+	want := "relay agent install --kind claude --role researcher"
 	if c.Fix != want {
 		t.Errorf("fix = %q, want %q", c.Fix, want)
 	}
@@ -789,7 +789,7 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 	report := Run(context.Background(), env, []string{"agy"})
 	c := findCheck(report, "agy", "reviewer")
 	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
-		c.Fix != "mkdir -p ~/.gemini/config/agents && relay agent print --kind agy --role reviewer > ~/.gemini/config/agents/reviewer.md" {
+		c.Fix != "relay agent install --kind agy --role reviewer" {
 		t.Errorf("row = %+v", c)
 	}
 }
@@ -834,7 +834,7 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 		if !strings.Contains(c.Detail, "differs from the definition this relay ships") {
 			t.Errorf("detail = %q, want it to mention shipped drift", c.Detail)
 		}
-		if c.Fix != "relay agent print --kind agy --role researcher > ~/.gemini/config/agents/researcher.md" {
+		if c.Fix != "relay agent install --kind agy --role researcher --force" {
 			t.Errorf("fix = %q", c.Fix)
 		}
 	})
