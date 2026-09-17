@@ -58,6 +58,7 @@ func TestTableExactValues(t *testing.T) {
 				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
 				{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+				{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
 			},
 		},
 		"claude": {
@@ -75,6 +76,7 @@ func TestTableExactValues(t *testing.T) {
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
 				{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
+				{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
 			},
 		},
 		"opencode": {
@@ -92,6 +94,7 @@ func TestTableExactValues(t *testing.T) {
 				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
 				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
+				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
 			},
 		},
 	}
@@ -208,6 +211,30 @@ func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 		if !strings.Contains(string(doc), "researcher") {
 			t.Errorf("%s plan-executor does not mention researcher; Definitions for builder is wrong", h.Kind)
 		}
+	}
+}
+
+// The architect is the planner's definition: relay ships it so the
+// planner session can be started with --agent architect on any kind, but
+// relay never launches it, so it is a Role row and not a roleTable entry.
+func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
+	for _, h := range All() {
+		doc, err := AgentDoc("architect", h.Kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
+		}
+		if !strings.Contains(string(doc), "name: architect") {
+			t.Errorf("%s architect definition does not carry name: architect", h.Kind)
+		}
+		if !strings.Contains(string(doc), "Ordered Implementation Steps") {
+			t.Errorf("%s architect definition lacks the plan output structure", h.Kind)
+		}
+		if h.Kind == "agy" && !strings.Contains(string(doc), "model: inherit") {
+			t.Errorf("agy architect must pin model: inherit so the launch line's --model wins")
+		}
+	}
+	if _, ok := RoleByName("architect"); ok {
+		t.Error("architect is a shipped definition, not a relay role")
 	}
 }
 

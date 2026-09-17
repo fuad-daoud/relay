@@ -115,7 +115,10 @@ type Harness struct {
 	// Roles are the definitions relay ships for this kind, ordered with
 	// plan-executor first so doctor reports the role relay's loop depends on
 	// before the rest. Never empty for a known kind: every kind relay runs
-	// selects its role with --agent.
+	// selects its role with --agent. Not every row backs a roleTable entry:
+	// architect is the planner's definition, shipped so the session that
+	// drives relay can be started with --agent architect, never launched
+	// by relay itself.
 	Roles []Role
 	// MinVersion is the semver floor doctor holds the binary to; "" means
 	// unchecked. agy's floor is the release that added Markdown agent
@@ -154,6 +157,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
 			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
 		},
 	},
 	"claude": {
@@ -175,6 +179,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
 			{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
+			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
 		},
 	},
 	"opencode": {
@@ -200,6 +205,7 @@ var knownHarnesses = map[string]Harness{
 			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
 			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
+			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
 		},
 	},
 }
