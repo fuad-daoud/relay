@@ -47,7 +47,7 @@ not yet needed, not what is forbidden.
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Purpose | Seeing more at once, not acting | The friction is that state is visible but substance is not. |
-| Layout | Drill-down: fleet list, then full-width detail | A diff hunk and a terminal capture are natively 80+ columns. A side pane wraps both into mush. |
+| Layout | Drill-down: fleet list, then full-width detail | A diff hunk and a terminal capture are natively 80+ columns. A side pane wraps both into mush. **Superseded** by `2026-09-17-relay-ui-split-design.md`: at 110+ columns a 34-column rail sits beside the pane; the drill-down stays below that. |
 | Scope | Read-only in v1 | Cannot corrupt a handoff. Actions are a cheap follow-up once it is known which ones get reached for. |
 | Toolkit | bubbletea + bubbles/viewport + lipgloss | A viewport, raw-mode key decoding, SIGWINCH and alt-screen handling is 600+ fiddly lines that is nobody's idea of relay's value. |
 
@@ -428,4 +428,6 @@ agent that wrote the code proves nothing on its own.
   it while adding a dependency.
 - **Mouse support, themes, configurable keybindings.**
 - **Multi-binding split views.** The drill-down layout exists precisely to give
-  wide artifacts their full width.
+  wide artifacts their full width. *Superseded on 2026-09-17: the split
+  design keeps full width for the pane below 110 columns and takes 34 for
+  a rail above it.*
