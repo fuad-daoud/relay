@@ -3,7 +3,6 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"path"
 	"strconv"
 	"strings"
 
@@ -221,12 +220,11 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	if env.Stat(fullPath) != nil {
 		// The fix must work on a machine that has never run this harness
 		// as a sub-agent host: none of the agents/ directories exist yet
-		// (#166 §1), and a redirect into a missing directory fails.
+		// (#166 §1); relay agent install creates the directory.
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix: fmt.Sprintf("mkdir -p %s && relay agent print --kind %s --role %s > %s",
-				path.Dir(homeRel), kind, r.Name, homeRel),
+			Fix:    fmt.Sprintf("relay agent install --kind %s --role %s", kind, r.Name),
 		}
 	}
 
@@ -254,12 +252,11 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 		// cannot build, and nothing else on this machine notices.
 		if r.ExpectModel != "" {
 			if shipped, shipErr := harness.AgentDoc(r.Name, kind); shipErr == nil {
-				trim := func(b []byte) string { return strings.TrimRight(string(b), " \t\r\n") }
-				if trim(shipped) != trim(raw) {
+				if !harness.DocEqual(shipped, raw) {
 					return Check{
 						Group: kind, Name: r.Name, Severity: SevWarn,
 						Detail: fmt.Sprintf("%s -- differs from the definition this relay ships", detail),
-						Fix:    fmt.Sprintf("relay agent print --kind %s --role %s > %s", kind, r.Name, homeRel),
+						Fix:    fmt.Sprintf("relay agent install --kind %s --role %s --force", kind, r.Name),
 					}
 				}
 			}

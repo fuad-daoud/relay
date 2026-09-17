@@ -69,7 +69,7 @@ Commands:
   policy       show, per role, which candidate relay would pick right now and why
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
-  agent     print embedded agent role definitions (e.g. relay agent print --kind claude)
+  agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
   help      print this message
   version   print the relay version
 
