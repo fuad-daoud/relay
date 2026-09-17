@@ -397,28 +397,28 @@ func TestLaunchPrintPerKind(t *testing.T) {
 		{
 			kind: "agy",
 			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-				"--output-format", "text", "--print-timeout", BudgetPlaceholder},
+				"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder},
 			wantPrompt: 1,
 		},
 		{
 			kind: "agy", extra: []string{"--dangerously-skip-permissions"},
 			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-				"--output-format", "text", "--print-timeout", BudgetPlaceholder, "--dangerously-skip-permissions"},
+				"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--dangerously-skip-permissions"},
 			wantPrompt: 1,
 		},
 		{
 			kind:       "claude",
-			wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "text"},
+			wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
 			wantPrompt: 1,
 		},
 		{
 			kind:       "opencode",
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor"},
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json"},
 			wantPrompt: 1,
 		},
 		{
 			kind: "opencode", extra: []string{"--auto"},
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--auto"},
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--auto"},
 			wantPrompt: 1,
 		},
 	}
@@ -441,6 +441,20 @@ func TestLaunchPrintPerKind(t *testing.T) {
 		})
 	}
 
+	// claude refuses stream-json in print mode without --verbose (verified
+	// 2026-09-16: "Error: When using --print, --output-format=stream-json
+	// requires --verbose"); no candidate's extra_args should have to know.
+	c, _ := Lookup("claude")
+	if p := c.Launch("prov", "m/x", nil, builder).Print; !containsAdjacent(p, "--output-format", "stream-json") || !contains(p, "--verbose") {
+		t.Errorf("claude print form must carry --output-format stream-json and --verbose: %v", p)
+	}
+	for _, kind := range []string{"agy", "claude"} {
+		h, _ := Lookup(kind)
+		if p := h.Launch("prov", "m/x", nil, builder).Print; contains(p, "--include-partial-messages") {
+			t.Errorf("%s: partial messages are out of scope (spec §1): %v", kind, p)
+		}
+	}
+
 	unknown := Harness{Kind: "unknown"}
 	got := unknown.Launch("prov", "m/x", []string{"--z"}, builder)
 	if len(got.Print) != 0 || got.PromptAt != -1 {
@@ -458,7 +472,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
 	got := l.PrintArgs(prompt, 90*time.Minute)
 	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "text", "--print-timeout", "1h30m0s", "--dangerously-skip-permissions"}
+		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--dangerously-skip-permissions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("PrintArgs = %v, want %v", got, want)
 	}
@@ -477,7 +491,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	c, _ := Lookup("claude")
 	cl := c.Launch("prov", "m/x", nil, builder)
 	got = cl.PrintArgs("hello", time.Hour)
-	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "text"}) {
+	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
 	for _, a := range got {
@@ -490,4 +504,22 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
 	}
+}
+
+func contains(argv []string, s string) bool {
+	for _, a := range argv {
+		if a == s {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAdjacent(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
