@@ -21,7 +21,12 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         go: ['1.22', 'stable']
     steps:
+      # The plugin-version drift check in make check needs the release tags,
+      # and the default depth of 1 has none, which would make the check skip on
+      # every run.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
