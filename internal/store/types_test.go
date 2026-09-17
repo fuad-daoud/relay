@@ -186,7 +186,7 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	for _, key := range []string{"mode", "pid", "started_at", "log_path"} {
+	for _, key := range []string{"mode", "pid", "started_at", "log_path", "stream_round", "stream_offset"} {
 		if bytes.Contains(data, []byte(`"`+key+`"`)) {
 			t.Errorf("pane endpoint JSON carries %q: %s", key, data)
 		}
@@ -194,12 +194,14 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 
 	// A headless endpoint carries all four and reads back equal.
 	want := Endpoint{
-		AgentName: "webshop-builder",
-		Kind:      "agy",
-		Mode:      ModeHeadless,
-		PID:       4242,
-		StartedAt: 1789000000,
-		LogPath:   "/state/webshop/003-builder.log",
+		AgentName:    "webshop-builder",
+		Kind:         "agy",
+		Mode:         ModeHeadless,
+		PID:          4242,
+		StartedAt:    1789000000,
+		LogPath:      "/state/webshop/003-builder.log",
+		StreamRound:  3,
+		StreamOffset: 4096,
 	}
 	data, err = json.Marshal(want)
 	if err != nil {
@@ -224,6 +226,9 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	}
 	if decoded["pid"] != float64(4242) || decoded["started_at"] != float64(1789000000) {
 		t.Errorf("pid/started_at must be JSON numbers: %s", data)
+	}
+	if decoded["stream_round"] != float64(3) || decoded["stream_offset"] != float64(4096) {
+		t.Errorf("stream cursor keys: %s", data)
 	}
 }
 

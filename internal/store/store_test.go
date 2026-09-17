@@ -596,4 +596,10 @@ func TestBuilderLogPathIsARoundFileBesideTheReport(t *testing.T) {
 	if r, ok := roundOfFile(filepath.Base(s.BuilderLogPath("webshop", 12))); !ok || r != 12 {
 		t.Errorf("roundOfFile(012-builder.log) = %d, %v; want 12, true", r, ok)
 	}
+	if got, want := s.BuilderStreamPath("webshop", 3), filepath.Join("/state", "webshop", "003-builder.jsonl"); got != want {
+		t.Errorf("BuilderStreamPath = %q, want %q", got, want)
+	}
+	if r, ok := roundOfFile(filepath.Base(s.BuilderStreamPath("webshop", 12))); !ok || r != 12 {
+		t.Errorf("roundOfFile(012-builder.jsonl) = %d, %v; want 12, true", r, ok)
+	}
 }
