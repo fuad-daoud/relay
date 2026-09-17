@@ -357,9 +357,10 @@ type fakeRunner struct {
 	aliveErr error
 	killErr  error
 
-	alive   map[int][]bool
-	exits   map[int]int
-	nextPID int
+	alive     map[int][]bool
+	exits     map[int]int
+	nextPID   int
+	exitPaths []string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -402,7 +403,8 @@ func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
 	return seq[0], nil
 }
 
-func (f *fakeRunner) ExitCode(_ context.Context, h ProcHandle, _ string) (int, bool) {
+func (f *fakeRunner) ExitCode(_ context.Context, h ProcHandle, path string) (int, bool) {
+	f.exitPaths = append(f.exitPaths, path)
 	code, ok := f.exits[h.PID]
 	return code, ok
 }

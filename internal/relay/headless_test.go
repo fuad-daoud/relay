@@ -109,6 +109,12 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	if spec.Dir != "/repo" || spec.LogPath != wantLog {
 		t.Errorf("spec Dir/LogPath = %q/%q, want /repo/%q", spec.Dir, spec.LogPath, wantLog)
 	}
+	if want := rt.Store.BuilderStreamPath("webshop", 1); spec.StreamPath != want {
+		t.Errorf("spec StreamPath = %q, want %q", spec.StreamPath, want)
+	}
+	if got.Builder.StreamRound != 1 || got.Builder.StreamOffset != 0 {
+		t.Errorf("cursor after a fresh start = round %d offset %d; want 1, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
+	}
 	if spec.Argv[0] != "agy" || spec.Argv[1] != "-p" || spec.Argv[2] != "the prompt" {
 		t.Errorf("argv = %v; want the agy print form with the prompt at index 2", spec.Argv)
 	}
@@ -121,6 +127,51 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 	if !got.Builder.Headless() || got.Builder.PaneID != "" {
 		t.Errorf("mode or pane changed: %+v", got.Builder)
+	}
+}
+
+func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
+	got, err := startRound(context.Background(), rt, b, "again")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if got.Builder.StreamRound != b.Round || got.Builder.StreamOffset != 512 {
+		t.Errorf("cursor = round %d offset %d; a same-round start must keep it at %d/512", got.Builder.StreamRound, got.Builder.StreamOffset, b.Round)
+	}
+}
+
+func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	b.Round = 2
+	b.Builder.StreamRound, b.Builder.StreamOffset = 1, 512
+	got, err := startRound(context.Background(), rt, b, "round two")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if got.Builder.StreamRound != 2 || got.Builder.StreamOffset != 0 {
+		t.Errorf("cursor = round %d offset %d; want 2, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
+	}
+	if fr.specs[0].StreamPath != rt.Store.BuilderStreamPath("webshop", 2) {
+		t.Errorf("StreamPath = %q, want round 2's", fr.specs[0].StreamPath)
+	}
+}
+
+func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != rt.Store.BuilderStreamPath("webshop", 1) {
+		t.Errorf("ExitCode was asked about %v; want the round-1 stream %s", fr.exitPaths, rt.Store.BuilderStreamPath("webshop", 1))
 	}
 }
 

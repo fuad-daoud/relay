@@ -68,10 +68,10 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Du
 // Preconditions:  b.Builder.Headless(); no live process on the endpoint
 // (Send checks with Runner.Alive first); rt.Runner non-nil.
 // Postconditions: on success PID, StartedAt and LogPath describe the new
-// process. On failure the endpoint is returned as it was, PID 0, and the
-// candidate's spawn_failed is in the ledger -- the same record a pane spawn
-// failure leaves, because it is the same failure: the candidate could not
-// be launched. The caller decides the binding's state.
+// process. On failure the endpoint is returned as it was (cursor moved to this
+// round), PID 0, and the candidate's spawn_failed is in the ledger -- the same
+// record a pane spawn failure leaves, because it is the same failure: the
+// candidate could not be launched. The caller decides the binding's state.
 func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
 		return b, ErrRunnerUnavailable
@@ -89,8 +89,17 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	if err != nil {
 		return b, err
 	}
+	if b.Builder.StreamRound != b.Round {
+		// A new round is a new stream file; a mid-round switch (same
+		// round) keeps rendering the file both processes append to.
+		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
+	}
 	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
-	h, err := rt.Runner.Start(ctx, ProcSpec{Dir: b.CWD, Argv: argv, LogPath: logPath})
+	h, err := rt.Runner.Start(ctx, ProcSpec{
+		Dir: b.CWD, Argv: argv,
+		LogPath:    logPath,
+		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
+	})
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
 		return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
@@ -250,9 +259,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
-	// Exited. The exit code is read once for both outcomes below.
+	// Exited. The exit code is read once, from the stream's trailer.
 	codeText := "unknown"
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), b.Builder.LogPath); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
 		codeText = strconv.Itoa(code)
 	}
 
