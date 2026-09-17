@@ -20,7 +20,7 @@ func renderAgy(obj map[string]any) []string {
 			}
 			return []string{toolLine(name, asMap(info["parameters"]))}
 		case "DONE":
-			return []string{"  -> ok"}
+			return []string{okLine(str(info["output"]))}
 		case "ERROR":
 			return []string{errLine(str(asMap(info["error"])["message"]))}
 		}

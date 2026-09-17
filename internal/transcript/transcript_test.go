@@ -87,6 +87,18 @@ func TestClaudeTable(t *testing.T) {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":""}]}}`,
 			[]string{"  -> error"},
 		},
+		"result ok with string content": {
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"     1\t# relay\n     2\t"}]}}`,
+			[]string{"  -> ok:      1\t# relay"},
+		},
+		"result ok with array content": {
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":[{"type":"text","text":"7c3ca64 docs: x\ne19924c feat: y"}]}]}}`,
+			[]string{"  -> ok: 7c3ca64 docs: x"},
+		},
+		"result ok with empty content": {
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":""}]}}`,
+			[]string{"  -> ok"},
+		},
 		"final result with denials and error": {
 			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"gave up","permission_denials":[{"tool_name":"Bash"},{"tool_name":"Edit"}]}`,
 			[]string{"denied: Bash", "denied: Edit", "result: error_during_execution", "gave up"},
@@ -134,6 +146,9 @@ func TestOneLineCutsOnARuneBoundary(t *testing.T) {
 	if got := oneLine("short\nrest"); got != "short" {
 		t.Errorf("oneLine = %q, want the first line", got)
 	}
+	if got := oneLine("with cr\r\nnext"); got != "with cr" {
+		t.Errorf("oneLine = %q, want the carriage return stripped", got)
+	}
 }
 
 func TestAgyTable(t *testing.T) {
@@ -149,9 +164,17 @@ func TestAgyTable(t *testing.T) {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/x"}}}}`,
 			[]string{"view_file /x"},
 		},
-		"tool done": {
-			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"view_file"}}`,
+		"tool done with output": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"list_dir","tool_info":{"output":"cmd/\ndist/\ndocs/"}}}`,
+			[]string{"  -> ok: cmd/"},
+		},
+		"tool done without output": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"write_to_file","tool_info":{"output":""}}}`,
 			[]string{"  -> ok"},
+		},
+		"tool done with crlf output": {
+			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command","tool_info":{"output":"FAIL\tx [setup failed]\r\nmore\r\n"}}}`,
+			[]string{"  -> ok: FAIL\tx [setup failed]"},
 		},
 		"tool error without message": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ERROR","tool_name":"view_file","tool_info":{"error":{"type":"TOOL_ERROR"}}}}`,

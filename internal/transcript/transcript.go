@@ -87,6 +87,16 @@ func mainArg(params map[string]any) (string, bool) {
 	return str(params[strs[0]]), true
 }
 
+// okLine is a successful tool result: "  -> ok: <first line of its output>",
+// or "  -> ok" when the harness gave none. One line, so three parallel
+// calls' results still tell apart.
+func okLine(output string) string {
+	if output = oneLine(output); output == "" {
+		return "  -> ok"
+	}
+	return "  -> ok: " + output
+}
+
 // errLine is a failed tool result: "  -> error: <first line>", or "  -> error"
 // when the harness gave no message.
 func errLine(msg string) string {
@@ -102,6 +112,7 @@ func oneLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
+	s = strings.TrimRight(s, "\r")
 	if len(s) > maxArg {
 		cut := maxArg
 		for cut > 0 && !utf8.RuneStart(s[cut]) {

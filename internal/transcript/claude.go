@@ -27,7 +27,7 @@ func renderClaude(obj map[string]any) []string {
 			if isErr, _ := blk["is_error"].(bool); isErr {
 				out = append(out, errLine(resultText(blk["content"])))
 			} else {
-				out = append(out, "  -> ok")
+				out = append(out, okLine(resultText(blk["content"])))
 			}
 		}
 		return out
