@@ -592,6 +592,9 @@ func cmdBind(args []string) error {
 	if err != nil {
 		return err
 	}
+	if t := relay.RestoreText(res); t != "" {
+		fmt.Println(t)
+	}
 
 	if *resume && (*builderAlias != "" || *rebind) {
 		builderDesc := b.Builder.PaneID
@@ -1457,11 +1460,15 @@ func cmdDone(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := relay.Done(context.Background(), rt, target); err != nil {
+	res, err := relay.Done(context.Background(), rt, target)
+	if err != nil && !errors.Is(err, relay.ErrStopFailed) {
 		return err
 	}
 
-	fmt.Println(relay.DoneText(target))
+	fmt.Println(relay.DoneText(target, res))
+	if err != nil {
+		return err
+	}
 	warnWaitingOnYou(rt, target)
 	return nil
 }

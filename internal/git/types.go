@@ -16,6 +16,10 @@ var ErrBranchExists = errors.New("branch already exists")
 // ErrWorktreeDirty reports an attempt to remove a worktree with uncommitted changes without force.
 var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
 
+// ErrBranchCheckedOut reports an attempt to add a worktree for a branch that
+// is already checked out in another worktree.
+var ErrBranchCheckedOut = errors.New("branch is checked out in another worktree")
+
 // DefaultMaxPatchBytes is the default byte cap for patch bodies.
 const DefaultMaxPatchBytes = 4 << 20
 

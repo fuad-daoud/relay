@@ -70,6 +70,15 @@ type Resolution struct {
 	// InheritedFrom is, for a fork that inherited its source's
 	// BuilderCandidate, the source binding's name; "" otherwise.
 	InheritedFrom string
+
+	// RestoredWorktree is the path re-added on this resume; "" when nothing was restored.
+	RestoredWorktree string
+	// RestoredBranch is the branch it was checked out from; set with RestoredWorktree.
+	RestoredBranch string
+	// OrphanedPane is the previous builder's pane id whenever a pane
+	// binding's worktree was restored (planner-only resume included: that
+	// pane cannot work in the recreated directory); "" otherwise.
+	OrphanedPane string
 }
 
 // Token is the canonical ref of the resolved candidate, or "" when there

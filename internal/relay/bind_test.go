@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -734,6 +735,297 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
 		}
 	})
+}
+
+func TestResumeRestoresMissingWorktree(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("BindResolved: %v", err)
+	}
+	if len(fg.checkoutWorktreeCalls) != 1 {
+		t.Fatalf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))
+	}
+	wantCall := checkoutWorktreeCall{Dir: "/repo", Path: wt, Branch: "relay/webshop"}
+	if fg.checkoutWorktreeCalls[0] != wantCall {
+		t.Errorf("checkoutWorktreeCall = %+v, want %+v", fg.checkoutWorktreeCalls[0], wantCall)
+	}
+	if res.RestoredWorktree != wt {
+		t.Errorf("RestoredWorktree = %q, want %q", res.RestoredWorktree, wt)
+	}
+	if res.RestoredBranch != "relay/webshop" {
+		t.Errorf("RestoredBranch = %q, want relay/webshop", res.RestoredBranch)
+	}
+	if res.OrphanedPane != "w2:p4" {
+		t.Errorf("OrphanedPane = %q, want w2:p4", res.OrphanedPane)
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != store.StateActive {
+		t.Errorf("loaded.State = %s, want active", loaded.State)
+	}
+}
+
+func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+	fr := newFakeRunner()
+	rt.Runner = fr
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("BindResolved: %v", err)
+	}
+	if res.OrphanedPane != "" {
+		t.Errorf("OrphanedPane = %q, want empty", res.OrphanedPane)
+	}
+	if len(fg.checkoutWorktreeCalls) != 1 {
+		t.Errorf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))
+	}
+}
+
+func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "no branch is recorded") {
+		t.Fatalf("err = %v, want containing 'no branch is recorded'", err)
+	}
+	if len(fg.checkoutWorktreeCalls) != 0 {
+		t.Errorf("checkoutWorktreeCalls = %d, want 0", len(fg.checkoutWorktreeCalls))
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != store.StateDone {
+		t.Errorf("loaded.State = %s, want done (unchanged)", loaded.State)
+	}
+}
+
+func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{} // branchExists stays false: the caller's cwd has no relay/webshop
+	rt.Git = fg
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt,
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/elsewhere",
+	})
+	if err == nil || !strings.Contains(err.Error(), "run resume from the repository") {
+		t.Fatalf("err = %v, want 'run resume from the repository'", err)
+	}
+	if fg.lastBranchDir != "/elsewhere" || fg.lastBranchName != "relay/webshop" {
+		t.Errorf("BranchExists asked (%q, %q), want (/elsewhere, relay/webshop)", fg.lastBranchDir, fg.lastBranchName)
+	}
+	if len(fg.checkoutWorktreeCalls) != 0 {
+		t.Errorf("checkoutWorktreeCalls = %d, want 0", len(fg.checkoutWorktreeCalls))
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.State != store.StateDone {
+		t.Errorf("state = %s, want done (unchanged)", loaded.State)
+	}
+}
+
+func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{checkoutWorktreeErr: git.ErrBranchCheckedOut}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "git worktree list") {
+		t.Fatalf("err = %v, want containing 'git worktree list'", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("tabs=%d starts=%+v, want none", len(f.tabs), f.starts)
+	}
+}
+
+func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := t.TempDir()
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		State:    store.StateActive,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	_, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("BindResolved: %v", err)
+	}
+	if len(fg.checkoutWorktreeCalls) != 0 {
+		t.Errorf("checkoutWorktreeCalls = %d, want 0", len(fg.checkoutWorktreeCalls))
+	}
+	if res.RestoredWorktree != "" {
+		t.Errorf("RestoredWorktree = %q, want empty", res.RestoredWorktree)
+	}
+}
+
+func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
+	oldBuilder := herdr.Agent{
+		Name:   "webshop-builder",
+		Kind:   "opencode",
+		Status: herdr.StatusIdle,
+		PaneID: "w2:p4",
+		CWD:    "/repo",
+	}
+	f := &fakeHerdr{
+		agents:  []herdr.Agent{plannerAgent(), oldBuilder},
+		newPane: "w2:p5",
+	}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		Round:    4,
+		State:    store.StateDone,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	got, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, Rebind: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("BindResolved: %v", err)
+	}
+	if len(fg.checkoutWorktreeCalls) != 1 {
+		t.Fatalf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))
+	}
+	if res.OrphanedPane != "w2:p4" {
+		t.Errorf("OrphanedPane = %q, want w2:p4", res.OrphanedPane)
+	}
+	if got.Builder.PaneID != "w2:p5" {
+		t.Errorf("Builder.PaneID = %q, want w2:p5", got.Builder.PaneID)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("State = %s, want active", got.State)
+	}
+	if got.Builder.Headless() {
+		t.Errorf("Builder is headless, want pane binding")
+	}
 }
 
 func TestBindRebindNotFound(t *testing.T) {

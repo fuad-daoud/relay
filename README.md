@@ -435,8 +435,16 @@ relay fork webshop --round 2 --new-name webshop-alt
 
 A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
 `~/.local/state/relay/<name>/`): `bind.json`, `log.jsonl`, and every round's
-plan, report, patch (`NNN-diff.patch`) and captured dialog. `relay done` stops relaying but removes
-nothing — the log is the record of what the planner actually told the builder.
+plan, report, patch (`NNN-diff.patch`) and captured dialog. `relay done` stops relaying and, when the binding's worktree is clean and
+no round is open, removes the worktree so its branch can be checked out
+in the main repo (`removed worktree ... (branch relay/x is free to check
+out)`); a dirty tree or an open pane round is kept and `relay gc` retries
+when it is clean. The binding directory itself is never removed by `done`
+— the log is the record of what the planner actually told the builder.
+`relay bind --resume <name>` puts a removed worktree back on the same
+branch at the same path; a DONE binding may then be rebound with
+`--rebind`, since the old builder pane cannot work in the recreated
+directory (`bind` names it so you can close it).
 
 ```
 relay unbind ai              # delete the binding and its whole directory
@@ -851,7 +859,8 @@ some candidate would load, and no candidate loads the planner.
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
   a done binding — no reports are queued, no dialogs captured, no timeouts
   flagged. The binding and its round log stay on disk (`relay log <name>`
-  still works as an audit trail) until `relay unbind` removes them.
+  still works as an audit trail) until `relay unbind` or `relay gc` removes them;
+  a clean worktree is released at `done` so the branch is free to review.
 
 ## The anti-clobber rule
 

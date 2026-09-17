@@ -546,14 +546,28 @@ func RenderStatus(r Report) string {
 	return sb.String()
 }
 
-// Done stops relaying for a binding once the planner has verified the work.
-func Done(ctx context.Context, rt Runtime, name string) error {
+// DoneResult is what Done actually did with the binding's worktree. Exactly
+// one of the three path fields is set, or none when the binding has no
+// Worktree (a --cwd or adopted binding). Same shape and meaning as the
+// worktree fields of UnbindResult (§3.1).
+type DoneResult struct {
+	WorktreeRemoved string // path relay removed; the branch survives.
+	WorktreeKept    string // path relay left in place.
+	KeptReason      string // why; "" unless WorktreeKept is set.
+	WorktreeGone    string // recorded path that no longer exists.
+	Branch          string // b.Branch, for the message; may be "".
+}
+
+// Done stops relaying for a binding once the planner has verified the work,
+// and gives a clean worktree back (§4.2).
+func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	// Load-modify-save, so it runs inside the state lock: the daemon rewrites
 	// this binding on every tick and would otherwise resurrect it by saving a
 	// pre-Done snapshot back over the top. Reach state only through tx here --
 	// rt.Store.Load/Save would try to take the lock a second time and Go
 	// mutexes are not reentrant.
-	return rt.Store.WithLock(func(tx *store.Tx) error {
+	var out DoneResult
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(name)
 		if err != nil {
 			return err
@@ -587,9 +601,28 @@ func Done(ctx context.Context, rt Runtime, name string) error {
 			})
 		}
 
+		out.Branch = b.Branch
+		switch {
+		case b.Worktree == "":
+			// nothing
+		case b.Builder.Headless() && stopErr != nil:
+			out.WorktreeKept = b.Worktree
+			out.KeptReason = "builder process still running"
+		case !b.Builder.Headless() && !b.RoundStartedAt.IsZero():
+			out.WorktreeKept = b.Worktree
+			out.KeptReason = fmt.Sprintf("round %d open; the builder may still write", b.Round)
+		default:
+			outcome := worktreeTeardown(ctx, rt, b, false)
+			out.WorktreeRemoved = outcome.Removed
+			out.WorktreeKept = outcome.Kept
+			out.KeptReason = outcome.Reason
+			out.WorktreeGone = outcome.Gone
+		}
+
 		if stopErr != nil {
 			return fmt.Errorf("%s marked done, but its builder process %d is still running: %v: %w", b.Name, pid, stopErr, ErrStopFailed)
 		}
 		return nil
 	})
+	return out, err
 }

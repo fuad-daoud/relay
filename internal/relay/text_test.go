@@ -7,10 +7,27 @@ import "testing"
 // never say different things (spec §5).
 
 func TestDoneText(t *testing.T) {
-	got := DoneText("webshop")
-	want := "webshop marked done; relaying stopped (relay gc archives it when you are finished with it)"
-	if got != want {
-		t.Fatalf("got %q\nwant %q", got, want)
+	base := "webshop marked done; relaying stopped (relay gc archives it when you are finished with it)"
+	cases := []struct {
+		name string
+		res  DoneResult
+		want string
+	}{
+		{"zero result", DoneResult{},
+			base},
+		{"removed with branch", DoneResult{WorktreeRemoved: "/w", Branch: "relay/x"},
+			base + "\nremoved worktree /w (branch relay/x is free to check out)"},
+		{"removed without branch", DoneResult{WorktreeRemoved: "/w"},
+			base + "\nremoved worktree /w"},
+		{"kept", DoneResult{WorktreeKept: "/w", KeptReason: "uncommitted changes"},
+			base + "\nkept worktree /w (uncommitted changes); relay gc retries when it is clean"},
+		{"gone", DoneResult{WorktreeGone: "/w"},
+			base + "\nworktree /w was already gone"},
+	}
+	for _, c := range cases {
+		if got := DoneText("webshop", c.res); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -56,5 +73,25 @@ func TestUnbindTextProcessLines(t *testing.T) {
 	// No process, no line: existing output is unchanged.
 	if got := UnbindText("x", UnbindResult{}); got != "unbound x (panes left untouched)" {
 		t.Errorf("plain: %q", got)
+	}
+}
+
+func TestRestoreText(t *testing.T) {
+	cases := []struct {
+		name string
+		res  Resolution
+		want string
+	}{
+		{"zero result", Resolution{},
+			""},
+		{"restored", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x"},
+			"restored worktree /w on relay/x"},
+		{"restored with orphaned pane", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x", OrphanedPane: "w2:p4"},
+			"restored worktree /w on relay/x\nold builder pane w2:p4 is in the removed directory; close it: herdr pane close w2:p4"},
+	}
+	for _, c := range cases {
+		if got := RestoreText(c.res); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
 	}
 }

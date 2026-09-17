@@ -391,6 +391,68 @@ func TestWorktreeLifecycle(t *testing.T) {
 	}
 }
 
+func TestCheckoutWorktree(t *testing.T) {
+	ctx := context.Background()
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "first commit")
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	wt1 := filepath.Join(t.TempDir(), "wt1")
+	if err := client.AddWorktree(ctx, repoDir, wt1, "feature", "HEAD"); err != nil {
+		t.Fatalf("AddWorktree failed: %v", err)
+	}
+	if err := client.RemoveWorktree(ctx, repoDir, wt1, false); err != nil {
+		t.Fatalf("RemoveWorktree failed: %v", err)
+	}
+
+	// (a) CheckoutWorktree(ctx, repo, wt2, "feature") returns nil and
+	// wt2/.git exists and git -C wt2 rev-parse --abbrev-ref HEAD prints feature.
+	wt2 := filepath.Join(t.TempDir(), "wt2")
+	if err := client.CheckoutWorktree(ctx, repoDir, wt2, "feature"); err != nil {
+		t.Fatalf("CheckoutWorktree wt2 failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt2, ".git")); err != nil {
+		t.Fatalf("wt2/.git does not exist: %v", err)
+	}
+	branchOut := strings.TrimSpace(runGit(t, wt2, "rev-parse", "--abbrev-ref", "HEAD"))
+	if branchOut != "feature" {
+		t.Fatalf("wt2 branch is %q, want %q", branchOut, "feature")
+	}
+
+	// (b) CheckoutWorktree(ctx, repo, wt3, "feature") -- the branch is now
+	// checked out in wt2 -- returns an error with errors.Is(err, ErrBranchCheckedOut)
+	// and wt3 does not exist afterwards (cleanup ran).
+	wt3 := filepath.Join(t.TempDir(), "wt3")
+	err := client.CheckoutWorktree(ctx, repoDir, wt3, "feature")
+	if !errors.Is(err, ErrBranchCheckedOut) {
+		t.Fatalf("CheckoutWorktree wt3 got %v, want ErrBranchCheckedOut", err)
+	}
+	if _, err := os.Stat(wt3); !os.IsNotExist(err) {
+		t.Fatalf("wt3 was not cleaned up after error: %v", err)
+	}
+
+	// (c) CheckoutWorktree(ctx, repo, wt4, "no-such-branch") returns a non-nil
+	// error that is not ErrBranchCheckedOut.
+	wt4 := filepath.Join(t.TempDir(), "wt4")
+	err = client.CheckoutWorktree(ctx, repoDir, wt4, "no-such-branch")
+	if err == nil {
+		t.Fatal("CheckoutWorktree wt4 expected error, got nil")
+	}
+	if errors.Is(err, ErrBranchCheckedOut) {
+		t.Fatalf("CheckoutWorktree wt4 got ErrBranchCheckedOut, want another error")
+	}
+}
+
 func TestHeadCommit_BranchExists_Dirty(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)

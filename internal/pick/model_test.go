@@ -111,7 +111,7 @@ func TestEnterRunsDoneAndShowsItsText(t *testing.T) {
 	if m.result.pending || m.result.err != nil {
 		t.Fatalf("result: pending=%v err=%v", m.result.pending, m.result.err)
 	}
-	if m.result.text != relay.DoneText("webshop") {
+	if m.result.text != relay.DoneText("webshop", relay.DoneResult{}) {
 		t.Fatalf("text = %q, want DoneText", m.result.text)
 	}
 	b, err := rt.Store.Load("webshop")

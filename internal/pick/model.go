@@ -81,10 +81,11 @@ func runVerb(ctx context.Context, rt relay.Runtime, opts Options, name string, i
 	return func() tea.Msg {
 		switch opts.Verb {
 		case VerbDone:
-			if err := relay.Done(ctx, rt, name); err != nil {
+			res, err := relay.Done(ctx, rt, name)
+			if err != nil {
 				return verbDoneMsg{err: err}
 			}
-			return verbDoneMsg{text: relay.DoneText(name)}
+			return verbDoneMsg{text: relay.DoneText(name, res)}
 		case VerbUnbind:
 			res, err := relay.Unbind(ctx, rt, name, opts.Archive)
 			if err != nil {

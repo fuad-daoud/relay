@@ -31,6 +31,10 @@ type addWorktreeCall struct {
 	Dir, Path, Branch, Commit string
 }
 
+type checkoutWorktreeCall struct {
+	Dir, Path, Branch string
+}
+
 type removeWorktreeCall struct {
 	Dir, Path string
 	Force     bool
@@ -63,6 +67,9 @@ type fakeGit struct {
 
 	addWorktreeErr   error
 	addWorktreeCalls []addWorktreeCall
+
+	checkoutWorktreeErr   error
+	checkoutWorktreeCalls []checkoutWorktreeCall
 
 	removeWorktreeErr   error
 	removeWorktreeCalls []removeWorktreeCall
@@ -125,6 +132,16 @@ func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit str
 	})
 	if f.addWorktreeErr != nil {
 		return f.addWorktreeErr
+	}
+	return nil
+}
+
+func (f *fakeGit) CheckoutWorktree(ctx context.Context, dir, path, branch string) error {
+	f.checkoutWorktreeCalls = append(f.checkoutWorktreeCalls, checkoutWorktreeCall{
+		Dir: dir, Path: path, Branch: branch,
+	})
+	if f.checkoutWorktreeErr != nil {
+		return f.checkoutWorktreeErr
 	}
 	return nil
 }
