@@ -149,24 +149,31 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 		// A headless builder (#99) has no pane; its output is the round's
 		// log file. Shown, never parsed.
 		if b.Builder.Headless() {
-			if b.Builder.LogPath == "" {
+			// Between rounds clearProcess blanks LogPath, but the cursor
+			// still names the last round that ran (transcript spec §4.7):
+			// keep showing that log rather than a blank tab.
+			logPath := b.Builder.LogPath
+			if logPath == "" && b.Builder.StreamRound != 0 {
+				logPath = rt.Store.BuilderLogPath(name, b.Builder.StreamRound)
+			}
+			if logPath == "" {
 				return tabMsg{
 					name: name,
 					t:    tabTerminal,
 					content: tabContent{
 						loaded: true,
-						empty:  "headless builder; no round is running, so there is no log yet",
+						empty:  "headless builder; no round has run yet, so there is no log",
 					},
 				}
 			}
-			data, err := os.ReadFile(b.Builder.LogPath)
+			data, err := os.ReadFile(logPath)
 			if err != nil {
 				return tabMsg{
 					name: name,
 					t:    tabTerminal,
 					content: tabContent{
 						loaded: true,
-						empty:  "log not written yet: " + b.Builder.LogPath,
+						empty:  "log not written yet: " + logPath,
 					},
 				}
 			}
