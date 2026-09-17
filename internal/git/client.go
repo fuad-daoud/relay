@@ -356,6 +356,45 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 	return nil
 }
 
+// CheckoutWorktree adds a worktree at path on an existing branch.
+//
+// Preconditions:  path does not exist; branch exists.
+// Postconditions: path is a working tree on branch; dir's own working tree,
+//	index and HEAD are unchanged.
+// Errors: ErrBranchCheckedOut, ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+//	On any error nothing is left behind at path.
+func (c *Client) CheckoutWorktree(ctx context.Context, dir, path, branch string) (retErr error) {
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(dir, absPath)
+	}
+
+	pathExisted := false
+	if _, err := os.Stat(absPath); err == nil {
+		pathExisted = true
+	}
+	defer func() {
+		if retErr != nil && !pathExisted {
+			_ = os.RemoveAll(absPath)
+			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
+		}
+	}()
+
+	branchName := strings.TrimPrefix(branch, "refs/heads/")
+
+	_, err := c.run(ctx, dir, nil, "worktree", "add", absPath, branchName)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "is already checked out") ||
+			strings.Contains(errStr, "is already used by worktree") {
+			return ErrBranchCheckedOut
+		}
+		return err
+	}
+
+	return nil
+}
+
 // RemoveWorktree removes a worktree and prunes its administrative entry. It
 // never removes the branch: a branch holds commits, and commits are work.
 //
