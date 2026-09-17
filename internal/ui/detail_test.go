@@ -163,7 +163,7 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	rendered := bodyOf(c)
+	rendered := bodyOf(tabDiff, c)
 	errRendered := errorStyle.Render(c.empty)
 	if rendered == errRendered {
 		t.Fatalf("empty prose must NOT be styled with errorStyle")
@@ -190,7 +190,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 
 	// Active tab diff shows error
 	m.detail.active = tabDiff
-	m.detail.vp.SetContent(bodyOf(m.detail.cache[tabDiff]))
+	m.detail.vp.SetContent(bodyOf(tabDiff, m.detail.cache[tabDiff]))
 	if !strings.Contains(m.detail.vp.View(), "error: disk read failed") {
 		t.Fatalf("expected error text in diff tab, got %q", m.detail.vp.View())
 	}
@@ -213,17 +213,22 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	m.detail.active = tabDiff
 	m.detail.vp = viewport.New(80, 20)
 
-	res, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	// Width 100 keeps this in the stack layout (< splitMinWidth): the point
+	// of this test is that a resize reflows the viewport without losing
+	// the active tab, which holds in either layout, and a stack-layout
+	// width keeps paneWidth() equal to the terminal width for a simple
+	// assertion.
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
 	m = res.(Model)
 
 	if m.detail.active != tabDiff {
 		t.Fatalf("expected active tab to remain tabDiff, got %v", m.detail.active)
 	}
-	if m.detail.vp.Width != 120 {
-		t.Fatalf("expected vp.Width 120, got %d", m.detail.vp.Width)
+	if m.detail.vp.Width != 100 {
+		t.Fatalf("expected vp.Width 100, got %d", m.detail.vp.Width)
 	}
-	if m.detail.vp.Height != 60-chromeHeight {
-		t.Fatalf("expected vp.Height %d, got %d", 60-chromeHeight, m.detail.vp.Height)
+	if want := m.viewportHeight(); m.detail.vp.Height != want {
+		t.Fatalf("expected vp.Height %d, got %d", want, m.detail.vp.Height)
 	}
 }
 
@@ -426,7 +431,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 			m = res.(Model)
 
 			if !m.detail.cache[tc.tab].loaded {
-				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(m.detail.cache[tc.tab]))
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.detail.cache[tc.tab]))
 			}
 		})
 	}

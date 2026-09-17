@@ -152,12 +152,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		m.detail.vp.Width = msg.Width
-		vpHeight := msg.Height - chromeHeight
-		if vpHeight < 0 {
-			vpHeight = 0
-		}
-		m.detail.vp.Height = vpHeight
+		m.detail.vp.Width = m.paneWidth()
+		m.detail.vp.Height = m.viewportHeight()
 		m.list.top = m.railTop()
 		return m, nil
 
@@ -214,7 +210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detail.cache[msg.t] = msg.content
 		currY := m.detail.vp.YOffset
-		m.detail.vp.SetContent(bodyOf(msg.content))
+		m.detail.vp.SetContent(bodyOf(msg.t, msg.content))
 		m.detail.vp.SetYOffset(currY)
 		return m, nil
 	}

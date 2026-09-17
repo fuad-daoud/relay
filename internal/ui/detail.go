@@ -1,17 +1,12 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 )
-
-// chromeHeight is the rows the detail screen spends on furniture: header,
-// tab bar, and footer. The viewport gets whatever is left.
-const chromeHeight = 4
 
 type detailModel struct {
 	name      string // binding under inspection
@@ -33,7 +28,9 @@ func styleFor(c tabContent) lipgloss.Style {
 	return normalStyle
 }
 
-func bodyOf(c tabContent) string {
+// bodyOf renders a tab's content for the viewport. Only the diff tab
+// colours its body (colourDiff); the other three return c.body as before.
+func bodyOf(t tab, c tabContent) string {
 	if !c.loaded {
 		return "loading…"
 	}
@@ -44,40 +41,18 @@ func bodyOf(c tabContent) string {
 	if c.empty != "" {
 		return st.Render(c.empty) // prose, NOT styled as an error
 	}
+	if t == tabDiff {
+		return colourDiff(c.body)
+	}
 	return st.Render(c.body)
 }
 
 func (m Model) detailView() string {
 	var b strings.Builder
-	r := row(m.report, m.detail.name)
-	round := m.detail.round + 1
-	display := ""
-	if r != nil {
-		round = r.Round
-		display = r.Display
-	}
-	title := fmt.Sprintf("%s · round %d", m.detail.name, round)
-	if display != "" {
-		title += " · " + display
-	}
-	b.WriteString(headerStyle.Render(renderBorder(title, m.width)))
+	b.WriteString(m.headerView())
 	b.WriteByte('\n')
-
-	for i, t := range tabTitles {
-		if i > 0 {
-			b.WriteString("  ")
-		}
-		if tab(i) == m.detail.active {
-			b.WriteString(activeTabStyle.Render("[" + t + "]"))
-		} else {
-			b.WriteString(inactiveTabStyle.Render(t))
-		}
-	}
+	b.WriteString(m.paneView(m.width))
 	b.WriteByte('\n')
-
-	b.WriteString(m.detail.vp.View())
-	b.WriteByte('\n')
-
-	b.WriteString(footerStyle.Render(renderBorder(m.footer(), m.width)))
+	b.WriteString(m.footerView())
 	return b.String()
 }

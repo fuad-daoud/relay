@@ -39,10 +39,12 @@ var tabTitles = [tabCount]string{"report", "terminal", "diff", "log"}
 // legitimately nothing to show -- a state that must render as prose, never as
 // an error. See §6.
 type tabContent struct {
-	body   string // rendered content, ready for the viewport
-	loaded bool   // false until the first fetch returns
-	err    error  // fetch failure, scoped to this tab alone
-	empty  string // prose explaining expected emptiness
+	body   string    // rendered content, ready for the viewport
+	loaded bool      // false until the first fetch returns
+	err    error     // fetch failure, scoped to this tab alone
+	empty  string    // prose explaining expected emptiness
+	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
+	at     time.Time // when the body was read; the source line's "13:38" and "captured 1s ago"
 }
 
 type tickMsg time.Time
@@ -84,6 +86,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 				t:    tabReport,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -100,6 +103,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 						t:     tabReport,
 						content: tabContent{
 							loaded: true,
+							at:     time.Now(),
 							empty:  fmt.Sprintf("round %d report has no payload", e.Round),
 						},
 					}
@@ -110,6 +114,8 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 					t:     tabReport,
 					content: tabContent{
 						loaded: true,
+						at:     time.Now(),
+						round:  e.Round,
 						body:   e.Payload,
 					},
 				}
@@ -121,6 +127,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 			t:    tabReport,
 			content: tabContent{
 				loaded: true,
+				at:     time.Now(),
 				empty:  "round 1 in flight; no report yet",
 			},
 		}
@@ -141,6 +148,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -162,6 +170,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 					t:    tabTerminal,
 					content: tabContent{
 						loaded: true,
+						at:     time.Now(),
 						empty:  "headless builder; no round has run yet, so there is no log",
 					},
 				}
@@ -173,6 +182,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 					t:    tabTerminal,
 					content: tabContent{
 						loaded: true,
+						at:     time.Now(),
 						empty:  "log not written yet: " + logPath,
 					},
 				}
@@ -186,6 +196,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					body:   body,
 				},
 			}
@@ -198,6 +209,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -210,6 +222,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					empty:  fmt.Sprintf("builder gone (`%s`); pane %s no longer exists", b.BuilderCandidate, b.Builder.PaneID),
 				},
 			}
@@ -229,6 +242,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				t:    tabTerminal,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -239,6 +253,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 			t:    tabTerminal,
 			content: tabContent{
 				loaded: true,
+				at:     time.Now(),
 				body:   out,
 			},
 		}
@@ -255,6 +270,8 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 				t:     tabDiff,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
+					round:  round,
 					empty:  "no completed round yet",
 				},
 			}
@@ -270,6 +287,8 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 				t:     tabDiff,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
+					round:  round,
 					err:    err,
 				},
 			}
@@ -281,6 +300,8 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 				t:     tabDiff,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
+					round:  round,
 					empty:  fmt.Sprintf("no diff recorded for round %d — no baseline captured", round),
 				},
 			}
@@ -292,6 +313,8 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 			t:     tabDiff,
 			content: tabContent{
 				loaded: true,
+				at:     time.Now(),
+				round:  round,
 				body:   string(patch),
 			},
 		}
@@ -308,6 +331,7 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 				t:    tabLog,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -319,6 +343,7 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 				t:    tabLog,
 				content: tabContent{
 					loaded: true,
+					at:     time.Now(),
 					empty:  "no entries yet",
 				},
 			}
@@ -336,6 +361,7 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 			t:    tabLog,
 			content: tabContent{
 				loaded: true,
+				at:     time.Now(),
 				body:   b.String(),
 			},
 		}

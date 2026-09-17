@@ -321,41 +321,6 @@ func TestQuitFromList(t *testing.T) {
 	}
 }
 
-func TestRenderBorderWidthWithBullet(t *testing.T) {
-	for _, tc := range []struct {
-		title string
-		width int
-	}{
-		{"relay", 60},
-		{"enter open · q quit", 60},
-		{"webshop · round 3 · NEEDS YOU", 60},
-		{"webshop · round 3 · NEEDS YOU", 80},
-	} {
-		border := renderBorder(tc.title, tc.width)
-		gotW := lipgloss.Width(border)
-		if gotW != tc.width {
-			t.Errorf("renderBorder(%q, %d) width = %d, want %d", tc.title, tc.width, gotW, tc.width)
-		}
-		if !strings.HasPrefix(border, "+- ") || !strings.HasSuffix(border, "+") {
-			t.Errorf("renderBorder(%q, %d) missing frame delimiters: %q", tc.title, tc.width, border)
-		}
-	}
-}
-
-func TestRenderBorderOverlongTruncatesAndCloses(t *testing.T) {
-	longTitle := "this is an extremely long title that exceeds the total border width by a lot · extra info"
-	width := 40
-
-	border := renderBorder(longTitle, width)
-	gotW := lipgloss.Width(border)
-	if gotW != width {
-		t.Fatalf("overlong border width = %d, want %d", gotW, width)
-	}
-	if !strings.HasPrefix(border, "+- ") || !strings.HasSuffix(border, "+") {
-		t.Fatalf("overlong border must remain closed with '+': %q", border)
-	}
-}
-
 func TestStateStylesDistinguishable(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
@@ -511,7 +476,7 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	m.detail.active = tabReport
 	m.detail.vp = viewport.New(80, 20)
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "report content"}
-	m.detail.vp.SetContent(bodyOf(m.detail.cache[tabReport]))
+	m.detail.vp.SetContent(bodyOf(tabReport, m.detail.cache[tabReport]))
 	detailOut := m.View()
 	if strings.Contains(detailOut, "client protocol") {
 		t.Errorf("detailView must NOT contain error block, got:\n%s", detailOut)

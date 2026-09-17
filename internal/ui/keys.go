@@ -30,12 +30,8 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			row := m.rows()[m.list.cursor]
-			vpHeight := m.height - chromeHeight
-			if vpHeight < 0 {
-				vpHeight = 0
-			}
-			vp := viewport.New(m.width, vpHeight)
-			vp.SetContent(bodyOf(tabContent{}))
+			vp := viewport.New(m.paneWidth(), m.viewportHeight())
+			vp.SetContent(bodyOf(tabReport, tabContent{}))
 			m.detail = detailModel{
 				name:   row.Name,
 				round:  row.Round - 1,
@@ -90,7 +86,7 @@ func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
 	m.detail.scroll[m.detail.active] = m.detail.vp.YOffset // park
 	m.detail.active = next
 	c := m.detail.cache[next]
-	m.detail.vp.SetContent(bodyOf(c))
+	m.detail.vp.SetContent(bodyOf(next, c))
 	m.detail.vp.SetYOffset(m.detail.scroll[next]) // restore
 	if !c.loaded && !m.tabInFlight {
 		m.tabInFlight = true

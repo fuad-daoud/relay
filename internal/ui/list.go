@@ -57,33 +57,6 @@ func (l *listModel) resolveSticky(rep relay.Report) {
 	l.sticky = rep.Bindings[l.cursor].Name
 }
 
-func renderBorder(title string, width int) string {
-	if width <= 0 {
-		width = 80
-	}
-	prefix := "+- " + title + " "
-	prefixWidth := lipgloss.Width(prefix)
-	if prefixWidth >= width {
-		if width <= 5 {
-			return strings.Repeat("-", width)
-		}
-		maxTitleWidth := width - 5
-		var tr strings.Builder
-		curW := 0
-		for _, r := range title {
-			rw := lipgloss.Width(string(r))
-			if curW+rw > maxTitleWidth {
-				break
-			}
-			tr.WriteRune(r)
-			curW += rw
-		}
-		rem := width - 5 - curW
-		return "+- " + tr.String() + " " + strings.Repeat("-", rem) + "+"
-	}
-	return prefix + strings.Repeat("-", width-prefixWidth-1) + "+"
-}
-
 const maxErrorLines = 8
 
 // renderError wraps err across the terminal width, preserving the newlines the

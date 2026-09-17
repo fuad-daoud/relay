@@ -55,9 +55,3 @@ func pillStyle(display string) lipgloss.Style {
 	fg := stateStyle(display).GetForeground()
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(fg).Padding(0, 1)
 }
-
-// Removed in Task 4 once detail.go stops using them.
-var (
-	headerStyle = fgStyle
-	footerStyle = dimStyle
-)
