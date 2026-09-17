@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -480,3 +481,76 @@ func TestDocEqual(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallResultLine(t *testing.T) {
+	tests := []struct {
+		res  InstallResult
+		want string
+	}{
+		{
+			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeWrote},
+			want: "wrote  ~/.claude/agents/researcher.md",
+		},
+		{
+			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeKeptDiffers},
+			want: "kept (differs; --force to overwrite)  ~/.claude/agents/researcher.md",
+		},
+		{
+			res:  InstallResult{Path: ".gemini/config/agents/reviewer.md", Outcome: OutcomeError, Err: "read-only"},
+			want: "error  ~/.gemini/config/agents/reviewer.md: read-only",
+		},
+	}
+	for _, tc := range tests {
+		got := tc.res.Line()
+		if got != tc.want {
+			t.Errorf("Line() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestOSInstallEnvRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	env := OSInstallEnv()
+
+	p, err := env.HomePath("a/b.md")
+	if err != nil {
+		t.Fatalf("unexpected HomePath error: %v", err)
+	}
+	expectedHomePath := filepath.Join(home, "a/b.md")
+	if p != expectedHomePath {
+		t.Errorf("HomePath = %q, want %q", p, expectedHomePath)
+	}
+
+	_, err = env.ReadFile(p)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected fs.ErrNotExist, got %v", err)
+	}
+
+	if err := env.MkdirAll(filepath.Dir(p)); err != nil {
+		t.Fatalf("MkdirAll error: %v", err)
+	}
+	if err := env.WriteFile(p, []byte("x")); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+	data, err := env.ReadFile(p)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+	if string(data) != "x" {
+		t.Errorf("ReadFile = %q, want %q", string(data), "x")
+	}
+
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("Stat error: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode perm = %o, want 0644", info.Mode().Perm())
+	}
+
+	if _, err := env.LookPath("definitely-not-a-binary-relay-test"); err == nil {
+		t.Error("expected error for non-existent binary, got nil")
+	}
+}
+

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 )
@@ -187,3 +189,45 @@ func writeDoc(env InstallEnv, full string, data []byte, res InstallResult, succe
 	res.Outcome = success
 	return res
 }
+
+// Line renders one output line for the result:
+// "<outcome>  ~/<path>" for every outcome but error, and
+// "error  ~/<path>: <err>" for that one.
+func (r InstallResult) Line() string {
+	if r.Outcome == OutcomeError {
+		return fmt.Sprintf("error  ~/%s: %s", r.Path, r.Err)
+	}
+	return fmt.Sprintf("%s  ~/%s", r.Outcome, r.Path)
+}
+
+type osInstallEnv struct{}
+
+// OSInstallEnv returns an InstallEnv backed by the OS and exec packages.
+func OSInstallEnv() InstallEnv {
+	return osInstallEnv{}
+}
+
+func (osInstallEnv) LookPath(binary string) (string, error) {
+	return exec.LookPath(binary)
+}
+
+func (osInstallEnv) HomePath(rel string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, rel), nil
+}
+
+func (osInstallEnv) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+func (osInstallEnv) MkdirAll(dir string) error {
+	return os.MkdirAll(dir, 0o755)
+}
+
+func (osInstallEnv) WriteFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o644)
+}
+
