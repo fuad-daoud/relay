@@ -224,6 +224,11 @@ inside every pane it manages, so it has to be run from inside one.
   round's log.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  `--json` also carries two fields the prose above does not spell out:
+  ```
+  branch      the binding's worktree branch; absent for a --cwd binding
+  waiting     set when the binding is stalled on a human: cause, line, since, hint
+  ```
 - `relay log NAME` — the binding's append-only round log.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
   until the round closes or the binding needs you, reading relay's own state only

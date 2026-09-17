@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -285,6 +286,65 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 	}
 	if _, ok := last["direction"].(string); !ok {
 		t.Errorf("last.direction missing or not a string: %#v", last)
+	}
+}
+
+// TestStatusRowBranch: the worktree branch reaches the row; a --cwd
+// binding (no branch) leaves it empty.
+func TestStatusRowBranch(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.Branch = "relay/webshop"
+	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Branch != "relay/webshop" {
+		t.Errorf("Branch = %q", row.Branch)
+	}
+	b.Branch = ""
+	row, _ = statusRow(context.Background(), rt, b, nil, nil)
+	if row.Branch != "" {
+		t.Errorf("--cwd binding Branch = %q, want empty", row.Branch)
+	}
+}
+
+// TestStatusRowWaiting: a needs_you binding whose round has a captured
+// question carries Waiting{Cause: "blocked", Hint: "relay answer ..."};
+// an active binding carries nil.
+func TestStatusRowWaiting(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StateNeedsYou
+	b.Round = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	qPath := rt.Store.QuestionPath(b.Name, 2)
+	if err := os.WriteFile(qPath, []byte("Do you want to proceed?"), 0o644); err != nil {
+		t.Fatalf("write question: %v", err)
+	}
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		TS: rt.Now().UTC(), Round: 2, Direction: store.DirToPlanner, Kind: store.KindQuestion,
+		Path: qPath,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Waiting == nil || row.Waiting.Cause != "blocked" {
+		t.Fatalf("Waiting = %+v, want cause blocked", row.Waiting)
+	}
+	if row.Waiting.Hint != "relay answer --name "+b.Name {
+		t.Errorf("Hint = %q", row.Waiting.Hint)
+	}
+	b.State = store.StateActive
+	row, _ = statusRow(context.Background(), rt, b, nil, nil)
+	if row.Waiting != nil {
+		t.Errorf("active row Waiting = %+v, want nil", row.Waiting)
 	}
 }
 
