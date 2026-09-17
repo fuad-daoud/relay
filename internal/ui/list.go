@@ -45,6 +45,15 @@ func listWindow(top, cursor, rows, n int) int {
 	return top
 }
 
+// errorRows is the line count of renderError(m.err, m.width) when m.err !=
+// nil, else 0.
+func (m Model) errorRows() int {
+	if m.err == nil {
+		return 0
+	}
+	return strings.Count(renderError(m.err, m.width), "\n") + 1
+}
+
 // listRows is how many binding rows the list screen can show: the terminal
 // height less the header, the footer, and whatever the error block takes.
 // Zero before the first WindowSizeMsg, which listWindow reads as no limit.
@@ -54,11 +63,7 @@ func (m Model) listRows() int {
 	if m.height <= 0 {
 		return 0
 	}
-	errLines := 0
-	if m.err != nil {
-		errLines = strings.Count(renderError(m.err, m.width), "\n") + 1
-	}
-	if rows := m.height - 2 - errLines; rows >= 1 {
+	if rows := m.height - 2 - m.errorRows(); rows >= 1 {
 		return rows
 	}
 	return 1

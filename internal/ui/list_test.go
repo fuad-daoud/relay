@@ -433,13 +433,21 @@ func TestStateStylesDistinguishable(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	sActive := styleDisplay("ACTIVE")
-	sDone := styleDisplay("DONE")
-	sNeedsYou := styleDisplay("NEEDS YOU")
 
-	if sActive == sDone || sDone == sNeedsYou || sActive == sNeedsYou {
-		t.Fatalf("state display styles must be distinguishable:\nACTIVE: %q\nDONE: %q\nNEEDS YOU: %q",
-			sActive, sDone, sNeedsYou)
+	states := []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
+	rendered := make(map[string]string, len(states))
+	for _, s := range states {
+		rendered[s] = stateStyle(s).Render(s)
+	}
+	for i, a := range states {
+		for _, b := range states[i+1:] {
+			if rendered[a] == rendered[b] {
+				t.Fatalf("state display styles must be distinguishable:\n%s: %q\n%s: %q", a, rendered[a], b, rendered[b])
+			}
+		}
+	}
+	if stateStyle("HELD").Render("HELD") == normalStyle.Render("HELD") {
+		t.Fatalf("HELD must be styled, not left as normalStyle (that was the old regression)")
 	}
 
 	b := relay.BindingStatus{
