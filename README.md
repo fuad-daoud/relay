@@ -324,10 +324,11 @@ pane builder would be typed, writes the harness's streamed JSON events to
 `~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
 `NNN-builder.log`, both beside the round's plan and report, and returns.
 The daemon renders the stream into the `.log` as it grows -- one line per
-tool call (`Bash go test ./...`), its result (`  -> ok`, `  -> error: …`),
+tool call (`Bash go test ./...`), its result with the first line of what it printed (`  -> ok: ok  github.com/… 0.4s`, `  -> error: …`),
 the builder's text, any denied permission, and the final answer -- so
 `relay ui`'s terminal tab, `relay status` and `tail -f` on the `.log` show
-the round live, about two seconds behind. The `.jsonl` is the raw record;
+the round live, about two seconds behind. Between rounds the tab keeps
+the last round's log. The `.jsonl` is the raw record;
 relay never reads it for meaning. When relay itself stops or replaces that process -- a
 mid-round switch, `relay done`, `relay unbind` -- it appends one line to the
 same log saying so (`--- relay 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
