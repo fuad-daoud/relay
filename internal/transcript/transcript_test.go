@@ -1,12 +1,15 @@
 package transcript
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+var update = flag.Bool("update", false, "rewrite testdata/*.log from the renderer")
 
 // TestFixtures renders every testdata/<kind>.jsonl line by line and compares
 // the joined output to testdata/<kind>.log. Add a kind by adding its pair.
@@ -22,15 +25,23 @@ func TestFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := os.ReadFile(filepath.Join("testdata", kind+".log"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			logPath := filepath.Join("testdata", kind+".log")
 			var got []string
 			for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
 				got = append(got, Render(kind, []byte(line))...)
 			}
-			if g, w := strings.Join(got, "\n")+"\n", string(want); g != w {
+			g := strings.Join(got, "\n") + "\n"
+			if *update {
+				if err := os.WriteFile(logPath, []byte(g), 0o644); err != nil {
+					t.Fatalf("write %s: %v", logPath, err)
+				}
+				return
+			}
+			want, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := string(want); g != w {
 				t.Errorf("rendered:\n%s\nwant:\n%s", g, w)
 			}
 		})
@@ -69,35 +80,35 @@ func TestClaudeTable(t *testing.T) {
 	}{
 		"text and tool in one message": {
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reading it.\nTwo lines."},{"type":"tool_use","name":"Read","input":{"file_path":"internal/doctor/doctor.go"}}]}}`,
-			[]string{"Reading it.\nTwo lines.", "Read internal/doctor/doctor.go"},
+			[]string{"Reading it.\nTwo lines.", "● Read internal/doctor/doctor.go"},
 		},
 		"tool with no argument": {
 			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ListAgents","input":{}}]}}`,
-			[]string{"ListAgents"},
+			[]string{"● ListAgents"},
 		},
 		"tool with a long multi-line command": {
 			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"` + strings.Repeat("x", 250) + `\nsecond"}}]}}`,
-			[]string{"Bash " + strings.Repeat("x", 200) + "..."},
+			[]string{"● Bash " + strings.Repeat("x", 200) + "..."},
 		},
 		"result error with array content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":[{"type":"text","text":"exit status 1\nmore"}]}]}}`,
-			[]string{"  -> error: exit status 1"},
+			[]string{"  ⎿ error: exit status 1"},
 		},
 		"result error with empty message": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":""}]}}`,
-			[]string{"  -> error"},
+			[]string{"  ⎿ error"},
 		},
 		"result ok with string content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"     1\t# relay\n     2\t"}]}}`,
-			[]string{"  -> ok:      1\t# relay"},
+			[]string{"  ⎿ ok:      1\t# relay"},
 		},
 		"result ok with array content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":[{"type":"text","text":"7c3ca64 docs: x\ne19924c feat: y"}]}]}}`,
-			[]string{"  -> ok: 7c3ca64 docs: x"},
+			[]string{"  ⎿ ok: 7c3ca64 docs: x"},
 		},
 		"result ok with empty content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":""}]}}`,
-			[]string{"  -> ok"},
+			[]string{"  ⎿ ok"},
 		},
 		"final result with denials and error": {
 			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"gave up","permission_denials":[{"tool_name":"Bash"},{"tool_name":"Edit"}]}`,
@@ -121,12 +132,12 @@ func TestMainArgumentPick(t *testing.T) {
 		params map[string]any
 		want   string
 	}{
-		"priority key wins over others": {map[string]any{"description": "d", "command": "c"}, "Bash c"},
-		"single string param":           {map[string]any{"AbsolutePathX": "/x"}, "Bash /x"},
-		"first in sorted order":         {map[string]any{"zeta": "z", "alpha": "a", "n": 3}, "Bash a"},
-		"non-string only":               {map[string]any{"n": 3, "ok": true}, "Bash"},
-		"empty string is not an arg":    {map[string]any{"command": "", "b": "x"}, "Bash x"},
-		"nil params":                    {nil, "Bash"},
+		"priority key wins over others": {map[string]any{"description": "d", "command": "c"}, "● Bash c"},
+		"single string param":           {map[string]any{"AbsolutePathX": "/x"}, "● Bash /x"},
+		"first in sorted order":         {map[string]any{"zeta": "z", "alpha": "a", "n": 3}, "● Bash a"},
+		"non-string only":               {map[string]any{"n": 3, "ok": true}, "● Bash"},
+		"empty string is not an arg":    {map[string]any{"command": "", "b": "x"}, "● Bash x"},
+		"nil params":                    {nil, "● Bash"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -158,27 +169,27 @@ func TestAgyTable(t *testing.T) {
 	}{
 		"tool active with several params": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_name":"run_command","tool_info":{"parameters":{"Cwd":"/repo","CommandLine":"go test ./..."}}}}`,
-			[]string{"run_command go test ./..."},
+			[]string{"● run_command go test ./..."},
 		},
 		"tool name falls back to tool_info.name": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/x"}}}}`,
-			[]string{"view_file /x"},
+			[]string{"● view_file /x"},
 		},
 		"tool done with output": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"list_dir","tool_info":{"output":"cmd/\ndist/\ndocs/"}}}`,
-			[]string{"  -> ok: cmd/"},
+			[]string{"  ⎿ ok: cmd/"},
 		},
 		"tool done without output": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"write_to_file","tool_info":{"output":""}}}`,
-			[]string{"  -> ok"},
+			[]string{"  ⎿ ok"},
 		},
 		"tool done with crlf output": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command","tool_info":{"output":"FAIL\tx [setup failed]\r\nmore\r\n"}}}`,
-			[]string{"  -> ok: FAIL\tx [setup failed]"},
+			[]string{"  ⎿ ok: FAIL\tx [setup failed]"},
 		},
 		"tool error without message": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"ERROR","tool_name":"view_file","tool_info":{"error":{"type":"TOOL_ERROR"}}}}`,
-			[]string{"  -> error"},
+			[]string{"  ⎿ error"},
 		},
 		"tool in an unknown state": {
 			`{"event":"step_update","step_update":{"step_type":"tool","state":"PAUSED","tool_name":"view_file"}}`,
@@ -216,7 +227,7 @@ func TestOpencodeTable(t *testing.T) {
 	}{
 		"error": {
 			`{"type":"error","timestamp":1789589781193,"sessionID":"ses_1","error":{"type":"provider.no-route","message":"Model unavailable: openrouter/z-ai/glm-5.3-flash"}}`,
-			[]string{"  -> error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
+			[]string{"  ⎿ error: Model unavailable: openrouter/z-ai/glm-5.3-flash"},
 		},
 		"tool_use in an unknown status is rule 5": {
 			`{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"status":"running","input":{"path":"a"}}}}`,
@@ -224,7 +235,7 @@ func TestOpencodeTable(t *testing.T) {
 		},
 		"tool_use with no argument": {
 			`{"type":"tool_use","part":{"type":"tool","tool":"todoread","state":{"status":"completed","input":{},"output":""}}}`,
-			[]string{"todoread", "  -> ok"},
+			[]string{"● todoread", "  ⎿ ok"},
 		},
 		"unknown type is its type": {
 			`{"type":"session_compacted","part":{}}`,
