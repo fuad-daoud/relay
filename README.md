@@ -230,6 +230,8 @@ inside every pane it manages, so it has to be run from inside one.
   waiting     set when the binding is stalled on a human: cause, line, since, hint
   ```
 - `relay log NAME` — the binding's append-only round log.
+- `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
+  tokens and cost across bindings, archived ones included.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
   until the round closes or the binding needs you, reading relay's own state only
   (never herdr). Exit 0: closed on the marker, stdout is the report path. 2: closed
@@ -832,8 +834,23 @@ a model with no row is `unknown`, never `$0`. Mark a subscription lane
 with `"plan": true` on its candidate: its rounds record `cost.plan` and
 are shown as a quota draw, never as free.
 
-Nothing prints these yet; they are in the log for `relay log`, `status
---json` and a `relay tab` summary to pick up (#142).
+Where you see it: `relay log` prints the round line under each report
+(`⎿ claude/anthropic/claude-sonnet-5  14m  in 182k (cache 91%)  out 12k  ~$0.41`);
+`relay status` adds a `usage` row (newest round) and a `spend` row
+(the binding's total: `4 rounds +2c · $1.23 · ~$0.40 · 2 unknown`), both
+on `--json` as `last_usage` and `spend`; `relay ui` shows the total on
+the card and in the header. Across bindings:
+
+```
+relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]
+```
+
+sums every round relay has recorded, including bindings `gc` has
+archived, one row per group and a total. Measured and estimated dollars
+never share a column; `plan` and `unknown` are counts of rounds. `tab`
+is the second exception to the #114 verb freeze, taken because its
+sums exist regardless (they are on `status --json`) and a cross-binding
+view has no other home.
 
 ### Consult candidates
 
