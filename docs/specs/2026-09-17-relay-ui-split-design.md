@@ -219,16 +219,39 @@ tree     relay/webshop · dirty · last close a1c9f0e (2 commits)
   after `builder`, so the pane head grows by one row per foreign agent
   and the viewport shrinks by the same; `paneHeadRows` is the minimum.
 - **tree row**: `Branch` (or the `CWD` for a `--cwd` binding), `dirty`
-  when set, `last close <Tree[:7]> (<Commits> commits)` from `LastClose`
-  when present. #143 adds the live numstat here.
-- **Tab bar**: `` N name `` per tab, the active one bold white on bg 24,
-  the others dim; a rule of `─` in 237 under it. The unread dots #143
-  adds to `report` and `diff` go after the name.
+  when set, and from `LastClose` when present `last close r<Round>:
+  <Commits> commit[s], <Tree>` -- `CloseInfo.Tree` is the word `clean` or
+  `dirty` (#130), not a hash. #143 adds the live numstat here.
+- **Tab bar** (amended 2026-09-18, round 3): four words, no numbers --
+  `report   terminal   diff   log`, the active one bold white, the others
+  dim -- over a rule whose span under the active word is `━` in accent
+  (75) and `─` in 237 elsewhere. `1`-`4` still switch tabs; the footer
+  says so. The unread dots #143 adds to `report` and `diff` go after the
+  word.
 - **Source line**: one faint line saying what the body is:
-  `report r3 · 13:38`, `%7 · captured 1s ago · 40 lines`, `round 3 · 3
-  files, +41 −6 · a1c9f0e` (from the patch's `diff --stat` tail when the
-  patch has one, else `round 3`), `12 entries`. The empty-case prose of
+  `report r3 · 13:38`, `%7 · captured 1s ago · 40 lines` for a pane
+  builder's screen, `headless · 002-builder.log · 412 lines · following`
+  (or `· scrolled`) for a headless builder's log, `round 3 · 3 files ·
+  +41 −6` (counted from the patch), `12 entries`. The empty-case prose of
   the old spec §7 renders in the viewport, unchanged.
+- **Viewport content is wrapped, never clipped** (round 3): every body is
+  word-wrapped to the viewport width before `SetContent`, and re-wrapped
+  on resize, so the viewport's logical lines are its visual lines. Without
+  this the viewport's own padding wraps long lines and pushes the rows
+  under them off the bottom, where no scroll reaches them.
+- **Terminal tab, headless builder** (round 3): the body is the whole
+  round log (the last 5000 lines of it), scrollable, and the viewport
+  follows the tail the way `tail -f` does: it is pinned to the bottom
+  until the human scrolls up, and pinned again the moment they scroll
+  back to the bottom. A pane builder's terminal tab stays a viewport-sized
+  live screen capture: there is nothing above it to scroll to.
+- **Transcript styling, headless builder** (round 3): the transcript
+  renderer marks its lines -- `● <Tool> <arg>` for a call, `  ⎿ ok: …` /
+  `  ⎿ error: …` for a result (`2026-09-17-headless-transcript-design.md`
+  §4.3, amended). On the terminal tab of a headless builder the ui draws a
+  call as `●` in 42, the tool name bold, and `(<arg>)` dim; an ok result
+  as `⎿` and its text dim; an error result as `⎿ error: …` in 203; prose
+  untouched. A pane builder's capture is never restyled.
 - **Answer hint**: when the active tab is `terminal` and `Waiting != nil`
   with `Cause == "blocked"`, the last viewport row is replaced by
   `relay: <Waiting.Hint>` (`relay:` in accent, the verb in fg). It is a
@@ -374,7 +397,11 @@ the active tab, and a fresh model starts on `report`.
 | both | any | `q` `ctrl+c` | quit |
 
 In split layout with the pane focused, `↑`/`↓` scroll the pane; the
-rail cursor does not move. `1`-`4` work from the rail too: switching tab
+rail cursor does not move. **Focus is visible** (round 3): the `│`
+separator between rail and pane is drawn in accent (75) while the pane is
+focused and in 237 while the rail is, and the selected card's `▎` gutter
+swaps the other way -- accent while the rail is focused, dim (245) while
+the pane is. One of the two is always lit. `1`-`4` work from the rail too: switching tab
 without leaving the rail is the common move, and it reads as a pane
 operation only because it fetches. `s` works from the pane as well.
 
@@ -392,7 +419,7 @@ terminal theme renders it consistently; none of the current 205 / 62 /
 | rule | 237 | `│` separator column, `─` under tabs |
 | selected bg | 235 | the selected card |
 | header bg | 236 | header bar |
-| accent | 75 | selection gutter, `relay:` in the hint; #143's unread dot |
+| accent | 75 | selection gutter, focused-pane separator, active-tab underline, `relay:` in the hint; #143's unread dot |
 | active tab | 255 on 24 | |
 | NEEDS YOU | 214 bold | state, `dirty`, notices, `needs you` count |
 | HELD | 111 | |
