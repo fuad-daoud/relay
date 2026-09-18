@@ -174,6 +174,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		Direction: store.DirToPlanner,
 		Kind:      store.KindFindings,
 		Note:      note,
+		Usage:     recordUsage(ctx, rt, consultSource(rt, b, c, rt.Now().UTC())),
 	}
 
 	if state == store.ConsultDone {

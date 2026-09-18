@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -207,7 +208,21 @@ func cmdDoctor(args []string) error {
 		return fmt.Errorf("herdr client does not support the probes doctor needs")
 	}
 	env := doctor.NewEnv(hc, rt.Store)
-	rep := doctor.Run(context.Background(), env, kinds, doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)))
+
+	opencodeConfigured := false
+	for _, k := range kinds {
+		if k == "opencode" {
+			opencodeConfigured = true
+		}
+	}
+	configDir, err := userConfigRoot() // the same userConfigRoot() result newRuntime uses
+	if err != nil {
+		return err
+	}
+	pricesPath := filepath.Join(configDir, "relay", "prices.json")
+	rep := doctor.Run(context.Background(), env, kinds,
+		doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)),
+		doctor.WithUsage(pricesPath, opencodeConfigured))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",

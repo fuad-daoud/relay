@@ -906,3 +906,56 @@ func TestDoctorKindAbsentFromDefinitionsKeepsEveryRow(t *testing.T) {
 		}
 	}
 }
+
+// findUsageCheck is findCheck's counterpart for the usage checks (#142):
+// those are matched by Name and a Detail substring rather than by Group,
+// since sqlite3/prices rows are global (Group ""), and findCheck above
+// already owns the name findCheck for the Group/Name lookup the rest of
+// this file uses.
+func findUsageCheck(rep Report, name, detailSub string) (Check, bool) {
+	for _, c := range rep.Checks {
+		if c.Name == name && strings.Contains(c.Detail, detailSub) {
+			return c, true
+		}
+	}
+	return Check{}, false
+}
+
+func TestUsageChecks(t *testing.T) {
+	t.Run("sqlite3 missing with opencode configured", func(t *testing.T) {
+		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
+		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", true))
+		c, ok := findUsageCheck(rep, "sqlite3", "")
+		if !ok || c.Severity != SevWarn {
+			t.Errorf("want a warn row for sqlite3: %+v", rep.Checks)
+		}
+		if !strings.Contains(c.Detail, "unknown") {
+			t.Errorf("Detail = %q, want it to say opencode pane rounds record unknown", c.Detail)
+		}
+	})
+	t.Run("sqlite3 not needed without opencode", func(t *testing.T) {
+		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
+		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		if _, ok := findUsageCheck(rep, "sqlite3", ""); ok {
+			t.Error("no opencode candidate: no sqlite3 row")
+		}
+	})
+	t.Run("prices absent is ok, stale is warn, malformed is warn", func(t *testing.T) {
+		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}, fileContents: map[string]string{}}
+		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		if c, ok := findUsageCheck(rep, "prices", "default"); !ok || c.Severity != SevOK {
+			t.Errorf("absent prices.json: want an OK row naming the default: %+v", rep.Checks)
+		}
+		env.existingFiles["/cfg/prices.json"] = true
+		env.fileContents["/cfg/prices.json"] = `{"as_of":"2020-01-01","models":{}}`
+		rep = Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		if c, ok := findUsageCheck(rep, "prices", "2020-01-01"); !ok || c.Severity != SevWarn {
+			t.Errorf("stale as_of: want a warn row: %+v", rep.Checks)
+		}
+		env.fileContents["/cfg/prices.json"] = `{"models": 5}`
+		rep = Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		if c, ok := findUsageCheck(rep, "prices", "does not validate"); !ok || c.Severity != SevWarn {
+			t.Errorf("malformed: want a warn row: %+v", rep.Checks)
+		}
+	})
+}

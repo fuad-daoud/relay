@@ -1,0 +1,6 @@
+{"event":"init","conversation_id":"conv-1","init":{"model":"gemini-3.8-flash","cwd":"/wt","tools":["view_file"]}}
+{"event":"step_update","step_update":{"conversation_id":"conv-1","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"conv-1","step_index":1,"state":"DONE","step_type":"agent_response","duration_seconds":6.6,"usage":{"input_tokens":1000,"output_tokens":40,"thinking_tokens":10,"cache_read_tokens":200,"total_tokens":1250}}}
+{"event":"step_update","step_update":{"conversation_id":"conv-1","step_index":2,"state":"DONE","step_type":"agent_response","duration_seconds":2.1,"usage":{"input_tokens":500,"output_tokens":35,"thinking_tokens":5,"cache_read_tokens":300,"total_tokens":840}}}
+{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"","duration_seconds":9.7,"num_turns":2,"usage":{"input_tokens":1500,"output_tokens":75,"thinking_tokens":15,"cache_read_tokens":500,"total_tokens":2090}}}
+relay-exit:0

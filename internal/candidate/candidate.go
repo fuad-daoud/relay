@@ -55,6 +55,10 @@ type Candidate struct {
 	Tree          string   `json:"tree,omitempty"`
 	ExtraArgs     []string `json:"extra_args,omitempty"`
 	LimitPatterns []string `json:"limit_patterns,omitempty"`
+
+	// Plan marks a subscription lane (#142): the round's cost is a quota
+	// draw, and printers say "plan", never "$0" and never "free".
+	Plan bool `json:"plan,omitempty"`
 }
 
 // Ref returns the candidate's canonical reference triple.

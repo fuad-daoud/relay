@@ -1,0 +1,3 @@
+[{"data":"{\"role\":\"user\",\"time\":{\"created\":1789150607700}}"},
+{"data":"{\"parentID\":\"msg_u\",\"role\":\"assistant\",\"agent\":\"plan-executor\",\"path\":{\"cwd\":\"/wt\",\"root\":\"/wt\"},\"cost\":0.00135925,\"tokens\":{\"total\":8896,\"input\":8825,\"output\":64,\"reasoning\":7,\"cache\":{\"write\":0,\"read\":0}},\"modelID\":\"z-ai/glm-5.3-flash\",\"providerID\":\"openrouter\",\"time\":{\"created\":1789150607770,\"completed\":1789150611274}}"},
+{"data":"{\"parentID\":\"msg_u\",\"role\":\"assistant\",\"agent\":\"plan-executor\",\"cost\":0,\"tokens\":{\"input\":0,\"output\":0,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}},\"modelID\":\"z-ai/glm-5.3-flash\",\"providerID\":\"openrouter\",\"time\":{\"created\":1789150611276}}"}]

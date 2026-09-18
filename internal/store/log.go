@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // maxLogEntries is a corruption guard, not a rotation policy: a log growing
@@ -70,6 +72,13 @@ type LogEntry struct {
 	// are unknown and Commits is meaningless.
 	Commits int    `json:"commits,omitempty"`
 	Tree    string `json:"tree,omitempty"`
+
+	// Usage is what the round consumed, on report entries, and what a
+	// consult consumed, on findings entries (#142). Nil on every other
+	// kind and on entries written before the field existed. Its Cost.Basis
+	// says whether the dollars were measured, estimated or unknown; a
+	// reader that treats nil as "free" is wrong -- nil is unknown.
+	Usage *usage.Usage `json:"usage,omitempty"`
 }
 
 func (s *Store) logPath(name string) string {

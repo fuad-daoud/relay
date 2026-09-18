@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 func seedBinding(t *testing.T) (*Store, string) {
@@ -250,5 +252,36 @@ func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
 	}
 	if out.Commits != 3 || out.Tree != "clean" {
 		t.Errorf("round trip: got %+v, want %+v", out, in)
+	}
+}
+
+func TestLogEntryUsageRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	with := LogEntry{
+		TS: time.Unix(1, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "p",
+		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 4200,
+			Tokens: usage.Tokens{In: 1, CacheRead: 2, CacheWrite: 3, Out: 4},
+			Cost:   usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1},
+	}
+	without := LogEntry{TS: time.Unix(2, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "q"}
+	if err := s.AppendLog("b", with); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendLog("b", without); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadLog("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Usage == nil || *got[0].Usage != *with.Usage {
+		t.Errorf("usage round trip: %+v", got[0].Usage)
+	}
+	if got[1].Usage != nil {
+		t.Errorf("an entry without usage must read back nil, got %+v", got[1].Usage)
+	}
+	raw, _ := json.Marshal(without)
+	if strings.Contains(string(raw), "usage") {
+		t.Errorf("an entry without usage must marshal byte-identically to before: %s", raw)
 	}
 }

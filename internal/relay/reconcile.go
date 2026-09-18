@@ -566,6 +566,9 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 }
 
 func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string) (store.Binding, error) {
+	now := rt.Now().UTC()
+	roundStart := b.RoundStartedAt
+
 	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
 		result := CaptureRoundDiff(ctx, rt, b)
@@ -596,9 +599,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	entry := store.LogEntry{
-		TS: rt.Now().UTC(), Round: b.Round,
+		TS: now, Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindReport,
 		Path: path, Payload: payload, Note: note,
+		Usage: recordUsage(ctx, rt, roundSource(rt, b, roundStart, now)),
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err

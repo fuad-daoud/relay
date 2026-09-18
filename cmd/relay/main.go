@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -31,6 +32,10 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
+	// usagepkg: this file already has a package-level const named "usage"
+	// (the help text below), so internal/usage is imported under a name
+	// that does not shadow it.
+	usagepkg "github.com/fuad-daoud/relay/internal/usage"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=v1.2.3".
@@ -289,6 +294,19 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	prices, err := usagepkg.LoadPrices(filepath.Join(configDir, "relay", "prices.json"))
+	if err != nil {
+		// A bad price file must never stop a round from closing: say so
+		// once, on stderr, and run on the embedded default.
+		fmt.Fprintf(os.Stderr, "relay: %v (using built-in prices)\n", err)
+	}
+	var sqlite usagepkg.Exec
+	if _, err := exec.LookPath("sqlite3"); err == nil {
+		sqlite = binExec{}
+	}
+	home, _ := os.UserHomeDir()
+	reader := usagepkg.New(sqlite, home)
+
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
 		return relay.Runtime{}, err
@@ -306,6 +324,8 @@ func newRuntime() (relay.Runtime, error) {
 		LedgerPath:  st.LedgerPath(),
 		HistoryPath: st.HistoryPath(),
 		Policy:      pol,
+		Usage:       reader,
+		Prices:      prices,
 		Now:         time.Now,
 		Hooks:       dispatcher,
 	}, nil

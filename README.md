@@ -800,6 +800,41 @@ role: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs in its own relay pane and hands
 back a file path.
 
+### Round usage
+
+At every round close relay records what the round consumed on the
+round's `report` entry in `log.jsonl` (and a consult's on its `findings`
+entry): harness, provider, model, duration, tokens (`in`, `cache_read`,
+`cache_write`, `out` -- `out` includes thinking), and a cost with its
+provenance:
+
+| `cost.basis` | meaning |
+|---|---|
+| `measured` | the harness reported dollars itself (claude's `total_cost_usd`, opencode's `cost`) |
+| `estimated` | relay multiplied the harness's token counts by `~/.config/relay/prices.json` |
+| `unknown` | no record, no price row, or no way to read; `note` says which |
+
+`unknown` is an answer, not a failure. Where each figure comes from:
+
+| harness | headless | pane |
+|---|---|---|
+| claude | the round's stream (`measured`) | `~/.claude/projects/<cwd>/` transcripts inside the round's window (`estimated`) |
+| agy | the round's stream (`estimated`) | agy keeps no usage record (`unknown`) |
+| opencode | the round's stream (`measured`) | `opencode.db` through `sqlite3` (`measured`); `relay doctor` says if `sqlite3` is missing |
+
+A binding on `--cwd` shares the planner's directory, so its pane rounds
+are `unknown` (`shared cwd`) rather than counting the planner's spend.
+
+`prices.json` is `{"as_of": "YYYY-MM-DD", "source": "...", "models":
+{"<provider>/<model>": {"in": …, "cache_read": …, "cache_write": …,
+"out": …}}}` in USD per million tokens, overlaid on the table relay ships;
+a model with no row is `unknown`, never `$0`. Mark a subscription lane
+with `"plan": true` on its candidate: its rounds record `cost.plan` and
+are shown as a quota draw, never as free.
+
+Nothing prints these yet; they are in the log for `relay log`, `status
+--json` and a `relay tab` summary to pick up (#142).
+
 ### Consult candidates
 
 `relay ask --role reviewer` resolves `reviewer` through the role table and then
