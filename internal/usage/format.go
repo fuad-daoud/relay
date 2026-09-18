@@ -1,0 +1,86 @@
+package usage
+
+import (
+	"fmt"
+	"math"
+	"strings"
+)
+
+// Money is the cost word. Plan wins over basis: a subscription lane never
+// shows dollars. Under a cent prints "<$0.01" so a tiny round is not
+// mistaken for a free one.
+func Money(c Cost) string {
+	switch {
+	case c.Plan:
+		return "plan"
+	case c.Basis == Unknown:
+		return "unknown"
+	}
+	prefix := "$"
+	if c.Basis == Estimated {
+		prefix = "~$"
+	}
+	if c.USD > 0 && c.USD < 0.005 {
+		return "<" + prefix + "0.01"
+	}
+	return fmt.Sprintf("%s%.2f", prefix, c.USD)
+}
+
+// ShortTokens: < 1000 as-is, < 1M "182k", else "2.3M". Rounds half up.
+func ShortTokens(n int64) string {
+	switch {
+	case n < 1000:
+		return fmt.Sprintf("%d", n)
+	case n < 999_500:
+		return fmt.Sprintf("%dk", int64(math.Round(float64(n)/1000)))
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+}
+
+// ShortDuration: "" for 0, "<1m" under a minute, "14m", "1h05m".
+func ShortDuration(ms int64) string {
+	switch {
+	case ms <= 0:
+		return ""
+	case ms < 60_000:
+		return "<1m"
+	}
+	minutes := ms / 60_000
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
+}
+
+// Line is the round line, issue #142's format. Parts are joined by two
+// spaces and omitted when empty; see the spec §2 for the exact rules.
+func Line(u Usage) string {
+	var parts []string
+	var id []string
+	for _, s := range []string{u.Harness, u.Provider, u.Model} {
+		if s != "" {
+			id = append(id, s)
+		}
+	}
+	if len(id) > 0 {
+		parts = append(parts, strings.Join(id, "/"))
+	}
+	if d := ShortDuration(u.DurationMS); d != "" {
+		parts = append(parts, d)
+	}
+	if u.Samples > 0 {
+		prompt := u.Tokens.In + u.Tokens.CacheRead + u.Tokens.CacheWrite
+		in := "in " + ShortTokens(prompt)
+		if prompt > 0 {
+			in += fmt.Sprintf(" (cache %.0f%%)", u.Tokens.CacheRatio()*100)
+		}
+		parts = append(parts, in, "out "+ShortTokens(u.Tokens.Out))
+	}
+	money := Money(u.Cost)
+	if u.Cost.Basis == Unknown && !u.Cost.Plan && u.Note != "" {
+		money += " (" + u.Note + ")"
+	}
+	parts = append(parts, money)
+	return strings.Join(parts, "  ")
+}
