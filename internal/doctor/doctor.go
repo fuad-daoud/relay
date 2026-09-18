@@ -2,12 +2,15 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 type Severity int
@@ -133,8 +136,10 @@ func semverAtLeast(v, floor string) (bool, error) {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	adopted     bool
-	definitions map[string][]string
+	adopted       bool
+	definitions   map[string][]string
+	usagePrices   string
+	usageOpencode bool
 }
 
 // WithAdopted scopes the per-kind checks to an adopted pane: the user launched
@@ -154,6 +159,16 @@ func WithAdopted(adopted bool) RunOption {
 func WithDefinitions(defs map[string][]string) RunOption {
 	return func(cfg *runConfig) {
 		cfg.definitions = defs
+	}
+}
+
+// WithUsage enables the round-usage checks (#142): sqlite3 on PATH when an
+// opencode candidate is configured (its pane rounds read opencode.db
+// through it), and prices.json parsing and age.
+func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
+	return func(cfg *runConfig) {
+		cfg.usagePrices = pricesPath
+		cfg.usageOpencode = opencodeConfigured
 	}
 }
 
@@ -521,8 +536,61 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 	}
 
+	if cfg.usagePrices != "" {
+		checks = append(checks, usageChecks(env, cfg)...)
+	}
+
 	return Report{
 		Checks:        checks,
 		UsableBuilder: usableBuilder,
 	}
+}
+
+// pricesMaxAge is how old prices.json's as_of may be before doctor warns.
+const pricesMaxAge = 90 * 24 * time.Hour
+
+func usageChecks(env Env, cfg runConfig) []Check {
+	var out []Check
+	if cfg.usageOpencode {
+		if _, err := env.LookPath("sqlite3"); err != nil {
+			out = append(out, Check{
+				Name: "sqlite3", Severity: SevWarn,
+				Detail: "not on PATH; opencode pane rounds record usage as unknown",
+				Fix:    "install sqlite3 (the CLI), e.g. pacman -S sqlite / apt install sqlite3",
+			})
+		} else {
+			out = append(out, Check{Name: "sqlite3", Severity: SevOK, Detail: "on PATH; opencode pane usage readable"})
+		}
+	}
+	if err := env.Stat(cfg.usagePrices); err != nil {
+		d := usage.DefaultPrices()
+		out = append(out, Check{Name: "prices", Severity: SevOK,
+			Detail: fmt.Sprintf("no %s; using the embedded default (as_of %s, %d models)", cfg.usagePrices, d.AsOf, len(d.Models))})
+		return out
+	}
+	raw, err := env.ReadFile(cfg.usagePrices)
+	if err != nil {
+		out = append(out, Check{Name: "prices", Severity: SevWarn, Detail: cfg.usagePrices + ": " + err.Error(), ProbeFailed: true})
+		return out
+	}
+	var p usage.Prices
+	if err := json.Unmarshal(raw, &p); err != nil {
+		out = append(out, Check{Name: "prices", Severity: SevWarn,
+			Detail: fmt.Sprintf("%s does not validate: %v; rounds estimate from the embedded default", cfg.usagePrices, err),
+			Fix:    "fix the JSON or delete the file"})
+		return out
+	}
+	asOf, err := time.Parse("2006-01-02", p.AsOf)
+	switch {
+	case err != nil:
+		out = append(out, Check{Name: "prices", Severity: SevWarn,
+			Detail: fmt.Sprintf("%s: as_of %q is not YYYY-MM-DD", cfg.usagePrices, p.AsOf), Fix: "set as_of to the date the prices were checked"})
+	case time.Since(asOf) > pricesMaxAge:
+		out = append(out, Check{Name: "prices", Severity: SevWarn,
+			Detail: fmt.Sprintf("%s: as_of %s is older than %d days; estimates may be stale", cfg.usagePrices, p.AsOf, int(pricesMaxAge.Hours()/24)),
+			Fix:    "check the providers' pricing pages and update as_of"})
+	default:
+		out = append(out, Check{Name: "prices", Severity: SevOK, Detail: fmt.Sprintf("%s: as_of %s, %d models", cfg.usagePrices, p.AsOf, len(p.Models))})
+	}
+	return out
 }
