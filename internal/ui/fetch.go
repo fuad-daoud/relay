@@ -357,9 +357,8 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 
 		var b strings.Builder
 		for _, e := range entries {
-			fmt.Fprintf(&b, "%s  round %-3d %-10s %-9s %s %s\n",
-				e.TS.Local().Format("2006-01-02 15:04:05"),
-				e.Round, e.Direction, e.Kind, e.Path, e.Note)
+			b.WriteString(relay.LogLine(e))
+			b.WriteByte('\n')
 		}
 
 		return tabMsg{

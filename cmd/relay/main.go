@@ -1334,8 +1334,7 @@ func cmdLog(args []string) error {
 	}
 
 	for _, e := range entries {
-		fmt.Printf("%s  round %-3d %-10s %-9s %s %s\n",
-			e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
+		fmt.Println(relay.LogLine(e))
 	}
 	return nil
 }
