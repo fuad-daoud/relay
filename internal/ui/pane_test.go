@@ -227,6 +227,48 @@ func TestWrapBodyMakesEveryLineReachable(t *testing.T) {
 	}
 }
 
+func TestColourTranscript(t *testing.T) {
+	body := "Now running the tests.\n● Bash go test ./...\n  ⎿ ok: ok  github.com/x 0.4s\n● Read\n  ⎿ error: no such file\n[system]"
+	out := strings.Split(colourTranscript(body), "\n")
+	if out[0] != "Now running the tests." {
+		t.Errorf("prose must be untouched: %q", out[0])
+	}
+	if p := stripANSI(out[1]); p != "● Bash(go test ./...)" {
+		t.Errorf("call = %q", p)
+	}
+	if !strings.Contains(out[1], stateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+		t.Errorf("call not styled: %q", out[1])
+	}
+	if p := stripANSI(out[2]); p != "  ⎿ ok: ok  github.com/x 0.4s" {
+		t.Errorf("ok result text changed: %q", p)
+	}
+	if out[2] != dimStyle.Render("  ⎿ ok: ok  github.com/x 0.4s") {
+		t.Errorf("ok result not dim: %q", out[2])
+	}
+	if p := stripANSI(out[3]); p != "● Read" {
+		t.Errorf("call without argument = %q (no empty parens)", p)
+	}
+	if out[4] != errorStyle.Render("  ⎿ error: no such file") {
+		t.Errorf("error result not styled: %q", out[4])
+	}
+	if out[5] != "[system]" {
+		t.Errorf("unknown-event line must be untouched: %q", out[5])
+	}
+}
+
+func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
+	c := tabContent{loaded: true, body: "● Bash ls"}
+	if got := bodyOf(tabTerminal, c, false); got != "● Bash ls" {
+		t.Errorf("a pane capture must never be restyled: %q", got)
+	}
+	if got := bodyOf(tabTerminal, c, true); stripANSI(got) != "● Bash(ls)" {
+		t.Errorf("headless terminal = %q", stripANSI(got))
+	}
+	if got := bodyOf(tabLog, c, true); got != "● Bash ls" {
+		t.Errorf("only the terminal tab styles transcript lines: %q", got)
+	}
+}
+
 func TestViewportReachesBottomOfLongLines(t *testing.T) {
 	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabLog)

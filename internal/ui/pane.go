@@ -144,6 +144,32 @@ func colourDiff(patch string) string {
 	return strings.Join(lines, "\n")
 }
 
+// colourTranscript styles a headless builder's log for the terminal tab,
+// by the transcript's own markers and nothing else: a call is a green
+// bullet, a bold tool name and its argument in parentheses, dim; an ok
+// result is dim; an error result is red; every other line -- assistant
+// prose, [unknown] events, the relay-exit trailer -- is left alone.
+func colourTranscript(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "● "):
+			rest := strings.TrimPrefix(l, "● ")
+			name, arg, _ := strings.Cut(rest, " ")
+			out := stateActiveStyle.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(name)
+			if arg != "" {
+				out += dimStyle.Render("(" + arg + ")")
+			}
+			lines[i] = out
+		case strings.HasPrefix(l, "  ⎿ error"):
+			lines[i] = errorStyle.Render(l)
+		case strings.HasPrefix(l, "  ⎿ "):
+			lines[i] = dimStyle.Render(l)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // sourceLine says, in one faint line, what the viewport is showing.
 func (m Model) sourceLine() string {
 	if m.detail.name == "" {
