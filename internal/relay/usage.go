@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -80,6 +81,12 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 		timedOut := rctx.Err() != nil
 		cancel()
 		u = usage.Fold(samples, rt.Prices, src.Plan, note)
+		if len(samples) > 0 && note != "" && !strings.Contains(u.Note, note) {
+			if u.Note != "" {
+				u.Note += "; "
+			}
+			u.Note += note
+		}
 		if timedOut {
 			if u.Note != "" {
 				u.Note += "; "

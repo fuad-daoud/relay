@@ -2,8 +2,10 @@ package usage
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -47,14 +49,77 @@ func New(exec Exec, home string) Reader { return reader{exec: exec, home: home} 
 func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
-		return r.readStream(src)
+		return r.readStream(ctx, src)
 	case ModePane:
 		return r.readPane(ctx, src)
 	}
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-func (r reader) readStream(src Source) ([]Sample, string) {
+// exitTrailer is proc.ExitTrailer: the last line relay's supervisor
+// writes to a headless stream, after the harness has exited. Copied, not
+// imported, so this package stays free of relay's process model;
+// TestExitTrailerMatchesProc in internal/relay pins the two equal.
+const exitTrailer = "relay-exit:"
+
+// ExitTrailerForTest exposes exitTrailer so internal/relay can pin it to
+// proc.ExitTrailer; nothing else calls it.
+func ExitTrailerForTest() string { return exitTrailer }
+
+// trailerPoll is how often a still-open stream is re-checked.
+const trailerPoll = 200 * time.Millisecond
+
+// tailProbe is how much of the file's end is read to find the last line.
+const tailProbe = 256
+
+// streamClosed reports whether path's last non-empty line is the exit
+// trailer -- the harness has exited and its final event is on disk.
+func streamClosed(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	size := info.Size()
+	n := int64(tailProbe)
+	if size < n {
+		n = size
+	}
+	buf := make([]byte, n)
+	if _, err := f.ReadAt(buf, size-n); err != nil && err != io.EOF {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
+	last := lines[len(lines)-1]
+	return strings.HasPrefix(last, exitTrailer)
+}
+
+// waitClosed blocks until the stream is closed or ctx is done, and
+// reports which. A round closes on the builder's done marker, which the
+// harness writes before its final event: the wait is what turns a race
+// into a measured figure.
+func waitClosed(ctx context.Context, path string) bool {
+	for {
+		if streamClosed(path) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(trailerPoll):
+		}
+	}
+}
+
+func (r reader) readStream(ctx context.Context, src Source) ([]Sample, string) {
+	if _, err := os.Stat(src.StreamPath); err != nil {
+		return nil, "no stream"
+	}
+	closed := waitClosed(ctx, src.StreamPath)
 	f, err := os.Open(src.StreamPath)
 	if err != nil {
 		return nil, "no stream"
@@ -71,8 +136,11 @@ func (r reader) readStream(src Source) ([]Sample, string) {
 	default:
 		return nil, "no reader for " + src.Harness
 	}
-	if len(samples) == 0 {
+	switch {
+	case len(samples) == 0:
 		return nil, "no usage events"
+	case !closed:
+		return samples, "stream still open"
 	}
 	return samples, ""
 }
