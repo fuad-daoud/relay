@@ -62,8 +62,10 @@ Do not run `herdr` or any harness. No test under `cmd/relay`.
 - No new dependencies. `internal/usage` still imports nothing from
   `internal/relay`, `internal/store` or `internal/proc`: the trailer
   prefix is a string constant in `internal/usage` with a comment naming
-  `proc.ExitTrailer` as its source, and a test in `internal/relay` (which
-  may import both) pins the two equal.
+  `proc.ExitTrailer` as its source, and a test in `internal/proc` pins
+  the two equal (`proc` imports `relay`, so the pin cannot live in
+  `relay`'s tests -- round 2's builder halted on exactly that, and the
+  test moved).
 - The round still always closes. The wait is inside the reader, under
   the caller's context; a reader that overruns is a note, never an error.
 - One commit, message `fix(usage): wait for the headless stream's trailer before reading (#142)`.
@@ -168,25 +170,26 @@ func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
 
 Add `strings`, `time` to the imports.
 
-Append to `internal/relay/usage_test.go`:
+Append to `internal/proc/proc_test.go` (not `internal/relay`: `proc`
+imports `relay`, so a `relay` test importing `proc` is an import cycle):
 
 ```go
-func TestExitTrailerMatchesProc(t *testing.T) {
-	if usage.ExitTrailerForTest() != proc.ExitTrailer {
-		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait forever on every headless round",
-			usage.ExitTrailerForTest(), proc.ExitTrailer)
+func TestExitTrailerMatchesUsage(t *testing.T) {
+	if usage.ExitTrailerForTest() != ExitTrailer {
+		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
+			usage.ExitTrailerForTest(), ExitTrailer)
 	}
 }
 ```
 
-with `"github.com/fuad-daoud/relay/internal/proc"` imported.
+with `"github.com/fuad-daoud/relay/internal/usage"` imported.
 `ExitTrailerForTest` is a one-line exported accessor defined in
 `source.go` in Step 3 (a `_test.go` file would not be visible across
 packages).
 
 - [ ] **Step 2: Run to verify they fail.**
 
-Run: `go test ./internal/usage/ -run 'TestStreamClosed|TestReadHeadless'; go test ./internal/relay/ -run TestExitTrailer`
+Run: `go test ./internal/usage/ -run 'TestStreamClosed|TestReadHeadless'; go test ./internal/proc/ -run TestExitTrailer`
 Expected: build failures.
 
 - [ ] **Step 3: Implement** in `internal/usage/source.go`.
@@ -343,7 +346,7 @@ test -z "$(gofmt -l .)" || gofmt -l .
 go vet ./...
 go test -race -count=1 ./...
 cp go.mod /tmp/gm; cp go.sum /tmp/gs; go mod tidy; cmp go.mod /tmp/gm && cmp go.sum /tmp/gs
-git add internal/usage/source.go internal/usage/source_test.go internal/relay/usage.go internal/relay/usage_test.go docs/specs/2026-09-18-round-usage-design.md docs/plans/2026-09-18-usage-surfaces-r2.md
+git add internal/usage/source.go internal/usage/source_test.go internal/relay/usage.go internal/proc/proc_test.go docs/specs/2026-09-18-round-usage-design.md docs/plans/2026-09-18-usage-surfaces-r2.md
 git commit -m "fix(usage): wait for the headless stream's trailer before reading (#142)"
 ```
 
