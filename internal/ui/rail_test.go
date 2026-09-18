@@ -48,9 +48,9 @@ func TestCardLinesShapes(t *testing.T) {
 	}{
 		{"blocked", blocked, []string{
 			"▎ webshop r4",
-			"question · 2m",
-			"dirty · 2 consults",
-			"agy · relay/webshop",
+			"▎ question · 2m",
+			"▎ dirty · 2 consults",
+			"▎ agy · relay/webshop",
 		}},
 		{"held", held, []string{
 			"ledger r3",

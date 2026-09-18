@@ -2,8 +2,8 @@
 
  ACTIVE  1                        │ api  round 2   ACTIVE                                                                                   
 ▎  api                         r2 │ planner                                                                                                 
-   working                        │ builder       agy       working                                                                         
-   agy                            │ foreign  %9   claude    working · reviewer                                                              
+▎  working                        │ builder       agy       working                                                                         
+▎  agy                            │ foreign  %9   claude    working · reviewer                                                              
                                   │ foreign  %10  opencode  idle · researcher                                                               
                                   │ tree                                                                                                    
                                   │                                                                                                         

@@ -156,11 +156,14 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 		l4 = append(l4, dimStyle.Render(b.Branch))
 	}
 
-	lines := []string{l1, "   " + strings.Join(l2, sep)}
+	// The gutter runs down every line of the selected card, so the bar
+	// marks the card and not just its name.
+	indent := gutter + "  "
+	lines := []string{l1, indent + strings.Join(l2, sep)}
 	if f := facts(b); len(f) > 0 {
-		lines = append(lines, "   "+strings.Join(f, sep))
+		lines = append(lines, indent+strings.Join(f, sep))
 	}
-	lines = append(lines, "   "+strings.Join(l4, sep))
+	lines = append(lines, indent+strings.Join(l4, sep))
 
 	for i, l := range lines {
 		l = fit(l, width)

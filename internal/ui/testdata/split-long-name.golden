@@ -2,8 +2,8 @@
 
  ACTIVE  1                        │ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  round 1   ACTIVE                                              
 ▎  xxxxxxxxxxxxxxxxxxxxxxxxxxxxr1 │ planner                                                                                                 
-   working                        │ builder       agy       working                                                                         
-   agy                            │ tree                                                                                                    
+▎  working                        │ builder       agy       working                                                                         
+▎  agy                            │ tree                                                                                                    
                                   │                                                                                                         
                                   │  report    terminal    diff    log                                                                      
                                   │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────

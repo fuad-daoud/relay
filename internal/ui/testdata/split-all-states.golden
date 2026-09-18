@@ -2,9 +2,9 @@
 
  NEEDS YOU  1                     │ webshop  round 4   NEEDS YOU                                                        question r4 · 2m ago
 ▎  webshop                     r4 │ planner  %1   claude    idle                                                                            
-   question · 2m                  │ builder  %7   agy       blocked · 2 consults                                                            
-   dirty · 2 consults             │ tree     relay/webshop · dirty                                                                          
-   agy · relay/webshop            │                                                                                                         
+▎  question · 2m                  │ builder  %7   agy       blocked · 2 consults                                                            
+▎  dirty · 2 consults             │ tree     relay/webshop · dirty                                                                          
+▎  agy · relay/webshop            │                                                                                                         
                                   │  report    terminal    diff    log                                                                      
  HELD  1                          │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────
    ledger                      r3 │ %7 · captured 0s ago · 2 lines                                                                          
