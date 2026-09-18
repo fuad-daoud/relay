@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
 
 // region is what a terminal cell shows, for hit-testing (spec §6.1).
 type region int
@@ -79,4 +82,69 @@ func (m Model) railBindingAt(row int) int {
 		return -1
 	}
 	return lines[i].binding
+}
+
+// wheelLines is how far one wheel notch scrolls the pane -- the viewport's
+// own MouseWheelDelta, so a wheel feels the same here as in any bubbles
+// pager.
+const wheelLines = 3
+
+// updateMouse is spec §6.1's table: the wheel scrolls what is under the
+// pointer, a click selects what is under it, focus follows the click.
+func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	r, row, col := m.hit(msg.X, msg.Y)
+	switch msg.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		down := msg.Button == tea.MouseButtonWheelDown
+		switch r {
+		case hitRail:
+			if down {
+				return m.moveCursor(+1)
+			}
+			return m.moveCursor(-1)
+		case hitPane, hitTabs:
+			if !m.paneVisible() {
+				return m, nil
+			}
+			if down {
+				m.detail.vp.LineDown(wheelLines)
+			} else {
+				m.detail.vp.LineUp(wheelLines)
+			}
+			if m.detail.active == tabTerminal {
+				m.detail.follow = m.detail.vp.AtBottom()
+			}
+			return m, nil
+		}
+		return m, nil
+
+	case tea.MouseButtonLeft:
+		switch r {
+		case hitRail:
+			i := m.railBindingAt(row)
+			if i < 0 {
+				return m, nil
+			}
+			m.screen = screenList
+			return m.moveCursor(i - m.list.cursor)
+		case hitTabs:
+			if !m.paneVisible() {
+				return m, nil
+			}
+			m.screen = screenDetail
+			if t := tabAt(col); t >= 0 && t != m.detail.active {
+				return m.switchTab(t)
+			}
+			return m, nil
+		case hitPane:
+			if m.paneVisible() {
+				m.screen = screenDetail
+			}
+			return m, nil
+		}
+	}
+	return m, nil
 }

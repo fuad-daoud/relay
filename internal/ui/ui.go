@@ -46,7 +46,7 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 		opts.Interval = minInterval
 	}
 
-	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err = p.Run()
 	return runResult(ctx, err)
 }

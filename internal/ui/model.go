@@ -218,6 +218,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateKeys(msg)
 
+	case tea.MouseMsg:
+		m.notice = ""
+		return m.updateMouse(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height

@@ -2,8 +2,12 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relay/internal/relay"
 )
 
 func TestTabSpansMatchTheDrawnRow(t *testing.T) {
@@ -99,5 +103,148 @@ func TestRailBindingAt(t *testing.T) {
 	m.list.top = 3
 	if got := m.railBindingAt(0); got != lines[3].binding {
 		t.Errorf("scrolled: row 0 -> %d, want %d", got, lines[3].binding)
+	}
+}
+
+func wheel(x, y int, down bool) tea.MouseMsg {
+	b := tea.MouseButtonWheelUp
+	if down {
+		b = tea.MouseButtonWheelDown
+	}
+	return tea.MouseMsg{X: x, Y: y, Button: b, Action: tea.MouseActionPress}
+}
+
+func click(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+}
+
+func longBody(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func TestWheelOverPaneScrollsWithoutMovingTheCursor(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.tabInFlight = false
+	m.detail.cache[tabReport] = tabContent{loaded: true, body: longBody(200)}
+	m.fillViewport()
+	cursor := m.list.cursor
+	px, py := railWidth+railGap+10, headerRows+20
+	res, _ := m.Update(wheel(px, py, true))
+	m = res.(Model)
+	if m.detail.vp.YOffset != 3 {
+		t.Errorf("one notch down scrolls three lines, got offset %d", m.detail.vp.YOffset)
+	}
+	if m.list.cursor != cursor || m.screen != screenList {
+		t.Error("a wheel over the pane must move neither the cursor nor the focus")
+	}
+	res, _ = m.Update(wheel(px, py, false))
+	if res.(Model).detail.vp.YOffset != 0 {
+		t.Error("one notch up scrolls back")
+	}
+}
+
+func TestWheelOverPaneKeepsTheTerminalFollowRule(t *testing.T) {
+	rows := threeRows()
+	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/001-builder.log"}
+	m := splitModel(t, 140, 40, rows...)
+	m.tabInFlight = false
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = res.(Model)
+	m.tabInFlight = false
+	res, _ = m.Update(tabMsg{name: m.detail.name, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
+	m = res.(Model)
+	px, py := railWidth+railGap+10, headerRows+20
+	res, _ = m.Update(wheel(px, py, false))
+	m = res.(Model)
+	if m.detail.follow {
+		t.Error("a wheel up over the terminal tab stops following")
+	}
+	for i := 0; i < 100 && !m.detail.vp.AtBottom(); i++ {
+		res, _ = m.Update(wheel(px, py, true))
+		m = res.(Model)
+	}
+	if !m.detail.follow {
+		t.Error("wheeling back to the bottom resumes following")
+	}
+}
+
+func TestWheelOverRailMovesTheCursor(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.tabInFlight = false
+	res, _ := m.Update(wheel(3, headerRows+1, true))
+	m = res.(Model)
+	if m.list.cursor != 1 || m.detail.name != m.rows()[1].Name {
+		t.Errorf("wheel down over the rail: cursor %d pane %q", m.list.cursor, m.detail.name)
+	}
+	res, _ = m.Update(wheel(3, headerRows+1, false))
+	if res.(Model).list.cursor != 0 {
+		t.Error("wheel up over the rail moves back")
+	}
+}
+
+func TestClickSelectsCardAndTab(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.tabInFlight = false
+	// Find the rail line of the third binding's name and click it.
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true)
+	target := -1
+	for i, l := range lines {
+		if l.binding == 2 {
+			target = i
+			break
+		}
+	}
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // focus the pane first
+	m = res.(Model)
+	res, cmd := m.Update(click(3, headerRows+target))
+	m = res.(Model)
+	if m.list.cursor != 2 || m.detail.name != m.rows()[2].Name || cmd == nil {
+		t.Errorf("click on a card: cursor %d pane %q cmd %v", m.list.cursor, m.detail.name, cmd != nil)
+	}
+	if m.screen != screenList {
+		t.Error("a click on the rail focuses the rail")
+	}
+	// Click a header line: nothing changes.
+	res, _ = m.Update(click(3, headerRows+0))
+	if res.(Model).list.cursor != 2 {
+		t.Error("a click on a group header selects nothing")
+	}
+	// Click the diff tab.
+	b := m.rows()[2]
+	head := len(m.paneHead(&b))
+	sp := tabSpans()[tabDiff]
+	m.tabInFlight = false
+	res, _ = m.Update(click(railWidth+railGap+sp[0]+1, headerRows+head))
+	m = res.(Model)
+	if m.detail.active != tabDiff || m.screen != screenDetail {
+		t.Errorf("click on the diff tab: active %v screen %v", m.detail.active, m.screen)
+	}
+	// Click the pane body: focus only.
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = res.(Model)
+	res, _ = m.Update(click(railWidth+railGap+10, headerRows+head+6))
+	if res.(Model).screen != screenDetail {
+		t.Error("a click in the pane body focuses the pane")
+	}
+}
+
+func TestClickOnStackListSelectsWithoutOpening(t *testing.T) {
+	m := splitModel(t, 80, 30, threeRows()...)
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true)
+	target := -1
+	for i, l := range lines {
+		if l.binding == 1 {
+			target = i
+			break
+		}
+	}
+	res, _ := m.Update(click(10, headerRows+target))
+	m = res.(Model)
+	if m.list.cursor != 1 || m.screen != screenList {
+		t.Errorf("stack click: cursor %d screen %v", m.list.cursor, m.screen)
 	}
 }
