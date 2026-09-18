@@ -172,6 +172,43 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 	return lines
 }
 
+// compactLine is a binding's one-line card (spec §6.0): gutter, unread
+// slot, name, round, then what · age as far as the width allows. The
+// qualifier gives way first; the name and round always fit.
+func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) string {
+	gutter := " "
+	if selected {
+		if focused {
+			gutter = accentStyle.Render("▎")
+		} else {
+			gutter = dimStyle.Render("▎")
+		}
+	}
+	const unreadSlot = "  "
+	nameStyle := fgStyle.Bold(true)
+	if selected {
+		nameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
+	}
+	round := dimStyle.Render(fmt.Sprintf("r%d", b.Round))
+	head := gutter + unreadSlot + nameStyle.Render(b.Name) + " " + round + " "
+	what, age := whatAge(b, now)
+	var q []string
+	if showState {
+		q = append(q, stateStyle(b.Display).Render(b.Display))
+	}
+	if what != "" {
+		q = append(q, dimStyle.Render(what))
+	}
+	if age != "" {
+		q = append(q, dimStyle.Render(age))
+	}
+	l := fit(head+strings.Join(q, sep), width)
+	if selected {
+		l = selectedBg.Render(l)
+	}
+	return l
+}
+
 // groupOrder is the attention order of the rail's headers.
 var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 
@@ -181,9 +218,14 @@ var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 // on each. cursor is the index in rows of the selected binding. focused is
 // "the rail has focus" (m.screen == screenList), threaded through to
 // cardLines so the selected card's gutter dims when the pane has focus.
-func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int) []railLine {
+// compact emits compactLine's single tagged line per binding instead.
+func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int, compact bool) []railLine {
 	var out []railLine
 	card := func(i int) {
+		if compact {
+			out = append(out, railLine{text: compactLine(rows[i], i == cursor, !attention, now, focused, width), binding: i})
+			return
+		}
 		for _, l := range cardLines(rows[i], i == cursor, !attention, now, focused, width) {
 			out = append(out, railLine{text: l, binding: i})
 		}
@@ -294,7 +336,7 @@ func (m Model) railView(width int) string {
 	case len(m.rows()) == 0:
 		lines = []string{"no bindings"}
 	default:
-		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, cardWidth)
+		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, cardWidth, m.compact)
 		first, last := railSpan(all, m.list.cursor)
 		start := railWindow(m.list.top, first, last, rows, len(all))
 		end := len(all)
@@ -320,7 +362,7 @@ func (m Model) railView(width int) string {
 // railTop re-windows the rail on the cursor's card. Called wherever the
 // cursor, the rows or the row budget changed.
 func (m Model) railTop() int {
-	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth())
+	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
 	first, last := railSpan(all, m.list.cursor)
 	return railWindow(m.list.top, first, last, m.bodyRows(), len(all))
 }

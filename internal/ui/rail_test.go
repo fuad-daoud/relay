@@ -111,7 +111,7 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 		{Name: "a1", Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "a2", Display: "ACTIVE", BuilderKind: "agy"},
 	}
-	lines := railLines(rows, 1, true, railNow, true, railDefault)
+	lines := railLines(rows, 1, true, railNow, true, railDefault, false)
 	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap
 	if len(lines) != 1+3+1+1+3+3+1 {
 		t.Fatalf("%d lines", len(lines))
@@ -127,7 +127,7 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 		t.Errorf("span of a1 = [%d,%d]", first, last)
 	}
 	// Name order: no headers, no gaps, every line tagged.
-	for _, l := range railLines(rows, 0, false, railNow, true, railDefault) {
+	for _, l := range railLines(rows, 0, false, railNow, true, railDefault, false) {
 		if l.binding < 0 {
 			t.Errorf("name order emitted an untagged line %q", plain(l.text))
 		}
@@ -151,6 +151,43 @@ func TestCardGutterDimsWhenRailUnfocused(t *testing.T) {
 	}
 	if !strings.Contains(dim, dimStyle.Render("▎")) || strings.Contains(dim, accentStyle.Render("▎")) {
 		t.Errorf("unfocused rail: gutter must be dim: %q", dim)
+	}
+}
+
+func TestCompactLineShape(t *testing.T) {
+	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
+		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}}
+	l := compactLine(b, true, false, railNow, true, railDefault)
+	if w := lipgloss.Width(l); w != railDefault {
+		t.Errorf("width %d", w)
+	}
+	if p := plain(l); p != "▎ webshop r4 question · 2m" {
+		t.Errorf("compact = %q", p)
+	}
+	// At railDefault, head (14 cols) + "NEEDS YOU · question · 2m" (25 cols)
+	// is 39, past the 34-col budget: fit() truncates the tail, dropping
+	// " · 2m" but keeping the state and what qualifiers.
+	if p := plain(compactLine(b, false, true, railNow, true, railDefault)); !strings.HasPrefix(p, "webshop r4 NEEDS YOU · question") {
+		t.Errorf("name order carries the state: %q", p)
+	}
+	// Narrow: the qualifier is what gives way, the name and round stay.
+	if p := plain(compactLine(b, false, false, railNow, true, railMin)); !strings.HasPrefix(p, "webshop r4") {
+		t.Errorf("at railMin = %q", p)
+	}
+}
+
+func TestRailLinesCompact(t *testing.T) {
+	rows := threeRows()
+	full := railLines(rows, 0, true, railNow, true, railDefault, false)
+	compact := railLines(rows, 0, true, railNow, true, railDefault, true)
+	// 3 headers + 3 gaps + 3 one-line cards.
+	if len(compact) != 9 {
+		t.Errorf("compact rail has %d lines, want 9 (full has %d)", len(compact), len(full))
+	}
+	for i, l := range compact {
+		if l.binding >= 0 && lipgloss.Width(l.text) != railDefault {
+			t.Errorf("line %d width %d", i, lipgloss.Width(l.text))
+		}
 	}
 }
 

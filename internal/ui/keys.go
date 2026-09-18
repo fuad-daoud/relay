@@ -19,6 +19,10 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d = -railStep
 		}
 		return m.setRail(m.railCols + d)
+	case "c":
+		m.compact = !m.compact
+		m.list.top = m.railTop()
+		return m, nil
 	case "1", "2", "3", "4":
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))

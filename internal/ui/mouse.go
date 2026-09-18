@@ -84,7 +84,7 @@ func (m Model) hit(x, y int) (region, int, int) {
 // row (0 = the first drawn line, m.list.top), or -1 for a header, a gap
 // or past the end.
 func (m Model) railBindingAt(row int) int {
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth())
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
 	i := m.list.top + row
 	if i < 0 || i >= len(lines) {
 		return -1

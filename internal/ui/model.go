@@ -51,6 +51,8 @@ type Model struct {
 	railCols int
 	// drag is true while a press on the rail│pane divider is held down.
 	drag bool
+	// compact is true for the one-line-per-binding rail; c toggles it.
+	compact bool
 	// now is the clock every age on screen is measured against. time.Now
 	// in production; fixed in tests so "2m ago" is deterministic.
 	now func() time.Time
@@ -407,14 +409,19 @@ func (m Model) footerView() string {
 	if !m.sort {
 		order = "name"
 	}
+	compactLabel := "compact"
+	if m.compact {
+		compactLabel = "cards"
+	}
+	compactKey := key("c", compactLabel)
 	var keys []string
 	switch {
 	case m.layout() == layoutSplit && m.screen == screenList:
-		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), key("q", "quit")}
+		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit:
-		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), key("q", "quit")}
+		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.screen == screenList:
-		keys = []string{key("↑↓", "move"), key("⏎", "open"), key("s", "sort: "+order), key("q", "quit")}
+		keys = []string{key("↑↓", "move"), key("⏎", "open"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	default:
 		keys = []string{key("esc", "back"), key("tab", "next pane"), key("1-4", "pane"), key("q", "quit")}
 	}

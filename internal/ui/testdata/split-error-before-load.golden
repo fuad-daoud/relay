@@ -37,4 +37,4 @@ cannot reach herdr — see the error│
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         
-↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   q quit                                   ! refresh failed (retrying)
+↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   c compact   q quit                       ! refresh failed (retrying)

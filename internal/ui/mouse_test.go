@@ -90,7 +90,7 @@ func TestHitShiftsUnderAnErrorBlock(t *testing.T) {
 
 func TestRailBindingAt(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth(), false)
 	for i, l := range lines {
 		if got := m.railBindingAt(i); got != l.binding {
 			t.Errorf("line %d: railBindingAt = %d, tag = %d (%q)", i, got, l.binding, strings.TrimSpace(stripANSI(l.text)))
@@ -190,7 +190,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.tabInFlight = false
 	// Find the rail line of the third binding's name and click it.
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth(), false)
 	target := -1
 	for i, l := range lines {
 		if l.binding == 2 {
@@ -234,7 +234,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 
 func TestClickOnStackListSelectsWithoutOpening(t *testing.T) {
 	m := splitModel(t, 80, 30, threeRows()...)
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth(), false)
 	target := -1
 	for i, l := range lines {
 		if l.binding == 1 {

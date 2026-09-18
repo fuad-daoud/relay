@@ -300,6 +300,25 @@ func TestRailResizeKeys(t *testing.T) {
 	}
 }
 
+func TestCompactToggleKeepsSelection(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = res.(Model)
+	name := m.rows()[m.list.cursor].Name
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	if !m.compact || m.rows()[m.list.cursor].Name != name || m.detail.name != name {
+		t.Errorf("c: compact %v cursor %q pane %q", m.compact, m.rows()[m.list.cursor].Name, m.detail.name)
+	}
+	if !strings.Contains(stripANSI(m.View()), "c cards") {
+		t.Error("footer names the toggle's other state")
+	}
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if res.(Model).compact {
+		t.Error("c twice is identity")
+	}
+}
+
 func TestHeaderGatesAndClock(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
