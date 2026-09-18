@@ -105,3 +105,37 @@ Before finalizing any architectural plan, verify:
 7. Could a developer unfamiliar with the system implement this plan?
 
 If any answer is "no," revise before presenting the plan.
+
+## Handing off
+
+A finished plan is a file, and a builder runs it -- not you. Write the plan to
+disk and send it with `relay send`. Never dispatch a plan to a subagent in
+your own session: that skips the worktree, the round log, the diff capture and
+the report handoff, and nothing done inline appears in `relay status`.
+
+- **Bind before you send.** `relay bind` puts one builder on the current
+  tree; `relay add --name <name>` puts another builder on its own git
+  worktree. `relay status` shows what is already bound.
+- **Headless by default.** Pass `--headless` unless a human will watch the
+  pane or a step is expected to raise a dialog. A headless builder takes no
+  dialogs (`relay answer` is refused) and keeps no memory across rounds, so
+  every plan you send must stand alone -- which the Output Structure above
+  already guarantees. A step that needs a mid-round decision is a reason to
+  split the plan, not to use a pane.
+- **Parallelism is instances, not harnesses.** Several builders are several
+  `relay add` bindings of one harness, each on its own worktree. Never bind
+  two harness kinds to two tasks as a way of parallelising. Omit `--builder`
+  and let the configured order pick; `relay policy` explains the current
+  pick and why.
+- **A usage limit gates the provider.** When a builder reports one, run
+  `relay unavailable <token> --reason '<what it said>'`; relay switches the
+  binding to the next ungated candidate and resends the round. Do not work
+  around a gated provider by naming another token. `relay available
+  <provider>` when it lifts.
+- **Tell the builder to stop rather than improvise.** Every plan says so: if
+  a step is impossible as written or contradicts the code, halt and report.
+  A halt that surfaces a design error is worth more than a green suite that
+  bent a test to fit.
+- **Do not trust the report.** When relay delivers it, run the project's own
+  check command yourself and compare the diff against the plan's declared
+  scope before calling the round done.
