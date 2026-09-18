@@ -229,7 +229,7 @@ inside every pane it manages, so it has to be run from inside one.
   branch      the binding's worktree branch; absent for a --cwd binding
   waiting     set when the binding is stalled on a human: cause, line, since, hint
   ```
-- `relay log NAME` — the binding's append-only round log.
+- `relay log NAME` — the binding's append-only round log. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
 - `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
   tokens and cost across bindings, archived ones included.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
@@ -565,6 +565,7 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 - `tree` — `binding` (the default) or `none` (which `relay ask` refuses today).
 - `extra_args` — appended verbatim after what relay renders.
 - `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
+- `dialog_patterns` — extra regexes appended to the harness defaults, matched against the builder's visible screen only when herdr reports its status as `unknown`; a match refuses `send` as blocked; extend-only.
 
 A file that does not validate stops every relay command with a message naming the entry; a missing file is zero candidates.
 

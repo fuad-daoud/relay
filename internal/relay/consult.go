@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -35,7 +36,9 @@ const (
 	consultGrace = 60 * time.Second
 )
 
-const consultNudgePrompt = `You went idle without writing your findings.
+const consultNudgeFingerprint = "You went idle without writing your findings."
+
+const consultNudgePrompt = consultNudgeFingerprint + `
 
 Write them to: %s
 
@@ -127,7 +130,7 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 		if idle && b.Consults[i].NudgedAt.IsZero() {
 			text := fmt.Sprintf(consultNudgePrompt, b.Consults[i].FindingsPath)
-			if err := promptWithRetry(ctx, rt, agent.PaneID, text); err == nil {
+			if err := promptWithRetry(ctx, rt, agent.PaneID, text, consultNudgeFingerprint); err == nil || errors.Is(err, ErrPromptLate) {
 				b.Consults[i].NudgedAt = now
 				continue
 			}

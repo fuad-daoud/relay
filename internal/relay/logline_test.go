@@ -37,3 +37,26 @@ func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
 		t.Errorf("second line must end with usage.Line: %q", lines[1])
 	}
 }
+
+func TestLogLineLateSuffix(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p/004-report.md", Note: "nudge"}
+	notLate := base
+	notLate.Late = false
+	late := base
+	late.Late = true
+
+	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_builder plan      /p/004-report.md nudge"
+	if got := LogLine(notLate); got != wantNotLate {
+		t.Errorf("\n got  %q\n want %q", got, wantNotLate)
+	}
+
+	gotLate := LogLine(late)
+	wantLate := wantNotLate + " late"
+	if gotLate != wantLate {
+		t.Errorf("\n got  %q\n want %q", gotLate, wantLate)
+	}
+	if !strings.HasSuffix(gotLate, "nudge late") {
+		t.Errorf("expected suffix %q, got %q", "nudge late", gotLate)
+	}
+}

@@ -198,10 +198,14 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		} else {
 			text := fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
 
-			if err := promptWithRetry(ctx, rt, pane, text); err != nil {
-				consult.State = store.ConsultSilent
-				consult.Note = "prompt failed: " + brief(err)
-				spawnErr = fmt.Errorf("prompt consult: %w", err)
+			if err := promptWithRetry(ctx, rt, pane, text, consult.FindingsPath); err != nil {
+				if errors.Is(err, ErrPromptLate) {
+					consult.State = store.ConsultRunning
+				} else {
+					consult.State = store.ConsultSilent
+					consult.Note = "prompt failed: " + brief(err)
+					spawnErr = fmt.Errorf("prompt consult: %w", err)
+				}
 			} else {
 				consult.State = store.ConsultRunning
 			}

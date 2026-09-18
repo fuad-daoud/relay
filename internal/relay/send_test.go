@@ -122,10 +122,53 @@ func TestSendLogsThePlan(t *testing.T) {
 	}
 }
 
-func TestSendRetriesOnceOnStall(t *testing.T) {
+func TestSendStallThenFingerprintOnScreenIsLate(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
 	f.stalls = 1
+	planPath := rt.Store.PlanPath("webshop", 1)
+	f.readOut = "previous output\n" + planPath + "\nsome other line"
+	f.prompts = nil
+	f.reads = nil
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("res.Round = %d, want 1", res.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("got %d accepted prompts, want 0 (prompt was not re-sent)", len(f.prompts))
+	}
+	if len(f.reads) != 1 {
+		t.Fatalf("got %d reads, want 1", len(f.reads))
+	}
+	if f.reads[0].Source != "visible" {
+		t.Errorf("read source = %q, want visible", f.reads[0].Source)
+	}
+	if f.reads[0].Lines != lateScanLines {
+		t.Errorf("read lines = %d, want %d", f.reads[0].Lines, lateScanLines)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planEntry := entries[len(entries)-1]
+	if planEntry.Kind != store.KindPlan {
+		t.Fatalf("last entry kind = %v, want plan", planEntry.Kind)
+	}
+	if !planEntry.Late {
+		t.Error("planEntry.Late = false, want true")
+	}
+}
+
+func TestSendStallWithoutFingerprintRetries(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.stalls = 1
+	f.readOut = "some other screen"
 	f.prompts = nil
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
@@ -133,6 +176,111 @@ func TestSendRetriesOnceOnStall(t *testing.T) {
 	}
 	if len(f.prompts) != 1 {
 		t.Fatalf("got %d accepted prompts, want 1", len(f.prompts))
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planEntry := entries[len(entries)-1]
+	if planEntry.Late {
+		t.Error("planEntry.Late = true, want false")
+	}
+}
+
+func TestSendRetriesOnceOnStall(t *testing.T) {
+	TestSendStallWithoutFingerprintRetries(t)
+}
+
+func TestSendStallReadErrorStillRetries(t *testing.T) {
+	f := &fakeHerdr{
+		stalls:  1,
+		readErr: errors.New("cannot read visible screen"),
+	}
+	rt, _ := seedBound(t, f)
+	f.prompts = nil
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("got %d accepted prompts, want 1 (retry should have succeeded)", len(f.prompts))
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planEntry := entries[len(entries)-1]
+	if planEntry.Late {
+		t.Error("planEntry.Late = true, want false when read error fell through to retry")
+	}
+}
+
+func TestSendUnknownBuilderAtDialogIsBlocked(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	f.agents[1].Status = herdr.StatusUnknown
+	f.readOut = "Do you want to proceed?\n❯ 1. Yes"
+	f.prompts = nil
+	f.reads = nil
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	if !errors.Is(err, ErrBuilderBlocked) {
+		t.Fatalf("Send err = %v, want ErrBuilderBlocked", err)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("prompts = %d, want 0", len(f.prompts))
+	}
+	if len(f.reads) != 1 {
+		t.Fatalf("reads = %d, want 1", len(f.reads))
+	}
+	if f.reads[0].Source != "visible" || f.reads[0].Lines != dialogScanLines {
+		t.Errorf("read = %+v, want visible with %d lines", f.reads[0], dialogScanLines)
+	}
+
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Round != b.Round {
+		t.Errorf("round = %d, want %d (round not advanced)", after.Round, b.Round)
+	}
+}
+
+func TestSendUnknownBuilderWithoutDialogSends(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents[1].Status = herdr.StatusUnknown
+	f.readOut = "$ "
+	f.prompts = nil
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Errorf("prompts = %d, want 1", len(f.prompts))
+	}
+}
+
+func TestSendIdleBuilderNeverScansForDialog(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	f.agents[1].Status = herdr.StatusIdle
+	f.readOut = "Do you want to proceed?\n❯ 1. Yes"
+	f.prompts = nil
+	f.reads = nil
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(f.prompts) != 1 {
+		t.Errorf("prompts = %d, want 1", len(f.prompts))
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("reads = %d, want 0", len(f.reads))
 	}
 }
 
@@ -163,7 +311,7 @@ func TestPromptRetryReportsANonStallFailureAsItself(t *testing.T) {
 	f := &fakeHerdr{stalls: 1, promptErr: herdr.ErrAgentBlocked}
 	rt, _ := seedBound(t, f)
 
-	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text")
+	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text", "")
 	if err == nil {
 		t.Fatal("a failing retry must surface an error")
 	}
@@ -184,7 +332,7 @@ func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
 	f := &fakeHerdr{stalls: 2}
 	rt, _ := seedBound(t, f)
 
-	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text")
+	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text", "")
 	if err == nil || !strings.Contains(err.Error(), "stalled twice") {
 		t.Fatalf("err = %v, want a stalled-twice error", err)
 	}

@@ -16,6 +16,7 @@ func queuedBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 
 	entry := store.LogEntry{
 		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Path:    "/x/001-report.md",
 		Payload: "Builder finished round 1. Report: /x/001-report.md",
 	}
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -81,6 +82,37 @@ func TestDeliverInjectsWhenIdleAndUnfocused(t *testing.T) {
 	}
 	if len(f.prompts) != 1 || f.prompts[0].Target != "w2:p3" {
 		t.Fatalf("prompts = %+v", f.prompts)
+	}
+
+	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || pending {
+		t.Errorf("delivery must confirm the log entry: pending=%v err=%v", pending, err)
+	}
+}
+
+func TestDeliverStallLateConfirmsOnce(t *testing.T) {
+	f := &fakeHerdr{stalls: 1}
+	rt, b := queuedBinding(t, f)
+	pendingEntry, ok, err := rt.Store.PendingForPlanner(b.Name)
+	if err != nil || !ok {
+		t.Fatalf("PendingForPlanner: ok=%v, err=%v", ok, err)
+	}
+	f.readOut = "screen content\n" + pendingEntry.Path + "\nmore screen content"
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+	f.reads = nil
+
+	_, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.Delivered {
+		t.Fatalf("want delivered, got %+v", got)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("prompts = %d, want 0 (retry should not have fired)", len(f.prompts))
+	}
+	if len(f.reads) != 1 || f.reads[0].Source != "visible" {
+		t.Fatalf("reads = %+v, want 1 visible read", f.reads)
 	}
 
 	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || pending {

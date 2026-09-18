@@ -19,6 +19,9 @@ const logLineIndent = 21
 func LogLine(e store.LogEntry) string {
 	first := fmt.Sprintf("%s  round %-3d %-10s %-9s %s %s",
 		e.TS.Local().Format("2006-01-02 15:04:05"), e.Round, e.Direction, e.Kind, e.Path, e.Note)
+	if e.Late {
+		first += " late"
+	}
 	if e.Usage == nil {
 		return first
 	}

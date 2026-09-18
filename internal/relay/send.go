@@ -4,12 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// ErrPromptLate is returned by promptWithRetry in place of nil when the first
+// stall was contradicted by the screen. Every caller treats it as success and
+// records/logs late.
+var ErrPromptLate = errors.New("prompt landed late")
+
+// lateScanLines is how many lines are read from the visible source when
+// confirming a fingerprint.
+const lateScanLines = 40
 
 // ErrBuilderBlocked reports that the builder is sitting at a dialog, so a plan
 // cannot be submitted until the planner answers it with `relay answer`.
@@ -141,6 +152,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 
 		text := composePrompt(b, planPath, reportPath, donePath)
 
+		late := false
 		if b.Builder.Headless() {
 			started, err := startRound(ctx, rt, b, text)
 			if err != nil {
@@ -157,17 +169,29 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 				return err
 			}
 			b = started
-		} else if err := promptWithRetry(ctx, rt, builder.PaneID, text); err != nil {
-			if errors.Is(err, herdr.ErrAgentBlocked) {
-				return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
+		} else {
+			if builder.Status == herdr.StatusUnknown {
+				patterns := dialogPatterns(rt, builder.Kind, b.BuilderCandidate)
+				if dialogGuard(ctx, rt, builder.PaneID, patterns) {
+					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
+				}
 			}
-			return fmt.Errorf("prompt builder: %w", err)
+
+			if err := promptWithRetry(ctx, rt, builder.PaneID, text, planPath); err != nil {
+				if errors.Is(err, ErrPromptLate) {
+					late = true
+				} else if errors.Is(err, herdr.ErrAgentBlocked) {
+					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
+				} else {
+					return fmt.Errorf("prompt builder: %w", err)
+				}
+			}
 		}
 
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPlan,
-			Path: planPath, Confirmed: true,
+			Path: planPath, Confirmed: true, Late: late,
 		}
 		if err := tx.AppendLog(name, entry); err != nil {
 			return err
@@ -212,10 +236,19 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 // promptWithRetry retries once past herdr's five second stall detection, then
 // gives up. It never fires a third time: a double-submitted plan means two
 // builders' worth of edits, which is worse than a stalled round.
-func promptWithRetry(ctx context.Context, rt Runtime, target, text string) error {
+func promptWithRetry(ctx context.Context, rt Runtime, target, text, fingerprint string) error {
 	err := rt.Herdr.Prompt(ctx, target, text)
 	if !errors.Is(err, herdr.ErrPromptStalled) {
 		return err
+	}
+
+	if fingerprint != "" {
+		screen, rerr := rt.Herdr.ReadAgentSource(ctx, target, "visible", lateScanLines)
+		if rerr != nil {
+			slog.Warn("late check: screen unreadable", "target", target, "err", rerr)
+		} else if strings.Contains(screen, fingerprint) {
+			return ErrPromptLate
+		}
 	}
 
 	if retryErr := rt.Herdr.Prompt(ctx, target, text); retryErr != nil {

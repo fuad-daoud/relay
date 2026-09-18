@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,6 +22,10 @@ const scrapeLines = 200
 // writing its report file.
 const nudgeNote = "nudge"
 
+// nudgeFingerprint is the first line of nudgePrompt, used to detect whether
+// a stalled prompt actually landed on screen.
+const nudgeFingerprint = "You went idle without finishing."
+
 // startGrace is how long after a plan was handed over relay refuses to nudge,
 // no matter what herdr reports. A builder is not "idle" seconds after being
 // prompted -- it is starting, and herdr's view of its status lags the prompt.
@@ -38,7 +43,7 @@ const nudgeGrace = 60 * time.Second
 
 // nudgePrompt is the one reminder relay sends when a builder went idle without
 // finishing. It names both files: the report and the completion marker.
-const nudgePrompt = `You went idle without finishing.
+const nudgePrompt = nudgeFingerprint + `
 Write your report to %s if you have not, then create the empty file %s as
 your last action, and reply with only the report path.`
 
@@ -519,14 +524,19 @@ func builderQuiescent(ctx context.Context, rt Runtime, b store.Binding, nudgedAt
 }
 
 func nudgeBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reportPath, donePath string) (store.Binding, error) {
-	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, donePath)); err != nil {
-		return b, fmt.Errorf("nudge builder: %w", err)
+	late := false
+	if err := promptWithRetry(ctx, rt, Target(b.Builder), fmt.Sprintf(nudgePrompt, reportPath, donePath), nudgeFingerprint); err != nil {
+		if errors.Is(err, ErrPromptLate) {
+			late = true
+		} else {
+			return b, fmt.Errorf("nudge builder: %w", err)
+		}
 	}
 
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: b.Round,
 		Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: reportPath, Note: nudgeNote, Confirmed: true,
+		Path: reportPath, Note: nudgeNote, Confirmed: true, Late: late,
 	}
 	if err := tx.AppendLog(b.Name, entry); err != nil {
 		return b, err

@@ -66,6 +66,7 @@ type LogEntry struct {
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 	Confirmed   bool       `json:"confirmed"`
 	Note        string     `json:"note,omitempty"`
+	Late        bool       `json:"late,omitempty"`
 
 	// Commits and Tree are the round's commit facts, on diff entries only
 	// (#130): commits added since the round's baseline HEAD, and whether the
