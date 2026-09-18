@@ -1,6 +1,9 @@
 package usage
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMoney(t *testing.T) {
 	cases := []struct {
@@ -91,6 +94,49 @@ func TestLine(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := Line(c.u); got != c.want {
+			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestParts(t *testing.T) {
+	cases := []struct {
+		name string
+		u    Usage
+		want []string
+	}{
+		{
+			name: "measured",
+			u: Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
+				Tokens: Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: Cost{USD: 4.71, Basis: Measured}, Samples: 1},
+			want: []string{"claude-sonnet-5", "9m", "in 15.0M", "cache 100%", "out 55k", "$4.71"},
+		},
+		{
+			name: "unknown: the model is not repeated in the note",
+			u: Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 6 * 60_000,
+				Tokens: Tokens{In: 100_000, CacheRead: 3_000_000, Out: 251}, Cost: Cost{Basis: Unknown}, Samples: 2,
+				Note: "no price for anthropic/claude-sonnet-5"},
+			want: []string{"claude-sonnet-5", "6m", "in 3.1M", "cache 97%", "out 251", "unknown: no price"},
+		},
+		{
+			name: "unknown, no samples, other note",
+			u:    Usage{Harness: "agy", Provider: "google", Model: "gemini-3.8-flash-high", DurationMS: 60_000, Cost: Cost{Basis: Unknown}, Note: "agy keeps no usage record"},
+			want: []string{"gemini-3.8-flash-high", "1m", "unknown: agy keeps no usage record"},
+		},
+		{
+			name: "adopted builder: harness stands in for the model",
+			u:    Usage{Harness: "claude", Cost: Cost{Basis: Unknown}, Note: "shared cwd"},
+			want: []string{"claude", "unknown: shared cwd"},
+		},
+		{
+			name: "no prompt tokens: no cache part",
+			u:    Usage{Model: "m", Tokens: Tokens{Out: 5}, Cost: Cost{USD: 0.01, Basis: Measured}, Samples: 1},
+			want: []string{"m", "in 0", "out 5", "$0.01"},
+		},
+	}
+	for _, c := range cases {
+		got := Parts(c.u)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
 			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
 		}
 	}

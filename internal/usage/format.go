@@ -84,3 +84,36 @@ func Line(u Usage) string {
 	parts = append(parts, money)
 	return strings.Join(parts, "  ")
 }
+
+// Parts is the round as short, separable parts for a surface that joins
+// them with its own separator and already names the harness elsewhere
+// (the ui's binding block): model (harness when there is none), duration,
+// "in N", "cache NN%", "out N", and the cost word. An unknown note that
+// ends in " for <provider>/<model>" loses that suffix -- the model is the
+// first part. Empty parts are omitted.
+func Parts(u Usage) []string {
+	var parts []string
+	switch {
+	case u.Model != "":
+		parts = append(parts, u.Model)
+	case u.Harness != "":
+		parts = append(parts, u.Harness)
+	}
+	if d := ShortDuration(u.DurationMS); d != "" {
+		parts = append(parts, d)
+	}
+	if u.Samples > 0 {
+		prompt := u.Tokens.In + u.Tokens.CacheRead + u.Tokens.CacheWrite
+		parts = append(parts, "in "+ShortTokens(prompt))
+		if prompt > 0 {
+			parts = append(parts, fmt.Sprintf("cache %.0f%%", u.Tokens.CacheRatio()*100))
+		}
+		parts = append(parts, "out "+ShortTokens(u.Tokens.Out))
+	}
+	money := Money(u.Cost)
+	if u.Cost.Basis == Unknown && !u.Cost.Plan && u.Note != "" {
+		note := strings.TrimSuffix(u.Note, " for "+u.Provider+"/"+u.Model)
+		money += ": " + note
+	}
+	return append(parts, money)
+}

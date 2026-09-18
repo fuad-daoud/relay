@@ -78,7 +78,13 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	// usage and spend mirror `relay status`'s rows (#142): the newest
 	// round's line, then the binding's total. Both only when recorded.
 	if b.LastUsage != nil {
-		rows = append(rows, label("usage")+usage.Line(*b.LastUsage))
+		parts := usage.Parts(*b.LastUsage)
+		styled := make([]string, len(parts))
+		for i, p := range parts {
+			styled[i] = dimStyle.Render(p)
+		}
+		styled[len(styled)-1] = fgStyle.Render(parts[len(parts)-1]) // the cost word is the point
+		rows = append(rows, label("usage")+strings.Join(styled, sep))
 	}
 	if b.Spend != nil {
 		rows = append(rows, label("spend")+usage.SpendLine(*b.Spend))

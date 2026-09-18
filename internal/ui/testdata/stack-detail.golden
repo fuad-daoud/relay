@@ -4,7 +4,7 @@ webshop  round 4   NEEDS YOU                                question r4 · 2m ag
 planner  %1   claude    idle                                                    
 builder  %7   agy       blocked · 2 consults                                    
 tree     relay/webshop · dirty                                                  
-usage    claude/anthropic/claude-sonnet-5  9m  in 15.1M (cache 100%)  out 55k  $
+usage    claude-sonnet-5 · 9m · in 15.1M · cache 100% · out 55k · $4.71         
 spend    3 rounds +2c · $9.40 · 1 unknown                                       
                                                                                 
  report    terminal    diff    log                                              

@@ -372,8 +372,8 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
 	head := m.paneHead(&b)
 	joined := stripANSI(strings.Join(head, "\n"))
-	if !strings.Contains(joined, "usage    "+usage.Line(*b.LastUsage)) {
-		t.Errorf("no usage row:\n%s", joined)
+	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 15.0M · cache 100% · out 55k · $4.71") {
+		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
 	}
 	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
 		t.Errorf("no spend row:\n%s", joined)

@@ -4,7 +4,7 @@
 ▎  webshop                     r4 │ planner  %1   claude    idle                                                                            
 ▎  question · 2m                  │ builder  %7   agy       blocked · 2 consults                                                            
 ▎  dirty · 2 consults · $9.40 · 1 │ tree     relay/webshop · dirty                                                                          
-▎  agy · relay/webshop            │ usage    claude/anthropic/claude-sonnet-5  9m  in 15.1M (cache 100%)  out 55k  $4.71                    
+▎  agy · relay/webshop            │ usage    claude-sonnet-5 · 9m · in 15.1M · cache 100% · out 55k · $4.71                                 
                                   │ spend    3 rounds +2c · $9.40 · 1 unknown                                                               
  HELD  1                          │                                                                                                         
    ledger                      r3 │  report    terminal    diff    log                                                                      

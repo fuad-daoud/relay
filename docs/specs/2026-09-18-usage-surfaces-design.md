@@ -77,6 +77,12 @@ func Sum(us []Usage, isConsult []bool) Spend
 // non-zero. Zero rounds and zero consults: "no rounds".
 func SpendLine(s Spend) string
 
+// Parts is the round as separable parts for a surface with its own
+// separator that names the harness elsewhere (the ui block): model (or
+// harness), duration, "in N", "cache NN%", "out N", cost word with an
+// unknown note minus any " for <provider>/<model>" suffix.
+func Parts(u Usage) []string
+
 // MoneyShort is SpendLine without the rounds part, for the rail card:
 // "$1.23 · ~$0.40 · 2 unknown". "" when nothing is non-zero.
 func MoneyShort(s Spend) string
@@ -130,9 +136,14 @@ money is not glance information.
   when `b.Spend != nil` and the string is non-empty. Same line as `dirty`
   / `2 consults` / `switched 2x`, same separator. The compact line is
   unchanged (it carries no facts).
-- **Pane block:** two rows after `tree`, mirroring `relay status`:
-  `usage    <usage.Line(LastUsage)>` and `spend    <SpendLine(Spend)>`,
-  each only when non-nil. (Amended 2026-09-18 after the first hands-on
+- **Pane block:** two rows after `tree`, mirroring `relay status`'s
+  rows in the block's own idiom: `usage    <usage.Parts(LastUsage)
+  joined by " · ">` -- model, duration, `in N`, `cache NN%`, `out N`,
+  cost word, the note's `for <provider>/<model>` suffix dropped because
+  the model is the first part and the `builder` row already names the
+  harness -- and `spend    <SpendLine(Spend)>`, each only when non-nil.
+  (The second hands-on check found `usage.Line` overflowing the pane;
+  `Parts` is what a narrow, `·`-separated row needs.) (Amended 2026-09-18 after the first hands-on
   check: the original placement, a dim string in the header bar next to
   the clock, was not found by the human looking for it. The block is
   where the binding's facts live; the header is for gates and the clock.)
