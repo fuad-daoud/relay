@@ -161,6 +161,12 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 // Every SetContent goes through here so a resize re-wraps.
 func (m *Model) fillViewport() {
 	y := m.detail.vp.YOffset
+	if m.detail.name == "" {
+		// Nothing is pointed at, so nothing is loading: an empty fleet's
+		// pane stays blank rather than promising content.
+		m.detail.vp.SetContent("")
+		return
+	}
 	c := m.detail.cache[m.detail.active]
 	m.detail.vp.SetContent(wrapBody(bodyOf(m.detail.active, c, m.detail.headless), m.detail.vp.Width))
 	m.detail.vp.SetYOffset(y)
