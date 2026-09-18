@@ -218,13 +218,13 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 }
 
 // setRail stores a new rail width, clamped, and re-fits the pane to the
-// width that leaves. Task 3 adds the prefs save here.
+// width that leaves.
 func (m Model) setRail(cols int) (tea.Model, tea.Cmd) {
 	m.railCols = m.clampRail(cols)
 	m.detail.vp.Width = m.paneWidth()
 	m.fillViewport()
 	m.list.top = m.railTop()
-	return m, nil
+	return m, m.save()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -318,6 +318,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.t == tabTerminal && m.detail.follow {
 			m.detail.vp.GotoBottom()
 		}
+		return m, nil
+
+	case prefsSavedMsg:
 		return m, nil
 	}
 

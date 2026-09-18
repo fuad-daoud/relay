@@ -1396,8 +1396,14 @@ func cmdUI(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return err
+	}
+
 	return ui.Run(ctx, rt, ui.Options{
-		Interval: *interval,
+		Interval:  *interval,
+		PrefsPath: filepath.Join(root, "ui.json"),
 	})
 }
 

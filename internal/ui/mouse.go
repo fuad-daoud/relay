@@ -109,7 +109,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseActionRelease:
 		if m.drag {
 			m.drag = false
-			return m, nil // Task 3: save prefs here
+			return m, m.save()
 		}
 		return m, nil
 	case tea.MouseActionPress:

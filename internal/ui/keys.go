@@ -12,7 +12,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sort = !m.sort
 		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
 		m.list.top = m.railTop()
-		return m, nil
+		return m, m.save()
 	case "<", ">":
 		d := railStep
 		if msg.String() == "<" {
@@ -22,7 +22,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.compact = !m.compact
 		m.list.top = m.railTop()
-		return m, nil
+		return m, m.save()
 	case "1", "2", "3", "4":
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))
