@@ -47,6 +47,12 @@ type tabContent struct {
 	at     time.Time // when the body was read; the source line's "13:38" and "captured 1s ago"
 }
 
+// headlessLogLines caps how much of a round log the terminal tab holds:
+// the whole log for any round a human would read, a bounded body for a
+// runaway one. The pane-builder branch still reads viewport-height lines
+// -- that one is a screen, this one is a file.
+const headlessLogLines = 5000
+
 type tickMsg time.Time
 
 type statusMsg struct {
@@ -188,8 +194,8 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				}
 			}
 			body := strings.TrimRight(string(data), "\n")
-			if all := strings.Split(body, "\n"); len(all) > lines {
-				body = strings.Join(all[len(all)-lines:], "\n")
+			if all := strings.Split(body, "\n"); len(all) > headlessLogLines {
+				body = strings.Join(all[len(all)-headlessLogLines:], "\n")
 			}
 			return tabMsg{
 				name: name,

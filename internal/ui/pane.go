@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -157,12 +158,25 @@ func (m Model) sourceLine() string {
 	case tabReport:
 		s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
 	case tabTerminal:
-		pane := ""
-		if r := row(m.report, m.detail.name); r != nil {
-			pane = r.BuilderPane
-		}
 		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
-		s = fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, m.now()), n)
+		r := row(m.report, m.detail.name)
+		if m.detail.headless {
+			src := "headless"
+			if r != nil && r.Headless != nil && r.Headless.LogPath != "" {
+				src += " · " + filepath.Base(r.Headless.LogPath)
+			}
+			mode := "following"
+			if !m.detail.follow {
+				mode = "scrolled"
+			}
+			s = fmt.Sprintf("%s · %d lines · %s", src, n, mode)
+		} else {
+			pane := ""
+			if r != nil {
+				pane = r.BuilderPane
+			}
+			s = fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, m.now()), n)
+		}
 	case tabDiff:
 		files, add, del := diffStat(c.body)
 		unit := "files"

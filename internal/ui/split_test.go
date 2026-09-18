@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,58 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 	if strings.Contains(f, "q quit") {
 		t.Errorf("the key list must be the side that gives way: %q", f)
+	}
+}
+
+func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
+	rows := threeRows()
+	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
+	m := splitModel(t, 140, 40, rows...)
+	// Attention order puts webshop (NEEDS YOU) first; make api the one under
+	// test by moving to it, then to the terminal tab.
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = res.(Model)
+	m.tabInFlight = false
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = res.(Model)
+	m.tabInFlight = false
+	if !m.detail.follow {
+		t.Fatal("a fresh terminal tab must follow")
+	}
+	body := func(n int) string {
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&b, "line %d\n", i)
+		}
+		return strings.TrimRight(b.String(), "\n")
+	}
+	res, _ = m.Update(tabMsg{name: "api", t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
+	m = res.(Model)
+	if !m.detail.vp.AtBottom() {
+		t.Error("following: a refresh must land at the bottom")
+	}
+	// Scroll up: follow clears.
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // focus the pane
+	m = res.(Model)
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = res.(Model)
+	if m.detail.follow {
+		t.Error("scrolling up must stop following")
+	}
+	y := m.detail.vp.YOffset
+	res, _ = m.Update(tabMsg{name: "api", t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
+	m = res.(Model)
+	if m.detail.vp.YOffset != y {
+		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, m.detail.vp.YOffset)
+	}
+	// Back to the bottom: follow resumes. The viewport's default keymap has
+	// no Home/End binding, so page down repeatedly until AtBottom().
+	for i := 0; i < 200 && !m.detail.vp.AtBottom(); i++ {
+		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = res.(Model)
+	}
+	if !m.detail.follow || !m.detail.vp.AtBottom() {
+		t.Error("scrolling to the bottom must resume following")
 	}
 }
 

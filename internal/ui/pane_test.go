@@ -125,6 +125,19 @@ func TestSourceLinePerTab(t *testing.T) {
 	if got := stripANSI(m.sourceLine()); got != "%7 · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
+	b.Headless = &relay.HeadlessInfo{LogPath: "/x/002-builder.log"}
+	m.report = relay.Report{Bindings: []relay.BindingStatus{b}}
+	m.detail.headless = true
+	m.detail.follow = true
+	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · following" {
+		t.Errorf("headless following source = %q", got)
+	}
+	m.detail.follow = false
+	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · scrolled" {
+		t.Errorf("headless scrolled source = %q", got)
+	}
+	m.detail.headless = false
+	m.detail.follow = false
 	m.detail.active = tabDiff
 	m.detail.cache[tabDiff] = tabContent{loaded: true, body: "diff --git a/x b/x\n+a\n-b\n"}
 	if got := stripANSI(m.sourceLine()); got != "round 2 · 1 file · +1 −1" {
