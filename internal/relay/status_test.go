@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 func TestStatusReportsLiveAgentState(t *testing.T) {
@@ -1395,5 +1396,72 @@ func TestRenderStatusOmitsDirtyWhenClean(t *testing.T) {
 	}}}
 	if out := RenderStatus(r); strings.Contains(out, "dirty") {
 		t.Errorf("rendered dirty from LastClose instead of Dirty:\n%s", out)
+	}
+}
+
+func seedUsageLog(t *testing.T) (Runtime, store.Binding) {
+	t.Helper()
+	rt, b := seedClosedRound(t, "clean", 1)
+	mk := func(usd float64, basis usage.Basis) *usage.Usage {
+		return &usage.Usage{Harness: "agy", Provider: "test", Model: "m", DurationMS: 60_000,
+			Tokens: usage.Tokens{In: 100, Out: 10}, Cost: usage.Cost{USD: usd, Basis: basis}, Samples: 1}
+	}
+	entries := []store.LogEntry{
+		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1", Confirmed: true, Usage: mk(0.10, usage.Measured)},
+		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindFindings, Payload: "f1", Confirmed: true, Usage: mk(0.02, usage.Estimated)},
+		{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r2", Confirmed: true, Usage: mk(0.30, usage.Measured)},
+	}
+	for _, e := range entries {
+		if err := rt.Store.AppendLog(b.Name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	return rt, b
+}
+
+func TestStatusLastUsageAndSpend(t *testing.T) {
+	rt, _ := seedUsageLog(t)
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got := rep.Bindings[0]
+	if got.LastUsage == nil || got.LastUsage.Cost.USD != 0.30 {
+		t.Fatalf("LastUsage = %+v, want the round-2 report's", got.LastUsage)
+	}
+	if got.Spend == nil {
+		t.Fatal("Spend = nil")
+	}
+	if got.Spend.Rounds != 2 || got.Spend.Consults != 1 {
+		t.Errorf("rounds/consults = %d/%d, want 2/1", got.Spend.Rounds, got.Spend.Consults)
+	}
+	if got.Spend.Measured < 0.399 || got.Spend.Measured > 0.401 || got.Spend.Estimated != 0.02 {
+		t.Errorf("measured/estimated = %v/%v, want 0.40/0.02", got.Spend.Measured, got.Spend.Estimated)
+	}
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "  usage    "+usage.Line(*got.LastUsage)) {
+		t.Errorf("text lacks the usage row:\n%s", text)
+	}
+	if !strings.Contains(text, "  spend    2 rounds +1c · $0.40 · ~$0.02") {
+		t.Errorf("text lacks the spend row:\n%s", text)
+	}
+}
+
+func TestStatusNoUsageNoRows(t *testing.T) {
+	rt, _ := seedClosedRound(t, "clean", 1)
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].LastUsage != nil || rep.Bindings[0].Spend != nil {
+		t.Errorf("no usage entries: both must be nil, got %+v / %+v", rep.Bindings[0].LastUsage, rep.Bindings[0].Spend)
+	}
+	text := RenderStatus(rep)
+	if strings.Contains(text, "  usage ") || strings.Contains(text, "  spend ") {
+		t.Errorf("no rows without usage:\n%s", text)
+	}
+	raw, _ := json.Marshal(rep.Bindings[0])
+	if strings.Contains(string(raw), "last_usage") || strings.Contains(string(raw), "spend") {
+		t.Errorf("json must omit both when nil: %s", raw)
 	}
 }
