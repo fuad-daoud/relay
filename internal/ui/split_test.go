@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 	"github.com/muesli/termenv"
 )
 
@@ -354,5 +355,38 @@ func TestHeaderGatesAndClock(t *testing.T) {
 	}
 	if strings.Count(h, "\n") != headerRows-1 {
 		t.Errorf("header must be %d rows: %q", headerRows, h)
+	}
+}
+
+func TestPaneHeadUsageAndSpendRows(t *testing.T) {
+	rows := threeRows()
+	m := splitModel(t, 140, 40, rows...)
+	var b relay.BindingStatus
+	for _, r := range rows {
+		if r.Name == m.detail.name {
+			b = r
+		}
+	}
+	b.LastUsage = &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
+		Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1}
+	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
+	head := m.paneHead(&b)
+	joined := stripANSI(strings.Join(head, "\n"))
+	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 15.0M · cache 100% · out 55k · $4.71") {
+		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
+	}
+	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
+		t.Errorf("no spend row:\n%s", joined)
+	}
+	if head[len(head)-1] != "" {
+		t.Error("the block still ends with its blank row")
+	}
+	b.LastUsage, b.Spend = nil, nil
+	if n := len(m.paneHead(&b)); n != 5 {
+		t.Errorf("without usage the block is 5 rows, got %d", n)
+	}
+	// The header no longer carries the spend: it belongs in the block.
+	if h := stripANSI(m.headerView()); strings.Contains(h, "spend") {
+		t.Errorf("header must not show spend: %q", h)
 	}
 }

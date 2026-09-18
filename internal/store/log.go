@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -195,8 +196,20 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 	}
 	defer f.Close()
 
+	entries, err := decodeLog(f)
+	if err != nil {
+		return nil, fmt.Errorf("%q: %w", name, err)
+	}
+	return entries, nil
+}
+
+// decodeLog scans a log.jsonl stream, one LogEntry per line, refusing to
+// read past maxLogEntries rather than silently truncating: since a log is
+// append-only, truncating would drop the newest entries. Shared by readLog
+// (the live file) and ReadArchivedLog (a tarball member).
+func decodeLog(r io.Reader) ([]LogEntry, error) {
 	entries := make([]LogEntry, 0, 64)
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
@@ -207,16 +220,16 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 
 		var e LogEntry
 		if err := json.Unmarshal(line, &e); err != nil {
-			return nil, fmt.Errorf("decode log entry for %q: %w", name, err)
+			return nil, fmt.Errorf("decode log entry: %w", err)
 		}
 
 		entries = append(entries, e)
 		if len(entries) > maxLogEntries {
-			return nil, fmt.Errorf("log for %q exceeds %d entries", name, maxLogEntries)
+			return nil, fmt.Errorf("log exceeds %d entries", maxLogEntries)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan log for %q: %w", name, err)
+		return nil, fmt.Errorf("scan log: %w", err)
 	}
 
 	return entries, nil

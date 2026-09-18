@@ -3,6 +3,8 @@
 package proc
 
 import (
+	"github.com/fuad-daoud/relay/internal/usage"
+
 	"context"
 	"os"
 	"path/filepath"
@@ -270,5 +272,16 @@ func TestExitCodeReadsOnlyATrailingRelayExitLine(t *testing.T) {
 	}
 	if _, ok := r.ExitCode(context.Background(), relay.ProcHandle{}, filepath.Join(dir, "absent.log")); ok {
 		t.Error("ExitCode on a missing file must be ok=false")
+	}
+}
+
+// The usage reader waits for the exit trailer before reading a headless
+// stream (#142) and carries its own copy of the prefix so internal/usage
+// stays free of the process model. This is the only place that pins the
+// two equal: proc imports relay, so the pin cannot live in relay's tests.
+func TestExitTrailerMatchesUsage(t *testing.T) {
+	if usage.ExitTrailerForTest() != ExitTrailer {
+		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
+			usage.ExitTrailerForTest(), ExitTrailer)
 	}
 }

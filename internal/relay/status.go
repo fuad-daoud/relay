@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // agentGone is the status shown for a binding endpoint herdr no longer knows.
@@ -53,6 +54,14 @@ type BindingStatus struct {
 	// LastClose is the newest diff entry's commit facts; nil when the log
 	// has no diff entry.
 	LastClose *CloseInfo `json:"last_close,omitempty"`
+	// LastUsage is the newest report entry's usage (#142); nil when no
+	// report entry carries one -- every round closed before #185, and
+	// every round not yet closed. Spend sums every report and findings
+	// entry that carries usage; nil when none does. Both omitted from JSON
+	// when nil so a consumer that never learned them sees the document it
+	// always did.
+	LastUsage *usage.Usage `json:"last_usage,omitempty"`
+	Spend     *usage.Spend `json:"spend,omitempty"`
 	// Dirty is the rendered rule: the newest close left the tree dirty and
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
@@ -288,6 +297,23 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 			row.LastClose = &CloseInfo{Round: e.Round, Commits: e.Commits, Tree: e.Tree}
 			break
 		}
+	}
+	var usages []usage.Usage
+	var consults []bool
+	for _, e := range entries {
+		if e.Usage == nil || (e.Kind != store.KindReport && e.Kind != store.KindFindings) {
+			continue
+		}
+		usages = append(usages, *e.Usage)
+		consults = append(consults, e.Kind == store.KindFindings)
+		if e.Kind == store.KindReport {
+			u := *e.Usage
+			row.LastUsage = &u
+		}
+	}
+	if len(usages) > 0 {
+		s := usage.Sum(usages, consults)
+		row.Spend = &s
 	}
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
 
@@ -533,6 +559,12 @@ func RenderStatus(r Report) string {
 				fmt.Fprintf(&sb, " (%s)", b.Last.Note)
 			}
 			fmt.Fprint(&sb, "\n")
+		}
+		if b.LastUsage != nil {
+			fmt.Fprintf(&sb, "  usage    %s\n", usage.Line(*b.LastUsage))
+		}
+		if b.Spend != nil {
+			fmt.Fprintf(&sb, "  spend    %s\n", usage.SpendLine(*b.Spend))
 		}
 		if b.Pending != nil {
 			fmt.Fprintf(&sb, "  pending  %s round %d -> planner", b.Pending.Kind, b.Pending.Round)

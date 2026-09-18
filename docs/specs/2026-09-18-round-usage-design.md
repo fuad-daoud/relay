@@ -242,11 +242,19 @@ Each takes the narrowest input (an `io.Reader`, an `fs.FS`, a `[]byte` of
 
 Reading rules per cell:
 
+- **every headless stream:** the reader first waits for the stream's
+  `relay-exit:` trailer, polling every 200 ms under the caller's 5 s
+  deadline. A round closes on the builder's done marker, which the
+  harness writes *before* its final event (measured 2026-09-18: done at
+  14:34:43, `result` at 14:34:44); without the wait the claude reader
+  falls through to its killed-round fallback on every ordinary round.
+  On timeout the stream is read as it is and the note gains
+  `stream still open`.
 - **claude stream:** take the `result` event's `usage` as one sample with
   `HasCost = total_cost_usd present`; model from the last `assistant`
   event's `message.model`, else `init.model`. If there is no `result`
-  event (the round was killed), fall back to the `assistant` events
-  deduped by `message.id`, `HasCost false`.
+  event (the round was killed, or the wait timed out), fall back to the
+  `assistant` events deduped by `message.id`, `HasCost false`.
 - **claude project:** walk every `*.jsonl` under the slug dir (subagents
   included); keep records with `type == "assistant"`, `timestamp` inside
   the window and `cwd == Worktree`; dedupe by `message.id`, first wins;

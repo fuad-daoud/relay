@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -410,6 +411,74 @@ func (s *Store) list() ([]Binding, error) {
 // ArchiveDir is where archived bindings are kept. It lives inside the state
 // root but List skips it, since it holds no live bindings.
 func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
+
+// Archive is one gc'd binding under ArchiveDir, named <name>-<stamp>.tar.gz.
+type Archive struct {
+	Name string
+	At   time.Time
+	Path string
+}
+
+// archiveStampLayout is the stamp archive() writes into the file name.
+const archiveStampLayout = "20060102-150405"
+
+// ListArchives returns every archive, oldest first. Files that do not
+// match the name pattern are ignored.
+func (s *Store) ListArchives() ([]Archive, error) {
+	names, err := filepath.Glob(filepath.Join(s.ArchiveDir(), "*.tar.gz"))
+	if err != nil {
+		return nil, err
+	}
+	var out []Archive
+	for _, p := range names {
+		base := strings.TrimSuffix(filepath.Base(p), ".tar.gz")
+		// The stamp is the last 15 bytes: YYYYMMDD-HHMMSS, preceded by '-'.
+		if len(base) < len(archiveStampLayout)+2 {
+			continue
+		}
+		cut := len(base) - len(archiveStampLayout)
+		if base[cut-1] != '-' {
+			continue
+		}
+		at, err := time.Parse(archiveStampLayout, base[cut:])
+		if err != nil {
+			continue
+		}
+		out = append(out, Archive{Name: base[:cut-1], At: at.UTC(), Path: p})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out, nil
+}
+
+// ReadArchivedLog returns the entries of the <name>/log.jsonl member of an
+// archive, nil when the archive has no such member. It reads the tarball
+// only as far as that member.
+func (s *Store) ReadArchivedLog(path string) ([]LogEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if filepath.Base(h.Name) != "log.jsonl" || strings.Count(strings.Trim(h.Name, "/"), "/") != 1 {
+			continue
+		}
+		return decodeLog(tr)
+	}
+}
 
 // LedgerPath is the availability ledger (#61): one file at the state root,
 // beside .lock, so every write to it can run under WithLock like a

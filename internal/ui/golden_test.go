@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")
@@ -45,6 +46,9 @@ func allStatesRows() []relay.BindingStatus {
 			PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle",
 			BuilderPane: "%7", BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop",
 			Dirty: true, Consults: 2,
+			LastUsage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
+				Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, CacheWrite: 50_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1},
+			Spend:   &usage.Spend{Rounds: 3, Consults: 2, Measured: 9.40, Unknown: 1},
 			Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute), Hint: "relay answer --name webshop"},
 			Last:    &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 		},
@@ -53,6 +57,7 @@ func allStatesRows() []relay.BindingStatus {
 			PlannerPane: "%2", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
 			BuilderPane: "%8", BuilderKind: "agy", BuilderStatus: "idle", Branch: "relay/ledger",
 			Pending: &relay.PendingInfo{Round: 3, Kind: store.KindReport, Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000}},
+			Spend:   &usage.Spend{Rounds: 3, Measured: 1.23, Estimated: 0.40, Unknown: 1},
 		},
 		{
 			Name: "api", Round: 2, Display: "ACTIVE",

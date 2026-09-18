@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -98,5 +99,67 @@ func TestReadPaneOpencodeUsesHomeStore(t *testing.T) {
 	}
 	if len(fe.args) < 3 || fe.args[2] != db {
 		t.Errorf("args = %v, want the store under home", fe.args)
+	}
+}
+
+func TestStreamClosed(t *testing.T) {
+	_, open := mustTemp(t, "{\"type\":\"assistant\"}\n")
+	if streamClosed(open) {
+		t.Error("no trailer: must be open")
+	}
+	_, closed := mustTemp(t, "{\"type\":\"result\"}\n\nrelay-exit:0\n")
+	if !streamClosed(closed) {
+		t.Error("trailer as last line: must be closed")
+	}
+	_, mid := mustTemp(t, "relay-exit:0\n{\"type\":\"assistant\"}\n")
+	if streamClosed(mid) {
+		t.Error("trailer not last: must be open")
+	}
+	if streamClosed("/nonexistent") {
+		t.Error("missing file is not closed")
+	}
+}
+
+func TestReadHeadlessWaitsForTrailer(t *testing.T) {
+	// Start with everything but the result event and the trailer, append
+	// them 300 ms later, and expect the result-based sample.
+	raw, err := os.ReadFile("testdata/claude-stream.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	head := strings.Join(lines[:len(lines)-2], "\n") + "\n"
+	tail := strings.Join(lines[len(lines)-2:], "\n") + "\n"
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(head), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+		f.WriteString(tail)
+		f.Close()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, note := New(nil, t.TempDir()).Read(ctx, Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path})
+	if note != "" || len(got) != 1 || !got[0].HasCost {
+		t.Fatalf("want the measured result sample after the trailer lands; got %d samples, note %q, %+v", len(got), note, got)
+	}
+}
+
+func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
+	raw, _ := os.ReadFile("testdata/claude-stream-killed.jsonl")
+	// The killed fixture ends in a trailer; strip it to make an open stream.
+	body := strings.TrimSuffix(strings.TrimRight(string(raw), "\n"), "relay-exit:137")
+	_, path := mustTemp(t, body)
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	got, note := New(nil, t.TempDir()).Read(ctx, Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path})
+	if note != "stream still open" {
+		t.Errorf("note = %q, want \"stream still open\"", note)
+	}
+	if len(got) == 0 {
+		t.Error("an open stream is still read: the fallback samples must come back with the note")
 	}
 }
