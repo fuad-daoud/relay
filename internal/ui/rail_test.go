@@ -154,25 +154,48 @@ func TestCardGutterDimsWhenRailUnfocused(t *testing.T) {
 	}
 }
 
-func TestCompactLineShape(t *testing.T) {
-	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
-		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}}
-	l := compactLine(b, true, false, railNow, true, railDefault)
-	if w := lipgloss.Width(l); w != railDefault {
-		t.Errorf("width %d", w)
+func TestClipName(t *testing.T) {
+	if got := clipName("webshop", 10); got != "webshop" {
+		t.Errorf("fits: %q", got)
 	}
-	if p := plain(l); p != "▎ webshop r4 question · 2m" {
+	if got := clipName("spaceapi-ingest", 10); got != "spaceapi-…" || lipgloss.Width(got) != 10 {
+		t.Errorf("clipped: %q (%d)", got, lipgloss.Width(got))
+	}
+	if got := clipName("ab", 2); got != "ab" {
+		t.Errorf("exact fit: %q", got)
+	}
+}
+
+func TestCompactLineShape(t *testing.T) {
+	// accentStyle and dimStyle render identically (plain text) under the
+	// Ascii profile go test's non-tty output gets by default; force real
+	// colour so the two are actually distinguishable, as
+	// TestCardGutterDimsWhenRailUnfocused already does for the same reason.
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	b := relay.BindingStatus{Name: "spaceapi-ingest", Round: 12, Display: "NEEDS YOU", BuilderKind: "agy",
+		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}}
+	l := compactLine(b, true, false, railNow, true, railCompact)
+	if w := lipgloss.Width(l); w != railCompact {
+		t.Errorf("width %d, want %d", w, railCompact)
+	}
+	p := plain(l)
+	if !strings.HasPrefix(p, "▎ spaceapi-") || !strings.HasSuffix(p, "r12") || !strings.Contains(p, "…") {
 		t.Errorf("compact = %q", p)
 	}
-	// At railDefault, head (14 cols) + "NEEDS YOU · question · 2m" (25 cols)
-	// is 39, past the 34-col budget: fit() truncates the tail, dropping
-	// " · 2m" but keeping the state and what qualifiers.
-	if p := plain(compactLine(b, false, true, railNow, true, railDefault)); !strings.HasPrefix(p, "webshop r4 NEEDS YOU · question") {
-		t.Errorf("name order carries the state: %q", p)
+	if strings.Contains(p, "question") || strings.Contains(p, "2m") {
+		t.Errorf("compact carries no qualifier: %q", p)
 	}
-	// Narrow: the qualifier is what gives way, the name and round stay.
-	if p := plain(compactLine(b, false, false, railNow, true, railMin)); !strings.HasPrefix(p, "webshop r4") {
-		t.Errorf("at railMin = %q", p)
+	short := plain(compactLine(relay.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"}, false, false, railNow, true, railCompact))
+	if short != "api r2" {
+		t.Errorf("short name = %q", short)
+	}
+	// Name order: the state colours the name, since there is no header.
+	styled := compactLine(b, false, true, railNow, true, railCompact)
+	if !strings.Contains(styled, stateStyle("NEEDS YOU").Bold(true).Render(clipName("spaceapi-ingest", railCompact-1-2-1-3-1))) {
+		t.Errorf("name order: the name must take the state colour: %q", styled)
 	}
 }
 

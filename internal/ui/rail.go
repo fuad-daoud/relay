@@ -175,9 +175,9 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 	return lines
 }
 
-// compactLine is a binding's one-line card (spec §6.0): gutter, unread
-// slot, name, round, then what · age as far as the width allows. The
-// qualifier gives way first; the name and round always fit.
+// compactLine is a binding's one-line card (spec §6.0, amended round 6):
+// gutter, unread slot, name clipped to fit, then round. No what · age
+// qualifier -- that pair is cards-only.
 func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) string {
 	gutter := " "
 	if selected {
@@ -188,24 +188,18 @@ func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time,
 		}
 	}
 	const unreadSlot = "  "
+	roundW := 3
+	nameW := width - 1 - 2 - 1 - roundW - 1
 	nameStyle := fgStyle.Bold(true)
-	if selected {
+	switch {
+	case selected:
 		nameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
+	case showState:
+		nameStyle = stateStyle(b.Display).Bold(true)
 	}
+	name := nameStyle.Render(clipName(b.Name, nameW))
 	round := dimStyle.Render(fmt.Sprintf("r%d", b.Round))
-	head := gutter + unreadSlot + nameStyle.Render(b.Name) + " " + round + " "
-	what, age := whatAge(b, now)
-	var q []string
-	if showState {
-		q = append(q, stateStyle(b.Display).Render(b.Display))
-	}
-	if what != "" {
-		q = append(q, dimStyle.Render(what))
-	}
-	if age != "" {
-		q = append(q, dimStyle.Render(age))
-	}
-	l := fit(head+strings.Join(q, sep), width)
+	l := fit(gutter+unreadSlot+fit(name, nameW)+" "+round+" ", width)
 	if selected {
 		l = selectedBg.Render(l)
 	}

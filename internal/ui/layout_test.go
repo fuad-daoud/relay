@@ -56,3 +56,20 @@ func TestRailWidthClamps(t *testing.T) {
 		t.Errorf("pane must keep paneMin, got %d", m.paneWidth())
 	}
 }
+
+func TestCompactRailIsNarrow(t *testing.T) {
+	m := Model{width: 140, height: 40, railCols: 50, compact: true}
+	if m.railWidth() != railCompact {
+		t.Errorf("compact rail = %d, want %d", m.railWidth(), railCompact)
+	}
+	if m.paneWidth() != 140-railCompact-railGap {
+		t.Errorf("pane = %d", m.paneWidth())
+	}
+	if m.railWidthStored() != 50 {
+		t.Error("compact must not touch the remembered cards width")
+	}
+	m.compact = false
+	if m.railWidth() != 50 {
+		t.Errorf("cards mode is back to the stored width, got %d", m.railWidth())
+	}
+}

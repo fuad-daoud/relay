@@ -287,3 +287,14 @@ func TestDragDividerResizesRail(t *testing.T) {
 }
 
 func railWidthOf(m Model) int { return m.railWidth() }
+
+func TestNoDragWhileCompact(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	sep := m.railWidth()
+	res, _ = m.Update(tea.MouseMsg{X: sep, Y: headerRows + 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if res.(Model).drag {
+		t.Error("the compact rail has no divider to drag")
+	}
+}

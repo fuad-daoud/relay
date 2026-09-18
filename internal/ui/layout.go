@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/charmbracelet/lipgloss"
+
 // Geometry of the two layouts (spec §3.1). Every number that shapes the
 // screen is here and nowhere else.
 const (
@@ -15,6 +17,8 @@ const (
 	railMin     = 20
 	paneMin     = 80 // a hunk's width; the rail never eats into it
 	railStep    = 2  // < and > move the divider this much
+
+	railCompact = 18 // the collapsed rail, like herdr's sidebar
 )
 
 // layout is which of the two screens the terminal width earns.
@@ -57,8 +61,12 @@ func (m Model) clampRail(cols int) int {
 
 // railWidth is the rail's drawn width: the stored preference, clamped to
 // the terminal it is drawn on. Zero (a fresh model before prefs) reads as
-// the default.
+// the default. Compact collapses the rail to railCompact columns, below
+// railMin by design, so it never runs through clampRail.
 func (m Model) railWidth() int {
+	if m.compact {
+		return railCompact
+	}
 	if m.railCols == 0 {
 		return m.clampRail(railDefault)
 	}
@@ -98,4 +106,13 @@ func (m Model) viewportHeight() int {
 		return 0
 	}
 	return h
+}
+
+// clipName is name when it fits width cells, else its first width-1
+// cells and an ellipsis -- the compact rail's one truncation.
+func clipName(name string, width int) string {
+	if lipgloss.Width(name) <= width {
+		return name
+	}
+	return lipgloss.NewStyle().MaxWidth(width-1).Render(name) + "…"
 }

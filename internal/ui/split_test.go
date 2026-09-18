@@ -319,6 +319,32 @@ func TestCompactToggleKeepsSelection(t *testing.T) {
 	}
 }
 
+func TestCompactIgnoresResize(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	before := m.railCols
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'>'}})
+	m = res.(Model)
+	if m.railCols != before || m.railWidth() != railCompact {
+		t.Errorf("> while compact: cols %d width %d", m.railCols, m.railWidth())
+	}
+	view := m.View()
+	for i, l := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(l); w > 140 {
+			t.Errorf("line %d is %d wide", i, w)
+		}
+	}
+	if m.detail.vp.Width != 140-railCompact-railGap {
+		t.Errorf("viewport must widen with the pane: %d", m.detail.vp.Width)
+	}
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	if m.detail.vp.Width != m.paneWidth() || m.railWidth() != before {
+		t.Errorf("back to cards: viewport %d pane %d rail %d", m.detail.vp.Width, m.paneWidth(), m.railWidth())
+	}
+}
+
 func TestHeaderGatesAndClock(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}

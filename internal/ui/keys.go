@@ -14,6 +14,9 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.top = m.railTop()
 		return m, m.save()
 	case "<", ">":
+		if m.compact {
+			return m, nil
+		}
 		d := railStep
 		if msg.String() == "<" {
 			d = -railStep
@@ -21,6 +24,8 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setRail(m.railCols + d)
 	case "c":
 		m.compact = !m.compact
+		m.detail.vp.Width = m.paneWidth()
+		m.fillViewport()
 		m.list.top = m.railTop()
 		return m, m.save()
 	case "1", "2", "3", "4":

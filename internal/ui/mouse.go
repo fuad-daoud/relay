@@ -143,7 +143,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseButtonLeft:
-		if m.layout() == layoutSplit && msg.X >= m.railWidth() && msg.X < m.railWidth()+railGap && m.hitBody(msg.Y) {
+		if !m.compact && m.layout() == layoutSplit && msg.X >= m.railWidth() && msg.X < m.railWidth()+railGap && m.hitBody(msg.Y) {
 			m.drag = true
 			return m, nil
 		}
