@@ -4,33 +4,17 @@ relay automates the plan/report handoff between two AI coding agent panes
 running under herdr: a planner hands work to a builder, and relay moves the
 files between them.
 
-## Dispatching work to builders
-
-**Parallelism comes from multiple instances of one harness, not from different
-harnesses.** Several agy builders can run at once, each in its own worktree.
-Needing two builders concurrently is never a reason to reach for a second
-harness kind.
-
-The harness order lives in `~/.config/relay/policy.json` under
-`order.builder`, not here. Omit `--builder` and relay takes the first
-candidate in that order the ledger does not gate; `relay policy` shows
-which one that is right now and why. Name a token only to override the
-order for one binding.
-
-When a builder reports a usage limit, run `relay unavailable <token>
---reason '<what it said>'` before the next bind, so the next pick skips
-that provider, and `relay available <provider>` when it lifts. Do not
-bind different harnesses to different tasks as a way of parallelising;
-do not work around a gated provider by naming a token on it.
-
-Candidates are configured in `~/.config/relay/candidates.json`; `relay candidates`
-lists what this machine has. Pass the token to `--builder` only to
-override the order.
-
 ## Working with builders
 
-- Give each concurrent builder its own git worktree. Two builders committing in
-  one worktree will race.
+The dispatch protocol -- `relay send` not in-session subagents, headless by
+default, one harness many worktrees, `relay unavailable` on a usage limit,
+stop rather than improvise -- is in the shipped `architect` definition
+(`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
+follows is what is specific to this machine and this repo.
+
+- Candidates are in `~/.config/relay/candidates.json` (`relay candidates`
+  lists them); the builder order is `order.builder` in
+  `~/.config/relay/policy.json`. `relay policy` shows the current pick.
 - relay closes a pane in exactly two places: `relay reap` (a terminal
   consult pane it spawned) and a mid-round builder switch (the replaced
   builder's pane, when it is still open). It stops a *process* in exactly
@@ -44,18 +28,10 @@ override the order.
   `gh pr checkout` in the main repo without `gc`; a dirty tree or an open
   pane round is kept and `gc` retries. `relay bind --resume` restores a
   released worktree; rebind a DONE binding only after that restore.
-- Prefer `--headless` on `add` for peers nobody will watch: no tab, no idle
-  harness in memory, and the round log is at
-  `~/.local/state/relay/<name>/NNN-builder.log`. A headless builder takes
-  no dialogs (`relay answer` is refused) and has no memory across rounds,
-  so its plans must be round-complete -- which relay plans already are.
+- A headless round's log is at `~/.local/state/relay/<name>/NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relay unavailable
-  <token>` is enough: the daemon switches the binding to the next
-  ungated candidate and resends the round. Do not rebind by hand unless
-  `relay status` says `NEEDS YOU`.
-- Tell a builder to stop rather than improvise when a step is impossible as
-  written or the plan conflicts with existing code. A halt that surfaces a
-  design error is worth more than a green suite that bent a test to fit.
+  <token>` is enough: the daemon switches and resends. Do not rebind by
+  hand unless `relay status` says `NEEDS YOU`.
 
 ## Verifying a builder's work
 
