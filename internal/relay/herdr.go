@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // Herdr is the slice of the herdr CLI this package needs. It is declared here,
@@ -63,6 +64,15 @@ type Runtime struct {
 	// per role (#61 step 2). The zero value means nothing is ordered, so
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
+
+	// Usage reads what a round consumed from the harness's own record
+	// (#142). Nil means every round records Basis unknown, note
+	// "no reader"; tests that do not set it behave as a machine with no
+	// reader, and rounds close exactly as before.
+	Usage usage.Reader
+	// Prices is ~/.config/relay/prices.json over the embedded default. The
+	// zero value prices nothing, so every estimate is unknown.
+	Prices usage.Prices
 
 	Now   func() time.Time
 	Hooks hooks.Dispatcher

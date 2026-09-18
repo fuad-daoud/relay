@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 type promptCall struct{ Target, Text string }
@@ -433,4 +434,22 @@ func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
 	f.kills = append(f.kills, h)
 	f.alive[h.PID] = []bool{false}
 	return nil
+}
+
+// fakeUsage scripts what the usage reader returns and records the Source
+// it was asked for.
+type fakeUsage struct {
+	samples []usage.Sample
+	note    string
+	sources []usage.Source
+	block   bool // when true, Read waits for ctx and returns nothing
+}
+
+func (f *fakeUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
+	f.sources = append(f.sources, src)
+	if f.block {
+		<-ctx.Done()
+		return nil, "blocked"
+	}
+	return f.samples, f.note
 }
