@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // paneHead is the pane's first rows: title with the state pill and the
@@ -73,7 +74,16 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 		}
 		tparts = append(tparts, dimStyle.Render(s))
 	}
-	rows = append(rows, label("tree")+strings.Join(tparts, sep), "")
+	rows = append(rows, label("tree")+strings.Join(tparts, sep))
+	// usage and spend mirror `relay status`'s rows (#142): the newest
+	// round's line, then the binding's total. Both only when recorded.
+	if b.LastUsage != nil {
+		rows = append(rows, label("usage")+usage.Line(*b.LastUsage))
+	}
+	if b.Spend != nil {
+		rows = append(rows, label("spend")+usage.SpendLine(*b.Spend))
+	}
+	rows = append(rows, "")
 	return rows
 }
 

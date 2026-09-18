@@ -130,9 +130,12 @@ money is not glance information.
   when `b.Spend != nil` and the string is non-empty. Same line as `dirty`
   / `2 consults` / `switched 2x`, same separator. The compact line is
   unchanged (it carries no facts).
-- **Header, split layout:** when a binding is selected and `b.Spend !=
-  nil`, the right side gains `dimStyle("spend " + SpendLine)` before the
-  clock. Stack layout's header is unchanged (it has no selected binding).
+- **Pane block:** two rows after `tree`, mirroring `relay status`:
+  `usage    <usage.Line(LastUsage)>` and `spend    <SpendLine(Spend)>`,
+  each only when non-nil. (Amended 2026-09-18 after the first hands-on
+  check: the original placement, a dim string in the header bar next to
+  the clock, was not found by the human looking for it. The block is
+  where the binding's facts live; the header is for gates and the clock.)
 - **Log tab:** through `relay.LogLine`, nothing else.
 - **Goldens:** `allStatesRows` gives the `ledger` row a `Spend` (`Rounds
   3, Measured 1.23, Estimated 0.40, Unknown 1`); the `split-*` and

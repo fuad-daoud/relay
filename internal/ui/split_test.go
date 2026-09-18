@@ -358,20 +358,35 @@ func TestHeaderGatesAndClock(t *testing.T) {
 	}
 }
 
-func TestHeaderShowsSelectedSpend(t *testing.T) {
+func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	rows := threeRows()
-	// Attention order selects webshop (NEEDS YOU) by default, not rows[0];
-	// set the spend on whichever row m.detail.name names (see task 5 step 1).
-	rows[2].Spend = &usage.Spend{Rounds: 3, Measured: 1.23, Unknown: 1}
 	m := splitModel(t, 140, 40, rows...)
-	if m.detail.name != rows[2].Name {
-		t.Fatalf("selected binding = %q, want %q (fix the row index above)", m.detail.name, rows[2].Name)
+	var b relay.BindingStatus
+	for _, r := range rows {
+		if r.Name == m.detail.name {
+			b = r
+		}
 	}
-	h := stripANSI(m.headerView())
-	if !strings.Contains(h, "spend 3 rounds · $1.23 · 1 unknown") {
-		t.Errorf("header = %q", h)
+	b.LastUsage = &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
+		Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1}
+	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
+	head := m.paneHead(&b)
+	joined := stripANSI(strings.Join(head, "\n"))
+	if !strings.Contains(joined, "usage    "+usage.Line(*b.LastUsage)) {
+		t.Errorf("no usage row:\n%s", joined)
 	}
-	if strings.Count(h, "\n") != headerRows-1 {
-		t.Errorf("header must stay %d rows: %q", headerRows, h)
+	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
+		t.Errorf("no spend row:\n%s", joined)
+	}
+	if head[len(head)-1] != "" {
+		t.Error("the block still ends with its blank row")
+	}
+	b.LastUsage, b.Spend = nil, nil
+	if n := len(m.paneHead(&b)); n != 5 {
+		t.Errorf("without usage the block is 5 rows, got %d", n)
+	}
+	// The header no longer carries the spend: it belongs in the block.
+	if h := stripANSI(m.headerView()); strings.Contains(h, "spend") {
+		t.Errorf("header must not show spend: %q", h)
 	}
 }
