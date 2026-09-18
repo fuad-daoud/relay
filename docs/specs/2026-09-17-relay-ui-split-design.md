@@ -417,11 +417,15 @@ function that drew or hit-tested against the constant reads the field.
 the drag, motion moves it, release ends it; a press anywhere else is a
 click as in §6.1).
 
-`c` toggles a **compact** rail: one line per binding instead of a card --
-gutter, unread slot, name, round, then `what · age` as far as the width
-allows -- group headers and gaps kept, so windowing, the wheel and clicks
-work unchanged (a card is just one tagged line). Compact is the honest
-choice for a wide fleet or a narrow rail; the cards come back with `c`.
+`c` toggles a **compact** rail (amended round 6): the rail collapses to
+`railCompact = 18` columns, the way herdr collapses its sidebar, with one
+line per binding -- gutter, unread slot, the name clipped to what fits
+with a trailing `…`, the round -- and the group headers and gaps kept, so
+windowing, the wheel and clicks work unchanged (a card is just one tagged
+line). In name order, where there are no headers, the name takes the
+state's colour. The remembered `railCols` is the cards-mode width and is
+untouched; `<`, `>` and the divider drag are no-ops while compact. The
+cards come back with `c`.
 
 Three preferences are **remembered across runs**: the sort order (`s`),
 compact (`c`) and `railCols`. They live in `ui.json` under relay's state
