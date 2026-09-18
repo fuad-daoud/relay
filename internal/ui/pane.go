@@ -116,6 +116,8 @@ func (m Model) tabBar() []string {
 	if pad := m.paneWidth() - lipgloss.Width(line); pad > 0 {
 		line += ruleStyle.Render(strings.Repeat("─", pad))
 	}
+	// tabSpans (mouse.go) assumes this two-space join to compute each
+	// word's column span; change both together.
 	return []string{strings.Join(words, "  "), line}
 }
 
