@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 	"sort"
@@ -236,6 +237,58 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 	if _, ok := RoleByName("architect"); ok {
 		t.Error("architect is a shipped definition, not a relay role")
 	}
+}
+
+// The architect body -- everything after the frontmatter -- is one text
+// shipped three times. #188 added the Handing off section that makes the
+// planner reach for relay; this pins both the section and the identity, so
+// an edit to one kind cannot drift from the others.
+func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
+	bodies := map[string]string{}
+	for _, h := range All() {
+		doc, err := AgentDoc("architect", h.Kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
+		}
+		body := definitionBody(t, h.Kind, string(doc))
+		for _, want := range []string{"## Handing off", "relay send", "--headless", "relay unavailable"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s architect body lacks %q", h.Kind, want)
+			}
+		}
+		for _, banned := range []string{"Agent tool", "slash command"} {
+			if strings.Contains(body, banned) {
+				t.Errorf("%s architect body is not harness-neutral: contains %q", h.Kind, banned)
+			}
+		}
+		bodies[h.Kind] = body
+	}
+	ref := bodies["claude"]
+	for kind, body := range bodies {
+		if body != ref {
+			t.Errorf("%s architect body differs from claude's:\n%s", kind, firstDifferingLine(ref, body))
+		}
+	}
+}
+
+// definitionBody returns the text after the closing --- of the frontmatter.
+func definitionBody(t *testing.T, kind, doc string) string {
+	t.Helper()
+	parts := strings.SplitN(doc, "\n---\n", 2)
+	if len(parts) != 2 || !strings.HasPrefix(doc, "---\n") {
+		t.Fatalf("%s architect definition has no frontmatter fence", kind)
+	}
+	return parts[1]
+}
+
+func firstDifferingLine(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(al) && i < len(bl); i++ {
+		if al[i] != bl[i] {
+			return fmt.Sprintf("line %d:\n  claude: %q\n  other:  %q", i+1, al[i], bl[i])
+		}
+	}
+	return fmt.Sprintf("lengths differ: %d vs %d lines", len(al), len(bl))
 }
 
 func TestCanServeRequiresEveryDefinition(t *testing.T) {
