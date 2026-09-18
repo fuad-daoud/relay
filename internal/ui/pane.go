@@ -62,12 +62,16 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	if b.Dirty {
 		tparts = append(tparts, stateNeedsYouStyle.Render("dirty"))
 	}
-	if b.LastClose != nil {
-		tree := b.LastClose.Tree
-		if len(tree) > 7 {
-			tree = tree[:7]
+	if lc := b.LastClose; lc != nil {
+		unit := "commits"
+		if lc.Commits == 1 {
+			unit = "commit"
 		}
-		tparts = append(tparts, dimStyle.Render(fmt.Sprintf("last close %s (%d commits)", tree, b.LastClose.Commits)))
+		s := fmt.Sprintf("last close r%d: %d %s", lc.Round, lc.Commits, unit)
+		if lc.Tree != "" {
+			s += ", " + lc.Tree
+		}
+		tparts = append(tparts, dimStyle.Render(s))
 	}
 	rows = append(rows, label("tree")+strings.Join(tparts, sep), "")
 	return rows
@@ -92,18 +96,27 @@ func spread(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// tabBar is the numbered tab row and the rule under it.
+// tabBar is the four tab words and, under them, a rule whose heavy accent
+// segment sits under the active word (spec §3.4). No numbers: 1-4 still
+// switch, the footer says so.
 func (m Model) tabBar() []string {
-	var parts []string
+	var words, rule []string
 	for i, t := range tabTitles {
-		label := fmt.Sprintf(" %d %s ", i+1, t)
+		label := " " + t + " "
 		if tab(i) == m.detail.active {
-			parts = append(parts, activeTabStyle.Render(label))
+			words = append(words, activeTabStyle.Render(label))
+			rule = append(rule, accentStyle.Render(strings.Repeat("━", lipgloss.Width(label))))
 		} else {
-			parts = append(parts, inactiveTabStyle.Render(label))
+			words = append(words, inactiveTabStyle.Render(label))
+			rule = append(rule, ruleStyle.Render(strings.Repeat("─", lipgloss.Width(label))))
 		}
 	}
-	return []string{strings.Join(parts, " "), ruleStyle.Render(strings.Repeat("─", m.paneWidth()))}
+	gap := ruleStyle.Render("──")
+	line := strings.Join(rule, gap)
+	if pad := m.paneWidth() - lipgloss.Width(line); pad > 0 {
+		line += ruleStyle.Render(strings.Repeat("─", pad))
+	}
+	return []string{strings.Join(words, "  "), line}
 }
 
 // diffStat counts a patch the way `git diff --stat` would summarise it:

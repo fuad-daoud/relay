@@ -5,8 +5,8 @@
    question · 2m                  │ builder  %7   agy       blocked · 2 consults                                                            
    dirty · 2 consults             │ tree     relay/webshop · dirty                                                                          
    agy · relay/webshop            │                                                                                                         
-                                  │  1 report   2 terminal   3 diff   4 log                                                                 
- HELD  1                          │ ────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │  report    terminal    diff    log                                                                      
+ HELD  1                          │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────
    ledger                      r3 │ %7 · captured 0s ago · 2 lines                                                                          
    report r3 · quiet 23s of 1m0s  │                                                                                                         
    agy · relay/ledger             │ $ go test ./...                                                                                         

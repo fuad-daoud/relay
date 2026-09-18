@@ -108,11 +108,16 @@ func facts(b relay.BindingStatus) []string {
 
 // cardLines renders one binding's card: three or four lines, each exactly
 // railWidth wide. selected paints the gutter and background; showState
-// puts the state word on line 2 (name order has no group headers).
-func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time) []string {
+// puts the state word on line 2 (name order has no group headers). focused
+// is "the rail has focus": the gutter is lit accent only when the card is
+// both selected and the rail is focused, dim when selected but the pane
+// has focus instead, so a human can tell which side is listening.
+func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool) []string {
 	gutter := " "
-	if selected {
+	if selected && focused {
 		gutter = accentStyle.Render("▎")
+	} else if selected {
+		gutter = dimStyle.Render("▎")
 	}
 	const unreadSlot = "  " // reserved for #143's ● -- keep the width
 	nameStyle := fgStyle.Bold(true)
@@ -173,11 +178,13 @@ var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 // railLines lays out every card. In attention order (which SortRows has
 // already applied to rows) a header opens each state group and a blank
 // line closes it; in name order it is cards back to back with the state
-// on each. cursor is the index in rows of the selected binding.
-func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time) []railLine {
+// on each. cursor is the index in rows of the selected binding. focused is
+// "the rail has focus" (m.screen == screenList), threaded through to
+// cardLines so the selected card's gutter dims when the pane has focus.
+func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool) []railLine {
 	var out []railLine
 	card := func(i int) {
-		for _, l := range cardLines(rows[i], i == cursor, !attention, now) {
+		for _, l := range cardLines(rows[i], i == cursor, !attention, now, focused) {
 			out = append(out, railLine{text: l, binding: i})
 		}
 	}
@@ -277,7 +284,7 @@ func (m Model) railView(width int) string {
 	case len(m.rows()) == 0:
 		lines = []string{"no bindings"}
 	default:
-		all := railLines(m.rows(), m.list.cursor, m.sort, m.now())
+		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList)
 		first, last := railSpan(all, m.list.cursor)
 		start := railWindow(m.list.top, first, last, rows, len(all))
 		end := len(all)
@@ -303,7 +310,7 @@ func (m Model) railView(width int) string {
 // railTop re-windows the rail on the cursor's card. Called wherever the
 // cursor, the rows or the row budget changed.
 func (m Model) railTop() int {
-	all := railLines(m.rows(), m.list.cursor, m.sort, m.now())
+	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList)
 	first, last := railSpan(all, m.list.cursor)
 	return railWindow(m.list.top, first, last, m.bodyRows(), len(all))
 }

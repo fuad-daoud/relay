@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/muesli/termenv"
 )
 
 // railNow is in the local zone on purpose: the ui formats clocks with
@@ -68,7 +69,7 @@ func TestCardLinesShapes(t *testing.T) {
 		}},
 	}
 	for _, tc := range cases {
-		got := cardLines(tc.b, tc.name == "blocked", false, railNow)
+		got := cardLines(tc.b, tc.name == "blocked", false, railNow, true)
 		if len(got) != len(tc.want) {
 			t.Fatalf("%s: %d lines, want %d:\n%s", tc.name, len(got), len(tc.want), strings.Join(got, "\n"))
 		}
@@ -85,11 +86,11 @@ func TestCardLinesShapes(t *testing.T) {
 
 func TestCardLinesNameOrderShowsState(t *testing.T) {
 	b := relay.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}
-	got := plain(cardLines(b, false, true, railNow)[1])
+	got := plain(cardLines(b, false, true, railNow, true)[1])
 	if !strings.HasPrefix(got, "ACTIVE · working") {
 		t.Errorf("line 2 = %q", got)
 	}
-	got = plain(cardLines(b, false, false, railNow)[1])
+	got = plain(cardLines(b, false, false, railNow, true)[1])
 	if strings.Contains(got, "ACTIVE") {
 		t.Errorf("attention order must not repeat the state on the card: %q", got)
 	}
@@ -97,7 +98,7 @@ func TestCardLinesNameOrderShowsState(t *testing.T) {
 
 func TestCardLinesTruncateLongName(t *testing.T) {
 	b := relay.BindingStatus{Name: strings.Repeat("x", 60), Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
-	for i, l := range cardLines(b, false, false, railNow) {
+	for i, l := range cardLines(b, false, false, railNow, true) {
 		if w := lipgloss.Width(l); w != railWidth {
 			t.Errorf("line %d width %d", i, w)
 		}
@@ -110,7 +111,7 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 		{Name: "a1", Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "a2", Display: "ACTIVE", BuilderKind: "agy"},
 	}
-	lines := railLines(rows, 1, true, railNow)
+	lines := railLines(rows, 1, true, railNow, true)
 	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap
 	if len(lines) != 1+3+1+1+3+3+1 {
 		t.Fatalf("%d lines", len(lines))
@@ -126,10 +127,30 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 		t.Errorf("span of a1 = [%d,%d]", first, last)
 	}
 	// Name order: no headers, no gaps, every line tagged.
-	for _, l := range railLines(rows, 0, false, railNow) {
+	for _, l := range railLines(rows, 0, false, railNow, true) {
 		if l.binding < 0 {
 			t.Errorf("name order emitted an untagged line %q", plain(l.text))
 		}
+	}
+}
+
+func TestCardGutterDimsWhenRailUnfocused(t *testing.T) {
+	// accentStyle and dimStyle render identically (plain text) under the
+	// Ascii profile go test's non-tty output gets by default; force real
+	// colour so the two are actually distinguishable, as detail_test.go and
+	// list_test.go already do for the same reason.
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	b := relay.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
+	lit := cardLines(b, true, false, railNow, true)[0]
+	dim := cardLines(b, true, false, railNow, false)[0]
+	if !strings.Contains(lit, accentStyle.Render("▎")) {
+		t.Errorf("focused rail: gutter must be accent: %q", lit)
+	}
+	if !strings.Contains(dim, dimStyle.Render("▎")) || strings.Contains(dim, accentStyle.Render("▎")) {
+		t.Errorf("unfocused rail: gutter must be dim: %q", dim)
 	}
 }
 

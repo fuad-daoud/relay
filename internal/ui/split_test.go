@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/muesli/termenv"
 )
 
 func splitModel(t *testing.T, width, height int, rows ...relay.BindingStatus) Model {
@@ -240,6 +241,30 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	}
 	if !m.detail.follow || !m.detail.vp.AtBottom() {
 		t.Error("scrolling to the bottom must resume following")
+	}
+}
+
+func TestFocusIsVisible(t *testing.T) {
+	// ruleStyle and accentStyle render identically (plain text) under the
+	// Ascii profile go test's non-tty output gets by default; force real
+	// colour so the two are actually distinguishable, as detail_test.go and
+	// list_test.go already do for the same reason.
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	m := splitModel(t, 140, 40, threeRows()...)
+	railFocused := m.View()
+	if !strings.Contains(railFocused, ruleStyle.Render("│")) || strings.Contains(railFocused, accentStyle.Render("│")) {
+		t.Error("rail focused: separator must be in the rule colour")
+	}
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	paneFocused := res.(Model).View()
+	if !strings.Contains(paneFocused, accentStyle.Render("│")) {
+		t.Error("pane focused: separator must be in accent")
+	}
+	if !strings.Contains(paneFocused, dimStyle.Render("▎")) {
+		t.Error("pane focused: the selected card's gutter must dim")
 	}
 }
 

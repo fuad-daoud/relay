@@ -321,7 +321,11 @@ func (m Model) splitView() string {
 	}
 	rail := strings.Split(m.railView(railWidth), "\n")
 	pane := strings.Split(m.paneView(m.paneWidth()), "\n")
-	bar := ruleStyle.Render("│") + " "
+	sepStyle := ruleStyle
+	if m.screen == screenDetail {
+		sepStyle = accentStyle
+	}
+	bar := sepStyle.Render("│") + " "
 	for i := 0; i < m.bodyRows(); i++ {
 		r, p := "", ""
 		if i < len(rail) {

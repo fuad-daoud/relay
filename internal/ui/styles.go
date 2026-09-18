@@ -15,7 +15,7 @@ var (
 
 	accentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 
-	activeTabStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Background(lipgloss.Color("24"))
+	activeTabStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
 	inactiveTabStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)

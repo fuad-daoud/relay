@@ -28,7 +28,7 @@ func TestPaneHeadRows(t *testing.T) {
 		PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
 		BuilderPane: "%7", BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relay/webshop", Dirty: true,
-		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "a1c9f0e1234567"},
+		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
 		Last:      &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 	}
 	m := paneModel(t, b, tabReport)
@@ -40,7 +40,7 @@ func TestPaneHeadRows(t *testing.T) {
 		"webshop  round 4   NEEDS YOU ",
 		"planner  %1   claude    idle · focused",
 		"builder  %7   agy       blocked · 2 consults",
-		"tree     relay/webshop · dirty · last close a1c9f0e (2 commits)",
+		"tree     relay/webshop · dirty · last close r3: 2 commits, clean",
 	}
 	for i, w := range want {
 		if got := stripANSI(head[i]); !strings.HasPrefix(got, w) {
@@ -53,6 +53,14 @@ func TestPaneHeadRows(t *testing.T) {
 	b.Foreign = []relay.ForeignAgent{{PaneID: "%9", Kind: "claude", Status: "working", Title: "reviewer"}}
 	if got := len(m.paneHead(&b)); got != paneHeadRows+1 {
 		t.Errorf("with a foreign agent: %d rows, want %d", got, paneHeadRows+1)
+	}
+
+	oneCommit := relay.BindingStatus{
+		Name: "ledger", Round: 2, Display: "ACTIVE",
+		LastClose: &relay.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
+	}
+	if got := stripANSI(m.paneHead(&oneCommit)[3]); !strings.Contains(got, "last close r1: 1 commit, dirty") {
+		t.Errorf("one-commit tree row = %q", got)
 	}
 }
 
@@ -72,20 +80,38 @@ func TestPaneHeadHeadlessAndCwd(t *testing.T) {
 	}
 }
 
-func TestTabBarMarksActive(t *testing.T) {
+func TestTabBarWordsAndUnderline(t *testing.T) {
 	m := paneModel(t, relay.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
 	bar := m.tabBar()
 	if len(bar) != tabRows {
 		t.Fatalf("%d tab rows", len(bar))
 	}
-	if got := stripANSI(bar[0]); !strings.Contains(got, " 1 report ") || !strings.Contains(got, " 3 diff ") {
-		t.Errorf("tab bar = %q", got)
+	words := stripANSI(bar[0])
+	if strings.ContainsAny(words, "1234") {
+		t.Errorf("tabs must not carry numbers: %q", words)
 	}
-	if !strings.Contains(bar[0], activeTabStyle.Render(" 3 diff ")) {
-		t.Errorf("diff tab not styled active: %q", bar[0])
+	if !strings.Contains(words, " report ") || !strings.Contains(words, " diff ") {
+		t.Errorf("tab words = %q", words)
 	}
-	if !strings.HasPrefix(stripANSI(bar[1]), "───") {
-		t.Errorf("rule row = %q", stripANSI(bar[1]))
+	if !strings.Contains(bar[0], lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(" diff ")) {
+		t.Errorf("active tab not bold white: %q", bar[0])
+	}
+	rule := stripANSI(bar[1])
+	if lipgloss.Width(rule) != m.paneWidth() {
+		t.Errorf("rule is %d wide, pane is %d", lipgloss.Width(rule), m.paneWidth())
+	}
+	// The heavy segment sits exactly under the active word.
+	start := strings.Index(words, " diff ")
+	seg := []rune(rule)[start : start+lipgloss.Width(" diff ")]
+	if string(seg) != strings.Repeat("━", len(seg)) {
+		t.Errorf("underline under diff = %q", string(seg))
+	}
+	before := []rune(rule)[:start]
+	if strings.ContainsRune(string(before), '━') {
+		t.Errorf("heavy rule outside the active word: %q", rule)
+	}
+	if !strings.Contains(bar[1], accentStyle.Render(strings.Repeat("━", len(seg)))) {
+		t.Errorf("underline not in accent: %q", bar[1])
 	}
 }
 

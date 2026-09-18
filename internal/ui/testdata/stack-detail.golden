@@ -5,8 +5,8 @@ planner  %1   claude    idle
 builder  %7   agy       blocked · 2 consults                                    
 tree     relay/webshop · dirty                                                  
                                                                                 
- 1 report   2 terminal   3 diff   4 log                                         
-────────────────────────────────────────────────────────────────────────────────
+ report    terminal    diff    log                                              
+──────────━━━━━━━━━━────────────────────────────────────────────────────────────
 %7 · captured 0s ago · 2 lines                                                  
                                                                                 
 $ go test ./...                                                                 
