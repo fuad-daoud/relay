@@ -1,0 +1,92 @@
+package usage
+
+import (
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+)
+
+//go:embed prices_default.json
+var defaultPricesJSON []byte
+
+// ErrBadPrices reports a prices.json that does not validate. The caller
+// prints it and continues with the default: a bad price file must never
+// stop a round from closing.
+var ErrBadPrices = errors.New("prices.json does not validate")
+
+// ModelPrice is USD per million tokens.
+type ModelPrice struct {
+	In         float64 `json:"in"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+	Out        float64 `json:"out"`
+}
+
+// Prices is the table. Models is keyed "provider/model" in the form
+// candidate refs use, minus the harness.
+type Prices struct {
+	AsOf   string                `json:"as_of"`
+	Source string                `json:"source"`
+	Models map[string]ModelPrice `json:"models"`
+}
+
+// DefaultPrices is the embedded table shipped with relay.
+func DefaultPrices() Prices {
+	var p Prices
+	if err := json.Unmarshal(defaultPricesJSON, &p); err != nil {
+		panic("prices_default.json: " + err.Error()) // a build artefact, caught by TestDefaultPricesParses
+	}
+	if p.Models == nil {
+		p.Models = map[string]ModelPrice{}
+	}
+	return p
+}
+
+// LoadPrices reads path over the embedded default: a missing file is the
+// default with no error; a present file's rows replace default rows of
+// the same key, and its as_of and source win; a malformed file is
+// ErrBadPrices.
+func LoadPrices(path string) (Prices, error) {
+	base := DefaultPrices()
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return base, nil
+	}
+	if err != nil {
+		return base, fmt.Errorf("%s: %w", path, err)
+	}
+	var file Prices
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return base, fmt.Errorf("%s: %v: %w", path, err, ErrBadPrices)
+	}
+	for k, m := range file.Models {
+		if m.In < 0 || m.CacheRead < 0 || m.CacheWrite < 0 || m.Out < 0 {
+			return base, fmt.Errorf("%s: %s: negative price: %w", path, k, ErrBadPrices)
+		}
+		base.Models[k] = m
+	}
+	if file.AsOf != "" {
+		base.AsOf = file.AsOf
+	}
+	if file.Source != "" {
+		base.Source = file.Source
+	}
+	return base, nil
+}
+
+// Estimate prices t for provider/model. ok is false when there is no row;
+// a missing row is never a number.
+func (p Prices) Estimate(provider, model string, t Tokens) (float64, bool) {
+	m, ok := p.Models[provider+"/"+model]
+	if !ok {
+		return 0, false
+	}
+	const million = 1_000_000
+	usd := float64(t.In)*m.In/million +
+		float64(t.CacheRead)*m.CacheRead/million +
+		float64(t.CacheWrite)*m.CacheWrite/million +
+		float64(t.Out)*m.Out/million
+	return usd, true
+}
