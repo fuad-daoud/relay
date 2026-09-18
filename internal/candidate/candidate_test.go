@@ -288,3 +288,24 @@ func TestLoadAcceptsLimitPatterns(t *testing.T) {
 		t.Errorf("LimitPatterns = %v, want %v", c.LimitPatterns, wantPatterns)
 	}
 }
+
+func TestCandidatePlanFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"plan":true},
+	          {"harness":"agy","provider":"google","model":"g","roles":["builder"]}]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := set.Lookup(Ref{Harness: "claude", Provider: "anthropic", Model: "sonnet"})
+	if err != nil || !c.Plan {
+		t.Errorf("plan flag not loaded: %+v, %v", c, err)
+	}
+	c, _ = set.Lookup(Ref{Harness: "agy", Provider: "google", Model: "g"})
+	if c.Plan {
+		t.Error("plan defaults to false")
+	}
+}
