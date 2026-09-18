@@ -1283,7 +1283,7 @@ func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Bi
 		if err != nil {
 			return err
 		}
-		out, closed, err = closeOnMarker(context.Background(), rt, tx, b, entries)
+		out, closed, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
 		return err
 	})
 	if err != nil {

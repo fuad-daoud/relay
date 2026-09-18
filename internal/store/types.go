@@ -106,6 +106,14 @@ type Binding struct {
 	// policy.Policy.SwitchLimit().
 	RoundSwitches int `json:"round_switches,omitempty"`
 
+	// RoundExcluded are candidate tokens (canonical ref strings, as
+	// BuilderCandidate holds them) that exited without a report during the
+	// CURRENT round (#191). switchBuilder folds them into the gate list so a
+	// mid-round switch never lands the pick back on a builder that just
+	// proved it cannot finish the round; queueReport clears the slice with
+	// RoundSwitches when the round advances.
+	RoundExcluded []string `json:"round_excluded,omitempty"`
+
 	// BuilderMissingSince is when the daemon first failed to locate the
 	// builder during the current absence; zero while it is located. Stamped
 	// on the first miss and cleared on any hit, so a detection flicker never
@@ -183,6 +191,13 @@ type Binding struct {
 	// today; the branch-integration verbs key on them (#130).
 	Branch string `json:"branch,omitempty"`
 	Base   string `json:"base,omitempty"`
+
+	// Repo is the source checkout the worktree was cut from -- the caller's
+	// cwd at add/fork time. Empty for a --cwd binding, an adopted bind, and
+	// every bind.json written before the field existed; empty disables
+	// worktree-escape detection (#192), since there is nothing to compare
+	// the worktree's drift against.
+	Repo string `json:"repo,omitempty"`
 
 	// Consults are the read-only one-shot agents attached to this binding,
 	// running and awaiting-reap alike. omitempty keeps every bind.json written

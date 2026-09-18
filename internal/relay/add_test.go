@@ -49,6 +49,9 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 	if got.Base != "commit-head-123" {
 		t.Errorf("base = %q, want the repo HEAD", got.Base)
 	}
+	if got.Binding.Repo != repo {
+		t.Errorf("Binding.Repo = %q, want the source repo %q (#192)", got.Binding.Repo, repo)
+	}
 
 	stored, err := rt.Store.Load("frontend")
 	if err != nil {

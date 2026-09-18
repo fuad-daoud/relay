@@ -236,6 +236,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Base:             base,
 		ForkedFrom:       src.Name,
 		ForkedAtRound:    opts.Round,
+		Repo:             src.Repo,
 	}
 
 	now := time.Now().UTC()

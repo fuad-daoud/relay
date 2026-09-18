@@ -93,10 +93,19 @@ func TestAgyDefinitionsFrontmatter(t *testing.T) {
 			if !strings.Contains(fm, "\ntools:\n") {
 				t.Errorf("plan-executor must carry a tools allowlist")
 			}
-			for _, name := range []string{"write_to_file", "replace_file_content", "run_command", "invoke_subagent"} {
+			for _, name := range []string{"write_to_file", "replace_file_content", "run_command"} {
 				m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
 				if !m.MatchString(fm) {
 					t.Errorf("plan-executor allowlist must include %s; without it the builder cannot build", name)
+				}
+			}
+			// #191: plan-executor never dispatches a sub-agent of any kind on
+			// agy, since an idle root agent there is an exit relay treats as a
+			// failed builder.
+			for _, name := range []string{"invoke_subagent", "manage_subagents"} {
+				m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
+				if m.MatchString(fm) {
+					t.Errorf("plan-executor allowlist must not include %s (#191)", name)
 				}
 			}
 		default:

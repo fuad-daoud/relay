@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/ledger"
@@ -30,6 +31,27 @@ func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
 		}
 	}
 	return ledger.Gate{}, false
+}
+
+// roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
+// candidates that exited without a report during the CURRENT round (#191).
+// Pure. switchBuilder folds these into the live ledger gates it passes to
+// resolveCandidate, so a mid-round switch never lands the pick back on a
+// builder that already proved it cannot finish this round. gatedBuilder is
+// NOT changed to look at these: it looks only at RateLimited, so an
+// exclusion never triggers a switch by itself -- only the switch's own
+// resolution sees it.
+func roundExclusionGates(b store.Binding) []ledger.Gate {
+	gates := make([]ledger.Gate, 0, len(b.RoundExcluded))
+	for _, t := range b.RoundExcluded {
+		gates = append(gates, ledger.Gate{
+			Token:   t,
+			Kind:    ledger.ExitedNoReport,
+			Note:    "round " + strconv.Itoa(b.Round),
+			Binding: b.Name,
+		})
+	}
+	return gates
 }
 
 // switchEntry is the log record of one builder switch: why the switch
@@ -89,7 +111,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, append(Gates(rt), roundExclusionGates(b)...), "", "builder")
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",

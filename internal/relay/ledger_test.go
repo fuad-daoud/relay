@@ -431,6 +431,15 @@ func TestGatesToleratesABadLedger(t *testing.T) {
 	}
 }
 
+// TestGateKindTextExitedNoReport pins the wording switchBuilder's synthesised
+// gate renders through ErrAllGated and skipText (#191): it must never drift
+// from "exited without a report".
+func TestGateKindTextExitedNoReport(t *testing.T) {
+	if got := GateKindText(ledger.ExitedNoReport); got != "exited without a report" {
+		t.Errorf("GateKindText(ExitedNoReport) = %q, want %q", got, "exited without a report")
+	}
+}
+
 func TestGateUntilText(t *testing.T) {
 	if got := GateUntilText(time.Time{}); got != "until cleared" {
 		t.Errorf("GateUntilText(zero) = %q, want %q", got, "until cleared")

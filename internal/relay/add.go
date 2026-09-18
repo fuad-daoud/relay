@@ -190,6 +190,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Worktree:         worktree,
 		Branch:           branch,
 		Base:             base,
+		Repo:             opts.Repo,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
