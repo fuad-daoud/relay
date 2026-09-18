@@ -405,6 +405,26 @@ the pane is. One of the two is always lit. `1`-`4` work from the rail too: switc
 without leaving the rail is the common move, and it reads as a pane
 operation only because it fetches. `s` works from the pane as well.
 
+### 6.1 Mouse (round 4, 2026-09-18)
+
+The program takes the mouse (`tea.WithMouseCellMotion`). Until it did, a
+terminal turned the wheel into arrow keys, so a wheel over the transcript
+walked the fleet whenever the rail had focus. With the mouse owned, the
+wheel scrolls what is under the pointer and a click selects what is under
+it; focus follows the click. Hit-testing is a pure function of the model's
+geometry (`hit(x, y)`), the same numbers `splitView` draws with.
+
+| Where | Wheel | Left click |
+| --- | --- | --- |
+| a rail card | move the cursor one binding per notch (the pane follows, as `j`/`k`) | select that binding; focus the rail |
+| the tab row | -- | switch to the tab whose word is under the pointer; focus the pane |
+| the pane body | scroll the viewport three lines per notch; the terminal tab's follow rule applies (at the bottom = following) | focus the pane |
+| header, footer, separator | -- | -- |
+
+In stack layout the list screen is all rail and the detail screen is all
+pane; a click on a list card selects without opening (`⏎` opens). The old
+spec's §10 "Mouse support" exclusion is superseded by this section.
+
 ## 7. Palette
 
 `styles.go` is replaced. Every colour is an xterm-256 index so a
