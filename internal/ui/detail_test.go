@@ -163,7 +163,7 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	rendered := bodyOf(tabDiff, c)
+	rendered := bodyOf(tabDiff, c, false)
 	errRendered := errorStyle.Render(c.empty)
 	if rendered == errRendered {
 		t.Fatalf("empty prose must NOT be styled with errorStyle")
@@ -190,7 +190,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 
 	// Active tab diff shows error
 	m.detail.active = tabDiff
-	m.detail.vp.SetContent(bodyOf(tabDiff, m.detail.cache[tabDiff]))
+	m.detail.vp.SetContent(bodyOf(tabDiff, m.detail.cache[tabDiff], false))
 	if !strings.Contains(m.detail.vp.View(), "error: disk read failed") {
 		t.Fatalf("expected error text in diff tab, got %q", m.detail.vp.View())
 	}
@@ -431,7 +431,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 			m = res.(Model)
 
 			if !m.detail.cache[tc.tab].loaded {
-				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.detail.cache[tc.tab]))
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.detail.cache[tc.tab], false))
 			}
 		})
 	}

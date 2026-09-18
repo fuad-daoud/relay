@@ -134,16 +134,18 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	vp := viewport.New(m.paneWidth(), m.viewportHeight())
-	vp.SetContent(bodyOf(m.detail.active, tabContent{}))
 	m.detail = detailModel{
-		name:   name,
-		round:  r.Round - 1,
-		active: m.detail.active,
-		vp:     vp,
+		name:     name,
+		round:    r.Round - 1,
+		active:   m.detail.active,
+		vp:       vp,
+		headless: r.Headless != nil,
+		follow:   true,
 	}
 	if r.Last != nil {
 		m.detail.lastLogTS = r.Last.TS
 	}
+	m.fillViewport()
 	if m.tabInFlight {
 		return m, nil
 	}
@@ -152,6 +154,16 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// fillViewport sets the viewport to the active tab's body, wrapped to the
+// viewport's width, keeping the current offset (the viewport clamps it).
+// Every SetContent goes through here so a resize re-wraps.
+func (m *Model) fillViewport() {
+	y := m.detail.vp.YOffset
+	c := m.detail.cache[m.detail.active]
+	m.detail.vp.SetContent(wrapBody(bodyOf(m.detail.active, c, m.detail.headless), m.detail.vp.Width))
+	m.detail.vp.SetYOffset(y)
 }
 
 func (m Model) maybeInvalidate() (Model, tea.Cmd) {
@@ -206,6 +218,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.detail.vp.Width = m.paneWidth()
 		m.detail.vp.Height = m.viewportHeight()
+		m.fillViewport()
 		m.list.top = m.railTop()
 		if m.layout() == layoutSplit && m.statusLoaded && len(m.rows()) > 0 {
 			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
@@ -272,9 +285,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detail.cache[msg.t] = msg.content
-		currY := m.detail.vp.YOffset
-		m.detail.vp.SetContent(bodyOf(msg.t, msg.content))
-		m.detail.vp.SetYOffset(currY)
+		m.fillViewport()
+		if msg.t == tabTerminal && m.detail.follow {
+			m.detail.vp.GotoBottom()
+		}
 		return m, nil
 	}
 

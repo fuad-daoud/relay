@@ -49,6 +49,11 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.detail.vp, cmd = m.detail.vp.Update(msg)
+	if m.detail.active == tabTerminal {
+		// The tail rule: at the bottom means following; anywhere else
+		// means the human is reading and the refresh must hold still.
+		m.detail.follow = m.detail.vp.AtBottom()
+	}
 	return m, cmd
 }
 
@@ -87,8 +92,11 @@ func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
 	m.detail.scroll[m.detail.active] = m.detail.vp.YOffset // park
 	m.detail.active = next
 	c := m.detail.cache[next]
-	m.detail.vp.SetContent(bodyOf(next, c))
+	m.fillViewport()
 	m.detail.vp.SetYOffset(m.detail.scroll[next]) // restore
+	if next == tabTerminal && m.detail.follow {
+		m.detail.vp.GotoBottom()
+	}
 	if !c.loaded && !m.tabInFlight {
 		m.tabInFlight = true
 		lines := m.detail.vp.Height

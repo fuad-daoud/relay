@@ -476,7 +476,7 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	m.detail.active = tabReport
 	m.detail.vp = viewport.New(80, 20)
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "report content"}
-	m.detail.vp.SetContent(bodyOf(tabReport, m.detail.cache[tabReport]))
+	m.detail.vp.SetContent(bodyOf(tabReport, m.detail.cache[tabReport], false))
 	detailOut := m.View()
 	if strings.Contains(detailOut, "client protocol") {
 		t.Errorf("detailView must NOT contain error block, got:\n%s", detailOut)

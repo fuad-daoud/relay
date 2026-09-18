@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -169,7 +170,7 @@ func TestPaneViewRowsAndWidth(t *testing.T) {
 		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
-	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal]))
+	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal], false))
 	view := m.paneView(m.paneWidth())
 	lines := strings.Split(view, "\n")
 	if len(lines) != m.bodyRows() {
@@ -182,5 +183,53 @@ func TestPaneViewRowsAndWidth(t *testing.T) {
 	}
 	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relay: relay answer") {
 		t.Errorf("last pane row must be the hint, got %q", got)
+	}
+}
+
+func TestWrapBodyMakesEveryLineReachable(t *testing.T) {
+	long := "alpha " + strings.Repeat("word ", 40) + "omega"
+	body := long + "\nsecond\nthird"
+	wrapped := wrapBody(body, 50)
+	for i, l := range strings.Split(wrapped, "\n") {
+		if w := lipgloss.Width(l); w > 50 {
+			t.Errorf("line %d is %d wide: %q", i, w, l)
+		}
+	}
+	if !strings.Contains(wrapped, "omega") || !strings.Contains(wrapped, "third") {
+		t.Errorf("wrapping lost text:\n%s", wrapped)
+	}
+	// A path with no spaces still breaks rather than overflowing.
+	path := strings.Repeat("/abcdefghij", 12)
+	for i, l := range strings.Split(wrapBody(path, 50), "\n") {
+		if w := lipgloss.Width(l); w > 50 {
+			t.Errorf("path line %d is %d wide", i, w)
+		}
+	}
+	// Styled input keeps its styling and its width.
+	styled := colourDiff("+" + strings.Repeat("x", 120))
+	for i, l := range strings.Split(wrapBody(styled, 50), "\n") {
+		if w := lipgloss.Width(l); w > 50 {
+			t.Errorf("styled line %d is %d wide", i, w)
+		}
+	}
+}
+
+func TestViewportReachesBottomOfLongLines(t *testing.T) {
+	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	m := paneModel(t, b, tabLog)
+	m.detail.vp.Width = 40
+	m.detail.vp.Height = 3
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, fmt.Sprintf("entry %d %s END%d", i, strings.Repeat("w ", 30), i))
+	}
+	m.detail.cache[tabLog] = tabContent{loaded: true, body: strings.Join(lines, "\n")}
+	m.fillViewport()
+	m.detail.vp.GotoBottom()
+	if v := stripANSI(m.detail.vp.View()); !strings.Contains(v, "END4") {
+		t.Errorf("the last line must be reachable at the bottom, got:\n%s", v)
+	}
+	if m.detail.vp.TotalLineCount() <= 5 {
+		t.Errorf("wrapped content must have more logical lines than raw (%d)", m.detail.vp.TotalLineCount())
 	}
 }

@@ -16,6 +16,16 @@ type detailModel struct {
 	scroll    [tabCount]int  // parked offsets for INACTIVE tabs
 	cache     [tabCount]tabContent
 	lastLogTS time.Time // invalidation key -- see §5 rule 3
+
+	// headless is true when the builder is headless (row.Headless != nil).
+	// It selects the terminal tab's source (the round log rather than a
+	// captured pane) and, from #180, its styling.
+	headless bool
+
+	// follow is the terminal tab's tail rule (spec §3.4): while true the
+	// viewport is pinned to the bottom on every refresh; scrolling up clears
+	// it, scrolling back to the bottom sets it. True on every re-point.
+	follow bool
 }
 
 func styleFor(c tabContent) lipgloss.Style {
@@ -30,7 +40,8 @@ func styleFor(c tabContent) lipgloss.Style {
 
 // bodyOf renders a tab's content for the viewport. Only the diff tab
 // colours its body (colourDiff); the other three return c.body as before.
-func bodyOf(t tab, c tabContent) string {
+// headless is unused for now -- #180's Task 3 gives it the terminal tab.
+func bodyOf(t tab, c tabContent, headless bool) string {
 	if !c.loaded {
 		return "loading…"
 	}
@@ -45,6 +56,18 @@ func bodyOf(t tab, c tabContent) string {
 		return colourDiff(c.body)
 	}
 	return st.Render(c.body)
+}
+
+// wrapBody word-wraps body to width so the viewport's logical lines are its
+// visual lines. The viewport pads with lipgloss.Width itself, which wraps
+// anything wider and then cuts the overflow with MaxHeight -- rows under a
+// long line fall off the bottom where no scroll reaches them. Wrapping
+// first, to the same width, is the whole fix. width <= 0 returns body.
+func wrapBody(body string, width int) string {
+	if width <= 0 || body == "" {
+		return body
+	}
+	return lipgloss.NewStyle().Width(width).Render(body)
 }
 
 func (m Model) detailView() string {
