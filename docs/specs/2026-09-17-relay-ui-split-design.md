@@ -405,6 +405,34 @@ the pane is. One of the two is always lit. `1`-`4` work from the rail too: switc
 without leaving the rail is the common move, and it reads as a pane
 operation only because it fetches. `s` works from the pane as well.
 
+### 6.0 Rail width, compact rail, remembered preferences (round 5, 2026-09-18)
+
+The rail's width is the human's to set. `railWidth` stops being a
+constant: the model carries `railCols`, default 34, clamped to
+`[railMin, width - railGap - paneMin]` with `railMin = 20` and
+`paneMin = 80` (a hunk's width), re-clamped on every resize. Every
+function that drew or hit-tested against the constant reads the field.
+`<` / `>` move the divider two columns; a left-button **drag** on the
+`│` separator moves it with the pointer (press on the separator starts
+the drag, motion moves it, release ends it; a press anywhere else is a
+click as in §6.1).
+
+`c` toggles a **compact** rail: one line per binding instead of a card --
+gutter, unread slot, name, round, then `what · age` as far as the width
+allows -- group headers and gaps kept, so windowing, the wheel and clicks
+work unchanged (a card is just one tagged line). Compact is the honest
+choice for a wide fleet or a narrow rail; the cards come back with `c`.
+
+Three preferences are **remembered across runs**: the sort order (`s`),
+compact (`c`) and `railCols`. They live in `ui.json` under relay's state
+root (`$XDG_STATE_HOME/relay/ui.json`) -- the "ui state file" #143 already
+pencilled in for the sort toggle. It is the ui's own file, written by the
+ui alone, never read by relay: the read-only rule (no relay state, no log
+entries, no herdr writes) holds. Loaded once at startup; a missing or
+unreadable file means defaults, silently. Saved as a `tea.Cmd` after each
+change (atomic write: temp file and rename); a failed save is not worth a
+notice -- the change still applies for the session.
+
 ### 6.1 Mouse (round 4, 2026-09-18)
 
 The program takes the mouse (`tea.WithMouseCellMotion`). Until it did, a
@@ -419,7 +447,8 @@ geometry (`hit(x, y)`), the same numbers `splitView` draws with.
 | a rail card | move the cursor one binding per notch (the pane follows, as `j`/`k`) | select that binding; focus the rail |
 | the tab row | -- | switch to the tab whose word is under the pointer; focus the pane |
 | the pane body | scroll the viewport three lines per notch; the terminal tab's follow rule applies (at the bottom = following) | focus the pane |
-| header, footer, separator | -- | -- |
+| the separator column | -- | press-drag moves the divider (§6.0) |
+| header, footer | -- | -- |
 
 In stack layout the list screen is all rail and the detail screen is all
 pane; a click on a list card selects without opening (`⏎` opens). The old
