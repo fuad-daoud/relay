@@ -13,6 +13,12 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
 		m.list.top = m.railTop()
 		return m, nil
+	case "<", ">":
+		d := railStep
+		if msg.String() == "<" {
+			d = -railStep
+		}
+		return m.setRail(m.railCols + d)
 	case "1", "2", "3", "4":
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))

@@ -42,12 +42,12 @@ func TestHitRegionsSplit(t *testing.T) {
 	if r, row, _ := m.hit(3, top+1); r != hitRail || row != 1 {
 		t.Errorf("rail cell -> %v row %d", r, row)
 	}
-	if r, _, _ := m.hit(railWidth, top+1); r != hitNone {
+	if r, _, _ := m.hit(m.railWidth(), top+1); r != hitNone {
 		t.Errorf("the separator column hits nothing, got %v", r)
 	}
 	b := m.rows()[m.list.cursor]
 	head := len(m.paneHead(&b))
-	px := railWidth + railGap
+	px := m.railWidth() + railGap
 	if r, row, col := m.hit(px+5, top+head); r != hitTabs || col != 5 || row != head {
 		t.Errorf("tab row -> %v row %d col %d", r, row, col)
 	}
@@ -90,7 +90,7 @@ func TestHitShiftsUnderAnErrorBlock(t *testing.T) {
 
 func TestRailBindingAt(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true)
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
 	for i, l := range lines {
 		if got := m.railBindingAt(i); got != l.binding {
 			t.Errorf("line %d: railBindingAt = %d, tag = %d (%q)", i, got, l.binding, strings.TrimSpace(stripANSI(l.text)))
@@ -132,7 +132,7 @@ func TestWheelOverPaneScrollsWithoutMovingTheCursor(t *testing.T) {
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: longBody(200)}
 	m.fillViewport()
 	cursor := m.list.cursor
-	px, py := railWidth+railGap+10, headerRows+20
+	px, py := m.railWidth()+railGap+10, headerRows+20
 	res, _ := m.Update(wheel(px, py, true))
 	m = res.(Model)
 	if m.detail.vp.YOffset != 3 {
@@ -157,7 +157,7 @@ func TestWheelOverPaneKeepsTheTerminalFollowRule(t *testing.T) {
 	m.tabInFlight = false
 	res, _ = m.Update(tabMsg{name: m.detail.name, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
 	m = res.(Model)
-	px, py := railWidth+railGap+10, headerRows+20
+	px, py := m.railWidth()+railGap+10, headerRows+20
 	res, _ = m.Update(wheel(px, py, false))
 	m = res.(Model)
 	if m.detail.follow {
@@ -190,7 +190,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.tabInFlight = false
 	// Find the rail line of the third binding's name and click it.
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true)
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
 	target := -1
 	for i, l := range lines {
 		if l.binding == 2 {
@@ -218,7 +218,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	head := len(m.paneHead(&b))
 	sp := tabSpans()[tabDiff]
 	m.tabInFlight = false
-	res, _ = m.Update(click(railWidth+railGap+sp[0]+1, headerRows+head))
+	res, _ = m.Update(click(m.railWidth()+railGap+sp[0]+1, headerRows+head))
 	m = res.(Model)
 	if m.detail.active != tabDiff || m.screen != screenDetail {
 		t.Errorf("click on the diff tab: active %v screen %v", m.detail.active, m.screen)
@@ -226,7 +226,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	// Click the pane body: focus only.
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = res.(Model)
-	res, _ = m.Update(click(railWidth+railGap+10, headerRows+head+6))
+	res, _ = m.Update(click(m.railWidth()+railGap+10, headerRows+head+6))
 	if res.(Model).screen != screenDetail {
 		t.Error("a click in the pane body focuses the pane")
 	}
@@ -234,7 +234,7 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 
 func TestClickOnStackListSelectsWithoutOpening(t *testing.T) {
 	m := splitModel(t, 80, 30, threeRows()...)
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true)
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth())
 	target := -1
 	for i, l := range lines {
 		if l.binding == 1 {
@@ -248,3 +248,42 @@ func TestClickOnStackListSelectsWithoutOpening(t *testing.T) {
 		t.Errorf("stack click: cursor %d screen %v", m.list.cursor, m.screen)
 	}
 }
+
+func TestDragDividerResizesRail(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	sep := m.railWidth()
+	y := headerRows + 5
+	press := tea.MouseMsg{X: sep, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	res, _ := m.Update(press)
+	m = res.(Model)
+	if !m.drag {
+		t.Fatal("a press on the separator starts a drag")
+	}
+	res, _ = m.Update(tea.MouseMsg{X: sep + 10, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m = res.(Model)
+	if m.railCols != sep+10 {
+		t.Errorf("motion moves the divider: %d, want %d", m.railCols, sep+10)
+	}
+	res, _ = m.Update(tea.MouseMsg{X: 3, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m = res.(Model)
+	if m.railCols != railMin {
+		t.Errorf("a drag past the floor clamps: %d", m.railCols)
+	}
+	res, _ = m.Update(tea.MouseMsg{X: 3, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+	m = res.(Model)
+	if m.drag {
+		t.Error("release ends the drag")
+	}
+	// Motion without a drag in progress does nothing.
+	res, _ = m.Update(tea.MouseMsg{X: 60, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	if res.(Model).railCols != railMin {
+		t.Error("stray motion must not move the divider")
+	}
+	// A press elsewhere is still a click, not a drag.
+	res, _ = m.Update(click(railWidthOf(m)+railGap+10, headerRows+20))
+	if res.(Model).drag {
+		t.Error("a press in the pane is a click")
+	}
+}
+
+func railWidthOf(m Model) int { return m.railWidth() }

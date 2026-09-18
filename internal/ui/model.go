@@ -45,6 +45,12 @@ type Model struct {
 	// sort is true for attention order (the default); s toggles it. Lives
 	// for the process only -- persisting it is #143's sidecar question.
 	sort bool
+	// railCols is the rail's stored width preference, in columns; 0 (a
+	// fresh model) reads as railDefault. railWidth() clamps it to the
+	// current terminal.
+	railCols int
+	// drag is true while a press on the rail│pane divider is held down.
+	drag bool
 	// now is the clock every age on screen is measured against. time.Now
 	// in production; fixed in tests so "2m ago" is deterministic.
 	now func() time.Time
@@ -61,6 +67,7 @@ func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
 		screen:         screenList,
 		statusInFlight: true,
 		sort:           true,
+		railCols:       railDefault,
 		now:            time.Now,
 	}
 }
@@ -208,6 +215,16 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 	return m, nil
 }
 
+// setRail stores a new rail width, clamped, and re-fits the pane to the
+// width that leaves. Task 3 adds the prefs save here.
+func (m Model) setRail(cols int) (tea.Model, tea.Cmd) {
+	m.railCols = m.clampRail(cols)
+	m.detail.vp.Width = m.paneWidth()
+	m.fillViewport()
+	m.list.top = m.railTop()
+	return m, nil
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -329,7 +346,7 @@ func (m Model) splitView() string {
 		b.WriteString(renderError(m.err, m.width))
 		b.WriteByte('\n')
 	}
-	rail := strings.Split(m.railView(railWidth), "\n")
+	rail := strings.Split(m.railView(m.railWidth()), "\n")
 	pane := strings.Split(m.paneView(m.paneWidth()), "\n")
 	sepStyle := ruleStyle
 	if m.screen == screenDetail {
@@ -344,7 +361,7 @@ func (m Model) splitView() string {
 		if i < len(pane) {
 			p = pane[i]
 		}
-		b.WriteString(fit(r, railWidth) + bar + p)
+		b.WriteString(fit(r, m.railWidth()) + bar + p)
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.footerView())

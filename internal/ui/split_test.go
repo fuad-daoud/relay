@@ -268,6 +268,38 @@ func TestFocusIsVisible(t *testing.T) {
 	}
 }
 
+func TestRailResizeKeys(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'>'}})
+	m = res.(Model)
+	if m.railCols != railDefault+railStep {
+		t.Errorf("> widens by railStep: %d", m.railCols)
+	}
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
+	res, _ = res.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
+	m = res.(Model)
+	if m.railCols != railDefault-railStep {
+		t.Errorf("< narrows by railStep: %d", m.railCols)
+	}
+	for i := 0; i < 50; i++ {
+		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
+		m = res.(Model)
+	}
+	if m.railCols != railMin {
+		t.Errorf("< stops at railMin: %d", m.railCols)
+	}
+	view := m.View()
+	for i, l := range strings.Split(view, "\n") {
+		if w := lipgloss.Width(l); w > 140 {
+			t.Errorf("line %d is %d wide after resizing", i, w)
+		}
+	}
+	// The pane's viewport follows the divider.
+	if m.detail.vp.Width != m.paneWidth() {
+		t.Errorf("viewport width %d, pane %d", m.detail.vp.Width, m.paneWidth())
+	}
+}
+
 func TestHeaderGatesAndClock(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}

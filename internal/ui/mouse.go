@@ -39,28 +39,36 @@ func tabAt(col int) tab {
 	return -1
 }
 
+// hitBody reports whether y falls in the body rows, between the header
+// (and error block) and the footer. Shared by hit and the divider's
+// press detection.
+func (m Model) hitBody(y int) bool {
+	top := headerRows + m.errorRows()
+	return y >= top && y < top+m.bodyRows()
+}
+
 // hit maps a terminal cell to what is drawn there, with the same numbers
 // the views use: the body starts under the header and the error block;
-// in split layout the rail is the first railWidth columns and the pane
+// in split layout the rail is the first railWidth() columns and the pane
 // begins after the separator; in stack layout the screen is one or the
 // other. row and col are relative to the region.
 func (m Model) hit(x, y int) (region, int, int) {
-	top := headerRows + m.errorRows()
-	if y < top || y >= top+m.bodyRows() {
+	if !m.hitBody(y) {
 		return hitNone, 0, 0
 	}
+	top := headerRows + m.errorRows()
 	bodyRow := y - top
 	switch {
-	case m.layout() == layoutSplit && x < railWidth:
+	case m.layout() == layoutSplit && x < m.railWidth():
 		return hitRail, bodyRow, x
-	case m.layout() == layoutSplit && x < railWidth+railGap:
+	case m.layout() == layoutSplit && x < m.railWidth()+railGap:
 		return hitNone, 0, 0
 	case m.layout() == layoutStack && m.screen == screenList:
 		return hitRail, bodyRow, x
 	}
 	col := x
 	if m.layout() == layoutSplit {
-		col = x - railWidth - railGap
+		col = x - m.railWidth() - railGap
 	}
 	head := paneHeadRows
 	if b := row(m.report, m.detail.name); b != nil {
@@ -76,7 +84,7 @@ func (m Model) hit(x, y int) (region, int, int) {
 // row (0 = the first drawn line, m.list.top), or -1 for a header, a gap
 // or past the end.
 func (m Model) railBindingAt(row int) int {
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList)
+	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth())
 	i := m.list.top + row
 	if i < 0 || i >= len(lines) {
 		return -1
@@ -92,7 +100,20 @@ const wheelLines = 3
 // updateMouse is spec §6.1's table: the wheel scrolls what is under the
 // pointer, a click selects what is under it, focus follows the click.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		if m.drag {
+			return m.setRail(msg.X)
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		if m.drag {
+			m.drag = false
+			return m, nil // Task 3: save prefs here
+		}
+		return m, nil
+	case tea.MouseActionPress:
+	default:
 		return m, nil
 	}
 	r, row, col := m.hit(msg.X, msg.Y)
@@ -122,6 +143,10 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseButtonLeft:
+		if m.layout() == layoutSplit && msg.X >= m.railWidth() && msg.X < m.railWidth()+railGap && m.hitBody(msg.Y) {
+			m.drag = true
+			return m, nil
+		}
 		switch r {
 		case hitRail:
 			i := m.railBindingAt(row)

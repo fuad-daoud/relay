@@ -112,7 +112,7 @@ func facts(b relay.BindingStatus) []string {
 // is "the rail has focus": the gutter is lit accent only when the card is
 // both selected and the rail is focused, dim when selected but the pane
 // has focus instead, so a human can tell which side is listening.
-func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool) []string {
+func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) []string {
 	gutter := " "
 	if selected && focused {
 		gutter = accentStyle.Render("▎")
@@ -125,7 +125,7 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 		nameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
 	}
 	round := dimStyle.Render(fmt.Sprintf("r%d", b.Round))
-	nameWidth := railWidth - 1 - 2 - lipgloss.Width(round) - 1 // gutter, slot, round, pad
+	nameWidth := width - 1 - 2 - lipgloss.Width(round) - 1 // gutter, slot, round, pad
 	name := nameStyle.Render(fit(b.Name, nameWidth))
 	l1 := gutter + unreadSlot + name + round + " "
 
@@ -163,7 +163,7 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 	lines = append(lines, "   "+strings.Join(l4, sep))
 
 	for i, l := range lines {
-		l = fit(l, railWidth)
+		l = fit(l, width)
 		if selected {
 			l = selectedBg.Render(l)
 		}
@@ -181,10 +181,10 @@ var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 // on each. cursor is the index in rows of the selected binding. focused is
 // "the rail has focus" (m.screen == screenList), threaded through to
 // cardLines so the selected card's gutter dims when the pane has focus.
-func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool) []railLine {
+func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int) []railLine {
 	var out []railLine
 	card := func(i int) {
-		for _, l := range cardLines(rows[i], i == cursor, !attention, now, focused) {
+		for _, l := range cardLines(rows[i], i == cursor, !attention, now, focused, width) {
 			out = append(out, railLine{text: l, binding: i})
 		}
 	}
@@ -205,13 +205,13 @@ func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.
 			continue
 		}
 		header := " " + stateStyle(state).Render(state) + faintStyle.Render(fmt.Sprintf("  %d", n))
-		out = append(out, railLine{text: fit(header, railWidth), binding: -1})
+		out = append(out, railLine{text: fit(header, width), binding: -1})
 		for i, r := range rows {
 			if r.Display == state {
 				card(i)
 			}
 		}
-		out = append(out, railLine{text: fit("", railWidth), binding: -1})
+		out = append(out, railLine{text: fit("", width), binding: -1})
 	}
 	// A state outside groupOrder (none today) would vanish; append it so
 	// nothing is ever hidden.
@@ -272,9 +272,19 @@ func railWindow(top, first, last, rows, n int) int {
 }
 
 // railView draws bodyRows() rail lines at width, windowed on the cursor's
-// card, or the three prose states when there is nothing to draw.
+// card, or the three prose states when there is nothing to draw. A card's
+// own content width is the split's rail width (the human's draggable
+// preference) only in split layout, where width is that same value; in
+// stack layout the rail is the whole screen, sized to the terminal, and
+// carries no divider to drag -- its cards keep the fixed railDefault
+// content width they always had, with width (here, m.width) doing what it
+// always did: padding/truncating the drawn line to the terminal.
 func (m Model) railView(width int) string {
 	rows := m.bodyRows()
+	cardWidth := railDefault
+	if m.layout() == layoutSplit {
+		cardWidth = width
+	}
 	var lines []string
 	switch {
 	case !m.statusLoaded && m.err != nil:
@@ -284,7 +294,7 @@ func (m Model) railView(width int) string {
 	case len(m.rows()) == 0:
 		lines = []string{"no bindings"}
 	default:
-		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList)
+		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, cardWidth)
 		first, last := railSpan(all, m.list.cursor)
 		start := railWindow(m.list.top, first, last, rows, len(all))
 		end := len(all)
@@ -310,7 +320,7 @@ func (m Model) railView(width int) string {
 // railTop re-windows the rail on the cursor's card. Called wherever the
 // cursor, the rows or the row budget changed.
 func (m Model) railTop() int {
-	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList)
+	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth())
 	first, last := railSpan(all, m.list.cursor)
 	return railWindow(m.list.top, first, last, m.bodyRows(), len(all))
 }

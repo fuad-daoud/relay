@@ -4,13 +4,17 @@ package ui
 // screen is here and nowhere else.
 const (
 	splitMinWidth = 110 // columns; at or above, rail + pane
-	railWidth     = 34  // columns, including the 1-column selection gutter
 	railGap       = 2   // separator column + 1 pad
 	headerRows    = 2   // header bar + blank
 	footerRows    = 1
 	paneHeadRows  = 5 // title, planner, builder, tree, blank
 	tabRows       = 2 // tab bar + rule
 	sourceRows    = 2 // source line + blank
+
+	railDefault = 34 // columns, including the 1-column selection gutter
+	railMin     = 20
+	paneMin     = 80 // a hunk's width; the rail never eats into it
+	railStep    = 2  // < and > move the divider this much
 )
 
 // layout is which of the two screens the terminal width earns.
@@ -31,9 +35,44 @@ func (m Model) layout() layout {
 // paneWidth is the columns the pane (and its viewport) gets.
 func (m Model) paneWidth() int {
 	if m.layout() == layoutSplit {
-		return m.width - railWidth - railGap
+		return m.width - m.railWidth() - railGap
 	}
 	return m.width
+}
+
+// clampRail keeps the rail between railMin and what leaves the pane its
+// paneMin, on the current terminal. On a terminal too narrow for both,
+// the floor wins: a rail is useless below railMin, and the split has a
+// width threshold anyway.
+func (m Model) clampRail(cols int) int {
+	max := m.width - railGap - paneMin
+	if cols > max {
+		cols = max
+	}
+	if cols < railMin {
+		cols = railMin
+	}
+	return cols
+}
+
+// railWidth is the rail's drawn width: the stored preference, clamped to
+// the terminal it is drawn on. Zero (a fresh model before prefs) reads as
+// the default.
+func (m Model) railWidth() int {
+	if m.railCols == 0 {
+		return m.clampRail(railDefault)
+	}
+	return m.clampRail(m.railCols)
+}
+
+// railWidthStored is the unclamped preference: railCols, or railDefault
+// when zero. A width set on a wide terminal is kept, not squashed by a
+// narrower one just because it happened to be read there.
+func (m Model) railWidthStored() int {
+	if m.railCols == 0 {
+		return railDefault
+	}
+	return m.railCols
 }
 
 // bodyRows is the rows between the header and the footer, less whatever
