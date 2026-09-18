@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,6 +362,9 @@ func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
+	// The lines argument is a pane-builder concern (#180's Task 2): the
+	// headless branch now always returns the whole log, capped only by
+	// headlessLogLines, so a request for 3 lines still gets all of it.
 	msg := fetchTerminal(context.Background(), rt, "webshop", 3)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -369,11 +373,51 @@ func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	if tMsg.content.err != nil || tMsg.content.empty != "" {
 		t.Fatalf("content = %+v, want a body", tMsg.content)
 	}
-	if tMsg.content.body != "c\nd\ne" {
-		t.Errorf("body = %q, want the last three lines", tMsg.content.body)
+	if tMsg.content.body != "a\nb\nc\nd\ne" {
+		t.Errorf("body = %q, want the whole log regardless of the lines argument", tMsg.content.body)
 	}
 	if fh.readCalls != 0 {
 		t.Errorf("a headless builder has no pane to read: readCalls = %d", fh.readCalls)
+	}
+}
+
+func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	logPath := filepath.Join(t.TempDir(), "002-builder.log")
+	var lines40 []string
+	for i := 1; i <= 40; i++ {
+		lines40 = append(lines40, fmt.Sprintf("line %d", i))
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines40, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := newTestBinding(name)
+	b.Builder = store.Endpoint{AgentName: name + "-builder", Kind: "agy", Mode: store.ModeHeadless, LogPath: logPath}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), rt, name, 5)().(tabMsg)
+	if got := strings.Count(msg.content.body, "\n") + 1; got != 40 {
+		t.Errorf("headless terminal body has %d lines, want all 40 regardless of the lines argument", got)
+	}
+
+	// A log longer than the cap keeps only its tail.
+	var linesOver []string
+	for i := 1; i <= headlessLogLines+10; i++ {
+		linesOver = append(linesOver, fmt.Sprintf("line %d", i))
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(linesOver, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg = fetchTerminal(context.Background(), rt, name, 5)().(tabMsg)
+	lines := strings.Split(msg.content.body, "\n")
+	if len(lines) != headlessLogLines || !strings.HasSuffix(lines[len(lines)-1], fmt.Sprint(headlessLogLines+10)) {
+		t.Errorf("capped body: %d lines, last %q", len(lines), lines[len(lines)-1])
 	}
 }
 

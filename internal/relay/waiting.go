@@ -14,12 +14,12 @@ import (
 // Waiting is what one binding is waiting on: a human decision it cannot make
 // progress without, and how long it has been waiting for it.
 type Waiting struct {
-	Name  string    // binding
-	Round int       // b.Round as stored
-	Cause string    // "blocked" | "halted" | "broken" | "orphaned" | "needs you"
-	Line  string    // what it is waiting on, one line, <= 120 runes, never empty
-	Since time.Time // when it started waiting; zero when relay does not know
-	Hint  string    // the relay verb that resolves it, e.g. `relay answer --name api`
+	Name  string    `json:"name"`            // binding
+	Round int       `json:"round"`           // b.Round as stored
+	Cause string    `json:"cause"`           // "blocked" | "halted" | "broken" | "orphaned" | "needs you"
+	Line  string    `json:"line"`            // what it is waiting on, one line, <= 120 runes, never empty
+	Since time.Time `json:"since,omitempty"` // when it started waiting; zero when relay does not know
+	Hint  string    `json:"hint"`            // the relay verb that resolves it, e.g. `relay answer --name api`
 }
 
 // switchable mirrors Reconcile's inline expression (reconcile.go): a

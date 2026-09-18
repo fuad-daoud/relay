@@ -216,14 +216,19 @@ Rules, in order:
    (claude, opencode) or `event` (agy), or `[?]` when neither is a string.
    A harness upgrade degrades to noise, not silence.
 
-Vocabulary (every kind renders into the same shapes):
+Vocabulary (every kind renders into the same shapes). Amended
+2026-09-18 (#180 round 3): a tool call carries a `● ` marker and a result
+a `⎿` marker, so a reader that styles the log -- `relay ui`'s terminal
+tab -- can tell a call from a line of assistant prose without guessing;
+`->` had no such property. Assistant text is still verbatim, so it never
+starts with either marker unless the model typed one.
 
 | what | line |
 |---|---|
-| tool call | `<name> <main argument>` -- the name as the harness spells it (`Bash`, `view_file`); the argument on one line, truncated to 200 bytes with `...` |
-| tool call, no argument | `<name>` |
-| tool result, ok | `  -> ok: <first line of the tool's output>`, or `  -> ok` when there is none (claude: `tool_result` content; agy: `tool_info.output`) |
-| tool result, error | `  -> error: <first line of the message>` |
+| tool call | `● <name> <main argument>` -- the name as the harness spells it (`Bash`, `view_file`); the argument on one line, truncated to 200 bytes with `...` |
+| tool call, no argument | `● <name>` |
+| tool result, ok | `  ⎿ ok: <first line of the tool's output>`, or `  ⎿ ok` when there is none (claude: `tool_result` content; agy: `tool_info.output`) |
+| tool result, error | `  ⎿ error: <first line of the message>` |
 | assistant text | the text, verbatim |
 | denied action | `denied: <what the harness names>` |
 | final result | the result text, verbatim; preceded by `result: <status>` when the harness says it was not a success |
@@ -257,8 +262,8 @@ block is rendered in order. Fixture: `testdata/claude.jsonl` from the
 | event | render |
 |---|---|
 | `step_update`, `step_type: tool`, `state: ACTIVE` | tool call: `tool_name`, `tool_info.parameters` |
-| `step_update`, `step_type: tool`, `state: DONE` | `  -> ok: <tool_info.output first line>` |
-| `step_update`, `step_type: tool`, `state: ERROR` | `  -> error: <tool_info.error.message>` |
+| `step_update`, `step_type: tool`, `state: DONE` | `  ⎿ ok: <tool_info.output first line>` |
+| `step_update`, `step_type: tool`, `state: ERROR` | `  ⎿ error: <tool_info.error.message>` |
 | `step_update`, any other `step_type` | noise |
 | `result` | `denied: <action> (<display_name>)` per `denied_actions` entry; `result: <status>` when `status != "SUCCESS"`; then `response` verbatim when non-empty |
 | `init` | noise |
@@ -272,11 +277,11 @@ denied under headless permissions, `response` empty).
 
 | event | render |
 |---|---|
-| `tool_use`, `part.state.status: completed` | tool call: `part.tool`, `part.state.input`; then `  -> ok: <part.state.output first line>` -- two lines from one event |
-| `tool_use`, `part.state.status: error` | tool call as above; then `  -> error: <part.state.error first line>` |
+| `tool_use`, `part.state.status: completed` | tool call: `part.tool`, `part.state.input`; then `  ⎿ ok: <part.state.output first line>` -- two lines from one event |
+| `tool_use`, `part.state.status: error` | tool call as above; then `  ⎿ error: <part.state.error first line>` |
 | `tool_use`, any other status | rule 5 |
 | `text` | `part.text` verbatim |
-| `error` | `  -> error: <error.message>` (session-level: `aborted`, `provider.auth`, `provider.no-route` seen) |
+| `error` | `  ⎿ error: <error.message>` (session-level: `aborted`, `provider.auth`, `provider.no-route` seen) |
 | `step_start`, `step_finish` | noise |
 
 opencode emits one `tool_use` per call, after the tool has finished, with

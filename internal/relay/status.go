@@ -83,6 +83,14 @@ type BindingStatus struct {
 	// Switches is builder switches in the current round (#61 step 6); zero is
 	// omitted.
 	Switches int `json:"switches,omitempty"`
+	// Branch is the binding's worktree branch; "" for a --cwd binding,
+	// which has no worktree of its own.
+	Branch string `json:"branch,omitempty"`
+	// Waiting is set when the binding is stalled on a human (WaitingOn):
+	// the cause, the one-line reason, since when, and the verb that
+	// resolves it. Nil otherwise, including for a switchable broken
+	// binding the daemon is about to fix itself.
+	Waiting *Waiting `json:"waiting,omitempty"`
 }
 
 // HeadlessInfo is the process half of a headless builder's status row
@@ -223,6 +231,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         runningConsults(b),
 		Switches:         b.RoundSwitches,
+		Branch:           b.Branch,
 		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
 	}
@@ -252,6 +261,9 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	entries, err := rt.Store.ReadLog(b.Name)
 	if err != nil {
 		return BindingStatus{}, err
+	}
+	if w, ok := WaitingOn(b, entries, questionFirstLine(rt)); ok {
+		row.Waiting = &w
 	}
 	if n := len(entries); n > 0 {
 		last := entries[n-1]

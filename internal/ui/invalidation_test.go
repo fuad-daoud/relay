@@ -212,6 +212,10 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
 	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	// width 80 (stack layout): this test predates footerView's width-aware
+	// left/right layout and was built at width 0, which the new footerView
+	// treats as "no room" and drops the right side entirely.
+	m.width = 80
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -232,8 +236,8 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	if !strings.Contains(m.notice, "webshop is gone") {
 		t.Fatalf("expected 'webshop is gone' notice, got %q", m.notice)
 	}
-	if !strings.Contains(m.footer(), "webshop is gone") {
-		t.Fatalf("expected footer to contain 'webshop is gone', got %q", m.footer())
+	if !strings.Contains(stripANSI(m.footerView()), "webshop is gone") {
+		t.Fatalf("expected footer to contain 'webshop is gone', got %q", stripANSI(m.footerView()))
 	}
 
 	// Second good statusMsg must NOT clear the notice
@@ -242,8 +246,8 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	if !strings.Contains(m.notice, "webshop is gone") {
 		t.Fatalf("notice must survive subsequent statusMsg, got %q", m.notice)
 	}
-	if !strings.Contains(m.footer(), "webshop is gone") {
-		t.Fatalf("footer must still show notice after subsequent statusMsg, got %q", m.footer())
+	if !strings.Contains(stripANSI(m.footerView()), "webshop is gone") {
+		t.Fatalf("footer must still show notice after subsequent statusMsg, got %q", stripANSI(m.footerView()))
 	}
 
 	// Keypress clears the notice

@@ -59,13 +59,14 @@ func unknown(obj map[string]any) string {
 	return "[?]"
 }
 
-// toolLine is "<name> <main argument>", or "<name>" when no parameter is a
-// non-empty string.
+// toolLine is "● <name> <main argument>", or "● <name>" when no parameter
+// is a non-empty string. The marker is what lets a reader tell a call from
+// assistant prose (spec §4.3, amended for #180).
 func toolLine(name string, params map[string]any) string {
 	if arg, ok := mainArg(params); ok {
-		return name + " " + oneLine(arg)
+		return "● " + name + " " + oneLine(arg)
 	}
-	return name
+	return "● " + name
 }
 
 func mainArg(params map[string]any) (string, bool) {
@@ -87,23 +88,23 @@ func mainArg(params map[string]any) (string, bool) {
 	return str(params[strs[0]]), true
 }
 
-// okLine is a successful tool result: "  -> ok: <first line of its output>",
-// or "  -> ok" when the harness gave none. One line, so three parallel
+// okLine is a successful tool result: "  ⎿ ok: <first line of its output>",
+// or "  ⎿ ok" when the harness gave none. One line, so three parallel
 // calls' results still tell apart.
 func okLine(output string) string {
 	if output = oneLine(output); output == "" {
-		return "  -> ok"
+		return "  ⎿ ok"
 	}
-	return "  -> ok: " + output
+	return "  ⎿ ok: " + output
 }
 
-// errLine is a failed tool result: "  -> error: <first line>", or "  -> error"
+// errLine is a failed tool result: "  ⎿ error: <first line>", or "  ⎿ error"
 // when the harness gave no message.
 func errLine(msg string) string {
 	if msg = oneLine(msg); msg == "" {
-		return "  -> error"
+		return "  ⎿ error"
 	}
-	return "  -> error: " + msg
+	return "  ⎿ error: " + msg
 }
 
 // oneLine keeps the first line of s and at most maxArg bytes of it, cut on

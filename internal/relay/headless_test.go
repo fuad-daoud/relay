@@ -472,7 +472,7 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if want := "run_command go test ./...\n  -> ok\n"; readLog(t, rt) != want {
+	if want := "● run_command go test ./...\n  ⎿ ok\n"; readLog(t, rt) != want {
 		t.Errorf("log = %q, want %q", readLog(t, rt), want)
 	}
 	if got.Builder.StreamOffset != int64(len(agyToolActive+agyToolDone)) {
@@ -481,7 +481,7 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 
 	// Nothing new: nothing appended.
 	again, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
-	if err != nil || readLog(t, rt) != "run_command go test ./...\n  -> ok\n" || again.Builder.StreamOffset != got.Builder.StreamOffset {
+	if err != nil || readLog(t, rt) != "● run_command go test ./...\n  ⎿ ok\n" || again.Builder.StreamOffset != got.Builder.StreamOffset {
 		t.Errorf("a tick with no new stream data must change nothing: log=%q offset=%d err=%v", readLog(t, rt), again.Builder.StreamOffset, err)
 	}
 
@@ -491,7 +491,7 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if want := "run_command go test ./...\n  -> ok\nall done\n"; readLog(t, rt) != want {
+	if want := "● run_command go test ./...\n  ⎿ ok\nall done\n"; readLog(t, rt) != want {
 		t.Errorf("log = %q, want %q", readLog(t, rt), want)
 	}
 }
@@ -514,7 +514,7 @@ func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if readLog(t, rt) != "run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
+	if readLog(t, rt) != "● run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
 		t.Errorf("completed line: log=%q offset=%d", readLog(t, rt), got.Builder.StreamOffset)
 	}
 }
@@ -541,7 +541,7 @@ func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 	if _, err := reconcile(t, rt, loaded, []herdr.Agent{plannerAgent()}); err != nil {
 		t.Fatal(err)
 	}
-	if readLog(t, rt) != "run_command go test ./...\n" {
+	if readLog(t, rt) != "● run_command go test ./...\n" {
 		t.Errorf("log after reload tick = %q; the line was rendered twice", readLog(t, rt))
 	}
 }
@@ -555,7 +555,7 @@ func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if readLog(t, rt) != "run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
+	if readLog(t, rt) != "● run_command go test ./...\n" || got.Builder.StreamOffset != int64(len(agyToolActive)) {
 		t.Errorf("log=%q offset=%d; want rendered from 0 and the cursor at EOF", readLog(t, rt), got.Builder.StreamOffset)
 	}
 }
@@ -601,7 +601,7 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 	if len(ex) != 1 {
 		t.Fatalf("exit entries = %d, want 1", len(ex))
 	}
-	want := "jetski: starting\nrun_command go test ./...\n  -> ok\nall done\nrelay-exit:0"
+	want := "jetski: starting\n● run_command go test ./...\n  ⎿ ok\nall done\nrelay-exit:0"
 	if ex[0].Payload != want {
 		t.Errorf("payload = %q, want the drained log %q", ex[0].Payload, want)
 	}
@@ -635,7 +635,7 @@ func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if want := "run_command go test ./...\nall done\nrelay-exit:0\n"; readLog(t, rt) != want {
+	if want := "● run_command go test ./...\nall done\nrelay-exit:0\n"; readLog(t, rt) != want {
 		t.Errorf("round 1 log after the close = %q, want %q", readLog(t, rt), want)
 	}
 }

@@ -1,0 +1,30 @@
+ relay   5 bindings · 1 needs you · 1 held    codex gated until 15:30  ·  14:02 
+
+webshop  round 4   NEEDS YOU                                question r4 · 2m ago
+planner  %1   claude    idle                                                    
+builder  %7   agy       blocked · 2 consults                                    
+tree     relay/webshop · dirty                                                  
+                                                                                
+ report    terminal    diff    log                                              
+──────────━━━━━━━━━━────────────────────────────────────────────────────────────
+%7 · captured 0s ago · 2 lines                                                  
+                                                                                
+$ go test ./...                                                                 
+ok      github.com/fuad-daoud/relay/internal/ui    1.2s                         
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+relay: relay answer --name webshop                                              
+esc back   tab next pane   1-4 pane   q quit                    refreshed 0s ago

@@ -16,6 +16,10 @@ type Options struct {
 	// Interval is the list poll period. Floored at minInterval, default 2s to
 	// match the daemon tick and `relay watch`.
 	Interval time.Duration
+
+	// PrefsPath is the ui's own preference file (spec §6.0); "" keeps the
+	// ui stateless -- nothing loaded, nothing saved.
+	PrefsPath string
 }
 
 const minInterval = 500 * time.Millisecond
@@ -46,7 +50,12 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 		opts.Interval = minInterval
 	}
 
-	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithContext(ctx))
+	model := newModel(ctx, rt, opts)
+	if opts.PrefsPath != "" {
+		model = model.applyPrefs(loadPrefs(opts.PrefsPath))
+	}
+
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err = p.Run()
 	return runResult(ctx, err)
 }

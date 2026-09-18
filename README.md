@@ -224,6 +224,11 @@ inside every pane it manages, so it has to be run from inside one.
   round's log.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  `--json` also carries two fields the prose above does not spell out:
+  ```
+  branch      the binding's worktree branch; absent for a --cwd binding
+  waiting     set when the binding is stalled on a human: cause, line, since, hint
+  ```
 - `relay log NAME` — the binding's append-only round log.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
   until the round closes or the binding needs you, reading relay's own state only
@@ -233,7 +238,10 @@ inside every pane it manages, so it has to be run from inside one.
   the binding is DONE or was unbound. 124: `--timeout` (default 10m) elapsed.
   `--any` waits on several and prints the winner's name first. A pane planner
   that does not want the report typed afterwards runs `relay wait N && relay pull N`.
-- `relay ui [--interval D]` — interactive reader: report, terminal, diff and log tabs.
+- `relay ui [--interval D]` — interactive reader: at 110 columns or more, a rail
+  of bindings grouped by state beside a pane showing the selected binding's
+  report, terminal, diff or log; narrower terminals get the list-then-detail
+  flow.
 - `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
@@ -283,7 +291,10 @@ It is strictly **read-only**: it never mutates state, never types into panes,
 and never appends to round logs. It holds the state lock only for the duration
 of a read, exactly as `relay status` does.
 
-Opening a binding displays four full-width tabs:
+At 110 columns or more, a rail of bindings grouped by state sits beside a
+pane showing the selected binding's report, terminal, diff or log (`⏎`
+focuses the pane, `s` toggles attention and name order); narrower
+terminals get the list-then-detail flow. The pane's four tabs:
 - **report** — the newest planner-bound report or question payload.
 - **terminal** — recent live terminal output from the builder agent's pane.
 - **diff** — the captured git patch from the newest completed round.
@@ -320,7 +331,7 @@ pane builder would be typed, writes the harness's streamed JSON events to
 `~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
 `NNN-builder.log`, both beside the round's plan and report, and returns.
 The daemon renders the stream into the `.log` as it grows -- one line per
-tool call (`Bash go test ./...`), its result with the first line of what it printed (`  -> ok: ok  github.com/… 0.4s`, `  -> error: …`),
+tool call (`● Bash go test ./...`), its result with the first line of what it printed (`  ⎿ ok: ok  github.com/… 0.4s`, `  ⎿ error: …`),
 the builder's text, any denied permission, and the final answer -- so
 `relay ui`'s terminal tab, `relay status` and `tail -f` on the `.log` show
 the round live, about two seconds behind. Between rounds the tab keeps

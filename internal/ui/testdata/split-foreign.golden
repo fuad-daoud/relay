@@ -1,0 +1,40 @@
+ relay   1 bindings                                                                                                                   14:02 
+
+ ACTIVE  1                        │ api  round 2   ACTIVE                                                                                   
+▎  api                         r2 │ planner                                                                                                 
+▎  working                        │ builder       agy       working                                                                         
+▎  agy                            │ foreign  %9   claude    working · reviewer                                                              
+                                  │ foreign  %10  opencode  idle · researcher                                                               
+                                  │ tree                                                                                                    
+                                  │                                                                                                         
+                                  │  report    terminal    diff    log                                                                      
+                                  │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────
+                                  │  · captured 0s ago · 2 lines                                                                            
+                                  │                                                                                                         
+                                  │ $ go test ./...                                                                                         
+                                  │ ok      github.com/fuad-daoud/relay/internal/ui    1.2s                                                 
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   c compact   q quit                                  refreshed 0s ago

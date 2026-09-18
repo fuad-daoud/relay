@@ -219,8 +219,8 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	if updated.detail.vp.Width != 100 {
 		t.Errorf("expected vp width 100, got %d", updated.detail.vp.Width)
 	}
-	if updated.detail.vp.Height != 40-chromeHeight {
-		t.Errorf("expected vp height %d, got %d", 40-chromeHeight, updated.detail.vp.Height)
+	if want := updated.viewportHeight(); updated.detail.vp.Height != want {
+		t.Errorf("expected vp height %d, got %d", want, updated.detail.vp.Height)
 	}
 }
 
