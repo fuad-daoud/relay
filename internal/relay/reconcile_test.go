@@ -142,6 +142,64 @@ func TestReconcileNudgesOnceWhenReportFileMissing(t *testing.T) {
 	}
 }
 
+func TestNudgeStallLateRecordsLate(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+	f.stalls = 1
+	f.readOut = "builder output...\n" + nudgeFingerprint + "\n..."
+	f.prompts = nil
+	f.reads = nil
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("a nudge must not advance the round, got %d", got.Round)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("expected 0 accepted retry prompts (no retry), got %+v", f.prompts)
+	}
+	if len(f.reads) < 1 {
+		t.Fatalf("expected at least 1 read, got %d", len(f.reads))
+	}
+	if f.reads[0].Source != "visible" || f.reads[0].Lines != lateScanLines {
+		t.Errorf("read[0] = %+v, want visible with %d lines", f.reads[0], lateScanLines)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nudgeEntry := entries[len(entries)-1]
+	if nudgeEntry.Note != nudgeNote {
+		t.Errorf("nudgeEntry.Note = %q, want %q", nudgeEntry.Note, nudgeNote)
+	}
+	if !nudgeEntry.Late {
+		t.Errorf("nudgeEntry.Late = false, want true")
+	}
+
+	nt, ok := nudgeTime(entries, 1)
+	if !ok || nt.IsZero() {
+		t.Errorf("nudgeTime(entries, 1) = (%v, %v), want valid time", nt, ok)
+	}
+
+	var realPlanSends int
+	for _, e := range entries {
+		if e.Round == 1 && e.Direction == store.DirToBuilder && e.Kind == store.KindPlan && e.Note != nudgeNote {
+			realPlanSends++
+		}
+	}
+	if realPlanSends != 1 {
+		t.Errorf("real plan sends = %d, want 1", realPlanSends)
+	}
+	if !HasEntry(entries, 1, store.DirToBuilder, store.KindPlan) {
+		t.Errorf("HasEntry should see the initial plan send")
+	}
+}
+
 func TestReconcileScrapesAfterNudgeFails(t *testing.T) {
 	// The builder's terminal output is assumed stable across ticks (here a single
 	// unchanging string), so relay observes a still screen across nudgeGrace and

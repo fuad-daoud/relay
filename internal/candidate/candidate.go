@@ -48,13 +48,14 @@ func (r Ref) String() string {
 
 // Candidate describes one concrete way to fill a role.
 type Candidate struct {
-	Harness       string   `json:"harness"`
-	Provider      string   `json:"provider"`
-	Model         string   `json:"model"`
-	Roles         []string `json:"roles"`
-	Tree          string   `json:"tree,omitempty"`
-	ExtraArgs     []string `json:"extra_args,omitempty"`
-	LimitPatterns []string `json:"limit_patterns,omitempty"`
+	Harness        string   `json:"harness"`
+	Provider       string   `json:"provider"`
+	Model          string   `json:"model"`
+	Roles          []string `json:"roles"`
+	Tree           string   `json:"tree,omitempty"`
+	ExtraArgs      []string `json:"extra_args,omitempty"`
+	LimitPatterns  []string `json:"limit_patterns,omitempty"`
+	DialogPatterns []string `json:"dialog_patterns,omitempty"`
 
 	// Plan marks a subscription lane (#142): the round's cost is a quota
 	// draw, and printers say "plan", never "$0" and never "free".
@@ -186,6 +187,11 @@ func Load(path string) (*Set, error) {
 		for j, pat := range c.LimitPatterns {
 			if _, err := regexp.Compile(pat); err != nil {
 				return nil, fmt.Errorf("candidates %s: candidate %d: limit_patterns[%d]: %w", path, i, j, err)
+			}
+		}
+		for j, pat := range c.DialogPatterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return nil, fmt.Errorf("candidates %s: candidate %d: dialog_patterns[%d]: %w", path, i, j, err)
 			}
 		}
 		key := c.Ref().String()

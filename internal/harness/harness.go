@@ -133,6 +133,20 @@ type Harness struct {
 	// TestLimitPatternsSetOnEveryKind enforces it. Case-insensitivity is
 	// written into the pattern with (?i).
 	LimitPatterns []string
+	// DialogPatterns are default regexes for the text this harness shows when
+	// it is waiting on a yes/no or option dialog. Every default must compile;
+	// TestDialogPatternsSetOnEveryKind enforces it. Case-insensitivity is
+	// written into the pattern with (?i).
+	DialogPatterns []string
+}
+
+var defaultDialogPatterns = []string{
+	`(?i)\[y/n\]`,
+	`(?i)\(y/n\)`,
+	`(?i)do you want to (proceed|continue|allow)`,
+	`❯\s*1\.\s*Yes`,
+	`(?i)press enter to confirm`,
+	`(?i)esc to cancel`,
 }
 
 var knownHarnesses = map[string]Harness{
@@ -153,6 +167,7 @@ var knownHarnesses = map[string]Harness{
 			`(?i)RESOURCE_EXHAUSTED`,
 			`(?i)quota exceeded`,
 		},
+		DialogPatterns: defaultDialogPatterns,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -175,6 +190,7 @@ var knownHarnesses = map[string]Harness{
 			`(?i)rate limit reached`,
 			`(?i)limit .*resets`,
 		},
+		DialogPatterns: defaultDialogPatterns,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -201,6 +217,7 @@ var knownHarnesses = map[string]Harness{
 			`(?i)insufficient (credits|quota)`,
 			`(?i)RESOURCE_EXHAUSTED`,
 		},
+		DialogPatterns: defaultDialogPatterns,
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},

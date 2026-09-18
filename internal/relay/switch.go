@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -161,10 +162,14 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 				b.Name, res.Token(), b.Round, err))
 		}
 		b = started
-	} else if err := promptWithRetry(ctx, rt, ep.PaneID, text); err != nil {
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
-			"%s: switched builder to %s but could not hand it round %d: %v",
-			b.Name, res.Token(), b.Round, err))
+	} else if err := promptWithRetry(ctx, rt, ep.PaneID, text, rt.Store.PlanPath(b.Name, b.Round)); err != nil {
+		if errors.Is(err, ErrPromptLate) {
+			slog.Info("plan handed to switched builder late", "binding", b.Name, "round", b.Round)
+		} else {
+			return haltBinding(ctx, rt, b, fmt.Sprintf(
+				"%s: switched builder to %s but could not hand it round %d: %v",
+				b.Name, res.Token(), b.Round, err))
+		}
 	}
 
 	b.RoundStartedAt = now

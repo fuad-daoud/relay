@@ -2,7 +2,9 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -99,8 +101,12 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	}
 
 	// Address the agent FindAgent just located; see internal/ui/fetch.go:170.
-	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload); err != nil {
-		return b, Delivery{}, fmt.Errorf("prompt planner: %w", err)
+	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload, pending.Path); err != nil {
+		if errors.Is(err, ErrPromptLate) {
+			slog.Info("report delivered late", "binding", b.Name, "round", pending.Round)
+		} else {
+			return b, Delivery{}, fmt.Errorf("prompt planner: %w", err)
+		}
 	}
 	if err := tx.ConfirmIndex(b.Name, idx); err != nil {
 		return b, Delivery{}, err
