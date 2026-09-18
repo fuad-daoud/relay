@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 type Model struct {
@@ -397,6 +398,14 @@ func (m Model) headerView() string {
 	var right []string
 	for _, g := range m.report.Gated {
 		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relay.GateUntilText(g.Until))))
+	}
+	if m.layout() == layoutSplit && m.detail.name != "" {
+		for _, b := range m.report.Bindings {
+			if b.Name == m.detail.name && b.Spend != nil {
+				right = append(right, dimStyle.Render("spend "+usage.SpendLine(*b.Spend)))
+				break
+			}
+		}
 	}
 	right = append(right, dimStyle.Render(m.now().Local().Format("15:04")+" "))
 	bar := headerBar.Render(fit(spread(left, strings.Join(right, "  ·  "), m.width), m.width))

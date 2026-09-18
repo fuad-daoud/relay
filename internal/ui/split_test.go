@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 	"github.com/muesli/termenv"
 )
 
@@ -354,5 +355,23 @@ func TestHeaderGatesAndClock(t *testing.T) {
 	}
 	if strings.Count(h, "\n") != headerRows-1 {
 		t.Errorf("header must be %d rows: %q", headerRows, h)
+	}
+}
+
+func TestHeaderShowsSelectedSpend(t *testing.T) {
+	rows := threeRows()
+	// Attention order selects webshop (NEEDS YOU) by default, not rows[0];
+	// set the spend on whichever row m.detail.name names (see task 5 step 1).
+	rows[2].Spend = &usage.Spend{Rounds: 3, Measured: 1.23, Unknown: 1}
+	m := splitModel(t, 140, 40, rows...)
+	if m.detail.name != rows[2].Name {
+		t.Fatalf("selected binding = %q, want %q (fix the row index above)", m.detail.name, rows[2].Name)
+	}
+	h := stripANSI(m.headerView())
+	if !strings.Contains(h, "spend 3 rounds · $1.23 · 1 unknown") {
+		t.Errorf("header = %q", h)
+	}
+	if strings.Count(h, "\n") != headerRows-1 {
+		t.Errorf("header must stay %d rows: %q", headerRows, h)
 	}
 }

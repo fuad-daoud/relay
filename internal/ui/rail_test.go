@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 	"github.com/muesli/termenv"
 )
 
@@ -226,5 +227,21 @@ func TestRailWindowSpan(t *testing.T) {
 		if got := railWindow(c.top, c.first, c.last, c.rows, c.n); got != c.want {
 			t.Errorf("railWindow(%d,%d,%d,%d,%d) = %d, want %d", c.top, c.first, c.last, c.rows, c.n, got, c.want)
 		}
+	}
+}
+
+func TestFactsSpend(t *testing.T) {
+	b := relay.BindingStatus{Name: "x", Spend: &usage.Spend{Rounds: 4, Measured: 1.23, Estimated: 0.40, Unknown: 2}}
+	joined := stripANSI(strings.Join(facts(b), " · "))
+	if !strings.Contains(joined, "$1.23 · ~$0.40 · 2 unknown") {
+		t.Errorf("facts = %q", joined)
+	}
+	b.Spend = &usage.Spend{Rounds: 2}
+	if f := facts(b); len(f) != 0 {
+		t.Errorf("a spend with nothing to say adds no fact: %q", f)
+	}
+	b.Spend = nil
+	if f := facts(b); len(f) != 0 {
+		t.Errorf("nil spend adds no fact: %q", f)
 	}
 }

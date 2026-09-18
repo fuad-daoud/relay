@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")
@@ -53,6 +54,7 @@ func allStatesRows() []relay.BindingStatus {
 			PlannerPane: "%2", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
 			BuilderPane: "%8", BuilderKind: "agy", BuilderStatus: "idle", Branch: "relay/ledger",
 			Pending: &relay.PendingInfo{Round: 3, Kind: store.KindReport, Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000}},
+			Spend:   &usage.Spend{Rounds: 3, Measured: 1.23, Estimated: 0.40, Unknown: 1},
 		},
 		{
 			Name: "api", Round: 2, Display: "ACTIVE",

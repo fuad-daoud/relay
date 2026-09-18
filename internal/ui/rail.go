@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // railLine is one rendered rail row tagged with the binding it belongs
@@ -102,6 +103,11 @@ func facts(b relay.BindingStatus) []string {
 	}
 	if b.ForkedFrom != "" {
 		out = append(out, dimStyle.Render(fmt.Sprintf("forked from %s r%d", b.ForkedFrom, b.ForkedAtRound)))
+	}
+	if b.Spend != nil {
+		if s := usage.MoneyShort(*b.Spend); s != "" {
+			out = append(out, dimStyle.Render(s))
+		}
 	}
 	return out
 }
