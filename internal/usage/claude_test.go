@@ -38,9 +38,9 @@ func TestProjectSlug(t *testing.T) {
 	cases := map[string]string{
 		"/home/fuad/projects/relay":        "-home-fuad-projects-relay",
 		"/home/fuad/.claude/projects":      "-home-fuad--claude-projects",
-		"/home/fuad":                        "-home-fuad",
+		"/home/fuad":                       "-home-fuad",
 		"/home/fuad/apps/google-cloud-sdk": "-home-fuad-apps-google-cloud-sdk",
-		"/home/fuad/.config/nvim":           "-home-fuad--config-nvim",
+		"/home/fuad/.config/nvim":          "-home-fuad--config-nvim",
 	}
 	for in, want := range cases {
 		if got := ProjectSlug(in); got != want {

@@ -46,11 +46,11 @@ func (u claudeUsage) tokens() Tokens {
 // claudeEvent covers the fields read from both the headless stream and the
 // pane transcript; each record uses a subset.
 type claudeEvent struct {
-	Type      string  `json:"type"`
-	Subtype   string  `json:"subtype"`
-	Model     string  `json:"model"` // system/init only
-	Timestamp string  `json:"timestamp"`
-	CWD       string  `json:"cwd"`
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
+	Model     string `json:"model"` // system/init only
+	Timestamp string `json:"timestamp"`
+	CWD       string `json:"cwd"`
 	Message   *struct {
 		ID    string       `json:"id"`
 		Model string       `json:"model"`
