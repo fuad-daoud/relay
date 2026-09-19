@@ -76,6 +76,11 @@ Commands:
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
+
+  serve                     run the remote-builder server (listener + daemon)
+  serve init|enroll|clients|revoke|fingerprint|status|gc
+                            server administration, on the server host
+
   help      print this message
   version   print the relay version
 
@@ -235,6 +240,8 @@ func run(args []string) error {
 		return cmdAvailable(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
+	case "serve":
+		return cmdServe(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q; run \"relay help\" for the command list", args[0])
 	}

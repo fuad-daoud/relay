@@ -273,6 +273,8 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay daemon [--interval D] [--held-grace D]` — the long-running reconciler; this is what
   the service unit runs. A held payload is injected into a focused planner once its input
   box is empty or its screen has been quiet for `--held-grace` (default 60s).
+- `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
+- `relay serve init|enroll|clients|revoke|fingerprint|status|gc` — server administration, on the server host.
 - `relay help` — the command list. `relay <command> -h` prints that command's
   flags.
 - `relay version` — the build's version.
@@ -394,6 +396,28 @@ matched line) on a match, parsing the line's own reset time when it names
 one (`Resets in 2h48m52s`, `resets 7pm`) or using `limit_gate_default_ms`
 otherwise, then switches uncounted toward `max_switches`. `relay
 unavailable` still overrides; `relay available` undoes a false positive.
+
+### Remote builders: the server
+
+`relay serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI panes.
+
+On a fresh server host, the first run looks like:
+1. `relay serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
+2. Copy the fingerprint to share with clients.
+3. Enrol each client's public key: `relay serve enroll --label <client-label> --key "<public key line>"`.
+4. Copy the service unit to `~/.config/systemd/user/relay-serve.service` and enable it:
+   ```
+   cp dist/relay-serve.service ~/.config/systemd/user/
+   systemctl --user daemon-reload
+   systemctl --user enable --now relay-serve
+   ```
+
+On the server machine, the admin can inspect enrolled clients and all owners' active bindings:
+- `relay serve status` displays active bindings across all owners, sorted by owner label.
+- `relay serve clients` lists enrolled clients and their revocation status.
+- `relay serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
+
+What `relay serve` does not do: it runs no planner, opens no tmux/herdr panes, and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
 
 ### Round budget
 
