@@ -1652,6 +1652,17 @@ func cmdDaemon(args []string) error {
 	}
 	rt.HeldGrace = *heldGrace
 
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	watcher := relay.NewConfigWatcher(relay.ConfigPaths{
+		Candidates: filepath.Join(configDir, "relay", "candidates.json"),
+		Policy:     filepath.Join(configDir, "relay", "policy.json"),
+		ConfigDir:  configDir,
+		Getenv:     os.Getenv,
+	})
+
 	// --check is the plugin startup hook's probe. It prints nothing on either
 	// path: the exit status is the whole answer, and a hook that printed would
 	// only fill herdr's plugin log with noise on every server start.
@@ -1682,7 +1693,7 @@ func cmdDaemon(args []string) error {
 	defer stop()
 
 	slog.Info("relay daemon starting", "interval", *interval, "held_grace", *heldGrace)
-	return relay.NewDaemon(rt, *interval).Run(ctx)
+	return relay.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).Run(ctx)
 }
 
 // bindingArg picks the binding name out of a --name flag and whatever

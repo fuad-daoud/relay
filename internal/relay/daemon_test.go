@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -459,5 +460,62 @@ func TestTickLocatesABuilderByNameAfterAPaneMove(t *testing.T) {
 	}
 	if loaded.Builder.PaneID != "w9:p8" {
 		t.Errorf("Builder.PaneID = %q, want w9:p8", loaded.Builder.PaneID)
+	}
+}
+
+// TestTickRefreshesRuntimeBeforeReconcile confirms Tick calls d.refresh
+// before it reconciles, so the round the reconcile pass sees is whatever the
+// refresh just swapped in -- not last tick's copy.
+func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+	const marker = "refreshed-marker"
+	refreshCalls := 0
+	d := NewDaemon(rt, time.Second).WithRefresh(func(in Runtime) Runtime {
+		refreshCalls++
+		in.Policy = policy.Policy{Order: map[string][]string{"builder": {marker}}}
+		return in
+	})
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if refreshCalls != 1 {
+		t.Errorf("refresh calls = %d, want 1", refreshCalls)
+	}
+	if got := d.rt.Policy.Order["builder"]; len(got) != 1 || got[0] != marker {
+		t.Errorf("d.rt.Policy not swapped by refresh, got %v", got)
+	}
+}
+
+// TestTickWithoutRefreshIsUnchanged confirms a Daemon with no WithRefresh
+// call behaves exactly as before #209 -- the same fixture and assertions as
+// TestTickReconcilesAndPersists, the test this one relies on to prove the
+// nil-refresh path is untouched.
+func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 2 {
+		t.Errorf("tick must persist the advanced round, got %d", b.Round)
+	}
+	if len(f.prompts) != 1 {
+		t.Errorf("an idle unfocused planner must receive the report, got %+v", f.prompts)
 	}
 }
