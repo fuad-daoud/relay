@@ -664,10 +664,11 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 type scriptRunner struct {
-	mu     sync.Mutex
-	specs  []relay.ProcSpec
-	alive  bool
-	pidSeq int
+	mu           sync.Mutex
+	specs        []relay.ProcSpec
+	aliveHandles []relay.ProcHandle
+	alive        bool
+	pidSeq       int
 }
 
 func newScriptRunner() *scriptRunner {
@@ -689,6 +690,7 @@ func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.Pr
 func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.aliveHandles = append(r.aliveHandles, h)
 	return r.alive, nil
 }
 
@@ -1407,5 +1409,147 @@ func TestAckUnclosedIs409(t *testing.T) {
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundOpen {
 		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
+func TestTickWalksEveryOwner(t *testing.T) {
+	ctx := context.Background()
+	gitClient := git.NewClient("git", 0, 0)
+
+	serverRoot := t.TempDir()
+	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	candPath := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := newScriptRunner()
+	srv, err := New(Config{
+		Root:       serverRoot,
+		Candidates: cSet,
+		Runner:     runner,
+		Git:        gitClient,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// Owner A
+	clientDirA := t.TempDir()
+	runGit(t, clientDirA, "init")
+	runGit(t, clientDirA, "config", "user.name", "testA")
+	runGit(t, clientDirA, "config", "user.email", "testA@example.com")
+	_ = os.WriteFile(filepath.Join(clientDirA, "f.txt"), []byte("a\n"), 0o644)
+	runGit(t, clientDirA, "add", "f.txt")
+	runGit(t, clientDirA, "commit", "-m", "init a")
+	headA, _, _ := gitClient.RefSHA(ctx, clientDirA, "HEAD")
+	rootA, _ := gitClient.RootCommit(ctx, clientDirA)
+	repoIDA, _ := remote.RepoID(rootA)
+
+	kpA, _ := remote.Generate()
+	idA := remote.IDOf(kpA.Public)
+	_, _ = srv.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now())
+
+	createBodyA, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "binding-a",
+		RepoID:     repoIDA,
+		BaseCommit: headA,
+	})
+	doSigned(t, ts, kpA, "POST", "/v1/bindings", createBodyA, "application/json")
+	_ = gitClient.UpdateRef(ctx, clientDirA, "refs/relay/binding-a/out", headA, "")
+	transA := remote.NewBundleTransport(gitClient, t.TempDir())
+	snapA, _ := transA.Snapshot(ctx, clientDirA, []string{"refs/relay/binding-a/out"}, "")
+	bytesA, _ := io.ReadAll(snapA.Body)
+	_ = snapA.Body.Close()
+	formA, ctA := makeRoundForm(t, 1, "# Plan A", bytesA)
+	doSigned(t, ts, kpA, "POST", "/v1/bindings/binding-a/rounds", formA, ctA)
+
+	// Owner B
+	clientDirB := t.TempDir()
+	runGit(t, clientDirB, "init")
+	runGit(t, clientDirB, "config", "user.name", "testB")
+	runGit(t, clientDirB, "config", "user.email", "testB@example.com")
+	_ = os.WriteFile(filepath.Join(clientDirB, "f.txt"), []byte("b\n"), 0o644)
+	runGit(t, clientDirB, "add", "f.txt")
+	runGit(t, clientDirB, "commit", "-m", "init b")
+	headB, _, _ := gitClient.RefSHA(ctx, clientDirB, "HEAD")
+	rootB, _ := gitClient.RootCommit(ctx, clientDirB)
+	repoIDB, _ := remote.RepoID(rootB)
+
+	kpB, _ := remote.Generate()
+	idB := remote.IDOf(kpB.Public)
+	_, _ = srv.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), time.Now())
+
+	createBodyB, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "binding-b",
+		RepoID:     repoIDB,
+		BaseCommit: headB,
+	})
+	doSigned(t, ts, kpB, "POST", "/v1/bindings", createBodyB, "application/json")
+	_ = gitClient.UpdateRef(ctx, clientDirB, "refs/relay/binding-b/out", headB, "")
+	transB := remote.NewBundleTransport(gitClient, t.TempDir())
+	snapB, _ := transB.Snapshot(ctx, clientDirB, []string{"refs/relay/binding-b/out"}, "")
+	bytesB, _ := io.ReadAll(snapB.Body)
+	_ = snapB.Body.Close()
+	formB, ctB := makeRoundForm(t, 1, "# Plan B", bytesB)
+	doSigned(t, ts, kpB, "POST", "/v1/bindings/binding-b/rounds", formB, ctB)
+
+	// Both owners have 1 running binding. Check initial alive calls count.
+	runner.mu.Lock()
+	initialAliveCount := len(runner.aliveHandles)
+	runner.mu.Unlock()
+
+	// Call s.Tick
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	// Assert runner.Alive was called for both
+	runner.mu.Lock()
+	newAliveHandles := runner.aliveHandles[initialAliveCount:]
+	runner.mu.Unlock()
+
+	if len(newAliveHandles) < 2 {
+		t.Fatalf("new alive calls = %d, want at least 2", len(newAliveHandles))
+	}
+
+	rtA := srv.runtime(idA)
+	bA, _ := rtA.Store.Load("binding-a")
+	rtB := srv.runtime(idB)
+	bB, _ := rtB.Store.Load("binding-b")
+
+	seenA, seenB := false, false
+	for _, h := range newAliveHandles {
+		if h.PID == bA.Builder.PID {
+			seenA = true
+		}
+		if h.PID == bB.Builder.PID {
+			seenB = true
+		}
+	}
+	if !seenA || !seenB {
+		t.Fatalf("seenA=%v, seenB=%v; want both true", seenA, seenB)
+	}
+}
+
+func TestTickSkipsMissingBindingsDir(t *testing.T) {
+	ctx := context.Background()
+	serverRoot := t.TempDir()
+	srv, err := New(Config{
+		Root: serverRoot,
+		Now:  time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatalf("Tick on missing bindings dir returned error: %v", err)
 	}
 }

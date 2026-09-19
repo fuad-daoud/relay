@@ -2,9 +2,11 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/relay"
 )
@@ -30,4 +32,28 @@ func (s *Server) Tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Run executes the daemon tick loop until ctx is cancelled.
+func (s *Server) Run(ctx context.Context) error {
+	interval := s.cfg.Interval
+	if interval < 500*time.Millisecond {
+		interval = 500 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return nil
+			}
+			return ctx.Err()
+		case <-ticker.C:
+			if err := s.Tick(ctx); err != nil {
+				slog.Error("server tick failed", "err", err)
+			}
+		}
+	}
 }
