@@ -381,6 +381,10 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	return next, true, err
 }
 
+// noteScraped marks a report entry whose body is a terminal capture, not
+// the builder's own file. A scraped body is never tail-parsed (#221).
+const noteScraped = "scraped"
+
 // joinNotes space-joins the non-empty ones, so a report entry's note can
 // carry both an existing reason (e.g. "noreport") and the escape annotation
 // (#192) without either overwriting the other.
@@ -642,7 +646,7 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		"Builder finished round %d but never wrote its report file. SCRAPED from its terminal (may be truncated): %s",
 		b.Round, reportPath)
 
-	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "scraped", nil)
+	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, noteScraped, nil)
 }
 
 func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord) (store.Binding, error) {
@@ -650,8 +654,18 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	roundStart := b.RoundStartedAt
 
 	body, _ := os.ReadFile(path)
-	tail, ok, reject := parseReportTail(body)
+	var (
+		tail   ReportTail
+		ok     bool
+		reject string
+	)
 	outcome := OutcomeUnstructured
+	if note != noteScraped {
+		// A scraped body is the terminal, which holds the prompt's own
+		// ```relay skeleton, truncated by the capture. The tail contract is
+		// for the file the builder writes, not for what herdr had on screen.
+		tail, ok, reject = parseReportTail(body)
+	}
 	if ok {
 		outcome = tail.Status
 	} else if reject != "" {
