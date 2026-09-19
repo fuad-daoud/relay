@@ -288,6 +288,30 @@ func TestDragDividerResizesRail(t *testing.T) {
 
 func railWidthOf(m Model) int { return m.railWidth() }
 
+// TestEmptyFleetClicksDoNotFocusPane pins the guards in mouse.go that keep
+// focus out of the pane at zero rows: a click on the old tab-bar row and a
+// click in the pane body must both leave the rail focused.
+func TestEmptyFleetClicksDoNotFocusPane(t *testing.T) {
+	m := splitModel(t, 140, 40)
+	if !m.empty() {
+		t.Fatal("fixture must be empty")
+	}
+	top := headerRows
+	px := m.railWidth() + railGap
+
+	res, _ := m.Update(click(px+5, top+paneHeadRows)) // old tab-bar row
+	m = res.(Model)
+	if m.screen != screenList {
+		t.Errorf("click on the tab-bar row: screen = %v, want screenList", m.screen)
+	}
+
+	res, _ = m.Update(click(px+5, top+paneHeadRows+3)) // pane body
+	m = res.(Model)
+	if m.screen != screenList {
+		t.Errorf("click in the pane body: screen = %v, want screenList", m.screen)
+	}
+}
+
 func TestNoDragWhileCompact(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})

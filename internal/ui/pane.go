@@ -270,11 +270,44 @@ func (m Model) hintLine(b *relay.BindingStatus) (string, bool) {
 	return accentStyle.Render("relay: ") + fgStyle.Render(b.Waiting.Hint), true
 }
 
+// emptyPaneBlock is the prose the pane shows at zero rows, already styled
+// and fitted to width and height (padded with blank rows to height).
+func emptyPaneBlock(width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	raw := []string{
+		"no bindings",
+		"",
+		"  relay bind                   put a builder on this tree",
+		"  relay add --name <name>      put a builder on its own worktree",
+		"  relay candidates             list what can be bound",
+	}
+	lines := make([]string, 0, height)
+	for _, l := range raw {
+		if l == "" {
+			lines = append(lines, fit("", width))
+		} else {
+			lines = append(lines, fit(emptyStyle.Render(l), width))
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, fit("", width))
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return lines
+}
+
 // paneView draws exactly bodyRows() rows at width: head, tabs, source,
 // blank, viewport, with the hint replacing the last viewport row when it
 // applies. The viewport is resized to what is left after a head that
 // grew by foreign rows.
 func (m Model) paneView(width int) string {
+	if m.empty() {
+		return strings.Join(emptyPaneBlock(width, m.bodyRows()), "\n")
+	}
 	b := row(m.report, m.detail.name)
 	rows := []string{}
 	rows = append(rows, m.paneHead(b)...)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,5 +392,124 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	batch := extractBatch(cmd)
 	if hasStatusMsg(batch) {
 		t.Fatal("tickMsg arriving before first statusMsg must not issue second status fetch")
+	}
+}
+
+func TestEmptyIsFalseBeforeLoad(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+
+	if m.statusLoaded {
+		t.Fatal("newModel must start with statusLoaded = false")
+	}
+	if m.empty() {
+		t.Fatal("empty() must report false when statusLoaded is false")
+	}
+
+	m.statusInFlight = false
+	res, _ := m.Update(statusMsg{report: relay.Report{}})
+	loaded := res.(Model)
+	if !loaded.statusLoaded {
+		t.Fatal("statusMsg must set statusLoaded = true")
+	}
+	if !loaded.empty() {
+		t.Fatal("empty() must report true when statusLoaded is true and rows are empty")
+	}
+}
+
+func TestEmptyFleetFooter(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, _ = m.Update(statusMsg{report: relay.Report{}})
+	m = res.(Model)
+
+	for _, tc := range []struct {
+		name    string
+		sort    bool
+		compact bool
+		wantC   string
+	}{
+		{"attention cards", true, false, "c compact"},
+		{"name cards", false, false, "c compact"},
+		{"attention compact", true, true, "c cards"},
+		{"name compact", false, true, "c cards"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m.sort = tc.sort
+			m.compact = tc.compact
+			plain := stripANSI(m.footerView())
+
+			for _, want := range []string{"s sort", tc.wantC, "q quit"} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("footer missing %q: %q", want, plain)
+				}
+			}
+			for _, forbidden := range []string{"↑↓", "⏎", "tab", "1-4", "esc"} {
+				if strings.Contains(plain, forbidden) {
+					t.Errorf("footer contains forbidden %q: %q", forbidden, plain)
+				}
+			}
+		})
+	}
+}
+
+// TestEmptyFleetKeysDoNotFocusPane pins the guards in keys.go that keep
+// focus out of the pane at zero rows: tab, shift+tab, 1-4 and enter must
+// all be no-ops on an empty, loaded fleet.
+func TestEmptyFleetKeysDoNotFocusPane(t *testing.T) {
+	m := splitModel(t, 140, 40)
+	if !m.empty() {
+		t.Fatal("fixture must be empty")
+	}
+	startActive := m.detail.active
+
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyTab},
+		{Type: tea.KeyShiftTab},
+		{Type: tea.KeyRunes, Runes: []rune{'1'}},
+		{Type: tea.KeyRunes, Runes: []rune{'4'}},
+		{Type: tea.KeyEnter},
+	}
+	for _, k := range keys {
+		res, _ := m.Update(k)
+		m = res.(Model)
+		if m.screen != screenList {
+			t.Errorf("key %q: screen = %v, want screenList", k.String(), m.screen)
+		}
+		if m.detail.active != startActive {
+			t.Errorf("key %q: detail.active changed to %v", k.String(), m.detail.active)
+		}
+	}
+}
+
+// TestEmptyFleetSnapsBackToList pins the statusMsg arm's snap: rows
+// dropping to zero while the pane is focused must land back on the rail,
+// with exactly the existing "is gone" notice and none added on top of it.
+func TestEmptyFleetSnapsBackToList(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()[:1]...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(Model)
+	if m.screen != screenDetail {
+		t.Fatal("fixture must start with the pane focused")
+	}
+	m.statusInFlight = false
+	res, _ = m.Update(statusMsg{report: relay.Report{}})
+	m = res.(Model)
+
+	if m.screen != screenList {
+		t.Errorf("screen = %v, want screenList", m.screen)
+	}
+	if m.notice == "" {
+		t.Error("the existing \"is gone\" notice must still fire")
+	}
+	if n := strings.Count(m.notice, "is gone"); n != 1 {
+		t.Errorf("notice must carry exactly one \"is gone\", got %d: %q", n, m.notice)
 	}
 }

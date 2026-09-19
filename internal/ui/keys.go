@@ -29,6 +29,9 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.top = m.railTop()
 		return m, m.save()
 	case "1", "2", "3", "4":
+		if m.empty() {
+			return m, nil
+		}
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))
 		}
@@ -41,7 +44,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			return m.moveCursor(+1)
 		case "enter":
-			if len(m.rows()) == 0 {
+			if m.empty() {
 				return m, nil
 			}
 			m.screen = screenDetail
@@ -49,6 +52,9 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.layout() == layoutSplit {
 			if msg.Type == tea.KeyTab || msg.Type == tea.KeyShiftTab || msg.String() == "tab" || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+				if m.empty() {
+					return m, nil
+				}
 				return m.cycleTab(msg)
 			}
 		}
@@ -60,6 +66,9 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Type == tea.KeyTab || msg.Type == tea.KeyShiftTab || msg.String() == "tab" || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+		if m.empty() {
+			return m, nil
+		}
 		return m.cycleTab(msg)
 	}
 	var cmd tea.Cmd
