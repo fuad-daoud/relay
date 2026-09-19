@@ -20,6 +20,11 @@ const minInterval = 500 * time.Millisecond
 type Daemon struct {
 	rt       Runtime
 	interval time.Duration
+
+	// refresh re-reads candidates.json and policy.json when they have
+	// changed and returns the Runtime the tick should use. Nil (the
+	// default) keeps today's behaviour: rt is used as given.
+	refresh func(Runtime) Runtime
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -28,6 +33,14 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 		interval = minInterval
 	}
 	return &Daemon{rt: rt, interval: interval}
+}
+
+// WithRefresh installs a per-tick refresh on the daemon. nil (the default)
+// keeps today's behaviour: the Runtime given to NewDaemon is used as-is.
+// Returns d for chaining.
+func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
+	d.refresh = f
+	return d
 }
 
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on the
@@ -54,6 +67,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 // Tick reconciles every binding against a single agent list snapshot.
 func (d *Daemon) Tick(ctx context.Context) error {
+	if d.refresh != nil {
+		d.rt = d.refresh(d.rt)
+	}
+
 	bindings, err := d.rt.Store.List()
 	if err != nil {
 		return fmt.Errorf("list bindings: %w", err)
