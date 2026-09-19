@@ -7,10 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -326,4 +329,238 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		return SendResult{}, err
 	}
 	return SendResult{Round: sendRound}, nil
+}
+
+const unreachableGrace = 30 * time.Minute
+
+func writeTempAndRename(dest string, r io.Reader) error {
+	dir := filepath.Dir(dest)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(dest)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := io.Copy(tmp, r); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, dest)
+}
+
+func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+	if planner, ok := FindAgent(agents, b.Planner); ok {
+		b.Planner = refreshEndpoint(b.Planner, planner)
+	}
+
+	if rt.Remote == nil {
+		slog.Warn("remote client not configured", "binding", b.Name)
+		return b, nil
+	}
+
+	now := rt.Now().UTC()
+	server := b.Builder.Server
+	name := b.Name
+
+	view, err := rt.Remote.GetBinding(ctx, server, name)
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) {
+			if httpErr.Status == 401 {
+				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
+			}
+			if httpErr.Status == 404 {
+				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+			}
+		}
+		if errors.Is(err, client.ErrUnreachable) {
+			if b.RemoteUnreachableSince.IsZero() {
+				b.RemoteUnreachableSince = now
+				slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
+			}
+			b.Builder.RemoteStatus = "unreachable"
+
+			entries, rerr := tx.ReadLog(name)
+			roundOpen := rerr == nil &&
+				HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+				!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+
+			dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
+			if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
+				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
+					name, server, dur, b.Round))
+			}
+			return b, nil
+		}
+		if errors.Is(err, client.ErrCertChanged) {
+			if b.Builder.RemoteStatus != "cert" {
+				slog.Warn("server certificate changed", "server", server, "binding", name)
+			}
+			b.Builder.RemoteStatus = "cert"
+			return b, nil
+		}
+		slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
+		return b, nil
+	}
+
+	b.RemoteUnreachableSince = time.Time{}
+	b.Builder.RemoteStatus = string(view.RoundState)
+
+	switch view.RoundState {
+	case remote.RoundRunning:
+		rc, err := rt.Remote.RoundFile(ctx, server, name, b.Round, "log")
+		if err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", b.Round, "err", err)
+			return b, nil
+		}
+		defer rc.Close()
+		logPath := rt.Store.BuilderLogPath(name, b.Round)
+		if err := writeTempAndRename(logPath, rc); err != nil {
+			slog.Warn("write builder log failed", "path", logPath, "err", err)
+		}
+		return b, nil
+
+	case remote.RoundNeedsYou:
+		return haltBinding(ctx, rt, b, name+": "+view.Halt)
+
+	case remote.RoundClosed:
+		if view.ClosedRound >= b.Round {
+			return catchUp(ctx, rt, tx, b, view, agents)
+		}
+		return deliverAndSettle(ctx, rt, tx, b, agents)
+
+	case remote.RoundIdle:
+		if b.State == store.StateBroken {
+			b.State = store.StateActive
+		}
+		return deliverAndSettle(ctx, rt, tx, b, agents)
+
+	default:
+		return deliverAndSettle(ctx, rt, tx, b, agents)
+	}
+}
+
+func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, agents []herdr.Agent) (store.Binding, error) {
+	n := view.ClosedRound
+	server := b.Builder.Server
+	name := b.Name
+
+	// 1. Fetch report, diff, log and write via temp-and-rename.
+	rcReport, err := rt.Remote.RoundFile(ctx, server, name, n, "report")
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 404 {
+			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", name, server, n))
+		}
+		slog.Warn("fetch report failed", "server", server, "name", name, "round", n, "err", err)
+		return b, nil
+	}
+	defer rcReport.Close()
+	if err := writeTempAndRename(rt.Store.ReportPath(name, n), rcReport); err != nil {
+		slog.Warn("write report failed", "path", rt.Store.ReportPath(name, n), "err", err)
+		return b, nil
+	}
+
+	rcDiff, err := rt.Remote.RoundFile(ctx, server, name, n, "diff")
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 404 {
+			// fine (no diff)
+		} else {
+			slog.Warn("fetch diff failed", "server", server, "name", name, "round", n, "err", err)
+			return b, nil
+		}
+	} else {
+		defer rcDiff.Close()
+		if err := writeTempAndRename(rt.Store.DiffPath(name, n), rcDiff); err != nil {
+			slog.Warn("write diff failed", "path", rt.Store.DiffPath(name, n), "err", err)
+			return b, nil
+		}
+	}
+
+	rcLog, err := rt.Remote.RoundFile(ctx, server, name, n, "log")
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 404 {
+			// fine
+		} else {
+			slog.Warn("fetch log failed", "server", server, "name", name, "round", n, "err", err)
+			return b, nil
+		}
+	} else {
+		defer rcLog.Close()
+		if err := writeTempAndRename(rt.Store.BuilderLogPath(name, n), rcLog); err != nil {
+			slog.Warn("write log failed", "path", rt.Store.BuilderLogPath(name, n), "err", err)
+			return b, nil
+		}
+	}
+
+	// 2. RoundBundle
+	rcBundle, err := rt.Remote.RoundBundle(ctx, server, name, n, b.Builder.LastKnown)
+	if err != nil {
+		slog.Warn("fetch round bundle failed", "server", server, "name", name, "round", n, "err", err)
+		return b, nil
+	}
+	if rcBundle != nil {
+		defer rcBundle.Close()
+		branchRef := b.Branch
+		if !strings.HasPrefix(branchRef, "refs/heads/") {
+			branchRef = "refs/heads/" + branchRef
+		}
+		refs := []string{branchRef}
+		if view.DirtyCommit != "" {
+			refs = append(refs, fmt.Sprintf("refs/relay/%s/round-%d", name, n))
+		}
+		if _, err := rt.Transport.Absorb(ctx, b.Repo, remote.ContentTypeGitBundle, rcBundle, refs); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "checked out") {
+				slog.Info("checkout another branch, then relay pull", "binding", name, "branch", b.Branch)
+				return b, nil
+			}
+			b.RemoteAbsorbFailures++
+			if b.RemoteAbsorbFailures >= 10 {
+				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot absorb round %d from %s: %s", name, n, server, err.Error()))
+			}
+			return b, nil
+		}
+	}
+
+	// 3. b.Builder.LastKnown = view.ResultCommit; b.RemoteAbsorbFailures = 0
+	b.Builder.LastKnown = view.ResultCommit
+	b.RemoteAbsorbFailures = 0
+
+	// 4. rt.Remote.Ack(server, name, n)
+	if _, err := rt.Remote.Ack(ctx, server, name, n); err != nil {
+		slog.Warn("ack failed", "server", server, "name", name, "round", n, "err", err)
+		return b, nil
+	}
+
+	// 5. queueReport
+	entries, err := tx.ReadLog(name)
+	if err != nil {
+		return b, err
+	}
+	reportPath := rt.Store.ReportPath(name, n)
+	payload := fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, reportPath)
+	note := ""
+	if view.DirtyCommit != "" {
+		note = fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n)
+	}
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note)
+	if err != nil {
+		return b, err
+	}
+
+	// 6. next.Builder.RemoteStatus = "idle"; return deliverAndSettle
+	next.Builder.RemoteStatus = "idle"
+	return deliverAndSettle(ctx, rt, tx, next, agents)
 }

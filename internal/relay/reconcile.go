@@ -152,6 +152,10 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, nil
 	}
 
+	if b.Builder.Remote() {
+		return reconcileRemote(ctx, rt, tx, b, agents)
+	}
+
 	// A headless builder (#99) is a process, not an agent herdr lists;
 	// everything below this line looks for a pane. Spec §5.1 is its own
 	// tick.

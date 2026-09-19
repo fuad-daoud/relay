@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -33,6 +35,8 @@ type fakeRemote struct {
 	roundFileErr      error
 	roundBundleResp   io.ReadCloser
 	roundBundleErr    error
+	roundFileFunc     func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
+	roundBundleFunc   func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	ackResp           remote.BindingView
 	ackErr            error
 	unavailableErr    error
@@ -74,11 +78,17 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 
 func (f *fakeRemote) RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
 	f.calls = append(f.calls, fmt.Sprintf("RoundFile:%s:%s:%d:%s", server, name, round, kind))
+	if f.roundFileFunc != nil {
+		return f.roundFileFunc(ctx, server, name, round, kind)
+	}
 	return f.roundFileResp, f.roundFileErr
 }
 
 func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
 	f.calls = append(f.calls, fmt.Sprintf("RoundBundle:%s:%s:%d:%s", server, name, round, since))
+	if f.roundBundleFunc != nil {
+		return f.roundBundleFunc(ctx, server, name, round, since)
+	}
 	return f.roundBundleResp, f.roundBundleErr
 }
 
@@ -565,5 +575,596 @@ func TestSendRemoteSetsLastShipped(t *testing.T) {
 	}
 	if reloaded.Builder.LastShipped != outSHA {
 		t.Fatalf("reloaded LastShipped = %q, want %q", reloaded.Builder.LastShipped, outSHA)
+	}
+}
+
+// remoteBinding is a minimal active remote binding, round 1, planner
+// pointed at plannerAgent()'s pane so deliverAndSettle's FindAgent succeeds
+// and does not turn the binding orphaned.
+func remoteBinding(server string) store.Binding {
+	return store.Binding{
+		Name:    "api",
+		CWD:     "/fake/repo",
+		Repo:    "/fake/repo",
+		Branch:  "relay/api",
+		Round:   1,
+		State:   store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: server,
+		},
+	}
+}
+
+func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteStatus != string(remote.RoundRunning) {
+		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundRunning)
+	}
+	data, err := os.ReadFile(st.BuilderLogPath("api", 1))
+	if err != nil {
+		t.Fatalf("read mirrored log: %v", err)
+	}
+	if string(data) != "builder log line 1\n" {
+		t.Fatalf("log = %q, want mirrored content", string(data))
+	}
+	foundGet, foundLog := false, false
+	for _, c := range fr.calls {
+		if c == "GetBinding:zen:api" {
+			foundGet = true
+		}
+		if c == "RoundFile:zen:api:1:log" {
+			foundLog = true
+		}
+	}
+	if !foundGet || !foundLog {
+		t.Fatalf("calls = %v, want GetBinding and RoundFile(log)", fr.calls)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s, want active while running", got.State)
+	}
+}
+
+func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"},
+	}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if got.Halt != "stuck at a dialog" {
+		t.Fatalf("Halt = %q, want the server's halt text", got.Halt)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "stuck at a dialog") {
+		t.Fatalf("notices = %v, want one naming the server's halt", f.notices)
+	}
+}
+
+func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000 // 1s budget; unreachableGrace (30m) is what keeps this from halting below
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+	agents := []herdr.Agent{plannerAgent()}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.RemoteUnreachableSince.IsZero() {
+		t.Fatal("RemoteUnreachableSince must be set once unreachable")
+	}
+	if got.Builder.RemoteStatus != "unreachable" {
+		t.Fatalf("RemoteStatus = %q, want unreachable", got.Builder.RemoteStatus)
+	}
+
+	// Five minutes later: well past the 1s budget alone, but inside the 30m
+	// grace, so this must not halt.
+	got, err = reconcile(t, at(rt, 5*time.Minute), got, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted after 5m unreachable; the grace should have covered it")
+	}
+	if len(f.notices) != 0 {
+		t.Fatalf("notices = %v, want none before the grace elapses", f.notices)
+	}
+}
+
+func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000 // 1s budget
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+	agents := []herdr.Agent{plannerAgent()}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Past the 1s budget plus the 30m unreachableGrace: this must halt.
+	// Mutation target: drop "+ unreachableGrace" from the comparison in
+	// reconcileRemote and this halt fires one tick early (or the
+	// not-halt test above starts halting instead).
+	got, err = reconcile(t, at(rt, 31*time.Minute), got, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you past budget+grace", got.State)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "unreachable for") || !strings.Contains(f.notices[0], "may still be running there") {
+		t.Fatalf("notices = %v, want the unreachable-past-budget halt", f.notices)
+	}
+}
+
+func TestReconcileRemote401Halts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: "revoked", Message: "key revoked"}}}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you on 401", got.State)
+	}
+	if !strings.Contains(got.Halt, "key revoked") {
+		t.Fatalf("Halt = %q, want the server's message", got.Halt)
+	}
+}
+
+func TestReconcileRemote404Halts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "gone"}}}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you on 404", got.State)
+	}
+	if !strings.Contains(got.Halt, "binding removed by the server admin") {
+		t.Fatalf("Halt = %q, want the removed-by-admin message", got.Halt)
+	}
+}
+
+// newRemoteClientRepo creates a client-side repo (what a remote binding's
+// Repo points at day to day) with one commit and a "relay/<name>" branch ref
+// at that commit -- not checked out, matching the ordinary case where the
+// planner's own repo sits on its own branch.
+func newRemoteClientRepo(t *testing.T, name string) (dir, headSHA string) {
+	t.Helper()
+	dir = t.TempDir()
+	runGit(t, dir, "init")
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "seed.txt")
+	runGit(t, dir, "commit", "-m", "seed")
+	headSHA = strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+	runGit(t, dir, "update-ref", "refs/heads/relay/"+name, headSHA)
+	return dir, headSHA
+}
+
+// newRoundResultBundle clones base (at baseSHA on refs/heads/relay/<name>),
+// adds one commit there, and returns a real bundle -- built the same way
+// BundleTransport.Snapshot always does -- carrying just that new commit,
+// plus its sha.
+func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base, name, baseSHA string) (io.ReadCloser, string) {
+	t.Helper()
+	resultDir := t.TempDir()
+	runGit(t, resultDir, "clone", base, ".")
+	runGit(t, resultDir, "checkout", "relay/"+name)
+	if err := os.WriteFile(filepath.Join(resultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, resultDir, "add", "result.txt")
+	runGit(t, resultDir, "commit", "-m", "round result")
+	headSHA := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD"))
+
+	transport := remote.NewBundleTransport(g, t.TempDir())
+	snap, err := transport.Snapshot(ctx, resultDir, []string{"refs/heads/relay/" + name}, baseSHA)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.Empty || snap.Body == nil {
+		t.Fatal("expected a non-empty bundle")
+	}
+	return snap.Body, headSHA
+}
+
+func TestCatchUpOrderAndIdempotence(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Herdr:     &fakeHerdr{},
+		Remote:    fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+	agents := []herdr.Agent{plannerAgent()}
+
+	// First tick: the server hands back a bundle that carries an extra ref
+	// the client never allowed (view.DirtyCommit == "", so only the branch
+	// itself is permitted). A real Absorb genuinely fails on this --
+	// ErrUnexpectedRef -- which is what lets this test tell "Ack moved
+	// before Absorb" apart from "Ack never runs at all": the RPC round-trip
+	// (RoundFile, RoundBundle) succeeds, catchUp actually reaches Absorb, and
+	// only Absorb itself rejects the bundle.
+	badResultDir := t.TempDir()
+	runGit(t, badResultDir, "clone", clientRepo, ".")
+	runGit(t, badResultDir, "checkout", "relay/api")
+	if err := os.WriteFile(filepath.Join(badResultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, badResultDir, "add", "result.txt")
+	runGit(t, badResultDir, "commit", "-m", "round result")
+	runGit(t, badResultDir, "branch", "extra", "HEAD")
+	badBundleTransport := remote.NewBundleTransport(g, t.TempDir())
+	badSnap, err := badBundleTransport.Snapshot(ctx, badResultDir, []string{"refs/heads/relay/api", "refs/heads/extra"}, c1)
+	if err != nil {
+		t.Fatalf("Snapshot (bad): %v", err)
+	}
+	if badSnap.Empty || badSnap.Body == nil {
+		t.Fatal("expected a non-empty bad bundle")
+	}
+	fr.roundBundleResp = badSnap.Body
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile (absorb fails): %v", err)
+	}
+	if got.Builder.LastKnown != "" {
+		t.Fatalf("LastKnown = %q after a failed absorb, want empty", got.Builder.LastKnown)
+	}
+	if got.RemoteAbsorbFailures != 1 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 1", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d after a failed absorb, want unchanged 1", got.Round)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Fatalf("Ack called before a successful absorb: %v", fr.calls)
+		}
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			t.Fatalf("a report entry exists after a failed absorb: %+v", e)
+		}
+	}
+
+	// Next tick: a clean bundle carrying only the allowed ref, so the absorb
+	// succeeds.
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+	fr.roundBundleResp = bundle
+	fr.getBindingResp.ResultCommit = headSHA
+
+	got, err = reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("Reconcile (bundle succeeds): %v", err)
+	}
+	if got.Builder.LastKnown != headSHA {
+		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, headSHA)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0 after success", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+	foundAck := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			foundAck = true
+		}
+	}
+	if !foundAck {
+		t.Fatalf("Ack never called after a successful absorb: %v", fr.calls)
+	}
+
+	entries, err = st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportCount := 0
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportCount++
+		}
+	}
+	if reportCount != 1 {
+		t.Fatalf("report entries = %d, want exactly 1", reportCount)
+	}
+
+	branchHead, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
+	if err != nil || !ok || branchHead != headSHA {
+		t.Fatalf("client branch after absorb: got (%q, %v, %v), want (%q, true, nil)", branchHead, ok, err, headSHA)
+	}
+}
+
+func TestCatchUpDirtyNote(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	// Build the round's result: relay/api advances to c2, and a dirty side
+	// ref (round-1) sits on top of it, exactly as a real dirty close does.
+	resultDir := t.TempDir()
+	runGit(t, resultDir, "clone", clientRepo, ".")
+	runGit(t, resultDir, "checkout", "relay/api")
+	if err := os.WriteFile(filepath.Join(resultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, resultDir, "add", "result.txt")
+	runGit(t, resultDir, "commit", "-m", "round result")
+	c2 := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD"))
+	tree := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD^{tree}"))
+	c3, err := g.CommitTree(ctx, resultDir, tree, c2, "[relay] api: round 1, uncommitted work")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	sideRef := "refs/relay/api/round-1"
+	if err := g.UpdateRef(ctx, resultDir, sideRef, c3, ""); err != nil {
+		t.Fatalf("UpdateRef side: %v", err)
+	}
+
+	transport := remote.NewBundleTransport(g, t.TempDir())
+	snap, err := transport.Snapshot(ctx, resultDir, []string{"refs/heads/relay/api", sideRef}, c1)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.Empty || snap.Body == nil {
+		t.Fatal("expected a non-empty bundle")
+	}
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, DirtyCommit: c3, ResultCommit: c2},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: snap.Body,
+	}
+	rt := Runtime{
+		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: transport,
+		Now: func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2", got.Round)
+	}
+	if got.Builder.LastKnown != c2 {
+		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, c2)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportNote string
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportNote = e.Note
+			found = true
+		}
+	}
+	if !found || !strings.Contains(reportNote, "uncommitted work at "+sideRef) {
+		t.Fatalf("report note = %q (found=%v), want it to name %s", reportNote, found, sideRef)
+	}
+
+	sideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
+	if err != nil || !ok || sideSHA != c3 {
+		t.Fatalf("client side ref: got (%q, %v, %v), want (%q, true, nil)", sideSHA, ok, err, c3)
+	}
+}
+
+func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+	// Unlike the ordinary case, check the binding's own branch out as this
+	// repo's current branch, which is what makes the fetch below collide.
+	runGit(t, clientRepo, "checkout", "relay/api")
+
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: bundle,
+	}
+	rt := Runtime{
+		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want unchanged 1 (retried, not halted)", got.Round)
+	}
+	if got.Builder.LastKnown != "" {
+		t.Fatalf("LastKnown = %q, want empty: the absorb never happened", got.Builder.LastKnown)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: a checked-out branch is retried, not counted as a failure", got.RemoteAbsorbFailures)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatal("a checked-out branch must retry quietly, not halt")
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Fatalf("Ack called despite the absorb never completing: %v", fr.calls)
+		}
+	}
+}
+
+func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("not a real bundle")), nil
+		},
+	}
+	ft := &fakeTransport{absorbErr: errors.New("disk full")}
+	f := &fakeHerdr{}
+	rt := Runtime{Store: st, Herdr: f, Remote: fr, Transport: ft, Now: func() time.Time { return baseTime }}
+	agents := []herdr.Agent{plannerAgent()}
+
+	got := b
+	var err error
+	for i := 1; i <= 10; i++ {
+		got, err = reconcile(t, rt, got, agents)
+		if err != nil {
+			t.Fatalf("Reconcile iteration %d: %v", i, err)
+		}
+		if i < 10 {
+			if got.State == store.StateNeedsYou {
+				t.Fatalf("halted after only %d absorb failures", i)
+			}
+			if got.RemoteAbsorbFailures != i {
+				t.Fatalf("iteration %d: RemoteAbsorbFailures = %d, want %d", i, got.RemoteAbsorbFailures, i)
+			}
+		}
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you at 10 absorb failures", got.State)
+	}
+	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "cannot absorb round") {
+		t.Fatalf("notices = %v, want one naming the absorb failure", f.notices)
 	}
 }
