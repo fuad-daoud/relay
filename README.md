@@ -277,7 +277,7 @@ inside every pane it manages, so it has to be run from inside one.
   the service unit runs. A held payload is injected into a focused planner once its input
   box is empty or its screen has been quiet for `--held-grace` (default 60s).
 - `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
-- `relay serve init|enroll|clients|revoke|fingerprint|status|gc` — server administration, on the server host.
+- `relay serve init|enroll|clients|revoke|fingerprint|status|gc|unbind` — server administration, on the server host.
 - `relay client init` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
   `relay serve enroll --key "<line>"` with.

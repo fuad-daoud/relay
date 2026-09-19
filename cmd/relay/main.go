@@ -80,7 +80,7 @@ Commands:
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
 
   serve                     run the remote-builder server (listener + daemon)
-  serve init|enroll|clients|revoke|fingerprint|status|gc
+  serve init|enroll|clients|revoke|fingerprint|status|gc|unbind
                             server administration, on the server host
 
   client init|add-server|rm-server

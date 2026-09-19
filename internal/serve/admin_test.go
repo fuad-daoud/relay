@@ -265,3 +265,167 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 		t.Errorf("new-idle was archived but should have been kept: %v", err)
 	}
 }
+
+func TestAdminUnbindByLabelAndId(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	s, err := New(Config{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := s.runtime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bByLabel := store.Binding{
+		Name:    "by-label",
+		Owner:   string(id),
+		CWD:     rt.Store.WorktreePath("by-label"),
+		State:   store.StateActive,
+		Round:   1,
+		Builder: store.Endpoint{Kind: "claude"},
+	}
+	if err := rt.Store.Save(bByLabel); err != nil {
+		t.Fatal(err)
+	}
+
+	bByID := store.Binding{
+		Name:    "by-id",
+		Owner:   string(id),
+		CWD:     rt.Store.WorktreePath("by-id"),
+		State:   store.StateActive,
+		Round:   1,
+		Builder: store.Endpoint{Kind: "claude"},
+	}
+	if err := rt.Store.Save(bByID); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	if _, err := AdminUnbind(ctx, s, "alice", "by-label", false); err != nil {
+		t.Fatalf("AdminUnbind by label: %v", err)
+	}
+	if _, err := rt.Store.Load("by-label"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("by-label load err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := AdminUnbind(ctx, s, string(id), "by-id", false); err != nil {
+		t.Fatalf("AdminUnbind by id: %v", err)
+	}
+	if _, err := rt.Store.Load("by-id"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("by-id load err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	s, err := New(Config{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := s.runtime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := store.Binding{
+		Name:    "running",
+		Owner:   string(id),
+		CWD:     rt.Store.WorktreePath("running"),
+		State:   store.StateActive,
+		Round:   1,
+		Builder: store.Endpoint{Kind: "claude"},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Store.AppendLog("running", store.LogEntry{
+		Round:     1,
+		Kind:      store.KindPlan,
+		Direction: store.DirToBuilder,
+		TS:        now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	if _, err := AdminUnbind(ctx, s, "alice", "running", false); err == nil || !strings.Contains(err.Error(), "running") {
+		t.Fatalf("AdminUnbind without force: got err %v, want a refusal mentioning 'running'", err)
+	}
+	if _, err := rt.Store.Load("running"); err != nil {
+		t.Errorf("running binding was removed despite the refusal: %v", err)
+	}
+
+	if _, err := AdminUnbind(ctx, s, "alice", "running", true); err != nil {
+		t.Fatalf("AdminUnbind with force: %v", err)
+	}
+	if _, err := rt.Store.Load("running"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("running binding still present after forced unbind: %v", err)
+	}
+}
+
+func TestAdminUnbindAmbiguousLabel(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	s, err := New(Config{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	kp1, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("dup", remote.MarshalPublic(kp1.Public, "dup"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	kp2, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("dup", remote.MarshalPublic(kp2.Public, "dup"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if _, err := AdminUnbind(ctx, s, "dup", "whatever", false); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("AdminUnbind with ambiguous label: got err %v, want an 'ambiguous' error", err)
+	}
+}

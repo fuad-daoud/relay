@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -75,7 +76,8 @@ func cmdServe(args []string) error {
        relay serve revoke <id> [--state <dir>]
        relay serve fingerprint [--state <dir>]
        relay serve status [--state <dir>]
-       relay serve gc --abandoned <duration> [--dry-run] [--state <dir>]`
+       relay serve gc --abandoned <duration> [--dry-run] [--state <dir>]
+       relay serve unbind --owner <label|id> <name> [--state <dir>] [--force]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -97,6 +99,8 @@ func cmdServe(args []string) error {
 		return cmdServeStatus(args[1:])
 	case "gc":
 		return cmdServeGC(args[1:])
+	case "unbind":
+		return cmdServeUnbind(args[1:])
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
@@ -374,6 +378,48 @@ func cmdServeStatus(args []string) error {
 	}
 
 	fmt.Print(serve.RenderAdminStatus(owners))
+	return nil
+}
+
+func cmdServeUnbind(args []string) error {
+	fs := flag.NewFlagSet("relay serve unbind", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	owner := fs.String("owner", "", "client label or id")
+	force := fs.Bool("force", false, "unbind even if the round is running")
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if *owner == "" || fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: relay serve unbind --owner <label|id> <name> [--state <dir>] [--force]")
+		return exitCodeErr{code: 2}
+	}
+
+	name := fs.Arg(0)
+	root, err := serveRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := serve.New(serve.Config{
+		Root: root,
+		Now:  time.Now,
+	})
+	if err != nil {
+		return err
+	}
+
+	res, err := serve.AdminUnbind(context.Background(), srv, *owner, name, *force)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay serve unbind: %v\n", err)
+		return exitCodeErr{code: 1}
+	}
+
+	fmt.Printf("unbound %s/%s\n", *owner, name)
+	if txt := relay.UnbindText(name, res); txt != "" {
+		fmt.Println(txt)
+	}
 	return nil
 }
 
