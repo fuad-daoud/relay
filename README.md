@@ -766,7 +766,8 @@ candidates in, per role:
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
   "scan_patterns": ["(?i)<instruction-tag"],
-  "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 }
+  "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 },
+  "gate": { "default": "make check", "timeout_ms": 600000 }
 }
 ```
 
@@ -789,7 +790,11 @@ binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 gates the provider when the matched line names no reset time; absent
 defaults to one hour. `scan_patterns` is an optional list of extra
 regular expressions appended to relay's built-in instruction-shaped scan list;
-each pattern must compile.
+each pattern must compile. `gate` configures the default acceptance command
+(see [Gate](#gate) below): `default` is the command a binding gets when it
+does not set `--gate` or `--no-gate` itself, absent or `""` meaning no gate;
+`timeout_ms` bounds one gate run, absent defaulting to ten minutes, and must
+be `> 0` when present.
 
 `classify` configures an optional classifier (TypeSafe's Jev model) to run
 beside the regex scan. When absent, relay scans with regexes only. The block
@@ -975,6 +980,52 @@ When any explicit tier (`read`, `edit`, `yolo`) is active, relay validates that 
 To migrate:
 - Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in `candidates.json`, and set `"max_tier": "yolo"` in `policy.json` (or use `--allow-yolo` on CLI commands).
 - Alternatively, leave `tier` unset (or set to `"harness"`), and relay will leave `extra_args` untouched.
+
+## Gate
+
+A binding can carry a **gate command**: a shell line relay runs in the
+worktree the instant the builder's completion marker appears, against the
+tree exactly as the builder left it, the same moment the round's diff is
+captured. The gate never decides anything -- it annotates. The round still
+closes on the marker, the report is still delivered, and the human still
+judges the diff; the gate only adds a `gate=<result>` note and a `Gate:`
+line to the payload, plus a structured record on the report's log entry.
+There is no repair loop yet: a failing gate is reported, not re-sent or
+auto-fixed (a planned follow-up adds an opt-in repair round).
+
+While the gate runs, the round is held: nothing else acts on the
+builder -- no nudge, no "exited without a report" handling, no round-timeout
+halt -- until the gate finishes or times out.
+
+Configure it with `--gate '<cmd>'` on `relay bind`, `relay add`, or `relay
+fork`; `--no-gate` opts a binding out of `policy.json`'s `gate.default` (see
+above) even when one is configured machine-wide. `relay fork` without
+`--gate`/`--no-gate` inherits the source binding's gate. Omitting both flags
+on `bind`/`add` falls back to `gate.default`, `""` meaning no gate at all --
+bindings written before this feature have no gate and are unaffected.
+
+The gate's full output -- and the supervisor's exit trailer -- lives at
+`NNN-gate.log` next to the round's plan and report. Its result is one of
+`pass`, `fail`, `timeout`, or `error` (the last for a gate that could not
+start, or whose exit code could not be read):
+
+```
+Gate: make check -- PASS (exit 0, 1m40s). Output: /path/to/003-gate.log
+```
+
+A failing gate's payload line also carries the last few non-empty lines of
+the log, so the planner sees why without opening the file:
+
+```
+Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
+  ok  	github.com/example/pkg	0.01s
+  FAIL	github.com/example/pkg2	0.02s
+  ...
+```
+
+`relay status` shows `gating <age>` in place of the builder's own status
+while the gate is running, and `relay log` appends ` gate=<result>` to the
+round's report entry.
 
 ## Consults: asking a reviewer
 

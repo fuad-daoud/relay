@@ -54,6 +54,16 @@ type Policy struct {
 	// MaxTier is the highest tier a command may request without --allow-yolo
 	// (#141). "" is DefaultMaxTier. Must parse and must not be "harness".
 	MaxTier string `json:"max_tier,omitempty"`
+
+	// Gate configures the acceptance command relay runs on a binding's
+	// completion marker when the binding itself has none (#132).
+	Gate *GatePolicy `json:"gate,omitempty"`
+}
+
+// GatePolicy configures the default gate command and its timeout (#132).
+type GatePolicy struct {
+	Default   string `json:"default,omitempty"`    // "" = no gate unless --gate
+	TimeoutMS *int   `json:"timeout_ms,omitempty"` // nil = DefaultGateTimeout; must be > 0
 }
 
 // Classify configures the optional classifier beside the regex scan (#211).
@@ -101,6 +111,10 @@ const DefaultMaxSwitches = 2
 // reset time can be parsed from the matched line and LimitGateDefaultMS is nil.
 const DefaultLimitGate = time.Hour
 
+// DefaultGateTimeout bounds one gate run when neither the binding nor
+// policy.json's gate.timeout_ms sets one (#132).
+const DefaultGateTimeout = 10 * time.Minute
+
 // SwitchLimit is MaxSwitches with the default applied.
 func (p Policy) SwitchLimit() int {
 	if p.MaxSwitches == nil {
@@ -146,6 +160,24 @@ func (p Policy) TierFor(role string) (harness.Tier, bool) {
 	return t, true
 }
 
+// GateDefault is the gate command a binding gets when it does not set one
+// itself, or "" when Gate is nil (#132).
+func (p Policy) GateDefault() string {
+	if p.Gate == nil {
+		return ""
+	}
+	return p.Gate.Default
+}
+
+// GateTimeout is gate.timeout_ms converted to time.Duration with the default
+// applied; safe on a nil Gate.
+func (p Policy) GateTimeout() time.Duration {
+	if p.Gate == nil || p.Gate.TimeoutMS == nil {
+		return DefaultGateTimeout
+	}
+	return time.Duration(*p.Gate.TimeoutMS) * time.Millisecond
+}
+
 // Load reads and validates a policy file. A missing file is the zero Policy
 // and no error, so every machine without a policy.json behaves exactly as it
 // did before this file existed. A present file that does not validate is an
@@ -174,6 +206,10 @@ func Load(path string) (Policy, error) {
 
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
 		return Policy{}, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
+	}
+
+	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
 	}
 
 	for i, pat := range p.ScanPatterns {

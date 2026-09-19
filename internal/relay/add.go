@@ -39,6 +39,15 @@ type AddOptions struct {
 
 	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
 	AllowYolo bool
+
+	// Gate is the acceptance command relay runs on the binding's completion
+	// marker (#132). Empty means fall back to policy.json's gate.default,
+	// unless NoGate opts out of that default.
+	Gate string
+
+	// NoGate opts this binding out of policy.json's gate.default even when
+	// Gate is empty (#132). Ignored when Gate is set.
+	NoGate bool
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -214,6 +223,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Base:             base,
 		Repo:             opts.Repo,
 		Tier:             string(tier),
+		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

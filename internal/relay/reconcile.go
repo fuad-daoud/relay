@@ -234,9 +234,12 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	// matters only on the fallback path below, when there is no marker.
 	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
 		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
-		next, closed, err := closeOnMarker(ctx, rt, tx, b, entries, "")
+		next, closed, gating, err := closeOnMarker(ctx, rt, tx, b, entries, "")
 		if err != nil {
 			return b, err
+		}
+		if gating {
+			return next, nil
 		}
 		if closed {
 			return deliverAndSettle(ctx, rt, tx, next, agents)
@@ -396,6 +399,13 @@ func joinNotes(a, b string) string {
 // (Store.DonePath) exists. It is the one place both the pane and the headless
 // path decide "the builder says it is finished", so they cannot disagree.
 //
+// With a gate configured (#132) it first runs the gate across ticks: gating
+// is true while the gate is running and the round must be left alone --
+// both callers return early without acting on the builder in any way (no
+// nudge, no "exited without a report" switch, no timeout halt). closed is
+// true when the round was closed this tick. closed and gating are never
+// both true.
+//
 // extraNote is appended (via joinNotes) to whichever note this close would
 // otherwise write -- "" for the pane path, and the escape annotation (#192)
 // computed by the headless path from escapeCheck before this call, since
@@ -405,36 +415,58 @@ func joinNotes(a, b string) string {
 // Preconditions: the round is open -- a plan was sent for b.Round and no
 // report has been queued for it.
 // Postconditions:
-//   - marker absent: closed is false, b is returned unchanged, nothing written.
-//   - marker and report present: the round closes normally (note extraNote).
+//   - marker absent: closed and gating are false, b is returned unchanged, nothing written.
+//   - gate running: gating is true, the binding carries the started/updated GateRun.
+//   - marker and report present: the round closes normally (note extraNote,
+//     plus "gate=<result>" and the gate's payload line when gated).
 //   - marker present, report absent: the round closes with note
 //     joinNotes("noreport", extraNote) and a payload saying so. The terminal
 //     is never read: the builder said it was done, and a scrape would be a
 //     worse artefact than an honest gap.
 //
-// Errors are queueReport's, wrapped; the round stays open and the next tick
-// retries, since the marker is still on disk.
-func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, error) {
+// Errors are gateStep's or queueReport's, wrapped; the round stays open and
+// the next tick retries, since the marker is still on disk.
+func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, bool, error) {
 	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
-		return b, false, nil
+		return b, false, false, nil
 	}
+
+	b, done, rec, err := gateStep(ctx, rt, tx, b)
+	if err != nil {
+		return b, false, false, fmt.Errorf("close round on marker: gate: %w", err)
+	}
+	if !done {
+		return b, false, true, nil
+	}
+
+	note := extraNote
+	gateSuffix := ""
+	if rec != nil {
+		note = joinNotes(note, "gate="+rec.Result)
+		var tail []string
+		if rec.Result == "fail" {
+			tail = tailLines(rec.LogPath, gateTailLines)
+		}
+		gateSuffix = "\n" + gateLine(*rec, tail)
+	}
+
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath), joinNotes("", extraNote))
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)+gateSuffix, joinNotes("", note), rec)
 		if err != nil {
-			return b, false, fmt.Errorf("close round on marker: %w", err)
+			return b, false, false, fmt.Errorf("close round on marker: %w", err)
 		}
-		return next, true, nil
+		return next, true, false, nil
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath), joinNotes("noreport", extraNote))
+		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath)+gateSuffix, joinNotes("noreport", note), rec)
 	if err != nil {
-		return b, false, fmt.Errorf("close round on marker: %w", err)
+		return b, false, false, fmt.Errorf("close round on marker: %w", err)
 	}
-	return next, true, nil
+	return next, true, false, nil
 }
 
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
@@ -495,7 +527,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
 		}
-		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked")
+		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked", nil)
 	}
 	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)
 	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
@@ -610,10 +642,10 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		"Builder finished round %d but never wrote its report file. SCRAPED from its terminal (may be truncated): %s",
 		b.Round, reportPath)
 
-	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "scraped")
+	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, "scraped", nil)
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord) (store.Binding, error) {
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
@@ -700,6 +732,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		Flagged:      sc.Flagged,
 		FlaggedBy:    sc.FlaggedBy,
 		Classify:     sc.Record,
+		Gate:         gate,
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
@@ -729,6 +762,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundClosedTree = closed
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
+	b.GateRun = nil
 
 	return b, nil
 }

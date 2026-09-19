@@ -269,6 +269,14 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		row.BuilderPane = a.PaneID
 	}
 
+	// A gate in flight overrides whatever the builder itself reports (#132):
+	// the round is held on the gate, not on the builder, which the marker
+	// already confirmed finished.
+	if b.GateRun != nil {
+		age := rt.Now().Sub(time.Unix(b.GateRun.StartedAt, 0)).Truncate(time.Second)
+		row.BuilderStatus = fmt.Sprintf("gating %s", age)
+	}
+
 	// Only broken is overloaded: it means "builder pane is gone", which covers
 	// a clean exit, a mid-round exit, and a pane that merely moved workspaces
 	// while the agent kept running. orphaned and needs_you are unambiguous.

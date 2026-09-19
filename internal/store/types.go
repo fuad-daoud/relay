@@ -94,7 +94,19 @@ type Binding struct {
 	Tier string `json:"tier,omitempty"`
 	// RoundTier overrides Tier for the CURRENT round of a headless binding,
 	// written by Send --tier and cleared by queueReport with RoundSwitches.
-	RoundTier      string    `json:"round_tier,omitempty"`
+	RoundTier string `json:"round_tier,omitempty"`
+	// Gate is the acceptance command relay runs in the worktree when the
+	// round's completion marker appears (#132); "" means no gate. Run through
+	// `sh -c`, so it may be any shell line. Set at bind/add/fork; never changed
+	// by relay.
+	Gate string `json:"gate,omitempty"`
+	// GateTimeoutMS bounds one gate run; 0 means policy.GateTimeout().
+	GateTimeoutMS int `json:"gate_timeout_ms,omitempty"`
+	// GateRun is the gate process for the CURRENT round while it runs; nil
+	// otherwise. Transient: written when the gate starts, cleared when the
+	// round closes.
+	GateRun *GateRun `json:"gate_run,omitempty"`
+
 	Round          int       `json:"round"`
 	State          State     `json:"state"`
 	RoundCap       int       `json:"round_cap"`
@@ -242,6 +254,14 @@ type Binding struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GateRun is the gate process for the CURRENT round while it runs (#132).
+type GateRun struct {
+	PID       int    `json:"pid"`
+	StartedAt int64  `json:"started_at"` // Unix seconds, as Endpoint.StartedAt
+	Round     int    `json:"round"`
+	Command   string `json:"command"`
 }
 
 type ServeFacts struct {

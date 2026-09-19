@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -80,6 +81,15 @@ type BindOptions struct {
 
 	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
 	AllowYolo bool
+
+	// Gate is the acceptance command relay runs on the binding's completion
+	// marker (#132). Empty means fall back to policy.json's gate.default,
+	// unless NoGate opts out of that default.
+	Gate string
+
+	// NoGate opts this binding out of policy.json's gate.default even when
+	// Gate is empty (#132). Ignored when Gate is set.
+	NoGate bool
 }
 
 // BindResolved ties the calling planner pane to a builder over one working
@@ -401,6 +411,19 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, planner her
 	return out, Resolution{}, nil
 }
 
+// resolveGate applies the gate resolution rule (#132): --no-gate wins over
+// everything, an explicit --gate is used as given, and an unset flag falls
+// back to policy.json's gate.default.
+func resolveGate(gate string, noGate bool, pol policy.Policy) string {
+	if noGate {
+		return ""
+	}
+	if gate != "" {
+		return gate
+	}
+	return pol.GateDefault()
+}
+
 func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
 	name := opts.Name
 	if name == "" {
@@ -462,6 +485,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),
+		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
 	}
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)

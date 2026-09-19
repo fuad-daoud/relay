@@ -835,7 +835,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	if view.DirtyCommit != "" {
 		note = fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n)
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil)
 	if err != nil {
 		return b, err
 	}

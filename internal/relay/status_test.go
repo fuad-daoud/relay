@@ -405,6 +405,28 @@ func TestStatusRowWaiting(t *testing.T) {
 	}
 }
 
+// TestStatusRowGatingShowsAge pins #132: a binding with GateRun set shows
+// "gating <age>" as its BuilderStatus, overriding whatever the builder
+// itself reports.
+func TestStatusRowGatingShowsAge(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.GateRun = &store.GateRun{
+		PID: 4242, StartedAt: clock.Now().Add(-72 * time.Second).Unix(),
+		Round: b.Round, Command: "make check",
+	}
+
+	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.BuilderStatus != "gating 1m12s" {
+		t.Errorf("BuilderStatus = %q, want %q", row.BuilderStatus, "gating 1m12s")
+	}
+}
+
 func TestDoneStopsRelaying(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)

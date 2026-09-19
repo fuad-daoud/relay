@@ -311,9 +311,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if escapeCheck(ctx, rt, b, true) == EscapeNote {
 		markerNote = escapeNote
 	}
-	next, closed, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	next, closed, gating, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, err
+	}
+	if gating {
+		return next, nil
 	}
 	if closed {
 		if next.Owner != "" {
@@ -389,7 +392,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil)
 		if err != nil {
 			return b, err
 		}

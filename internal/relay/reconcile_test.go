@@ -1278,20 +1278,28 @@ func TestEffectiveStatus(t *testing.T) {
 // the store lock, with the binding's current log.
 func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool) {
 	t.Helper()
+	out, closed, _ := closeOnMarkerUnderLockGating(t, rt, b)
+	return out, closed
+}
+
+// closeOnMarkerUnderLockGating is closeOnMarkerUnderLock plus the gating
+// return, for the gate lifecycle tests (#132).
+func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool, bool) {
+	t.Helper()
 	var out store.Binding
-	var closed bool
+	var closed, gating bool
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		entries, err := tx.ReadLog(b.Name)
 		if err != nil {
 			return err
 		}
-		out, closed, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
+		out, closed, gating, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
 		return err
 	})
 	if err != nil {
 		t.Fatalf("closeOnMarker: %v", err)
 	}
-	return out, closed
+	return out, closed, gating
 }
 
 func touch(t *testing.T, path string) {
@@ -2135,4 +2143,379 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Errorf("question.Note = %q, want empty", question.Note)
 		}
 	})
+}
+
+// gates returns the gate entries in webshop's log.
+func gates(t *testing.T, rt Runtime) []store.LogEntry {
+	t.Helper()
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var out []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindGate {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestGateNotConfiguredIsUnchanged pins #132: a binding with no gate closes
+// exactly as it did before the gate existed -- no process is started and the
+// payload is unchanged.
+func TestGateNotConfiguredIsUnchanged(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed, gating := closeOnMarkerUnderLockGating(t, rt, b)
+	if gating {
+		t.Fatal("gating = true with no gate configured")
+	}
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if len(fr.specs) != 0 {
+		t.Fatalf("Start calls = %d, want 0 with no gate configured", len(fr.specs))
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "" {
+		t.Errorf("note = %q, want empty", pending.Note)
+	}
+	want := "Builder finished round 1. Report: " + rt.Store.ReportPath("webshop", 1)
+	if !strings.HasSuffix(pending.Payload, want) {
+		t.Errorf("payload = %q, want it to end with %q (unchanged by the gate)", pending.Payload, want)
+	}
+	if strings.Contains(pending.Payload, "Gate:") {
+		t.Errorf("payload = %q, want no gate line with no gate configured", pending.Payload)
+	}
+}
+
+// TestGateStartsOnMarkerAndHoldsTheRound pins #132's state machine: a
+// configured gate starts on the marker tick and holds the round across
+// ticks -- no nudge, no exit/switch handling -- until it finishes.
+//
+// Mutation check (run and report): make the pane call site ignore gating
+// (fall through to the status switch instead of returning early); this test
+// fails because the second tick's nudge reaches fakeHerdr; restore; passes.
+func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the gate holds the round open", got.Round)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("Start calls = %d, want exactly 1", len(fr.specs))
+	}
+	spec := fr.specs[0]
+	wantLog := rt.Store.GateLogPath("webshop", 1)
+	if spec.Dir != b.CWD {
+		t.Errorf("spec.Dir = %q, want %q", spec.Dir, b.CWD)
+	}
+	wantArgv := []string{"sh", "-c", "make check 2>&1"}
+	if len(spec.Argv) != len(wantArgv) {
+		t.Fatalf("spec.Argv = %v, want %v", spec.Argv, wantArgv)
+	}
+	for i := range wantArgv {
+		if spec.Argv[i] != wantArgv[i] {
+			t.Fatalf("spec.Argv = %v, want %v", spec.Argv, wantArgv)
+		}
+	}
+	if spec.LogPath != wantLog || spec.StreamPath != wantLog {
+		t.Errorf("LogPath/StreamPath = %q/%q, want both %q", spec.LogPath, spec.StreamPath, wantLog)
+	}
+	if len(fr.handles) != 1 {
+		t.Fatalf("handles = %d, want 1", len(fr.handles))
+	}
+	if got.GateRun == nil || got.GateRun.PID != fr.handles[0].PID {
+		t.Fatalf("GateRun = %+v, want PID %d", got.GateRun, fr.handles[0].PID)
+	}
+	if len(gates(t, rt)) != 1 {
+		t.Fatalf("KindGate entries = %d, want 1", len(gates(t, rt)))
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatalf("no report entry while the gate is running: %+v", pending)
+	}
+
+	// Second tick: the gate is still alive. Even though the builder itself
+	// would otherwise be idle long enough to nudge, gating must hold the
+	// round untouched. fakeRunner.Start stamps StartedAt from a real epoch
+	// unrelated to the fake clock, so it is realigned here -- otherwise the
+	// elapsed-since-start arithmetic in gateStep would see it as already far
+	// past any timeout.
+	got.GateRun.StartedAt = clock.Now().Unix()
+	fr.script(fr.handles[0].PID, true)
+	clock.Advance(startGrace + time.Second)
+	agents2 := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusIdle)}
+	got2, err := reconcile(t, rt, got, agents2)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if got2.Round != 1 {
+		t.Fatalf("Round = %d after second tick, want 1", got2.Round)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("Start calls after second tick = %d, want still 1", len(fr.specs))
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("no nudge while the gate runs: %+v", f.prompts)
+	}
+	if len(exits(t, rt)) != 0 {
+		t.Errorf("no exit handling while the gate runs: %+v", exits(t, rt))
+	}
+	if len(switches(t, rt)) != 0 {
+		t.Errorf("no switch while the gate runs: %+v", switches(t, rt))
+	}
+}
+
+// TestGatePassClosesWithAnnotation pins #132: a gate that exits 0 closes the
+// round with a gate=pass annotation, a Gate record on the entry, and the
+// gate's payload line.
+func TestGatePassClosesWithAnnotation(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	// First tick starts the gate.
+	got, closed, gating := closeOnMarkerUnderLockGating(t, rt, b)
+	if closed || !gating {
+		t.Fatalf("closed=%v gating=%v after starting the gate, want gating only", closed, gating)
+	}
+
+	// The gate exits 0.
+	fr.script(fr.handles[0].PID, false)
+	fr.exit(fr.handles[0].PID, 0)
+
+	got, closed, gating = closeOnMarkerUnderLockGating(t, rt, got)
+	if gating {
+		t.Fatal("gating = true after the gate exited")
+	}
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if got.GateRun != nil {
+		t.Errorf("GateRun = %+v, want nil after the round closes", got.GateRun)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "gate=pass" {
+		t.Errorf("note = %q, want gate=pass", pending.Note)
+	}
+	if pending.Gate == nil || pending.Gate.Result != "pass" || pending.Gate.ExitCode != 0 {
+		t.Fatalf("Gate = %+v, want Result=pass ExitCode=0", pending.Gate)
+	}
+	wantLog := rt.Store.GateLogPath("webshop", 1)
+	if !strings.Contains(pending.Payload, "Gate: make check -- PASS (exit 0,") ||
+		!strings.Contains(pending.Payload, wantLog) {
+		t.Errorf("payload = %q", pending.Payload)
+	}
+}
+
+// TestGateFailAddsTail pins #132: a gate that exits non-zero closes the
+// round with gate=fail, and the payload carries the log's last
+// gateTailLines non-empty lines, not the first.
+func TestGateFailAddsTail(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, _, gating := closeOnMarkerUnderLockGating(t, rt, b)
+	if !gating {
+		t.Fatal("want gating after starting the gate")
+	}
+
+	gateLog := rt.Store.GateLogPath("webshop", 1)
+	body := "line one\nline two\nline three\nline four\nline five\nline six\n"
+	if err := os.WriteFile(gateLog, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fr.script(fr.handles[0].PID, false)
+	fr.exit(fr.handles[0].PID, 2)
+
+	got, closed, gating := closeOnMarkerUnderLockGating(t, rt, got)
+	if gating {
+		t.Fatal("gating = true after the gate exited")
+	}
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "gate=fail" {
+		t.Errorf("note = %q, want gate=fail", pending.Note)
+	}
+	if pending.Gate == nil || pending.Gate.Result != "fail" || pending.Gate.ExitCode != 2 {
+		t.Fatalf("Gate = %+v, want Result=fail ExitCode=2", pending.Gate)
+	}
+	if !strings.Contains(pending.Payload, "FAIL (exit 2,") {
+		t.Errorf("payload = %q, want it to contain FAIL (exit 2,", pending.Payload)
+	}
+	for _, want := range []string{"line two", "line three", "line four", "line five", "line six"} {
+		if !strings.Contains(pending.Payload, want) {
+			t.Errorf("payload missing tail line %q: %q", want, pending.Payload)
+		}
+	}
+	if strings.Contains(pending.Payload, "line one") {
+		t.Errorf("payload must carry only the last 5 lines, not the first: %q", pending.Payload)
+	}
+}
+
+// TestGateTimeoutKills pins #132: a gate that outlives its timeout is
+// killed and the round closes with gate=timeout.
+func TestGateTimeoutKills(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, _, gating := closeOnMarkerUnderLockGating(t, rt, b)
+	if !gating {
+		t.Fatal("want gating after starting the gate")
+	}
+	// fakeRunner.Start stamps StartedAt from a real epoch unrelated to the
+	// fake clock, so it is realigned here -- otherwise the elapsed-since-start
+	// arithmetic in gateStep would see it as already far past any timeout.
+	got.GateRun.StartedAt = clock.Now().Unix()
+
+	fr.script(fr.handles[0].PID, true)
+	clock.Advance(rt.Policy.GateTimeout() - time.Second)
+	got, closed, gating := closeOnMarkerUnderLockGating(t, rt, got)
+	if closed || !gating {
+		t.Fatalf("closed=%v gating=%v just under the timeout, want still gating", closed, gating)
+	}
+	if len(fr.kills) != 0 {
+		t.Fatalf("kills = %+v before the timeout elapsed, want none", fr.kills)
+	}
+
+	fr.script(fr.handles[0].PID, true)
+	clock.Advance(2 * time.Second)
+	got, closed, gating = closeOnMarkerUnderLockGating(t, rt, got)
+	if gating {
+		t.Fatal("gating = true after the timeout")
+	}
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if len(fr.kills) != 1 || fr.kills[0].PID != fr.handles[0].PID {
+		t.Fatalf("kills = %+v, want exactly one kill of pid %d", fr.kills, fr.handles[0].PID)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "gate=timeout" {
+		t.Errorf("note = %q, want gate=timeout", pending.Note)
+	}
+	if pending.Gate == nil || pending.Gate.Result != "timeout" {
+		t.Fatalf("Gate = %+v, want Result=timeout", pending.Gate)
+	}
+	if !strings.Contains(pending.Payload, "TIMEOUT after") {
+		t.Errorf("payload = %q, want it to contain TIMEOUT after", pending.Payload)
+	}
+}
+
+// TestGateNoRunnerIsErrorNotHang pins #132: a gate configured on a runtime
+// with no Runner cannot hang the round -- it closes this tick with a
+// gate=error annotation instead.
+func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	rt.Runner = nil
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, closed, gating := closeOnMarkerUnderLockGating(t, rt, b)
+	if gating {
+		t.Fatal("gating = true with no runner; want an immediate error result")
+	}
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "gate=error" {
+		t.Errorf("note = %q, want gate=error", pending.Note)
+	}
+	if pending.Gate == nil || pending.Gate.Result != "error" || pending.Gate.Note != "no runner" {
+		t.Fatalf("Gate = %+v, want Result=error Note=\"no runner\"", pending.Gate)
+	}
+	if !strings.Contains(pending.Payload, "Gate: make check -- ERROR: no runner.") {
+		t.Errorf("payload = %q", pending.Payload)
+	}
 }

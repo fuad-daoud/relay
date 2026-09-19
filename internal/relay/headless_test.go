@@ -2149,3 +2149,48 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 		t.Errorf("specs = %d, want 1 (no new process started)", len(fr.specs))
 	}
 }
+
+// TestGateHeadlessCallSiteHolds pins #132: the headless marker path holds
+// the round while a configured gate runs -- no "exited without a report"
+// handling (no KindExit, no switch) -- exactly as the pane call site does.
+func TestGateHeadlessCallSiteHolds(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, f, fr)
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the gate holds the round open", got.Round)
+	}
+	if got.GateRun == nil {
+		t.Fatal("GateRun must be set once the gate starts")
+	}
+	if len(exits(t, rt)) != 0 {
+		t.Errorf("no KindExit while the gate runs: %+v", exits(t, rt))
+	}
+	if len(switches(t, rt)) != 0 {
+		t.Errorf("no switch while the gate runs: %+v", switches(t, rt))
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+}

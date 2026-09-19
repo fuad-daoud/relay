@@ -40,6 +40,9 @@ func LogLine(e store.LogEntry) string {
 	if e.Kind == store.KindPlan && e.Tier != "" {
 		first += " tier=" + e.Tier
 	}
+	if e.Gate != nil {
+		first += " gate=" + e.Gate.Result
+	}
 	if e.Usage == nil {
 		return first
 	}
