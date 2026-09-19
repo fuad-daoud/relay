@@ -717,3 +717,45 @@ func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []strin
 	}
 	return fetched, nil
 }
+
+// MergeFF fast-forwards dir's current branch to ref.
+//
+// Preconditions:  dir is inside a git worktree.
+// Postconditions: on success the worktree and its branch are at ref.
+// Errors: ErrNotFastForward if fast-forward is not possible, ErrMergeConflict
+// if uncommitted changes conflict with the update, ErrNotRepo, ErrGitUnavailable,
+// context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) MergeFF(ctx context.Context, dir, ref string) error {
+	_, err := c.run(ctx, dir, nil, "merge", "--ff-only", ref)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return err
+		}
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not possible to fast-forward") {
+			return ErrNotFastForward
+		}
+		if strings.Contains(errStr, "would be overwritten") || strings.Contains(errStr, "local changes") {
+			return ErrMergeConflict
+		}
+		return err
+	}
+	return nil
+}
+
+// InitBare initializes a bare git repository at path.
+//
+// Preconditions:  path is the destination repository directory.
+// Postconditions: path is a bare repository; idempotent (an existing bare repo is left as is).
+// Errors: ErrGitUnavailable, context.DeadlineExceeded, or a wrapped failure.
+func (c *Client) InitBare(ctx context.Context, path string) error {
+	if _, err := os.Stat(filepath.Join(path, "HEAD")); err == nil {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, dir, nil, "init", "--bare", path)
+	return err
+}

@@ -207,8 +207,28 @@ type Binding struct {
 	// ConsultCap bounds RUNNING consults; zero means DefaultConsultCap.
 	ConsultCap int `json:"consult_cap,omitempty"`
 
+	// Owner is the enrolled client id that created this binding on a relay
+	// server (remote-builders spec §2.1). Empty on every local binding. When
+	// set, the binding has no planner: deliverAndSettle leaves payloads queued
+	// and the owner collects them over the wire.
+	Owner string `json:"owner,omitempty"`
+
+	// Serve is what the server records about the binding beyond the local
+	// fields; nil on local bindings.
+	Serve *ServeFacts `json:"serve,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ServeFacts struct {
+	RepoID       string    `json:"repo_id"`                 // remote.RepoID of the client's repo
+	BareRepo     string    `json:"bare_repo"`               // absolute path of the bare repo
+	ClosedRound  int       `json:"closed_round,omitempty"`  // last round closed by the daemon; 0 none
+	ResultCommit string    `json:"result_commit,omitempty"` // refs/heads/relay/<name> at that close
+	DirtyCommit  string    `json:"dirty_commit,omitempty"`  // refs/relay/<name>/round-<ClosedRound>, "" if clean
+	AckedRound   int       `json:"acked_round,omitempty"`   // last round the owner acked; 0 none
+	LastSeen     time.Time `json:"last_seen,omitempty"`     // last signed request from the owner about this binding
 }
 
 // DefaultConsultCap bounds how many consults may be RUNNING on one binding at

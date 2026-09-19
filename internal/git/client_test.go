@@ -1257,3 +1257,116 @@ func TestFetchBundleIgnoresRefsNotAsked(t *testing.T) {
 		t.Fatalf("bareB ref2 unexpectedly present: ok=%v, err=%v", ok2, err)
 	}
 }
+
+func TestMergeFF(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+	if err := os.WriteFile(filepath.Join(repoDir, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "f1.txt")
+	runGit(t, repoDir, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	if err := client.AddWorktree(ctx, repoDir, wtDir, "feature", c1); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+
+	// 1. Fast-forward succeeds and moves the worktree
+	if err := os.WriteFile(filepath.Join(repoDir, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "f2.txt")
+	runGit(t, repoDir, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	refOut := "refs/relay/test/out"
+	runGit(t, repoDir, "update-ref", refOut, c2)
+
+	if err := client.MergeFF(ctx, wtDir, refOut); err != nil {
+		t.Fatalf("MergeFF expected success, got %v", err)
+	}
+	head, err := client.HeadCommit(ctx, wtDir)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	if head != c2 {
+		t.Fatalf("wt HEAD = %s, want %s", head, c2)
+	}
+	if _, err := os.Stat(filepath.Join(wtDir, "f2.txt")); err != nil {
+		t.Fatalf("f2.txt missing in worktree after ff: %v", err)
+	}
+
+	// 2. Diverged ref -> ErrNotFastForward
+	if err := os.WriteFile(filepath.Join(wtDir, "wt_only.txt"), []byte("wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wtDir, "add", "wt_only.txt")
+	runGit(t, wtDir, "commit", "-m", "c3 in wt")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "repo_only.txt"), []byte("repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "repo_only.txt")
+	runGit(t, repoDir, "commit", "-m", "c4 in repo")
+	c4 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	refDiverged := "refs/relay/test/diverged"
+	runGit(t, repoDir, "update-ref", refDiverged, c4)
+
+	err = client.MergeFF(ctx, wtDir, refDiverged)
+	if !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("MergeFF on diverged ref: got %v, want ErrNotFastForward", err)
+	}
+
+	// 3. Dirty file the update touches -> ErrMergeConflict
+	// Create another commit on repoDir modifying f2.txt from c2 (or c4)
+	wtHead, err := client.HeadCommit(ctx, wtDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Commit on top of wtHead in repoDir
+	runGit(t, repoDir, "checkout", "-b", "conflict-branch", wtHead)
+	if err := os.WriteFile(filepath.Join(repoDir, "f2.txt"), []byte("modified in conflict branch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "f2.txt")
+	runGit(t, repoDir, "commit", "-m", "conflict commit")
+	conflictHead := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	refConflict := "refs/relay/test/conflict"
+	runGit(t, repoDir, "update-ref", refConflict, conflictHead)
+
+	// Make f2.txt dirty in wtDir
+	if err := os.WriteFile(filepath.Join(wtDir, "f2.txt"), []byte("dirty in wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = client.MergeFF(ctx, wtDir, refConflict)
+	if !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("MergeFF with dirty conflicting file: got %v, want ErrMergeConflict", err)
+	}
+}
+
+func TestInitBare(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	barePath := filepath.Join(t.TempDir(), "sub", "test.git")
+
+	// Creates bare repo
+	if err := client.InitBare(ctx, barePath); err != nil {
+		t.Fatalf("InitBare failed: %v", err)
+	}
+	headFile := filepath.Join(barePath, "HEAD")
+	if _, err := os.Stat(headFile); err != nil {
+		t.Fatalf("HEAD file does not exist: %v", err)
+	}
+
+	// Second call is a no-op
+	if err := client.InitBare(ctx, barePath); err != nil {
+		t.Fatalf("second InitBare failed: %v", err)
+	}
+}

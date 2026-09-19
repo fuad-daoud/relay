@@ -23,6 +23,9 @@ var ErrBranchCheckedOut = errors.New("branch is checked out in another worktree"
 // ErrNotFastForward reports that a ref update is not a fast-forward.
 var ErrNotFastForward = errors.New("ref update is not a fast-forward")
 
+// ErrMergeConflict reports uncommitted changes that conflict with an update.
+var ErrMergeConflict = errors.New("uncommitted changes conflict with the update")
+
 // ErrBadBundle reports a bundle that is malformed or its prerequisites are missing.
 var ErrBadBundle = errors.New("bundle is malformed or its prerequisites are missing")
 
