@@ -488,6 +488,20 @@ rule a headless binding follows). `relay done` and `relay unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
 the server is treated as already gone, and proceeds).
 
+What `status` and `doctor` show: `relay status` and `relay ui` name a
+remote binding's builder by its server (`zen`, not a pane id), with the
+last round state the daemon observed there (`running`, `idle`, `closed`,
+`needs_you`, `unreachable`, `cert`) in the status column -- read from the
+store, never over the network, so it costs nothing extra. `relay status`,
+`relay pull` and each `relay wait` poll additionally sync every remote
+binding first, so a round the server closed while your daemon was not
+running (or was never started) is collected without it -- a laptop closed
+overnight still shows the finished round on the next `relay status`.
+`relay doctor` adds one row per configured server: reachable and enrolled
+(`enrolled as <label>`), not yet enrolled (with the line to give the
+admin), unreachable, or a certificate that no longer matches the pinned
+fingerprint.
+
 ### Round budget
 
 Each round carries a budget; past it, relay flags the binding `NEEDS YOU` and
