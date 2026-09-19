@@ -39,6 +39,8 @@ type Env interface {
 	// its trimmed stdout, so a harness with a version floor can be held to
 	// it the way herdr is (spec §4.4). path came from LookPath.
 	BinaryVersion(ctx context.Context, path string) (string, error)
+	// Probe tests whether dir is writable by creating and removing a temporary file.
+	Probe(dir string) error
 }
 
 type realEnv struct {
@@ -103,4 +105,17 @@ func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error
 		return "", errors.New("empty version output")
 	}
 	return fields[0], nil
+}
+
+func (e *realEnv) Probe(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, "doctor-probe-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	_ = f.Close()
+	return os.Remove(name)
 }

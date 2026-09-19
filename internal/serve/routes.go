@@ -36,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v1/whoami", s.handleWhoAmI)
+	mux.HandleFunc("GET /v1/candidates", s.handleCandidates)
 	mux.HandleFunc("POST /v1/bindings", s.handleCreateBinding)
 	mux.HandleFunc("GET /v1/bindings", s.handleListBindings)
 	mux.HandleFunc("GET /v1/bindings/{name}", s.handleGetBinding)
