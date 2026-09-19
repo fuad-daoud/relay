@@ -80,3 +80,38 @@ func TestLogLineOutcomeAndFlagged(t *testing.T) {
 		t.Errorf("\n got  %q\n want %q", got, want)
 	}
 }
+
+func TestLogLineClassify(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	e := store.LogEntry{
+		TS:        ts,
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindReport,
+		Path:      "/p/001-report.md",
+		Flagged:   3,
+		FlaggedBy: "both",
+		Classify:  &store.ClassifyRecord{Max: 0.94, Partial: true},
+		Late:      true,
+	}
+	got := LogLine(e)
+	wantSuffix := "flagged=3 by=both p=0.94 partial late"
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Errorf("got %q, want suffix %q", got, wantSuffix)
+	}
+
+	eTimeout := store.LogEntry{
+		TS:        ts,
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindReport,
+		Path:      "/p/001-report.md",
+		Flagged:   3,
+		FlaggedBy: "regex",
+		Classify:  &store.ClassifyRecord{Note: "classify: timeout"},
+	}
+	gotTimeout := LogLine(eTimeout)
+	if strings.Contains(gotTimeout, "p=") {
+		t.Errorf("got %q, want no p=", gotTimeout)
+	}
+}

@@ -308,16 +308,16 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		return b, fmt.Errorf("write question %s: %w", path, err)
 	}
 
-	flagged := ScanInstructionShaped([]byte(dialog), compileScanPatterns(rt.Policy))
+	sc := scanForInjection(ctx, rt, "dialog", b, []byte(dialog))
 
 	payload := fmt.Sprintf(
 		"Builder is blocked at a dialog in round %d. Question: %s\n"+
 			"Read it, then answer with: relay answer --name %s (--keys <key> | --choice <n> | --text <s>)",
 		b.Round, path, b.Name)
 
-	if flagged > 0 {
+	if sc.Flagged > 0 {
 		pLines := strings.SplitN(payload, "\n", 2)
-		pFirst := pLines[0] + flaggedParenthetical(flagged)
+		pFirst := pLines[0] + flaggedParenthetical(sc.Flagged, sc.Record)
 		if len(pLines) > 1 {
 			payload = pFirst + "\n" + pLines[1]
 		} else {
@@ -328,8 +328,8 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindQuestion,
-		Path: path, Payload: payload,
-		Flagged: flagged,
+		Path: path, Payload: payload, Note: sc.Note,
+		Flagged: sc.Flagged, FlaggedBy: sc.FlaggedBy, Classify: sc.Record,
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
@@ -390,17 +390,6 @@ func joinNotes(a, b string) string {
 	default:
 		return a + " " + b
 	}
-}
-
-func flaggedParenthetical(flagged int) string {
-	if flagged <= 0 {
-		return ""
-	}
-	unit := "lines"
-	if flagged == 1 {
-		unit = "line"
-	}
-	return fmt.Sprintf(" (%d instruction-shaped %s flagged; see relay log)", flagged, unit)
 }
 
 // closeOnMarker closes an open round when the builder's completion marker
@@ -638,7 +627,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		// so the planner does not treat this as "the builder omitted the block".
 		note = joinNotes(note, reject)
 	}
-	flagged := ScanInstructionShaped(body, compileScanPatterns(rt.Policy))
+	sc := scanForInjection(ctx, rt, "report", b, body)
+	note = joinNotes(note, sc.Note)
 
 	pLines := strings.SplitN(payload, "\n", 2)
 	pFirst := pLines[0]
@@ -659,8 +649,8 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			pFirst = pFirst + fmt.Sprintf(" Outcome: %s.", outcome)
 		}
 	}
-	if flagged > 0 {
-		pFirst += flaggedParenthetical(flagged)
+	if sc.Flagged > 0 {
+		pFirst += flaggedParenthetical(sc.Flagged, sc.Record)
 	}
 	payload = pFirst + pRest
 
@@ -707,7 +697,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		ChangedPaths: tail.ChangedPaths,
 		CommandsRun:  tail.CommandsRun,
 		NotDone:      tail.NotDone,
-		Flagged:      flagged,
+		Flagged:      sc.Flagged,
+		FlaggedBy:    sc.FlaggedBy,
+		Classify:     sc.Record,
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err

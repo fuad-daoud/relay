@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -265,6 +266,8 @@ func cmdDoctor(args []string) error {
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
+	_, st := classify.Resolve(rt.Policy.Classify, configDir, os.Getenv)
+	rep.Checks = append(rep.Checks, doctor.ClassifyCheck(st))
 	refusals := relay.RoleRefusals(rt.Candidates, rt.Policy, relay.Gates(rt))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
 	for _, r := range refusals {

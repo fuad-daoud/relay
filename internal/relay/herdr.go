@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -80,6 +81,13 @@ type Runtime struct {
 	// "no reader"; tests that do not set it behave as a machine with no
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
+
+	// Classify judges report and dialog paragraphs for instruction-shaped
+	// content beside the regex scan (#211). Nil means no classifier is
+	// configured and the regex result stands alone; cmd/relay wires
+	// classify.Resolve, tests wire *classify.Fake.
+	Classify classify.Classifier
+
 	// Prices is ~/.config/relay/prices.json over the embedded default. The
 	// zero value prices nothing, so every estimate is unknown.
 	Prices usage.Prices

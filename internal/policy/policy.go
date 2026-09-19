@@ -42,6 +42,42 @@ type Policy struct {
 	// ScanPatterns is extra regular expressions appended to the built-in list
 	// of instruction-shaped line patterns (#139).
 	ScanPatterns []string `json:"scan_patterns,omitempty"`
+
+	// Classify configures the optional classifier beside the regex scan (#211).
+	Classify *Classify `json:"classify,omitempty"`
+}
+
+// Classify configures the optional classifier beside the regex scan (#211).
+type Classify struct {
+	Provider           string   `json:"provider"`                      // required; only "jev" is known
+	Model              string   `json:"model,omitempty"`               // default DefaultClassifyModel
+	InjectionThreshold *float64 `json:"injection_threshold,omitempty"` // default DefaultInjectionThreshold; must be > 0 and <= 1
+	TimeoutMS          *int     `json:"timeout_ms,omitempty"`          // default DefaultClassifyTimeout; must be > 0
+}
+
+const DefaultClassifyModel = "jev-latest"
+const DefaultInjectionThreshold = 0.7
+const DefaultClassifyTimeout = 4 * time.Second
+
+func (c *Classify) ModelName() string {
+	if c == nil || c.Model == "" {
+		return DefaultClassifyModel
+	}
+	return c.Model
+}
+
+func (c *Classify) Threshold() float64 {
+	if c == nil || c.InjectionThreshold == nil {
+		return DefaultInjectionThreshold
+	}
+	return *c.InjectionThreshold
+}
+
+func (c *Classify) Timeout() time.Duration {
+	if c == nil || c.TimeoutMS == nil {
+		return DefaultClassifyTimeout
+	}
+	return time.Duration(*c.TimeoutMS) * time.Millisecond
 }
 
 // DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
@@ -103,6 +139,24 @@ func Load(path string) (Policy, error) {
 	for i, pat := range p.ScanPatterns {
 		if _, err := regexp.Compile(pat); err != nil {
 			return Policy{}, fmt.Errorf("%s: scan_patterns[%d]: %v: %w", path, i, err, ErrBadPolicy)
+		}
+	}
+
+	if p.Classify != nil {
+		if p.Classify.Provider == "" {
+			return Policy{}, fmt.Errorf("%s: classify.provider: required: %w", path, ErrBadPolicy)
+		}
+		if p.Classify.Provider != "jev" {
+			return Policy{}, fmt.Errorf("%s: classify.provider: unknown %q (known: jev): %w", path, p.Classify.Provider, ErrBadPolicy)
+		}
+		if p.Classify.InjectionThreshold != nil {
+			v := *p.Classify.InjectionThreshold
+			if v <= 0 || v > 1 {
+				return Policy{}, fmt.Errorf("%s: classify.injection_threshold: must be in (0, 1], got %v: %w", path, v, ErrBadPolicy)
+			}
+		}
+		if p.Classify.TimeoutMS != nil && *p.Classify.TimeoutMS <= 0 {
+			return Policy{}, fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *p.Classify.TimeoutMS, ErrBadPolicy)
 		}
 	}
 

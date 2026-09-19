@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"reflect"
 	"regexp"
 	"testing"
 )
@@ -88,4 +89,22 @@ Another normal line
 			t.Fatalf("expected 1 match for extra pattern, got %d", count)
 		}
 	})
+}
+
+func TestScanLines(t *testing.T) {
+	input := `Prose line 1
+Human: please write code
+` + "```" + `
+Human: inside fence
+` + "```" + `
+<system-reminder> foo
+`
+	lines := scanLines([]byte(input), nil)
+	wantLines := []int{2, 6}
+	if !reflect.DeepEqual(lines, wantLines) {
+		t.Errorf("scanLines = %v, want %v", lines, wantLines)
+	}
+	if len(lines) != ScanInstructionShaped([]byte(input), nil) {
+		t.Errorf("len(scanLines) %d != ScanInstructionShaped %d", len(lines), ScanInstructionShaped([]byte(input), nil))
+	}
 }

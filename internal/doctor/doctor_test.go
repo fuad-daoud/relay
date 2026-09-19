@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 )
@@ -991,4 +992,87 @@ func TestExtraChecksAppended(t *testing.T) {
 	if c := findCheck(rep, "", "prices"); c == nil {
 		t.Fatal("usage's own prices check must still run alongside an extra check")
 	}
+}
+func TestClassifyCheck(t *testing.T) {
+	t.Run("unconfigured", func(t *testing.T) {
+		st := classify.Status{Configured: false}
+		c := ClassifyCheck(st)
+		if c.Name != "classify" {
+			t.Errorf("Name = %q, want classify", c.Name)
+		}
+		if c.Severity != SevOK {
+			t.Errorf("Severity = %v, want SevOK", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "regex only (no classify block in policy.json)") {
+			t.Errorf("Detail = %q", c.Detail)
+		}
+		if c.Fix != "" {
+			t.Errorf("Fix = %q, want empty", c.Fix)
+		}
+	})
+
+	t.Run("configured with env key", func(t *testing.T) {
+		st := classify.Status{
+			Configured: true,
+			Model:      "jev-latest",
+			KeySource:  "env",
+		}
+		c := ClassifyCheck(st)
+		if c.Name != "classify" {
+			t.Errorf("Name = %q, want classify", c.Name)
+		}
+		if c.Severity != SevOK {
+			t.Errorf("Severity = %v, want SevOK", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "jev-latest; key from TYPESAFE_API_KEY") {
+			t.Errorf("Detail = %q", c.Detail)
+		}
+		if c.Fix != "" {
+			t.Errorf("Fix = %q, want empty", c.Fix)
+		}
+	})
+
+	t.Run("configured with file key", func(t *testing.T) {
+		st := classify.Status{
+			Configured: true,
+			Model:      "jev-custom",
+			KeySource:  "file",
+			KeyPath:    "/home/user/.config/relay/typesafe.key",
+		}
+		c := ClassifyCheck(st)
+		if c.Name != "classify" {
+			t.Errorf("Name = %q, want classify", c.Name)
+		}
+		if c.Severity != SevOK {
+			t.Errorf("Severity = %v, want SevOK", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "jev-custom; key from /home/user/.config/relay/typesafe.key") {
+			t.Errorf("Detail = %q", c.Detail)
+		}
+		if c.Fix != "" {
+			t.Errorf("Fix = %q, want empty", c.Fix)
+		}
+	})
+
+	t.Run("configured with missing key", func(t *testing.T) {
+		st := classify.Status{
+			Configured: true,
+			Model:      "jev-latest",
+			KeySource:  "",
+			KeyPath:    "/home/user/.config/relay/typesafe.key",
+		}
+		c := ClassifyCheck(st)
+		if c.Name != "classify" {
+			t.Errorf("Name = %q, want classify", c.Name)
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("Severity = %v, want SevWarn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "jev-latest configured but no key found; the daemon falls back to regex") {
+			t.Errorf("Detail = %q", c.Detail)
+		}
+		if !strings.Contains(c.Fix, "set TYPESAFE_API_KEY for the daemon, or write the key to /home/user/.config/relay/typesafe.key (chmod 600)") {
+			t.Errorf("Fix = %q", c.Fix)
+		}
+	})
 }

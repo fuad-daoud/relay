@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -315,6 +316,8 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	cls, _ := classify.Resolve(pol.Classify, configDir, os.Getenv)
+
 	prices, err := usagepkg.LoadPrices(filepath.Join(configDir, "relay", "prices.json"))
 	if err != nil {
 		// A bad price file must never stop a round from closing: say so
@@ -351,6 +354,7 @@ func newRuntime() (relay.Runtime, error) {
 		LedgerPath:  st.LedgerPath(),
 		HistoryPath: st.HistoryPath(),
 		Policy:      pol,
+		Classify:    cls,
 		Usage:       reader,
 		Prices:      prices,
 		Now:         time.Now,
