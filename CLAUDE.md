@@ -40,7 +40,10 @@ Do not trust the report. Run `make check` yourself -- it is stricter than
 `go mod tidy` check -- and compare `git diff --stat` against the plan's
 declared scope. `make e2e` additionally runs one round against a real, private
 herdr session with scripted agents; it is local-only and not part of `make check`.
-Run it after any change to `reconcile.go`'s nudge, fingerprint or scrape path.
+Run it after any change to `reconcile.go`'s nudge, fingerprint or scrape
+path, and after any change to `reporttail.go` or `queueReport`: the e2e
+suite asserts the scraped round's note exactly, and #201 changed the tail
+parser without running it, which left e2e red on `main` for a week (#221).
 
 For anything subtle, mutation-test it: break the specific condition the change
 turns on and confirm a named test fails. A test that passes both with and

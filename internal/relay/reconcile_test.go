@@ -1538,6 +1538,79 @@ func TestReconcileQuiescentWithoutReportStillScrapes(t *testing.T) {
 	}
 }
 
+// TestReconcileScrapedBodyIsNeverTailParsed pins #221: a scraped body is a
+// terminal capture, never the builder's own report file, so queueReport must
+// not call parseReportTail on it regardless of whether the text looks like a
+// well-formed relay block.
+func TestReconcileScrapedBodyIsNeverTailParsed(t *testing.T) {
+	cases := []struct {
+		name    string
+		readOut string
+	}{
+		{
+			name: "unclosed",
+			// Opening fence never closed -- the #221 shape.
+			readOut: "I implemented the guard clause\n```relay\nstatus: done\nchanged_paths:\n  - internal/x.go\n",
+		},
+		{
+			name: "wellformed",
+			// A block the parser *would* accept -- proves the parse is
+			// skipped, not merely its error hidden.
+			readOut: "I stopped.\n```relay\nstatus: halted\nhalted_at: step 3\nchanged_paths:\n  - internal/x.go\n```\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeHerdr{readOut: tc.readOut}
+			rt, b := sentBinding(t, f)
+			clock := &fakeClock{now: baseTime}
+			rt = withClock(rt, clock)
+			b.RoundStartedAt = rt.Now().Add(-startGrace - time.Second)
+			agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+			b, err := reconcile(t, rt, b, agents) // nudge
+			if err != nil {
+				t.Fatalf("first Reconcile: %v", err)
+			}
+			clock.Advance(nudgeGrace + time.Second)
+			got, err := reconcile(t, rt, b, agents) // scrape
+			if err != nil {
+				t.Fatalf("second Reconcile: %v", err)
+			}
+			pending, found, err := rt.Store.PendingForPlanner("webshop")
+			if err != nil || !found || got.Round != 2 {
+				t.Fatalf("scrape must close the round: round=%d found=%v err=%v", got.Round, found, err)
+			}
+			if pending.Note != "scraped" {
+				t.Errorf("note = %q, want %q exactly", pending.Note, "scraped")
+			}
+			if pending.Outcome != OutcomeUnstructured {
+				t.Errorf("outcome = %q, want %q", pending.Outcome, OutcomeUnstructured)
+			}
+			if pending.HaltedAt != "" {
+				t.Errorf("HaltedAt = %q, want empty", pending.HaltedAt)
+			}
+			if pending.ChangedPaths != nil {
+				t.Errorf("ChangedPaths = %v, want nil", pending.ChangedPaths)
+			}
+
+			// The scraped file itself must start with the HTML comment and
+			// contain the terminal text.
+			reportBytes, err := os.ReadFile(rt.Store.ReportPath("webshop", 1))
+			if err != nil {
+				t.Fatalf("read report file: %v", err)
+			}
+			reportText := string(reportBytes)
+			if !strings.HasPrefix(reportText, "<!-- SCRAPED") {
+				t.Errorf("report does not start with <!-- SCRAPED, got: %q", reportText[:min(len(reportText), 40)])
+			}
+			if !strings.Contains(reportText, tc.readOut) {
+				t.Errorf("report does not contain readOut text")
+			}
+		})
+	}
+}
+
 // TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping checks the pane
 // quiescence decision point (spec §5): a match on the screen switches the
 // builder uncounted instead of scraping a report.
