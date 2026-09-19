@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -136,6 +138,13 @@ func cmdServeRun(args []string) error {
 	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
 	if err != nil {
 		return err
+	}
+
+	builderTierRT := relay.Runtime{Candidates: candidates, Policy: pol, LedgerPath: filepath.Join(root, "ledger.json")}
+	if builderTier := relay.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
+		slog.Warn(relay.ServerTierWarning(relay.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
+	} else {
+		slog.Info("builder tier", "tier", builderTier)
 	}
 
 	cfg := serve.Config{

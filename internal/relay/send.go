@@ -118,7 +118,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
 		if hint.Builder.Remote() {
-			return sendRemote(ctx, rt, hint, body)
+			return sendRemote(ctx, rt, hint, body, opts.Tier)
 		}
 		if opts.Tier != "" && !hint.Builder.Headless() {
 			return SendResult{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)

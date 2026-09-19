@@ -11,10 +11,100 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// servedTierCandidatesJSON has one builder candidate with a "read" tier
+// default, so tests can exercise "candidate over policy" without a bespoke
+// fixture per test.
+const servedTierCandidatesJSON = `[
+  {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"read"}
+]`
+
+// servedNoTierCandidateJSON has one builder candidate with no tier of its
+// own, so ServedBuilderTier's chain falls through to policy/harness.
+const servedNoTierCandidateJSON = `[
+  {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
+]`
+
+func TestResolveServedTier(t *testing.T) {
+	set := candidateSet(t, servedTierCandidatesJSON)
+	token := "claude/test/m"
+
+	// explicit beats candidate beats policy beats harness.
+	rt := Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "harness"}}}
+	if got, err := ResolveServedTier(rt, token, "edit"); err != nil || got != harness.TierEdit {
+		t.Fatalf("explicit edit: got %v, err %v, want edit, nil", got, err)
+	}
+
+	// candidate beats policy (explicit empty).
+	rt = Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "harness"}}}
+	if got, err := ResolveServedTier(rt, token, ""); err != nil || got != harness.TierRead {
+		t.Fatalf("candidate over policy: got %v, err %v, want read, nil", got, err)
+	}
+
+	// policy beats harness (no candidate tier, no explicit).
+	rt = Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "edit"}}}
+	if got, err := ResolveServedTier(rt, "opencode/test/m", ""); err != nil || got != harness.TierEdit {
+		t.Fatalf("policy over harness: got %v, err %v, want edit, nil", got, err)
+	}
+
+	// Unresolvable token contributes nothing: falls through to policy.
+	rt = Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "edit"}}}
+	if got, err := ResolveServedTier(rt, "claude/unknown/model", ""); err != nil || got != harness.TierEdit {
+		t.Fatalf("unresolvable token: got %v, err %v, want edit, nil", got, err)
+	}
+
+	// Everything empty -> harness.
+	rt = Runtime{Candidates: nil, Policy: policy.Policy{}}
+	if got, err := ResolveServedTier(rt, "", ""); err != nil || got != harness.TierHarness {
+		t.Fatalf("all empty: got %v, err %v, want harness, nil", got, err)
+	}
+
+	// Explicit above max_tier -> ErrTierAboveMax.
+	rt = Runtime{Candidates: set, Policy: policy.Policy{}}
+	if _, err := ResolveServedTier(rt, token, "yolo"); !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("explicit above max_tier: err = %v, want ErrTierAboveMax", err)
+	}
+
+	// Policy tier above max_tier with explicit "" -> ErrTierAboveMax.
+	rt = Runtime{Candidates: nil, Policy: policy.Policy{Tier: map[string]string{"builder": "yolo"}}}
+	if _, err := ResolveServedTier(rt, "", ""); !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("policy tier above max_tier: err = %v, want ErrTierAboveMax", err)
+	}
+
+	// explicit=yolo, MaxTier=yolo -> ok (allowYolo is never consulted).
+	rt = Runtime{Candidates: nil, Policy: policy.Policy{MaxTier: "yolo"}}
+	if got, err := ResolveServedTier(rt, "", "yolo"); err != nil || got != harness.TierYolo {
+		t.Fatalf("explicit yolo at max_tier yolo: got %v, err %v, want yolo, nil", got, err)
+	}
+
+	// Malformed explicit -> ParseTier's error.
+	rt = Runtime{Candidates: nil, Policy: policy.Policy{}}
+	if _, err := ResolveServedTier(rt, "", "bogus"); err == nil {
+		t.Fatal("malformed explicit: want error, got nil")
+	}
+}
+
+func TestServedBuilderTier(t *testing.T) {
+	set := candidateSet(t, servedNoTierCandidateJSON)
+
+	// Policy tier set -> that tier (candidate token resolved via PickServedCandidate("") has no tier of its own).
+	rt := Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "edit"}}, Now: func() time.Time { return baseTime }, LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
+	if got := ServedBuilderTier(rt); got != harness.TierEdit {
+		t.Fatalf("policy tier set: got %v, want edit", got)
+	}
+
+	// Refused chain (policy tier above max_tier) -> harness, not an error.
+	rt = Runtime{Candidates: nil, Policy: policy.Policy{Tier: map[string]string{"builder": "yolo"}}, Now: func() time.Time { return baseTime }}
+	if got := ServedBuilderTier(rt); got != harness.TierHarness {
+		t.Fatalf("refused chain: got %v, want harness", got)
+	}
+}
 
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()

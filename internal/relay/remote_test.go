@@ -28,10 +28,12 @@ type fakeRemote struct {
 	candidatesErr     error
 	createBindingResp remote.BindingView
 	createBindingErr  error
+	createBindingReq  remote.CreateBindingRequest
 	getBindingResp    remote.BindingView
 	getBindingErr     error
 	startRoundResp    remote.BindingView
 	startRoundErr     error
+	startRoundTier    string
 	roundFileResp     io.ReadCloser
 	roundFileErr      error
 	roundBundleResp   io.ReadCloser
@@ -62,6 +64,7 @@ func (f *fakeRemote) Candidates(ctx context.Context, server string) (remote.Cand
 
 func (f *fakeRemote) CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error) {
 	f.calls = append(f.calls, "CreateBinding:"+server+":"+req.Name)
+	f.createBindingReq = req
 	if f.onCreateBinding != nil {
 		f.onCreateBinding()
 	}
@@ -73,8 +76,9 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
+	f.startRoundTier = tier
 	return f.startRoundResp, f.startRoundErr
 }
 
@@ -229,6 +233,106 @@ func TestProbeServersStates(t *testing.T) {
 	}
 }
 
+// TestProbeServersFillsTierFields pins that ProbeServers copies
+// WhoAmI.Features/BuilderTier/MaxTier into the enrolled probe, and leaves
+// them zero for a pre-tier (non-aware) server (#141 remote half).
+func TestProbeServersFillsTierFields(t *testing.T) {
+	servers := map[string]client.ServerEntry{
+		"zen":   {URL: "https://zen:7777"},
+		"other": {URL: "https://other:7777"},
+	}
+	rt := Runtime{Remote: &fakeRemote{
+		whoAmIResp: remote.WhoAmI{
+			Label:       "laptop",
+			Features:    []string{remote.FeatureTier},
+			BuilderTier: "harness",
+			MaxTier:     "edit",
+		},
+	}}
+
+	probes := ProbeServers(context.Background(), rt, servers, "")
+	if len(probes) != 2 {
+		t.Fatalf("got %d probes, want 2", len(probes))
+	}
+	for _, p := range probes {
+		if !p.TierAware {
+			t.Fatalf("probe %s: TierAware = false, want true", p.Name)
+		}
+		if p.BuilderTier != "harness" {
+			t.Fatalf("probe %s: BuilderTier = %q, want harness", p.Name, p.BuilderTier)
+		}
+		if p.MaxTier != "edit" {
+			t.Fatalf("probe %s: MaxTier = %q, want edit", p.Name, p.MaxTier)
+		}
+	}
+}
+
+// TestProbeServersPreTierLeavesTierFieldsZero pins the pre-tier (v1) server
+// case: WhoAmI carries no Features, so the probe is not TierAware and its
+// tier fields stay empty (#141 remote half).
+func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
+	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
+	rt := Runtime{Remote: &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Label: "laptop"}, // no Features: pre-tier server
+	}}
+
+	probes := ProbeServers(context.Background(), rt, servers, "")
+	if len(probes) != 1 {
+		t.Fatalf("got %d probes, want 1", len(probes))
+	}
+	p := probes[0]
+	if p.TierAware {
+		t.Fatalf("TierAware = true, want false")
+	}
+	if p.BuilderTier != "" || p.MaxTier != "" {
+		t.Fatalf("BuilderTier/MaxTier = %q/%q, want empty", p.BuilderTier, p.MaxTier)
+	}
+}
+
+// TestServerTierWarning pins the one condition that warns: an enrolled,
+// tier-aware server whose builder tier is harness. Every other combination
+// -- not aware, or aware at a tier above harness -- is silent (#141 remote
+// half).
+func TestServerTierWarning(t *testing.T) {
+	cases := []struct {
+		name string
+		p    ServerProbe
+		want bool
+	}{
+		{"tier aware at harness", ServerProbe{TierAware: true, BuilderTier: "harness"}, true},
+		{"tier aware at edit", ServerProbe{TierAware: true, BuilderTier: "edit"}, false},
+		{"not tier aware", ServerProbe{TierAware: false, BuilderTier: ""}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ServerTierWarning(tc.p) != ""
+			if got != tc.want {
+				t.Fatalf("ServerTierWarning(%+v) non-empty = %v, want %v", tc.p, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderServersShowsTierAndWarning pins the two lines RenderServers adds
+// per probe: the builder-tier annotation on the row, and a "!!" warning line
+// underneath when ServerTierWarning fires (#141 remote half).
+func TestRenderServersShowsTierAndWarning(t *testing.T) {
+	probes := []ServerProbe{
+		{Name: "zen", URL: "https://zen:7777", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "harness", MaxTier: "edit"},
+		{Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop", TierAware: false},
+	}
+	out := RenderServers(probes)
+	if !strings.Contains(out, "builder tier: harness (max edit)") {
+		t.Fatalf("output missing builder tier line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "!! headless builders at tier harness") {
+		t.Fatalf("output missing !! warning line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "builder tier: unknown (pre-tier server)") {
+		t.Fatalf("output missing unknown pre-tier line; got:\n%s", out)
+	}
+}
+
 func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -295,6 +399,120 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 	if pickNote != "picked claude/anthropic/haiku on zen: server's pick" {
 		t.Fatalf("pick note = %q, want it to name the server's own pick", pickNote)
+	}
+}
+
+// TestAddRemoteTierPreTierServerRefused pins ErrServerPreTier: a server that
+// does not advertise FeatureTier refuses --tier before any binding is
+// created there (#141 remote half).
+func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{}, // Features nil: pre-tier server
+		createBindingResp: remote.BindingView{
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+
+	_, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+		Tier:   "edit",
+	})
+	if !errors.Is(err, ErrServerPreTier) {
+		t.Fatalf("Add err = %v, want ErrServerPreTier", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
+	}
+}
+
+// TestAddRemoteTierWiresRequestAndEchoesBinding pins the wire contract: a
+// tier-aware server gets Tier on the CreateBindingRequest, and the local
+// binding records the tier the server echoed back, not the request's own
+// (#141 remote half).
+func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+			Tier:      "edit",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+
+	res, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+		Tier:   "edit",
+	})
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	if fr.createBindingReq.Tier != "edit" {
+		t.Fatalf("CreateBindingRequest.Tier = %q, want edit", fr.createBindingReq.Tier)
+	}
+	if res.Binding.Tier != "edit" {
+		t.Fatalf("res.Binding.Tier = %q, want edit", res.Binding.Tier)
+	}
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Tier != "edit" {
+		t.Fatalf("stored.Tier = %q, want edit", stored.Tier)
+	}
+}
+
+// TestAddRemoteNoTierSkipsProbe pins the no-op path: omitting --tier never
+// probes WhoAmI and sends no Tier on the wire, so a pre-tier server is
+// unaffected by a plain `relay add --server` (#141 remote half).
+func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+
+	if _, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "WhoAmI") {
+			t.Fatalf("calls = %v, want no WhoAmI", fr.calls)
+		}
+	}
+	if fr.createBindingReq.Tier != "" {
+		t.Fatalf("CreateBindingRequest.Tier = %q, want empty", fr.createBindingReq.Tier)
 	}
 }
 
@@ -704,6 +922,125 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	entries, _ := st.ReadLog("api")
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+}
+
+// TestSendRemoteTierPassedToStartRound pins that a Send with a Tier option
+// reaches StartRound over the wire, after the pre-tier probe succeeds
+// (#141 remote half).
+func TestSendRemoteTierPassedToStartRound(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relay/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		startRoundResp: remote.BindingView{
+			RoundState: remote.RoundRunning,
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: ft,
+		Now:       time.Now,
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(ctx, rt, "api", planFile, SendOptions{Tier: "edit"}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if fr.startRoundTier != "edit" {
+		t.Fatalf("startRoundTier = %q, want edit", fr.startRoundTier)
+	}
+}
+
+// TestSendRemoteTierAboveMaxWraps pins that a 422 tier_above_max from
+// StartRound maps back to ErrTierAboveMax client-side, matching the local
+// refusal's wording (#141 remote half).
+func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relay/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	fr := &fakeRemote{
+		startRoundErr: &client.HTTPError{
+			Status: 422,
+			Body: remote.ErrorBody{
+				Code:    remote.CodeTierAboveMax,
+				Message: "tier yolo exceeds this server's max_tier edit",
+			},
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Git:       fg,
+		Remote:    fr,
+		Transport: ft,
+		Now:       time.Now,
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{})
+	if !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("Send err = %v, want ErrTierAboveMax", err)
 	}
 }
 

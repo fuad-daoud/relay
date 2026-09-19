@@ -29,6 +29,14 @@ type WhoAmI struct {
 	Label         string   `json:"label"`
 	ServerVersion int      `json:"server_version"`
 	Transports    []string `json:"transports"` // ["git-bundle"]
+
+	// Features, BuilderTier and MaxTier are additive (#141 remote half): a
+	// pre-tier server omits them, so a client can tell the two apart before
+	// creating anything.
+	Features    []string `json:"features,omitempty"`     // ["tier"] on a server with this change
+	BuilderTier string   `json:"builder_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
+	// launches at when the client sends none
+	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
 }
 
 // CreateBindingRequest holds the parameters for creating a new binding on the server.
@@ -39,6 +47,7 @@ type CreateBindingRequest struct {
 	Candidate      string `json:"candidate,omitempty"`
 	RoundCap       int    `json:"round_cap,omitempty"`
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
+	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
 }
 
 // BindingView is the server's wire representation of a binding's state.
@@ -64,6 +73,7 @@ type BindingView struct {
 	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
+	Tier           string    `json:"tier,omitempty"` // effectiveTier(b) on the server; "" from a pre-tier server
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.
@@ -100,7 +110,12 @@ const (
 	CodeTooLarge       Code = "too_large"
 	CodeVersion        Code = "version"
 	CodeInvalid        Code = "invalid"
+	CodeTierAboveMax   Code = "tier_above_max"
 )
+
+// FeatureTier is the WhoAmI.Features token a server with the permission-tier
+// wire fields advertises (#141 remote half).
+const FeatureTier = "tier"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

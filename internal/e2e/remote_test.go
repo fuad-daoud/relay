@@ -53,10 +53,10 @@ func tickUntil(t *testing.T, deadline time.Duration, step func() bool) {
 func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	return newServerWithContext(t, ctx, cancel)
+	return newServerWithContext(t, ctx, cancel, policy.Policy{})
 }
 
-func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
+func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc, pol policy.Policy) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "serve")
 	now := time.Now()
@@ -87,7 +87,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	cfg := serve.Config{
 		Root:           root,
 		Candidates:     cSet,
-		Policy:         policy.Policy{},
+		Policy:         pol,
 		Runner:         runner,
 		Git:            gitClient,
 		Now:            time.Now,
@@ -507,7 +507,7 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	ctx := context.Background()
 
 	srvCtx, srvCancel := context.WithCancel(context.Background())
-	srv, url, fp, enroll, _, _ := newServerWithContext(t, srvCtx, srvCancel)
+	srv, url, fp, enroll, _, _ := newServerWithContext(t, srvCtx, srvCancel, policy.Policy{})
 	rt, hd, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	_ = enroll(pubLine)

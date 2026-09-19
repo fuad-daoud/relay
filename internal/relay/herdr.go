@@ -176,7 +176,7 @@ type RemoteClient interface {
 	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
 	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
 	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
-	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader) (remote.BindingView, error)
+	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)

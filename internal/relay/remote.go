@@ -8,17 +8,24 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// ErrServerPreTier is a client-side refusal that happens before any server
+// state changes: the server does not advertise the "tier" feature, so a
+// requested --tier has nowhere to land.
+var ErrServerPreTier = errors.New("server does not carry a permission tier")
 
 func is40Hex(s string) bool {
 	if len(s) != 40 {
@@ -106,7 +113,29 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		}
 	}
 
-	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS})
+	// 4.5. tier probe: opts.Tier requires the server to advertise FeatureTier
+	// before any binding is created there. checkTierCap here is the client's
+	// own policy, as Add does locally.
+	wireTier := ""
+	if opts.Tier != "" {
+		t, err := harness.ParseTier(opts.Tier)
+		if err != nil {
+			return AddResult{}, err
+		}
+		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+			return AddResult{}, err
+		}
+		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
+		if err != nil {
+			return AddResult{}, err
+		}
+		if !slices.Contains(who.Features, remote.FeatureTier) {
+			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
+		}
+		wireTier = string(t)
+	}
+
+	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS, Tier})
 	// HTTPError 409 -> the server already has this binding for this client, with
 	// no local counterpart here; only `relay serve unbind` on the server can
 	// clear that, since a local `relay bind --resume` has nothing to resume.
@@ -115,12 +144,16 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		RepoID:     repoID,
 		BaseCommit: base,
 		Candidate:  candidateStr,
+		Tier:       wireTier,
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == 409 {
 			return AddResult{}, fmt.Errorf("binding %s already exists on %s for this client but not here; relay serve unbind --owner <your label> %s on the server, or choose another name", opts.Name, opts.Server, opts.Name)
+		}
+		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
+			return AddResult{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 		}
 		return AddResult{}, err
 	}
@@ -201,6 +234,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		BuilderCandidate: view.Candidate,
 		Round:            1,
 		State:            store.StateActive,
+		Tier:             view.Tier,
 	}
 
 	res := Resolution{
@@ -252,7 +286,7 @@ func remotePickEntry(now time.Time, server, token string, explicit bool) store.L
 	}
 }
 
-func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte) (SendResult, error) {
+func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier string) (SendResult, error) {
 	if rt.Remote == nil {
 		return SendResult{}, ErrRemoteUnavailable
 	}
@@ -261,6 +295,18 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	}
 	if rt.Transport == nil {
 		return SendResult{}, errors.New("no remote transport configured")
+	}
+
+	// The cap check already ran in Send; do not repeat it here. Only the
+	// pre-tier-server probe is this function's job when a tier was asked for.
+	if tier != "" {
+		who, err := rt.Remote.WhoAmI(ctx, b.Builder.Server)
+		if err != nil {
+			return SendResult{}, err
+		}
+		if !slices.Contains(who.Features, remote.FeatureTier) {
+			return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, b.Builder.Server)
+		}
 	}
 
 	server := b.Builder.Server
@@ -305,8 +351,8 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		bundleReader = snap.Body
 	}
 
-	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty)
-	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader)
+	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier)
+	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier)
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
@@ -315,6 +361,8 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 				view.RoundState = remote.RoundRunning
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen {
 				return SendResult{}, fmt.Errorf("round %d is running on %s", b.Round, server)
+			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
+				return SendResult{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 			} else if httpErr.Status == 422 {
 				return SendResult{}, fmt.Errorf("%s: %s", server, httpErr.Body.Message)
 			} else {
@@ -612,6 +660,12 @@ type ServerProbe struct {
 	// Detail is the enrollment line for "not enrolled", the failure cause
 	// for "unreachable", and the error text otherwise; "" for "enrolled".
 	Detail string
+
+	// TierAware, BuilderTier and MaxTier are filled only in the "enrolled"
+	// arm, from WhoAmI.Features/BuilderTier/MaxTier (#141 remote half).
+	TierAware   bool   // WhoAmI.Features contains FeatureTier
+	BuilderTier string // WhoAmI.BuilderTier; "" when !TierAware
+	MaxTier     string // WhoAmI.MaxTier;     "" when !TierAware
 }
 
 // ProbeServers checks every configured server's reachability and this
@@ -647,6 +701,11 @@ func ProbeServers(ctx context.Context, rt Runtime, servers map[string]client.Ser
 		case err == nil:
 			p.State = "enrolled"
 			p.Label = who.Label
+			p.TierAware = slices.Contains(who.Features, remote.FeatureTier)
+			if p.TierAware {
+				p.BuilderTier = who.BuilderTier
+				p.MaxTier = who.MaxTier
+			}
 		case errors.Is(err, client.ErrCertChanged):
 			p.State = "cert changed"
 		case errors.Is(err, client.ErrUnreachable):
@@ -683,6 +742,15 @@ func probeStatusText(p ServerProbe) string {
 	}
 }
 
+// ServerTierWarning is the one-line warning for a server that would launch
+// headless builders at tier harness, "" otherwise (including !TierAware).
+func ServerTierWarning(p ServerProbe) string {
+	if p.TierAware && p.BuilderTier == string(harness.TierHarness) {
+		return "headless builders at tier harness deny every tool unless the server host's harness settings allow them; set tier.builder in the server's policy.json or pass --tier"
+	}
+	return ""
+}
+
 // RenderServers formats probes as the table `relay servers` prints: one row
 // per server, name, url, and enrollment status, aligned on the longest name.
 func RenderServers(probes []ServerProbe) string {
@@ -699,7 +767,19 @@ func RenderServers(probes []ServerProbe) string {
 
 	var sb strings.Builder
 	for _, p := range probes {
-		fmt.Fprintf(&sb, "%-*s  %-40s  %s\n", width, p.Name, p.URL, probeStatusText(p))
+		row := fmt.Sprintf("%-*s  %-40s  %s", width, p.Name, p.URL, probeStatusText(p))
+		if p.State == "enrolled" {
+			if p.TierAware {
+				row += fmt.Sprintf("  builder tier: %s (max %s)", p.BuilderTier, p.MaxTier)
+			} else {
+				row += "  builder tier: unknown (pre-tier server)"
+			}
+		}
+		sb.WriteString(row)
+		sb.WriteString("\n")
+		if warning := ServerTierWarning(p); warning != "" {
+			fmt.Fprintf(&sb, "  !! %s\n", warning)
+		}
 	}
 	return sb.String()
 }

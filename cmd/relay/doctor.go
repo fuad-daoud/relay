@@ -329,6 +329,25 @@ func serverChecks(probes []relay.ServerProbe) []doctor.Check {
 		case "enrolled":
 			c.Severity = doctor.SevOK
 			c.Detail = fmt.Sprintf("%s: enrolled as %s", p.Name, p.Label)
+			checks = append(checks, c)
+			if warning := relay.ServerTierWarning(p); warning != "" {
+				checks = append(checks, doctor.Check{
+					Group:    "",
+					Name:     "servers",
+					Severity: doctor.SevWarn,
+					Detail:   fmt.Sprintf("%s: %s", p.Name, warning),
+					Fix:      "set tier.builder in the server's policy.json",
+				})
+			} else if !p.TierAware {
+				checks = append(checks, doctor.Check{
+					Group:       "",
+					Name:        "servers",
+					Severity:    doctor.SevWarn,
+					Detail:      fmt.Sprintf("%s: builder tier unknown (pre-tier server)", p.Name),
+					ProbeFailed: true,
+				})
+			}
+			continue
 		case "not enrolled":
 			c.Severity = doctor.SevWarn
 			c.Detail = fmt.Sprintf("%s: not enrolled", p.Name)

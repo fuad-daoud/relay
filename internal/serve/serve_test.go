@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -486,6 +487,37 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
+	if len(who.Features) != 1 || who.Features[0] != remote.FeatureTier {
+		t.Fatalf("Features = %v, want [%s]", who.Features, remote.FeatureTier)
+	}
+	if who.BuilderTier != "harness" {
+		t.Fatalf("BuilderTier = %q, want harness", who.BuilderTier)
+	}
+	if who.MaxTier != "edit" {
+		t.Fatalf("MaxTier = %q, want edit", who.MaxTier)
+	}
+}
+
+func TestWhoAmIBuilderTierFromPolicy(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{Tier: map[string]string{"builder": "edit"}, MaxTier: "yolo"})
+
+	req := signedRequest(t, kp, "GET", "/v1/whoami", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if who.BuilderTier != "edit" {
+		t.Fatalf("BuilderTier = %q, want edit", who.BuilderTier)
+	}
+	if who.MaxTier != "yolo" {
+		t.Fatalf("MaxTier = %q, want yolo", who.MaxTier)
+	}
 }
 
 func TestNonV1Is426(t *testing.T) {
@@ -649,6 +681,157 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 	t.Logf("ls %s/api:", ownerSubDir)
 	for _, a := range apiEntries {
 		t.Logf("  %s", a.Name())
+	}
+}
+
+// newTierTestServer builds a server with one builder candidate and the
+// given policy, for handleCreateBinding tier-resolution tests (#141 remote
+// half).
+func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair) {
+	t.Helper()
+	root := t.TempDir()
+
+	candPath := filepath.Join(root, "candidates.json")
+	candJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	if err := os.WriteFile(candPath, []byte(candJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(Config{
+		Root:       root,
+		Candidates: cSet,
+		Policy:     pol,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return srv, kp
+}
+
+func createBindingRequest(t *testing.T, srv *Server, kp remote.Keypair, req remote.CreateBindingRequest) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(req)
+	httpReq := signedRequest(t, kp, "POST", "/v1/bindings", body)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httpReq)
+	return rec
+}
+
+func TestCreateBindingResolvesTierFromPolicy(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{Tier: map[string]string{"builder": "edit"}})
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var view remote.BindingView
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("decode view: %v", err)
+	}
+	if view.Tier != "edit" {
+		t.Fatalf("view.Tier = %q, want edit", view.Tier)
+	}
+
+	id := remote.IDOf(kp.Public)
+	b, err := testRuntime(t, srv, id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Tier != "edit" {
+		t.Fatalf("stored binding Tier = %q, want edit", b.Tier)
+	}
+}
+
+func TestCreateBindingNoPolicyTierDefaultsToHarness(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{})
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var view remote.BindingView
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("decode view: %v", err)
+	}
+	if view.Tier != "harness" {
+		t.Fatalf("view.Tier = %q, want harness", view.Tier)
+	}
+
+	id := remote.IDOf(kp.Public)
+	b, err := testRuntime(t, srv, id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Tier != "harness" {
+		t.Fatalf("stored binding Tier = %q, want harness", b.Tier)
+	}
+}
+
+func TestCreateBindingTierAboveMaxRefused(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{})
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+		Tier:       "yolo",
+	})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errBody.Code != remote.CodeTierAboveMax {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeTierAboveMax)
+	}
+
+	id := remote.IDOf(kp.Public)
+	if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+		t.Fatal("binding was stored despite tier_above_max refusal")
+	}
+}
+
+func TestCreateBindingBogusTierInvalid(t *testing.T) {
+	srv, kp := newTierTestServer(t, policy.Policy{})
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+		Tier:       "bogus",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errBody.Code != remote.CodeInvalid {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
 	}
 }
 
@@ -1159,6 +1342,139 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	}
 	if specs[0].Dir != b.Worktree {
 		t.Fatalf("runner spec Dir = %q, want %q", specs[0].Dir, b.Worktree)
+	}
+}
+
+// makeRoundFormWithTier is makeRoundForm plus an optional "tier" field,
+// written after "plan" and before "bundle" per the wire contract (#141
+// remote half).
+func makeRoundFormWithTier(t *testing.T, round int, plan, tier string, bundleBytes []byte) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if tier != "" {
+		if err := mw.WriteField("tier", tier); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(bundleBytes) > 0 {
+		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bundleBytes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
+func TestRoundStartHonoursTierField(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	rt := env.runtime(t)
+	before, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if before.Tier != "harness" {
+		t.Fatalf("binding stored at Tier = %q, want harness", before.Tier)
+	}
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "edit", bundleBytes)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	env.runner.mu.Lock()
+	specs := env.runner.specs
+	env.runner.mu.Unlock()
+	if len(specs) != 1 {
+		t.Fatalf("runner specs count = %d, want 1", len(specs))
+	}
+	if !slices.Contains(specs[0].Argv, "--permission-mode") || !slices.Contains(specs[0].Argv, "acceptEdits") {
+		t.Fatalf("runner spec Argv = %v, want --permission-mode acceptEdits", specs[0].Argv)
+	}
+
+	after, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if after.RoundTier != "edit" {
+		t.Fatalf("binding RoundTier = %q, want edit", after.RoundTier)
+	}
+}
+
+func TestRoundStartTierAboveMaxIs422(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "yolo", bundleBytes)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("start round status = %d, want 422; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeTierAboveMax {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeTierAboveMax)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if relay.RoundStateOf(b, entries) != remote.RoundIdle {
+		t.Fatalf("round state = %v, want idle", relay.RoundStateOf(b, entries))
+	}
+
+	env.runner.mu.Lock()
+	specsLen := len(env.runner.specs)
+	env.runner.mu.Unlock()
+	if specsLen != 0 {
+		t.Fatalf("runner specs count = %d, want 0", specsLen)
 	}
 }
 

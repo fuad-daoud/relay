@@ -3,6 +3,7 @@ package serve
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,23 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	now := s.cfg.Now()
 	candidateToken, harnessKind := relay.PickServedCandidate(rt, req.Candidate)
 
+	tier, err := relay.ResolveServedTier(rt, candidateToken, req.Tier)
+	if err != nil {
+		if errors.Is(err, relay.ErrTierAboveMax) {
+			offending := req.Tier
+			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's policy.json"
+			if offending == "" {
+				format = "policy tier.builder %s exceeds max_tier %s"
+				offending = string(tier)
+			}
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax,
+				fmt.Sprintf(format, offending, rt.Policy.MaxTierOrDefault()))
+			return
+		}
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+		return
+	}
+
 	cwd := rt.Store.WorktreePath(req.Name)
 	b := store.Binding{
 		Name:             req.Name,
@@ -106,6 +124,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		Repo:             bare,
 		Builder:          store.Endpoint{Kind: harnessKind, Mode: store.ModeHeadless, AgentName: req.Name},
 		BuilderCandidate: candidateToken,
+		Tier:             string(tier),
 		Round:            1,
 		State:            store.StateActive,
 		RoundCap:         req.RoundCap,
