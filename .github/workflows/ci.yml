@@ -12,6 +12,14 @@ jobs:
   check:
     name: check (${{ matrix.os }}, go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Go < 1.24 does not emit an LC_UUID load command on darwin unless
+      # told to, and the current macOS dyld refuses to load a binary
+      # without one -- the race-test binary of any package that imports
+      # net dies with "dyld: missing LC_UUID load command" before its
+      # tests start. -B gobuildid is the opt-in the 1.22/1.23 backports
+      # added (golang/go#68678); on 1.24+ it is already the default.
+      GOFLAGS: -ldflags=-B=gobuildid
     strategy:
       fail-fast: false
       matrix:
