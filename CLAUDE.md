@@ -52,7 +52,7 @@ without the logic is not pinning anything.
   plans live in `docs/plans/YYYY-MM-DD-<name>.md`, a directory introduced by
   #45 -- follow it or drop it, it has no history behind it yet.
 - State lives in `$XDG_STATE_HOME/relay` (default `~/.local/state/relay`);
-  config resolves via `os.UserConfigDir()`, which honours `XDG_CONFIG_HOME`.
+  config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
   Compose relay config paths through `userConfigRoot()` (`cmd/relay/main.go`),
   never by hand -- see #42 for what hand-rolling one costs.
 

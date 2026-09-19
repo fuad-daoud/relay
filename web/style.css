@@ -434,6 +434,13 @@ h1 {
   }
 }
 
+/* Print, reader mode and link-preview capture never scroll the frame into
+   view, so the observer never fires: force the reveal complete on paper. */
+@media print {
+  .js .map__frame .map__svg > g.reveal,
+  .js .map__frame .node.reveal { opacity: 1; transform: none; transition: none; }
+}
+
 /* ── below the map ──────────────────────────────────────────────────────── */
 
 .after-map {

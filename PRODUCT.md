@@ -54,8 +54,9 @@ that automates judgement:
   completed responses scroll out of reach; relay hands work over as files on disk
   (`NNN-plan.md`, `NNN-report.md`), so nothing depends on reading a terminal
   correctly.
-- **Panes are yours.** relay opens exactly one pane per binding and closes a pane in
-  exactly two places. A broken, orphaned or timed-out binding is flagged and
+- **Panes are yours.** relay opens at most one pane per binding (a headless
+  binding opens none) and closes a pane in exactly two places. A broken,
+  orphaned or timed-out binding is flagged and
   reported, never cleaned up — the builder's terminal is often the only record of
   why a round went wrong.
 - **The anti-clobber rule.** relay cannot see what a human has half-typed, so a
@@ -78,7 +79,7 @@ that automates judgement:
 - Two processes: the `relay` CLI, invoked by the planner through its Bash tool, and
   `relay daemon`, one reconciler per herdr session, run under systemd or launchd.
 - State lives in `$XDG_STATE_HOME/relay` (default `~/.local/state/relay`); config
-  resolves through `os.UserConfigDir()`.
+  resolves through `$XDG_CONFIG_HOME` (default `~/.config`).
 
 ## Capabilities and Constraints
 
@@ -116,8 +117,8 @@ closes the round on that marker.
   binding. Not persistent, does not advance the round, does not count against the
   one-writer-per-tree rule.
 - **Round diff capture** — each round's patch, plus between-round drift.
-- **Four display states** — ACTIVE, NEEDS YOU, HELD, DONE. Plus BROKEN and ORPHANED,
-  which are flagged and left for a human.
+- **Four display states** — ACTIVE, NEEDS YOU, HELD, DONE. A broken or orphaned
+  binding is shown as NEEDS YOU and left for a human.
 - **Lifecycle hooks** — `state_changed` and `round_started` scripts, 10s timeout.
 - **Status line** — `relay statusline` under the Claude Code prompt.
 - **Roles relay ships definitions for:** `plan-executor` (the builder), `researcher`

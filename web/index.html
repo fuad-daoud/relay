@@ -219,7 +219,7 @@ try{var t=localStorage.getItem("relay-theme");if(t==="dark"||t==="light")documen
       <h2>The round</h2>
       <div class="section__body">
         <p>Six verbs, run from inside the planner’s herdr pane, in the repository you want worked on.</p>
-        <pre translate="no"><code>relay bind --builder claude/anthropic/sonnet   <span class="c"># open a builder tab, bind it to this tree</span>
+        <pre translate="no" tabindex="0"><code>relay bind --builder claude/anthropic/sonnet   <span class="c"># open a builder tab, bind it to this tree</span>
 relay send --file plan.md                      <span class="c"># hand it the plan</span>
 relay status                                   <span class="c"># watch the round</span>
 relay wait                                     <span class="c"># block until it closes or needs you</span>
@@ -278,7 +278,7 @@ relay done &lt;name&gt;                              <span class="c"># stop rela
           on its own git worktree, so they never contend for files; exactly one agent may write to a working tree.
           <code translate="no">relay fork</code> branches a new binding from an earlier round, copying that round’s
           history and artifacts and launching a fresh builder in a dedicated worktree.</p>
-        <pre translate="no"><code>relay bind --builder claude/anthropic/sonnet --name api
+        <pre translate="no" tabindex="0"><code>relay bind --builder claude/anthropic/sonnet --name api
 relay add  --name frontend --builder claude/anthropic/sonnet
 relay add  --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
 
@@ -342,7 +342,7 @@ relay send --name backend  --file api_plan.md</code></pre>
           <code translate="no">relay policy</code> prints what relay would pick right now, computed by the same code
           <code translate="no">bind</code> runs, so it cannot disagree with what <code translate="no">bind</code> does
           next. There is no <code translate="no">relay policy set</code> — edit the file.</p>
-        <pre translate="no"><code>relay unavailable claude/anthropic/sonnet --for 2h
+        <pre translate="no" tabindex="0"><code>relay unavailable claude/anthropic/sonnet --for 2h
 relay available anthropic</code></pre>
         <p>A limit gates the <b>provider</b> — every candidate with that provider — because that is who enforces the
           quota, not the model. Without <code translate="no">--for</code> it stays gated until you clear it, because
@@ -407,7 +407,7 @@ relay available anthropic</code></pre>
       <h2>Install</h2>
       <div class="section__body">
         <p><b>As a herdr plugin</b>, if you already run herdr&nbsp;0.8.2 or newer:</p>
-        <pre translate="no"><code>herdr plugin install fuad-daoud/relay</code></pre>
+        <pre translate="no" tabindex="0"><code>herdr plugin install fuad-daoud/relay</code></pre>
         <p>That downloads the release binary matching the plugin manifest and verifies its checksum. You get a
           <code translate="no">relay ui</code> overlay pane, three popup pickers —
           <code translate="no">pick-done</code>, <code translate="no">pick-unbind</code>,
@@ -419,7 +419,7 @@ relay available anthropic</code></pre>
         <p><b>As a release binary.</b> Prebuilt binaries for Linux and macOS, amd64 and arm64, are attached to every
           release. Unpack one and put <code translate="no">relay</code> on your <code translate="no">PATH</code>.</p>
         <p><b>From source</b>, with a Go toolchain:</p>
-        <pre translate="no"><code>go install github.com/fuad-daoud/relay/cmd/relay@latest</code></pre>
+        <pre translate="no" tabindex="0"><code>go install github.com/fuad-daoud/relay/cmd/relay@latest</code></pre>
         <p>Then run <code translate="no">relay doctor</code> and work through what it prints.</p>
 
         <h3>Requirements</h3>
@@ -438,7 +438,7 @@ relay available anthropic</code></pre>
 
 <footer class="colophon">
   <div class="wrap colophon__in">
-    <p><span class="colophon__mark" translate="no">relay</span> <span class="colophon__meta">MIT · v0.2.0 · herdr&nbsp;≥&nbsp;0.8.2 · Go&nbsp;1.22+ · Linux and macOS</span> <a href="https://github.com/fuad-daoud/relay">github.com/fuad-daoud/relay<svg class="ico" aria-hidden="true" focusable="false"><use href="#i-out"/></svg></a></p>
+    <p><span class="colophon__mark" translate="no">relay</span> <span class="colophon__meta">MIT · <span data-version>v0.2.0</span> · herdr&nbsp;≥&nbsp;0.8.2 · Go&nbsp;1.22+ · Linux and macOS</span> <a href="https://github.com/fuad-daoud/relay">github.com/fuad-daoud/relay<svg class="ico" aria-hidden="true" focusable="false"><use href="#i-out"/></svg></a></p>
   </div>
 </footer>
 
@@ -492,7 +492,7 @@ relay available anthropic</code></pre>
     for (var i = 0; i < entries.length; i++) {
       if (entries[i].isIntersecting) { frame.classList.add('is-in'); io.disconnect(); return; }
     }
-  }, { threshold: 0.15 });
+  }, { threshold: 0, rootMargin: '0px 0px 200px 0px' });
   io.observe(frame);
 })();
 </script>
