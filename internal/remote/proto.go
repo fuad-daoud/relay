@@ -80,6 +80,7 @@ const (
 	CodeSpawnFailed    Code = "spawn_failed"
 	CodeTooLarge       Code = "too_large"
 	CodeVersion        Code = "version"
+	CodeInvalid        Code = "invalid"
 )
 
 // ErrorBody represents a JSON error response returned by the server.
