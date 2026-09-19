@@ -29,7 +29,7 @@ check:
 	else \
 		echo "shellcheck not installed; skipping shell lint"; \
 	fi
-	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t"; done
+	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
 
 # e2e runs one relay round against a private, detached herdr session with
 # scripted agents (docs/specs/2026-09-12-e2e-real-herdr-design.md). Local
