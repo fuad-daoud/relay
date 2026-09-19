@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -138,6 +139,10 @@ type Harness struct {
 	// TestDialogPatternsSetOnEveryKind enforces it. Case-insensitivity is
 	// written into the pattern with (?i).
 	DialogPatterns []string
+	// DenialPatterns are default regexes for the text this harness prints when
+	// a tool call was refused by its permission mode in print mode (#141).
+	// Every default must compile; TestDenialPatternsSetOnEveryKind enforces it.
+	DenialPatterns []string
 }
 
 var defaultDialogPatterns = []string{
@@ -168,6 +173,12 @@ var knownHarnesses = map[string]Harness{
 			`(?i)quota exceeded`,
 		},
 		DialogPatterns: defaultDialogPatterns,
+		// Denial patterns for agy; unverified against a real denied round; replace with the observed line when one is seen.
+		DenialPatterns: []string{
+			`(?i)permission (request )?(denied|rejected)`,
+			`(?i)tool (call|use) (was )?rejected`,
+			`(?i)not permitted in (plan|accept-edits) mode`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -191,6 +202,12 @@ var knownHarnesses = map[string]Harness{
 			`(?i)limit .*resets`,
 		},
 		DialogPatterns: defaultDialogPatterns,
+		// Denial patterns for claude; unverified against a real denied round; replace with the observed line when one is seen.
+		DenialPatterns: []string{
+			`(?i)requested permissions to use .* but you haven't granted`,
+			`(?i)permission (to use .* was )?denied`,
+			`(?i)tool use was rejected`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -218,6 +235,11 @@ var knownHarnesses = map[string]Harness{
 			`(?i)RESOURCE_EXHAUSTED`,
 		},
 		DialogPatterns: defaultDialogPatterns,
+		// Denial patterns for opencode; unverified against a real denied round; replace with the observed line when one is seen.
+		DenialPatterns: []string{
+			`(?i)permission.*(denied|rejected)`,
+			`(?i)rejected: external_directory`,
+		},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
@@ -287,25 +309,13 @@ type Launch struct {
 	PromptAt int
 }
 
-// Launch renders the command-line arguments needed to run the given role on
-// this harness. Relay renders the argv because model and role are fields
-// (candidates spec §1 point 2): with a verbatim args list in config, the
-// model would be a label relay could not check against what it launched.
-// Every kind selects its role with --agent; there is no other mechanism (#85).
-//
-// The print form per kind (headless spec §3.5), before extra:
-//
-//	agy       -p <prompt> --model M --agent <def> --output-format stream-json --print-timeout <budget> --add-dir <dir>
-//	claude    -p <prompt> --model M --agent <def> --output-format stream-json --verbose
-//	opencode  run <prompt> -m P/M --agent <def> --format json
-//
-// agy gets the budget because its default print timeout (5m) would kill any
-// real round; claude and opencode have no such flag. Every kind streams
-// (#168, transcript spec §3.5): one JSON event per line on stdout as the
-// turn runs, rendered into the builder log by the daemon. claude refuses
-// stream-json in print mode without --verbose. No
-// --include-partial-messages: token deltas add nothing a human line needs.
-func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) Launch {
+// Launch renders argv for role at tier. tier's PermissionArgs are appended
+// after the base form and before extra, in both Args and Print. Errors:
+// ErrTierUnsupported (refusal cell); ErrExtraArgsPermission when tier !=
+// TierHarness and extra carries a permission flag for this kind
+// (`candidate extra_args carries %s; remove it or use --tier harness`).
+// At TierHarness the result is byte-identical to the pre-#141 Launch.
+func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, tier Tier) (Launch, error) {
 	var base, print []string
 	promptAt := -1
 
@@ -333,16 +343,26 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) L
 		promptAt = 1
 	}
 
-	args := append(append([]string(nil), base...), extra...)
+	perm, err := h.PermissionArgs(tier)
+	if err != nil {
+		return Launch{}, err
+	}
+	if tier != TierHarness {
+		if f := h.ExtraArgsPermissionFlag(extra); f != "" {
+			return Launch{}, fmt.Errorf("%w: candidate extra_args carries %s; remove it or use --tier harness", ErrExtraArgsPermission, f)
+		}
+	}
+
+	args := append(append(append([]string(nil), base...), perm...), extra...)
 	if print != nil {
-		print = append(print, extra...)
+		print = append(append(append([]string(nil), print...), perm...), extra...)
 	}
 	return Launch{
 		Kind:     h.Kind,
 		Args:     args,
 		Print:    print,
 		PromptAt: promptAt,
-	}
+	}, nil
 }
 
 // PrintArgs is Print with the prompt, the round budget and the round's

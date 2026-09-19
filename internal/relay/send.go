@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -83,16 +84,32 @@ type SendResult struct {
 	Drift string // the drift line for stdout, or "" when there is nothing to say
 }
 
+// SendOptions is what a send may add to the plan file (#141).
+type SendOptions struct {
+	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
+	AllowYolo bool
+}
+
 // Send copies the planner's plan into relay state and hands it to the builder:
 // typed into its pane, or -- for a headless binding (#99) -- as the prompt of
 // a fresh process started in the binding's tree. It returns a SendResult
 // describing the round and any between-rounds drift.
-func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error) {
+func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (SendResult, error) {
 	// Read the caller's file before taking the lock; it is the one input that
 	// does not depend on binding state.
 	body, err := os.ReadFile(file)
 	if err != nil {
 		return SendResult{}, fmt.Errorf("read plan %s: %w", file, err)
+	}
+
+	if opts.Tier != "" {
+		t, err := harness.ParseTier(opts.Tier)
+		if err != nil {
+			return SendResult{}, err
+		}
+		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+			return SendResult{}, err
+		}
 	}
 
 	var baseline, baselineHead string
@@ -102,6 +119,9 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 	if hint, err := rt.Store.Load(name); err == nil {
 		if hint.Builder.Remote() {
 			return sendRemote(ctx, rt, hint, body)
+		}
+		if opts.Tier != "" && !hint.Builder.Headless() {
+			return SendResult{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
 		}
 		baseline, baselineHead = CaptureBaseline(ctx, rt, hint)
 		hintRound = hint.Round
@@ -167,6 +187,13 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			}
 		}
 
+		if opts.Tier != "" {
+			if !b.Builder.Headless() {
+				return fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
+			}
+			b.RoundTier = opts.Tier
+		}
+
 		planPath := rt.Store.PlanPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
@@ -180,6 +207,10 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 		if b.Builder.Headless() {
 			started, err := startRound(ctx, rt, b, text)
 			if err != nil {
+				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+					_ = os.Remove(planPath)
+					return err
+				}
 				// The plan is staged and the round is open; nothing was
 				// started. NEEDS YOU says so in status, and the ledger's
 				// spawn_failed (written by startRound) gates the candidate
@@ -216,6 +247,7 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPlan,
 			Path: planPath, Confirmed: true, Late: late,
+			Tier: string(effectiveTier(b)),
 		}
 		if err := tx.AppendLog(name, entry); err != nil {
 			return err

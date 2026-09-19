@@ -186,7 +186,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath)
+	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{})
 	if sendErr != nil {
 		if errors.Is(sendErr, relay.ErrRunnerUnavailable) {
 			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())

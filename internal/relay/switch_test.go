@@ -29,7 +29,7 @@ func sentSwitchable(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 		t.Fatalf("Bind: %v", err)
 	}
 	f.agents = append(f.agents, builderAgent(herdr.StatusWorking))
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -545,7 +545,7 @@ func TestAdoptedBuilderIsNeverSwitched(t *testing.T) {
 	}
 
 	f.agents = []herdr.Agent{plannerAgent(), {Kind: "claude", Status: herdr.StatusWorking, PaneID: "w2:p8", CWD: "/repo"}}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")

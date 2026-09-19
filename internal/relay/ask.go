@@ -118,7 +118,14 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return AskResult{}, fmt.Errorf("candidate %q declares tree \"none\": %w", c.Ref().String(), ErrTreelessUnsupported)
 	}
 	h, _ := harness.Lookup(c.Harness)
-	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
+	tier := resolveTier("", c, rt.Policy, opts.Role)
+	if err := checkTierCap(tier, rt.Policy, false); err != nil {
+		return AskResult{}, err
+	}
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	if err != nil {
+		return AskResult{}, err
+	}
 
 	newID := rt.NewID
 	if newID == nil {

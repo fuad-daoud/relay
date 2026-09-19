@@ -33,6 +33,12 @@ type AddOptions struct {
 
 	// Base commit or ref to branch from; defaults to HEAD.
 	Base string
+
+	// Tier overrides the candidate/policy permission tier (#141).
+	Tier string
+
+	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
+	AllowYolo bool
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -92,6 +98,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		return AddResult{}, err
 	}
 	c := res.Candidate
+
+	tier := resolveTier(opts.Tier, c, rt.Policy, "builder")
+	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+		return AddResult{}, err
+	}
 
 	agents, err := rt.Herdr.ListAgents(ctx)
 	if err != nil {
@@ -173,6 +184,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		CWD:         cwd,
 		WorkspaceID: opts.WorkspaceID,
 		Headless:    opts.Headless,
+		Tier:        string(tier),
+		AllowYolo:   opts.AllowYolo,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -200,6 +213,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Branch:           branch,
 		Base:             base,
 		Repo:             opts.Repo,
+		Tier:             string(tier),
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

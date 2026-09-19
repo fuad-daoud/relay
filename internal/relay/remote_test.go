@@ -607,7 +607,7 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Send(ctx, rt, "api", planFile)
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{})
 	if err == nil || !strings.Contains(err.Error(), "zen unreachable") {
 		t.Fatalf("Send got %v, want zen unreachable", err)
 	}
@@ -687,7 +687,7 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Send(ctx, rt, "api", planFile)
+	res, err := Send(ctx, rt, "api", planFile, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -755,7 +755,7 @@ func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Send(ctx, rt, "api", planFile)
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -816,7 +816,7 @@ func TestSendRemoteSetsLastShipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Send(ctx, rt, "api", planFile)
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}

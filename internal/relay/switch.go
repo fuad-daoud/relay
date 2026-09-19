@@ -142,7 +142,12 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	// The replacement inherits the mode (spec §5.4): a headless binding gets
 	// a headless endpoint, which startRound below fills in.
-	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{Candidate: res.Token(), CWD: b.CWD, Headless: b.Builder.Headless()}, b.Name, b.Planner.PaneID)
+	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{
+		Candidate: res.Token(),
+		CWD:       b.CWD,
+		Headless:  b.Builder.Headless(),
+		Tier:      string(effectiveTier(b)),
+	}, b.Name, b.Planner.PaneID)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which
 		// gates it for the next resolution. Count the attempt and leave the

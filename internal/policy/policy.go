@@ -45,6 +45,15 @@ type Policy struct {
 
 	// Classify configures the optional classifier beside the regex scan (#211).
 	Classify *Classify `json:"classify,omitempty"`
+
+	// Tier maps a role name to its default tier (#141). Absent role -> no
+	// default here. Every key must be a known role; every value must parse;
+	// no value may be Above MaxTierOrDefault().
+	Tier map[string]string `json:"tier,omitempty"`
+
+	// MaxTier is the highest tier a command may request without --allow-yolo
+	// (#141). "" is DefaultMaxTier. Must parse and must not be "harness".
+	MaxTier string `json:"max_tier,omitempty"`
 }
 
 // Classify configures the optional classifier beside the regex scan (#211).
@@ -80,6 +89,9 @@ func (c *Classify) Timeout() time.Duration {
 	return time.Duration(*c.TimeoutMS) * time.Millisecond
 }
 
+// DefaultMaxTier is the ceiling used when MaxTier is empty (#141).
+const DefaultMaxTier = harness.TierEdit
+
 // DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
 // replacements cover "the first pick was gated and the second failed to
 // spawn"; a third in one round is a pattern a human should see.
@@ -104,6 +116,34 @@ func (p Policy) LimitGateDefault() time.Duration {
 		return DefaultLimitGate
 	}
 	return time.Duration(*p.LimitGateDefaultMS) * time.Millisecond
+}
+
+// MaxTierOrDefault returns MaxTier as a harness.Tier, or DefaultMaxTier when empty (#141).
+func (p Policy) MaxTierOrDefault() harness.Tier {
+	if p.MaxTier == "" {
+		return DefaultMaxTier
+	}
+	t, err := harness.ParseTier(p.MaxTier)
+	if err != nil || t == harness.TierHarness {
+		return DefaultMaxTier
+	}
+	return t
+}
+
+// TierFor returns the configured tier for role, or ok false if absent (#141).
+func (p Policy) TierFor(role string) (harness.Tier, bool) {
+	if p.Tier == nil {
+		return "", false
+	}
+	val, ok := p.Tier[role]
+	if !ok {
+		return "", false
+	}
+	t, err := harness.ParseTier(val)
+	if err != nil {
+		return "", false
+	}
+	return t, true
 }
 
 // Load reads and validates a policy file. A missing file is the zero Policy
@@ -157,6 +197,38 @@ func Load(path string) (Policy, error) {
 		}
 		if p.Classify.TimeoutMS != nil && *p.Classify.TimeoutMS <= 0 {
 			return Policy{}, fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *p.Classify.TimeoutMS, ErrBadPolicy)
+		}
+	}
+
+	maxTier := DefaultMaxTier
+	if p.MaxTier != "" {
+		parsed, err := harness.ParseTier(p.MaxTier)
+		if err != nil {
+			return Policy{}, fmt.Errorf("%s: max_tier: %v: %w", path, err, ErrBadPolicy)
+		}
+		if parsed == harness.TierHarness {
+			return Policy{}, fmt.Errorf("%s: max_tier: \"harness\" is not a cap: %w", path, ErrBadPolicy)
+		}
+		maxTier = parsed
+	}
+
+	tierRoles := make([]string, 0, len(p.Tier))
+	for role := range p.Tier {
+		tierRoles = append(tierRoles, role)
+	}
+	sort.Strings(tierRoles)
+
+	for _, role := range tierRoles {
+		if _, ok := harness.RoleByName(role); !ok {
+			return Policy{}, fmt.Errorf("%s: tier.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
+		}
+		val := p.Tier[role]
+		parsed, err := harness.ParseTier(val)
+		if err != nil {
+			return Policy{}, fmt.Errorf("%s: tier.%s: %v: %w", path, role, err, ErrBadPolicy)
+		}
+		if parsed.Above(maxTier) {
+			return Policy{}, fmt.Errorf("%s: tier.%s: %s exceeds max_tier %s; raise max_tier in the same file: %w", path, role, parsed, maxTier, ErrBadPolicy)
 		}
 	}
 

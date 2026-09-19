@@ -687,6 +687,8 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 - `roles` — non-empty list of roles from `builder`, `reviewer`, `researcher`. Required.
 - `tree` — `binding` (the default) or `none` (which `relay ask` refuses today).
 - `extra_args` — appended verbatim after what relay renders.
+- `tier` — default permission tier for this candidate: `harness`, `read`, `edit`, `yolo`. Optional; defaults to role default in policy, else `harness`.
+- `denial_patterns` — regexes that replace the harness default denial patterns for this candidate when detecting permission-blocked exits. Optional.
 - `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
 - `dialog_patterns` — extra regexes appended to the harness defaults, matched against the builder's visible screen only when herdr reports its status as `unknown`; a match refuses `send` as blocked; extend-only.
 
@@ -756,6 +758,11 @@ candidates in, per role:
                 "claude/anthropic/sonnet",
                 "opencode/openrouter/z-ai/glm-5.3-flash"]
   },
+  "tier": {
+    "builder": "edit",
+    "reviewer": "read"
+  },
+  "max_tier": "edit",
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
   "scan_patterns": ["(?i)<instruction-tag"],
@@ -771,7 +778,11 @@ configured, or one that does not serve the role, is skipped -- never an
 error, because removing a candidate must not stop every command -- and
 `relay policy` and `relay doctor` warn about it. Both also say when several
 candidates serve a role and no order is set, since an omitted `--builder`
-refuses in that state. `max_switches` bounds
+refuses in that state. `tier` specifies default permission tiers per role
+(`builder`, `reviewer`, `researcher`), defaulting to `harness`. `max_tier`
+bounds permission autonomy across all commands (`read`, `edit`, `yolo`),
+defaulting to `edit`; commands requesting a tier above `max_tier` require
+`--allow-yolo` or raising `max_tier`. `max_switches` bounds
 how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 `limit_gate_default_ms` is how long a rate limit relay detects itself
@@ -894,6 +905,74 @@ within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relay unavailable` a provider
 before it bites.
+
+## Permission tiers
+
+relay defines four permission tiers that control how autonomously agents may use tools and make changes:
+
+- `harness` — relay passes no permission flags to the harness; the harness CLI defaults or configuration files decide (relay default). Outside the tier order.
+- `read` — read-only inspection and planning; write operations are denied.
+- `edit` — file editing and standard workspace modification commands permitted.
+- `yolo` — full autonomy; interactive permission prompts and confirmation dialogs bypassed.
+
+The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278, agy 1.2.7, opencode 2.0.8):
+
+| kind | harness | read | edit | yolo |
+|---|---|---|---|---|
+| claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
+| agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
+| opencode | (none) | refuse | refuse | `--auto` |
+
+opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
+
+### Ceiling semantics and ordering
+
+Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
+
+`max_tier` in `policy.json` defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
+- The command includes `--allow-yolo` on the command line (e.g. `relay bind --tier yolo --allow-yolo` or `relay send --tier yolo --allow-yolo`), or
+- `max_tier` is explicitly raised to `"yolo"` in `policy.json`.
+
+`max_tier` cannot be set to `"harness"` because `"harness"` is outside the rank order and does not represent a ceiling.
+
+### Resolution chain
+
+When starting an agent, relay resolves the permission tier through a precedence chain:
+1. Explicit CLI flag: `--tier <tier>` passed to `bind`, `add`, `fork`, or `send`.
+2. Candidate configuration: `"tier"` set on the candidate in `candidates.json`.
+3. Policy configuration: `"tier"` mapped for the active role (`builder`, `reviewer`, `researcher`) in `policy.json`.
+4. Fallback default: `harness`.
+
+When forking a binding (`relay fork`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
+
+For consults (`relay ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
+
+### Headless vs. pane builder tiers
+
+- **Pane builders**: A pane builder is a persistent terminal process spawned when the binding is created. Its CLI flags are fixed at spawn. Passing `--tier` to `relay send` on a pane binding is refused because an active interactive harness cannot be re-flagged mid-flight. To change the tier of a pane builder, re-bind it with `relay bind --resume --rebind --tier <tier>`.
+- **Headless builders**: Headless builders execute a new process for each round. A round may temporarily override the tier using `relay send --tier <tier> [--allow-yolo]`. The round override takes precedence during that round, and is automatically reset to the binding's default tier when the round completes.
+
+### Permission-blocked exits
+
+When a headless builder exits without producing a report file, relay inspects the tail of its stdout/stderr log against the harness's default denial patterns (or the candidate's `denial_patterns` if configured).
+
+If a permission denial pattern matches (for example, if a tool was refused because the agent attempted an edit while in `read` mode, or executed a command without required approvals):
+- The binding halts and transitions to `NEEDS YOU`.
+- The halt message quotes the matching denial line and instructs the planner to re-send with a higher tier or adjust harness allow lists.
+- The ledger records an exit entry with note suffix `; permission-blocked: <line>`.
+- relay does **not** switch to another candidate (which would waste quota on a configuration error) and does **not** record a rate-limit gate.
+
+To recover from a permission-blocked halt, adjust the tier (e.g. `relay send --tier edit` or `relay send --tier yolo --allow-yolo`) or update permissions, then re-send the plan.
+
+### Migration from extra_args
+
+Previously, permission bypass flags were often passed via `extra_args` in `candidates.json` (such as `"--dangerously-skip-permissions"` or `"--auto"`).
+
+When any explicit tier (`read`, `edit`, `yolo`) is active, relay validates that `extra_args` does not contain conflicting permission flags (e.g. `--permission-mode`, `--dangerously-skip-permissions`, `--mode`, `--auto`). If detected, relay refuses to launch.
+
+To migrate:
+- Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in `candidates.json`, and set `"max_tier": "yolo"` in `policy.json` (or use `--allow-yolo` on CLI commands).
+- Alternatively, leave `tier` unset (or set to `"harness"`), and relay will leave `extra_args` untouched.
 
 ## Consults: asking a reviewer
 

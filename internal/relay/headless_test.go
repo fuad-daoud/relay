@@ -80,7 +80,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
 	}
 	for _, c := range cases {
-		got, err := headlessLaunch(lookup(c.token), role, 2*time.Hour, "PROMPT", "/repo")
+		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo")
 		if err != nil {
 			t.Fatalf("%s: %v", c.token, err)
 		}
@@ -88,7 +88,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 			t.Errorf("%s:\n got %v\nwant %v", c.token, got, c.want)
 		}
 	}
-	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, time.Hour, "x", "/repo"); err == nil {
+	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo"); err == nil {
 		t.Error("unknown harness kind must be an error, not a panic or an empty argv")
 	}
 }
@@ -229,7 +229,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, f, fr)
 
-	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# do the thing"))
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -280,11 +280,11 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one"), SendOptions{}); err != nil {
 		t.Fatalf("first Send: %v", err)
 	}
 	// Unscripted, the fake reports the process alive forever.
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one again"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one again"), SendOptions{})
 	if !errors.Is(err, ErrBuilderBusy) {
 		t.Fatalf("second Send: err = %v, want ErrBuilderBusy", err)
 	}
@@ -300,11 +300,11 @@ func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one"), SendOptions{}); err != nil {
 		t.Fatalf("first Send: %v", err)
 	}
 	fr.script(fr.handles[0].PID, false) // exited between the two sends
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one, corrected")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one, corrected"), SendOptions{}); err != nil {
 		t.Fatalf("second Send: %v", err)
 	}
 	if len(fr.specs) != 2 || len(fr.handles) != 2 || fr.handles[1].PID == fr.handles[0].PID {
@@ -321,7 +321,7 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	fr.startErr = errors.New("agy: not found on PATH")
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if err == nil || !errors.Is(err, fr.startErr) {
 		t.Fatalf("err = %v, want the Start error wrapped", err)
 	}
@@ -365,7 +365,7 @@ func TestSendClearsAStaleHalt(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -390,7 +390,7 @@ func TestSendPanePathIsUntouchedByHeadless(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedBound(t, f)
 	rt.Runner = fr
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(fr.specs) != 0 {
@@ -673,7 +673,7 @@ func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
 func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
 	t.Helper()
 	rt, _ := seedHeadless(t, f, fr)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -1080,7 +1080,7 @@ func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, _ := rt.Store.Load("webshop")
@@ -1323,7 +1323,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found")
 	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err == nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err == nil {
 		t.Fatal("Send should have failed")
 	}
 	b, _ := rt.Store.Load("webshop")
@@ -1838,7 +1838,7 @@ func escapeFixture(t *testing.T, f *fakeHerdr, fr *fakeRunner, fg *fakeGit, repo
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -1970,7 +1970,7 @@ func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 	f.listCalls = 0
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -2082,4 +2082,70 @@ func TestAppendLogMarker(t *testing.T) {
 			t.Errorf("%s is no longer a directory", dir)
 		}
 	})
+}
+
+func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	fr := newFakeRunner()
+	rt := newRuntime(t, f)
+	rt.Runner = fr
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testClaudeRef,
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Headless:    true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+
+	oldPID := b.Builder.PID
+	fr.script(oldPID, false)
+	fr.exit(oldPID, 1)
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	denialText := "tool use was rejected: Bash command not allowed"
+	if err := os.WriteFile(logPath, []byte("starting\n"+denialText+"\nrelay-exit:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "permission denial") || !strings.Contains(got.Halt, `"`+denialText+`"`) {
+		t.Errorf("Halt = %q, want it to contain 'permission denial' and %q", got.Halt, `"`+denialText+`"`)
+	}
+	ex := exits(t, rt)
+	if len(ex) != 1 {
+		t.Fatalf("got %d exit entries, want 1", len(ex))
+	}
+	wantSuffix := "; permission-blocked: " + denialText
+	if !strings.HasSuffix(ex[0].Note, wantSuffix) {
+		t.Errorf("exit entry Note = %q, want suffix %q", ex[0].Note, wantSuffix)
+	}
+	if got.RoundSwitches != b.RoundSwitches {
+		t.Errorf("RoundSwitches = %d, want %d (unchanged)", got.RoundSwitches, b.RoundSwitches)
+	}
+	if l := loadLedger(t, rt); len(l.Entries) != 0 {
+		t.Errorf("ledger entries = %+v, want none", l.Entries)
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("specs = %d, want 1 (no new process started)", len(fr.specs))
+	}
 }

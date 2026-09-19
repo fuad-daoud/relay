@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/harness"
 )
 
 func load(t *testing.T, body string) (Policy, error) {
@@ -374,4 +376,103 @@ func TestClassifyPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTierPolicy(t *testing.T) {
+	t.Run("max_tier default is edit", func(t *testing.T) {
+		p := Policy{}
+		if p.MaxTierOrDefault() != harness.TierEdit {
+			t.Errorf("Policy{}.MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierEdit)
+		}
+		pLoaded, err := load(t, `{}`)
+		if err != nil {
+			t.Fatalf("Load({}) err: %v", err)
+		}
+		if pLoaded.MaxTierOrDefault() != harness.TierEdit {
+			t.Errorf("pLoaded.MaxTierOrDefault() = %v, want %v", pLoaded.MaxTierOrDefault(), harness.TierEdit)
+		}
+	})
+
+	t.Run("max_tier yolo and tier builder yolo loads", func(t *testing.T) {
+		p, err := load(t, `{"max_tier":"yolo","tier":{"builder":"yolo"}}`)
+		if err != nil {
+			t.Fatalf("Load unexpected err: %v", err)
+		}
+		if p.MaxTierOrDefault() != harness.TierYolo {
+			t.Errorf("MaxTierOrDefault() = %v, want %v", p.MaxTierOrDefault(), harness.TierYolo)
+		}
+		got, ok := p.TierFor("builder")
+		if !ok || got != harness.TierYolo {
+			t.Errorf("TierFor(\"builder\") = (%v, %v), want (yolo, true)", got, ok)
+		}
+		_, ok = p.TierFor("reviewer")
+		if ok {
+			t.Errorf("TierFor(\"reviewer\") ok = true, want false")
+		}
+	})
+
+	t.Run("tier builder yolo with default cap exceeds max_tier", func(t *testing.T) {
+		_, err := load(t, `{"tier":{"builder":"yolo"}}`)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), "exceeds max_tier") {
+			t.Errorf("error %q does not contain \"exceeds max_tier\"", err.Error())
+		}
+	})
+
+	t.Run("max_tier harness is rejected", func(t *testing.T) {
+		_, err := load(t, `{"max_tier":"harness"}`)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), `"harness" is not a cap`) {
+			t.Errorf("error %q does not contain '\"harness\" is not a cap'", err.Error())
+		}
+	})
+
+	t.Run("unknown role key in tier is rejected", func(t *testing.T) {
+		_, err := load(t, `{"tier":{"wizard":"read"}}`)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), "unknown role") {
+			t.Errorf("error %q does not contain \"unknown role\"", err.Error())
+		}
+	})
+
+	t.Run("invalid max_tier string is rejected", func(t *testing.T) {
+		_, err := load(t, `{"max_tier":"god"}`)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), "max_tier:") {
+			t.Errorf("error %q does not contain \"max_tier:\"", err.Error())
+		}
+	})
+
+	t.Run("invalid tier value string is rejected", func(t *testing.T) {
+		_, err := load(t, `{"tier":{"builder":"invalid"}}`)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), "tier.builder:") {
+			t.Errorf("error %q does not contain \"tier.builder:\"", err.Error())
+		}
+	})
 }

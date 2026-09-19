@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -746,5 +747,65 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 	}
 	if b.Consults[0].State != store.ConsultRunning {
 		t.Errorf("state = %q, want running", b.Consults[0].State)
+	}
+}
+
+func TestAskReviewerOnClaudeTierRead(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.Policy.Tier = map[string]string{"reviewer": "read"}
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role:        "reviewer",
+		Candidate:   testClaudeRef,
+		File:        q,
+		Name:        "webshop",
+		PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d starts, want 1", len(f.starts))
+	}
+	hasPlan := false
+	for i, arg := range f.starts[0].Args {
+		if arg == "--permission-mode" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == "plan" {
+			hasPlan = true
+			break
+		}
+	}
+	if !hasPlan {
+		t.Errorf("expected --permission-mode plan in starts[0].Args, got %v", f.starts[0].Args)
+	}
+}
+
+func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	rt.Policy.Tier = map[string]string{"reviewer": "read"}
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role:        "reviewer",
+		Candidate:   testOpencodeRef,
+		File:        q,
+		Name:        "webshop",
+		PlannerPane: "w2:p3",
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %d, want 0 (no reservation written)", len(b.Consults))
 	}
 }

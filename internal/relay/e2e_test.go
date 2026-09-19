@@ -514,7 +514,7 @@ func reconcileAt(t *testing.T, s *e2eSession, rt Runtime, clock *fakeClock, at t
 func sendAt(t *testing.T, rt Runtime, clock *fakeClock, at time.Duration, name string) {
 	t.Helper()
 	clock.now = baseTime.Add(at)
-	if _, err := Send(context.Background(), rt, name, writePlan(t, "do the thing")); err != nil {
+	if _, err := Send(context.Background(), rt, name, writePlan(t, "do the thing"), SendOptions{}); err != nil {
 		t.Fatalf("Send %s: %v", name, err)
 	}
 }

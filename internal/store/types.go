@@ -87,12 +87,19 @@ type Binding struct {
 	// BuilderCandidate is the harness/provider/model token the builder was
 	// started from (#80); empty for an adopted builder and for any binding
 	// written before the field existed.
-	BuilderCandidate string    `json:"builder_candidate,omitempty"`
-	Round            int       `json:"round"`
-	State            State     `json:"state"`
-	RoundCap         int       `json:"round_cap"`
-	RoundTimeoutMS   int       `json:"round_timeout_ms"`
-	RoundStartedAt   time.Time `json:"round_started_at"`
+	BuilderCandidate string `json:"builder_candidate,omitempty"`
+	// Tier is the effective permission tier the binding's builder launches at
+	// (#141), resolved once at bind/add/fork. "" on bindings written before the
+	// field existed and means harness.
+	Tier string `json:"tier,omitempty"`
+	// RoundTier overrides Tier for the CURRENT round of a headless binding,
+	// written by Send --tier and cleared by queueReport with RoundSwitches.
+	RoundTier      string    `json:"round_tier,omitempty"`
+	Round          int       `json:"round"`
+	State          State     `json:"state"`
+	RoundCap       int       `json:"round_cap"`
+	RoundTimeoutMS int       `json:"round_timeout_ms"`
+	RoundStartedAt time.Time `json:"round_started_at"`
 	// HaltNotifiedRound is the round a halt notification has already been sent
 	// for. It is deliberately NOT derived from State: every earlier attempt to
 	// dedupe halt notices on State was defeated by a later step in the same

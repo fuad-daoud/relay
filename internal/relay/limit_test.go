@@ -214,7 +214,7 @@ func gateOnLimitSetup(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, stor
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")

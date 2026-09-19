@@ -56,6 +56,11 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)quota exceeded`,
 			},
 			DialogPatterns: defaultDialogPatterns,
+			DenialPatterns: []string{
+				`(?i)permission (request )?(denied|rejected)`,
+				`(?i)tool (call|use) (was )?rejected`,
+				`(?i)not permitted in (plan|accept-edits) mode`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -75,6 +80,11 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)limit .*resets`,
 			},
 			DialogPatterns: defaultDialogPatterns,
+			DenialPatterns: []string{
+				`(?i)requested permissions to use .* but you haven't granted`,
+				`(?i)permission (to use .* was )?denied`,
+				`(?i)tool use was rejected`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
@@ -94,6 +104,10 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)RESOURCE_EXHAUSTED`,
 			},
 			DialogPatterns: defaultDialogPatterns,
+			DenialPatterns: []string{
+				`(?i)permission.*(denied|rejected)`,
+				`(?i)rejected: external_directory`,
+			},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
@@ -397,7 +411,10 @@ func TestLaunch(t *testing.T) {
 			if !ok {
 				t.Fatalf("Lookup(%q) not found", tt.kind)
 			}
-			got := h.Launch(tt.provider, tt.model, tt.extra, tt.role)
+			got, err := h.Launch(tt.provider, tt.model, tt.extra, tt.role, TierHarness)
+			if err != nil {
+				t.Fatalf("Launch() error = %v", err)
+			}
 			if got.Kind != tt.kind {
 				t.Errorf("Launch().Kind = %q, want %q", got.Kind, tt.kind)
 			}
@@ -413,14 +430,20 @@ func TestLaunch(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"agy\") not found")
 	}
-	launch := h.Launch("prov", "m/x", extra, builder)
+	launch, err := h.Launch("prov", "m/x", extra, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
 	launch.Args = append(launch.Args, "--b")
 	if !reflect.DeepEqual(extra, []string{"--a"}) {
 		t.Errorf("extra was modified: got %v, want [--a]", extra)
 	}
 
 	unknownHarness := Harness{Kind: "unknown"}
-	launchUnknown := unknownHarness.Launch("prov", "m/x", extra, builder)
+	launchUnknown, err := unknownHarness.Launch("prov", "m/x", extra, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
 	launchUnknown.Args = append(launchUnknown.Args, "--c")
 	if !reflect.DeepEqual(extra, []string{"--a"}) {
 		t.Errorf("extra was modified on unknown harness: got %v, want [--a]", extra)
@@ -533,7 +556,10 @@ func TestLaunchPrintPerKind(t *testing.T) {
 			if !ok {
 				t.Fatalf("Lookup(%q) not found", tt.kind)
 			}
-			got := h.Launch("prov", "m/x", tt.extra, builder)
+			got, err := h.Launch("prov", "m/x", tt.extra, builder, TierHarness)
+			if err != nil {
+				t.Fatalf("Launch() error = %v", err)
+			}
 			if !reflect.DeepEqual(got.Print, tt.wantPrint) {
 				t.Errorf("Print = %v, want %v", got.Print, tt.wantPrint)
 			}
@@ -550,12 +576,14 @@ func TestLaunchPrintPerKind(t *testing.T) {
 	// 2026-09-16: "Error: When using --print, --output-format=stream-json
 	// requires --verbose"); no candidate's extra_args should have to know.
 	c, _ := Lookup("claude")
-	if p := c.Launch("prov", "m/x", nil, builder).Print; !containsAdjacent(p, "--output-format", "stream-json") || !contains(p, "--verbose") {
+	claudeLaunch, _ := c.Launch("prov", "m/x", nil, builder, TierHarness)
+	if p := claudeLaunch.Print; !containsAdjacent(p, "--output-format", "stream-json") || !contains(p, "--verbose") {
 		t.Errorf("claude print form must carry --output-format stream-json and --verbose: %v", p)
 	}
 	for _, kind := range []string{"agy", "claude"} {
 		h, _ := Lookup(kind)
-		if p := h.Launch("prov", "m/x", nil, builder).Print; contains(p, "--include-partial-messages") {
+		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
+		if p := l.Print; contains(p, "--include-partial-messages") {
 			t.Errorf("%s: partial messages are out of scope (spec §1): %v", kind, p)
 		}
 	}
@@ -563,18 +591,20 @@ func TestLaunchPrintPerKind(t *testing.T) {
 	// agy pins its workspace to the round's tree (#192); claude and opencode
 	// carry no such flag.
 	a, _ := Lookup("agy")
-	if p := a.Launch("prov", "m/x", nil, builder).Print; !containsAdjacent(p, "--add-dir", DirPlaceholder) {
+	agyLaunch, _ := a.Launch("prov", "m/x", nil, builder, TierHarness)
+	if p := agyLaunch.Print; !containsAdjacent(p, "--add-dir", DirPlaceholder) {
 		t.Errorf("agy print form must carry --add-dir <dir>: %v", p)
 	}
 	for _, kind := range []string{"claude", "opencode"} {
 		h, _ := Lookup(kind)
-		if p := h.Launch("prov", "m/x", nil, builder).Print; contains(p, "--add-dir") {
+		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
+		if p := l.Print; contains(p, "--add-dir") {
 			t.Errorf("%s: --add-dir is agy-only: %v", kind, p)
 		}
 	}
 
 	unknown := Harness{Kind: "unknown"}
-	got := unknown.Launch("prov", "m/x", []string{"--z"}, builder)
+	got, _ := unknown.Launch("prov", "m/x", []string{"--z"}, builder, TierHarness)
 	if len(got.Print) != 0 || got.PromptAt != -1 {
 		t.Errorf("unknown kind: Print = %v PromptAt = %d; want empty and -1", got.Print, got.PromptAt)
 	}
@@ -584,7 +614,10 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	builder, _ := RoleByName("builder")
 	h, _ := Lookup("agy")
 	extra := []string{"--dangerously-skip-permissions"}
-	l := h.Launch("prov", "m/x", extra, builder)
+	l, err := h.Launch("prov", "m/x", extra, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
 	before := append([]string(nil), l.Print...)
 
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
@@ -607,7 +640,10 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 
 	// A kind with no budget or dir flag ignores both; the prompt still lands.
 	c, _ := Lookup("claude")
-	cl := c.Launch("prov", "m/x", nil, builder)
+	cl, err := c.Launch("prov", "m/x", nil, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
 	got = cl.PrintArgs("hello", time.Hour, "/w")
 	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}) {
 		t.Errorf("claude PrintArgs = %v", got)

@@ -209,6 +209,16 @@ func TestLoadValidation(t *testing.T) {
 			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"dialog_patterns":["("]}]`,
 			wantSubstring: "dialog_patterns[0]",
 		},
+		{
+			name:          "invalid tier",
+			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"tier":"god"}]`,
+			wantSubstring: "candidate 0: tier:",
+		},
+		{
+			name:          "invalid denial pattern regex",
+			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"denial_patterns":["["]}]`,
+			wantSubstring: "denial_patterns[0]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -343,5 +353,40 @@ func TestCandidatePlanFlag(t *testing.T) {
 	c, _ = set.Lookup(Ref{Harness: "agy", Provider: "google", Model: "g"})
 	if c.Plan {
 		t.Error("plan defaults to false")
+	}
+}
+
+func TestLoadAcceptsTierAndDenialPatterns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[
+		{
+			"harness": "claude",
+			"provider": "anthropic",
+			"model": "sonnet",
+			"roles": ["builder"],
+			"tier": "yolo",
+			"denial_patterns": ["(?i)permission denied"]
+		}
+	]`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	set, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() unexpected err: %v", err)
+	}
+
+	c, err := set.Lookup(Ref{"claude", "anthropic", "sonnet"})
+	if err != nil {
+		t.Fatalf("Lookup() err: %v", err)
+	}
+
+	if c.Tier != "yolo" {
+		t.Errorf("Tier = %q, want \"yolo\"", c.Tier)
+	}
+	wantPatterns := []string{"(?i)permission denied"}
+	if !reflect.DeepEqual(c.DenialPatterns, wantPatterns) {
+		t.Errorf("DenialPatterns = %v, want %v", c.DenialPatterns, wantPatterns)
 	}
 }

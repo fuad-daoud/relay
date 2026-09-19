@@ -45,6 +45,12 @@ type ForkOptions struct {
 	// instead of a pane (#99). Not inherited from the source: the mode is a
 	// property of this binding, chosen at its creation.
 	Headless bool
+
+	// Tier overrides the candidate/policy permission tier (#141).
+	Tier string
+
+	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
+	AllowYolo bool
 }
 
 // ForkResult is what a fork produced, so the CLI can tell the human where the
@@ -146,6 +152,15 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 	c := res.Candidate
 
+	explicitTier := opts.Tier
+	if explicitTier == "" && src.Tier != "" {
+		explicitTier = src.Tier
+	}
+	tier := resolveTier(explicitTier, c, rt.Policy, "builder")
+	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+		return ForkResult{}, err
+	}
+
 	var (
 		cwd      string
 		worktree string
@@ -209,6 +224,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		CWD:         cwd,
 		WorkspaceID: opts.WorkspaceID,
 		Headless:    opts.Headless,
+		Tier:        string(tier),
+		AllowYolo:   opts.AllowYolo,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -240,6 +257,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		ForkedFrom:       src.Name,
 		ForkedAtRound:    opts.Round,
 		Repo:             src.Repo,
+		Tier:             string(tier),
 	}
 
 	now := time.Now().UTC()

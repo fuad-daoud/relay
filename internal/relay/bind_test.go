@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -1979,5 +1980,113 @@ func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "builder agent name") {
 		t.Fatalf("err = %v, want the agent-name refusal", err)
+	}
+}
+
+func TestBindWithTierEditOnClaude(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testClaudeRef,
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Tier:        "edit",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Tier != "edit" {
+		t.Errorf("b.Tier = %q, want %q", b.Tier, "edit")
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d agent starts, want 1", len(f.starts))
+	}
+	hasFlag := false
+	for i, arg := range f.starts[0].Args {
+		if arg == "--permission-mode" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == "acceptEdits" {
+			hasFlag = true
+			break
+		}
+	}
+	if !hasFlag {
+		t.Errorf("expected --permission-mode acceptEdits in starts[0].Args, got %v", f.starts[0].Args)
+	}
+}
+
+func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testClaudeRef,
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Tier:        "yolo",
+	})
+	if !errors.Is(err, ErrTierAboveMax) {
+		t.Fatalf("err = %v, want ErrTierAboveMax", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
+	}
+}
+
+func TestBindOpencodeCandidateTierReadRefused(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testOpencodeRef,
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Tier:        "read",
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
+	}
+}
+
+func TestBindPolicyTierBuilderRead(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Policy.Tier = map[string]string{"builder": "read"}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testClaudeRef,
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Tier != "read" {
+		t.Errorf("b.Tier = %q, want %q", b.Tier, "read")
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d agent starts, want 1", len(f.starts))
+	}
+	hasFlag := false
+	for i, arg := range f.starts[0].Args {
+		if arg == "--permission-mode" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == "plan" {
+			hasFlag = true
+			break
+		}
+	}
+	if !hasFlag {
+		t.Errorf("expected --permission-mode plan in starts[0].Args, got %v", f.starts[0].Args)
 	}
 }

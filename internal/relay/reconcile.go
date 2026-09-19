@@ -723,6 +723,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0
 	b.RoundExcluded = nil
+	b.RoundTier = ""
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
 	b.RoundClosedTree = closed
