@@ -273,6 +273,24 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	if res.Branch != "relay/api" {
 		t.Fatalf("res.Branch = %q, want relay/api", res.Branch)
 	}
+
+	// #100 step 6: the server picked the candidate (opts.Candidate == ""),
+	// so the pick entry must say so rather than ExplainResolution's
+	// "explicit, policy bypassed", which would misdescribe a token nobody
+	// on this side named.
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pickNote string
+	for _, e := range entries {
+		if e.Kind == store.KindPick {
+			pickNote = e.Note
+		}
+	}
+	if pickNote != "picked claude/anthropic/haiku on zen: server's pick" {
+		t.Fatalf("pick note = %q, want it to name the server's own pick", pickNote)
+	}
 }
 
 func TestAddRemoteRefusesCWD(t *testing.T) {

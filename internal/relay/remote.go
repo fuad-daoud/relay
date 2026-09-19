@@ -188,7 +188,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, err
 			return err
 		}
 		if view.Candidate != "" {
-			return tx.AppendLog(b.Name, pickEntry(rt.Now(), 1, "builder", res))
+			return tx.AppendLog(b.Name, remotePickEntry(rt.Now(), opts.Server, view.Candidate, opts.Candidate != ""))
 		}
 		return nil
 	}); err != nil {
@@ -206,6 +206,24 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, err
 		Base:       base,
 		Resolution: res,
 	}, nil
+}
+
+// remotePickEntry is addRemote's pick log entry: the same shape pickEntry
+// writes (round 1, DirToPlanner, KindPick, Confirmed) but naming the server
+// and whether the token was named by the planner or picked by the server's
+// own policy -- ExplainResolution's "explicit, policy bypassed" wording
+// assumes a local resolveCandidate call that never ran here, so it would
+// misdescribe a token the server picked on its own.
+func remotePickEntry(now time.Time, server, token string, explicit bool) store.LogEntry {
+	how := "server's pick"
+	if explicit {
+		how = "explicit"
+	}
+	return store.LogEntry{
+		TS: now.UTC(), Round: 1, Direction: store.DirToPlanner,
+		Kind: store.KindPick, Confirmed: true,
+		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how),
+	}
 }
 
 func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte) (SendResult, error) {
