@@ -2,6 +2,7 @@ package serve
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,11 +28,13 @@ type Config struct {
 }
 
 type Server struct {
-	cfg       Config
-	clients   *Clients
-	nonces    *remote.NonceWindow  // ttl = remote.MaxClockSkew
-	transport remote.TreeTransport // remote.NewBundleTransport(cfg.Git, filepath.Join(cfg.Root, "tmp"))
-	mu        sync.Mutex           // §6.3 of the spec: every store/ledger mutation and every tick
+	cfg          Config
+	clients      *Clients
+	nonces       *remote.NonceWindow  // ttl = remote.MaxClockSkew
+	transport    remote.TreeTransport // remote.NewBundleTransport(cfg.Git, filepath.Join(cfg.Root, "tmp"))
+	addr         net.Addr
+	insecureHTTP bool
+	mu           sync.Mutex // §6.3 of the spec: every store/ledger mutation and every tick
 }
 
 func New(cfg Config) (*Server, error) {
