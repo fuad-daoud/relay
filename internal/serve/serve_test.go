@@ -1270,6 +1270,9 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	if view.RoundState != remote.RoundClosed {
 		t.Fatalf("round_state = %q, want %q", view.RoundState, remote.RoundClosed)
 	}
+	if view.ClosedRound != 1 {
+		t.Fatalf("closed_round = %d, want 1", view.ClosedRound)
+	}
 	bareBranchSHA, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/relay/api")
 	if err != nil || !ok {
 		t.Fatalf("bare branch sha: %v, ok=%v", err, ok)

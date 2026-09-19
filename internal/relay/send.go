@@ -100,6 +100,9 @@ func Send(ctx context.Context, rt Runtime, name, file string) (SendResult, error
 	var builder herdr.Agent
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
+		if hint.Builder.Remote() {
+			return sendRemote(ctx, rt, hint, body)
+		}
 		baseline, baselineHead = CaptureBaseline(ctx, rt, hint)
 		hintRound = hint.Round
 		// A headless builder (#99) is a process relay starts per round; there

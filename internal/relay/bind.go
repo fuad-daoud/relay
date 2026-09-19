@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -151,6 +152,13 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	b, err := rt.Store.Load(opts.Name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
+	}
+
+	// A remote binding has no pane and no worktree: its mode is fixed at
+	// creation (like a headless binding's), so none of the pane/worktree
+	// logic below applies to it. §4.6.
+	if b.Builder.Remote() {
+		return resumeRemote(ctx, rt, opts, planner, b)
 	}
 
 	var res Resolution
@@ -306,6 +314,66 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	}
 
 	return out, res, nil
+}
+
+// resumeRemote is resume's remote-binding path (§4.6). A remote binding's
+// mode is fixed at creation, so this never adopts a pane or spawns one: it
+// only forwards to the server and, once the server agrees, repoints the
+// planner and reactivates the binding locally.
+//
+// Errors: "cannot change a remote builder; unbind and add" when the caller
+// asked to change the builder (--rebind, --candidate, --builder pane, or
+// --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
+// error; or a message naming the binding when its branch is gone.
+func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent, b store.Binding) (store.Binding, Resolution, error) {
+	if opts.Rebind || opts.Candidate != "" || opts.BuilderPane != "" || opts.Headless {
+		return store.Binding{}, Resolution{}, errors.New("cannot change a remote builder; unbind and add")
+	}
+	if rt.Remote == nil {
+		return store.Binding{}, Resolution{}, ErrRemoteUnavailable
+	}
+
+	if _, rerr := rt.Remote.Resume(ctx, b.Builder.Server, b.Name); rerr != nil {
+		var httpErr *client.HTTPError
+		if errors.As(rerr, &httpErr) {
+			return store.Binding{}, Resolution{}, fmt.Errorf("%s: %s", b.Builder.Server, httpErr.Body.Message)
+		}
+		if errors.Is(rerr, client.ErrUnreachable) {
+			return store.Binding{}, Resolution{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, rerr)
+		}
+		return store.Binding{}, Resolution{}, fmt.Errorf("%s: %w", b.Builder.Server, rerr)
+	}
+
+	if rt.Git == nil {
+		return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot verify the branch")
+	}
+	exists, berr := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)
+	if berr != nil {
+		return store.Binding{}, Resolution{}, fmt.Errorf("check branch %s: %w", b.Branch, berr)
+	}
+	if !exists {
+		return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is gone; relay unbind, then relay add --server to start fresh", opts.Name, b.Branch)
+	}
+
+	var out store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(opts.Name)
+		if err != nil {
+			return err
+		}
+		cur.Planner = endpointOf(planner)
+		cur.State = store.StateActive
+		if err := tx.Save(cur); err != nil {
+			return err
+		}
+		out = cur
+		return nil
+	})
+	if err != nil {
+		return store.Binding{}, Resolution{}, err
+	}
+
+	return out, Resolution{}, nil
 }
 
 func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
@@ -596,6 +664,26 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	b, err := rt.Store.Load(name)
 	if err != nil {
 		return UnbindResult{}, err
+	}
+
+	// A remote binding's server is told first (§4.6), same shape as Done: it
+	// is asked to release the binding before anything local changes. A 404
+	// means the server already considers it gone, which is not a reason to
+	// refuse the local unbind -- it proceeds exactly as if the server had
+	// agreed.
+	if b.Builder.Remote() {
+		if rt.Remote == nil {
+			return UnbindResult{}, ErrRemoteUnavailable
+		}
+		if uerr := rt.Remote.Unbind(ctx, b.Builder.Server, b.Name); uerr != nil {
+			var httpErr *client.HTTPError
+			if !(errors.As(uerr, &httpErr) && httpErr.Status == 404) {
+				if errors.Is(uerr, client.ErrUnreachable) {
+					return UnbindResult{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, uerr)
+				}
+				return UnbindResult{}, fmt.Errorf("%s: %w", b.Builder.Server, uerr)
+			}
+		}
 	}
 
 	var res UnbindResult

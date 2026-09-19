@@ -61,6 +61,10 @@ type rootCommitCall struct {
 	Dir string
 }
 
+type createBranchCall struct {
+	Dir, Branch, Commit string
+}
+
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
 	snapshotTreeID  string
@@ -85,6 +89,9 @@ type fakeGit struct {
 	branchCalls     int
 	lastBranchDir   string
 	lastBranchName  string
+
+	createBranchErr   error
+	createBranchCalls []createBranchCall
 
 	addWorktreeErr   error
 	addWorktreeCalls []addWorktreeCall
@@ -163,6 +170,16 @@ func (f *fakeGit) BranchExists(ctx context.Context, dir, branch string) (bool, e
 		return false, f.branchExistsErr
 	}
 	return f.branchExists, nil
+}
+
+func (f *fakeGit) CreateBranch(ctx context.Context, dir, branch, commit string) error {
+	f.createBranchCalls = append(f.createBranchCalls, createBranchCall{
+		Dir: dir, Branch: branch, Commit: commit,
+	})
+	if f.createBranchErr != nil {
+		return f.createBranchErr
+	}
+	return nil
 }
 
 func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit string) error {

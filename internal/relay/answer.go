@@ -15,6 +15,10 @@ import (
 // no terminal; there is no dialog to answer. What it printed is in its log.
 var ErrHeadlessNoDialog = errors.New("builder is headless and takes no dialogs")
 
+// ErrRemoteNoDialog: a remote builder (#100) runs on someone else's server
+// with no pane relay can send keys into. §4.6.
+var ErrRemoteNoDialog = errors.New("remote builders take no dialogs")
+
 // AnswerInput is how the planner answers a builder's dialog. Exactly one field
 // must be set.
 type AnswerInput struct {
@@ -92,6 +96,9 @@ func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error 
 	var builder herdr.Agent
 	var locatedBuilder bool
 	if hint, err := rt.Store.Load(name); err == nil {
+		if hint.Builder.Remote() {
+			return fmt.Errorf("%s: %w", name, ErrRemoteNoDialog)
+		}
 		if hint.Builder.Headless() {
 			where := "no round is running"
 			if hint.Builder.LogPath != "" {

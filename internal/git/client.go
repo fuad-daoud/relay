@@ -306,6 +306,29 @@ func (c *Client) BranchExists(ctx context.Context, dir, branch string) (bool, er
 	return false, err
 }
 
+// CreateBranch creates a branch at commit in dir without checking it out.
+//
+// Errors: ErrBranchExists, ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+func (c *Client) CreateBranch(ctx context.Context, dir, branch, commit string) error {
+	branchName := strings.TrimPrefix(branch, "refs/heads/")
+	exists, err := c.BranchExists(ctx, dir, branchName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrBranchExists
+	}
+	_, err = c.run(ctx, dir, nil, "branch", branchName, commit)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "already exists") {
+			return ErrBranchExists
+		}
+		return err
+	}
+	return nil
+}
+
 // AddWorktree creates a worktree at path, checking out a NEW branch at commit.
 //
 // Preconditions:  path does not exist; branch does not exist; commit resolves.

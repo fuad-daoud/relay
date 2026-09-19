@@ -27,6 +27,12 @@ type AddOptions struct {
 	// Headless makes the peer's builder a process relay runs per round
 	// instead of a pane (#99). Passed through to resolveBuilder.
 	Headless bool
+
+	// Server hosts the builder on a remote relay server (§4.4).
+	Server string
+
+	// Base commit or ref to branch from; defaults to HEAD.
+	Base string
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -64,6 +70,9 @@ type AddResult struct {
 //
 //	or a wrapped herdr failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
+	if opts.Server != "" {
+		return addRemote(ctx, rt, opts)
+	}
 	if opts.PlannerPane == "" {
 		return AddResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
 	}
