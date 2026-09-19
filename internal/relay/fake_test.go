@@ -41,6 +41,26 @@ type removeWorktreeCall struct {
 	Force     bool
 }
 
+type refSHACall struct {
+	Dir, Ref string
+}
+
+type updateRefCall struct {
+	Dir, Ref, NewSHA, OldSHA string
+}
+
+type commitTreeCall struct {
+	Dir, Tree, Parent, Message string
+}
+
+type mergeFFCall struct {
+	Dir, Ref string
+}
+
+type rootCommitCall struct {
+	Dir string
+}
+
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
 	snapshotTreeID  string
@@ -86,6 +106,24 @@ type fakeGit struct {
 	lastRevListDir  string
 	lastRevListFrom string
 	lastRevListTo   string
+
+	refSHACalls []refSHACall
+	refSHA      map[string]string
+	refSHAErr   error
+
+	updateRefCalls []updateRefCall
+	updateRefErr   error
+
+	commitTreeCalls []commitTreeCall
+	commitTreeSHA   string
+	commitTreeErr   error
+
+	mergeFFCalls []mergeFFCall
+	mergeFFErr   error
+
+	rootCommitCalls []rootCommitCall
+	rootCommitSHA   string
+	rootCommitErr   error
 }
 
 func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
@@ -175,6 +213,57 @@ func (f *fakeGit) RevListCount(ctx context.Context, dir, from, to string) (int, 
 		return 0, f.revListErr
 	}
 	return f.revListCount, nil
+}
+
+func (f *fakeGit) RefSHA(ctx context.Context, dir, ref string) (string, bool, error) {
+	f.refSHACalls = append(f.refSHACalls, refSHACall{Dir: dir, Ref: ref})
+	if f.refSHAErr != nil {
+		return "", false, f.refSHAErr
+	}
+	if f.refSHA != nil {
+		sha, ok := f.refSHA[ref]
+		return sha, ok, nil
+	}
+	return "fakerefsha", true, nil
+}
+
+func (f *fakeGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	f.updateRefCalls = append(f.updateRefCalls, updateRefCall{
+		Dir: dir, Ref: ref, NewSHA: newSHA, OldSHA: oldSHA,
+	})
+	if f.refSHA != nil {
+		f.refSHA[ref] = newSHA
+	}
+	return f.updateRefErr
+}
+
+func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {
+	f.commitTreeCalls = append(f.commitTreeCalls, commitTreeCall{
+		Dir: dir, Tree: tree, Parent: parent, Message: message,
+	})
+	if f.commitTreeErr != nil {
+		return "", f.commitTreeErr
+	}
+	if f.commitTreeSHA != "" {
+		return f.commitTreeSHA, nil
+	}
+	return "fakecommit", nil
+}
+
+func (f *fakeGit) MergeFF(ctx context.Context, dir, ref string) error {
+	f.mergeFFCalls = append(f.mergeFFCalls, mergeFFCall{Dir: dir, Ref: ref})
+	return f.mergeFFErr
+}
+
+func (f *fakeGit) RootCommit(ctx context.Context, dir string) (string, error) {
+	f.rootCommitCalls = append(f.rootCommitCalls, rootCommitCall{Dir: dir})
+	if f.rootCommitErr != nil {
+		return "", f.rootCommitErr
+	}
+	if f.rootCommitSHA != "" {
+		return f.rootCommitSHA, nil
+	}
+	return "fakerootcommit", nil
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {

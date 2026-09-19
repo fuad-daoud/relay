@@ -42,6 +42,11 @@ type Git interface {
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
 	Dirty(ctx context.Context, dir string) (bool, error)
+	RefSHA(ctx context.Context, dir, ref string) (string, bool, error)
+	UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error
+	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
+	MergeFF(ctx context.Context, dir, ref string) error
+	RootCommit(ctx context.Context, dir string) (string, error)
 }
 
 // Runtime carries relay's dependencies explicitly, so every command and the
