@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -220,9 +221,25 @@ func cmdDoctor(args []string) error {
 		return err
 	}
 	pricesPath := filepath.Join(configDir, "relay", "prices.json")
+
+	// One doctor row per configured server (remote-builders spec §5.5):
+	// reachable and enrolled, not enrolled (with the line to give the
+	// admin), unreachable, or a changed certificate. No servers.json ->
+	// no rows.
+	var extraChecks []doctor.Check
+	if servers, serversErr := client.LoadServers(client.ServersPath(configDir)); serversErr == nil && len(servers) > 0 {
+		_, pubPath := client.KeyPaths(configDir)
+		enrollLine := ""
+		if raw, rerr := os.ReadFile(pubPath); rerr == nil {
+			enrollLine = string(raw)
+		}
+		extraChecks = serverChecks(relay.ProbeServers(context.Background(), rt, servers, enrollLine))
+	}
+
 	rep := doctor.Run(context.Background(), env, kinds,
 		doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)),
-		doctor.WithUsage(pricesPath, opencodeConfigured))
+		doctor.WithUsage(pricesPath, opencodeConfigured),
+		doctor.WithExtraChecks(extraChecks))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",
@@ -292,6 +309,45 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 				g.Token, relay.GateKindText(g.Kind), g.Since.Local().Format("15:04"), relay.GateUntilText(g.Until)),
 			Fix: fix,
 		})
+	}
+	return checks
+}
+
+// serverChecks turns each configured server's probe (relay.ProbeServers)
+// into a doctor row (remote-builders spec §5.5): reachable and enrolled is
+// ok; not enrolled and unreachable warn (an unreachable probe is
+// ProbeFailed -- relay could not establish the fact, not that anything is
+// wrong); a changed certificate fails, since the client hard-refuses it.
+func serverChecks(probes []relay.ServerProbe) []doctor.Check {
+	checks := make([]doctor.Check, 0, len(probes))
+	for _, p := range probes {
+		c := doctor.Check{Group: "", Name: "servers"}
+		switch p.State {
+		case "enrolled":
+			c.Severity = doctor.SevOK
+			c.Detail = fmt.Sprintf("%s: enrolled as %s", p.Name, p.Label)
+		case "not enrolled":
+			c.Severity = doctor.SevWarn
+			c.Detail = fmt.Sprintf("%s: not enrolled", p.Name)
+			c.Fix = "give the admin: " + p.Detail
+		case "unreachable":
+			c.Severity = doctor.SevWarn
+			c.Detail = fmt.Sprintf("%s: unreachable: %s", p.Name, p.Detail)
+			c.ProbeFailed = true
+		case "cert changed":
+			c.Severity = doctor.SevFail
+			c.Detail = fmt.Sprintf("%s: certificate changed", p.Name)
+			c.Fix = fmt.Sprintf("relay client add-server %s <url> --fingerprint <new>", p.Name)
+		case "no key":
+			c.Severity = doctor.SevWarn
+			c.Detail = fmt.Sprintf("%s: %s", p.Name, p.Detail)
+			c.ProbeFailed = true
+		default:
+			c.Severity = doctor.SevWarn
+			c.Detail = fmt.Sprintf("%s: %s", p.Name, p.Detail)
+			c.ProbeFailed = true
+		}
+		checks = append(checks, c)
 	}
 	return checks
 }

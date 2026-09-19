@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -220,7 +219,8 @@ func cmdClientRmServer(args []string) error {
 }
 
 // cmdServers prints one row per configured server: name, url, and this
-// client's enrollment on it (§4.7).
+// client's enrollment on it (§4.7), via the same relay.ProbeServers doctor's
+// per-server checks use.
 func cmdServers(args []string) error {
 	fs := flag.NewFlagSet("relay servers", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -242,51 +242,18 @@ func cmdServers(args []string) error {
 		return nil
 	}
 
-	names := make([]string, 0, len(servers))
-	for n := range servers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	privPath, _ := client.KeyPaths(configDir)
+	privPath, pubPath := client.KeyPaths(configDir)
 	key, keyErr := client.LoadKey(privPath)
-	var c *client.Client
+	var rt relay.Runtime
 	if keyErr == nil {
-		c = client.New(servers, key, time.Now)
+		rt.Remote = client.New(servers, key, time.Now)
 	}
 
-	width := 0
-	for _, n := range names {
-		if len(n) > width {
-			width = len(n)
-		}
+	enrollLine := ""
+	if raw, rerr := os.ReadFile(pubPath); rerr == nil {
+		enrollLine = string(raw)
 	}
-	for _, n := range names {
-		e := servers[n]
-		fmt.Printf("%-*s  %-40s  %s\n", width, n, e.URL, serverStatus(c, keyErr, n))
-	}
+
+	fmt.Print(relay.RenderServers(relay.ProbeServers(context.Background(), rt, servers, enrollLine)))
 	return nil
-}
-
-// serverStatus is one server's enrollment word: enrolled-as|not
-// enrolled|unreachable|cert changed|no client key (§4.7).
-func serverStatus(c *client.Client, keyErr error, name string) string {
-	if keyErr != nil {
-		return "no client key"
-	}
-	who, err := c.WhoAmI(context.Background(), name)
-	switch {
-	case err == nil:
-		return "enrolled as " + who.Label
-	case errors.Is(err, client.ErrCertChanged):
-		return "cert changed"
-	case errors.Is(err, client.ErrUnreachable):
-		return "unreachable"
-	default:
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == 401 {
-			return "not enrolled"
-		}
-		return err.Error()
-	}
 }
