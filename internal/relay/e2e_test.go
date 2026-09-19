@@ -276,7 +276,7 @@ func TestE2E(t *testing.T) {
 	t.Run("marker_closes_round", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "marker", planner)
 		sendAt(t, rt, clock, 0, "marker")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		if err := os.WriteFile(rt.Store.ReportPath("marker", 1), []byte("builder's words"), 0o644); err != nil {
@@ -303,7 +303,7 @@ func TestE2E(t *testing.T) {
 	t.Run("idle_without_marker_nudges_once", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "nudge", planner)
 		sendAt(t, rt, clock, 0, "nudge")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, 5*time.Second, b) // inside startGrace
@@ -376,7 +376,7 @@ func TestE2E(t *testing.T) {
 	t.Run("still_screen_scrapes", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "scrape", planner)
 		sendAt(t, rt, clock, 0, "scrape")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
@@ -405,7 +405,7 @@ func TestE2E(t *testing.T) {
 	t.Run("screen_movement_resets_grace", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "moving", planner)
 		sendAt(t, rt, clock, 0, "moving")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge

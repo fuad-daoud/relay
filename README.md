@@ -237,9 +237,11 @@ inside every pane it manages, so it has to be run from inside one.
   (never herdr). Exit 0: closed on the marker, stdout is the report path. 2: closed
   without it (`unmarked`, `scraped`, `noreport` — verify before trusting), report
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
-  the binding is DONE or was unbound. 124: `--timeout` (default 10m) elapsed.
-  `--any` waits on several and prints the winner's name first. A pane planner
-  that does not want the report typed afterwards runs `relay wait N && relay pull N`.
+  the binding is DONE or was unbound. 5: closed, but the builder's report says
+  halted or blocked -- read it before sending again; stdout is the report path.
+  124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
+  winner's name first. A pane planner that does not want the report typed afterwards
+  runs `relay wait N && relay pull N`.
 - `relay ui [--interval D]` — interactive reader: at 110 columns or more, a rail
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
@@ -281,6 +283,20 @@ fall back to whichever binding owns the current working directory, and a bare
 `relay status` lists them all. Naming one is **required** for `answer`, `done`
 and `unbind`: those act on a specific loop — `answer` types into a live dialog,
 the other two end one — and they refuse to guess (see below).
+
+### The report block
+
+The builder ends its report with a fenced `relay` block:
+
+```relay
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # repo-relative files you changed
+commands_run: []        # commands you ran, e.g. ["make check"]
+not_done: []            # adjacent work you deliberately left
+```
+
+The four valid statuses are `done`, `halted`, `blocked`, and `deferred`. A missing or malformed block closes the round as `unstructured` without error or refusal. When `changed_paths` does not match git's count of changed files, relay notes the discrepancy as `paths: report N, diff M` on the diff entry.
 
 ### Interactive reader: relay ui
 
@@ -634,7 +650,8 @@ candidates in, per role:
                 "opencode/openrouter/z-ai/glm-5.3-flash"]
   },
   "max_switches": 2,
-  "limit_gate_default_ms": 3600000
+  "limit_gate_default_ms": 3600000,
+  "scan_patterns": ["(?i)<instruction-tag"]
 }
 ```
 
@@ -651,7 +668,9 @@ how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 `limit_gate_default_ms` is how long a rate limit relay detects itself
 gates the provider when the matched line names no reset time; absent
-defaults to one hour.
+defaults to one hour. `scan_patterns` is an optional list of extra
+regular expressions appended to relay's built-in instruction-shaped scan list;
+each pattern must compile.
 
 `relay policy` shows what relay would do right now:
 

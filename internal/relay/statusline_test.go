@@ -525,3 +525,42 @@ func TestPlannerStatusNeverProbesHerdr(t *testing.T) {
 		t.Errorf("f.listCalls = %d, want 0", f.listCalls)
 	}
 }
+
+func TestWaitingReportOutcome(t *testing.T) {
+	t.Run("outcome halted", func(t *testing.T) {
+		b := BindingStatus{
+			LastPayload: &LastEvent{
+				Kind:    store.KindReport,
+				Outcome: "halted",
+			},
+		}
+		if got := waiting(b); got != "report in · halted" {
+			t.Errorf("waiting = %q, want 'report in · halted'", got)
+		}
+	})
+
+	t.Run("outcome halted with note", func(t *testing.T) {
+		b := BindingStatus{
+			LastPayload: &LastEvent{
+				Kind:    store.KindReport,
+				Note:    "unmarked",
+				Outcome: "halted",
+			},
+		}
+		if got := waiting(b); got != "report in (unmarked) · halted" {
+			t.Errorf("waiting = %q, want 'report in (unmarked) · halted'", got)
+		}
+	})
+
+	t.Run("outcome done quiet", func(t *testing.T) {
+		b := BindingStatus{
+			LastPayload: &LastEvent{
+				Kind:    store.KindReport,
+				Outcome: "done",
+			},
+		}
+		if got := waiting(b); got != "report in" {
+			t.Errorf("waiting = %q, want 'report in'", got)
+		}
+	})
+}

@@ -153,6 +153,16 @@ Your final report must include:
 - Deviations: none is the goal; any must be explicitly flagged with justification.
 - Files created/modified, mapped to the steps that produced them.
 
+End every report with the `relay` block relay's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
+
+```relay
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # repo-relative files you changed
+commands_run: []        # commands you ran, e.g. ["make check"]
+not_done: []            # adjacent work you deliberately left
+```
+
 # Why this agent cannot be a sub-agent
 
 `subagent: false` above means no agent can invoke a plan-executor with

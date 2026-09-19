@@ -81,6 +81,23 @@ type LogEntry struct {
 	// says whether the dollars were measured, estimated or unknown; a
 	// reader that treats nil as "free" is wrong -- nil is unknown.
 	Usage *usage.Usage `json:"usage,omitempty"`
+
+	// Outcome, HaltedAt, ChangedPaths, CommandsRun, and NotDone are parsed
+	// from the builder's trailing relay block, on report entries only (#133).
+	// Outcome is one of "done", "halted", "blocked", "deferred", or "unstructured";
+	// an empty Outcome means the entry predates the field (readers treat "" like
+	// "unstructured"). HaltedAt, ChangedPaths, CommandsRun, and NotDone are zero
+	// when none was given.
+	Outcome      string   `json:"outcome,omitempty"`
+	HaltedAt     string   `json:"halted_at,omitempty"`
+	ChangedPaths []string `json:"changed_paths,omitempty"`
+	CommandsRun  []string `json:"commands_run,omitempty"`
+	NotDone      []string `json:"not_done,omitempty"`
+
+	// Flagged is the count of instruction-shaped lines detected in the report
+	// or question body, on report and question entries (#139). Zero means nothing
+	// was flagged or the entry predates the field.
+	Flagged int `json:"flagged,omitempty"`
 }
 
 func (s *Store) logPath(name string) string {

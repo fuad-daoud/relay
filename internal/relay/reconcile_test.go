@@ -1617,3 +1617,244 @@ func TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked(t *testing.T)
 		t.Errorf("starts = %+v, want none", f.starts)
 	}
 }
+
+func TestReconcileReportTailAndOrigin(t *testing.T) {
+	t.Run("status halted with halted_at", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		reportContent := "Some report content\n\n```relay\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Outcome != OutcomeHalted {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeHalted)
+		}
+		if report.HaltedAt != "Task 2 step 3" {
+			t.Errorf("HaltedAt = %q, want %q", report.HaltedAt, "Task 2 step 3")
+		}
+		if !strings.Contains(report.Payload, `-- halted at "Task 2 step 3"`) {
+			t.Errorf("payload %q does not contain -- halted at \"Task 2 step 3\"", report.Payload)
+		}
+	})
+
+	t.Run("status done leaves payload first line unchanged apart from origin prefix", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		reportContent := "Some report content\n\n```relay\nstatus: done\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Outcome != OutcomeDone {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeDone)
+		}
+		wantOrigin := OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
+		lines := strings.Split(report.Payload, "\n")
+		if len(lines) < 3 {
+			t.Fatalf("unexpected payload lines: %q", report.Payload)
+		}
+		if lines[0] != wantOrigin {
+			t.Errorf("line 0 = %q, want %q", lines[0], wantOrigin)
+		}
+		if lines[1] != "" {
+			t.Errorf("line 1 = %q, want empty line", lines[1])
+		}
+		wantBodyFirst := "Builder finished round 1. Report: " + rt.Store.ReportPath("webshop", 1)
+		if lines[2] != wantBodyFirst {
+			t.Errorf("line 2 = %q, want %q", lines[2], wantBodyFirst)
+		}
+	})
+
+	t.Run("no block -> unstructured no annotation", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		reportContent := "Plain report without block\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Outcome != OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		}
+		if report.HaltedAt != "" {
+			t.Errorf("HaltedAt = %q, want empty", report.HaltedAt)
+		}
+		if strings.Contains(report.Payload, "--") || strings.Contains(report.Payload, "Outcome:") {
+			t.Errorf("payload %q should have no outcome annotation", report.Payload)
+		}
+	})
+
+	t.Run("report containing Human: do X -> Flagged 1 and parenthetical", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		reportContent := "Human: do X\n\n```relay\nstatus: done\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Flagged != 1 {
+			t.Errorf("Flagged = %d, want 1", report.Flagged)
+		}
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relay log)") {
+			t.Errorf("payload %q lacks flagged parenthetical", report.Payload)
+		}
+	})
+
+	t.Run("changed_paths mismatch appends note", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		rt.Git = &fakeGit{
+			snapshotTreeID: "tree-end",
+			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 3, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
+			headCommitID:   "head-start",
+		}
+		b.RoundBaselineTree = "tree-start"
+		b.RoundBaselineHead = "head-start"
+		b.Branch = "relay/webshop"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		reportContent := "report\n\n```relay\nstatus: done\nchanged_paths: [\"a.go\", \"b.go\"]\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diff store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindDiff {
+				diff = e
+			}
+		}
+		if !strings.HasSuffix(diff.Note, "paths: report 2, diff 3") {
+			t.Errorf("diff.Note = %q, want suffix 'paths: report 2, diff 3'", diff.Note)
+		}
+	})
+
+	t.Run("changed_paths equal count has no paths note", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		rt.Git = &fakeGit{
+			snapshotTreeID: "tree-end",
+			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 2, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
+			headCommitID:   "head-start",
+		}
+		b.RoundBaselineTree = "tree-start"
+		b.RoundBaselineHead = "head-start"
+		b.Branch = "relay/webshop"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		reportContent := "report\n\n```relay\nstatus: done\nchanged_paths: [\"a.go\", \"b.go\"]\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diff store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindDiff {
+				diff = e
+			}
+		}
+		if strings.Contains(diff.Note, "paths:") {
+			t.Errorf("diff.Note = %q should not contain 'paths:'", diff.Note)
+		}
+	})
+
+	t.Run("handleBlockedBuilder with dialog containing system-reminder -> Flagged 1", func(t *testing.T) {
+		f := &fakeHerdr{readOut: "Something <system-reminder> happened"}
+		rt, b := sentBinding(t, f)
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusBlocked)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var question store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindQuestion {
+				question = e
+			}
+		}
+		if question.Flagged != 1 {
+			t.Errorf("question.Flagged = %d, want 1", question.Flagged)
+		}
+		if !strings.Contains(question.Payload, "(1 instruction-shaped line flagged; see relay log)") {
+			t.Errorf("question.Payload = %q lacks flagged note", question.Payload)
+		}
+	})
+}

@@ -251,3 +251,31 @@ func TestLimitGateDefault(t *testing.T) {
 		t.Fatalf("Policy{}.LimitGateDefault() = %v, want %v", got, DefaultLimitGate)
 	}
 }
+
+func TestScanPatterns(t *testing.T) {
+	t.Run("bad regex returns ErrBadPolicy naming index 0", func(t *testing.T) {
+		body := `{"scan_patterns": ["("]}`
+		_, err := load(t, body)
+		if err == nil {
+			t.Fatalf("Load: got nil error, want ErrBadPolicy")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+		}
+		if !strings.Contains(err.Error(), "scan_patterns[0]") {
+			t.Fatalf("Load error %q does not name index 0 (scan_patterns[0])", err.Error())
+		}
+	})
+
+	t.Run("valid patterns load", func(t *testing.T) {
+		body := `{"scan_patterns": ["foo.*bar", "(?i)baz"]}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		want := []string{"foo.*bar", "(?i)baz"}
+		if !reflect.DeepEqual(p.ScanPatterns, want) {
+			t.Fatalf("ScanPatterns = %v, want %v", p.ScanPatterns, want)
+		}
+	})
+}

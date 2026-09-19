@@ -1465,3 +1465,48 @@ func TestStatusNoUsageNoRows(t *testing.T) {
 		t.Errorf("json must omit both when nil: %s", raw)
 	}
 }
+
+func TestRenderStatusOutcome(t *testing.T) {
+	t.Run("prints outcome when halted", func(t *testing.T) {
+		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)
+		rep := Report{
+			Bindings: []BindingStatus{
+				{
+					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
+					Last: &LastEvent{
+						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+						Note: "noreport", Outcome: "halted",
+					},
+				},
+			},
+		}
+		text := RenderStatus(rep)
+		want := "last     " + ts.Local().Format("15:04:05") + " report to_planner round 1 (noreport) halted\n"
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in status text:\n%s", want, text)
+		}
+	})
+
+	t.Run("prints nothing for done outcome", func(t *testing.T) {
+		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)
+		rep := Report{
+			Bindings: []BindingStatus{
+				{
+					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
+					Last: &LastEvent{
+						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+						Outcome: "done",
+					},
+				},
+			},
+		}
+		text := RenderStatus(rep)
+		want := "last     " + ts.Local().Format("15:04:05") + " report to_planner round 1\n"
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in status text:\n%s", want, text)
+		}
+		if strings.Contains(text, "done") {
+			t.Errorf("status text should not print 'done' outcome:\n%s", text)
+		}
+	})
+}

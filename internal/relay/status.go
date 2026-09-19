@@ -126,7 +126,8 @@ type LastEvent struct {
 	// Note is the entry's note, when it has one. A nudge is a plan entry to
 	// the builder and a scrape is a report entry to the planner, so without
 	// it the last line after either reads exactly like the ordinary case.
-	Note string `json:"note,omitempty"`
+	Note    string `json:"note,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // CloseInfo is the newest round close's commit facts, from its diff log
@@ -279,7 +280,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		row.Last = &LastEvent{
 			TS: last.TS, Round: last.Round,
 			Direction: last.Direction, Kind: last.Kind,
-			Note: last.Note,
+			Note: last.Note, Outcome: last.Outcome,
 		}
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
@@ -287,7 +288,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 			row.LastPayload = &LastEvent{
 				TS: e.TS, Round: e.Round,
 				Direction: e.Direction, Kind: e.Kind,
-				Note: e.Note,
+				Note: e.Note, Outcome: e.Outcome,
 			}
 			break
 		}
@@ -557,6 +558,9 @@ func RenderStatus(r Report) string {
 				b.Last.TS.Local().Format("15:04:05"), b.Last.Kind, b.Last.Direction, b.Last.Round)
 			if b.Last.Note != "" {
 				fmt.Fprintf(&sb, " (%s)", b.Last.Note)
+			}
+			if b.Last.Outcome != "" && b.Last.Outcome != OutcomeDone {
+				fmt.Fprintf(&sb, " %s", b.Last.Outcome)
 			}
 			fmt.Fprint(&sb, "\n")
 		}
