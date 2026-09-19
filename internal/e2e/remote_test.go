@@ -50,6 +50,12 @@ func tickUntil(t *testing.T, deadline time.Duration, step func() bool) {
 
 func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	return newServerWithContext(t, ctx, cancel)
+}
+
+func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
+	t.Helper()
 	root := filepath.Join(t.TempDir(), "serve")
 	now := time.Now()
 
@@ -105,7 +111,6 @@ func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) re
 		t.Fatalf("serve.New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.ListenAndServe(ctx, serve.ListenConfig{
@@ -379,5 +384,274 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	}
 	if cb.State != store.StateDone {
 		t.Fatalf("step 4: client binding state = %q, want done", cb.State)
+	}
+}
+
+func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
+	ctx := context.Background()
+
+	srv, url, fp, enroll, srvStore, runner := newServer(t)
+	rt, hd, kp := newClient(t, url, fp)
+	pubLine := remote.MarshalPublic(kp.Public, "test client")
+	owner := enroll(pubLine)
+	repo := newRepo(t)
+
+	_, err := relay.Add(ctx, rt, relay.AddOptions{
+		Name:        "api",
+		Server:      "zen",
+		Repo:        repo,
+		PlannerPane: "p1",
+	})
+	if err != nil {
+		t.Fatalf("step 1: relay.Add: %v", err)
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
+		t.Fatalf("step 2: write plan: %v", err)
+	}
+	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+		t.Fatalf("step 2: relay.Send: %v", err)
+	}
+
+	serverStore := srvStore(owner)
+	gitClient := git.NewClient("git", 10*time.Second, 0)
+	serverRT := relay.Runtime{
+		Store:  serverStore,
+		Git:    gitClient,
+		Runner: runner,
+	}
+	finishRound(t, serverRT, "api", 1, "round 1 done")
+
+	// several srv.Ticks with no client ticks (the laptop is asleep)
+	for i := 0; i < 3; i++ {
+		if err := srv.Tick(ctx); err != nil {
+			t.Fatalf("step 3: srv.Tick %d: %v", i, err)
+		}
+	}
+
+	// Assert the server view is closed with acked_round 0
+	sv, err := rt.Remote.GetBinding(ctx, "zen", "api")
+	if err != nil {
+		t.Fatalf("step 3: GetBinding: %v", err)
+	}
+	if sv.RoundState != "closed" {
+		t.Fatalf("step 3: server RoundState = %q, want closed", sv.RoundState)
+	}
+	if sv.AckedRound != 0 {
+		t.Fatalf("step 3: server AckedRound = %d, want 0", sv.AckedRound)
+	}
+
+	// Then client ticks:
+	clientDaemon := relay.NewDaemon(rt, time.Second)
+	tickUntil(t, 10*time.Second, func() bool {
+		_ = clientDaemon.Tick(ctx)
+		entries, err := rt.Store.ReadLog("api")
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if e.Kind == store.KindReport && e.Round == 1 {
+				return true
+			}
+		}
+		return false
+	})
+
+	// exactly one prompt to the planner, acked_round == 1
+	hd.mu.Lock()
+	promptCount := len(hd.prompts)
+	hd.mu.Unlock()
+	if promptCount != 1 {
+		t.Fatalf("step 3: prompts = %d, want 1", promptCount)
+	}
+
+	sv, err = rt.Remote.GetBinding(ctx, "zen", "api")
+	if err != nil {
+		t.Fatalf("step 3: GetBinding after client tick: %v", err)
+	}
+	if sv.AckedRound != 1 {
+		t.Fatalf("step 3: server AckedRound = %d, want 1", sv.AckedRound)
+	}
+
+	// and a second batch of client ticks adds no second report entry and no second prompt (idempotence)
+	for i := 0; i < 3; i++ {
+		_ = clientDaemon.Tick(ctx)
+	}
+
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("step 4: ReadLog: %v", err)
+	}
+	reportEntries := 0
+	for _, e := range entries {
+		if e.Kind == store.KindReport && e.Round == 1 {
+			reportEntries++
+		}
+	}
+	if reportEntries != 1 {
+		t.Fatalf("step 4: report entries count = %d, want 1", reportEntries)
+	}
+
+	hd.mu.Lock()
+	promptCountAfter := len(hd.prompts)
+	hd.mu.Unlock()
+	if promptCountAfter != 1 {
+		t.Fatalf("step 4: prompts after second batch = %d, want 1", promptCountAfter)
+	}
+}
+
+func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
+	ctx := context.Background()
+
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+	srv, url, fp, enroll, _, _ := newServerWithContext(t, srvCtx, srvCancel)
+	rt, hd, kp := newClient(t, url, fp)
+	pubLine := remote.MarshalPublic(kp.Public, "test client")
+	_ = enroll(pubLine)
+	repo := newRepo(t)
+
+	_, err := relay.Add(ctx, rt, relay.AddOptions{
+		Name:        "api",
+		Server:      "zen",
+		Repo:        repo,
+		PlannerPane: "p1",
+	})
+	if err != nil {
+		t.Fatalf("step 1: relay.Add: %v", err)
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
+		t.Fatalf("step 2: write plan: %v", err)
+	}
+	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+		t.Fatalf("step 2: relay.Send: %v", err)
+	}
+
+	// cancel the server's context (listener down)
+	srvCancel()
+	tickUntil(t, 5*time.Second, func() bool {
+		return srv.Addr() == nil
+	})
+
+	// client Tick
+	clientDaemon := relay.NewDaemon(rt, time.Second)
+	if err := clientDaemon.Tick(ctx); err != nil {
+		t.Fatalf("step 3: clientDaemon.Tick: %v", err)
+	}
+
+	// Assert: state stays active, Builder.RemoteStatus == "unreachable", RemoteUnreachableSince set,
+	// no notice from fakeHerdr.Notify. Restart a server? Not needed: the assertion is the non-halt.
+	cb, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("step 3: load client binding: %v", err)
+	}
+	if cb.State != store.StateActive {
+		t.Fatalf("step 3: state = %q, want active", cb.State)
+	}
+	if cb.Builder.RemoteStatus != "unreachable" {
+		t.Fatalf("step 3: Builder.RemoteStatus = %q, want unreachable", cb.Builder.RemoteStatus)
+	}
+	if cb.RemoteUnreachableSince.IsZero() {
+		t.Fatalf("step 3: RemoteUnreachableSince is zero, want non-zero")
+	}
+
+	hd.mu.Lock()
+	noticeCount := len(hd.notices)
+	hd.mu.Unlock()
+	if noticeCount != 0 {
+		t.Fatalf("step 3: notices count = %d, want 0", noticeCount)
+	}
+}
+
+func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
+	ctx := context.Background()
+
+	srv, url, fp, enroll, srvStore, runner := newServer(t)
+	rt, hd, kp := newClient(t, url, fp)
+	pubLine := remote.MarshalPublic(kp.Public, "test client")
+	owner := enroll(pubLine)
+	repo := newRepo(t)
+
+	_, err := relay.Add(ctx, rt, relay.AddOptions{
+		Name:        "api",
+		Server:      "zen",
+		Repo:        repo,
+		PlannerPane: "p1",
+	})
+	if err != nil {
+		t.Fatalf("step 1: relay.Add: %v", err)
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
+		t.Fatalf("step 2: write plan: %v", err)
+	}
+	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+		t.Fatalf("step 2: relay.Send: %v", err)
+	}
+
+	serverStore := srvStore(owner)
+	gitClient := git.NewClient("git", 10*time.Second, 0)
+	serverRT := relay.Runtime{
+		Store:  serverStore,
+		Git:    gitClient,
+		Runner: runner,
+	}
+	finishRound(t, serverRT, "api", 1, "round 1 done")
+
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatalf("step 3: srv.Tick: %v", err)
+	}
+
+	// then relay.SyncRemote(ctx, rt) (no daemon tick)
+	if _, err := relay.SyncRemote(ctx, rt); err != nil {
+		t.Fatalf("step 3: SyncRemote: %v", err)
+	}
+
+	// Assert: report entry exists and is pending (not delivered: hd.prompts empty), state is not orphaned;
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("step 3: ReadLog: %v", err)
+	}
+	foundPendingReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport && e.Round == 1 {
+			if !e.Confirmed {
+				foundPendingReport = true
+			}
+		}
+	}
+	if !foundPendingReport {
+		t.Fatalf("step 3: pending report entry not found in log: %+v", entries)
+	}
+
+	hd.mu.Lock()
+	promptCount := len(hd.prompts)
+	hd.mu.Unlock()
+	if promptCount != 0 {
+		t.Fatalf("step 3: prompts count = %d, want 0", promptCount)
+	}
+
+	cb, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("step 3: load client binding: %v", err)
+	}
+	if cb.State == store.StateOrphaned {
+		t.Fatalf("step 3: state is orphaned")
+	}
+
+	// then one daemon Tick delivers it (one prompt)
+	clientDaemon := relay.NewDaemon(rt, time.Second)
+	if err := clientDaemon.Tick(ctx); err != nil {
+		t.Fatalf("step 4: clientDaemon.Tick: %v", err)
+	}
+
+	hd.mu.Lock()
+	promptsAfter := len(hd.prompts)
+	hd.mu.Unlock()
+	if promptsAfter != 1 {
+		t.Fatalf("step 4: prompts count after daemon tick = %d, want 1", promptsAfter)
 	}
 }
