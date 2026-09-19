@@ -767,3 +767,76 @@ func TestUpdateRefCreatesAndCAS(t *testing.T) {
 		t.Fatalf("ref after successful CAS = %q, want %q", sha, c2)
 	}
 }
+
+func TestCommitTreeFromLinkedWorktree(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// git init --bare a repo
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	// seed it by cloning, committing one file and pushing refs/heads/relay/api
+	seedDir := t.TempDir()
+	runGit(t, seedDir, "clone", bare, ".")
+	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, seedDir, "add", "file.txt")
+	runGit(t, seedDir, "commit", "-m", "init")
+	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relay/api")
+
+	// git worktree add from the bare repo at that branch
+	wt := t.TempDir()
+	runGit(t, bare, "worktree", "add", wt, "refs/heads/relay/api")
+
+	// write an untracked file in the worktree
+	if err := os.WriteFile(filepath.Join(wt, "untracked.txt"), []byte("dirty work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// SnapshotTree on the worktree
+	tree, err := client.SnapshotTree(ctx, wt)
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	head, ok, err := client.RefSHA(ctx, bare, "refs/heads/relay/api")
+	if err != nil || !ok {
+		t.Fatalf("RefSHA(bare): %v, ok=%v", err, ok)
+	}
+
+	// CommitTree(bare, tree, head, msg)
+	msg := "[relay] api: round 1, uncommitted work"
+	sha, err := client.CommitTree(ctx, bare, tree, head, msg)
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+
+	// UpdateRef(bare, "refs/relay/api/round-1", sha, "")
+	sideRef := "refs/relay/api/round-1"
+	if err := client.UpdateRef(ctx, bare, sideRef, sha, ""); err != nil {
+		t.Fatalf("UpdateRef(sideRef): %v", err)
+	}
+
+	// assert git cat-file -p <sha> in the bare repo shows tree, parent, author relay <relay@localhost>
+	catOut := runGit(t, bare, "cat-file", "-p", sha)
+	if !strings.Contains(catOut, "tree "+tree) {
+		t.Errorf("cat-file missing tree %q in:\n%s", tree, catOut)
+	}
+	if !strings.Contains(catOut, "parent "+head) {
+		t.Errorf("cat-file missing parent %q in:\n%s", head, catOut)
+	}
+	if !strings.Contains(catOut, "author relay <relay@localhost>") {
+		t.Errorf("cat-file missing relay author in:\n%s", catOut)
+	}
+	if !strings.Contains(catOut, "committer relay <relay@localhost>") {
+		t.Errorf("cat-file missing relay committer in:\n%s", catOut)
+	}
+
+	// refs/heads/relay/api still equals head
+	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relay/api")
+	if err != nil || !ok || headAfter != head {
+		t.Fatalf("refs/heads/relay/api changed: got %q, want %q", headAfter, head)
+	}
+}

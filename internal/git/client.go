@@ -520,3 +520,39 @@ func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string)
 	_, err := c.run(ctx, dir, nil, args...)
 	return err
 }
+
+// CommitTree creates a commit object directly from a tree and parent commit.
+//
+// The commit is created with fixed author and committer identity:
+//
+//	GIT_AUTHOR_NAME=relay GIT_AUTHOR_EMAIL=relay@localhost
+//	GIT_COMMITTER_NAME=relay GIT_COMMITTER_EMAIL=relay@localhost
+//
+// The environment variables are passed through run's env parameter, overriding
+// the caller's identity. A global commit.gpgsign does not apply because
+// commit-tree never signs unless -S is given.
+//
+// Preconditions:  dir is inside a git repository; tree is a valid tree SHA;
+//
+//	parent is empty or a valid commit SHA.
+//
+// Postconditions: the commit exists in the object database, unreferenced.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {
+	args := []string{"commit-tree", tree}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	args = append(args, "-m", message)
+	env := []string{
+		"GIT_AUTHOR_NAME=relay",
+		"GIT_AUTHOR_EMAIL=relay@localhost",
+		"GIT_COMMITTER_NAME=relay",
+		"GIT_COMMITTER_EMAIL=relay@localhost",
+	}
+	out, err := c.run(ctx, dir, env, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
