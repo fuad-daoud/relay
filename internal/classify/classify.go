@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 )
 
 // Kind says what a paragraph was in the source text.
@@ -45,6 +46,12 @@ type Status struct {
 	Model      string // effective model name when configured
 	KeySource  string // "env", "file", or "" when no key was found
 	KeyPath    string // the file path consulted (always set when Configured), for the doctor message
+
+	// KeyFileMode is the key file's permission bits when a key file was found,
+	// whether or not it was usable; 0 when no file exists. For doctor.
+	KeyFileMode os.FileMode
+	// KeyFileLoose is true when the file exists but KeyFileUsable refused it.
+	KeyFileLoose bool
 }
 
 // Classifier answers the injection question over pre-split paragraphs.

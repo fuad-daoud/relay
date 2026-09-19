@@ -796,10 +796,12 @@ beside the regex scan. When absent, relay scans with regexes only. The block
 requires `"provider": "jev"`; `model` defaults to `"jev-latest"`,
 `injection_threshold` defaults to `0.7`, and `timeout_ms` defaults to `4000`.
 The API key is read from the `TYPESAFE_API_KEY` environment variable or from
-`~/.config/relay/typesafe.key`. The key file exists because the daemon runs as
-a systemd user unit that inherits no login environment (`systemctl --user
-set-environment TYPESAFE_API_KEY=...` also works). `relay doctor` reports which
-key source was found or warns if neither is set. In `relay log`, an entry like
+`~/.config/relay/typesafe.key`. The key is stripped from every builder's
+environment so that agents running arbitrary plans never inherit relay's own secrets.
+The key file exists because the daemon runs as a systemd user unit that inherits no login
+environment (`systemctl --user set-environment TYPESAFE_API_KEY=...` also works). The key
+file must be mode 0600 and is ignored otherwise, with `relay doctor` naming it. `relay doctor`
+reports which key source was found or warns if neither is set. In `relay log`, an entry like
 `flagged=3 by=both p=0.94` records the de-duplicated union of regex-hit lines
 and classifier paragraphs at or above the threshold, which judge flagged the
 content (`regex`, `jev`, or `both`), and the maximum probability seen across

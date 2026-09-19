@@ -285,3 +285,30 @@ func TestExitTrailerMatchesUsage(t *testing.T) {
 			usage.ExitTrailerForTest(), ExitTrailer)
 	}
 }
+
+func TestStartStripsDeniedEnv(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "leak")
+	t.Setenv("RELAY_T4", "keep")
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", `echo "k=${TYPESAFE_API_KEY-unset}"; echo "r=$RELAY_T4"`}, LogPath: log, StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "k=unset") {
+		t.Errorf("stream does not contain k=unset: %q", out)
+	}
+	if !strings.Contains(out, "r=keep") {
+		t.Errorf("stream does not contain r=keep: %q", out)
+	}
+}

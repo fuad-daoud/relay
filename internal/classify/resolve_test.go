@@ -168,4 +168,69 @@ func TestResolve(t *testing.T) {
 			t.Fatalf("expected Unavailable, got %T", cls)
 		}
 	})
+
+	t.Run("0644 key file -> Unavailable, KeySource empty, KeyFileLoose true, reason names mode; 0600 -> file key", func(t *testing.T) {
+		cfgDir := t.TempDir()
+		relayDir := filepath.Join(cfgDir, "relay")
+		if err := os.MkdirAll(relayDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		keyPath := filepath.Join(relayDir, "typesafe.key")
+		if err := os.WriteFile(keyPath, []byte("file-secret-key\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := &policy.Classify{Provider: "jev"}
+		getenv := func(string) string { return "" }
+
+		// Loose permissions (0644)
+		cls, st := Resolve(cfg, cfgDir, getenv)
+		if !st.Configured {
+			t.Fatal("expected Configured true")
+		}
+		if st.KeySource != "" {
+			t.Errorf("KeySource = %q, want empty", st.KeySource)
+		}
+		if !st.KeyFileLoose {
+			t.Errorf("KeyFileLoose = %v, want true", st.KeyFileLoose)
+		}
+		if st.KeyFileMode != 0o644 {
+			t.Errorf("KeyFileMode = 0%o, want 0644", st.KeyFileMode)
+		}
+
+		unavail, ok := cls.(Unavailable)
+		if !ok {
+			t.Fatalf("expected Unavailable, got %T", cls)
+		}
+		if !strings.Contains(unavail.Reason, "0644") {
+			t.Errorf("reason %q does not contain 0644", unavail.Reason)
+		}
+		_, err := unavail.Judge(context.Background(), Request{Source: "report", Paragraphs: []Paragraph{{Index: 0, Kind: KindProse, Text: "t", Line: 1, Lines: 1}}})
+		if err == nil || !strings.Contains(err.Error(), "readable by others") {
+			t.Errorf("Judge error %v does not contain 'readable by others'", err)
+		}
+
+		// Fixed permissions (0600)
+		if err := os.Chmod(keyPath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		cls2, st2 := Resolve(cfg, cfgDir, getenv)
+		if !st2.Configured {
+			t.Fatal("expected Configured true")
+		}
+		if st2.KeySource != "file" {
+			t.Errorf("KeySource = %q, want file", st2.KeySource)
+		}
+		if st2.KeyFileLoose {
+			t.Errorf("KeyFileLoose = %v, want false", st2.KeyFileLoose)
+		}
+		client, ok := cls2.(*Client)
+		if !ok {
+			t.Fatalf("expected *Client, got %T", cls2)
+		}
+		if client.Key != "file-secret-key" {
+			t.Errorf("client.Key = %q, want file-secret-key", client.Key)
+		}
+	})
 }

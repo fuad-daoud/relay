@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,25 @@ func Resolve(cfg *policy.Classify, configDir string, getenv func(string) string)
 			st.KeySource = "env"
 			return NewClient(envKey, cfg.ModelName()), st
 		}
+	}
+
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			st.KeySource = ""
+			reason := fmt.Sprintf("no key: set TYPESAFE_API_KEY or write %s", keyPath)
+			return Unavailable{Reason: reason}, st
+		}
+		st.KeySource = ""
+		reason := fmt.Sprintf("cannot stat %s: %v", keyPath, err)
+		return Unavailable{Reason: reason}, st
+	}
+
+	st.KeyFileMode = info.Mode().Perm()
+	if ok, reason := KeyFileUsable(st.KeyFileMode); !ok {
+		st.KeyFileLoose = true
+		st.KeySource = ""
+		return Unavailable{Reason: reason}, st
 	}
 
 	if data, err := os.ReadFile(keyPath); err == nil {
