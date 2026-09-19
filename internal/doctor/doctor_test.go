@@ -1027,6 +1027,9 @@ func TestClassifyCheck(t *testing.T) {
 		if !strings.Contains(c.Detail, "jev-latest; key from TYPESAFE_API_KEY") {
 			t.Errorf("Detail = %q", c.Detail)
 		}
+		if !strings.HasSuffix(c.Detail, "; not passed to builders") {
+			t.Errorf("Detail %q does not end with '; not passed to builders'", c.Detail)
+		}
 		if c.Fix != "" {
 			t.Errorf("Fix = %q, want empty", c.Fix)
 		}
@@ -1073,6 +1076,30 @@ func TestClassifyCheck(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "set TYPESAFE_API_KEY for the daemon, or write the key to /home/user/.config/relay/typesafe.key (chmod 600)") {
 			t.Errorf("Fix = %q", c.Fix)
+		}
+	})
+
+	t.Run("configured with loose key file", func(t *testing.T) {
+		st := classify.Status{
+			Configured:   true,
+			Model:        "jev-latest",
+			KeySource:    "",
+			KeyPath:      "/home/user/.config/relay/typesafe.key",
+			KeyFileLoose: true,
+			KeyFileMode:  0o644,
+		}
+		c := ClassifyCheck(st)
+		if c.Name != "classify" {
+			t.Errorf("Name = %q, want classify", c.Name)
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("Severity = %v, want SevWarn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "readable by others") || !strings.Contains(c.Detail, "0644") {
+			t.Errorf("Detail = %q", c.Detail)
+		}
+		if !strings.HasPrefix(c.Fix, "chmod 600 ") {
+			t.Errorf("Fix = %q, want prefix 'chmod 600 '", c.Fix)
 		}
 	})
 }

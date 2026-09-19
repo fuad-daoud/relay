@@ -107,7 +107,7 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	argv := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", bin}, spec.Argv[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(os.Environ(), spec.Env...)
+	cmd.Env = ChildEnv(os.Environ(), DeniedEnv, spec.Env)
 	cmd.Stdin = nil
 	cmd.Stdout = streamf
 	cmd.Stderr = logf

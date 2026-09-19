@@ -616,8 +616,10 @@ func usageChecks(env Env, cfg runConfig) []Check {
 // fails doctor: regex runs regardless.
 //
 //	!st.Configured                  -> SevOK,   Detail "regex only (no classify block in policy.json)"
-//	Configured, KeySource "env"     -> SevOK,   Detail "<model>; key from TYPESAFE_API_KEY"
+//	Configured, KeySource "env"     -> SevOK,   Detail "<model>; key from TYPESAFE_API_KEY; not passed to builders"
 //	Configured, KeySource "file"    -> SevOK,   Detail "<model>; key from <KeyPath>"
+//	Configured, KeyFileLoose        -> SevWarn, Detail "<model> configured but <KeyPath> is readable by others (mode 0644); ignored",
+//	                                             Fix "chmod 600 <KeyPath>"
 //	Configured, KeySource ""        -> SevWarn, Detail "<model> configured but no key found; the daemon falls back to regex",
 //	                                             Fix "set TYPESAFE_API_KEY for the daemon, or write the key to <KeyPath> (chmod 600)"
 //
@@ -636,14 +638,19 @@ func ClassifyCheck(st classify.Status) Check {
 	switch st.KeySource {
 	case "env":
 		c.Severity = SevOK
-		c.Detail = fmt.Sprintf("%s; key from TYPESAFE_API_KEY", st.Model)
+		c.Detail = fmt.Sprintf("%s; key from TYPESAFE_API_KEY; not passed to builders", st.Model)
 	case "file":
 		c.Severity = SevOK
 		c.Detail = fmt.Sprintf("%s; key from %s", st.Model, st.KeyPath)
 	default:
 		c.Severity = SevWarn
-		c.Detail = fmt.Sprintf("%s configured but no key found; the daemon falls back to regex", st.Model)
-		c.Fix = fmt.Sprintf("set TYPESAFE_API_KEY for the daemon, or write the key to %s (chmod 600)", st.KeyPath)
+		if st.KeyFileLoose {
+			c.Detail = fmt.Sprintf("%s configured but %s is readable by others (mode 0%o); ignored", st.Model, st.KeyPath, st.KeyFileMode.Perm())
+			c.Fix = fmt.Sprintf("chmod 600 %s", st.KeyPath)
+		} else {
+			c.Detail = fmt.Sprintf("%s configured but no key found; the daemon falls back to regex", st.Model)
+			c.Fix = fmt.Sprintf("set TYPESAFE_API_KEY for the daemon, or write the key to %s (chmod 600)", st.KeyPath)
+		}
 	}
 	return c
 }
