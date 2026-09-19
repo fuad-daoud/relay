@@ -13,7 +13,10 @@ server); #142's cost surfaces gain an owner dimension.
 **Surface freeze:** `servers`, `client *` and `serve *` are new verbs. #114
 step 1 froze the verb list until ~2026-10-12. This lands after the freeze
 lifts; implementation may start on a branch before then.
-**Status:** draft; plan to follow at `docs/plans/2026-09-19-remote-builders.md`.
+**Status:** implemented 2026-09-19 in five PRs (#206 `internal/remote`, #207
+server core, #208 `relay serve`, #210 client, #212 surfaces) plus the
+in-process end-to-end in `internal/e2e`. Plans: `docs/plans/2026-09-19-remote-builders-*.md`.
+Amendments made during implementation are marked **[amended]** below.
 
 ## 1. System overview
 
@@ -84,10 +87,10 @@ laptop (client)                          zen (server)
 planner pane (herdr)                     relay serve --listen :7777
 relay daemon  --- HTTPS, signed ------>  server daemon: headless rounds
 client store                             server store: all owners' bindings
-  <name>/binding.json  Mode=remote         serve/bindings/<owner>/<name>/binding.json
-  <name>/NNN-{plan,report,diff,log}        serve/bindings/<owner>/<name>/NNN-{plan,report,diff,log,stream}
-  repo: branch relay/<name>                serve/repos/<owner>/<repo_id>.git
-                                           serve/worktrees/<owner>/<name>
+  <name>/binding.json  Mode=remote         serve/bindings/<owner-hex>/<name>/binding.json
+  <name>/NNN-{plan,report,diff,log}        serve/bindings/<owner-hex>/<name>/NNN-{plan,report,diff,log,stream}
+  repo: branch relay/<name>                serve/repos/<owner-hex>/<repo_id>.git
+                                           serve/bindings/<owner-hex>/.worktrees/<name>
 ```
 
 - **Client config:** `~/.config/relay/servers.json` (`{"zen": {"url":
@@ -96,7 +99,12 @@ client store                             server store: all owners' bindings
   `userConfigRoot()`. No server configured = today's behaviour.
 - **Server:** `relay serve` on the same binary. State under the normal
   `$XDG_STATE_HOME/relay` plus `serve/`. Candidates and policy are the
-  ordinary config files on that host.
+  ordinary config files on that host. **[amended]** Each owner is a
+  separate `store.Store` rooted at `serve/bindings/<owner-hex>/`, where
+  `<owner-hex>` is the client id's digest as 64 hex characters
+  (`ClientID.Dir()`): the `SHA256:<base64>` form contains `/`. The
+  worktree is that store's own `WorktreePath(name)`, so `done`, `unbind`
+  and `gc` work unchanged on a server binding.
 - **Client binding:** `relay add --name api --server zen [--base <ref>]
   [--builder <token>]`. `Builder.Mode = remote`, `Builder.Server = "zen"`.
   No local worktree; the local branch `relay/api` is created at `--base`
@@ -143,6 +151,9 @@ client store                             server store: all owners' bindings
   appends `{id, label, pubkey, enrolled_at}` to `serve/clients.json`.
   `relay serve clients` lists; `relay serve revoke <id>` sets `revoked_at`
   (bindings stay, the key stops working); re-enrolling clears it.
+  **[amended]** A running server re-reads `clients.json` whenever the
+  file's mtime or size changes, so enroll and revoke take effect without
+  a restart (found by the end-to-end test, plan 4b).
 - Nothing over the network can enroll. The enrollment channel is "the
   admin pastes a public key".
 
@@ -223,6 +234,9 @@ lists across owners.
   dirty_commit:   sha or "" (closed only),
   report_outcome: structured tail per #198, parsed server-side,
   acked_round:    int,
+  closed_round:   int,                                   [amended] the round result_commit belongs to
+  diff_note, diff_commits, diff_tree:                    [amended] the server's diff entry at close, so
+                                                         the client writes its diff entry without a baseline
   candidate:      token,
   round_started_at, round_cap, round_timeout_ms
 }
@@ -233,7 +247,9 @@ lists across owners.
 `{"error": "<code>", "message": "<sentence>"}`. Codes are a closed set:
 `not_enrolled`, `revoked`, `bad_signature`, `stale`, `not_found`,
 `round_open`, `round_started`, `not_fast_forward`, `no_runner`,
-`spawn_failed`, `too_large`, `version`. The client prints `<server>:
+`spawn_failed`, `too_large`, `version`, **[amended]** `invalid` (400: a
+malformed create -- bad name, missing repo id, base commit not 40 hex; also
+409 for a duplicate name). The client prints `<server>:
 <message>`, never a raw status.
 
 ### 3.3 Sizes
@@ -272,6 +288,14 @@ released on `done`, removed on `unbind`.
 
 ### 4.3 Outbound, close, inbound
 
+- **[amended] The outbound ref.** git refuses to fetch into a branch a
+  worktree has checked out, and the server's worktree holds
+  `relay/<name>`. So the client points `refs/relay/<name>/out` at its
+  branch head and bundles that; the server absorbs it into the bare repo
+  and fast-forwards the worktree with `merge --ff-only` (`422
+  not_fast_forward` when it cannot; a dirty-tree conflict is the same code
+  with its own message). Inbound is unchanged: the client never has
+  `relay/<name>` checked out.
 - **First send:** `Snapshot(since="")` bundles the full history of
   `base_commit`. **Later sends:** `since = LastShipped`; usually an empty
   bundle since the planner does not edit `relay/<name>`. Server `Absorb`:
@@ -348,7 +372,7 @@ refuse with nothing recorded.
 
 | verb | remote binding |
 |---|---|
-| `add --server zen [--builder tok] [--base ref]` | validates `tok` against `/v1/candidates`; creates local `relay/<name>` at base; `POST /v1/bindings`; local binding `Mode=remote` |
+| `add --server zen [--builder tok] [--base ref]` | validates `tok` against `/v1/candidates`; `POST /v1/bindings` first, then creates local `relay/<name>` at base; a failure after the server agreed removes the server binding and the branch. **[amended]** Remote bindings are exempt from the one-binding-per-CWD rule and are never resolved by cwd: several per repo, always addressed by `--name` |
 | `bind --server`; `fork` from/to remote | refused: `remote builders are add-only`; `fork across servers is not supported` |
 | `send`, `status`, `ui`, `show`, `log`, `wait`, `pull` | work; reads sync first |
 | `unavailable <token>` | forwarded; local ledger untouched |
@@ -399,10 +423,10 @@ discipline).
 | `relay serve init` | `server.key`, cert; prints fingerprint; refuses to overwrite |
 | `relay serve enroll --label L --key K` / `clients` / `revoke <id>` | `clients.json` |
 | `relay serve fingerprint` | for clients to pin |
-| `relay status` | every binding, `owner` column first (label, else id prefix), NEEDS YOU on top |
-| `relay log/show/tab <name> [--owner L]` | `--owner` when the bare name is ambiguous; refuse with the matches otherwise |
+| `relay serve status` **[amended: under `serve`]** | every owner's bindings grouped under the owner's label; the single-store verbs are not multi-owner |
+| `relay serve log/show/tab --owner L <name>` | follow-up, not shipped |
 | `relay unavailable <token>` | gates the server's candidate; same code, same ledger |
-| `relay unbind/done/gc [--owner L] <name>` | admin ends anyone's binding; the owner's client halts with `binding removed by the server admin` on its next tick |
+| `relay serve unbind --owner <label or id> <name> [--force]` **[amended]** | admin ends anyone's binding (archived); refused while a round runs unless `--force`; the owner's client halts with `binding removed by the server admin` on its next tick |
 | `relay serve gc --abandoned 30d` | archives bindings whose owner made no signed request in N days; branch and files kept |
 | `relay doctor` | plus listener, cert expiry, enrolled clients, `serve/` writable, harness logins |
 

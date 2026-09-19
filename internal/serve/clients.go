@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,33 +27,91 @@ type Client struct {
 	RevokedAt  time.Time       `json:"revoked_at,omitempty"`
 }
 
+// fileStamp records the ModTime and Size of clients.json at the last successful read;
+// zero when the file was absent.
+//
+// Mtime resolution on some filesystems is one second; Size is in the stamp
+// so two writes inside one second with different content still differ.
+// Two writes inside one second with the same size would be missed, but
+// enroll and revoke are human-paced operations.
+type fileStamp struct {
+	modTime time.Time
+	size    int64
+}
+
 type Clients struct {
-	path string
-	mu   sync.Mutex
-	list []Client
+	path       string
+	mu         sync.Mutex
+	list       []Client
+	stamp      fileStamp
+	warnLogged map[string]bool
+}
+
+func (c *Clients) refresh() error {
+	if c.path == "" {
+		return nil
+	}
+	st, err := os.Stat(c.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if c.stamp != (fileStamp{}) {
+				c.list = nil
+				c.stamp = fileStamp{}
+			}
+			return nil
+		}
+		return err
+	}
+
+	if c.stamp != (fileStamp{}) && st.ModTime().Equal(c.stamp.modTime) && st.Size() == c.stamp.size {
+		return nil
+	}
+
+	data, err := os.ReadFile(c.path)
+	if err != nil {
+		return err
+	}
+	var parsed []Client
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	c.list = parsed
+	c.stamp = fileStamp{
+		modTime: st.ModTime(),
+		size:    st.Size(),
+	}
+	return nil
+}
+
+func (c *Clients) warnOnceLocked(err error) {
+	if err == nil {
+		return
+	}
+	msg := err.Error()
+	if c.warnLogged == nil {
+		c.warnLogged = make(map[string]bool)
+	}
+	if !c.warnLogged[msg] {
+		c.warnLogged[msg] = true
+		slog.Warn("refresh clients", "path", c.path, "err", err)
+	}
 }
 
 func LoadClients(path string) (*Clients, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &Clients{path: path, list: []Client{}}, nil
-		}
+	c := &Clients{path: path}
+	if err := c.refresh(); err != nil {
 		return nil, err
 	}
-	var list []Client
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, err
-	}
-	return &Clients{
-		path: path,
-		list: list,
-	}, nil
+	return c, nil
 }
 
 func (c *Clients) Lookup(id remote.ClientID) (ed25519.PublicKey, remote.KeyStatus) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := c.refresh(); err != nil {
+		c.warnOnceLocked(err)
+	}
 
 	for _, cl := range c.list {
 		if cl.ID == id {
@@ -78,6 +137,10 @@ func (c *Clients) Add(label, pubLine string, now time.Time) (Client, error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := c.refresh(); err != nil {
+		return Client{}, err
+	}
 
 	for i, cl := range c.list {
 		if cl.ID == id {
@@ -114,6 +177,10 @@ func (c *Clients) Revoke(id remote.ClientID, now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if err := c.refresh(); err != nil {
+		return err
+	}
+
 	for i, cl := range c.list {
 		if cl.ID == id {
 			c.list[i].RevokedAt = now
@@ -127,6 +194,10 @@ func (c *Clients) List() []Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if err := c.refresh(); err != nil {
+		c.warnOnceLocked(err)
+	}
+
 	out := make([]Client, len(c.list))
 	copy(out, c.list)
 	return out
@@ -135,6 +206,10 @@ func (c *Clients) List() []Client {
 func (c *Clients) LabelOf(id remote.ClientID) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := c.refresh(); err != nil {
+		c.warnOnceLocked(err)
+	}
 
 	for _, cl := range c.list {
 		if cl.ID == id && cl.Label != "" {
@@ -179,5 +254,16 @@ func (c *Clients) saveLocked() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, c.path)
+	if err := os.Rename(tmpName, c.path); err != nil {
+		return err
+	}
+	st, err := os.Stat(c.path)
+	if err != nil {
+		return err
+	}
+	c.stamp = fileStamp{
+		modTime: st.ModTime(),
+		size:    st.Size(),
+	}
+	return nil
 }

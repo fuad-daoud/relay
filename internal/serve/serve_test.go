@@ -139,6 +139,116 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 	}
 }
 
+func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
+	clientsPath := filepath.Join(t.TempDir(), "clients.json")
+	c1, err := LoadClients(clientsPath)
+	if err != nil {
+		t.Fatalf("LoadClients 1: %v", err)
+	}
+	c2, err := LoadClients(clientsPath)
+	if err != nil {
+		t.Fatalf("LoadClients 2: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	pubLine := remote.MarshalPublic(kp.Public, "client 1")
+
+	// c2 should not know id initially
+	if _, status := c2.Lookup(id); status != remote.KeyUnknown {
+		t.Fatalf("Lookup before add: got %v, want KeyUnknown", status)
+	}
+
+	// Add on c1
+	if _, err := c1.Add("client1", pubLine, time.Now()); err != nil {
+		t.Fatalf("Add on c1: %v", err)
+	}
+
+	// Lookup on c2 returns KeyActive without any reload call
+	pub, status := c2.Lookup(id)
+	if status != remote.KeyActive {
+		t.Fatalf("Lookup on c2: got %v, want KeyActive", status)
+	}
+	if !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup returned wrong public key")
+	}
+}
+
+func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
+	clientsPath := filepath.Join(t.TempDir(), "clients.json")
+	c, err := LoadClients(clientsPath)
+	if err != nil {
+		t.Fatalf("LoadClients: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	pubLine := remote.MarshalPublic(kp.Public, "client 1")
+
+	if _, err := c.Add("client1", pubLine, time.Now()); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Corrupt the file. Size will differ from the formatted JSON written by Add.
+	corrupted := []byte("{invalid json, not a client list")
+	if err := os.WriteFile(clientsPath, corrupted, 0o600); err != nil {
+		t.Fatalf("write corrupted clients.json: %v", err)
+	}
+
+	// Lookup still answers from the old list
+	pub, status := c.Lookup(id)
+	if status != remote.KeyActive {
+		t.Fatalf("Lookup after corrupt file: got %v, want KeyActive", status)
+	}
+	if !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup returned wrong public key")
+	}
+}
+
+func TestClientsRefreshOnDelete(t *testing.T) {
+	clientsPath := filepath.Join(t.TempDir(), "clients.json")
+	c, err := LoadClients(clientsPath)
+	if err != nil {
+		t.Fatalf("LoadClients: %v", err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	pubLine := remote.MarshalPublic(kp.Public, "client 1")
+
+	if _, err := c.Add("client1", pubLine, time.Now()); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	pub, status := c.Lookup(id)
+	if status != remote.KeyActive {
+		t.Fatalf("Lookup before delete: got %v, want KeyActive", status)
+	}
+	if !bytes.Equal(pub, kp.Public) {
+		t.Fatalf("Lookup returned wrong public key")
+	}
+
+	// Remove the file
+	if err := os.Remove(clientsPath); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Lookup -> KeyUnknown
+	_, status = c.Lookup(id)
+	if status != remote.KeyUnknown {
+		t.Fatalf("Lookup after remove: got %v, want KeyUnknown", status)
+	}
+}
+
 // TestOwnerLabel checks the request log's owner field (#100 step 6): an
 // enrolled caller's label, and "-" -- not "" -- for a request that never
 // authenticated at all (the zero ClientID an auth failure leaves behind).
