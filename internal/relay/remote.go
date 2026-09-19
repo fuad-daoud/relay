@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -358,14 +359,26 @@ func writeTempAndRename(dest string, r io.Reader) error {
 	return os.Rename(tmpName, dest)
 }
 
-func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+// observeRemote advances b from the server's view: planner refresh, candidate
+// refresh, mirrored log, and (on a newly closed round) catchUp -- everything
+// reconcileRemote used to do, except the final delivery to the planner pane.
+// deliver reports whether the caller should follow up with deliverAndSettle;
+// it is false for every path that already returned on its own in the
+// original function (a running mirror, a fresh halt, an unreachable/cert/
+// other error).
+//
+// The split exists for SyncRemote (spec §2.2): a read path with no agents
+// list must observe the server's state without ever calling
+// deliverAndSettle, because deliverAndSettle reads a nil/empty agents list
+// as "the planner is gone" and orphans the binding.
+func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, bool, error) {
 	if planner, ok := FindAgent(agents, b.Planner); ok {
 		b.Planner = refreshEndpoint(b.Planner, planner)
 	}
 
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
-		return b, nil
+		return b, false, nil
 	}
 
 	now := rt.Now().UTC()
@@ -377,10 +390,12 @@ func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
 			if httpErr.Status == 401 {
-				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
+				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
+				return b, false, err
 			}
 			if httpErr.Status == 404 {
-				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+				return b, false, err
 			}
 		}
 		if errors.Is(err, client.ErrUnreachable) {
@@ -397,60 +412,255 @@ func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 
 			dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
 			if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
-				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
+				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
 					name, server, dur, b.Round))
+				return b, false, err
 			}
-			return b, nil
+			return b, false, nil
 		}
 		if errors.Is(err, client.ErrCertChanged) {
 			if b.Builder.RemoteStatus != "cert" {
 				slog.Warn("server certificate changed", "server", server, "binding", name)
 			}
 			b.Builder.RemoteStatus = "cert"
-			return b, nil
+			return b, false, nil
 		}
 		slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
-		return b, nil
+		return b, false, nil
 	}
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
+
+	// A server-side switch (#100): the candidate that actually ran differs
+	// from what this binding last recorded. Refresh the token and the
+	// harness kind, and log it the same way a local mid-round switch does,
+	// so usage and status name the builder that actually ran.
+	if view.Candidate != "" && view.Candidate != b.BuilderCandidate {
+		prev := b.BuilderCandidate
+		b.BuilderCandidate = view.Candidate
+		kind := ""
+		if ref, err := candidate.ParseRef(view.Candidate); err == nil {
+			kind = ref.Harness
+		}
+		b.Builder.Kind = kind
+		if err := tx.AppendLog(name, store.LogEntry{
+			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch,
+			Note:      fmt.Sprintf("switched on %s: %s -> %s", server, prev, view.Candidate),
+			Confirmed: true,
+		}); err != nil {
+			return b, false, err
+		}
+	}
 
 	switch view.RoundState {
 	case remote.RoundRunning:
 		rc, err := rt.Remote.RoundFile(ctx, server, name, b.Round, "log")
 		if err != nil {
 			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", b.Round, "err", err)
-			return b, nil
+			return b, false, nil
 		}
 		defer rc.Close()
 		logPath := rt.Store.BuilderLogPath(name, b.Round)
 		if err := writeTempAndRename(logPath, rc); err != nil {
 			slog.Warn("write builder log failed", "path", logPath, "err", err)
 		}
-		return b, nil
+		return b, false, nil
 
 	case remote.RoundNeedsYou:
-		return haltBinding(ctx, rt, b, name+": "+view.Halt)
+		b, err := haltBinding(ctx, rt, b, name+": "+view.Halt)
+		return b, false, err
 
 	case remote.RoundClosed:
 		if view.ClosedRound >= b.Round {
-			return catchUp(ctx, rt, tx, b, view, agents)
+			next, err := catchUp(ctx, rt, tx, b, view)
+			return next, true, err
 		}
-		return deliverAndSettle(ctx, rt, tx, b, agents)
+		return b, true, nil
 
 	case remote.RoundIdle:
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
 		}
-		return deliverAndSettle(ctx, rt, tx, b, agents)
+		return b, true, nil
 
 	default:
-		return deliverAndSettle(ctx, rt, tx, b, agents)
+		return b, true, nil
 	}
 }
 
-func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, agents []herdr.Agent) (store.Binding, error) {
+// reconcileRemote is the daemon tick's entry point for a remote binding: it
+// observes the server's state and, unless observeRemote already returned
+// (a halt, a running mirror, an error), delivers any pending payload to the
+// planner pane.
+func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+	next, deliver, err := observeRemote(ctx, rt, tx, b, agents)
+	if err != nil || !deliver {
+		return next, err
+	}
+	return deliverAndSettle(ctx, rt, tx, next, agents)
+}
+
+// SyncRemote runs one read-only observe pass over every remote binding that
+// is still relaying (not store.StateDone), so `relay status`, `relay pull`
+// and each `relay wait` iteration collect a closed round without the daemon
+// running (spec §2.2). It never delivers to a planner pane: it calls
+// observeRemote directly, not reconcileRemote, with a nil agents list --
+// deliverAndSettle would read that as "the planner is gone" and orphan a
+// binding whose planner simply is not running `relay daemon` right now.
+//
+// synced counts bindings whose stored state actually changed under the
+// pass; per-binding errors are joined into one returned error rather than
+// aborting, so one unreachable server does not stop another binding's sync.
+// A halt observeRemote decides on (a 401, a 404, an unreachable round past
+// its budget) still fires: only delivery is skipped here, not the same
+// observations the daemon would make.
+func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
+	if rt.Remote == nil {
+		return 0, nil
+	}
+
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return 0, err
+	}
+
+	synced := 0
+	var errs []error
+	for _, b := range bindings {
+		if !b.Builder.Remote() || b.State == store.StateDone {
+			continue
+		}
+		name := b.Name
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			fresh, err := tx.Load(name)
+			if errors.Is(err, store.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			next, _, err := observeRemote(ctx, rt, tx, fresh, nil)
+			if err != nil {
+				return err
+			}
+			if store.SameBinding(next, fresh) {
+				return nil
+			}
+			synced++
+			return tx.Save(next)
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+
+	return synced, errors.Join(errs...)
+}
+
+// ServerProbe is one configured server's reachability and enrollment, as
+// `relay servers` and `relay doctor` both report it (spec §5.5, §4.7).
+type ServerProbe struct {
+	Name  string
+	URL   string
+	State string // "enrolled" | "not enrolled" | "unreachable" | "cert changed" | "no key" | "error"
+	Label string // enrolled as
+	// Detail is the enrollment line for "not enrolled", the failure cause
+	// for "unreachable", and the error text otherwise; "" for "enrolled".
+	Detail string
+}
+
+// ProbeServers checks every configured server's reachability and this
+// client's enrollment on it, in name order. It is pure over rt.Remote (a
+// RemoteClient), so it is tested with fakeRemote, and shared by `relay
+// servers` and `relay doctor`'s per-server checks.
+//
+// rt.Remote == nil means no client key: every server probes "no key",
+// naming the fix. Otherwise each server is checked with WhoAmI: success is
+// "enrolled"; a 401 is "not enrolled" (Detail is the caller's enrollLine,
+// the line to hand the admin); ErrCertChanged is "cert changed";
+// ErrUnreachable is "unreachable" (Detail is the failure cause); anything
+// else is "error" (Detail is the error text).
+func ProbeServers(ctx context.Context, rt Runtime, servers map[string]client.ServerEntry, enrollLine string) []ServerProbe {
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	probes := make([]ServerProbe, 0, len(names))
+	for _, n := range names {
+		p := ServerProbe{Name: n, URL: servers[n].URL}
+		if rt.Remote == nil {
+			p.State = "no key"
+			p.Detail = "run relay client init"
+			probes = append(probes, p)
+			continue
+		}
+
+		who, err := rt.Remote.WhoAmI(ctx, n)
+		switch {
+		case err == nil:
+			p.State = "enrolled"
+			p.Label = who.Label
+		case errors.Is(err, client.ErrCertChanged):
+			p.State = "cert changed"
+		case errors.Is(err, client.ErrUnreachable):
+			p.State = "unreachable"
+			p.Detail = strings.TrimPrefix(err.Error(), client.ErrUnreachable.Error()+": ")
+		default:
+			var httpErr *client.HTTPError
+			if errors.As(err, &httpErr) && httpErr.Status == 401 {
+				p.State = "not enrolled"
+				p.Detail = enrollLine
+			} else {
+				p.State = "error"
+				p.Detail = err.Error()
+			}
+		}
+		probes = append(probes, p)
+	}
+	return probes
+}
+
+// probeStatusText is one ServerProbe's status word, exactly what `relay
+// servers` printed before ProbeServers existed (serverStatus in
+// cmd/relay/client.go).
+func probeStatusText(p ServerProbe) string {
+	switch p.State {
+	case "enrolled":
+		return "enrolled as " + p.Label
+	case "no key":
+		return "no client key"
+	case "not enrolled", "unreachable", "cert changed":
+		return p.State
+	default:
+		return p.Detail
+	}
+}
+
+// RenderServers formats probes as the table `relay servers` prints: one row
+// per server, name, url, and enrollment status, aligned on the longest name.
+func RenderServers(probes []ServerProbe) string {
+	if len(probes) == 0 {
+		return "no servers configured; relay client add-server <name> <url>\n"
+	}
+
+	width := 0
+	for _, p := range probes {
+		if len(p.Name) > width {
+			width = len(p.Name)
+		}
+	}
+
+	var sb strings.Builder
+	for _, p := range probes {
+		fmt.Fprintf(&sb, "%-*s  %-40s  %s\n", width, p.Name, p.URL, probeStatusText(p))
+	}
+	return sb.String()
+}
+
+func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView) (store.Binding, error) {
 	n := view.ClosedRound
 	server := b.Builder.Server
 	name := b.Name
@@ -471,6 +681,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		return b, nil
 	}
 
+	diffDownloaded := false
 	rcDiff, err := rt.Remote.RoundFile(ctx, server, name, n, "diff")
 	if err != nil {
 		var httpErr *client.HTTPError
@@ -486,6 +697,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 			slog.Warn("write diff failed", "path", rt.Store.DiffPath(name, n), "err", err)
 			return b, nil
 		}
+		diffDownloaded = true
 	}
 
 	rcLog, err := rt.Remote.RoundFile(ctx, server, name, n, "log")
@@ -544,13 +756,37 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		return b, nil
 	}
 
-	// 5. queueReport
+	// 5. queueReport. The server already recorded a diff entry at close
+	// (DiffSummary note, commits, clean/dirty); the view carried those three
+	// facts, so write the client's own diff entry from them here -- with the
+	// downloaded patch as Path -- before queueReport, which then sees the
+	// entry already exists and skips its own CaptureRoundDiff. Because
+	// queueReport only appends its "Diff:" line inside that same "no entry
+	// yet" branch, the line is added to the payload here instead, from the
+	// stored facts rather than a fresh DiffResult.
 	entries, err := tx.ReadLog(name)
 	if err != nil {
 		return b, err
 	}
+	if view.DiffNote != "" && !HasEntry(entries, n, store.DirToPlanner, store.KindDiff) {
+		diffPath := ""
+		if diffDownloaded {
+			diffPath = rt.Store.DiffPath(name, n)
+		}
+		diffEntry := store.LogEntry{
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner, Kind: store.KindDiff,
+			Path: diffPath, Note: view.DiffNote, Commits: view.DiffCommits, Tree: view.DiffTree, Confirmed: true,
+		}
+		if err := tx.AppendLog(name, diffEntry); err != nil {
+			return b, err
+		}
+		entries = append(entries, diffEntry)
+	}
 	reportPath := rt.Store.ReportPath(name, n)
 	payload := fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, reportPath)
+	if line := DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
+		payload = payload + "\n" + line
+	}
 	note := ""
 	if view.DirtyCommit != "" {
 		note = fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n)
@@ -560,9 +796,10 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		return b, err
 	}
 
-	// 6. next.Builder.RemoteStatus = "idle"; return deliverAndSettle
+	// 6. Mark idle; the caller (reconcileRemote or SyncRemote) decides
+	// whether to deliver.
 	next.Builder.RemoteStatus = "idle"
-	return deliverAndSettle(ctx, rt, tx, next, agents)
+	return next, nil
 }
 
 // ForwardUnavailable tells every remote binding with an open round that its

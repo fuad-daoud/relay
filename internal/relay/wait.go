@@ -146,6 +146,13 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	start := rt.Now()
 
 	for {
+		// A remote binding's closed round is collected here too (spec §2.2):
+		// with no daemon running, this is the only place `relay wait` would
+		// otherwise see the round's state go stale. Advisory: a sync error
+		// does not stop the poll, since the loop below re-reads the store
+		// either way.
+		_, _ = SyncRemote(ctx, rt)
+
 		for _, n := range opts.Names {
 			b, err := rt.Store.Load(n)
 			if errors.Is(err, store.ErrNotFound) {

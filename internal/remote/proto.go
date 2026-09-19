@@ -43,20 +43,27 @@ type CreateBindingRequest struct {
 
 // BindingView is the server's wire representation of a binding's state.
 type BindingView struct {
-	Name           string     `json:"name"`
-	State          string     `json:"state"` // the store's State string
-	Round          int        `json:"round"`
-	RoundState     RoundState `json:"round_state"`
-	ClosedRound    int        `json:"closed_round"`
-	Halt           string     `json:"halt,omitempty"`
-	ResultCommit   string     `json:"result_commit,omitempty"`
-	DirtyCommit    string     `json:"dirty_commit,omitempty"`
-	ReportOutcome  string     `json:"report_outcome,omitempty"` // relay.ReportTail.Status or "unstructured"
-	AckedRound     int        `json:"acked_round"`
-	Candidate      string     `json:"candidate,omitempty"`
-	RoundStartedAt time.Time  `json:"round_started_at,omitempty"`
-	RoundCap       int        `json:"round_cap"`
-	RoundTimeoutMS int        `json:"round_timeout_ms"`
+	Name          string     `json:"name"`
+	State         string     `json:"state"` // the store's State string
+	Round         int        `json:"round"`
+	RoundState    RoundState `json:"round_state"`
+	ClosedRound   int        `json:"closed_round"`
+	Halt          string     `json:"halt,omitempty"`
+	ResultCommit  string     `json:"result_commit,omitempty"`
+	DirtyCommit   string     `json:"dirty_commit,omitempty"`
+	ReportOutcome string     `json:"report_outcome,omitempty"` // relay.ReportTail.Status or "unstructured"
+	// DiffNote, DiffCommits and DiffTree are the closed round's diff facts,
+	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
+	// DiffSummary wrote to the server's own log at close. Empty/zero on any
+	// binding that is not closed, or whose close wrote no diff entry.
+	DiffNote       string    `json:"diff_note,omitempty"`
+	DiffCommits    int       `json:"diff_commits,omitempty"`
+	DiffTree       string    `json:"diff_tree,omitempty"`
+	AckedRound     int       `json:"acked_round"`
+	Candidate      string    `json:"candidate,omitempty"`
+	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
+	RoundCap       int       `json:"round_cap"`
+	RoundTimeoutMS int       `json:"round_timeout_ms"`
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.

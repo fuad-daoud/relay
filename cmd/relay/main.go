@@ -1139,6 +1139,12 @@ func cmdPull(args []string) error {
 		return err
 	}
 
+	if rt.Remote != nil {
+		if _, serr := relay.SyncRemote(context.Background(), rt); serr != nil {
+			fmt.Fprintf(os.Stderr, "relay: sync remote bindings: %v\n", serr)
+		}
+	}
+
 	payload, found, err := relay.Pull(context.Background(), rt, target)
 	if err != nil {
 		return err
@@ -1330,6 +1336,11 @@ func cmdStatus(args []string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
+	}
+	if rt.Remote != nil {
+		if _, serr := relay.SyncRemote(context.Background(), rt); serr != nil {
+			fmt.Fprintf(os.Stderr, "relay: sync remote bindings: %v\n", serr)
+		}
 	}
 	rep, err := relay.Status(context.Background(), rt)
 	if err != nil {

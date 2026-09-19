@@ -515,3 +515,46 @@ func TestDiffTextWithCommitFacts(t *testing.T) {
 		})
 	}
 }
+
+// TestDiffLineFromNoteMatchesDiffLine checks DiffLineFromNote against
+// DiffLine's own output for the same res/facts pair, over the note shapes
+// where the wire facts (Note, Commits, Tree) carry everything DiffLine
+// needs: an available diff always has a res.Path DiffLineFromNote never
+// sees, so those cases are deliberately not compared here (see the
+// function's doc comment).
+func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
+	unavailable := DiffResult{Available: false, Reason: "no baseline"}
+	empty := DiffResult{Available: true}
+	silent := DiffResult{Available: false}
+	branch := "relay/api-auth"
+
+	cases := []struct {
+		name  string
+		res   DiffResult
+		facts CommitResult
+		tree  string
+	}{
+		// Mutation target: drop the trailing commitClause append for the
+		// unavailable case and this stops matching DiffLine, which appends
+		// it too.
+		{"unavailable keeps the clause", unavailable, CommitResult{Known: true, Commits: 2}, "clean"},
+		// Mutation target: treat "no changes" like the default case (append
+		// a clause) and this starts differing from DiffLine, which returns
+		// early with no clause on an empty diff.
+		{"empty diff gains nothing", empty, CommitResult{Known: true, Commits: 2}, "clean"},
+		// Mutation target: drop the "base == \"unavailable\"" short-circuit
+		// and this returns a non-empty line instead of "", unlike DiffLine
+		// on a result with no reason.
+		{"silent diff stays silent", silent, CommitResult{Known: true, Commits: 2}, "clean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			note := DiffSummary(tc.res, tc.facts)
+			want := DiffLine(tc.res, tc.facts, branch)
+			if got := DiffLineFromNote(note, tc.facts.Commits, tc.tree, branch); got != want {
+				t.Fatalf("DiffLineFromNote(%q, %d, %q, %q) = %q, want %q (DiffLine's own output for the same facts)",
+					note, tc.facts.Commits, tc.tree, branch, got, want)
+			}
+		})
+	}
+}

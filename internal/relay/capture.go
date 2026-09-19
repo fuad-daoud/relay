@@ -273,6 +273,46 @@ func DiffLine(res DiffResult, facts CommitResult, branch string) string {
 	return base
 }
 
+// DiffLineFromNote renders the report-payload Diff: line from a diff log
+// entry's stored facts (Note, Commits, Tree) rather than a fresh DiffResult:
+// the shape a remote binding's catchUp writes, since the wire carries the
+// server's diff Note and commit facts, never a patch to re-diff against a
+// local baseline. It reuses commitClause -- the same helper DiffLine calls
+// -- so the two never drift on how a commit count and a clean/dirty tree
+// are worded, and reproduces DiffLine's output exactly whenever the note
+// alone says everything DiffLine would ("no changes", "unavailable[:
+// reason]"); for every other shape it keeps the note's own wording as the
+// base clause, since the original Stat and patch path never crossed the
+// wire.
+func DiffLineFromNote(note string, commits int, tree, branch string) string {
+	if note == "" {
+		return ""
+	}
+
+	base := note
+	if idx := strings.Index(base, "; "); idx != -1 {
+		base = base[:idx]
+	}
+
+	switch {
+	case base == "no changes":
+		return "Diff: no file changes"
+	case base == "unavailable":
+		// Matches DiffLine's own !Available && Reason == "" case: nothing
+		// worth telling the planner.
+		return ""
+	case strings.HasPrefix(base, "unavailable: "):
+		base = fmt.Sprintf("unavailable (%s)", strings.TrimPrefix(base, "unavailable: "))
+	}
+
+	line := "Diff: " + base
+	facts := CommitResult{Known: tree != "", Commits: commits, Dirty: tree == "dirty"}
+	if clause := commitClause(facts, branch, true); clause != "" {
+		line += " -- " + clause
+	}
+	return line
+}
+
 // ReadDiff returns the stored patch for one round, and whether one exists.
 // It is the read path behind `relay diff`.
 //
