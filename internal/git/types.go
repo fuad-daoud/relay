@@ -29,7 +29,6 @@ var ErrBadBundle = errors.New("bundle is malformed or its prerequisites are miss
 // ErrRefMissing reports that a ref does not exist.
 var ErrRefMissing = errors.New("ref does not exist")
 
-
 // DefaultMaxPatchBytes is the default byte cap for patch bodies.
 const DefaultMaxPatchBytes = 4 << 20
 

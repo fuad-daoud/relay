@@ -654,3 +654,116 @@ func TestRevListCount(t *testing.T) {
 		t.Fatalf("RevListCount outside a repo: err = %v, want ErrNotRepo", err)
 	}
 }
+
+func TestRootCommit(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// empty git init -> ErrRefMissing
+	emptyRepo := t.TempDir()
+	runGit(t, emptyRepo, "init")
+	if _, err := client.RootCommit(ctx, emptyRepo); !errors.Is(err, ErrRefMissing) {
+		t.Fatalf("RootCommit(empty): got err %v, want ErrRefMissing", err)
+	}
+
+	// two commits -> the first's sha
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f1.txt")
+	runGit(t, repo, "commit", "-m", "first")
+	firstSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repo, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f2.txt")
+	runGit(t, repo, "commit", "-m", "second")
+
+	root, err := client.RootCommit(ctx, repo)
+	if err != nil {
+		t.Fatalf("RootCommit: %v", err)
+	}
+	if root != firstSHA {
+		t.Fatalf("RootCommit = %q, want first commit %q", root, firstSHA)
+	}
+}
+
+func TestRefSHAMissingIsOkFalse(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "first")
+	headSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// missing ref -> "", false, nil
+	sha, ok, err := client.RefSHA(ctx, repo, "refs/heads/nope")
+	if err != nil || ok || sha != "" {
+		t.Fatalf("RefSHA(refs/heads/nope) = (%q, %v, %v); want (\"\", false, nil)", sha, ok, err)
+	}
+
+	// existing ref -> sha, true, nil
+	sha, ok, err = client.RefSHA(ctx, repo, "HEAD")
+	if err != nil || !ok || sha != headSHA {
+		t.Fatalf("RefSHA(HEAD) = (%q, %v, %v); want (%q, true, nil)", sha, ok, err, headSHA)
+	}
+}
+
+func TestUpdateRefCreatesAndCAS(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f1.txt")
+	runGit(t, repo, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repo, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f2.txt")
+	runGit(t, repo, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	ref := "refs/heads/testref"
+
+	// create with old ""
+	if err := client.UpdateRef(ctx, repo, ref, c1, ""); err != nil {
+		t.Fatalf("UpdateRef create: %v", err)
+	}
+	sha := strings.TrimSpace(runGit(t, repo, "rev-parse", ref))
+	if sha != c1 {
+		t.Fatalf("ref after create = %q, want %q", sha, c1)
+	}
+
+	// CAS with wrong old sha errors and ref is unchanged
+	wrongSHA := "0123456789abcdef0123456789abcdef01234567"
+	if err := client.UpdateRef(ctx, repo, ref, c2, wrongSHA); err == nil {
+		t.Fatal("UpdateRef CAS with wrong old sha succeeded, want error")
+	}
+	sha = strings.TrimSpace(runGit(t, repo, "rev-parse", ref))
+	if sha != c1 {
+		t.Fatalf("ref after failed CAS = %q, want %q", sha, c1)
+	}
+
+	// CAS with correct old sha succeeds
+	if err := client.UpdateRef(ctx, repo, ref, c2, c1); err != nil {
+		t.Fatalf("UpdateRef CAS with correct old sha: %v", err)
+	}
+	sha = strings.TrimSpace(runGit(t, repo, "rev-parse", ref))
+	if sha != c2 {
+		t.Fatalf("ref after successful CAS = %q, want %q", sha, c2)
+	}
+}

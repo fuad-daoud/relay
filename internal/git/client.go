@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -447,4 +448,75 @@ func (c *Client) Dirty(ctx context.Context, dir string) (bool, error) {
 		return false, err
 	}
 	return len(bytes.TrimSpace(out)) > 0, nil
+}
+
+// RootCommit returns the single root commit SHA of the repository at dir.
+// If the repository has several roots (a grafted or multi-root history), it
+// returns the lexicographically smallest root SHA so the result is deterministic.
+//
+// Preconditions:  dir is inside a git repository with at least one commit.
+// Postconditions: the repository is unchanged.
+// Errors: ErrNotRepo, ErrGitUnavailable, ErrRefMissing (empty repo with no HEAD),
+//
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) RootCommit(ctx context.Context, dir string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "rev-list", "--max-parents=0", "HEAD")
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", err
+		}
+		return "", ErrRefMissing
+	}
+	roots := strings.Fields(string(out))
+	if len(roots) == 0 {
+		return "", ErrRefMissing
+	}
+	sort.Strings(roots)
+	return roots[0], nil
+}
+
+// RefSHA resolves ref to a commit SHA.
+//
+// Preconditions:  dir is inside a git repository.
+// Postconditions: the repository is unchanged; returns (sha, true, nil) when ref
+//
+//	resolves, or ("", false, nil) when ref does not exist.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) RefSHA(ctx context.Context, dir, ref string) (sha string, ok bool, err error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", false, err
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	res := strings.TrimSpace(string(out))
+	if res == "" {
+		return "", false, nil
+	}
+	return res, true, nil
+}
+
+// UpdateRef updates ref to newSHA, optionally verifying that oldSHA matches.
+//
+// Preconditions:  dir is inside a git repository; newSHA is a valid object ID.
+//
+//	oldSHA is empty ("create or overwrite") or a commit SHA to compare-and-swap.
+//
+// Postconditions: ref points to newSHA.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure
+//
+//	(including CAS mismatch).
+func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	args := []string{"update-ref", ref, newSHA}
+	if oldSHA != "" {
+		args = append(args, oldSHA)
+	}
+	_, err := c.run(ctx, dir, nil, args...)
+	return err
 }
