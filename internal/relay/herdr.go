@@ -83,6 +83,12 @@ type Runtime struct {
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
 
+	// Sessions locates a pane builder's own session record so the daemon can
+	// render it into the round log the way it renders a headless stream
+	// (#184). Nil means pane builders keep the screen capture; tests that do
+	// not set it behave exactly as before.
+	Sessions SessionLocator
+
 	// Classify judges report and dialog paragraphs for instruction-shaped
 	// content beside the regex scan (#211). Nil means no classifier is
 	// configured and the regex result stands alone; cmd/relay wires

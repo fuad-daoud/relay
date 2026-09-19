@@ -356,6 +356,7 @@ func newRuntime() (relay.Runtime, error) {
 		Policy:      pol,
 		Classify:    cls,
 		Usage:       reader,
+		Sessions:    relay.HomeSessionLocator(home),
 		Prices:      prices,
 		Now:         time.Now,
 		Hooks:       dispatcher,

@@ -39,9 +39,10 @@ func styleFor(c tabContent) lipgloss.Style {
 }
 
 // bodyOf renders a tab's content for the viewport. The diff tab colours its
-// body (colourDiff); a headless builder's terminal tab colours transcript
-// markers (colourTranscript, #180); everything else returns c.body as
-// before.
+// body (colourDiff); a rendered round log's terminal tab colours transcript
+// markers (colourTranscript, #180) -- a headless builder's always is one, and
+// so is a pane builder's once its session record is located (#184);
+// everything else returns c.body as before.
 func bodyOf(t tab, c tabContent, headless bool) string {
 	if !c.loaded {
 		return "loading…"
@@ -56,7 +57,7 @@ func bodyOf(t tab, c tabContent, headless bool) string {
 	if t == tabDiff {
 		return colourDiff(c.body)
 	}
-	if t == tabTerminal && headless {
+	if t == tabTerminal && (headless || c.transcript) {
 		return colourTranscript(c.body)
 	}
 	return st.Render(c.body)

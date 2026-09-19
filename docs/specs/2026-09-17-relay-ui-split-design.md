@@ -243,15 +243,18 @@ tree     relay/webshop · dirty · last close a1c9f0e (2 commits)
   round log (the last 5000 lines of it), scrollable, and the viewport
   follows the tail the way `tail -f` does: it is pinned to the bottom
   until the human scrolls up, and pinned again the moment they scroll
-  back to the bottom. A pane builder's terminal tab stays a viewport-sized
-  live screen capture: there is nothing above it to scroll to.
+  back to the bottom. A pane builder whose harness keeps a session record
+  relay can read (claude, #184) gets the same log view, cut per round at
+  send; any other pane builder's terminal tab stays a viewport-sized live
+  screen capture: there is nothing above it to scroll to.
 - **Transcript styling, headless builder** (round 3): the transcript
   renderer marks its lines -- `● <Tool> <arg>` for a call, `  ⎿ ok: …` /
   `  ⎿ error: …` for a result (`2026-09-17-headless-transcript-design.md`
   §4.3, amended). On the terminal tab of a headless builder the ui draws a
   call as `●` in 42, the tool name bold, and `(<arg>)` dim; an ok result
   as `⎿` and its text dim; an error result as `⎿ error: …` in 203; prose
-  untouched. A pane builder's capture is never restyled.
+  untouched. A screen capture is never restyled; a pane builder's rendered
+  round log is styled like a headless one.
 - **Answer hint**: when the active tab is `terminal` and `Waiting != nil`
   with `Cause == "blocked"`, the last viewport row is replaced by
   `relay: <Waiting.Hint>` (`relay:` in accent, the verb in fg). It is a

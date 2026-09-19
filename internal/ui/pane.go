@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -217,10 +216,13 @@ func (m Model) sourceLine() string {
 	case tabTerminal:
 		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
 		r := row(m.report, m.detail.name)
-		if m.detail.headless {
-			src := "headless"
-			if r != nil && r.Headless != nil && r.Headless.LogPath != "" {
-				src += " · " + filepath.Base(r.Headless.LogPath)
+		if c.transcript {
+			src := "pane"
+			if m.detail.headless {
+				src = "headless"
+			}
+			if c.logName != "" {
+				src += " · " + c.logName
 			}
 			mode := "following"
 			if !m.detail.follow {

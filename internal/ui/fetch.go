@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,6 +46,14 @@ type tabContent struct {
 	empty  string    // prose explaining expected emptiness
 	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
 	at     time.Time // when the body was read; the source line's "13:38" and "captured 1s ago"
+
+	// transcript is true when the body is a rendered round log (headless
+	// stream or pane session record, #184): colour markers, show the log
+	// source line instead of the capture one.
+	transcript bool
+	// logName is the base name of that log ("003-builder.log"); "" for a
+	// capture.
+	logName string
 }
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
@@ -140,8 +149,37 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string) tea.Cmd {
 	}
 }
 
+// logTab reads a round log for the terminal tab: the last headlessLogLines
+// lines, transcript true, logName the file's base name. ok is false when
+// the file cannot be read (missing or otherwise), so the caller decides
+// what the tab says instead: the pane branch falls back to the capture, the
+// headless branch keeps its own "log not written yet" prose. (Extracted
+// from the headless branch of fetchTerminal; that branch now calls it.)
+func logTab(name, logPath string) (tabMsg, bool) {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return tabMsg{}, false
+	}
+	body := strings.TrimRight(string(data), "\n")
+	if all := strings.Split(body, "\n"); len(all) > headlessLogLines {
+		body = strings.Join(all[len(all)-headlessLogLines:], "\n")
+	}
+	return tabMsg{
+		name: name,
+		t:    tabTerminal,
+		content: tabContent{
+			loaded:     true,
+			at:         time.Now(),
+			body:       body,
+			transcript: true,
+			logName:    filepath.Base(logPath),
+		},
+	}, true
+}
+
 // fetchTerminal resolves the builder agent and reads its recent output, or --
-// for a headless builder -- the tail of its round log.
+// for a headless builder, or a claude pane builder whose session record is
+// located (#184) -- the tail of its round log.
 func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
@@ -181,21 +219,8 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 					},
 				}
 			}
-			data, err := os.ReadFile(logPath)
-			if err != nil {
-				return tabMsg{
-					name: name,
-					t:    tabTerminal,
-					content: tabContent{
-						loaded: true,
-						at:     time.Now(),
-						empty:  "log not written yet: " + logPath,
-					},
-				}
-			}
-			body := strings.TrimRight(string(data), "\n")
-			if all := strings.Split(body, "\n"); len(all) > headlessLogLines {
-				body = strings.Join(all[len(all)-headlessLogLines:], "\n")
+			if msg, ok := logTab(name, logPath); ok {
+				return msg
 			}
 			return tabMsg{
 				name: name,
@@ -203,8 +228,17 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					body:   body,
+					empty:  "log not written yet: " + logPath,
 				},
+			}
+		}
+
+		// A claude pane builder's own session record is rendered into the
+		// round log the same way (#184); any other pane builder has no
+		// record relay can read and falls straight through to the capture.
+		if b.Builder.StreamRound != 0 {
+			if msg, ok := logTab(name, rt.Store.BuilderLogPath(name, b.Builder.StreamRound)); ok {
+				return msg
 			}
 		}
 

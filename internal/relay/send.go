@@ -243,6 +243,14 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			}
 		}
 
+		// armSessionCursor cuts the pane builder's round log at the record's
+		// current size, the way startRound cuts a headless one's (#184). The
+		// guard restates what the branch above already implies: headless has
+		// startRound, remote has no local record to render.
+		if !b.Builder.Headless() && !b.Builder.Remote() {
+			b = armSessionCursor(rt, b)
+		}
+
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPlan,
