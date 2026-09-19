@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 )
 
@@ -26,8 +27,17 @@ type ReportTail struct {
 // ParseReportTail finds and decodes the builder's trailing relay block.
 // Pure; no I/O; every failure returns ok == false.
 func ParseReportTail(report []byte) (ReportTail, bool) {
+	tail, ok, _ := parseReportTail(report)
+	return tail, ok
+}
+
+// parseReportTail is ParseReportTail plus a reason when a ```relay fence was
+// found but the block was rejected. The reason is empty when there was no
+// block (the usual unstructured case) so callers can tell "builder omitted
+// the block" from "builder wrote one we could not read".
+func parseReportTail(report []byte) (ReportTail, bool, string) {
 	if len(report) == 0 {
-		return ReportTail{}, false
+		return ReportTail{}, false, ""
 	}
 
 	rawLines := bytes.Split(report, []byte("\n"))
@@ -43,7 +53,7 @@ func ParseReportTail(report []byte) (ReportTail, bool) {
 		}
 	}
 	if openIdx == -1 {
-		return ReportTail{}, false
+		return ReportTail{}, false, ""
 	}
 
 	closeIdx := -1
@@ -54,12 +64,12 @@ func ParseReportTail(report []byte) (ReportTail, bool) {
 		}
 	}
 	if closeIdx == -1 {
-		return ReportTail{}, false
+		return ReportTail{}, false, "tail: unclosed fence"
 	}
 
 	for i := closeIdx + 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) != "" {
-			return ReportTail{}, false
+			return ReportTail{}, false, "tail: prose after closing fence"
 		}
 	}
 
@@ -68,6 +78,7 @@ func ParseReportTail(report []byte) (ReportTail, bool) {
 		statusRaw   string
 		hasStatus   bool
 		haltedAtRaw string
+		openList    string
 	)
 
 	for i := openIdx + 1; i < closeIdx; i++ {
@@ -77,31 +88,43 @@ func ParseReportTail(report []byte) (ReportTail, bool) {
 		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, "-") && (len(line) == 1 || line[1] == ' ' || line[1] == '\t') {
+			if openList == "" {
+				return ReportTail{}, false, fmt.Sprintf("tail: line %d has no ':'", i+1)
+			}
+			item := strings.TrimSpace(unquoteScalar(strings.TrimSpace(line[1:])))
+			if item != "" {
+				setList(&tail, openList, append(listOf(tail, openList), item))
+			}
+			continue
+		}
 		colon := strings.Index(line, ":")
 		if colon == -1 {
-			return ReportTail{}, false
+			return ReportTail{}, false, fmt.Sprintf("tail: line %d has no ':'", i+1)
 		}
 		key := strings.TrimSpace(line[:colon])
 		val := strings.TrimSpace(line[colon+1:])
+		openList = ""
 		switch key {
 		case "status":
 			hasStatus = true
 			statusRaw = val
 		case "halted_at":
 			haltedAtRaw = val
-		case "changed_paths":
-			tail.ChangedPaths = parseListValue(val)
-		case "commands_run":
-			tail.CommandsRun = parseListValue(val)
-		case "not_done":
-			tail.NotDone = parseListValue(val)
+		case "changed_paths", "commands_run", "not_done":
+			if val == "" {
+				setList(&tail, key, nil)
+				openList = key
+			} else {
+				setList(&tail, key, parseListValue(val))
+			}
 		default:
 			// Unknown keys are ignored
 		}
 	}
 
 	if !hasStatus {
-		return ReportTail{}, false
+		return ReportTail{}, false, "tail: missing status"
 	}
 
 	status := strings.TrimSpace(unquoteScalar(statusRaw))
@@ -109,12 +132,36 @@ func ParseReportTail(report []byte) (ReportTail, bool) {
 	case OutcomeDone, OutcomeHalted, OutcomeBlocked, OutcomeDeferred:
 		tail.Status = status
 	default:
-		return ReportTail{}, false
+		return ReportTail{}, false, "tail: unknown status"
 	}
 
 	tail.HaltedAt = strings.TrimSpace(unquoteScalar(haltedAtRaw))
 
-	return tail, true
+	return tail, true, ""
+}
+
+func listOf(tail ReportTail, key string) []string {
+	switch key {
+	case "changed_paths":
+		return tail.ChangedPaths
+	case "commands_run":
+		return tail.CommandsRun
+	case "not_done":
+		return tail.NotDone
+	default:
+		return nil
+	}
+}
+
+func setList(tail *ReportTail, key string, vals []string) {
+	switch key {
+	case "changed_paths":
+		tail.ChangedPaths = vals
+	case "commands_run":
+		tail.CommandsRun = vals
+	case "not_done":
+		tail.NotDone = vals
+	}
 }
 
 func stripComment(line string) string {
