@@ -8,10 +8,12 @@ trap 'rm -rf "$work"' EXIT
 
 # Build a fake repo root with two manifests at the given versions.
 stage() {
+	site=${3:-$1}
 	rm -rf "$work/repo"
-	mkdir -p "$work/repo/from-source"
+	mkdir -p "$work/repo/from-source" "$work/repo/web"
 	printf 'id = "x"\nversion = "%s"\n' "$1" > "$work/repo/herdr-plugin.toml"
 	printf 'id = "x"\nversion = "%s"\n' "$2" > "$work/repo/from-source/herdr-plugin.toml"
+	printf '<p><span data-version>v%s</span></p>\n' "$site" > "$work/repo/web/index.html"
 	cp "$here/check-plugin-version.sh" "$work/repo/"
 }
 
@@ -53,6 +55,9 @@ check "agreeing manifests, mismatched tag" 1 v9.9.9
 stage 1.2.3 4.5.6
 check "disagreeing manifests, no tag" 1
 check "disagreeing manifests, matching tag" 1 v1.2.3
+
+stage 1.2.3 1.2.3 9.9.9
+check "site version disagrees with manifests" 1
 
 stage_repo 1.2.3 10
 check "drift at the limit" 0
