@@ -134,41 +134,55 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 	if round == 0 {
 		return b
 	}
-	streamPath := rt.Store.BuilderStreamPath(b.Name, round)
-	info, err := os.Stat(streamPath)
+	b.Builder.StreamOffset = drainFile(
+		rt.Store.BuilderLogPath(b.Name, round),
+		rt.Store.BuilderStreamPath(b.Name, round),
+		b.Builder.StreamOffset,
+		func(line []byte) []string { return transcript.Render(b.Builder.Kind, line) },
+		"stream", "binding", b.Name, "round", round,
+	)
+	return b
+}
+
+// drainFile appends render(line) for every complete line of src past off
+// to logPath and returns the new offset. It is the shared body of
+// drainStream and drainSession (#184): it never fails the tick -- every
+// problem is a slog.Warn (with what) and the offset unchanged, except an
+// offset past EOF, which resets to 0. what names the source in warnings
+// ("stream", "session").
+func drainFile(logPath, src string, off int64, render func(line []byte) []string, what string, fields ...any) int64 {
+	info, err := os.Stat(src)
 	if err != nil {
-		return b // not started yet, or gone with the round: nothing to drain
+		return off // not started yet, or gone with the round: nothing to drain
 	}
-	off := b.Builder.StreamOffset
 	if off > info.Size() {
-		slog.Warn("builder transcript: cursor past end of stream; rendering from the start",
-			"binding", b.Name, "round", round, "offset", off, "size", info.Size())
+		slog.Warn("builder "+what+": cursor past end of "+what+"; rendering from the start",
+			append(append([]any{}, fields...), "offset", off, "size", info.Size())...)
 		off = 0
 	}
 	if off == info.Size() {
-		return b
+		return off
 	}
-	data, err := readFrom(streamPath, off)
+	data, err := readFrom(src, off)
 	if err != nil {
-		slog.Warn("builder transcript", "binding", b.Name, "round", round, "err", err)
-		return b
+		slog.Warn("builder "+what, append(append([]any{}, fields...), "err", err)...)
+		return off
 	}
 	end := bytes.LastIndexByte(data, '\n')
 	if end < 0 {
-		return b
+		return off
 	}
 	var out []string
 	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
-		out = append(out, transcript.Render(b.Builder.Kind, line)...)
+		out = append(out, render(line)...)
 	}
 	if len(out) > 0 {
-		if err := appendLines(rt.Store.BuilderLogPath(b.Name, round), out); err != nil {
-			slog.Warn("builder transcript", "binding", b.Name, "round", round, "err", err)
-			return b
+		if err := appendLines(logPath, out); err != nil {
+			slog.Warn("builder "+what, append(append([]any{}, fields...), "err", err)...)
+			return off
 		}
 	}
-	b.Builder.StreamOffset = off + int64(end) + 1
-	return b
+	return off + int64(end) + 1
 }
 
 // readFrom is the file's bytes from off to its end.

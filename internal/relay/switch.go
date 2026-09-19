@@ -164,6 +164,12 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	b.Builder = ep
+	if !ep.Headless() {
+		// The replacement pane starts a fresh session (#184): offset 0, since
+		// its own record file starts empty. The round's log keeps appending,
+		// after the marker line below.
+		b.Builder.StreamRound, b.Builder.StreamOffset, b.Builder.LogPath = b.Round, 0, rt.Store.BuilderLogPath(b.Name, b.Round)
+	}
 	b.BuilderCandidate = res.Token()
 	if counted {
 		b.RoundSwitches++

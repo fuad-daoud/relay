@@ -185,6 +185,86 @@ func TestFetchTerminalBuilderPresent(t *testing.T) {
 	}
 }
 
+func TestFetchTerminalPaneReadsRoundLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	logPath := st.BuilderLogPath(name, 2)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := newTestBinding(name)
+	b.Builder.StreamRound = 2
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), rt, name, 24)()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tMsg.content.err != nil || tMsg.content.empty != "" {
+		t.Fatalf("content = %+v, want a body", tMsg.content)
+	}
+	if tMsg.content.body != "a\nb\nc" {
+		t.Errorf("body = %q, want the round log", tMsg.content.body)
+	}
+	if !tMsg.content.transcript {
+		t.Error("transcript = false, want true for a rendered round log")
+	}
+	if tMsg.content.logName != "002-builder.log" {
+		t.Errorf("logName = %q, want 002-builder.log", tMsg.content.logName)
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("the round log satisfies the tab; ReadAgent must not be called: readCalls = %d", fh.readCalls)
+	}
+}
+
+func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	fh.agents = []herdr.Agent{
+		{PaneID: "w1:p2", Kind: "opencode"},
+	}
+	fh.readOut = "captured screen"
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	// StreamRound is set (as Send would arm it) but the round log was never
+	// written -- e.g. the session record was never located -- so the tab
+	// falls back to today's capture path.
+	b := newTestBinding(name)
+	b.Builder.AgentName = ""
+	b.Builder.StreamRound = 2
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), rt, name, 24)()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if tMsg.content.body != "captured screen" {
+		t.Errorf("body = %q, want the capture", tMsg.content.body)
+	}
+	if tMsg.content.transcript {
+		t.Error("transcript = true, want false for a capture")
+	}
+	if fh.readCalls != 1 {
+		t.Errorf("expected 1 ReadAgent call (the fallback), got %d", fh.readCalls)
+	}
+}
+
 func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)

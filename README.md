@@ -339,6 +339,13 @@ terminals get the list-then-detail flow. The pane's four tabs:
 - **diff** — the captured git patch from the newest completed round.
 - **log** — the formatted append-only round log.
 
+For a claude pane builder the terminal tab is the round's own transcript:
+the daemon renders the harness's session record
+(`~/.claude/projects/*/<session>.jsonl`) into `NNN-builder.log` from the
+moment the round was sent, so the tab scrolls, follows the tail and is
+styled exactly as a headless builder's. opencode and agy pane builders
+keep the live screen capture (#184).
+
 ### Panes are yours, always
 
 relay never opens, closes or kills a pane except the one builder pane it spawns

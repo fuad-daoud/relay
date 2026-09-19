@@ -83,6 +83,60 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	}
 }
 
+// TestSendArmsSessionCursorForPaneBuilder pins Send's pane branch (#184):
+// after the plan lands, the builder's cursor is cut at the located session
+// record's current size, so the round's log holds only what the builder
+// writes to its own record from here on.
+func TestSendArmsSessionCursorForPaneBuilder(t *testing.T) {
+	f := &fakeHerdr{}
+	// The session id must be on the agent BEFORE Bind, so Bind's own
+	// post-spawn lookup (bind.go's best-effort ListAgents) records it on
+	// the endpoint -- the same pattern sentBindingWithBuilderSession uses.
+	f.agents = []herdr.Agent{
+		plannerAgent(),
+		{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: "S"}},
+	}
+	f.newPane = "w2:p4"
+	rt := newRuntime(t, f)
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	f.prompts = nil
+
+	record := filepath.Join(t.TempDir(), "S.jsonl")
+	if err := os.WriteFile(record, []byte(strings.Repeat("x", 42)), 0o644); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		if kind == "agy" && sessionID == "S" {
+			return record, true
+		}
+		return "", false
+	}
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Builder.StreamRound != res.Round {
+		t.Errorf("StreamRound = %d, want round %d", b.Builder.StreamRound, res.Round)
+	}
+	if b.Builder.StreamOffset != 42 {
+		t.Errorf("StreamOffset = %d, want 42 (the record's size at send time)", b.Builder.StreamOffset)
+	}
+	if want := rt.Store.BuilderLogPath("webshop", res.Round); b.Builder.LogPath != want {
+		t.Errorf("LogPath = %q, want %q", b.Builder.LogPath, want)
+	}
+}
+
 // The role is selected with --agent at launch (#85); the plan prompt is
 // the plan prompt, on round 1 as on every other.
 func TestSendPromptCarriesNoPreamble(t *testing.T) {

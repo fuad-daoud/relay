@@ -154,6 +154,8 @@ func TestSourceLinePerTab(t *testing.T) {
 	b.Headless = &relay.HeadlessInfo{LogPath: "/x/002-builder.log"}
 	m.report = relay.Report{Bindings: []relay.BindingStatus{b}}
 	m.detail.headless = true
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+		transcript: true, logName: "002-builder.log"}
 	m.detail.follow = true
 	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · following" {
 		t.Errorf("headless following source = %q", got)
@@ -163,6 +165,12 @@ func TestSourceLinePerTab(t *testing.T) {
 		t.Errorf("headless scrolled source = %q", got)
 	}
 	m.detail.headless = false
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+		transcript: true, logName: "002-builder.log"}
+	m.detail.follow = true
+	if got := stripANSI(m.sourceLine()); got != "pane · 002-builder.log · 3 lines · following" {
+		t.Errorf("pane transcript source = %q", got)
+	}
 	m.detail.follow = false
 	m.detail.active = tabDiff
 	m.detail.cache[tabDiff] = tabContent{loaded: true, body: "diff --git a/x b/x\n+a\n-b\n"}
@@ -292,6 +300,12 @@ func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 	}
 	if got := bodyOf(tabLog, c, true); got != "● Bash ls" {
 		t.Errorf("only the terminal tab styles transcript lines: %q", got)
+	}
+	// A pane builder's rendered session record (#184) colours markers too,
+	// even though the builder itself is not headless.
+	pc := tabContent{loaded: true, body: "● Bash ls", transcript: true}
+	if got := bodyOf(tabTerminal, pc, false); stripANSI(got) != "● Bash(ls)" {
+		t.Errorf("pane transcript terminal = %q", stripANSI(got))
 	}
 }
 

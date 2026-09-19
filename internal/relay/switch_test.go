@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,40 @@ func TestGoneSwitchesAfterGrace(t *testing.T) {
 	wantPrefix := "switched builder (gone for 31s): picked agy/other/m for builder: order #1"
 	if !strings.HasPrefix(sw[0].Note, wantPrefix) {
 		t.Errorf("switch note = %q, want prefix %q", sw[0].Note, wantPrefix)
+	}
+}
+
+// TestSwitchRearmsSessionCursor pins switchBuilder's pane re-arm (#184,
+// round 2 correction to base plan §4): the replacement pane's own session
+// record starts empty, so the cursor is cut at offset 0 for the SAME
+// round's log -- but the marker line stays headless-only (the round-1
+// halt), so the log file itself must not exist yet.
+func TestSwitchRearmsSessionCursor(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentSwitchable(t, f)
+
+	got, err := reconcile(t, rt, b, gone())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got, err = reconcile(t, at(rt, 31*time.Second), got, gone())
+	if err != nil {
+		t.Fatalf("Reconcile at +31s: %v", err)
+	}
+
+	if got.Builder.StreamRound != got.Round {
+		t.Errorf("StreamRound = %d, want round %d", got.Builder.StreamRound, got.Round)
+	}
+	if got.Builder.StreamOffset != 0 {
+		t.Errorf("StreamOffset = %d, want 0 (the replacement's own record starts empty)", got.Builder.StreamOffset)
+	}
+	if want := rt.Store.BuilderLogPath(got.Name, got.Round); got.Builder.LogPath != want {
+		t.Errorf("LogPath = %q, want %q", got.Builder.LogPath, want)
+	}
+
+	logPath := rt.Store.BuilderLogPath(got.Name, got.Round)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("pane switch created a log file: %s", logPath)
 	}
 }
 

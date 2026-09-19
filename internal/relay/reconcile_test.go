@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,68 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	}
 	if !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
 		t.Errorf("payload must name the report path, got %q", pending.Payload)
+	}
+}
+
+// TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path (#184):
+// once refreshEndpoint has run, drainSession renders whatever the builder's
+// own session record holds since the last tick into the round's log, the
+// way reconcileHeadless drains a headless stream.
+func TestReconcileDrainsPaneSessionRecord(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBindingWithBuilderSession(t, f, "S")
+
+	// sentBindingWithBuilderSession is shared with the broken-recovery
+	// tests and always spawns an "agy" builder; RenderRecord only has a
+	// table for kind "claude" (#184), so the binding's Kind is corrected
+	// here to actually exercise rendering. Builder.StreamRound and LogPath
+	// are already round 1 / BuilderLogPath("webshop",1) from the helper's
+	// own Send call, since armSessionCursor arms the cursor unconditionally
+	// (offset 0 there, because rt.Sessions was nil at that Send).
+	b.Builder.Kind = "claude"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	record := filepath.Join(t.TempDir(), "S.jsonl")
+	assistant := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
+	if err := os.WriteFile(record, []byte(assistant), 0o644); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		if kind == "claude" && sessionID == "S" {
+			return record, true
+		}
+		return "", false
+	}
+
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	logPath := rt.Store.BuilderLogPath("webshop", 1)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "hi") {
+		t.Errorf("log = %q, want the rendered assistant text", data)
+	}
+	if got.Builder.StreamOffset != int64(len(assistant)) {
+		t.Errorf("StreamOffset = %d, want %d (the binding's offset advanced past the rendered line, ready for the caller's tx.Save)", got.Builder.StreamOffset, len(assistant))
+	}
+
+	// rt.Sessions nil -> no log file. Every other reconcile test already
+	// covers this implicitly (none set rt.Sessions); asserted once here.
+	rt2, b2 := sentBindingWithBuilderSession(t, &fakeHerdr{}, "S2")
+	got2, err := reconcile(t, rt2, b2, []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)})
+	if err != nil {
+		t.Fatalf("Reconcile (nil Sessions): %v", err)
+	}
+	if _, err := os.Stat(rt2.Store.BuilderLogPath("webshop", got2.Round)); !os.IsNotExist(err) {
+		t.Errorf("nil rt.Sessions must not write a round log")
 	}
 }
 

@@ -202,6 +202,11 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		b.Planner = refreshEndpoint(b.Planner, planner)
 	}
 
+	// Render what the pane builder's own session record holds since the last
+	// tick (#184), the way reconcileHeadless drains its stream, before
+	// anything below reads the log.
+	b = drainSession(rt, b)
+
 	if switchable {
 		if g, gated := gatedBuilder(rt, b); gated {
 			reason := "rate-limited"
