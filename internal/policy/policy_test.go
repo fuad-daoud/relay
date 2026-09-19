@@ -254,6 +254,67 @@ func TestLimitGateDefault(t *testing.T) {
 	}
 }
 
+func TestGatePolicy(t *testing.T) {
+	t.Run("nil Gate defaults", func(t *testing.T) {
+		p := Policy{}
+		if got := p.GateDefault(); got != "" {
+			t.Errorf("GateDefault() = %q, want \"\"", got)
+		}
+		if got := p.GateTimeout(); got != DefaultGateTimeout {
+			t.Errorf("GateTimeout() = %v, want %v", got, DefaultGateTimeout)
+		}
+	})
+
+	t.Run("default and timeout_ms honoured", func(t *testing.T) {
+		body := `{"gate":{"default":"make check","timeout_ms":1800000}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if got := p.GateDefault(); got != "make check" {
+			t.Errorf("GateDefault() = %q, want %q", got, "make check")
+		}
+		if got := p.GateTimeout(); got != 30*time.Minute {
+			t.Errorf("GateTimeout() = %v, want %v", got, 30*time.Minute)
+		}
+	})
+
+	t.Run("absent timeout_ms defaults", func(t *testing.T) {
+		body := `{"gate":{"default":"make check"}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if got := p.GateTimeout(); got != DefaultGateTimeout {
+			t.Errorf("GateTimeout() = %v, want %v", got, DefaultGateTimeout)
+		}
+	})
+
+	badCases := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{"timeout_ms zero", `{"gate":{"timeout_ms":0}}`, "gate.timeout_ms: must be > 0, got 0"},
+		{"timeout_ms negative", `{"gate":{"timeout_ms":-5}}`, "gate.timeout_ms: must be > 0, got -5"},
+	}
+
+	for _, bc := range badCases {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
+			}
+		})
+	}
+}
+
 func TestScanPatterns(t *testing.T) {
 	t.Run("bad regex returns ErrBadPolicy naming index 0", func(t *testing.T) {
 		body := `{"scan_patterns": ["("]}`

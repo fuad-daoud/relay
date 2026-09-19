@@ -51,6 +51,15 @@ type ForkOptions struct {
 
 	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
 	AllowYolo bool
+
+	// Gate is the acceptance command relay runs on the fork's completion
+	// marker (#132). Empty inherits the source binding's Gate; NoGate opts
+	// out of that inheritance too.
+	Gate string
+
+	// NoGate opts this fork out of a gate even when the source binding has
+	// one (#132). Ignored when Gate is set.
+	NoGate bool
 }
 
 // ForkResult is what a fork produced, so the CLI can tell the human where the
@@ -161,6 +170,12 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		return ForkResult{}, err
 	}
 
+	explicitGate := opts.Gate
+	if explicitGate == "" && src.Gate != "" {
+		explicitGate = src.Gate
+	}
+	gate := resolveGate(explicitGate, opts.NoGate, rt.Policy)
+
 	var (
 		cwd      string
 		worktree string
@@ -258,6 +273,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		ForkedAtRound:    opts.Round,
 		Repo:             src.Repo,
 		Tier:             string(tier),
+		Gate:             gate,
 	}
 
 	now := time.Now().UTC()

@@ -599,6 +599,8 @@ func cmdBind(args []string) error {
 		"run the builder as a process per round instead of a pane; not with --resume or a pane id in --builder")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
+	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -639,6 +641,8 @@ func cmdBind(args []string) error {
 		Headless:     *headless,
 		Tier:         *tier,
 		AllowYolo:    *allowYolo,
+		Gate:         *gate,
+		NoGate:       *noGate,
 	}
 	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
@@ -725,6 +729,8 @@ func cmdFork(args []string) error {
 	headless := fs.Bool("headless", false, "run the fork's builder as a process per round instead of a pane")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
+	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -758,6 +764,8 @@ func cmdFork(args []string) error {
 		Headless:    *headless,
 		Tier:        *tier,
 		AllowYolo:   *allowYolo,
+		Gate:        *gate,
+		NoGate:      *noGate,
 	}
 
 	res, err := relay.Fork(context.Background(), rt, opts)
@@ -792,6 +800,8 @@ func cmdAdd(args []string) error {
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
+	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -822,6 +832,8 @@ func cmdAdd(args []string) error {
 		Base:        *base,
 		Tier:        *tier,
 		AllowYolo:   *allowYolo,
+		Gate:        *gate,
+		NoGate:      *noGate,
 	})
 	if err != nil {
 		return err

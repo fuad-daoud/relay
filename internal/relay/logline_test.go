@@ -144,3 +144,24 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 		t.Errorf("report entry must not print tier: %q", gotReport)
 	}
 }
+
+// TestLogLineGateSuffix pins #132: a report entry with a Gate record appends
+// " gate=<Result>"; an entry with none carries no such suffix.
+func TestLogLineGateSuffix(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	withGate := store.LogEntry{
+		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Path: "/p/001-report.md", Gate: &store.GateRecord{Result: "fail"},
+	}
+	got := LogLine(withGate)
+	if !strings.HasSuffix(got, " gate=fail") {
+		t.Errorf("expected suffix %q, got %q", " gate=fail", got)
+	}
+
+	noGate := withGate
+	noGate.Gate = nil
+	got2 := LogLine(noGate)
+	if strings.Contains(got2, "gate=") {
+		t.Errorf("no gate= expected without a Gate record: %q", got2)
+	}
+}

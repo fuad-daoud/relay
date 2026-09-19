@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -2088,5 +2090,104 @@ func TestBindPolicyTierBuilderRead(t *testing.T) {
 	}
 	if !hasFlag {
 		t.Errorf("expected --permission-mode plan in starts[0].Args, got %v", f.starts[0].Args)
+	}
+}
+
+// TestBindGateFlagStored pins #132: an explicit --gate is stored on the
+// binding as given.
+func TestBindGateFlagStored(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Gate: "make check",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Gate != "make check" {
+		t.Errorf("b.Gate = %q, want %q", b.Gate, "make check")
+	}
+}
+
+// TestBindGatePolicyDefaultApplied pins #132: with no --gate, policy.json's
+// gate.default is used.
+func TestBindGatePolicyDefaultApplied(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Gate != "make check" {
+		t.Errorf("b.Gate = %q, want the policy default %q", b.Gate, "make check")
+	}
+}
+
+// TestBindNoGateOverridesPolicyDefault pins #132: --no-gate opts a binding
+// out of policy.json's gate.default.
+func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		NoGate: true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Gate != "" {
+		t.Errorf("b.Gate = %q, want empty despite the policy default", b.Gate)
+	}
+}
+
+// TestForkInheritsSourceGate pins #132: a fork with no --gate/--no-gate
+// inherits the source binding's Gate.
+func TestForkInheritsSourceGate(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Gate = "make check"
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source:      "source",
+		Round:       2,
+		NewName:     "alt",
+		PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Fork failed: %v", err)
+	}
+	if res.Binding.Gate != "make check" {
+		t.Errorf("Binding.Gate = %q, want inherited from source", res.Binding.Gate)
+	}
+
+	stored, err := rt.Store.Load("alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Gate != "make check" {
+		t.Errorf("stored Gate = %q, want inherited from source", stored.Gate)
 	}
 }

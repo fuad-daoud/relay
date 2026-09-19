@@ -162,6 +162,14 @@ func (s *Store) BuilderStreamPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".jsonl")
 }
 
+// GateLogPath is where the gate command's output for a round is appended
+// (#132). A round file like the plan and the report, so fork copies it and
+// gc archives it.
+// Layout: <binding dir>/NNN-gate.log
+func (s *Store) GateLogPath(name string, round int) string {
+	return s.roundFile(name, round, "gate", ".log")
+}
+
 // QuestionPath is where a captured blocking dialog is stored.
 func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")

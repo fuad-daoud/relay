@@ -48,6 +48,7 @@ const (
 	KindPick     Kind = "pick"   // relay -> log only: which candidate a spawn resolved to and why (#61 step 2)
 	KindSwitch   Kind = "switch" // relay -> log only: the builder was replaced mid-round, and why (#61 step 6)
 	KindExit     Kind = "exit"   // relay -> log only: a headless builder exited without a report (#99)
+	KindGate     Kind = "gate"   // relay -> log only: the gate started (#132)
 
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path
@@ -69,6 +70,10 @@ type LogEntry struct {
 	Late        bool       `json:"late,omitempty"`
 	// Tier is the permission tier the round was sent at, on plan entries (#141).
 	Tier string `json:"tier,omitempty"`
+
+	// Gate is the acceptance check's result, on report entries of a gated
+	// round (#132). Nil when the binding has no gate or the entry predates it.
+	Gate *GateRecord `json:"gate,omitempty"`
 
 	// Commits and Tree are the round's commit facts, on diff entries only
 	// (#130): commits added since the round's baseline HEAD, and whether the
@@ -123,6 +128,17 @@ type ClassifyRecord struct {
 	Max         float64 `json:"injection_max"`     // highest p seen, even below Threshold
 	InputTokens int     `json:"input_tokens,omitempty"`
 	Note        string  `json:"note,omitempty"` // failure reason, "classify: ..." form; empty on success
+}
+
+// GateRecord is the acceptance check's result, on report entries of a gated
+// round (#132).
+type GateRecord struct {
+	Command    string `json:"command"`
+	Result     string `json:"result"`    // "pass" | "fail" | "timeout" | "error"
+	ExitCode   int    `json:"exit_code"` // meaningful for pass/fail
+	DurationMS int64  `json:"duration_ms"`
+	LogPath    string `json:"log_path"`
+	Note       string `json:"note,omitempty"` // why "error": start failed, no runner, ...
 }
 
 func (s *Store) logPath(name string) string {
