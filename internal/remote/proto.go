@@ -64,6 +64,17 @@ type UnavailableRequest struct {
 	Reason string `json:"reason"`
 }
 
+type CandidateView struct {
+	Token string `json:"token"` // canonical harness/provider/model token
+	Kind  string `json:"kind"`  // harness kind: agy | claude | opencode
+	Gated bool   `json:"gated"` // a live limit gate on the ledger
+	Pick  bool   `json:"pick"`  // what the policy order would pick right now for the builder role
+}
+
+type CandidatesResponse struct {
+	Candidates []CandidateView `json:"candidates"`
+}
+
 // Code represents a structured error code returned by the remote protocol.
 type Code string
 
