@@ -241,6 +241,11 @@ func cmdDoctor(args []string) error {
 		})
 	}
 
+	if stateRoot, err := store.DefaultRoot(); err == nil {
+		serveRoot := filepath.Join(stateRoot, "serve")
+		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveRoot, time.Now())...)
+	}
+
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
 	refusals := relay.RoleRefusals(rt.Candidates, rt.Policy, relay.Gates(rt))

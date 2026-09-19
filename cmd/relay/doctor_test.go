@@ -430,6 +430,10 @@ func (s *stubDoctorEnv) BinaryVersion(ctx context.Context, path string) (string,
 	return "", nil
 }
 
+func (s *stubDoctorEnv) Probe(dir string) error {
+	return nil
+}
+
 // A probe relay could not complete is not actionable and stays off the hot path.
 // An actionable row in the same report must survive it -- the all-or-nothing
 // filter this replaces dropped both, and its test could not tell the difference
