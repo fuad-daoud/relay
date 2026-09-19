@@ -564,3 +564,44 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	next.Builder.RemoteStatus = "idle"
 	return deliverAndSettle(ctx, rt, tx, next, agents)
 }
+
+// ForwardUnavailable tells every remote binding with an open round that its
+// server-side candidate just hit a usage limit, so that server's own
+// reconcile can switch or gate it exactly as a local daemon would (§4.6). It
+// never fails the caller: a binding relay could not reach is named in the
+// returned lines instead, and `relay unavailable`'s local behaviour (the
+// ledger gate) proceeds either way.
+func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) []string {
+	if rt.Remote == nil {
+		return nil
+	}
+
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return []string{fmt.Sprintf("list bindings: %v", err)}
+	}
+
+	var lines []string
+	for _, b := range bindings {
+		if !b.Builder.Remote() {
+			continue
+		}
+
+		entries, err := rt.Store.ReadLog(b.Name)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("%s: read log: %v", b.Name, err))
+			continue
+		}
+		open := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+		if !open {
+			continue
+		}
+
+		if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, token, reason); err != nil {
+			lines = append(lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
+		}
+	}
+
+	return lines
+}

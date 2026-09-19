@@ -103,6 +103,9 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if err != nil {
 		return ForkResult{}, err
 	}
+	if src.Builder.Remote() {
+		return ForkResult{}, errors.New("fork across servers is not supported")
+	}
 	if opts.Round < 1 || opts.Round > src.Round {
 		return ForkResult{}, ErrRoundOutOfRange
 	}

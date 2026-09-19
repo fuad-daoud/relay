@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -619,6 +621,25 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		b, err := tx.Load(name)
 		if err != nil {
 			return err
+		}
+
+		// A remote binding's server is told first (§4.6): the server is the
+		// one place that knows whether the round is still open, and it must
+		// agree before this binding stops relaying locally.
+		if b.Builder.Remote() {
+			if rt.Remote == nil {
+				return ErrRemoteUnavailable
+			}
+			if derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name); derr != nil {
+				var httpErr *client.HTTPError
+				if errors.As(derr, &httpErr) && httpErr.Status == 409 {
+					return fmt.Errorf("round %d is running on %s; wait or relay unbind --force", b.Round, b.Builder.Server)
+				}
+				if errors.Is(derr, client.ErrUnreachable) {
+					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
+				}
+				return fmt.Errorf("%s: %w", b.Builder.Server, derr)
+			}
 		}
 
 		oldState := b.State

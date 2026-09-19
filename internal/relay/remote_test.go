@@ -1168,3 +1168,211 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 		t.Fatalf("notices = %v, want one naming the absorb failure", f.notices)
 	}
 }
+
+func TestDoneRemoteForwardsFirst(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{doneErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeRoundOpen, Message: "round is open"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	_, err := Done(ctx, rt, "api")
+	if err == nil || !strings.Contains(err.Error(), "round 1 is running on zen; wait or relay unbind --force") {
+		t.Fatalf("Done err = %v, want the round-open refusal", err)
+	}
+
+	reloaded, lerr := st.Load("api")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if reloaded.State != store.StateActive {
+		t.Fatalf("state = %s, want unchanged active: a refused Done must not mark the binding done", reloaded.State)
+	}
+}
+
+func TestUnbindRemote404Proceeds(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "gone"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := Unbind(ctx, rt, "api", false); err != nil {
+		t.Fatalf("Unbind: %v, want a 404 to proceed locally", err)
+	}
+
+	if _, err := st.Load("api"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Load after unbind: err = %v, want ErrNotFound", err)
+	}
+	foundUnbind := false
+	for _, c := range fr.calls {
+		if c == "Unbind:zen:api" {
+			foundUnbind = true
+		}
+	}
+	if !foundUnbind {
+		t.Fatalf("server Unbind never called: %v", fr.calls)
+	}
+}
+
+func TestResumeRemoteRefusesRebind(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
+
+	_, _, err := BindResolved(ctx, rt, BindOptions{
+		Name: "api", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/fake/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot change a remote builder; unbind and add") {
+		t.Fatalf("BindResolved err = %v, want the remote-rebind refusal", err)
+	}
+}
+
+func TestGCRemoteOnlyWhenDone(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	doneB := remoteBinding("zen")
+	doneB.Name = "done-remote"
+	doneB.CWD = "/fake/done-remote"
+	doneB.State = store.StateDone
+	if err := st.Save(doneB); err != nil {
+		t.Fatal(err)
+	}
+
+	openB := remoteBinding("zen")
+	openB.Name = "open-remote"
+	openB.CWD = "/fake/open-remote"
+	if err := st.Save(openB); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	results, err := GC(ctx, rt, GCOptions{})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(results) != 1 || results[0].Name != "done-remote" {
+		t.Fatalf("results = %+v, want only done-remote", results)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("GC made a server call: %v, want none", fr.calls)
+	}
+	if _, lerr := st.Load("open-remote"); lerr != nil {
+		t.Fatalf("open-remote must survive GC: %v", lerr)
+	}
+}
+
+func TestForwardUnavailable(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	openB := remoteBinding("zen")
+	openB.Name = "open-remote"
+	openB.CWD = "/fake/open-remote"
+	if err := st.Save(openB); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("open-remote", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		t.Fatal(err)
+	}
+
+	idleB := remoteBinding("zen")
+	idleB.Name = "idle-remote"
+	idleB.CWD = "/fake/idle-remote"
+	if err := st.Save(idleB); err != nil {
+		t.Fatal(err)
+	}
+	// No plan entry for idle-remote's round: its round is not open.
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	lines := ForwardUnavailable(ctx, rt, "some-token", "hit a limit")
+	if len(lines) != 0 {
+		t.Fatalf("lines = %v, want none: the fake never fails", lines)
+	}
+
+	unavailableCalls := 0
+	var target string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Unavailable:") {
+			unavailableCalls++
+			target = c
+		}
+	}
+	if unavailableCalls != 1 {
+		t.Fatalf("Unavailable calls = %d, want exactly 1: %v", unavailableCalls, fr.calls)
+	}
+	if !strings.Contains(target, "open-remote") {
+		t.Fatalf("the one call = %q, want it naming open-remote", target)
+	}
+}
+
+func TestAnswerAskForkRefuseRemote(t *testing.T) {
+	t.Run("Answer", func(t *testing.T) {
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
+
+		err := Answer(context.Background(), rt, "api", AnswerInput{Keys: "y"})
+		if err == nil || !strings.Contains(err.Error(), "remote builders take no dialogs") {
+			t.Fatalf("Answer err = %v, want the remote-dialog refusal", err)
+		}
+	})
+
+	t.Run("Ask", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, _ := seedForAsk(t, f)
+		b := remoteBinding("zen")
+		b.Name = "remote-ask"
+		b.CWD = "/other-tree-remote"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		q := writeQuestion(t, "Review something.")
+
+		_, err := Ask(context.Background(), rt, AskOptions{
+			Role: "reviewer", File: q, Name: "remote-ask", PlannerPane: "w2:p3",
+		})
+		if err == nil || !strings.Contains(err.Error(), "consults are local-only") {
+			t.Fatalf("Ask err = %v, want the consults-are-local-only refusal", err)
+		}
+	})
+
+	t.Run("Fork", func(t *testing.T) {
+		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+		rt := newForkRuntime(t, f, nil, nil)
+		b := remoteBinding("zen")
+		b.CWD = "/fake/fork-src"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Fork(context.Background(), rt, ForkOptions{
+			Source: "api", NewName: "api2", Round: 1, PlannerPane: "w2:p3", CWD: "/fake/fork-dst",
+		})
+		if err == nil || !strings.Contains(err.Error(), "fork across servers is not supported") {
+			t.Fatalf("Fork err = %v, want the cross-server refusal", err)
+		}
+	})
+}
