@@ -1694,6 +1694,36 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		}
 	})
 
+	t.Run("rejected block notes why on the entry", func(t *testing.T) {
+		f := &fakeHerdr{}
+		rt, b := sentBinding(t, f)
+		reportContent := "```relay\nstatus: done\njust a random line without colon\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+		if _, err := reconcile(t, rt, b, agents); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Outcome != OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		}
+		if !strings.Contains(report.Note, "tail: line 3 has no ':'") {
+			t.Errorf("Note = %q, want tail: line 3 has no ':'", report.Note)
+		}
+	})
+
 	t.Run("no block -> unstructured no annotation", func(t *testing.T) {
 		f := &fakeHerdr{}
 		rt, b := sentBinding(t, f)

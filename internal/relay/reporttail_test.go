@@ -2,6 +2,7 @@ package relay
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -235,6 +236,115 @@ not_done: 'leave for later'
 		input := "```relay\nstatus: done\njust a random line without colon\n```\n"
 		if _, ok := ParseReportTail([]byte(input)); ok {
 			t.Fatalf("expected ok=false for line without colon, got true")
+		}
+	})
+
+	t.Run("block list of three", func(t *testing.T) {
+		input := `
+` + "```relay" + `
+status: done
+halted_at: ""
+changed_paths:
+  - Makefile
+  - scripts/check-plugin-version_test.sh
+  - internal/relay/reporttail.go
+commands_run:
+  - make check
+not_done:
+  - docs
+` + "```" + `
+`
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		if tail.Status != OutcomeDone {
+			t.Fatalf("expected status done, got %s", tail.Status)
+		}
+		wantPaths := []string{"Makefile", "scripts/check-plugin-version_test.sh", "internal/relay/reporttail.go"}
+		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+			t.Fatalf("changed_paths: got %+v, want %+v", tail.ChangedPaths, wantPaths)
+		}
+		if !reflect.DeepEqual(tail.CommandsRun, []string{"make check"}) {
+			t.Fatalf("commands_run: got %+v", tail.CommandsRun)
+		}
+		if !reflect.DeepEqual(tail.NotDone, []string{"docs"}) {
+			t.Fatalf("not_done: got %+v", tail.NotDone)
+		}
+	})
+
+	t.Run("block list after a flow list on another key", func(t *testing.T) {
+		input := `
+` + "```relay" + `
+status: done
+commands_run: ["make check"]
+changed_paths:
+  - Makefile
+  - scripts/check-plugin-version_test.sh
+` + "```" + `
+`
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		if !reflect.DeepEqual(tail.CommandsRun, []string{"make check"}) {
+			t.Fatalf("commands_run: got %+v", tail.CommandsRun)
+		}
+		wantPaths := []string{"Makefile", "scripts/check-plugin-version_test.sh"}
+		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+			t.Fatalf("changed_paths: got %+v, want %+v", tail.ChangedPaths, wantPaths)
+		}
+	})
+
+	t.Run("dash with no open list key -> false", func(t *testing.T) {
+		input := "```relay\nstatus: done\n- Makefile\n```\n"
+		if _, ok := ParseReportTail([]byte(input)); ok {
+			t.Fatalf("expected ok=false for list item with no open list key, got true")
+		}
+		_, _, reason := parseReportTail([]byte(input))
+		if !strings.Contains(reason, "has no ':'") {
+			t.Fatalf("reason = %q, want tail: line N has no ':'", reason)
+		}
+	})
+
+	t.Run("mixed flow then block on one key last wins", func(t *testing.T) {
+		input := `
+` + "```relay" + `
+status: done
+changed_paths: ["old.go"]
+changed_paths:
+  - Makefile
+  - scripts/check-plugin-version_test.sh
+` + "```" + `
+`
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		want := []string{"Makefile", "scripts/check-plugin-version_test.sh"}
+		if !reflect.DeepEqual(tail.ChangedPaths, want) {
+			t.Fatalf("changed_paths: got %+v, want %+v", tail.ChangedPaths, want)
+		}
+	})
+
+	t.Run("rejected block reports why", func(t *testing.T) {
+		input := "```relay\nstatus: done\njust a random line without colon\n```\n"
+		_, ok, reason := parseReportTail([]byte(input))
+		if ok {
+			t.Fatalf("expected ok=false")
+		}
+		if reason != "tail: line 3 has no ':'" {
+			t.Fatalf("reason = %q, want tail: line 3 has no ':'", reason)
+		}
+	})
+
+	t.Run("missing block has empty reason", func(t *testing.T) {
+		_, ok, reason := parseReportTail([]byte("plain prose\n"))
+		if ok {
+			t.Fatalf("expected ok=false")
+		}
+		if reason != "" {
+			t.Fatalf("reason = %q, want empty", reason)
 		}
 	})
 

@@ -625,10 +625,14 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	roundStart := b.RoundStartedAt
 
 	body, _ := os.ReadFile(path)
-	tail, ok := ParseReportTail(body)
+	tail, ok, reject := parseReportTail(body)
 	outcome := OutcomeUnstructured
 	if ok {
 		outcome = tail.Status
+	} else if reject != "" {
+		// A fence was present but unreadable: keep unstructured, but say why
+		// so the planner does not treat this as "the builder omitted the block".
+		note = joinNotes(note, reject)
 	}
 	flagged := ScanInstructionShaped(body, compileScanPatterns(rt.Policy))
 
