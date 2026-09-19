@@ -1,0 +1,13 @@
+{"type":"thread.started","thread_id":"01a0bb3b-6da3-79d1-a85d-9ea76187d710"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Exceeded skills context budget. All skill descriptions were removed and 1281 additional skills were not included in the model-visible skills list."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I’ll run `ls -a` first, then use the available agent capability to request the exact one-word reply."}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/bash -lc 'ls -a'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/usr/bin/bash -lc 'ls -a'","aggregated_output":".\n..\n.git\ncodex.jsonl\nresearcher.toml\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"The directory listing is complete. I’m now spawning the researcher-role sub-agent with the exact instruction to return one word."}}
+{"type":"item.started","item":{"id":"item_4","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"01a0bb3b-6da3-79d1-a85d-9ea76187d710","receiver_thread_ids":[],"prompt":"Reply with the single word PONG.","agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_4","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"01a0bb3b-6da3-79d1-a85d-9ea76187d710","receiver_thread_ids":["01a0bb3b-9c37-79f3-82e2-02c7a1a20ea9"],"prompt":"Reply with the single word PONG.","agents_states":{"01a0bb3b-9c37-79f3-82e2-02c7a1a20ea9":{"status":"pending_init","message":null}},"status":"completed"}}
+{"type":"item.started","item":{"id":"item_5","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bb3b-6da3-79d1-a85d-9ea76187d710","receiver_thread_ids":["01a0bb3b-9c37-79f3-82e2-02c7a1a20ea9"],"prompt":null,"agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_5","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bb3b-6da3-79d1-a85d-9ea76187d710","receiver_thread_ids":["01a0bb3b-9c37-79f3-82e2-02c7a1a20ea9"],"prompt":null,"agents_states":{"01a0bb3b-9c37-79f3-82e2-02c7a1a20ea9":{"status":"completed","message":"LUNA-RESEARCHER PONG"}},"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"LUNA-RESEARCHER PONG"}}
+{"type":"turn.completed","usage":{"input_tokens":105565,"cached_input_tokens":97024,"cache_write_input_tokens":0,"output_tokens":419,"reasoning_output_tokens":92}}

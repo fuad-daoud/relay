@@ -1,8 +1,10 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -143,6 +145,9 @@ type Harness struct {
 	// a tool call was refused by its permission mode in print mode (#141).
 	// Every default must compile; TestDenialPatternsSetOnEveryKind enforces it.
 	DenialPatterns []string
+	// DocExt is the extension of this kind's shipped definition files under
+	// agents/; "" means "md". codex roles are TOML profiles (spec §5).
+	DocExt string
 }
 
 var defaultDialogPatterns = []string{
@@ -247,6 +252,39 @@ var knownHarnesses = map[string]Harness{
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
 		},
 	},
+	"codex": {
+		Kind:        "codex",
+		Binary:      "codex",
+		Integration: "codex",
+		MinVersion:  "0.155.0",
+		// Observed 2026-09-19, codex-cli 0.155.1: a spawned [agents.*] role is
+		// a thread inside the same `codex exec` process, reported on the
+		// parent's stream as collab_tool_call items; herdr sees one pane.
+		SubAgents: SubAgentsHidden,
+		// Codex CLI limit text and OpenAI 429 bodies; unverified against a pane; replace with the observed line when one is seen.
+		LimitPatterns: []string{
+			`(?i)usage limit`,
+			`(?i)rate limit`,
+			`(?i)quota`,
+			`(?i)"status": 429`,
+			`(?i)too many requests`,
+		},
+		DialogPatterns: defaultDialogPatterns,
+		// Denial patterns for codex; unverified against a real denied round; replace with the observed line when one is seen.
+		DenialPatterns: []string{
+			`(?i)(command|operation|write) (was )?(rejected|denied|blocked)`,
+			`(?i)sandbox.*(denied|blocked|not permitted)`,
+			`(?i)not permitted`,
+			`(?i)permission denied`,
+		},
+		DocExt: "toml",
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
+			{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
+			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
+			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
+		},
+	},
 }
 
 // Role returns the named role for this harness.
@@ -341,6 +379,18 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
 			"--add-dir", DirPlaceholder}
 		promptAt = 1
+	case "codex":
+		id, effort, err := SplitEffort(model)
+		if err != nil {
+			return Launch{}, fmt.Errorf("%w: codex model %q", ErrBadModel, model)
+		}
+		cfg := []string{"-p", role.Definition, "-m", id, "-c", "model_provider=" + provider}
+		if effort != "" {
+			cfg = append(cfg, "-c", "model_reasoning_effort="+effort)
+		}
+		base = cfg
+		print = append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder)
+		promptAt = 1
 	}
 
 	perm, err := h.PermissionArgs(tier)
@@ -389,6 +439,28 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []str
 		}
 	}
 	return out
+}
+
+// ErrBadModel reports a candidate model relay cannot render for its kind.
+var ErrBadModel = errors.New("bad model")
+
+// SplitEffort splits a codex candidate model "<id>[:<effort>]" on its last
+// ':' (spec §3.1). No colon: (model, ""). It does not validate the effort
+// vocabulary, which is model-dependent. Returns ErrBadModel when the id is
+// empty or a colon is present with an empty effort.
+func SplitEffort(model string) (id, effort string, err error) {
+	if model == "" {
+		return "", "", ErrBadModel
+	}
+	i := strings.LastIndex(model, ":")
+	if i < 0 {
+		return model, "", nil
+	}
+	id, effort = model[:i], model[i+1:]
+	if id == "" || effort == "" {
+		return "", "", ErrBadModel
+	}
+	return id, effort, nil
 }
 
 // Lookup returns the entry for a kind. ok is false for a kind relay was not

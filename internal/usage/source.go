@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/harness"
 )
 
 // Mode is how the builder ran.
@@ -20,7 +22,7 @@ const (
 // Source is everything a reader needs to find one round's record. It is
 // built by internal/relay from a binding; this package never sees one.
 type Source struct {
-	Harness    string // "claude" | "agy" | "opencode"
+	Harness    string // "claude" | "agy" | "opencode" | "codex"
 	Mode       Mode
 	Provider   string // the candidate's; "" for an adopted builder
 	Model      string // the candidate's; "" for an adopted builder
@@ -133,6 +135,12 @@ func (r reader) readStream(ctx context.Context, src Source) ([]Sample, string) {
 		samples = agyStream(f, src.Provider, src.Model)
 	case "opencode":
 		samples = opencodeStream(f, src.Provider, src.Model)
+	case "codex":
+		model := src.Model
+		if id, _, err := harness.SplitEffort(src.Model); err == nil {
+			model = id
+		}
+		samples = codexStream(f, src.Provider, model)
 	default:
 		return nil, "no reader for " + src.Harness
 	}
@@ -149,6 +157,8 @@ func (r reader) readPane(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Harness {
 	case "agy":
 		return nil, "agy keeps no usage record"
+	case "codex":
+		return nil, "codex pane usage not read"
 	case "claude", "opencode":
 	default:
 		return nil, "no reader for " + src.Harness

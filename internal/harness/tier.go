@@ -98,6 +98,17 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("%w: opencode cannot honour tier %s", ErrTierUnsupported, tier)
 		}
+	case "codex":
+		switch tier {
+		case TierRead:
+			return []string{"-s", "read-only"}, nil
+		case TierEdit:
+			return []string{"-s", "workspace-write"}, nil
+		case TierYolo:
+			return []string{"--dangerously-bypass-approvals-and-sandbox"}, nil
+		default:
+			return nil, fmt.Errorf("%w: codex cannot honour tier %s", ErrTierUnsupported, tier)
+		}
 	default:
 		return nil, nil
 	}
@@ -112,6 +123,12 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 //	          --disallowedTools, --disallowed-tools, --permission-prompts
 //	agy:      --mode, --dangerously-skip-permissions, --sandbox
 //	opencode: --auto
+//	codex:    -s, --sandbox, -a, --ask-for-approval, --full-auto,
+//	          --approve-for-me, --dangerously-bypass-approvals-and-sandbox
+//
+// A `-c sandbox_mode=...` or `-c approval_policy=...` pair is not detected:
+// -c is a generic override and the two-element shape does not fit the
+// whole-element matcher.
 func (h Harness) PermissionFlags() []string {
 	switch h.Kind {
 	case "claude":
@@ -134,6 +151,16 @@ func (h Harness) PermissionFlags() []string {
 	case "opencode":
 		return []string{
 			"--auto",
+		}
+	case "codex":
+		return []string{
+			"-s",
+			"--sandbox",
+			"-a",
+			"--ask-for-approval",
+			"--full-auto",
+			"--approve-for-me",
+			"--dangerously-bypass-approvals-and-sandbox",
 		}
 	default:
 		return nil

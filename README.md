@@ -21,7 +21,7 @@ human, whether the work is done, is a decision that stays with the planner
   and every single thing relay observes or controls goes through the `herdr`
   CLI. relay is useless without it.
 - **Two agent harnesses that herdr can drive** — one for the planner, one for
-  the builder. relay knows how to start `opencode`, `claude` and `agy`; you tell it
+  the builder. relay knows how to start `opencode`, `claude`, `agy` and `codex`; you tell it
   which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relay works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
@@ -144,6 +144,12 @@ On a clean machine, set up prerequisites and preflight with `relay doctor`:
    doctor` reports the pin each installed definition carries, warns when an
    agy copy pins a tier or differs from what relay ships, and names the
    `relay agent install ... --force` that restores it.
+
+   codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
+   with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
+   every codex builder's research sub-agents and `relay doctor` warns when
+   that pin drifts. Pane builders also need `herdr integration install
+   codex`.
 5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
 6. If more than one candidate serves `builder`, write `~/.config/relay/policy.json`
    with the order to try them in (see [Policy](#policy)); `relay policy` shows
@@ -681,7 +687,7 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 ]
 ```
 
-- `harness` — a kind relay knows: `agy`, `claude`, `opencode`. Required.
+- `harness` — a kind relay knows: `agy`, `claude`, `opencode`, `codex`. Required.
 - `provider` — who enforces the quota; free text. Required.
 - `model` — passed to the harness as-is. Required.
 - `roles` — non-empty list of roles from `builder`, `reviewer`, `researcher`. Required.
@@ -709,6 +715,9 @@ A role is relay's name for a job; the harness definition it selects is what `rel
 | `agy` | `--model <model> --agent <role.Definition>` |
 | `claude` | `--model <model> --agent <role.Definition>` |
 | `opencode` | `--agent <role.Definition> -m <provider>/<model>` |
+| `codex` | `-p <role.Definition> -m <id> -c model_provider=<provider> [-c model_reasoning_effort=<effort>]` |
+
+For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
 Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
 
@@ -922,13 +931,14 @@ relay defines four permission tiers that control how autonomously agents may use
 - `edit` — file editing and standard workspace modification commands permitted.
 - `yolo` — full autonomy; interactive permission prompts and confirmation dialogs bypassed.
 
-The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278, agy 1.2.7, opencode 2.0.8):
+The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278, agy 1.2.7, opencode 2.0.8, codex 0.155.1):
 
 | kind | harness | read | edit | yolo |
 |---|---|---|---|---|
 | claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
+| codex | (none) | `-s read-only` | `-s workspace-write` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 

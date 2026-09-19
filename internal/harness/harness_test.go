@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -113,6 +114,34 @@ func TestTableExactValues(t *testing.T) {
 				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
 				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+			},
+		},
+		"codex": {
+			Kind:        "codex",
+			Binary:      "codex",
+			Integration: "codex",
+			MinVersion:  "0.155.0",
+			SubAgents:   SubAgentsHidden,
+			LimitPatterns: []string{
+				`(?i)usage limit`,
+				`(?i)rate limit`,
+				`(?i)quota`,
+				`(?i)"status": 429`,
+				`(?i)too many requests`,
+			},
+			DialogPatterns: defaultDialogPatterns,
+			DenialPatterns: []string{
+				`(?i)(command|operation|write) (was )?(rejected|denied|blocked)`,
+				`(?i)sandbox.*(denied|blocked|not permitted)`,
+				`(?i)not permitted`,
+				`(?i)permission denied`,
+			},
+			DocExt: "toml",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
+				{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
+				{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
+				{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
 			},
 		},
 	}
@@ -250,7 +279,14 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
-		if !strings.Contains(string(doc), "name: architect") {
+		if h.DocExt == "toml" {
+			// A profile has no frontmatter: its identity is the file relay
+			// installs it at (architect.config.toml, selected with -p
+			// architect) and the literal that carries the role text.
+			if !strings.Contains(string(doc), "developer_instructions = '''") {
+				t.Errorf("%s architect definition lacks the developer_instructions literal", h.Kind)
+			}
+		} else if !strings.Contains(string(doc), "name: architect") {
 			t.Errorf("%s architect definition does not carry name: architect", h.Kind)
 		}
 		if !strings.Contains(string(doc), "Ordered Implementation Steps") {
@@ -297,9 +333,22 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	}
 }
 
-// definitionBody returns the text after the closing --- of the frontmatter.
+// definitionBody returns the text after the closing --- of the frontmatter,
+// or, for a kind whose definitions are TOML (DocExt "toml"), the text of the
+// developer_instructions multi-line literal.
 func definitionBody(t *testing.T, kind, doc string) string {
 	t.Helper()
+	if h, ok := Lookup(kind); ok && h.DocExt == "toml" {
+		_, after, ok := strings.Cut(doc, "developer_instructions = '''\n")
+		if !ok {
+			t.Fatalf("%s definition has no developer_instructions literal", kind)
+		}
+		body, _, ok2 := strings.Cut(after, "'''")
+		if !ok2 {
+			t.Fatalf("%s definition has no developer_instructions literal", kind)
+		}
+		return body
+	}
 	parts := strings.SplitN(doc, "\n---\n", 2)
 	if len(parts) != 2 || !strings.HasPrefix(doc, "---\n") {
 		t.Fatalf("%s architect definition has no frontmatter fence", kind)
@@ -549,6 +598,12 @@ func TestLaunchPrintPerKind(t *testing.T) {
 			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--auto"},
 			wantPrompt: 1,
 		},
+		{
+			kind: "codex",
+			wantPrint: []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "m/x", "-c", "model_provider=prov",
+				"--json", "-C", DirPlaceholder},
+			wantPrompt: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.kind+" "+strings.Join(tt.extra, " "), func(t *testing.T) {
@@ -610,6 +665,82 @@ func TestLaunchPrintPerKind(t *testing.T) {
 	}
 }
 
+func TestLaunchCodex(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	h, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("Lookup(\"codex\") not found")
+	}
+
+	wantArgs := []string{"-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high"}
+	wantPrint := []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", DirPlaceholder}
+
+	got, err := h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Args, wantArgs) {
+		t.Errorf("Args = %v, want %v", got.Args, wantArgs)
+	}
+	if !reflect.DeepEqual(got.Print, wantPrint) {
+		t.Errorf("Print = %v, want %v", got.Print, wantPrint)
+	}
+
+	wantArgsEdit := append(append([]string(nil), wantArgs...), "-s", "workspace-write")
+	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write")
+	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("Launch() TierEdit error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Args, wantArgsEdit) {
+		t.Errorf("TierEdit Args = %v, want %v", got.Args, wantArgsEdit)
+	}
+	if !reflect.DeepEqual(got.Print, wantPrintEdit) {
+		t.Errorf("TierEdit Print = %v, want %v", got.Print, wantPrintEdit)
+	}
+
+	got, err = h.Launch("openai", "gpt-5.6-terra:high", []string{"--foo"}, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch() extra error = %v", err)
+	}
+	if len(got.Args) == 0 || got.Args[len(got.Args)-1] != "--foo" {
+		t.Errorf("Args with extra must end in --foo: %v", got.Args)
+	}
+	if len(got.Print) == 0 || got.Print[len(got.Print)-1] != "--foo" {
+		t.Errorf("Print with extra must end in --foo: %v", got.Print)
+	}
+
+	printBefore := append([]string(nil), got.Print...)
+	rendered := got.PrintArgs("hi", time.Hour, "/w")
+	wantRendered := []string{"exec", "hi", "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", "/w", "--foo"}
+	if !reflect.DeepEqual(rendered, wantRendered) {
+		t.Errorf("PrintArgs = %v, want %v", rendered, wantRendered)
+	}
+	if !reflect.DeepEqual(got.Print, printBefore) {
+		t.Errorf("PrintArgs mutated Print: got %v, want unchanged %v", got.Print, printBefore)
+	}
+}
+
+func TestLaunchCodexBadModel(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	h, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("Lookup(\"codex\") not found")
+	}
+	for _, model := range []string{":high", "gpt-5.6-terra:"} {
+		_, err := h.Launch("openai", model, nil, builder, TierHarness)
+		if !errors.Is(err, ErrBadModel) {
+			t.Errorf("Launch(%q) error = %v, want ErrBadModel", model, err)
+		}
+	}
+}
+
 func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	builder, _ := RoleByName("builder")
 	h, _ := Lookup("agy")
@@ -657,6 +788,39 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	// Unknown kind: empty in, empty out, no panic.
 	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w"); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
+	}
+}
+
+func TestSplitEffort(t *testing.T) {
+	tests := []struct {
+		in         string
+		wantID     string
+		wantEffort string
+		wantErr    bool
+	}{
+		{"gpt-5.6-terra:high", "gpt-5.6-terra", "high", false},
+		{"gpt-5.6-terra", "gpt-5.6-terra", "", false},
+		{"a:b:c", "a:b", "c", false},
+		{":high", "", "", true},
+		{"gpt-5.6-terra:", "", "", true},
+		{"", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			id, effort, err := SplitEffort(tt.in)
+			if tt.wantErr {
+				if !errors.Is(err, ErrBadModel) {
+					t.Fatalf("SplitEffort(%q) error = %v, want ErrBadModel", tt.in, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SplitEffort(%q) unexpected error: %v", tt.in, err)
+			}
+			if id != tt.wantID || effort != tt.wantEffort {
+				t.Errorf("SplitEffort(%q) = (%q, %q), want (%q, %q)", tt.in, id, effort, tt.wantID, tt.wantEffort)
+			}
+		})
 	}
 }
 

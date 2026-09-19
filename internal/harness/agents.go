@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-//go:embed agents/*.md
+//go:embed agents/*.md agents/*.toml
 var agentFS embed.FS
 
 // ErrNoAgentDoc reports a role/kind pair with no embedded definition.
@@ -25,7 +25,11 @@ func AgentDoc(role, kind string) ([]byte, error) {
 	if !ok {
 		return nil, ErrNoAgentDoc
 	}
-	b, err := agentFS.ReadFile("agents/" + r.Doc + ".md")
+	ext := h.DocExt
+	if ext == "" {
+		ext = "md"
+	}
+	b, err := agentFS.ReadFile("agents/" + r.Doc + "." + ext)
 	if err != nil {
 		return nil, ErrNoAgentDoc
 	}

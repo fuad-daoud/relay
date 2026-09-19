@@ -235,28 +235,28 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	env := &fakeEnv{
 		herdrVer: "0.9.0",
 		lookPaths: map[string]string{
-			"codex": "/usr/bin/codex",
+			"droid": "/usr/bin/droid",
 		},
 		intStatus: map[string]herdr.IntegrationState{
-			// codex is not in herdr integration status
+			// droid is not in herdr integration status
 		},
 	}
 
-	report := Run(context.Background(), env, []string{"codex"})
-	roleCheck := findCheck(report, "codex", "plan-executor")
+	report := Run(context.Background(), env, []string{"droid"})
+	roleCheck := findCheck(report, "droid", "plan-executor")
 	if roleCheck == nil {
-		t.Fatal("codex plan-executor check not found")
+		t.Fatal("droid plan-executor check not found")
 	}
 	if roleCheck.Severity != SevOK {
-		t.Errorf("codex role check severity = %v, want SevOK", roleCheck.Severity)
+		t.Errorf("droid role check severity = %v, want SevOK", roleCheck.Severity)
 	}
 
-	intCheck := findCheck(report, "codex", "integration")
+	intCheck := findCheck(report, "droid", "integration")
 	if intCheck == nil {
-		t.Fatal("codex integration check not found")
+		t.Fatal("droid integration check not found")
 	}
 	if intCheck.Severity != SevOK {
-		t.Errorf("codex integration severity = %v, want SevOK when not in herdr integration status", intCheck.Severity)
+		t.Errorf("droid integration severity = %v, want SevOK when not in herdr integration status", intCheck.Severity)
 	}
 }
 
@@ -873,6 +873,102 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 		c := findCheck(report, "claude", "plan-executor")
 		if c == nil || c.Severity != SevOK {
 			t.Errorf("row = %+v, want SevOK", c)
+		}
+	})
+}
+
+func TestPinnedModelToml(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		raw  string
+		want string
+	}{
+		{
+			name: "codex top-level model before a table",
+			kind: "codex",
+			raw:  "# c\nmodel = \"gpt-5.6-luna\"\nmodel_reasoning_effort = \"medium\"\n[agents.x]\nmodel = \"other\"\n",
+			want: "gpt-5.6-luna",
+		},
+		{
+			name: "codex model_reasoning_effort must not match model",
+			kind: "codex",
+			raw:  "model_reasoning_effort = \"medium\"\n",
+			want: "",
+		},
+		{
+			name: "codex model inside a table is not a top-level pin",
+			kind: "codex",
+			raw:  "[agents.x]\nmodel = \"other\"\n",
+			want: "",
+		},
+		{
+			name: "claude frontmatter model",
+			kind: "claude",
+			raw:  "---\nmodel: opus\n---\n",
+			want: "opus",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pinnedModel(tc.kind, []byte(tc.raw)); got != tc.want {
+				t.Errorf("pinnedModel(%q, ...) = %q, want %q", tc.kind, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoctorCodexResearcherPin(t *testing.T) {
+	newEnv := func(t *testing.T) *fakeEnv {
+		t.Helper()
+		home := "/home/u"
+		env := &fakeEnv{
+			herdrVer:      "0.9.0",
+			homeDir:       home,
+			lookPaths:     map[string]string{"codex": "/usr/bin/codex"},
+			intStatus:     map[string]herdr.IntegrationState{"codex": {Installed: true}},
+			existingFiles: map[string]bool{},
+			fileContents:  map[string]string{},
+			versions:      map[string]string{"/usr/bin/codex": "0.155.1"},
+		}
+		for _, role := range []string{"plan-executor", "researcher", "reviewer", "architect"} {
+			env.existingFiles[home+"/.codex/"+role+".config.toml"] = true
+		}
+		return env
+	}
+
+	t.Run("researcher pinned to the shipped model is OK", func(t *testing.T) {
+		env := newEnv(t)
+		env.fileContents["/home/u/.codex/researcher.config.toml"] = shippedDoc(t, "researcher", "codex")
+		report := Run(context.Background(), env, []string{"codex"})
+		c := findCheck(report, "codex", "researcher")
+		want := "~/.codex/researcher.config.toml (model: gpt-5.6-luna)"
+		if c == nil || c.Severity != SevOK || c.Detail != want {
+			t.Errorf("row = %+v, want SevOK %q", c, want)
+		}
+	})
+
+	t.Run("researcher drifted to another model warns with the install fix", func(t *testing.T) {
+		env := newEnv(t)
+		drifted := strings.ReplaceAll(shippedDoc(t, "researcher", "codex"), "gpt-5.6-luna", "gpt-5.6-terra")
+		env.fileContents["/home/u/.codex/researcher.config.toml"] = drifted
+		report := Run(context.Background(), env, []string{"codex"})
+		c := findCheck(report, "codex", "researcher")
+		wantDetail := "~/.codex/researcher.config.toml (model: gpt-5.6-terra) -- pins gpt-5.6-terra; relay ships gpt-5.6-luna"
+		wantFix := "relay agent install --kind codex --role researcher --force"
+		if c == nil || c.Severity != SevWarn || c.Detail != wantDetail || c.Fix != wantFix {
+			t.Errorf("row = %+v, want SevWarn %q fix %q", c, wantDetail, wantFix)
+		}
+	})
+
+	t.Run("plan-executor carries no pin suffix", func(t *testing.T) {
+		env := newEnv(t)
+		env.fileContents["/home/u/.codex/plan-executor.config.toml"] = shippedDoc(t, "plan-executor", "codex")
+		report := Run(context.Background(), env, []string{"codex"})
+		c := findCheck(report, "codex", "plan-executor")
+		want := "~/.codex/plan-executor.config.toml"
+		if c == nil || c.Severity != SevOK || c.Detail != want {
+			t.Errorf("row = %+v, want SevOK %q", c, want)
 		}
 	})
 }
