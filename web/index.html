@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>relay — the plan/report handoff between two agent panes</title>
+<meta name="description" content="relay automates the plan/report handoff between two AI coding agent panes running under herdr. A CLI carries the plan out mid-turn; a daemon carries the report back after the turn has ended.">
+<meta name="theme-color" content="#f5f9fe" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#071831" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:ital,wght@0,400;0,600;1,400&display=swap">
+<link rel="stylesheet" href="style.css">
+<script>document.documentElement.className+=" js";
+try{var t=localStorage.getItem("relay-theme");if(t==="dark"||t==="light")document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 4v15"/><path d="m5.5 13 6.5 6.5L18.5 13"/>
+  </symbol>
+  <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 17 17 7"/><path d="M8 7h9v9"/>
+  </symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap topbar__in">
+    <a class="wordmark" href="#main" translate="no">relay</a>
+    <nav class="topbar__nav" aria-label="Primary">
+      <a href="#install">install</a>
+      <a href="https://github.com/fuad-daoud/relay">source<svg class="ico" aria-hidden="true" focusable="false"><use href="#i-out"/></svg></a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <div class="wrap">
+
+    <div class="orient">
+      <h1>The handoff between a planner agent and a builder agent, drawn.</h1>
+      <a class="cta" href="#install">Install relay<svg class="ico" aria-hidden="true" focusable="false"><use href="#i-down"/></svg></a>
+      <p class="lede">relay automates the plan/report handoff between two AI coding agent panes running under
+        <a href="https://github.com/herdrdev/herdr">herdr</a>. You talk to the planner; the planner hands work
+        to a builder; relay moves the files between them. That copy-paste is the only manual step in the loop,
+        and it is pure mechanism.</p>
+      <p class="hard">
+        <strong>herdr is a hard dependency, not an integration.</strong>
+        herdr&nbsp;0.8.2 or newer must be on your <code translate="no">PATH</code>. herdr owns the panes, and
+        everything relay observes or controls goes through the <code translate="no">herdr</code> CLI. Without
+        it, relay does nothing.
+      </p>
+    </div>
+
+    <figure class="map">
+      
+      <div class="map__frame">
+        <svg class="map__svg" viewBox="0 0 880 451" role="img" aria-labelledby="map-t map-d" preserveAspectRatio="xMidYMid meet">
+          <title id="map-t">How one relay round moves between the planner, the builder and disk.</title>
+          <desc id="map-d">The planner pane calls the relay CLI, which stages the plan as 001-plan.md in the state
+            directory at ~/.local/state/relay/&lt;name&gt;/ and has herdr type it into the builder. Those three steps are
+            drawn as solid arrows: each one happens while the planner’s turn is still running. The builder writes
+            001-report.md and then an empty 001-done marker back into the same directory. The relay daemon, a separate
+            long-running process, sees that marker and delivers the report to the planner. Those steps are drawn as
+            dashed arrows: they happen after the planner’s turn has ended, which is the only reason a second process
+            exists.</desc>
+
+          <defs>
+            <marker id="ah-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="strokeWidth" orient="auto-start-reverse">
+              <path d="M0 1.2 9.4 5 0 8.8z" class="ah ah--out"/>
+            </marker>
+            <marker id="ah-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="strokeWidth" orient="auto-start-reverse">
+              <path d="M0 1.2 9.4 5 0 8.8z" class="ah ah--in"/>
+            </marker>
+          </defs>
+
+          <!-- 1 -->
+          <g class="reveal" style="--i:0">
+            <g class="n n-planner">
+              <rect x="56" y="14" width="272" height="94"/>
+              <text class="t-name" x="72" y="44">planner pane</text>
+              <text class="t-sub" x="72" y="69">you talk to it.</text>
+              <text class="t-sub" x="72" y="90">herdr owns the pane.</text>
+            </g>
+            <path class="edge edge--out e-ab" d="M192 108V150" marker-end="url(#ah-out)"/>
+            <text class="t-edge t-edge--out" x="206" y="138">relay send</text>
+          </g>
+
+          <!-- 2 -->
+          <g class="reveal" style="--i:1">
+            <g class="n n-cli">
+              <rect x="56" y="158" width="272" height="120"/>
+              <text class="t-name" x="72" y="188">relay CLI</text>
+              <text class="t-sub" x="72" y="213">the planner calls it mid-turn</text>
+              <text class="t-sub" x="72" y="234">and it returns straight away.</text>
+              <text class="t-verbs" x="72" y="260">bind · send · pull · done</text>
+            </g>
+            <path class="edge edge--out e-bc" d="M328 218H444" marker-end="url(#ah-out)"/>
+            <text class="t-edge t-edge--out" x="386" y="206" text-anchor="middle">001-plan.md</text>
+          </g>
+
+          <!-- 3 -->
+          <g class="reveal" style="--i:2">
+            <g class="n n-state">
+              <rect x="452" y="112" width="208" height="309"/>
+              <text class="t-name" x="468" y="142">state directory</text>
+              <text class="t-path" x="468" y="167">~/.local/state/</text>
+              <text class="t-path" x="468" y="188">relay/&lt;name&gt;/</text>
+              <text class="t-file" x="484" y="218">bind.json</text>
+              <text class="t-file" x="484" y="240">log.jsonl</text>
+              <text class="t-file" x="484" y="262">001-plan.md</text>
+              <text class="t-file" x="484" y="284">001-report.md</text>
+              <text class="t-file" x="484" y="306">001-question.md</text>
+              <text class="t-file" x="484" y="328">001-diff.patch</text>
+              <text class="t-file" x="484" y="350">001-done</text>
+              <text class="t-sub" x="468" y="382">the round closes on the</text>
+              <text class="t-sub" x="468" y="403">empty 001-done marker.</text>
+            </g>
+            <path class="edge edge--out e-cd" d="M484 112V70H676" marker-end="url(#ah-out)"/>
+            <text class="t-edge t-edge--out" x="580" y="58" text-anchor="middle">herdr agent prompt</text>
+          </g>
+
+          <!-- 4 -->
+          <g class="reveal" style="--i:3">
+            <g class="n n-builder">
+              <rect x="684" y="14" width="190" height="115"/>
+              <text class="t-name" x="700" y="44">builder</text>
+              <text class="t-sub" x="700" y="69">its own herdr tab, or</text>
+              <text class="t-sub" x="700" y="90">--headless: a process,</text>
+              <text class="t-sub" x="700" y="111">not a pane.</text>
+            </g>
+            <path class="edge edge--in e-dc" d="M804 129V236H668" marker-end="url(#ah-in)"/>
+            <text class="t-edge t-edge--in" x="732" y="204" text-anchor="middle">001-report.md</text>
+            <text class="t-edge t-edge--in" x="732" y="224" text-anchor="middle">then 001-done</text>
+          </g>
+
+          <!-- 5 -->
+          <g class="reveal" style="--i:4">
+            <g class="n n-daemon">
+              <rect x="56" y="322" width="272" height="115"/>
+              <text class="t-name" x="72" y="352">relay daemon</text>
+              <text class="t-sub" x="72" y="377">one per herdr session,</text>
+              <text class="t-sub" x="72" y="398">under systemd or launchd.</text>
+              <text class="t-sub" x="72" y="419">It runs when no model does.</text>
+            </g>
+            <path class="edge edge--in e-ce" d="M452 362H336" marker-end="url(#ah-in)"/>
+            <text class="t-edge t-edge--in" x="394" y="350" text-anchor="middle">the marker</text>
+            <path class="edge edge--in e-ea" d="M56 410H34V40H48" marker-end="url(#ah-in)"/>
+            <text class="t-edge t-edge--in" transform="translate(20 225) rotate(-90)" text-anchor="middle">delivered after the planner’s turn has ended</text>
+          </g>
+        </svg>
+
+        <ol class="map__nodes" role="list">
+          <li class="node node--planner reveal" style="--i:0">
+            <a href="#refusals">
+              <span class="node__name">planner pane</span>
+              <span class="node__sub">You talk to it; herdr owns the pane. relay never types over a focused one.</span>
+            </a>
+            <p class="node__edge node__edge--out"><code translate="no">relay send --file plan.md</code> — called mid-turn, returns straight away</p>
+          </li>
+          <li class="node node--cli reveal" style="--i:1">
+            <a href="#round">
+              <span class="node__name">relay CLI</span>
+              <span class="node__sub">Invoked by the planner through its own Bash call: <code translate="no">bind</code>, <code translate="no">send</code>, <code translate="no">status</code>, <code translate="no">wait</code>, <code translate="no">pull</code>, <code translate="no">done</code>.</span>
+            </a>
+            <p class="node__edge node__edge--out">stages <code translate="no">001-plan.md</code> in the state directory</p>
+          </li>
+          <li class="node node--state reveal" style="--i:2">
+            <a href="#on-disk">
+              <span class="node__name">state directory</span>
+              <span class="node__sub"><code translate="no">~/.local/state/relay/&lt;name&gt;/</code> — <code translate="no">bind.json</code>, <code translate="no">log.jsonl</code>, and every round’s plan, report, captured dialog, patch and <code translate="no">001-done</code> marker.</span>
+            </a>
+            <p class="node__edge node__edge--out"><code translate="no">herdr agent prompt</code> types the plan into the builder</p>
+          </li>
+          <li class="node node--builder reveal" style="--i:3">
+            <a href="#builders">
+              <span class="node__name">builder</span>
+              <span class="node__sub">Its own herdr tab — or, with <code translate="no">--headless</code>, a fresh process per round and no tab at all.</span>
+            </a>
+            <p class="node__edge node__edge--in">writes <code translate="no">001-report.md</code>, then an empty <code translate="no">001-done</code>, back to disk</p>
+          </li>
+          <li class="node node--daemon reveal" style="--i:4">
+            <a href="#daemon">
+              <span class="node__name">relay daemon</span>
+              <span class="node__sub">One reconciler per herdr session, under systemd or launchd. It runs when no model does.</span>
+            </a>
+            <p class="node__edge node__edge--in">sees the marker and delivers the report to the planner — or holds it while the planner pane is focused</p>
+          </li>
+        </ol>
+      </div>
+      <figcaption class="legend">
+        <p class="legend__row">
+          <svg class="swatch" viewBox="0 0 34 8" aria-hidden="true" focusable="false"><line class="swatch__solid" x1="0" y1="4" x2="26" y2="4"/><path class="swatch__head" d="M26 1.2 33 4l-7 2.8z"/></svg>
+          <span><b>outbound.</b> The planner calls <code translate="no">relay send</code> and it returns inside the same turn.</span>
+        </p>
+        <p class="legend__row">
+          <svg class="swatch" viewBox="0 0 34 8" aria-hidden="true" focusable="false"><line class="swatch__dash" x1="0" y1="4" x2="26" y2="4"/><path class="swatch__headd" d="M26 1.2 33 4l-7 2.8z"/></svg>
+          <span><b>inbound.</b> The report lands after that turn has ended, when no model is running to notice it.</span>
+        </p>
+      </figcaption>
+    </figure>
+
+    <div class="after-map">
+      <p class="why">The outbound leg runs while the planner is mid-turn, so the planner just calls
+        <code translate="no">relay send</code> and waits for it to return. The inbound leg happens after the
+        planner’s turn has ended, when no model is running to notice that a builder finished. Something has to be
+        awake then. That is the only reason a daemon exists.</p>
+    </div>
+
+  </div>
+
+  <div class="wrap">
+
+    <section class="section" id="round">
+      <h2>The round</h2>
+      <div class="section__body">
+        <p>Six verbs, run from inside the planner’s herdr pane, in the repository you want worked on.</p>
+        <pre translate="no" tabindex="0"><code>relay bind --builder claude/anthropic/sonnet   <span class="c"># open a builder tab, bind it to this tree</span>
+relay send --file plan.md                      <span class="c"># hand it the plan</span>
+relay status                                   <span class="c"># watch the round</span>
+relay wait                                     <span class="c"># block until it closes or needs you</span>
+relay pull                                     <span class="c"># print the pending notice, with the report's path</span>
+relay done &lt;name&gt;                              <span class="c"># stop relaying when you are satisfied</span></code></pre>
+        <p><code translate="no">relay bind</code> reads the planner’s pane from <code translate="no">$HERDR_PANE_ID</code>,
+          which herdr sets inside every pane it manages, so it has to be run from inside one. The builder writes
+          <code translate="no">NNN-report.md</code> when it has finished and then creates an empty
+          <code translate="no">NNN-done</code> as its last action; relay closes the round on that marker. A builder
+          that goes idle without the marker is nudged once, then its report is delivered flagged
+          <code translate="no">unmarked</code>; if it wrote no report, its terminal is scraped instead and flagged
+          <code translate="no">scraped</code>.</p>
+        <p><code translate="no">relay wait</code> exits with meaning, so a shell can branch on it: <b>0</b> closed on
+          the marker, <b>2</b> closed without it, <b>3</b> needs you, <b>4</b> done or unbound, <b>124</b> timed out.
+          <code translate="no">relay pull</code> prints the pending notice, with the report’s path, to stdout instead
+          of typing it anywhere, which is the safe way for the planner to fetch one mid-turn.</p>
+
+        <h3 id="on-disk">What a round leaves on disk</h3>
+        <p class="note">Under <code translate="no">~/.local/state/relay/&lt;name&gt;/</code>. State resolves through
+          <code translate="no">$XDG_STATE_HOME</code>; config through <code translate="no">$XDG_CONFIG_HOME</code>, else
+          <code translate="no">~/.config</code>.</p>
+        <dl class="sched">
+          <div><dt translate="no">bind.json</dt><dd>The binding itself.</dd></div>
+          <div><dt translate="no">log.jsonl</dt><dd>The append-only round log. <code translate="no">relay log &lt;name&gt;</code> formats it.</dd></div>
+          <div><dt translate="no">NNN-plan.md</dt><dd>Planner to builder.</dd></div>
+          <div><dt translate="no">NNN-report.md</dt><dd>Builder to planner.</dd></div>
+          <div><dt translate="no">NNN-question.md</dt><dd>A blocked builder’s dialog, captured.</dd></div>
+          <div><dt translate="no">NNN-diff.patch</dt><dd>The round’s captured patch. <code translate="no">relay diff --stat</code>, or <code translate="no">--drift</code> for what changed between rounds.</dd></div>
+          <div><dt translate="no">NNN-done</dt><dd>Empty. Its existence is the completion contract.</dd></div>
+        </dl>
+        <p><code translate="no">relay unbind --archive</code> packs a binding into <code translate="no">.archive/</code>
+          as a gzipped tarball instead of deleting it. Without the flag, <code translate="no">unbind</code> deletes;
+          <code translate="no">relay gc</code> is the verb that archives by default.</p>
+      </div>
+    </section>
+
+    <section class="section" id="builders">
+      <h2>Builders</h2>
+      <div class="section__body">
+        <p><b>A pane, by default.</b> Every agent relay spawns opens in its own herdr tab in the planner’s workspace,
+          labelled with the agent’s name, without moving focus. There is no split option: side-by-side panes stop
+          being readable at two or three builders, and tabs scale.</p>
+        <p><b>Or headless.</b> <code translate="no">relay bind --headless</code> makes the builder a process instead
+          of a pane, and nothing opens at bind. Each <code translate="no">relay send</code> starts the harness’s
+          non-interactive form — <code translate="no">agy -p …</code>, <code translate="no">claude -p …</code>,
+          <code translate="no">opencode run …</code> — in the binding’s tree, writes the streamed JSON events to
+          <code translate="no">NNN-builder.jsonl</code>, and returns. The daemon renders that stream into
+          <code translate="no">NNN-builder.log</code> as it grows, about two seconds behind, so
+          <code translate="no">relay ui</code>, <code translate="no">relay status</code> and
+          <code translate="no">tail -f</code> all show the round live.</p>
+        <p>One fresh process per round is the whole trade: no tab, no idle harness holding memory — an idle opencode
+          builder is roughly 800&nbsp;MB — and no dialogs, because stdin is closed and
+          <code translate="no">relay answer</code> is refused. Also no memory across rounds, so a headless plan has
+          to carry its own context.</p>
+        <p><b>Several at once.</b> <code translate="no">relay add</code> attaches another builder to the same planner
+          on its own git worktree, so they never contend for files; exactly one agent may write to a working tree.
+          <code translate="no">relay fork</code> branches a new binding from an earlier round, copying that round’s
+          history and artifacts and launching a fresh builder in a dedicated worktree.</p>
+        <pre translate="no" tabindex="0"><code>relay bind --builder claude/anthropic/sonnet --name api
+relay add  --name frontend --builder claude/anthropic/sonnet
+relay add  --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
+
+relay send --name frontend --file ui_plan.md
+relay send --name backend  --file api_plan.md</code></pre>
+      </div>
+    </section>
+
+    <section class="section" id="daemon">
+      <h2>The daemon</h2>
+      <div class="section__body">
+        <p><code translate="no">relay daemon</code> is the reconciler — one per herdr session, run from any spare
+          terminal or installed as a systemd user unit or a LaunchAgent with <code translate="no">make service</code>.
+          It polls herdr and does three things: deliver a finished builder’s report to the planner, capture the
+          dialog when a builder blocks, and keep round accounting. Nothing else needs it running; without it, no
+          finished report is queued, so <code translate="no">relay pull</code> has nothing to print. Only one runs at a time —
+          it takes an exclusive lock on <code translate="no">$XDG_STATE_HOME/relay/.daemon.lock</code> and refuses to
+          start beside another.</p>
+
+        <h3>What <code translate="no">relay status</code> shows</h3>
+        <dl class="sched">
+          <div><dt translate="no">ACTIVE</dt><dd>Someone is working. Nothing needs a human yet.</dd></div>
+          <div><dt translate="no">NEEDS YOU</dt><dd>relay has stopped and a person must act: a blocked builder, a dead builder pane or a lost planner pane (flagged and reported, never cleaned up), a round past its timeout, a binding at its round cap.</dd></div>
+          <div><dt translate="no">HELD</dt><dd>A payload is ready, but the planner pane is focused. The row carries the hold’s clock.</dd></div>
+          <div><dt translate="no">DONE</dt><dd>You declared the work verified. Relaying stopped deliberately, not because anything went wrong.</dd></div>
+        </dl>
+
+        <h3>Mid-round switching</h3>
+        <p>The daemon can replace a builder while a round is open — when its pane has been gone for 30 seconds, or
+          when you gate its provider. It resolves <code translate="no">builder</code> again through
+          <code translate="no">policy.json</code> and the ledger, starts the pick in the <em>same</em> tree, and hands
+          it the <em>same</em> round’s plan. The round number does not change; the round clock restarts. A
+          <code translate="no">switch</code> entry in the log says what was tried and why. Bounded by
+          <code translate="no">max_switches</code>, default 2; <code translate="no">0</code> turns switching off. After
+          that the binding goes NEEDS YOU; the count resets only when the round advances. A switch that finds every
+          candidate gated goes NEEDS YOU too, and that one recovers on its own once
+          <code translate="no">relay available</code> clears a provider.</p>
+
+        <h3>Lifecycle hooks</h3>
+        <p>The daemon runs any executable in <code translate="no">~/.config/relay/hooks/state_changed.d/</code> and
+          <code translate="no">~/.config/relay/hooks/round_started.d/</code>, detached, with a 10-second timeout, and
+          <code translate="no">RELAY_EVENT</code>, <code translate="no">RELAY_BINDING</code>,
+          <code translate="no">RELAY_STATE</code>, <code translate="no">RELAY_OLD_STATE</code> and
+          <code translate="no">RELAY_ROUND</code> in the environment. Output and failures go to
+          <code translate="no">~/.local/state/relay/hooks.log</code>. A missing directory is a silent no-op.</p>
+      </div>
+    </section>
+
+    <section class="section" id="candidates">
+      <h2>Candidates, policy, availability</h2>
+      <div class="section__body">
+        <p>A candidate is one way to fill a role, named by the token
+          <code translate="no">harness/provider/model</code>. <b>relay ships none</b>: which model you are entitled to
+          run is a fact about your accounts, not about relay. You write
+          <code translate="no">~/.config/relay/candidates.json</code>, where <code translate="no">harness</code> is a
+          kind relay knows — <code translate="no">agy</code>, <code translate="no">claude</code>,
+          <code translate="no">opencode</code> — and <code translate="no">roles</code> names which of
+          <code translate="no">builder</code>, <code translate="no">reviewer</code> and
+          <code translate="no">researcher</code> the candidate serves.</p>
+        <p><code translate="no">~/.config/relay/policy.json</code> sets the order to try them in, per role.
+          <code translate="no">relay policy</code> prints what relay would pick right now, computed by the same code
+          <code translate="no">bind</code> runs, so it cannot disagree with what <code translate="no">bind</code> does
+          next. There is no <code translate="no">relay policy set</code> — edit the file.</p>
+        <pre translate="no" tabindex="0"><code>relay unavailable claude/anthropic/sonnet --for 2h
+relay available anthropic</code></pre>
+        <p>A limit gates the <b>provider</b> — every candidate with that provider — because that is who enforces the
+          quota, not the model. Without <code translate="no">--for</code> it stays gated until you clear it, because
+          relay does not know your provider’s reset schedule. relay records spawn failures itself, gating that one
+          candidate for ten minutes, and those expire on their own. Name a gated candidate explicitly and relay prints
+          a note and proceeds: you named it.</p>
+      </div>
+    </section>
+
+    <section class="section" id="refusals">
+      <h2>What relay refuses to do</h2>
+      <div class="section__body">
+        <p>relay makes no judgements. It moves files, types prompts, and watches herdr’s live agent state. Whether a
+          report is good, whether a question needs a human, whether the work is done — every one of those decisions
+          stays with the planner, or with you. Three structural refusals follow from that.</p>
+        <div class="refusal">
+          <h3>File handoffs, not screen scraping</h3>
+          <p>Agent TUIs run on the alternate screen, and completed responses scroll out of reach of a terminal read
+            regardless of how many lines you ask for. herdr’s own prescribed workaround is to have the agent write its
+            response to a file and reply with the path, so relay hands work over as files on disk. Nothing depends on
+            reading a terminal correctly.</p>
+        </div>
+        <div class="refusal">
+          <h3>Panes are yours</h3>
+          <p>relay opens a pane only for an agent it starts (a builder, its mid-round replacement, a consult) and
+            closes a pane in exactly two places.
+            <code translate="no">done</code> and <code translate="no">unbind</code> leave a pane builder running. A
+            BROKEN, ORPHANED or timed-out binding is flagged and reported, never cleaned up: that terminal is often the
+            only record of <em>why</em> a round went wrong, and throwing it away automatically is worse than leaving a
+            process up. Closing panes you have finished with stays your job.</p>
+        </div>
+        <div class="refusal">
+          <h3>The anti-clobber rule</h3>
+          <p><code translate="no">herdr agent prompt</code> types text into a pane and presses Enter, and relay cannot
+            see what you have half-typed. So a focused planner pane is treated as unsafe to inject into: relay holds
+            the payload and sends one notification instead of typing over you. A held payload leaves the hold three
+            ways — your focus moves to another pane, the planner’s input box is seen empty, or the visible screen has
+            not changed for <code translate="no">--held-grace</code> (60&nbsp;s), in which case an abandoned draft gets
+            the payload appended, accepted on purpose. <code translate="no">relay pull</code> bypasses all of it by
+            printing to stdout.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--quiet" id="surface">
+      <h2>Also in the box</h2>
+      <div class="section__body">
+        <dl class="sched">
+          <div><dt translate="no">relay ui</dt><dd>A full-screen reader for live bindings: report, terminal, diff and log tabs. Strictly read-only — it never mutates state, types into panes, or appends to a log.</dd></div>
+          <div><dt translate="no">relay diff [--stat] [--drift]</dt><dd>The round’s captured patch, its diffstat, or the drift between rounds. Captured only when <code translate="no">git</code> is on <code translate="no">PATH</code>.</dd></div>
+          <div><dt translate="no">relay ask --role reviewer</dt><dd>A one-shot consult beside a binding. Not persistent, does not advance the round, does not count against the one-writer-per-tree rule. Its findings land as a file and are queued to the planner like any other report.</dd></div>
+          <div><dt translate="no">relay answer --pick</dt><dd>Answer a builder blocked at a dialog, via <code translate="no">send-keys</code>. relay re-checks that herdr still reports it blocked, and refuses to guess which builder you meant.</dd></div>
+          <div><dt translate="no">relay doctor</dt><dd>Preflights herdr, the daemon, each harness binary, herdr integrations and the role files, and prints the literal fix command for a missing daemon, integration or role file.</dd></div>
+          <div><dt translate="no">relay statusline</dt><dd>One row per live binding of this planner pane, under the Claude Code prompt: <code translate="no">○ name  rN · builder · what relay is waiting on  …  age · STATE</code>, with <code translate="no">●</code> on a NEEDS YOU row.</dd></div>
+          <div><dt translate="no">relay gc [--dry-run]</dt><dd>Clear every binding you marked DONE, in one pass. Archives by default.</dd></div>
+          <div><dt translate="no">relay agent print --kind</dt><dd>One of the role definitions relay ships, for one harness kind: <code translate="no">plan-executor</code> by default, or with <code translate="no">--role</code> the read-only <code translate="no">researcher</code>, <code translate="no">reviewer</code>, or <code translate="no">architect</code> — the planner persona relay ships but never launches.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="section" id="install">
+      <h2>Install</h2>
+      <div class="section__body">
+        <p><b>As a herdr plugin</b>, if you already run herdr&nbsp;0.8.2 or newer:</p>
+        <pre translate="no" tabindex="0"><code>herdr plugin install fuad-daoud/relay</code></pre>
+        <p>That downloads the release binary matching the plugin manifest and verifies its checksum. You get a
+          <code translate="no">relay ui</code> overlay pane, three popup pickers —
+          <code translate="no">pick-done</code>, <code translate="no">pick-unbind</code>,
+          <code translate="no">pick-answer</code> — an <code translate="no">install-service</code> action that installs
+          the binary to <code translate="no">~/.local/bin/relay</code> and registers the daemon with systemd or
+          launchd, and a startup check that tells you if the reconciler is not running. herdr does not sandbox
+          plugins: the scripts are <code translate="no">scripts/plugin-*.sh</code> in the repository, and they are
+          worth reading before you install.</p>
+        <p><b>As a release binary.</b> Prebuilt binaries for Linux and macOS, amd64 and arm64, are attached to every
+          release. Unpack one and put <code translate="no">relay</code> on your <code translate="no">PATH</code>.</p>
+        <p><b>From source</b>, with a Go toolchain:</p>
+        <pre translate="no" tabindex="0"><code>go install github.com/fuad-daoud/relay/cmd/relay@latest</code></pre>
+        <p>Then run <code translate="no">relay doctor</code> and work through what it prints.</p>
+
+        <h3>Requirements</h3>
+        <dl class="sched">
+          <div><dt translate="no">herdr ≥ 0.8.2</dt><dd>On <code translate="no">PATH</code>. A hard runtime dependency: herdr owns the panes, and everything relay observes or controls goes through its CLI.</dd></div>
+          <div><dt>Two harnesses</dt><dd>One for the planner, one for the builder. relay knows how to start <code translate="no">agy</code>, <code translate="no">claude</code> and <code translate="no">opencode</code>.</dd></div>
+          <div><dt translate="no">git</dt><dd>Optional. Without it relay works normally, but rounds capture no diffs.</dd></div>
+          <div><dt>Linux or macOS</dt><dd>Both are exercised in CI. Windows is not supported — the blocker is herdr, not relay. The tree still cross-compiles for <code translate="no">windows/amd64</code> and refuses at runtime with a clear error rather than running without a state lock.</dd></div>
+          <div><dt translate="no">Go 1.22+</dt><dd>To build from source. Not needed for a release binary.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="colophon">
+  <div class="wrap colophon__in">
+    <p><span class="colophon__mark" translate="no">relay</span> <span class="colophon__meta">MIT · <span data-version>v0.2.0</span> · herdr&nbsp;≥&nbsp;0.8.2 · Go&nbsp;1.22+ · Linux and macOS</span> <a href="https://github.com/fuad-daoud/relay">github.com/fuad-daoud/relay<svg class="ico" aria-hidden="true" focusable="false"><use href="#i-out"/></svg></a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var nav = document.querySelector('.topbar__nav');
+  if (!nav) return;
+  var root = document.documentElement;
+  var metas = document.querySelectorAll('meta[name="theme-color"]');
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+  function current() {
+    if (root.dataset.theme) return root.dataset.theme;
+    return (mq && mq.matches) ? 'dark' : 'light';
+  }
+
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'theme';
+
+  function paint() {
+    var next = current() === 'dark' ? 'light' : 'dark';
+    btn.textContent = next;
+    btn.setAttribute('aria-label', 'Switch to the ' + next + ' theme');
+    var colour = current() === 'dark' ? '#071831' : '#f5f9fe';
+    for (var i = 0; i < metas.length; i++) metas[i].content = colour;
+  }
+
+  btn.addEventListener('click', function () {
+    var next = current() === 'dark' ? 'light' : 'dark';
+    root.dataset.theme = next;
+    try { localStorage.setItem('relay-theme', next); } catch (e) {}
+    paint();
+  });
+
+  /* Follow the OS until the visitor overrides it. */
+  if (mq && mq.addEventListener) {
+    mq.addEventListener('change', function () { if (!root.dataset.theme) paint(); });
+  }
+
+  paint();
+  nav.appendChild(btn);
+})();
+
+(function () {
+  var frame = document.querySelector('.map__frame');
+  if (!frame) return;
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || !('IntersectionObserver' in window)) { frame.classList.add('is-in'); return; }
+  var io = new IntersectionObserver(function (entries) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].isIntersecting) { frame.classList.add('is-in'); io.disconnect(); return; }
+    }
+  }, { threshold: 0, rootMargin: '0px 0px 200px 0px' });
+  io.observe(frame);
+})();
+</script>
+</body>
+</html>
