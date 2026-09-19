@@ -10,7 +10,7 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check build install service uninstall release
+.PHONY: check build install service uninstall release jev
 
 check:
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -37,6 +37,14 @@ check:
 e2e:
 	go vet -tags e2e ./internal/relay
 	go test -tags e2e -count=1 -run TestE2E ./internal/relay -v
+
+# jev runs the classifier fixtures against the real TypeSafe endpoint
+# (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs
+# TYPESAFE_API_KEY or ~/.config/relay/typesafe.key and skips otherwise.
+# Not part of check.
+jev:
+	go vet -tags jev ./internal/classify
+	go test -tags jev -count=1 -run TestJevInjectionFixtures ./internal/classify -v
 
 build: check
 	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay

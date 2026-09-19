@@ -279,3 +279,99 @@ func TestScanPatterns(t *testing.T) {
 		}
 	})
 }
+
+func TestClassifyPolicy(t *testing.T) {
+	t.Run("nil receiver accessors return defaults", func(t *testing.T) {
+		var c *Classify
+		if got := c.ModelName(); got != DefaultClassifyModel {
+			t.Errorf("ModelName() = %q, want %q", got, DefaultClassifyModel)
+		}
+		if got := c.Threshold(); got != DefaultInjectionThreshold {
+			t.Errorf("Threshold() = %v, want %v", got, DefaultInjectionThreshold)
+		}
+		if got := c.Timeout(); got != DefaultClassifyTimeout {
+			t.Errorf("Timeout() = %v, want %v", got, DefaultClassifyTimeout)
+		}
+	})
+
+	t.Run("valid block with defaults", func(t *testing.T) {
+		body := `{"classify":{"provider":"jev"}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if p.Classify == nil {
+			t.Fatal("Classify is nil")
+		}
+		if got := p.Classify.ModelName(); got != "jev-latest" {
+			t.Errorf("ModelName() = %q, want jev-latest", got)
+		}
+		if got := p.Classify.Threshold(); got != 0.7 {
+			t.Errorf("Threshold() = %v, want 0.7", got)
+		}
+		if got := p.Classify.Timeout(); got != 4*time.Second {
+			t.Errorf("Timeout() = %v, want 4s", got)
+		}
+	})
+
+	t.Run("explicit values honoured", func(t *testing.T) {
+		body := `{"classify":{"provider":"jev","model":"jev-v2","injection_threshold":0.85,"timeout_ms":2500}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if p.Classify == nil {
+			t.Fatal("Classify is nil")
+		}
+		if got := p.Classify.ModelName(); got != "jev-v2" {
+			t.Errorf("ModelName() = %q, want jev-v2", got)
+		}
+		if got := p.Classify.Threshold(); got != 0.85 {
+			t.Errorf("Threshold() = %v, want 0.85", got)
+		}
+		if got := p.Classify.Timeout(); got != 2500*time.Millisecond {
+			t.Errorf("Timeout() = %v, want 2.5s", got)
+		}
+	})
+
+	t.Run("1.0 accepted", func(t *testing.T) {
+		body := `{"classify":{"provider":"jev","injection_threshold":1.0}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if got := p.Classify.Threshold(); got != 1.0 {
+			t.Errorf("Threshold() = %v, want 1.0", got)
+		}
+	})
+
+	badCases := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{"provider missing", `{"classify":{}}`, "classify.provider: required"},
+		{"provider other", `{"classify":{"provider":"other"}}`, "classify.provider: unknown \"other\" (known: jev)"},
+		{"threshold 0", `{"classify":{"provider":"jev","injection_threshold":0}}`, "classify.injection_threshold: must be in (0, 1], got 0"},
+		{"threshold negative", `{"classify":{"provider":"jev","injection_threshold":-0.1}}`, "classify.injection_threshold: must be in (0, 1], got -0.1"},
+		{"threshold 1.5", `{"classify":{"provider":"jev","injection_threshold":1.5}}`, "classify.injection_threshold: must be in (0, 1], got 1.5"},
+		{"timeout 0", `{"classify":{"provider":"jev","timeout_ms":0}}`, "classify.timeout_ms: must be > 0, got 0"},
+		{"timeout negative", `{"classify":{"provider":"jev","timeout_ms":-10}}`, "classify.timeout_ms: must be > 0, got -10"},
+		{"unknown key inside classify", `{"classify":{"provider":"jev","unknown_key":true}}`, "unknown_key"},
+	}
+
+	for _, bc := range badCases {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/usage"
@@ -609,4 +610,40 @@ func usageChecks(env Env, cfg runConfig) []Check {
 		out = append(out, Check{Name: "prices", Severity: SevOK, Detail: fmt.Sprintf("%s: as_of %s, %d models", cfg.usagePrices, p.AsOf, len(p.Models))})
 	}
 	return out
+}
+
+// ClassifyCheck is the one global doctor row for the classifier. It never
+// fails doctor: regex runs regardless.
+//
+//	!st.Configured                  -> SevOK,   Detail "regex only (no classify block in policy.json)"
+//	Configured, KeySource "env"     -> SevOK,   Detail "<model>; key from TYPESAFE_API_KEY"
+//	Configured, KeySource "file"    -> SevOK,   Detail "<model>; key from <KeyPath>"
+//	Configured, KeySource ""        -> SevWarn, Detail "<model> configured but no key found; the daemon falls back to regex",
+//	                                             Fix "set TYPESAFE_API_KEY for the daemon, or write the key to <KeyPath> (chmod 600)"
+//
+// Name "classify", Group "". No network probe: a bad key is reported by the
+// first round's entry note, not by doctor.
+func ClassifyCheck(st classify.Status) Check {
+	c := Check{
+		Name:  "classify",
+		Group: "",
+	}
+	if !st.Configured {
+		c.Severity = SevOK
+		c.Detail = "regex only (no classify block in policy.json)"
+		return c
+	}
+	switch st.KeySource {
+	case "env":
+		c.Severity = SevOK
+		c.Detail = fmt.Sprintf("%s; key from TYPESAFE_API_KEY", st.Model)
+	case "file":
+		c.Severity = SevOK
+		c.Detail = fmt.Sprintf("%s; key from %s", st.Model, st.KeyPath)
+	default:
+		c.Severity = SevWarn
+		c.Detail = fmt.Sprintf("%s configured but no key found; the daemon falls back to regex", st.Model)
+		c.Fix = fmt.Sprintf("set TYPESAFE_API_KEY for the daemon, or write the key to %s (chmod 600)", st.KeyPath)
+	}
+	return c
 }

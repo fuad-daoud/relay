@@ -98,6 +98,29 @@ type LogEntry struct {
 	// or question body, on report and question entries (#139). Zero means nothing
 	// was flagged or the entry predates the field.
 	Flagged int `json:"flagged,omitempty"`
+
+	// FlaggedBy says which judge produced Flagged (#211): "regex", "jev", or
+	// "both". Empty when Flagged is 0 or the entry predates the field.
+	FlaggedBy string `json:"flagged_by,omitempty"`
+
+	// Classify is the classifier's record for this entry (#211), on report and
+	// question entries when a classifier was configured for the round. Nil when
+	// none was configured or the entry predates the field. When Note is set the
+	// classifier did not answer and Paragraphs, Above, Max and InputTokens are
+	// zero; the regex count in Flagged stands alone.
+	Classify *ClassifyRecord `json:"classify,omitempty"`
+}
+
+type ClassifyRecord struct {
+	Provider    string  `json:"provider"`          // "jev"
+	Model       string  `json:"model,omitempty"`   // from the response when it answered, else the configured name
+	Threshold   float64 `json:"threshold"`         // the policy threshold used
+	Paragraphs  int     `json:"paragraphs"`        // paragraphs sent (after Trim)
+	Partial     bool    `json:"partial,omitempty"` // Trim dropped paragraphs from the middle
+	Above       int     `json:"above"`             // paragraphs with p >= Threshold
+	Max         float64 `json:"injection_max"`     // highest p seen, even below Threshold
+	InputTokens int     `json:"input_tokens,omitempty"`
+	Note        string  `json:"note,omitempty"` // failure reason, "classify: ..." form; empty on success
 }
 
 func (s *Store) logPath(name string) string {

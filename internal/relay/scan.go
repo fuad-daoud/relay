@@ -3,8 +3,8 @@ package relay
 import (
 	"bytes"
 	"regexp"
-	"strings"
 
+	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/policy"
 )
 
@@ -17,37 +17,21 @@ var builtInPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^\s*IMPORTANT:.*you must`),
 }
 
-// isFence returns true if line is exactly three or more backticks optionally followed by an info string.
-func isFence(line string) bool {
-	trimmed := strings.TrimRight(line, " \t")
-	n := 0
-	for n < len(trimmed) && trimmed[n] == '`' {
-		n++
-	}
-	if n < 3 {
-		return false
-	}
-	rest := trimmed[n:]
-	if strings.Contains(rest, "`") {
-		return false
-	}
-	return true
-}
-
-// ScanInstructionShaped counts lines in text that match any built-in pattern or extra patterns outside of fences.
-// Pure; no I/O; returns 0 for empty input.
-func ScanInstructionShaped(text []byte, extra []*regexp.Regexp) int {
+// scanLines returns the 1-based line numbers ScanInstructionShaped counts,
+// in order.
+func scanLines(text []byte, extra []*regexp.Regexp) []int {
 	if len(text) == 0 {
-		return 0
+		return nil
 	}
 
 	rawLines := bytes.Split(text, []byte("\n"))
-	count := 0
+	var matchedLines []int
 	insideFence := false
 
-	for _, rawLine := range rawLines {
+	for i, rawLine := range rawLines {
+		lineNo := i + 1
 		line := string(bytes.TrimRight(rawLine, "\r"))
-		if isFence(line) {
+		if classify.IsFence(line) {
 			insideFence = !insideFence
 			continue
 		}
@@ -71,11 +55,17 @@ func ScanInstructionShaped(text []byte, extra []*regexp.Regexp) int {
 			}
 		}
 		if matched {
-			count++
+			matchedLines = append(matchedLines, lineNo)
 		}
 	}
 
-	return count
+	return matchedLines
+}
+
+// ScanInstructionShaped counts lines in text that match any built-in pattern or extra patterns outside of fences.
+// Pure; no I/O; returns 0 for empty input.
+func ScanInstructionShaped(text []byte, extra []*regexp.Regexp) int {
+	return len(scanLines(text, extra))
 }
 
 // compileScanPatterns compiles policy extra scan patterns.

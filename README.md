@@ -758,7 +758,8 @@ candidates in, per role:
   },
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
-  "scan_patterns": ["(?i)<instruction-tag"]
+  "scan_patterns": ["(?i)<instruction-tag"],
+  "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 }
 }
 ```
 
@@ -778,6 +779,22 @@ gates the provider when the matched line names no reset time; absent
 defaults to one hour. `scan_patterns` is an optional list of extra
 regular expressions appended to relay's built-in instruction-shaped scan list;
 each pattern must compile.
+
+`classify` configures an optional classifier (TypeSafe's Jev model) to run
+beside the regex scan. When absent, relay scans with regexes only. The block
+requires `"provider": "jev"`; `model` defaults to `"jev-latest"`,
+`injection_threshold` defaults to `0.7`, and `timeout_ms` defaults to `4000`.
+The API key is read from the `TYPESAFE_API_KEY` environment variable or from
+`~/.config/relay/typesafe.key`. The key file exists because the daemon runs as
+a systemd user unit that inherits no login environment (`systemctl --user
+set-environment TYPESAFE_API_KEY=...` also works). `relay doctor` reports which
+key source was found or warns if neither is set. In `relay log`, an entry like
+`flagged=3 by=both p=0.94` records the de-duplicated union of regex-hit lines
+and classifier paragraphs at or above the threshold, which judge flagged the
+content (`regex`, `jev`, or `both`), and the maximum probability seen across
+all paragraphs. The 0.7 threshold is provisional pending `make jev`. Model
+output is never altered and delivery is never held: a high probability flags the
+entry for the planner to see, but never halts delivery.
 
 `relay policy` shows what relay would do right now:
 
