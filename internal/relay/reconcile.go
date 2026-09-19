@@ -737,6 +737,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // DeliverPending records why it held or injected, and nothing else in
 // production reads that reason (#75).
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+	if b.Owner != "" {
+		// Owned by a remote client: there is no planner pane. Payloads stay
+		// queued; the owner reads them over the wire (remote-builders spec §6.2).
+		return b, nil
+	}
 	prev := b.State
 	next, got, err := DeliverPending(ctx, rt, tx, b, agents)
 	if err != nil {
