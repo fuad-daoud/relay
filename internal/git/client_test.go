@@ -840,3 +840,202 @@ func TestCommitTreeFromLinkedWorktree(t *testing.T) {
 		t.Fatalf("refs/heads/relay/api changed: got %q, want %q", headAfter, head)
 	}
 }
+
+func TestBundleCreateFullThenIncremental(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+
+	// Make first commit substantial so full bundle is larger
+	payload := make([]byte, 50000)
+	for i := range payload {
+		payload[i] = byte(i*31 + 7)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "large.txt"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "large.txt")
+	runGit(t, repo, "commit", "-m", "first")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	bFull := filepath.Join(t.TempDir(), "full.bundle")
+	ref := "refs/heads/master"
+	runGit(t, repo, "update-ref", ref, c1)
+
+	heads, empty, err := client.BundleCreate(ctx, repo, bFull, []string{ref}, "")
+	if err != nil || empty {
+		t.Fatalf("BundleCreate full: empty=%v, err=%v", empty, err)
+	}
+	if heads[ref] != c1 {
+		t.Fatalf("heads[%s] = %q, want %q", ref, heads[ref], c1)
+	}
+
+	bHeads, err := client.BundleHeads(ctx, repo, bFull)
+	if err != nil {
+		t.Fatalf("BundleHeads full: %v", err)
+	}
+	if bHeads[ref] != c1 {
+		t.Fatalf("bHeads[%s] = %q, want %q", ref, bHeads[ref], c1)
+	}
+
+	// Add second commit
+	if err := os.WriteFile(filepath.Join(repo, "small.txt"), []byte("small\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "small.txt")
+	runGit(t, repo, "commit", "-m", "second")
+	c2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", ref, c2)
+
+	bIncr := filepath.Join(t.TempDir(), "incr.bundle")
+	heads2, empty, err := client.BundleCreate(ctx, repo, bIncr, []string{ref}, c1)
+	if err != nil || empty {
+		t.Fatalf("BundleCreate incr: empty=%v, err=%v", empty, err)
+	}
+	if heads2[ref] != c2 {
+		t.Fatalf("heads2[%s] = %q, want %q", ref, heads2[ref], c2)
+	}
+
+	bHeads2, err := client.BundleHeads(ctx, repo, bIncr)
+	if err != nil {
+		t.Fatalf("BundleHeads incr: %v", err)
+	}
+	if bHeads2[ref] != c2 {
+		t.Fatalf("bHeads2[%s] = %q, want %q", ref, bHeads2[ref], c2)
+	}
+
+	fiFull, err := os.Stat(bFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fiIncr, err := os.Stat(bIncr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fiIncr.Size() >= fiFull.Size() {
+		t.Fatalf("incremental bundle size (%d) >= full bundle size (%d)", fiIncr.Size(), fiFull.Size())
+	}
+
+	// Malformed bundle -> ErrBadBundle
+	badBundle := filepath.Join(t.TempDir(), "bad.bundle")
+	if err := os.WriteFile(badBundle, []byte("bad bundle content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.BundleHeads(ctx, repo, badBundle); !errors.Is(err, ErrBadBundle) {
+		t.Fatalf("BundleHeads on bad bundle: got %v, want ErrBadBundle", err)
+	}
+}
+
+func TestBundleCreateEmptyWhenNothingNew(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "first")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	ref := "refs/heads/master"
+	runGit(t, repo, "update-ref", ref, c1)
+
+	bPath := filepath.Join(t.TempDir(), "empty.bundle")
+	heads, empty, err := client.BundleCreate(ctx, repo, bPath, []string{ref}, c1)
+	if err != nil {
+		t.Fatalf("BundleCreate: %v", err)
+	}
+	if !empty {
+		t.Fatal("BundleCreate returned empty=false, want true")
+	}
+	if heads[ref] != c1 {
+		t.Fatalf("heads[%s] = %q, want %q", ref, heads[ref], c1)
+	}
+	if _, err := os.Stat(bPath); !os.IsNotExist(err) {
+		t.Fatalf("expected bundle file not to exist, got err: %v", err)
+	}
+}
+
+func TestBundleCreateSinceNotAncestor(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "root.txt"), []byte("root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "root.txt")
+	runGit(t, repo, "commit", "-m", "root")
+
+	// Branch A
+	runGit(t, repo, "checkout", "-b", "branchA")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	runGit(t, repo, "commit", "-m", "a")
+	refA := "refs/heads/branchA"
+
+	// Branch B
+	runGit(t, repo, "checkout", "master")
+	runGit(t, repo, "checkout", "-b", "branchB")
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "b.txt")
+	runGit(t, repo, "commit", "-m", "b")
+	cBranchB := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	bPath := filepath.Join(t.TempDir(), "unrelated.bundle")
+	_, _, err := client.BundleCreate(ctx, repo, bPath, []string{refA}, cBranchB)
+	if !errors.Is(err, ErrRefMissing) {
+		t.Fatalf("BundleCreate with unrelated since: got %v, want ErrRefMissing", err)
+	}
+}
+
+func TestBundleCreateTwoRefs(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f1.txt")
+	runGit(t, repo, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repo, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f2.txt")
+	runGit(t, repo, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	ref1 := "refs/heads/relay/api"
+	ref2 := "refs/relay/api/round-1"
+	runGit(t, repo, "update-ref", ref1, c2)
+	runGit(t, repo, "update-ref", ref2, c1)
+
+	bPath := filepath.Join(t.TempDir(), "two_refs.bundle")
+	heads, empty, err := client.BundleCreate(ctx, repo, bPath, []string{ref1, ref2}, "")
+	if err != nil || empty {
+		t.Fatalf("BundleCreate two refs: empty=%v, err=%v", empty, err)
+	}
+	if heads[ref1] != c2 || heads[ref2] != c1 {
+		t.Fatalf("unexpected heads: %v", heads)
+	}
+
+	bHeads, err := client.BundleHeads(ctx, repo, bPath)
+	if err != nil {
+		t.Fatalf("BundleHeads: %v", err)
+	}
+	if bHeads[ref1] != c2 || bHeads[ref2] != c1 {
+		t.Fatalf("unexpected bHeads: %v", bHeads)
+	}
+}

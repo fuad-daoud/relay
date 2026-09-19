@@ -556,3 +556,106 @@ func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message stri
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// BundleCreate creates a git bundle file at path containing refs relative to since.
+//
+// Preconditions:  every ref in refs resolves in dir's repository (else ErrRefMissing);
+//
+//	since is "" or a commit SHA in dir's repository that is an ancestor of every ref.
+//
+// Postconditions: if empty is false, file at path is a complete bundle;
+//
+//	heads maps each ref to its resolved SHA. If since is non-empty and
+//	every ref's head equals since, no bundle is created and empty is true.
+//
+// Errors: ErrRefMissing, ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded,
+//
+//	or a wrapped git failure.
+func (c *Client) BundleCreate(ctx context.Context, dir, path string, refs []string, since string) (map[string]string, bool, error) {
+	heads := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		sha, ok, err := c.RefSHA(ctx, dir, ref)
+		if err != nil {
+			return nil, false, err
+		}
+		if !ok {
+			return nil, false, fmt.Errorf("%w: %s", ErrRefMissing, ref)
+		}
+		heads[ref] = sha
+	}
+
+	if since != "" && len(heads) > 0 {
+		allEqual := true
+		for _, head := range heads {
+			if head != since {
+				allEqual = false
+				break
+			}
+		}
+		if allEqual {
+			return heads, true, nil
+		}
+	}
+
+	if since != "" {
+		for _, ref := range refs {
+			_, err := c.run(ctx, dir, nil, "merge-base", "--is-ancestor", since, ref)
+			if err != nil {
+				if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return nil, false, err
+				}
+				return nil, false, fmt.Errorf("%w: since is not an ancestor of %s", ErrRefMissing, ref)
+			}
+		}
+	}
+
+	args := []string{"bundle", "create", path}
+	for _, ref := range refs {
+		if since != "" {
+			args = append(args, since+".."+ref)
+		} else {
+			args = append(args, ref)
+		}
+	}
+
+	_, err := c.run(ctx, dir, nil, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	return heads, false, nil
+}
+
+// BundleHeads lists the heads carried in the bundle file at path.
+//
+// Preconditions:  path exists and is a readable git bundle file.
+// Postconditions: returns a map of ref name -> commit SHA.
+// Errors: ErrBadBundle (file is malformed), ErrNotRepo, ErrGitUnavailable,
+//
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]string, error) {
+	out, err := c.run(ctx, dir, nil, "bundle", "list-heads", path)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+
+	heads := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("%w: malformed bundle head entry %q", ErrBadBundle, line)
+		}
+		heads[parts[1]] = parts[0]
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+	return heads, nil
+}
