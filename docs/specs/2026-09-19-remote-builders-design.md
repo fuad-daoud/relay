@@ -248,9 +248,14 @@ naming the cap.
 
 ```
 TreeTransport
-  Snapshot(ctx, repo, ref, since string) -> (contentType string, body io.ReadCloser, head string, err)
-  Absorb(ctx, repo, ref, contentType string, body io.Reader) -> (head string, err)
+  Snapshot(ctx, repo string, refs []string, since string) -> (Snapshot{ContentType, Body, Heads map[ref]sha, Empty}, err)
+  Absorb(ctx, repo, contentType string, body io.Reader, refs []string) -> (moved map[ref]sha, err)
 ```
+
+`refs` are full ref names; the inbound snapshot carries the branch and,
+when present, the round's side ref in one body. A body carrying a ref the
+caller did not name is refused (`ErrUnexpectedRef`); every named ref is
+fast-forward only.
 
 `git-bundle` (`application/x-git-bundle`) is the only content type in v1.
 A tree sync later is a second content type on the same two calls and the
