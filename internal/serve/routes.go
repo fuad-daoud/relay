@@ -42,6 +42,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/bindings/{name}/done", s.handleDone)
 	mux.HandleFunc("POST /v1/bindings/{name}/unbind", s.handleUnbind)
 	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
+	mux.HandleFunc("POST /v1/bindings/{name}/rounds", s.handleStartRound)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/files/{kind}", s.handleRoundFile)
+	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/bundle", s.handleRoundBundle)
+	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/unavailable", s.handleUnavailable)
 

@@ -2,19 +2,26 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 )
 
@@ -636,5 +643,769 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	ownerLedgerPath := filepath.Join(root, "bindings", string(idA), "ledger.json")
 	if _, err := os.Stat(ownerLedgerPath); err == nil {
 		t.Fatalf("per-owner ledger.json unexpectedly exists at %s", ownerLedgerPath)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return string(out)
+}
+
+type scriptRunner struct {
+	mu     sync.Mutex
+	specs  []relay.ProcSpec
+	alive  bool
+	pidSeq int
+}
+
+func newScriptRunner() *scriptRunner {
+	return &scriptRunner{alive: true}
+}
+
+func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.specs = append(r.specs, spec)
+	r.pidSeq++
+	r.alive = true
+	if spec.LogPath != "" {
+		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
+	}
+	return relay.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
+}
+
+func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.alive, nil
+}
+
+func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (code int, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.alive {
+		return 0, false
+	}
+	return 0, true
+}
+
+func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alive = false
+	return nil
+}
+
+func (r *scriptRunner) setAlive(a bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alive = a
+}
+
+func doSigned(t *testing.T, ts *httptest.Server, kp remote.Keypair, method, path string, body []byte, contentType string) (*http.Response, []byte) {
+	t.Helper()
+	req := signedRequest(t, kp, method, path, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = strings.TrimPrefix(ts.URL, "http://")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request %s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return resp, respBody
+}
+
+func makeRoundForm(t *testing.T, round int, plan string, bundleBytes []byte) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundleBytes) > 0 {
+		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bundleBytes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
+type testEnv struct {
+	srv       *Server
+	ts        *httptest.Server
+	kp        remote.Keypair
+	id        remote.ClientID
+	clientDir string
+	rootSHA   string
+	headSHA   string
+	repoID    string
+	runner    *scriptRunner
+	gitClient *git.Client
+	transport *remote.BundleTransport
+}
+
+func setupTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	ctx := context.Background()
+	gitClient := git.NewClient("git", 0, 0)
+
+	clientDir := t.TempDir()
+	runGit(t, clientDir, "init")
+	runGit(t, clientDir, "config", "user.name", "test")
+	runGit(t, clientDir, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(clientDir, "file.txt"), []byte("initial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientDir, "add", "file.txt")
+	runGit(t, clientDir, "commit", "-m", "initial commit")
+
+	headSHA, ok, err := gitClient.RefSHA(ctx, clientDir, "HEAD")
+	if err != nil || !ok {
+		t.Fatalf("headSHA: %v, ok=%v", err, ok)
+	}
+	rootSHA, err := gitClient.RootCommit(ctx, clientDir)
+	if err != nil {
+		t.Fatalf("rootCommit: %v", err)
+	}
+	repoID, err := remote.RepoID(rootSHA)
+	if err != nil {
+		t.Fatalf("repoID: %v", err)
+	}
+
+	serverRoot := t.TempDir()
+	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	candPath := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := newScriptRunner()
+	srv, err := New(Config{
+		Root:       serverRoot,
+		Candidates: cSet,
+		Runner:     runner,
+		Git:        gitClient,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	transport := remote.NewBundleTransport(gitClient, t.TempDir())
+
+	return &testEnv{
+		srv:       srv,
+		ts:        ts,
+		kp:        kp,
+		id:        id,
+		clientDir: clientDir,
+		rootSHA:   rootSHA,
+		headSHA:   headSHA,
+		repoID:    repoID,
+		runner:    runner,
+		gitClient: gitClient,
+		transport: transport,
+	}
+}
+
+func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	outRef := "refs/relay/api/out"
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snap body: %v", err)
+	}
+
+	formBytes, ct := makeRoundForm(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	rt := env.srv.runtime(env.id)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if _, err := os.Stat(b.Worktree); err != nil {
+		t.Fatalf("worktree stat: %v", err)
+	}
+	wtHead, ok, err := env.gitClient.RefSHA(ctx, b.Worktree, "HEAD")
+	if err != nil || !ok || wtHead != env.headSHA {
+		t.Fatalf("worktree HEAD = (%q, %v, %v), want %q", wtHead, ok, err, env.headSHA)
+	}
+
+	planContent, err := os.ReadFile(rt.Store.PlanPath("api", 1))
+	if err != nil || string(planContent) != "# Round 1 Plan\nDo stuff" {
+		t.Fatalf("plan content: got (%q, %v)", string(planContent), err)
+	}
+
+	env.runner.mu.Lock()
+	specs := env.runner.specs
+	env.runner.mu.Unlock()
+	if len(specs) != 1 {
+		t.Fatalf("runner specs count = %d, want 1", len(specs))
+	}
+	if specs[0].Dir != b.Worktree {
+		t.Fatalf("runner spec Dir = %q, want %q", specs[0].Dir, b.Worktree)
+	}
+}
+
+func TestRoundStartWhileRunningIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second start status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
+func TestRoundResendSamePlanIs200(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
+	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	resendBytes, ct2 := makeRoundForm(t, 1, "# Plan 1", nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, ct2)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+}
+
+func TestRoundResendDifferentPlanIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
+	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	resendBytes, ct2 := makeRoundForm(t, 1, "# Different Plan", nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, ct2)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("resend status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundStarted {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundStarted)
+	}
+}
+
+func TestRoundStartNotFastForward(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, b.Worktree, "commit", "--allow-empty", "-m", "server commit")
+
+	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
+	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// Client commits on top of initial commit (diverging from server branch)
+	clientFile := filepath.Join(env.clientDir, "client.txt")
+	if err := os.WriteFile(clientFile, []byte("client divergence\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, env.clientDir, "add", "client.txt")
+	runGit(t, env.clientDir, "commit", "-m", "client commit")
+	clientHead, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "HEAD")
+	if err != nil || !ok {
+		t.Fatalf("client HEAD: %v, ok=%v", err, ok)
+	}
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, clientHead, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+
+	snap2, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes2, _ := io.ReadAll(snap2.Body)
+	_ = snap2.Body.Close()
+
+	formBytes2, ct2 := makeRoundForm(t, 2, "# Plan 2", bundleBytes2)
+	resp2, body2 := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes2, ct2)
+	if resp2.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("start not-ff status = %d, want 422; body: %s", resp2.StatusCode, string(body2))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body2, &errBody)
+	if errBody.Code != remote.CodeNotFastForward {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeNotFastForward)
+	}
+}
+
+func TestRoundCloseServesFilesBundleAck(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workFile := filepath.Join(b.Worktree, "result.txt")
+	if err := os.WriteFile(workFile, []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, b.Worktree, "add", "result.txt")
+	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
+
+	reportText := "# Report 1\nCompleted work.\n\n```relay\nstatus: done\n```\n"
+	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.setAlive(false)
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get binding status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	var view remote.BindingView
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.RoundState != remote.RoundClosed {
+		t.Fatalf("round_state = %q, want %q", view.RoundState, remote.RoundClosed)
+	}
+	bareBranchSHA, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/relay/api")
+	if err != nil || !ok {
+		t.Fatalf("bare branch sha: %v, ok=%v", err, ok)
+	}
+	if view.ResultCommit != bareBranchSHA {
+		t.Fatalf("result_commit = %q, want %q", view.ResultCommit, bareBranchSHA)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/report", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get report status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "status: done") {
+		t.Fatalf("report body missing status: done:\n%s", string(body))
+	}
+
+	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/diff", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get diff status = %d, want 200", resp.StatusCode)
+	}
+
+	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get log status = %d, want 200", resp.StatusCode)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+
+	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), []string{"refs/heads/relay/api"})
+	if err != nil {
+		t.Fatalf("client Absorb: %v", err)
+	}
+	if moved["refs/heads/relay/api"] != view.ResultCommit {
+		t.Fatalf("client moved branch = %q, want %q", moved["refs/heads/relay/api"], view.ResultCommit)
+	}
+	clientHeadSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relay/api")
+	if err != nil || !ok || clientHeadSHA != view.ResultCommit {
+		t.Fatalf("client branch sha = %q, want %q", clientHeadSHA, view.ResultCommit)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	var ackView remote.BindingView
+	_ = json.Unmarshal(body, &ackView)
+	if ackView.AckedRound != 1 {
+		t.Fatalf("acked_round = %d, want 1", ackView.AckedRound)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get binding status = %d, want 200", resp.StatusCode)
+	}
+	var idleView remote.BindingView
+	_ = json.Unmarshal(body, &idleView)
+	if idleView.RoundState != remote.RoundIdle {
+		t.Fatalf("round_state = %q, want %q", idleView.RoundState, remote.RoundIdle)
+	}
+}
+
+func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(b.Worktree, "untracked.txt"), []byte("dirty content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.setAlive(false)
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get binding status = %d, want 200", resp.StatusCode)
+	}
+	var view remote.BindingView
+	_ = json.Unmarshal(body, &view)
+	if view.DirtyCommit == "" {
+		t.Fatal("view.DirtyCommit is empty, want non-empty")
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+
+	inboundRefs := []string{"refs/heads/relay/api", "refs/relay/api/round-1"}
+	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), inboundRefs)
+	if err != nil {
+		t.Fatalf("Absorb: %v", err)
+	}
+	if _, movedBranch := moved["refs/heads/relay/api"]; movedBranch {
+		t.Fatal("branch was unexpectedly moved in absorb")
+	}
+
+	clientBranchSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relay/api")
+	if ok && clientBranchSHA != env.headSHA {
+		t.Fatalf("client branch sha = %q, want %q", clientBranchSHA, env.headSHA)
+	}
+
+	sideSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/relay/api/round-1")
+	if err != nil || !ok || sideSHA != view.DirtyCommit {
+		t.Fatalf("side ref sha = (%q, %v, %v), want %q", sideSHA, ok, err, view.DirtyCommit)
+	}
+	catOut := runGit(t, env.clientDir, "cat-file", "-p", sideSHA)
+	if !strings.Contains(catOut, "parent "+env.headSHA) {
+		t.Fatalf("side ref commit missing parent %q:\n%s", env.headSHA, catOut)
+	}
+}
+
+func TestFilesBeforeCloseIs404(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	for _, kind := range []string{"report", "diff", "plan"} {
+		resp, _ := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/"+kind, nil, "")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET files/%s status = %d, want 404", kind, resp.StatusCode)
+		}
+	}
+}
+
+func TestBundleWrongRoundIs404(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.srv.runtime(env.id)
+	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
+	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
+	env.runner.setAlive(false)
+	_ = env.srv.Tick(ctx)
+
+	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/2/bundle", nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET round 2 bundle status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAckUnclosedIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("ack status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
 	}
 }
