@@ -260,6 +260,12 @@ func (s *Store) Delete(name string) error {
 }
 
 // FindByCWD returns the binding driving cwd, if any.
+//
+// A remote binding is never returned: its CWD is the repo the branch is cut
+// from and results are fetched into, not a working tree it drives, so the
+// cwd-addressed verbs (`relay send` with no --name, `relay status` for "this
+// tree") resolve to the tree's local binding or to nothing. Remote bindings
+// are always addressed by --name.
 func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 	var found bool
 	var b Binding
@@ -269,6 +275,9 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 			return err
 		}
 		for _, binding := range bindings {
+			if binding.Builder.Remote() {
+				continue
+			}
 			// A done binding no longer drives its tree: resolving `relay send`
 			// onto one would hand a plan to a finished session. assertCWDFree
 			// scans separately, so this does not relax the two-builders-in-one
@@ -350,12 +359,25 @@ func (s *Store) save(b Binding) error {
 	return writeFileAtomic(s.bindingPath(b.Name), raw, bindingFileMode)
 }
 
+// assertCWDFree refuses a second active binding on the same working tree.
+//
+// A remote binding is exempt on both sides: its CWD is only the repo its
+// branch is cut from and results are fetched into, never a working tree a
+// builder writes in, so it may share a CWD with any number of remote
+// bindings and with one local binding, and a local binding is never refused
+// because a remote one names its repo.
 func (s *Store) assertCWDFree(b Binding) error {
+	if b.Builder.Remote() {
+		return nil
+	}
 	bindings, err := s.list()
 	if err != nil {
 		return err
 	}
 	for _, other := range bindings {
+		if other.Builder.Remote() {
+			continue
+		}
 		if other.CWD == b.CWD && other.Name != b.Name && other.State != StateDone {
 			return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				b.CWD, other.Name, other.Builder.PaneID, other.Round, ErrCWDTaken)

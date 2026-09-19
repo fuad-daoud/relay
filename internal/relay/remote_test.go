@@ -293,6 +293,39 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 }
 
+// TestAddRemoteTwicePerRepo pins #100: a remote binding's CWD is the repo its
+// branch is cut from, not a working tree it drives, so two remote bindings
+// may share one repo the same way two `relay add` worktrees do. (Mutation
+// target: revert the assertCWDFree remote exemption in
+// internal/store/store.go and this fails with ErrCWDTaken on the second
+// addRemote call.)
+func TestAddRemoteTwicePerRepo(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	if _, err := Add(ctx, rt, AddOptions{Name: "e2e2", Server: "zen", Repo: "/fake/repo"}); err != nil {
+		t.Fatalf("first Add: %v", err)
+	}
+	if _, err := Add(ctx, rt, AddOptions{Name: "e2e3", Server: "zen", Repo: "/fake/repo"}); err != nil {
+		t.Fatalf("second Add with the same repo: %v", err)
+	}
+}
+
 func TestAddRemoteRefusesCWD(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())

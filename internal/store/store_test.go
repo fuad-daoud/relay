@@ -335,6 +335,82 @@ func TestSaveStillRefusesASecondActiveBindingBesideADoneOne(t *testing.T) {
 	}
 }
 
+// TestAssertCWDFreeIgnoresRemote pins #100's CWD-uniqueness exemption: a
+// remote binding's CWD is only the repo its branch is cut from and results
+// are fetched into, never a working tree a builder writes in, so it must not
+// collide with other remote bindings and must not stop a local binding from
+// naming the same repo -- but two builders in one tree is still refused
+// between local bindings.
+func TestAssertCWDFreeIgnoresRemote(t *testing.T) {
+	s := New(t.TempDir())
+
+	a := newBinding("a", "/repo")
+	if err := s.Save(a); err != nil {
+		t.Fatalf("Save local a: %v", err)
+	}
+
+	b := newBinding("b", "/repo")
+	b.Builder.Mode = ModeRemote
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save remote b beside local a: %v", err)
+	}
+
+	c := newBinding("c", "/repo")
+	c.Builder.Mode = ModeRemote
+	if err := s.Save(c); err != nil {
+		t.Fatalf("Save remote c beside local a and remote b: %v", err)
+	}
+
+	d := newBinding("d", "/repo")
+	err := s.Save(d)
+	if !errors.Is(err, ErrCWDTaken) {
+		t.Fatalf("got %v, want ErrCWDTaken from local d", err)
+	}
+	if !strings.Contains(err.Error(), `"a"`) {
+		t.Fatalf("error %q must name a, not b", err)
+	}
+	if strings.Contains(err.Error(), `"b"`) {
+		t.Fatalf("error %q must not name remote binding b", err)
+	}
+}
+
+// TestFindByCWDSkipsRemote pins the other half of #100's exemption: the
+// cwd-addressed verbs (`relay send` with no --name, `relay status` for "this
+// tree") must never resolve onto a remote binding, since a remote binding's
+// CWD is not a working tree it drives. Remote bindings are always addressed
+// by --name.
+func TestFindByCWDSkipsRemote(t *testing.T) {
+	s := New(t.TempDir())
+
+	remoteOnly := newBinding("remoteonly", "/repo")
+	remoteOnly.Builder.Mode = ModeRemote
+	if err := s.Save(remoteOnly); err != nil {
+		t.Fatalf("Save remote: %v", err)
+	}
+
+	if _, found, err := s.FindByCWD("/repo"); err != nil || found {
+		t.Fatalf("found=%v err=%v, want a remote-only CWD to be invisible here", found, err)
+	}
+
+	local := newBinding("local", "/repo2")
+	if err := s.Save(local); err != nil {
+		t.Fatalf("Save local: %v", err)
+	}
+	remoteAlso := newBinding("remotealso", "/repo2")
+	remoteAlso.Builder.Mode = ModeRemote
+	if err := s.Save(remoteAlso); err != nil {
+		t.Fatalf("Save remote beside local: %v", err)
+	}
+
+	got, found, err := s.FindByCWD("/repo2")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v, want the local binding", found, err)
+	}
+	if got.Name != "local" {
+		t.Errorf("name = %q, want local", got.Name)
+	}
+}
+
 func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
