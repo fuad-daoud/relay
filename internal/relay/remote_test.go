@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -379,11 +380,55 @@ func TestAddRemoteServerConflict(t *testing.T) {
 	}
 
 	_, err := Add(ctx, rt, opts)
-	if err == nil || !strings.Contains(err.Error(), "binding api already exists on zen for this client; relay bind --resume --name api") {
+	if err == nil || !strings.Contains(err.Error(), "binding api already exists on zen for this client but not here; relay serve unbind --owner <your label> api on the server, or choose another name") {
 		t.Fatalf("got err %v, want 409 conflict message", err)
 	}
 	if len(fg.createBranchCalls) != 0 {
 		t.Fatalf("createBranch called %d times, want 0", len(fg.createBranchCalls))
+	}
+}
+
+// TestAddRemoteCleansUpServerOnSaveFailure pins #100: any failure after
+// CreateBinding succeeds -- not just ErrBranchExists -- unbinds the server
+// binding it just created, best-effort, before addRemote returns. A
+// fakeGit.CreateBranch error that is not ErrBranchExists exercises the
+// general defer path (the ErrBranchExists path already has its own test,
+// TestAddRemoteBranchExistsUnbindsServer). Mutation target: remove the
+// deferred cleanup in addRemote and this fails, since Unbind is never
+// called for this generic error.
+func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:    "1111111111111111111111111111111111111111",
+		rootCommitSHA:   "2222222222222222222222222222222222222222",
+		createBranchErr: errors.New("disk full"),
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name: "api",
+		},
+	}
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	opts := AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}
+
+	_, err := Add(ctx, rt, opts)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("got err %v, want the CreateBranch error", err)
+	}
+
+	if !slices.Contains(fr.calls, "Unbind:zen:api") {
+		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
 	}
 }
 

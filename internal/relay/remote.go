@@ -33,7 +33,7 @@ func is40Hex(s string) bool {
 	return true
 }
 
-func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
+func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResult, err error) {
 	if opts.CWD != "" {
 		return AddResult{}, errors.New("remote builders are add-only: --cwd and --server cannot be combined")
 	}
@@ -107,7 +107,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, err
 	}
 
 	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS})
-	// HTTPError 409 -> "binding api already exists on zen for this client; relay bind --resume --name api"
+	// HTTPError 409 -> the server already has this binding for this client, with
+	// no local counterpart here; only `relay serve unbind` on the server can
+	// clear that, since a local `relay bind --resume` has nothing to resume.
 	createReq := remote.CreateBindingRequest{
 		Name:       opts.Name,
 		RepoID:     repoID,
@@ -118,20 +120,32 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, err
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == 409 {
-			return AddResult{}, fmt.Errorf("binding %s already exists on %s for this client; relay bind --resume --name %s", opts.Name, opts.Server, opts.Name)
+			return AddResult{}, fmt.Errorf("binding %s already exists on %s for this client but not here; relay serve unbind --owner <your label> %s on the server, or choose another name", opts.Name, opts.Server, opts.Name)
 		}
 		return AddResult{}, err
 	}
 
+	// From here on the server has a binding this client does not yet. Every
+	// later failure (branch exists, CreateBranch error, Save error including
+	// store.ErrCWDTaken, log append error) unbinds it on the server
+	// best-effort before returning the original error, so a client-side
+	// refusal never leaves an orphaned server binding behind (#100).
+	created := true
+	defer func() {
+		if !created || err == nil {
+			return
+		}
+		if unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name); unbindErr != nil {
+			slog.Warn("unbind after failed add", "server", opts.Server, "name", opts.Name, "err", unbindErr)
+			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %v", err, opts.Name, opts.Server, unbindErr)
+		}
+	}()
+
 	// 6. rt.Git.CreateBranch(opts.Repo, "relay/"+name, base) -- after the server agreed, so a refused create leaves no branch
-	// ErrBranchExists -> error "branch relay/api exists; delete it or pick another name" AND rt.Remote.Unbind the
-	// server binding just created (best effort, logged).
+	// ErrBranchExists -> error "branch relay/api exists; delete it or pick another name"
 	branch := "relay/" + opts.Name
 	if err := rt.Git.CreateBranch(ctx, opts.Repo, branch, base); err != nil {
 		if errors.Is(err, git.ErrBranchExists) {
-			if unbindErr := rt.Remote.Unbind(ctx, opts.Server, opts.Name); unbindErr != nil {
-				slog.Warn("unbind after failed branch create", "server", opts.Server, "name", opts.Name, "err", unbindErr)
-			}
 			return AddResult{}, fmt.Errorf("branch relay/%s exists; delete it or pick another name", opts.Name)
 		}
 		return AddResult{}, err
@@ -199,6 +213,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, err
 		b = stored
 	}
 
+	created = false
 	return AddResult{
 		Binding:    b,
 		Worktree:   "",
