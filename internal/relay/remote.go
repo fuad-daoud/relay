@@ -129,8 +129,13 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	// later failure (branch exists, CreateBranch error, Save error including
 	// store.ErrCWDTaken, log append error) unbinds it on the server
 	// best-effort before returning the original error, so a client-side
-	// refusal never leaves an orphaned server binding behind (#100).
+	// refusal never leaves an orphaned server binding behind (#100). Once
+	// CreateBranch itself has succeeded, the same failure also removes the
+	// local branch relay just cut -- server first, since that binding is the
+	// one another client could see (#100 round 4).
+	branch := "relay/" + opts.Name
 	created := true
+	branchCreated := false
 	defer func() {
 		if !created || err == nil {
 			return
@@ -139,17 +144,23 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 			slog.Warn("unbind after failed add", "server", opts.Server, "name", opts.Name, "err", unbindErr)
 			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %v", err, opts.Name, opts.Server, unbindErr)
 		}
+		if branchCreated {
+			if delErr := rt.Git.DeleteBranch(ctx, opts.Repo, branch); delErr != nil {
+				slog.Warn("delete branch after failed add", "repo", opts.Repo, "branch", branch, "err", delErr)
+				err = fmt.Errorf("%w; local branch %s could not be removed: %v", err, branch, delErr)
+			}
+		}
 	}()
 
 	// 6. rt.Git.CreateBranch(opts.Repo, "relay/"+name, base) -- after the server agreed, so a refused create leaves no branch
 	// ErrBranchExists -> error "branch relay/api exists; delete it or pick another name"
-	branch := "relay/" + opts.Name
 	if err := rt.Git.CreateBranch(ctx, opts.Repo, branch, base); err != nil {
 		if errors.Is(err, git.ErrBranchExists) {
 			return AddResult{}, fmt.Errorf("branch relay/%s exists; delete it or pick another name", opts.Name)
 		}
 		return AddResult{}, err
 	}
+	branchCreated = true
 
 	// 7. b := Binding{Name, CWD: opts.Repo, Repo: opts.Repo, Branch, Base: base, Planner: <as Add fills it>,
 	//                 Builder: Endpoint{Mode: ModeRemote, Server: server, Kind: <kind from view.Candidate's harness, "" if unknown>,

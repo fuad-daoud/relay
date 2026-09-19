@@ -41,6 +41,7 @@ type Git interface {
 	RevListCount(ctx context.Context, dir, from, to string) (int, error)
 	BranchExists(ctx context.Context, dir, branch string) (bool, error)
 	CreateBranch(ctx context.Context, dir, branch, commit string) error
+	DeleteBranch(ctx context.Context, dir, branch string) error
 	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error

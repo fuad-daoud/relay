@@ -65,6 +65,10 @@ type createBranchCall struct {
 	Dir, Branch, Commit string
 }
 
+type deleteBranchCall struct {
+	Dir, Branch string
+}
+
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
 	snapshotTreeID  string
@@ -92,6 +96,10 @@ type fakeGit struct {
 
 	createBranchErr   error
 	createBranchCalls []createBranchCall
+
+	deleteBranchErr   error
+	deleteBranchCalls []deleteBranchCall
+	deleteBranchFunc  func(ctx context.Context, dir, branch string) error
 
 	addWorktreeErr   error
 	addWorktreeCalls []addWorktreeCall
@@ -180,6 +188,16 @@ func (f *fakeGit) CreateBranch(ctx context.Context, dir, branch, commit string) 
 		return f.createBranchErr
 	}
 	return nil
+}
+
+func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {
+	f.deleteBranchCalls = append(f.deleteBranchCalls, deleteBranchCall{
+		Dir: dir, Branch: branch,
+	})
+	if f.deleteBranchFunc != nil {
+		return f.deleteBranchFunc(ctx, dir, branch)
+	}
+	return f.deleteBranchErr
 }
 
 func (f *fakeGit) AddWorktree(ctx context.Context, dir, path, branch, commit string) error {

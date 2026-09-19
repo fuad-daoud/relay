@@ -47,6 +47,7 @@ type fakeRemote struct {
 	resumeErr         error
 
 	onCreateBinding func()
+	onUnbind        func()
 }
 
 func (f *fakeRemote) WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error) {
@@ -110,6 +111,9 @@ func (f *fakeRemote) Done(ctx context.Context, server, name string) error {
 
 func (f *fakeRemote) Unbind(ctx context.Context, server, name string) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unbind:%s:%s", server, name))
+	if f.onUnbind != nil {
+		f.onUnbind()
+	}
 	return f.unbindErr
 }
 
@@ -473,6 +477,88 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+	}
+}
+
+// TestAddRemoteCleansUpLocalBranchOnSaveFailure pins #100 round 4: a failure
+// that happens after CreateBranch has already succeeded also removes the
+// local branch relay just cut, not only the server binding -- otherwise the
+// branch is left behind and the next `add` with the same name is refused
+// with "branch relay/<name> exists; delete it or pick another name", even
+// though relay itself created it. The provocation makes Save fail (a real
+// store, not fakeGit, since fakeGit.CreateBranch must succeed here): the
+// binding's own state directory is pre-occupied by a plain file, so the
+// store's os.MkdirAll refuses it -- exercising the same "some failure after
+// CreateBinding succeeds" path TestAddRemoteCleansUpServerOnSaveFailure pins
+// for CreateBranch, but one step later, after the branch already exists.
+// Mutation target: drop the DeleteBranch call in addRemote's deferred
+// cleanup and this fails, since DeleteBranch is then never called.
+func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	st := store.New(root)
+
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name: "api",
+		},
+	}
+
+	var order []string
+	fr.onUnbind = func() { order = append(order, "unbind") }
+	fg.deleteBranchFunc = func(ctx context.Context, dir, branch string) error {
+		order = append(order, "delete-branch")
+		return nil
+	}
+
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	opts := AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}
+
+	// Make the store's own root read-only, but only after its lock file
+	// already exists: addRemote's first step (rt.Store.Load) must still see
+	// a plain "no such file" for a binding that has never been saved, not a
+	// permission error, or this would fail before CreateBinding and
+	// CreateBranch ever ran. tx.Save's later os.MkdirAll(root/api, ...) does
+	// need to create a new directory entry, though, so it fails.
+	if err := st.WithLock(func(tx *store.Tx) error { return nil }); err != nil {
+		t.Fatalf("seed lock file: %v", err)
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	_, err := Add(ctx, rt, opts)
+	if err == nil {
+		t.Fatal("Add expected error, got nil")
+	}
+
+	if !slices.Contains(fr.calls, "Unbind:zen:api") {
+		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+	}
+	if len(fg.deleteBranchCalls) != 1 {
+		t.Fatalf("DeleteBranch calls = %v, want exactly one", fg.deleteBranchCalls)
+	}
+	want := deleteBranchCall{Dir: "/fake/repo", Branch: "relay/api"}
+	if fg.deleteBranchCalls[0] != want {
+		t.Fatalf("DeleteBranch call = %+v, want %+v", fg.deleteBranchCalls[0], want)
+	}
+	if len(order) != 2 || order[0] != "unbind" || order[1] != "delete-branch" {
+		t.Fatalf("expected Unbind before DeleteBranch, got order %v", order)
 	}
 }
 
