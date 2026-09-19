@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -45,6 +46,44 @@ func Generate() (Keypair, error) {
 func IDOf(pub ed25519.PublicKey) ClientID {
 	sum := sha256.Sum256(pub)
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]))
+}
+
+// Dir is the id as a path component: the 32-byte digest in lower-case hex
+// (64 characters), with no prefix. Safe for any filesystem; one-to-one with
+// the id. ("", false) for a string that is not a well-formed ClientID.
+func (id ClientID) Dir() (string, bool) {
+	s := string(id)
+	if !strings.HasPrefix(s, "SHA256:") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(s, "SHA256:")
+	raw, err := base64.RawStdEncoding.DecodeString(rest)
+	if err != nil || len(raw) != 32 {
+		return "", false
+	}
+	if base64.RawStdEncoding.EncodeToString(raw) != rest {
+		return "", false
+	}
+	return hex.EncodeToString(raw), true
+}
+
+// IDFromDir is the inverse: 64 hex characters -> ClientID; ("", false)
+// otherwise.
+func IDFromDir(dir string) (ClientID, bool) {
+	if len(dir) != 64 {
+		return "", false
+	}
+	for i := 0; i < len(dir); i++ {
+		c := dir[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	raw, err := hex.DecodeString(dir)
+	if err != nil || len(raw) != 32 {
+		return "", false
+	}
+	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(raw)), true
 }
 
 // MarshalPrivate encodes k's private key as a PEM block of type "RELAY ED25519 PRIVATE KEY".

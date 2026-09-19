@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"strings"
@@ -144,5 +145,72 @@ func TestIDShape(t *testing.T) {
 	}
 	if strings.Contains(id, "=") {
 		t.Fatalf("id %q contains padding =", id)
+	}
+}
+
+func TestClientIDDirRoundTrip(t *testing.T) {
+	kp, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	id := IDOf(kp.Public)
+	dir, ok := id.Dir()
+	if !ok {
+		t.Fatalf("id.Dir() failed for %s", id)
+	}
+	if len(dir) != 64 {
+		t.Fatalf("len(dir) = %d, want 64", len(dir))
+	}
+	for _, c := range dir {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Fatalf("dir %q contains non-lower-hex char %c", dir, c)
+		}
+	}
+	back, ok := IDFromDir(dir)
+	if !ok {
+		t.Fatalf("IDFromDir(%q) failed", dir)
+	}
+	if back != id {
+		t.Fatalf("IDFromDir roundtrip mismatch: got %q, want %q", back, id)
+	}
+}
+
+func TestClientIDDirRejects(t *testing.T) {
+	// Dir rejects:
+	// "x"
+	if _, ok := ClientID("x").Dir(); ok {
+		t.Error(`ClientID("x").Dir() ok = true, want false`)
+	}
+	// "SHA256:"
+	if _, ok := ClientID("SHA256:").Dir(); ok {
+		t.Error(`ClientID("SHA256:").Dir() ok = true, want false`)
+	}
+	// "SHA256:!!"
+	if _, ok := ClientID("SHA256:!!").Dir(); ok {
+		t.Error(`ClientID("SHA256:!!").Dir() ok = true, want false`)
+	}
+	// a 31-byte digest
+	digest31 := "SHA256:" + base64.RawStdEncoding.EncodeToString(make([]byte, 31))
+	if _, ok := ClientID(digest31).Dir(); ok {
+		t.Error(`ClientID(31-byte).Dir() ok = true, want false`)
+	}
+
+	// IDFromDir rejects:
+	// "zz"
+	if _, ok := IDFromDir("zz"); ok {
+		t.Error(`IDFromDir("zz") ok = true, want false`)
+	}
+	// 63 chars
+	if _, ok := IDFromDir(strings.Repeat("a", 63)); ok {
+		t.Error(`IDFromDir(63 chars) ok = true, want false`)
+	}
+	// upper-case hex
+	upperHex := strings.Repeat("A", 64)
+	if _, ok := IDFromDir(upperHex); ok {
+		t.Error(`IDFromDir(upper-case hex) ok = true, want false`)
+	}
+	mixedUpper := strings.Repeat("0", 63) + "F"
+	if _, ok := IDFromDir(mixedUpper); ok {
+		t.Error(`IDFromDir(mixed upper-case hex) ok = true, want false`)
 	}
 }

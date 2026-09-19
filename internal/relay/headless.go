@@ -313,6 +313,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, err
 	}
 	if closed {
+		if next.Owner != "" {
+			next = closeServedRound(ctx, rt, next)
+		}
 		next.Builder = clearProcess(next.Builder)
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
