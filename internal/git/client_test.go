@@ -1039,3 +1039,221 @@ func TestBundleCreateTwoRefs(t *testing.T) {
 		t.Fatalf("unexpected bHeads: %v", bHeads)
 	}
 }
+
+func TestFetchBundleFastForwards(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoA := t.TempDir()
+	runGit(t, repoA, "init")
+	if err := os.WriteFile(filepath.Join(repoA, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f1.txt")
+	runGit(t, repoA, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+	ref := "refs/heads/relay/api"
+	runGit(t, repoA, "update-ref", ref, c1)
+
+	bareB := t.TempDir()
+	runGit(t, bareB, "init", "--bare")
+
+	// Bundle 1: full
+	b1 := filepath.Join(t.TempDir(), "b1.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, b1, []string{ref}, ""); err != nil {
+		t.Fatalf("BundleCreate b1: %v", err)
+	}
+
+	fetched, err := client.FetchBundle(ctx, bareB, b1, []string{ref})
+	if err != nil {
+		t.Fatalf("FetchBundle b1: %v", err)
+	}
+	if fetched[ref] != c1 {
+		t.Fatalf("fetched[%s] = %q, want %q", ref, fetched[ref], c1)
+	}
+	shaB, ok, err := client.RefSHA(ctx, bareB, ref)
+	if err != nil || !ok || shaB != c1 {
+		t.Fatalf("bareB ref = (%q, %v, %v); want (%q, true, nil)", shaB, ok, err, c1)
+	}
+
+	// Bundle 2: incremental
+	if err := os.WriteFile(filepath.Join(repoA, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f2.txt")
+	runGit(t, repoA, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+	runGit(t, repoA, "update-ref", ref, c2)
+
+	b2 := filepath.Join(t.TempDir(), "b2.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, b2, []string{ref}, c1); err != nil {
+		t.Fatalf("BundleCreate b2: %v", err)
+	}
+
+	fetched2, err := client.FetchBundle(ctx, bareB, b2, []string{ref})
+	if err != nil {
+		t.Fatalf("FetchBundle b2: %v", err)
+	}
+	if fetched2[ref] != c2 {
+		t.Fatalf("fetched2[%s] = %q, want %q", ref, fetched2[ref], c2)
+	}
+	shaB2, ok, err := client.RefSHA(ctx, bareB, ref)
+	if err != nil || !ok || shaB2 != c2 {
+		t.Fatalf("bareB ref = (%q, %v, %v); want (%q, true, nil)", shaB2, ok, err, c2)
+	}
+}
+
+func TestFetchBundleRefusesNonFastForward(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoA := t.TempDir()
+	runGit(t, repoA, "init")
+	if err := os.WriteFile(filepath.Join(repoA, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f1.txt")
+	runGit(t, repoA, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+	ref := "refs/heads/relay/api"
+	runGit(t, repoA, "update-ref", ref, c1)
+
+	bareB := t.TempDir()
+	runGit(t, bareB, "init", "--bare")
+
+	// initial bundle into B
+	b1 := filepath.Join(t.TempDir(), "b1.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, b1, []string{ref}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.FetchBundle(ctx, bareB, b1, []string{ref}); err != nil {
+		t.Fatal(err)
+	}
+
+	// B's ref is moved ahead by a local commit
+	treeB := strings.TrimSpace(runGit(t, bareB, "rev-parse", c1+"^{tree}"))
+	localCommit, err := client.CommitTree(ctx, bareB, treeB, c1, "local divergence")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	if err := client.UpdateRef(ctx, bareB, ref, localCommit, c1); err != nil {
+		t.Fatalf("UpdateRef: %v", err)
+	}
+
+	// A produces commit c2
+	if err := os.WriteFile(filepath.Join(repoA, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f2.txt")
+	runGit(t, repoA, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+	runGit(t, repoA, "update-ref", ref, c2)
+
+	b2 := filepath.Join(t.TempDir(), "b2.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, b2, []string{ref}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Client's bundle fetch must fail with ErrNotFastForward
+	_, err = client.FetchBundle(ctx, bareB, b2, []string{ref})
+	if !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("FetchBundle non-fast-forward: got %v, want ErrNotFastForward", err)
+	}
+
+	// B's ref remains unchanged at localCommit
+	shaB, ok, err := client.RefSHA(ctx, bareB, ref)
+	if err != nil || !ok || shaB != localCommit {
+		t.Fatalf("bareB ref = %q, want %q", shaB, localCommit)
+	}
+}
+
+func TestFetchBundleMissingPrereq(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoA := t.TempDir()
+	runGit(t, repoA, "init")
+	if err := os.WriteFile(filepath.Join(repoA, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f1.txt")
+	runGit(t, repoA, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repoA, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f2.txt")
+	runGit(t, repoA, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	ref := "refs/heads/relay/api"
+	runGit(t, repoA, "update-ref", ref, c2)
+
+	// Incremental bundle requiring c1
+	bIncr := filepath.Join(t.TempDir(), "incr.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, bIncr, []string{ref}, c1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bare repo B has never seen c1
+	bareB := t.TempDir()
+	runGit(t, bareB, "init", "--bare")
+
+	_, err := client.FetchBundle(ctx, bareB, bIncr, []string{ref})
+	if !errors.Is(err, ErrBadBundle) {
+		t.Fatalf("FetchBundle missing prereq: got %v, want ErrBadBundle", err)
+	}
+}
+
+func TestFetchBundleIgnoresRefsNotAsked(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoA := t.TempDir()
+	runGit(t, repoA, "init")
+	if err := os.WriteFile(filepath.Join(repoA, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f1.txt")
+	runGit(t, repoA, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repoA, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f2.txt")
+	runGit(t, repoA, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	ref1 := "refs/heads/relay/api"
+	ref2 := "refs/relay/api/round-1"
+	runGit(t, repoA, "update-ref", ref1, c1)
+	runGit(t, repoA, "update-ref", ref2, c2)
+
+	bPath := filepath.Join(t.TempDir(), "two.bundle")
+	if _, _, err := client.BundleCreate(ctx, repoA, bPath, []string{ref1, ref2}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	bareB := t.TempDir()
+	runGit(t, bareB, "init", "--bare")
+
+	fetched, err := client.FetchBundle(ctx, bareB, bPath, []string{ref1})
+	if err != nil {
+		t.Fatalf("FetchBundle: %v", err)
+	}
+	if len(fetched) != 1 || fetched[ref1] != c1 {
+		t.Fatalf("unexpected fetched map: %v", fetched)
+	}
+
+	sha1, ok1, err := client.RefSHA(ctx, bareB, ref1)
+	if err != nil || !ok1 || sha1 != c1 {
+		t.Fatalf("bareB ref1: got (%q, %v, %v), want (%q, true, nil)", sha1, ok1, err, c1)
+	}
+
+	_, ok2, err := client.RefSHA(ctx, bareB, ref2)
+	if err != nil || ok2 {
+		t.Fatalf("bareB ref2 unexpectedly present: ok=%v, err=%v", ok2, err)
+	}
+}

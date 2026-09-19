@@ -659,3 +659,57 @@ func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]
 	}
 	return heads, nil
 }
+
+// FetchBundle verifies the bundle file at path and fetches each ref in refs that
+// the bundle carries into dir's repository.
+//
+// The fetch is performed one ref at a time, in refs order, using the refspec
+// <ref>:<ref> without a leading '+', enforcing that every update is a fast-forward.
+// If any ref update fails, execution stops and any refs already moved stay moved.
+// Callers treat a partial absorb as retryable; a re-run is idempotent because a ref
+// already at its target SHA is a no-op fetch.
+//
+// Preconditions:  dir is inside a git repository; path is a bundle file.
+// Postconditions: refs carried by the bundle that appear in refs are updated to the
+//
+//	bundle's heads; returns a map of ref -> SHA for the refs fetched.
+//
+// Errors: ErrBadBundle (bundle verify fails or prerequisites missing),
+//
+//	ErrNotFastForward (a ref cannot be fast-forwarded), ErrNotRepo, ErrGitUnavailable,
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []string) (map[string]string, error) {
+	_, err := c.run(ctx, dir, nil, "bundle", "verify", path)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+
+	heads, err := c.BundleHeads(ctx, dir, path)
+	if err != nil {
+		return nil, err
+	}
+
+	fetched := make(map[string]string)
+	for _, ref := range refs {
+		sha, ok := heads[ref]
+		if !ok {
+			continue
+		}
+		_, err := c.run(ctx, dir, nil, "fetch", "--no-tags", path, ref+":"+ref)
+		if err != nil {
+			if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fetched, err
+			}
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "non-fast-forward") || strings.Contains(errStr, "[rejected]") {
+				return fetched, ErrNotFastForward
+			}
+			return fetched, err
+		}
+		fetched[ref] = sha
+	}
+	return fetched, nil
+}
