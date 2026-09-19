@@ -140,6 +140,9 @@ func TestDeliverHoldsWhilePlannerPaneFocused(t *testing.T) {
 	if len(f.notices) != 1 {
 		t.Errorf("a held delivery must raise exactly one herdr notification, got %d", len(f.notices))
 	}
+	if f.sounds[0] != herdr.SoundDone {
+		t.Errorf("held notify sound = %q, want %q", f.sounds[0], herdr.SoundDone)
+	}
 
 	if _, pending, _ := rt.Store.PendingForPlanner(b.Name); !pending {
 		t.Error("a held payload stays pending")

@@ -59,9 +59,14 @@ func (f *fakeHerdr) StartAgent(_ context.Context, _, _, _ string, _ []string) er
 	return errors.New("read-only violation: StartAgent called")
 }
 
-func (f *fakeHerdr) Notify(_ context.Context, _ string) error {
+func (f *fakeHerdr) Notify(_ context.Context, _, _ string, _ herdr.Sound) error {
 	f.t.Errorf("read-only violation: Notify called")
 	return errors.New("read-only violation: Notify called")
+}
+
+func (f *fakeHerdr) ReportMetadata(_ context.Context, _ string, _ herdr.PaneMetadata) error {
+	f.t.Errorf("read-only violation: ReportMetadata called")
+	return errors.New("read-only violation: ReportMetadata called")
 }
 
 func (f *fakeHerdr) ClosePane(_ context.Context, _ string) error {

@@ -234,6 +234,89 @@ func TestClientWaitTimeoutIsDistinctOutsidePrompt(t *testing.T) {
 	}
 }
 
+// argvOf reads the args file stubHerdrRecordingArgs wrote, one argument per
+// line, and returns it as a slice.
+func argvOf(t *testing.T, argsPath string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+}
+
+func TestClientNotifyArgv(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args")
+	c := NewClient(stubHerdrRecordingArgs(t, argsPath), 5*time.Second)
+
+	if err := c.Notify(context.Background(), "t", "b", SoundRequest); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got := argvOf(t, argsPath)
+	want := []string{"notification", "show", "t", "--body", "b", "--sound", "request"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+
+	if err := c.Notify(context.Background(), "t", "", ""); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	got = argvOf(t, argsPath)
+	want = []string{"notification", "show", "t", "--sound", "none"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+}
+
+func TestClientReportMetadataArgv(t *testing.T) {
+	argsPath := filepath.Join(t.TempDir(), "args")
+	c := NewClient(stubHerdrRecordingArgs(t, argsPath), 5*time.Second)
+
+	err := c.ReportMetadata(context.Background(), "P", PaneMetadata{
+		Tokens:      map[string]string{"relay_state": "x", "relay": "y"},
+		ClearTokens: []string{"a"},
+		Seq:         7,
+	})
+	if err != nil {
+		t.Fatalf("ReportMetadata: %v", err)
+	}
+	got := argvOf(t, argsPath)
+	want := []string{
+		"pane", "report-metadata", "P", "--source", "relay",
+		"--token", "relay=y", "--token", "relay_state=x",
+		"--clear-token", "a", "--seq", "7",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", got, want)
+	}
+
+	// A value longer than maxTokenValue arrives truncated, rune-safe.
+	long := strings.Repeat("v", 100)
+	if err := c.ReportMetadata(context.Background(), "P", PaneMetadata{
+		Tokens: map[string]string{"relay": long},
+		Seq:    1,
+	}); err != nil {
+		t.Fatalf("ReportMetadata: %v", err)
+	}
+	got = argvOf(t, argsPath)
+	wantVal := "relay=" + strings.Repeat("v", 80)
+	if got[len(got)-3] != wantVal {
+		t.Fatalf("truncated token = %q, want %q", got[len(got)-3], wantVal)
+	}
+
+	// Empty metadata is a no-op: no herdr call, so the args file from the
+	// previous call is left untouched rather than rewritten.
+	if err := os.Remove(argsPath); err != nil {
+		t.Fatalf("remove args file: %v", err)
+	}
+	if err := c.ReportMetadata(context.Background(), "P", PaneMetadata{}); err != nil {
+		t.Fatalf("ReportMetadata empty: %v", err)
+	}
+	if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+		t.Fatalf("empty metadata ran herdr: args file exists (err=%v)", err)
+	}
+}
+
 func TestParseIntegrationStatus(t *testing.T) {
 	raw := `
 opencode: outdated (v10 < v11) (/home/fuad/.config/opencode/plugins/herdr-agent-state.js)

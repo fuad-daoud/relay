@@ -275,7 +275,8 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 // wants: one notification per round that goes wrong.
 func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
 	if b.HaltNotifiedRound != b.Round {
-		if err := rt.Herdr.Notify(ctx, message); err != nil {
+		body := fmt.Sprintf("round %d", b.Round)
+		if err := rt.Herdr.Notify(ctx, message, body, herdr.SoundRequest); err != nil {
 			return b, fmt.Errorf("notify halt: %w", err)
 		}
 
@@ -336,6 +337,16 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
+	}
+
+	dialogLine := capLine(dialog, 100)
+	if dialogLine == "" {
+		dialogLine = "dialog captured"
+	}
+	notifyTitle := fmt.Sprintf("%s: builder blocked at a dialog", b.Name)
+	notifyBody := fmt.Sprintf("round %d: %s", b.Round, dialogLine)
+	if err := rt.Herdr.Notify(ctx, notifyTitle, notifyBody, herdr.SoundRequest); err != nil {
+		slog.Warn("blocked dialog notify failed", "binding", b.Name, "err", err)
 	}
 
 	// Once per round: HasEntry on the question gates the call.

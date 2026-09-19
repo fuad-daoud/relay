@@ -154,6 +154,9 @@ func TestGoneSwitchesAfterGrace(t *testing.T) {
 	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "switched builder to agy/other/m") {
 		t.Fatalf("notices = %+v, want one containing 'switched builder to agy/other/m'", f.notices)
 	}
+	if f.sounds[0] != herdr.SoundNone {
+		t.Errorf("switch notify sound = %q, want %q", f.sounds[0], herdr.SoundNone)
+	}
 
 	sw := switches(t, rt)
 	if len(sw) != 1 {
