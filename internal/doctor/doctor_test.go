@@ -964,3 +964,31 @@ func TestUsageChecks(t *testing.T) {
 		}
 	})
 }
+
+// TestExtraChecksAppended checks that WithExtraChecks appends its checks
+// verbatim at the end of the report, after every check Run itself built --
+// including the usage checks WithUsage enables (#100 step 5: cmd/relay
+// folds relay.ProbeServers' server rows in this way, without Run knowing
+// anything about servers.json or the network).
+func TestExtraChecksAppended(t *testing.T) {
+	env := &fakeEnv{herdrVer: "0.9.0", lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
+	extra := []Check{
+		{Group: "", Name: "servers", Severity: SevOK, Detail: "zen: enrolled as laptop"},
+	}
+
+	rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false), WithExtraChecks(extra))
+
+	if len(rep.Checks) == 0 {
+		t.Fatal("report has no checks")
+	}
+	// Mutation target: have WithExtraChecks prepend, or Run drop cfg.extra
+	// entirely, and this either finds "servers" somewhere other than last,
+	// or not at all.
+	last := rep.Checks[len(rep.Checks)-1]
+	if last.Name != "servers" || last.Detail != "zen: enrolled as laptop" {
+		t.Fatalf("last check = %+v, want the extra check appended after every check Run built (including usage)", last)
+	}
+	if c := findCheck(rep, "", "prices"); c == nil {
+		t.Fatal("usage's own prices check must still run alongside an extra check")
+	}
+}

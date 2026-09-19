@@ -92,6 +92,18 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 			}
 		}
 	}
+	var diffNote, diffTree string
+	var diffCommits int
+	if b.Serve != nil && b.Serve.ClosedRound > 0 {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindDiff {
+				diffNote = entries[i].Note
+				diffCommits = entries[i].Commits
+				diffTree = entries[i].Tree
+				break
+			}
+		}
+	}
 	var ackedRound int
 	var closedRound int
 	if b.Serve != nil {
@@ -108,6 +120,9 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		ResultCommit:   resultCommit,
 		DirtyCommit:    dirtyCommit,
 		ReportOutcome:  reportOutcome,
+		DiffNote:       diffNote,
+		DiffCommits:    diffCommits,
+		DiffTree:       diffTree,
 		AckedRound:     ackedRound,
 		Candidate:      b.BuilderCandidate,
 		RoundStartedAt: b.RoundStartedAt,

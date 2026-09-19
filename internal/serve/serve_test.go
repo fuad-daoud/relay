@@ -139,6 +139,34 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 	}
 }
 
+// TestOwnerLabel checks the request log's owner field (#100 step 6): an
+// enrolled caller's label, and "-" -- not "" -- for a request that never
+// authenticated at all (the zero ClientID an auth failure leaves behind).
+func TestOwnerLabel(t *testing.T) {
+	clientsPath := filepath.Join(t.TempDir(), "clients.json")
+	c, err := LoadClients(clientsPath)
+	if err != nil {
+		t.Fatalf("LoadClients: %v", err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := c.Add("laptop", remote.MarshalPublic(kp.Public, "test client"), time.Now()); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if got := ownerLabel(c, id); got != "laptop" {
+		t.Errorf("ownerLabel(enrolled) = %q, want laptop", got)
+	}
+	// Mutation target: drop the caller == "" guard and this reads "" (via
+	// LabelOf's own fallback on an empty id) instead of "-".
+	if got := ownerLabel(c, ""); got != "-" {
+		t.Errorf(`ownerLabel(unauthenticated) = %q, want "-"`, got)
+	}
+}
+
 func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 	t.Helper()
 	root := t.TempDir()

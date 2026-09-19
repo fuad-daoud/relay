@@ -1417,3 +1417,59 @@ func TestCreateBranch(t *testing.T) {
 		t.Fatalf("prefixed CreateBranch got %v, want ErrBranchExists", err)
 	}
 }
+
+func TestDeleteBranch(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "initial")
+	headSHA := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	// An existing branch is removed.
+	if err := client.CreateBranch(ctx, repoDir, "feature", headSHA); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := client.DeleteBranch(ctx, repoDir, "feature"); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	exists, err := client.BranchExists(ctx, repoDir, "feature")
+	if err != nil {
+		t.Fatalf("BranchExists: %v", err)
+	}
+	if exists {
+		t.Fatal("branch still exists after DeleteBranch")
+	}
+
+	// A missing branch is nil (idempotent) -- both a branch just removed and
+	// one that never existed.
+	if err := client.DeleteBranch(ctx, repoDir, "feature"); err != nil {
+		t.Fatalf("DeleteBranch on already-removed branch: got %v, want nil", err)
+	}
+	if err := client.DeleteBranch(ctx, repoDir, "never-existed"); err != nil {
+		t.Fatalf("DeleteBranch on never-created branch: got %v, want nil", err)
+	}
+
+	// Prefixed form addresses the same branch.
+	if err := client.CreateBranch(ctx, repoDir, "feature2", headSHA); err != nil {
+		t.Fatalf("CreateBranch feature2: %v", err)
+	}
+	if err := client.DeleteBranch(ctx, repoDir, "refs/heads/feature2"); err != nil {
+		t.Fatalf("DeleteBranch with refs/heads/ prefix: %v", err)
+	}
+	exists, err = client.BranchExists(ctx, repoDir, "feature2")
+	if err != nil {
+		t.Fatalf("BranchExists: %v", err)
+	}
+	if exists {
+		t.Fatal("feature2 still exists after prefixed DeleteBranch")
+	}
+}

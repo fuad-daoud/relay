@@ -32,6 +32,19 @@ func writeErr(w http.ResponseWriter, status int, code remote.Code, msg string) {
 	})
 }
 
+// ownerLabel is the request log's owner field: the caller's enrolled label,
+// falling back to its id prefix (Clients.LabelOf), or "-" when the request
+// never authenticated at all -- caller is the zero ClientID on a signature
+// failure, since the auth middleware never reaches the point of setting one.
+// Without this, that case printed owner="" instead of naming the failure as
+// what it is: nobody.
+func ownerLabel(clients *Clients, caller remote.ClientID) string {
+	if caller == "" {
+		return "-"
+	}
+	return clients.LabelOf(caller)
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -64,7 +77,7 @@ func (s *Server) Handler() http.Handler {
 		rw := &responseLogger{ResponseWriter: w, status: http.StatusOK}
 		authenticatedMux.ServeHTTP(rw, r)
 
-		owner := s.clients.LabelOf(callerOf(r))
+		owner := ownerLabel(s.clients, callerOf(r))
 		slog.Info("http request", "method", r.Method, "path", r.URL.Path, "owner", owner, "status", rw.status)
 	})
 }

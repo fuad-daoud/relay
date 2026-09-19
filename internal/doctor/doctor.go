@@ -140,6 +140,7 @@ type runConfig struct {
 	definitions   map[string][]string
 	usagePrices   string
 	usageOpencode bool
+	extra         []Check
 }
 
 // WithAdopted scopes the per-kind checks to an adopted pane: the user launched
@@ -169,6 +170,19 @@ func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.usagePrices = pricesPath
 		cfg.usageOpencode = opencodeConfigured
+	}
+}
+
+// WithExtraChecks appends checks verbatim at the end of the report, after
+// every check Run itself builds (including the usage checks WithUsage
+// enables). It exists so a caller can fold in checks built from data Run
+// never sees -- remote server probes, assembled in cmd/relay from
+// servers.json and the network -- without Run knowing anything about
+// either. It never changes the verdict except through the severities the
+// checks themselves carry.
+func WithExtraChecks(checks []Check) RunOption {
+	return func(cfg *runConfig) {
+		cfg.extra = append(cfg.extra, checks...)
 	}
 }
 
@@ -539,6 +553,8 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	if cfg.usagePrices != "" {
 		checks = append(checks, usageChecks(env, cfg)...)
 	}
+
+	checks = append(checks, cfg.extra...)
 
 	return Report{
 		Checks:        checks,

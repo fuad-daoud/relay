@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,7 @@ type fakeRemote struct {
 	resumeErr         error
 
 	onCreateBinding func()
+	onUnbind        func()
 }
 
 func (f *fakeRemote) WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error) {
@@ -109,6 +111,9 @@ func (f *fakeRemote) Done(ctx context.Context, server, name string) error {
 
 func (f *fakeRemote) Unbind(ctx context.Context, server, name string) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unbind:%s:%s", server, name))
+	if f.onUnbind != nil {
+		f.onUnbind()
+	}
 	return f.unbindErr
 }
 
@@ -152,6 +157,76 @@ func (f *fakeTransport) Absorb(ctx context.Context, repo, contentType string, bo
 		return nil, f.absorbErr
 	}
 	return f.absorbResp, nil
+}
+
+// TestProbeServersStates checks ProbeServers' one-state-per-outcome mapping
+// over fakeRemote (#100 step 5): no client key, enrolled, not enrolled, a
+// changed certificate, unreachable, and an unrecognised error.
+func TestProbeServersStates(t *testing.T) {
+	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
+
+	cases := []struct {
+		name       string
+		rt         Runtime
+		enrollLine string
+		wantState  string
+		wantLabel  string
+		wantDetail string
+	}{
+		{
+			name:      "no key",
+			rt:        Runtime{},
+			wantState: "no key", wantDetail: "run relay client init",
+		},
+		{
+			name:      "enrolled",
+			rt:        Runtime{Remote: &fakeRemote{whoAmIResp: remote.WhoAmI{Label: "laptop"}}},
+			wantState: "enrolled", wantLabel: "laptop",
+		},
+		{
+			name:       "not enrolled",
+			rt:         Runtime{Remote: &fakeRemote{whoAmIErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: "not_enrolled"}}}},
+			enrollLine: "ed25519 AAAA... me@laptop",
+			wantState:  "not enrolled", wantDetail: "ed25519 AAAA... me@laptop",
+		},
+		{
+			name:      "cert changed",
+			rt:        Runtime{Remote: &fakeRemote{whoAmIErr: client.ErrCertChanged}},
+			wantState: "cert changed",
+		},
+		{
+			name:      "unreachable",
+			rt:        Runtime{Remote: &fakeRemote{whoAmIErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}},
+			wantState: "unreachable", wantDetail: "dial tcp: connection refused",
+		},
+		{
+			name:      "error",
+			rt:        Runtime{Remote: &fakeRemote{whoAmIErr: errors.New("boom")}},
+			wantState: "error", wantDetail: "boom",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probes := ProbeServers(context.Background(), tc.rt, servers, tc.enrollLine)
+			if len(probes) != 1 {
+				t.Fatalf("got %d probes, want 1", len(probes))
+			}
+			p := probes[0]
+			if p.Name != "zen" || p.URL != "https://zen:7777" {
+				t.Fatalf("Name/URL = %q/%q, want zen/https://zen:7777", p.Name, p.URL)
+			}
+			if p.State != tc.wantState {
+				t.Fatalf("State = %q, want %q", p.State, tc.wantState)
+			}
+			if p.Label != tc.wantLabel {
+				t.Fatalf("Label = %q, want %q", p.Label, tc.wantLabel)
+			}
+			if p.Detail != tc.wantDetail {
+				t.Fatalf("Detail = %q, want %q", p.Detail, tc.wantDetail)
+			}
+		})
+	}
 }
 
 func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
@@ -202,6 +277,57 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 	if res.Branch != "relay/api" {
 		t.Fatalf("res.Branch = %q, want relay/api", res.Branch)
+	}
+
+	// #100 step 6: the server picked the candidate (opts.Candidate == ""),
+	// so the pick entry must say so rather than ExplainResolution's
+	// "explicit, policy bypassed", which would misdescribe a token nobody
+	// on this side named.
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pickNote string
+	for _, e := range entries {
+		if e.Kind == store.KindPick {
+			pickNote = e.Note
+		}
+	}
+	if pickNote != "picked claude/anthropic/haiku on zen: server's pick" {
+		t.Fatalf("pick note = %q, want it to name the server's own pick", pickNote)
+	}
+}
+
+// TestAddRemoteTwicePerRepo pins #100: a remote binding's CWD is the repo its
+// branch is cut from, not a working tree it drives, so two remote bindings
+// may share one repo the same way two `relay add` worktrees do. (Mutation
+// target: revert the assertCWDFree remote exemption in
+// internal/store/store.go and this fails with ErrCWDTaken on the second
+// addRemote call.)
+func TestAddRemoteTwicePerRepo(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	if _, err := Add(ctx, rt, AddOptions{Name: "e2e2", Server: "zen", Repo: "/fake/repo"}); err != nil {
+		t.Fatalf("first Add: %v", err)
+	}
+	if _, err := Add(ctx, rt, AddOptions{Name: "e2e3", Server: "zen", Repo: "/fake/repo"}); err != nil {
+		t.Fatalf("second Add with the same repo: %v", err)
 	}
 }
 
@@ -258,11 +384,55 @@ func TestAddRemoteServerConflict(t *testing.T) {
 	}
 
 	_, err := Add(ctx, rt, opts)
-	if err == nil || !strings.Contains(err.Error(), "binding api already exists on zen for this client; relay bind --resume --name api") {
+	if err == nil || !strings.Contains(err.Error(), "binding api already exists on zen for this client but not here; relay serve unbind --owner <your label> api on the server, or choose another name") {
 		t.Fatalf("got err %v, want 409 conflict message", err)
 	}
 	if len(fg.createBranchCalls) != 0 {
 		t.Fatalf("createBranch called %d times, want 0", len(fg.createBranchCalls))
+	}
+}
+
+// TestAddRemoteCleansUpServerOnSaveFailure pins #100: any failure after
+// CreateBinding succeeds -- not just ErrBranchExists -- unbinds the server
+// binding it just created, best-effort, before addRemote returns. A
+// fakeGit.CreateBranch error that is not ErrBranchExists exercises the
+// general defer path (the ErrBranchExists path already has its own test,
+// TestAddRemoteBranchExistsUnbindsServer). Mutation target: remove the
+// deferred cleanup in addRemote and this fails, since Unbind is never
+// called for this generic error.
+func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:    "1111111111111111111111111111111111111111",
+		rootCommitSHA:   "2222222222222222222222222222222222222222",
+		createBranchErr: errors.New("disk full"),
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name: "api",
+		},
+	}
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	opts := AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}
+
+	_, err := Add(ctx, rt, opts)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("got err %v, want the CreateBranch error", err)
+	}
+
+	if !slices.Contains(fr.calls, "Unbind:zen:api") {
+		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
 	}
 }
 
@@ -307,6 +477,88 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+	}
+}
+
+// TestAddRemoteCleansUpLocalBranchOnSaveFailure pins #100 round 4: a failure
+// that happens after CreateBranch has already succeeded also removes the
+// local branch relay just cut, not only the server binding -- otherwise the
+// branch is left behind and the next `add` with the same name is refused
+// with "branch relay/<name> exists; delete it or pick another name", even
+// though relay itself created it. The provocation makes Save fail (a real
+// store, not fakeGit, since fakeGit.CreateBranch must succeed here): the
+// binding's own state directory is pre-occupied by a plain file, so the
+// store's os.MkdirAll refuses it -- exercising the same "some failure after
+// CreateBinding succeeds" path TestAddRemoteCleansUpServerOnSaveFailure pins
+// for CreateBranch, but one step later, after the branch already exists.
+// Mutation target: drop the DeleteBranch call in addRemote's deferred
+// cleanup and this fails, since DeleteBranch is then never called.
+func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	st := store.New(root)
+
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name: "api",
+		},
+	}
+
+	var order []string
+	fr.onUnbind = func() { order = append(order, "unbind") }
+	fg.deleteBranchFunc = func(ctx context.Context, dir, branch string) error {
+		order = append(order, "delete-branch")
+		return nil
+	}
+
+	rt := Runtime{
+		Store:  st,
+		Git:    fg,
+		Remote: fr,
+		Now:    time.Now,
+	}
+
+	opts := AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+	}
+
+	// Make the store's own root read-only, but only after its lock file
+	// already exists: addRemote's first step (rt.Store.Load) must still see
+	// a plain "no such file" for a binding that has never been saved, not a
+	// permission error, or this would fail before CreateBinding and
+	// CreateBranch ever ran. tx.Save's later os.MkdirAll(root/api, ...) does
+	// need to create a new directory entry, though, so it fails.
+	if err := st.WithLock(func(tx *store.Tx) error { return nil }); err != nil {
+		t.Fatalf("seed lock file: %v", err)
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	_, err := Add(ctx, rt, opts)
+	if err == nil {
+		t.Fatal("Add expected error, got nil")
+	}
+
+	if !slices.Contains(fr.calls, "Unbind:zen:api") {
+		t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+	}
+	if len(fg.deleteBranchCalls) != 1 {
+		t.Fatalf("DeleteBranch calls = %v, want exactly one", fg.deleteBranchCalls)
+	}
+	want := deleteBranchCall{Dir: "/fake/repo", Branch: "relay/api"}
+	if fg.deleteBranchCalls[0] != want {
+		t.Fatalf("DeleteBranch call = %+v, want %+v", fg.deleteBranchCalls[0], want)
+	}
+	if len(order) != 2 || order[0] != "unbind" || order[1] != "delete-branch" {
+		t.Fatalf("expected Unbind before DeleteBranch, got order %v", order)
 	}
 }
 
@@ -641,6 +893,82 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 	}
 }
 
+// TestReconcileRemoteRefreshesCandidate checks that a server-side switch
+// (the round is now running a different candidate than this binding last
+// recorded) updates the token and harness kind and logs a switch entry
+// naming the server, and that a later tick whose view still names the same
+// candidate adds nothing more (#100 step 2).
+func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.BuilderCandidate = "claude/anthropic/haiku"
+	b.Builder.Kind = "claude"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
+		roundFileResp:  io.NopCloser(strings.NewReader("")),
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	agents := []herdr.Agent{plannerAgent()}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != "opencode/anthropic/sonnet" {
+		t.Fatalf("BuilderCandidate = %q, want the server's candidate", got.BuilderCandidate)
+	}
+	if got.Builder.Kind != "opencode" {
+		t.Fatalf("Builder.Kind = %q, want opencode", got.Builder.Kind)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	switches := 0
+	var note string
+	for _, e := range entries {
+		if e.Kind == store.KindSwitch {
+			switches++
+			note = e.Note
+		}
+	}
+	if switches != 1 {
+		t.Fatalf("switch entries = %d, want 1", switches)
+	}
+	if !strings.Contains(note, "zen") || !strings.Contains(note, "claude/anthropic/haiku") || !strings.Contains(note, "opencode/anthropic/sonnet") {
+		t.Fatalf("switch note = %q, want it to name the server and both tokens", note)
+	}
+
+	// Mutation target: compare view.Candidate against something other than
+	// b.BuilderCandidate (or drop the comparison entirely) and a second,
+	// identical view adds a second switch entry instead of nothing.
+	got2, err := reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("Reconcile (second tick): %v", err)
+	}
+	if got2.BuilderCandidate != "opencode/anthropic/sonnet" {
+		t.Fatalf("BuilderCandidate after second tick = %q, want unchanged", got2.BuilderCandidate)
+	}
+	entries2, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	switches2 := 0
+	for _, e := range entries2 {
+		if e.Kind == store.KindSwitch {
+			switches2++
+		}
+	}
+	if switches2 != 1 {
+		t.Fatalf("switch entries after an identical second view = %d, want still 1", switches2)
+	}
+}
+
 func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -794,6 +1122,102 @@ func TestReconcileRemote404Halts(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, "binding removed by the server admin") {
 		t.Fatalf("Halt = %q, want the removed-by-admin message", got.Halt)
+	}
+}
+
+// TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
+// (the read path `relay status`/`pull`/`wait` share, spec §2.2) collects a
+// closed round -- the report entry lands, pending -- without ever
+// delivering it to a planner pane.
+func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("synced = %d, want 1", synced)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			found = true
+			if e.Confirmed {
+				t.Fatal("report entry must still be pending: SyncRemote must never deliver it")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no report entry after SyncRemote collected the closed round")
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mutation target: have SyncRemote call reconcileRemote instead of
+	// observeRemote, and this assertion fails: reconcileRemote's
+	// deliverAndSettle reads a nil agents list as "the planner is gone"
+	// and orphans the binding.
+	if got.State == store.StateOrphaned {
+		t.Fatal("SyncRemote must not deliver, so it must never orphan a binding")
+	}
+}
+
+// TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
+// network for a binding it should not sync: one already DONE, and one that
+// is not a remote binding at all.
+func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
+	st := store.New(t.TempDir())
+
+	doneRemote := remoteBinding("zen")
+	doneRemote.Name = "done-remote"
+	doneRemote.State = store.StateDone
+	if err := st.Save(doneRemote); err != nil {
+		t.Fatal(err)
+	}
+
+	local := store.Binding{
+		Name: "local", CWD: "/fake/repo", State: store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := st.Save(local); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 0 {
+		t.Fatalf("synced = %d, want 0: a DONE remote binding and a local binding must both be skipped", synced)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("fakeRemote calls = %v, want none: SyncRemote must not touch the network for a skipped binding", fr.calls)
 	}
 }
 
@@ -1062,6 +1486,96 @@ func TestCatchUpDirtyNote(t *testing.T) {
 	sideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
 	if err != nil || !ok || sideSHA != c3 {
 		t.Fatalf("client side ref: got (%q, %v, %v), want (%q, true, nil)", sideSHA, ok, err, c3)
+	}
+}
+
+// TestCatchUpWritesDiffEntryFromView checks that catchUp writes the
+// client's own diff log entry from the server's view facts (Note, Commits,
+// Tree, plus the downloaded patch as Path) rather than letting queueReport
+// capture its own diff from a local baseline that a remote binding never
+// has.
+func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	// Mutation target: skip writing the diff entry in catchUp, and
+	// queueReport falls back to its own CaptureRoundDiff, which either
+	// calls fakeGit.SnapshotTree (raising this count above 0) or, since a
+	// remote binding never carries a local RoundBaselineTree, writes a
+	// diff entry whose note reads "unavailable: no baseline" instead of
+	// the server's own note.
+	if fg.snapshotCalls != 0 {
+		t.Fatalf("fakeGit.SnapshotTree called %d times, want 0: queueReport must not capture its own diff", fg.snapshotCalls)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diffEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindDiff {
+			diffEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no diff entry written")
+	}
+	if diffEntry.Note != "1 file, +1 -0; 1 commit, clean" {
+		t.Fatalf("diff entry Note = %q, want the server's own note", diffEntry.Note)
+	}
+	if diffEntry.Commits != 1 {
+		t.Fatalf("diff entry Commits = %d, want 1", diffEntry.Commits)
+	}
+	if diffEntry.Tree != "clean" {
+		t.Fatalf("diff entry Tree = %q, want clean", diffEntry.Tree)
+	}
+	if diffEntry.Path != st.DiffPath("api", 1) {
+		t.Fatalf("diff entry Path = %q, want the downloaded patch's path %q", diffEntry.Path, st.DiffPath("api", 1))
+	}
+	if !diffEntry.Confirmed {
+		t.Fatal("diff entry must be Confirmed, like every other relay-bookkeeping entry")
+	}
+
+	var reportEntry store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry = e
+		}
+	}
+	if !strings.Contains(reportEntry.Payload, "Diff:") {
+		t.Fatalf("report payload = %q, want a Diff: line from DiffLineFromNote", reportEntry.Payload)
 	}
 }
 

@@ -132,6 +132,41 @@ func TestServedViewReportOutcome(t *testing.T) {
 	}
 }
 
+func TestServedViewDiffFacts(t *testing.T) {
+	b := store.Binding{
+		Name:             "api",
+		State:            store.StateActive,
+		Round:            3,
+		BuilderCandidate: "claude-sonnet",
+		Serve: &store.ServeFacts{
+			ClosedRound: 2,
+			AckedRound:  1,
+		},
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Kind: store.KindDiff, Note: "old round's diff", Commits: 9, Tree: "dirty"},
+		{Round: 2, Kind: store.KindDiff, Note: "1 file, +1 -0; 1 commit, clean", Commits: 1, Tree: "clean"},
+	}
+
+	view := ServedView(b, entries)
+	if view.DiffNote != "1 file, +1 -0; 1 commit, clean" {
+		t.Fatalf("DiffNote: got %q, want the round 2 diff entry's note", view.DiffNote)
+	}
+	if view.DiffCommits != 1 {
+		t.Fatalf("DiffCommits: got %d, want 1", view.DiffCommits)
+	}
+	if view.DiffTree != "clean" {
+		t.Fatalf("DiffTree: got %q, want clean", view.DiffTree)
+	}
+
+	// With no diff entry for ClosedRound, every fact stays zero.
+	viewNoDiff := ServedView(b, entries[:1])
+	if viewNoDiff.DiffNote != "" || viewNoDiff.DiffCommits != 0 || viewNoDiff.DiffTree != "" {
+		t.Fatalf("diff facts with no matching entry: got %+v, want all zero", viewNoDiff)
+	}
+}
+
 func TestCloseServedRoundClean(t *testing.T) {
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)

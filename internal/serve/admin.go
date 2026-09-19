@@ -171,3 +171,72 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 
 	return results, nil
 }
+
+// AdminUnbind removes a stale server binding: the admin's answer to a
+// client's `add --server` whose 409 means the server already holds a
+// binding by that name for that client, with no local counterpart to
+// resume it (#100). owner resolves by exact client label or exact id; a
+// label shared by two clients is refused rather than guessed at. A running
+// round is refused unless force is set, matching relay unbind's own
+// guardedness; archiving (not deleting) keeps log.jsonl and every round
+// file, same as relay unbind --archive.
+func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relay.UnbindResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id, err := s.resolveOwner(owner)
+	if err != nil {
+		return relay.UnbindResult{}, err
+	}
+
+	rt, err := s.runtime(id)
+	if err != nil {
+		return relay.UnbindResult{}, err
+	}
+
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return relay.UnbindResult{}, err
+	}
+
+	if !force {
+		logEntries, _ := rt.Store.ReadLog(b.Name)
+		if relay.RoundStateOf(b, logEntries) == remote.RoundRunning {
+			return relay.UnbindResult{}, fmt.Errorf("round %d is running; wait, or --force", b.Round)
+		}
+	}
+
+	return relay.Unbind(ctx, rt, name, true)
+}
+
+// resolveOwner finds the one client owner names, by exact label or exact
+// client id. Two clients sharing a label is an error naming both ids rather
+// than a silent pick between them.
+func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
+	clients := s.clients.List()
+
+	for _, c := range clients {
+		if string(c.ID) == owner {
+			return c.ID, nil
+		}
+	}
+
+	var matches []Client
+	for _, c := range clients {
+		if c.Label == owner {
+			matches = append(matches, c)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0].ID, nil
+	case 0:
+		return "", ErrNoSuchClient
+	default:
+		ids := make([]string, len(matches))
+		for i, c := range matches {
+			ids[i] = string(c.ID)
+		}
+		return "", fmt.Errorf("label %q is ambiguous: %s", owner, strings.Join(ids, ", "))
+	}
+}

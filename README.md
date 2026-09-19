@@ -277,7 +277,7 @@ inside every pane it manages, so it has to be run from inside one.
   the service unit runs. A held payload is injected into a focused planner once its input
   box is empty or its screen has been quiet for `--held-grace` (default 60s).
 - `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
-- `relay serve init|enroll|clients|revoke|fingerprint|status|gc` — server administration, on the server host.
+- `relay serve init|enroll|clients|revoke|fingerprint|status|gc|unbind` — server administration, on the server host.
 - `relay client init` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
   `relay serve enroll --key "<line>"` with.
@@ -487,6 +487,20 @@ builder; unbind and add" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relay done` and `relay unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
 the server is treated as already gone, and proceeds).
+
+What `status` and `doctor` show: `relay status` and `relay ui` name a
+remote binding's builder by its server (`zen`, not a pane id), with the
+last round state the daemon observed there (`running`, `idle`, `closed`,
+`needs_you`, `unreachable`, `cert`) in the status column -- read from the
+store, never over the network, so it costs nothing extra. `relay status`,
+`relay pull` and each `relay wait` poll additionally sync every remote
+binding first, so a round the server closed while your daemon was not
+running (or was never started) is collected without it -- a laptop closed
+overnight still shows the finished round on the next `relay status`.
+`relay doctor` adds one row per configured server: reachable and enrolled
+(`enrolled as <label>`), not yet enrolled (with the line to give the
+admin), unreachable, or a certificate that no longer matches the pinned
+fingerprint.
 
 ### Round budget
 

@@ -40,6 +40,62 @@ func TestStatusReportsLiveAgentState(t *testing.T) {
 	}
 }
 
+// TestStatusRemoteRow checks that a remote binding's status row names the
+// server as its pane and shows the last RemoteStatus the daemon recorded
+// (#100 step 3), and that RenderStatus prints both.
+func TestStatusRemoteRow(t *testing.T) {
+	f := &fakeHerdr{}
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Builder.RemoteStatus = "running"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
+	f.agents = []herdr.Agent{plannerAgent()}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	got := rep.Bindings[0]
+	if got.BuilderPane != "zen" {
+		t.Fatalf("BuilderPane = %q, want the server name zen", got.BuilderPane)
+	}
+	if got.BuilderStatus != "running" {
+		t.Fatalf("BuilderStatus = %q, want the recorded RemoteStatus", got.BuilderStatus)
+	}
+
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "zen") || !strings.Contains(text, "running") {
+		t.Errorf("rendered status must show the server and its status, got %q", text)
+	}
+}
+
+// TestStatusRemoteRowUnknownStatus checks the "" -> "unknown" fallback for a
+// remote binding the daemon has never ticked.
+func TestStatusRemoteRowUnknownStatus(t *testing.T) {
+	f := &fakeHerdr{}
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
+	f.agents = []herdr.Agent{plannerAgent()}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep.Bindings[0].BuilderStatus; got != "unknown" {
+		t.Fatalf("BuilderStatus with no recorded RemoteStatus = %q, want unknown", got)
+	}
+}
+
 func TestStatusMarksMissingAgentsAsGone(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := sentBinding(t, f)
