@@ -21,6 +21,8 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 )
@@ -1665,5 +1667,101 @@ func TestTickSkipsMissingBindingsDir(t *testing.T) {
 
 	if err := srv.Tick(ctx); err != nil {
 		t.Fatalf("Tick on missing bindings dir returned error: %v", err)
+	}
+}
+
+func TestCandidatesView(t *testing.T) {
+	root := t.TempDir()
+
+	candPath := filepath.Join(root, "candidates.json")
+	candJSON := `[
+		{"harness": "claude", "provider": "anthropic", "model": "haiku", "roles": ["builder"]},
+		{"harness": "claude", "provider": "anthropic", "model": "sonnet", "roles": ["builder"]}
+	]`
+	if err := os.WriteFile(candPath, []byte(candJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pol := policy.Policy{
+		Order: map[string][]string{
+			"builder": {"claude/anthropic/haiku", "claude/anthropic/sonnet"},
+		},
+	}
+
+	now := time.Now()
+	// Write a gate on haiku to the server-wide ledger
+	l := ledger.Ledger{
+		Entries: []ledger.Entry{
+			{
+				Kind:    ledger.SpawnFailed,
+				Subject: "claude/anthropic/haiku",
+				Source:  "relay",
+				At:      now,
+				Until:   now.Add(time.Hour),
+				Note:    "test failure",
+			},
+		},
+	}
+	if err := ledger.Save(filepath.Join(root, "ledger.json"), l); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(Config{
+		Root:       root,
+		Candidates: cSet,
+		Policy:     pol,
+		Now:        func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	req := signedRequest(t, kp, "GET", "/v1/candidates", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp remote.CandidatesResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if len(resp.Candidates) != 2 {
+		t.Fatalf("got %d candidates, want 2", len(resp.Candidates))
+	}
+
+	haiku := resp.Candidates[0]
+	sonnet := resp.Candidates[1]
+
+	if haiku.Token != "claude/anthropic/haiku" || !haiku.Gated || haiku.Pick {
+		t.Errorf("haiku = %+v, want Token=claude/anthropic/haiku, Gated=true, Pick=false", haiku)
+	}
+	if sonnet.Token != "claude/anthropic/sonnet" || sonnet.Gated || !sonnet.Pick {
+		t.Errorf("sonnet = %+v, want Token=claude/anthropic/sonnet, Gated=false, Pick=true", sonnet)
+	}
+
+	pickCount := 0
+	for _, c := range resp.Candidates {
+		if c.Pick {
+			pickCount++
+		}
+	}
+	if pickCount != 1 {
+		t.Errorf("pickCount = %d, want exactly 1", pickCount)
 	}
 }
