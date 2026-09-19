@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,12 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/serve"
 )
+
+func fingerprintOf(der []byte) string {
+	sum := sha256.Sum256(der)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
 
 var (
 	ErrUnreachable   = errors.New("remote server unreachable")
@@ -87,7 +92,7 @@ func (c *Client) getHTTPClient(entry ServerEntry) *http.Client {
 				if len(rawCerts) == 0 {
 					return errors.New("no certificates presented")
 				}
-				fp := serve.FingerprintOf(rawCerts[0])
+				fp := fingerprintOf(rawCerts[0])
 				if !strings.EqualFold(fp, entry.Fingerprint) {
 					return ErrCertChanged
 				}

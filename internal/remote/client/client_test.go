@@ -1,4 +1,4 @@
-package client
+package client_test
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -106,7 +107,7 @@ type testServerFixture struct {
 	serverRoot  string
 }
 
-func startTestServer(t *testing.T) (*Client, *testServerFixture) {
+func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	t.Helper()
 	serverRoot := t.TempDir()
 	tlsDir := filepath.Join(serverRoot, "tls")
@@ -166,13 +167,13 @@ func startTestServer(t *testing.T) (*Client, *testServerFixture) {
 
 	transport := remote.NewBundleTransport(gitClient, t.TempDir())
 
-	servers := Servers{
-		"zen": ServerEntry{
+	servers := client.Servers{
+		"zen": client.ServerEntry{
 			URL:         ts.URL,
 			Fingerprint: fp,
 		},
 	}
-	cl := New(servers, kp, time.Now)
+	cl := client.New(servers, kp, time.Now)
 
 	fix := &testServerFixture{
 		srv:         srv,
@@ -208,16 +209,16 @@ func TestCertChangedRefused(t *testing.T) {
 	ctx := context.Background()
 
 	// A client pinned to a different fingerprint
-	wrongServers := Servers{
-		"zen": ServerEntry{
+	wrongServers := client.Servers{
+		"zen": client.ServerEntry{
 			URL:         fix.ts.URL,
 			Fingerprint: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		},
 	}
-	cl := New(wrongServers, fix.kp, time.Now)
+	cl := client.New(wrongServers, fix.kp, time.Now)
 
 	_, err := cl.WhoAmI(ctx, "zen")
-	if !errors.Is(err, ErrCertChanged) {
+	if !errors.Is(err, client.ErrCertChanged) {
 		t.Fatalf("WhoAmI with bad fingerprint got %v, want ErrCertChanged", err)
 	}
 }
@@ -227,7 +228,7 @@ func TestUnknownServer(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := cl.WhoAmI(ctx, "unknown-server")
-	if !errors.Is(err, ErrUnknownServer) {
+	if !errors.Is(err, client.ErrUnknownServer) {
 		t.Fatalf("WhoAmI got %v, want ErrUnknownServer", err)
 	}
 }
@@ -240,18 +241,18 @@ func TestUnreachable(t *testing.T) {
 	addr := l.Addr().String()
 	_ = l.Close() // closed port
 
-	servers := Servers{
-		"closed": ServerEntry{
+	servers := client.Servers{
+		"closed": client.ServerEntry{
 			URL:      "http://" + addr,
 			Insecure: true,
 		},
 	}
 	kp, _ := remote.Generate()
-	cl := New(servers, kp, time.Now)
+	cl := client.New(servers, kp, time.Now)
 	ctx := context.Background()
 
 	_, err = cl.WhoAmI(ctx, "closed")
-	if !errors.Is(err, ErrUnreachable) {
+	if !errors.Is(err, client.ErrUnreachable) {
 		t.Fatalf("WhoAmI on closed port got %v, want ErrUnreachable", err)
 	}
 }
@@ -265,20 +266,20 @@ func TestNotEnrolledIs401Body(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	servers := Servers{
-		"zen": ServerEntry{
+	servers := client.Servers{
+		"zen": client.ServerEntry{
 			URL:         fix.ts.URL,
 			Fingerprint: fix.fingerprint,
 		},
 	}
-	cl := New(servers, unenrolledKey, time.Now)
+	cl := client.New(servers, unenrolledKey, time.Now)
 
 	_, err = cl.WhoAmI(ctx, "zen")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 
-	var httpErr *HTTPError
+	var httpErr *client.HTTPError
 	if !errors.As(err, &httpErr) {
 		t.Fatalf("got error %T (%v), want *HTTPError", err, err)
 	}

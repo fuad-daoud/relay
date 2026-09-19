@@ -5,6 +5,8 @@ package relay
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -12,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -80,8 +83,10 @@ type Runtime struct {
 	// zero value prices nothing, so every estimate is unknown.
 	Prices usage.Prices
 
-	Now   func() time.Time
-	Hooks hooks.Dispatcher
+	Now       func() time.Time
+	Hooks     hooks.Dispatcher
+	Remote    RemoteClient
+	Transport remote.TreeTransport
 
 	// HeldGrace is how long a focused planner's screen must be unchanged before
 	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by
@@ -151,4 +156,23 @@ func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
 		return herdr.Agent{}, false
 	}
 	return agents[i], true
+}
+
+// ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
+var ErrRemoteUnavailable = errors.New("no remote client configured; run relay client init and relay client add-server")
+
+// RemoteClient is the client for communicating with remote relay servers.
+type RemoteClient interface {
+	WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error)
+	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
+	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
+	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
+	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader) (remote.BindingView, error)
+	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
+	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
+	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
+	Unavailable(ctx context.Context, server, name, token, reason string) error
+	Done(ctx context.Context, server, name string) error
+	Unbind(ctx context.Context, server, name string) error
+	Resume(ctx context.Context, server, name string) (remote.BindingView, error)
 }
