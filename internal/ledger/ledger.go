@@ -26,6 +26,12 @@ const (
 	// RateLimited records that a provider is currently rejecting requests
 	// due to quota or concurrency limits. Subject is a provider name.
 	RateLimited Kind = "rate_limited"
+
+	// ExitedNoReport records that a headless builder exited without a
+	// report during the current round. It is never written to the ledger
+	// file: it is synthesised in memory, per round, by switchBuilder from
+	// Binding.RoundExcluded (#191), so Load never needs to validate it.
+	ExitedNoReport Kind = "exited_no_report"
 )
 
 // ErrBadEntry reports a ledger entry that fails validation.

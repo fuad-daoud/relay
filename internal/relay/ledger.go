@@ -204,6 +204,8 @@ func GateKindText(k ledger.Kind) string {
 		return "spawn failed"
 	case ledger.RateLimited:
 		return "rate-limited"
+	case ledger.ExitedNoReport:
+		return "exited without a report"
 	default:
 		return string(k)
 	}

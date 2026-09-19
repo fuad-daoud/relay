@@ -34,7 +34,8 @@ const (
 	e2eScreenTimeout = 5 * time.Second
 	e2ePoll          = 200 * time.Millisecond
 	// e2eEchoTimeout bounds waitEcho: the shim spends one real second per
-	// prompt line, and builderPrompt is six lines.
+	// prompt line, and builderPrompt is twelve lines since it opens by
+	// naming the working tree and the git-status halt rule (#192).
 	e2eEchoTimeout = 15 * time.Second
 )
 

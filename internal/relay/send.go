@@ -41,7 +41,20 @@ var ErrBuilderNotBlocked = errors.New("builder is not blocked; nothing to answer
 // file rather than something relay reads off the terminal. The marker is the
 // builder's own "the tree is final": relay closes the round on it, not on the
 // report appearing (spec 2026-09-12-completion-marker §1).
-const builderPrompt = `Round %d from the planner.
+//
+// It opens by naming the working tree and a halt rule (#192): a headless
+// agy builder has been observed to run its shell somewhere else and execute
+// a round against the planner's main checkout instead of its own worktree.
+// Telling the builder which tree is its own, and to check with `git status`
+// before doing anything else, is relay's second line of defence alongside
+// pinning the process's workspace with --add-dir.
+const builderPrompt = `Your working tree is: %s
+It is the only tree you may touch. Before anything else, run ` + "`git status`" + `
+there. If that fails, or reports a different directory or branch than you
+expect for this tree, stop: write a report saying so, create the done marker,
+and do nothing else.
+
+Round %d from the planner.
 Read: %s
 When you are done, write your report to: %s
 Then, as the very last thing you do -- after every edit, test and commit --
@@ -266,7 +279,7 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text, fingerprint 
 }
 
 // composePrompt renders the builder prompt for this round. Nothing is
-// interpolated except the round number and the three paths.
+// interpolated except the tree, the round number and the three paths.
 func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
-	return fmt.Sprintf(builderPrompt, b.Round, planPath, reportPath, donePath)
+	return fmt.Sprintf(builderPrompt, b.CWD, b.Round, planPath, reportPath, donePath)
 }

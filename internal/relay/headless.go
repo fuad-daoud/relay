@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,11 +49,11 @@ func roundBudget(b store.Binding) time.Duration {
 }
 
 // headlessLaunch renders the argv for one headless round: the candidate's
-// binary, then its print form with the prompt and the budget filled in
-// (headless spec §4.2). Pure. An unknown kind is an error, not a panic:
-// Load validated the set, but a binding written by a future relay could
-// name a kind this one does not know.
-func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Duration, prompt string) ([]string, error) {
+// binary, then its print form with the prompt, the budget and the round's
+// working tree filled in (headless spec §4.2, #192). Pure. An unknown kind
+// is an error, not a panic: Load validated the set, but a binding written
+// by a future relay could name a kind this one does not know.
+func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Duration, prompt, dir string) ([]string, error) {
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
 		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
@@ -61,7 +62,7 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Du
 	if l.PromptAt < 0 {
 		return nil, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	return append([]string{h.Binary}, l.PrintArgs(prompt, budget)...), nil
+	return append([]string{h.Binary}, l.PrintArgs(prompt, budget, dir)...), nil
 }
 
 // startRound starts the round's process for a headless binding and records
@@ -88,7 +89,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
 	role, _ := harness.RoleByName("builder")
-	argv, err := headlessLaunch(c, role, roundBudget(b), prompt)
+	argv, err := headlessLaunch(c, role, roundBudget(b), prompt, b.CWD)
 	if err != nil {
 		return b, err
 	}
@@ -299,7 +300,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// The marker is the contract (completion-marker spec §4.4): the process
 	// is done with whatever it exits as, and it exits on its own. Never Kill
 	// here. A report without a marker is a process still working.
-	next, closed, err := closeOnMarker(ctx, rt, tx, b, entries)
+	//
+	// The escape check runs before closeOnMarker, not inside it: queueReport
+	// clears RoundBaselineTree, and the snapshot must be compared against it
+	// while it is still on b (#192).
+	markerNote := ""
+	if escapeCheck(ctx, rt, b, true) == EscapeNote {
+		markerNote = escapeNote
+	}
+	next, closed, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, err
 	}
@@ -370,7 +379,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, "unmarked")
+		note := "unmarked"
+		if escapeCheck(ctx, rt, b, true) == EscapeNote {
+			note = joinNotes(note, escapeNote)
+		}
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note)
 		if err != nil {
 			return b, err
 		}
@@ -386,6 +399,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
 
+	// The escape halt comes before gateOnLimit: a limit line in the log of
+	// an escaped round must not turn a halt into a switch (#192).
+	if escapeCheck(ctx, rt, b, false) == EscapeHalt {
+		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
+	}
+
 	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
 	if handled {
 		return next, err
@@ -394,7 +413,20 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if !switchable {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, b.Builder.LogPath))
 	}
+	// The exclusion is appended to the b that switchBuilder receives so the
+	// replacement inherits it and the field is persisted with the switch
+	// (#191): a headless builder that exited without a report is excluded
+	// from the pick for the rest of this round.
+	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
+}
+
+// appendUnique returns s with v appended, unless it is already present.
+func appendUnique(s []string, v string) []string {
+	if slices.Contains(s, v) {
+		return s
+	}
+	return append(s, v)
 }
 
 // ErrStopFailed reports that relay marked a binding done or unbound but

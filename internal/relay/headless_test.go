@@ -75,12 +75,12 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		want  []string
 	}{
 		{testAgyRef, []string{"agy", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor",
-			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--dangerously-skip-permissions"}},
+			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--add-dir", "/repo", "--dangerously-skip-permissions"}},
 		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}},
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
 	}
 	for _, c := range cases {
-		got, err := headlessLaunch(lookup(c.token), role, 2*time.Hour, "PROMPT")
+		got, err := headlessLaunch(lookup(c.token), role, 2*time.Hour, "PROMPT", "/repo")
 		if err != nil {
 			t.Fatalf("%s: %v", c.token, err)
 		}
@@ -88,7 +88,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 			t.Errorf("%s:\n got %v\nwant %v", c.token, got, c.want)
 		}
 	}
-	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, time.Hour, "x"); err == nil {
+	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, time.Hour, "x", "/repo"); err == nil {
 		t.Error("unknown harness kind must be an error, not a panic or an empty argv")
 	}
 }
@@ -120,6 +120,9 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 	if !containsArg(spec.Argv, "--print-timeout", "24h0m0s") {
 		t.Errorf("argv %v lacks the default 24h budget", spec.Argv)
+	}
+	if !containsArg(spec.Argv, "--add-dir", "/repo") {
+		t.Errorf("argv %v lacks --add-dir pinned to the binding's CWD (#192)", spec.Argv)
 	}
 	h := fr.handles[0]
 	if got.Builder.PID != h.PID || got.Builder.StartedAt != h.StartedAt.Unix() || got.Builder.LogPath != wantLog {
@@ -1818,6 +1821,212 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 	}
 	if len(fr.kills) != 0 {
 		t.Errorf("a builder that wrote its marker is never killed: %+v", fr.kills)
+	}
+}
+
+// escapeFixture seeds webshop headless with a Repo and a fake Git configured
+// so a round that leaves the worktree's tree unchanged while the repo is
+// dirty is detected as a worktree escape (#192): fg.snapshotTreeID is
+// captured as the round's baseline by Send and compared against again at
+// close, so leaving it alone between the two is what makes treeUnchanged
+// hold.
+func escapeFixture(t *testing.T, f *fakeHerdr, fr *fakeRunner, fg *fakeGit, repo string) (Runtime, store.Binding) {
+	t.Helper()
+	rt, b := seedHeadless(t, f, fr)
+	rt.Git = fg
+	b.Repo = repo
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree == "" {
+		t.Fatalf("baseline tree not captured; fixture assumes rt.Git is wired before Send")
+	}
+	return rt, b
+}
+
+// TestHeadlessMarkerCloseEscapedNote: the tree is unchanged and the source
+// repo is dirty, but the builder still produced a report and its marker --
+// the round closes normally, annotated "escaped" rather than halted (#192).
+func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
+	rt, b := escapeFixture(t, f, fr, fg, "/original/repo")
+
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2: an escape note still closes the round", got.Round)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != escapeNote {
+		t.Errorf("note = %q, want %q", pending.Note, escapeNote)
+	}
+}
+
+// TestHeadlessExitNoReportEscapedHalts: the tree is unchanged, the source
+// repo is dirty, and the process exited without a report at all -- nothing
+// suggests the builder ever touched its own tree, so relay halts NEEDS YOU
+// rather than dispatching a replacement into the same broken setup (#192).
+func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
+	rt, b := escapeFixture(t, f, fr, fg, "/original/repo")
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you: an escape halts rather than switches", got.State)
+	}
+	if !strings.Contains(got.Halt, "worked outside its tree") {
+		t.Errorf("Halt = %q, want it to name the escape", got.Halt)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0: an escape halt is not a switch", got.RoundSwitches)
+	}
+	if len(switches(t, rt)) != 0 {
+		t.Errorf("switch entries = %+v, want none", switches(t, rt))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("specs = %+v, want no second Start", fr.specs)
+	}
+}
+
+// TestHeadlessExitNoReportNoRepoSwitches pins that a binding with no Repo
+// (an old bind.json, a --cwd bind, or an adopted one) is untouched by #192:
+// escapeCheck's precondition on b.Repo keeps the existing switch-on-exit
+// behaviour exactly as it was.
+func TestHeadlessExitNoReportNoRepoSwitches(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active after an ordinary switch", got.State)
+	}
+	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 {
+		t.Errorf("bookkeeping: cand=%q switches=%d, want %q / 1", got.BuilderCandidate, got.RoundSwitches, testClaudeRef)
+	}
+	if len(switches(t, rt)) != 1 {
+		t.Errorf("switch entries = %+v, want 1", switches(t, rt))
+	}
+}
+
+// twoBuilderJSON serves "builder" from exactly two candidates, so excluding
+// both is reachable in one round -- testCandidatesJSON's third (unlisted)
+// candidate would otherwise still be pickable and no halt would ever fire.
+const twoBuilderJSON = `[
+  {"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]},
+  {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
+]`
+
+// TestReconcileHeadlessRoundExclusionThenAllGatedHalts is #191's end-to-end
+// pin: A exits without a report and is excluded in favour of B; B then also
+// exits without a report, and with every candidate serving "builder" now
+// excluded, relay halts instead of dispatching a third pick into the same
+// broken round. A report that eventually appears still closes the round
+// normally, and finishRound clears the exclusion with the switch count.
+func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	fr := newFakeRunner()
+	rt := newRuntime(t, f)
+	rt.Runner = fr
+	rt.Candidates = candidateSet(t, twoBuilderJSON)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	f.listCalls = 0
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Stage 1: A (agy) exits without a report -> switches to B (claude),
+	// RoundExcluded == [A].
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (A exits): %v", err)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Fatalf("candidate after switch = %q, want %q", got.BuilderCandidate, testClaudeRef)
+	}
+	if len(got.RoundExcluded) != 1 || got.RoundExcluded[0] != testAgyRef {
+		t.Fatalf("RoundExcluded = %v, want [%s]", got.RoundExcluded, testAgyRef)
+	}
+
+	// Stage 2: B (claude) also exits without a report -> every candidate
+	// serving builder is now excluded, so relay halts instead of switching.
+	fr.script(got.Builder.PID, false)
+	fr.exit(got.Builder.PID, 4)
+	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (B exits): %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "exited without a report") {
+		t.Errorf("Halt = %q, want it to mention \"exited without a report\"", got.Halt)
+	}
+	if len(got.RoundExcluded) != 2 {
+		t.Errorf("RoundExcluded = %v, want both candidates excluded", got.RoundExcluded)
+	}
+
+	// Stage 3: a report and marker eventually appear for round 1 -- the
+	// marker still closes the round, and finishRound clears RoundExcluded
+	// alongside RoundSwitches.
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (marker closes): %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2", got.Round)
+	}
+	if got.RoundExcluded != nil {
+		t.Errorf("RoundExcluded = %v, want nil after finishRound", got.RoundExcluded)
 	}
 }
 

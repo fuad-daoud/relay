@@ -230,7 +230,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	// matters only on the fallback path below, when there is no marker.
 	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
 		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
-		next, closed, err := closeOnMarker(ctx, rt, tx, b, entries)
+		next, closed, err := closeOnMarker(ctx, rt, tx, b, entries, "")
 		if err != nil {
 			return b, err
 		}
@@ -361,22 +361,43 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	return next, true, err
 }
 
+// joinNotes space-joins the non-empty ones, so a report entry's note can
+// carry both an existing reason (e.g. "noreport") and the escape annotation
+// (#192) without either overwriting the other.
+func joinNotes(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + " " + b
+	}
+}
+
 // closeOnMarker closes an open round when the builder's completion marker
 // (Store.DonePath) exists. It is the one place both the pane and the headless
 // path decide "the builder says it is finished", so they cannot disagree.
+//
+// extraNote is appended (via joinNotes) to whichever note this close would
+// otherwise write -- "" for the pane path, and the escape annotation (#192)
+// computed by the headless path from escapeCheck before this call, since
+// queueReport clears RoundBaselineTree and the comparison must happen while
+// it is still on the binding.
 //
 // Preconditions: the round is open -- a plan was sent for b.Round and no
 // report has been queued for it.
 // Postconditions:
 //   - marker absent: closed is false, b is returned unchanged, nothing written.
-//   - marker and report present: the round closes normally (note "").
-//   - marker present, report absent: the round closes with note "noreport" and
-//     a payload saying so. The terminal is never read: the builder said it
-//     was done, and a scrape would be a worse artefact than an honest gap.
+//   - marker and report present: the round closes normally (note extraNote).
+//   - marker present, report absent: the round closes with note
+//     joinNotes("noreport", extraNote) and a payload saying so. The terminal
+//     is never read: the builder said it was done, and a scrape would be a
+//     worse artefact than an honest gap.
 //
 // Errors are queueReport's, wrapped; the round stays open and the next tick
 // retries, since the marker is still on disk.
-func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
+func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, error) {
 	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
 		return b, false, nil
 	}
@@ -384,7 +405,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath), "")
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath), joinNotes("", extraNote))
 		if err != nil {
 			return b, false, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -392,7 +413,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath), "noreport")
+		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath), joinNotes("noreport", extraNote))
 	if err != nil {
 		return b, false, fmt.Errorf("close round on marker: %w", err)
 	}
@@ -632,8 +653,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.HaltNotifiedRound = 0
 	b.Halt = ""
 	b.HaltAt = time.Time{}
-	// A switch counted against the old round says nothing about the new one.
+	// A switch counted against the old round says nothing about the new one,
+	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0
+	b.RoundExcluded = nil
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
 	b.RoundClosedTree = closed

@@ -268,6 +268,7 @@ func (h Harness) CanServe(role string) bool {
 const (
 	PromptPlaceholder = "<prompt>"
 	BudgetPlaceholder = "<budget>"
+	DirPlaceholder    = "<dir>"
 )
 
 // Launch describes how to start an agent process for a specific role and
@@ -294,7 +295,7 @@ type Launch struct {
 //
 // The print form per kind (headless spec §3.5), before extra:
 //
-//	agy       -p <prompt> --model M --agent <def> --output-format stream-json --print-timeout <budget>
+//	agy       -p <prompt> --model M --agent <def> --output-format stream-json --print-timeout <budget> --add-dir <dir>
 //	claude    -p <prompt> --model M --agent <def> --output-format stream-json --verbose
 //	opencode  run <prompt> -m P/M --agent <def> --format json
 //
@@ -318,10 +319,17 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) L
 		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
 		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json"}
 		promptAt = 1
+	// 2026-09-18 probe: agy's stream `init` event reports `cwd` = the
+	// process directory, yet its first `run_command` ran outside any
+	// repository and the model `cd`-ed into the planner's main checkout
+	// (#192). `--add-dir <cwd>` pins the workspace; `--project`/
+	// `--new-project` were not used because they name agy-side project
+	// records, not a directory.
 	case "agy":
 		base = []string{"--model", model, "--agent", role.Definition}
 		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
-			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder}
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
+			"--add-dir", DirPlaceholder}
 		promptAt = 1
 	}
 
@@ -337,11 +345,16 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec) L
 	}
 }
 
-// PrintArgs is Print with the prompt and the round budget filled in: a fresh
-// slice, so neither Print nor the caller's extra is touched. The budget is
-// rendered as a Go duration ("1h30m0s"), which is what agy's --print-timeout
-// parses. A kind whose Print has no BudgetPlaceholder ignores budget.
-func (l Launch) PrintArgs(prompt string, budget time.Duration) []string {
+// PrintArgs is Print with the prompt, the round budget and the round's
+// working tree filled in: a fresh slice, so neither Print nor the caller's
+// extra is touched. The budget is rendered as a Go duration ("1h30m0s"),
+// which is what agy's --print-timeout parses. A kind whose Print has no
+// BudgetPlaceholder ignores budget, and one with no DirPlaceholder ignores
+// dir, the same rule.
+//
+// Precondition: dir is absolute or empty. Postcondition: no placeholder
+// string remains in the result.
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -349,6 +362,8 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration) []string {
 			out = append(out, prompt)
 		case BudgetPlaceholder:
 			out = append(out, budget.String())
+		case DirPlaceholder:
+			out = append(out, dir)
 		default:
 			out = append(out, a)
 		}

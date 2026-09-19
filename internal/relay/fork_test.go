@@ -116,6 +116,16 @@ func TestForkSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedFourRoundBinding(t, rt, "source", srcCWD)
+	// Give "source" a Repo distinct from its CWD, so the fork's inheritance
+	// of it (#192) is a real assertion rather than a same-value coincidence.
+	srcWithRepo, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcWithRepo.Repo = "/original/repo"
+	if err := rt.Store.Save(srcWithRepo); err != nil {
+		t.Fatal(err)
+	}
 	srcBefore, err := rt.Store.Load("source")
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +173,9 @@ func TestForkSuccess(t *testing.T) {
 	}
 	if res.Base != "commit-head-123" {
 		t.Errorf("Base = %q, want commit-head-123", res.Base)
+	}
+	if res.Binding.Repo != "/original/repo" {
+		t.Errorf("Binding.Repo = %q, want inherited from source (#192)", res.Binding.Repo)
 	}
 
 	storedFork, err := rt.Store.Load("alt")
