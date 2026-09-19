@@ -156,6 +156,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenList
 			return m.moveCursor(i - m.list.cursor)
 		case hitTabs:
+			if m.empty() {
+				return m, nil
+			}
 			if !m.paneVisible() {
 				return m, nil
 			}
@@ -165,6 +168,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case hitPane:
+			if m.empty() {
+				return m, nil
+			}
 			if m.paneVisible() {
 				m.screen = screenDetail
 			}

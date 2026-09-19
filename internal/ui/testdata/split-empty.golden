@@ -1,15 +1,10 @@
  relay   no bindings                                                                                                                  14:02 
 
-no bindings                       │                                                                                                         
+no bindings                       │ no bindings                                                                                             
                                   │                                                                                                         
-                                  │                                                                                                         
-                                  │                                                                                                         
-                                  │                                                                                                         
-                                  │  report    terminal    diff    log                                                                      
-                                  │ ━━━━━━━━────────────────────────────────────────────────────────────────────────────────────────────────
-                                  │                                                                                                         
-                                  │                                                                                                         
-                                  │                                                                                                         
+                                  │   relay bind                   put a builder on this tree                                               
+                                  │   relay add --name <name>      put a builder on its own worktree                                        
+                                  │   relay candidates             list what can be bound                                                   
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         
@@ -37,4 +32,9 @@ no bindings                       │
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         
-↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   c compact   q quit                                  refreshed 0s ago
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+                                  │                                                                                                         
+s sort: attention   c compact   q quit                                                                                      refreshed 0s ago

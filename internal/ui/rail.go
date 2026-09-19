@@ -336,6 +336,12 @@ func (m Model) railView(width int) string {
 		lines = []string{"cannot reach herdr — see the error above"}
 	case !m.statusLoaded:
 		lines = []string{"loading…"}
+	case m.empty() && m.layout() == layoutStack:
+		// The stack list screen is the whole terminal at zero rows, so it
+		// reads the same prose block the pane shows in split layout,
+		// instead of the bare "no bindings" line below (that line stays
+		// the split layout's narrow rail summary).
+		return strings.Join(emptyPaneBlock(width, rows), "\n")
 	case len(m.rows()) == 0:
 		lines = []string{"no bindings"}
 	default:

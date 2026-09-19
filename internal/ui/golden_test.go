@@ -159,6 +159,12 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "stack-empty", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return goldenModel(t, 100, 30, relay.Report{})
+			},
+		},
+		{
 			name: "stack-all-states", width: 80, height: 30,
 			build: func(t *testing.T) Model {
 				rows := allStatesRows()

@@ -81,6 +81,13 @@ func (m Model) rows() []relay.BindingStatus {
 	return relay.SortRows(m.report.Bindings, m.sort)
 }
 
+// empty reports whether the fleet has no rows to show. It is the one place
+// the zero-binding rule lives; paneView, footerView, the key and mouse
+// handlers and the statusMsg arm all ask it, never len(m.rows()) directly.
+func (m Model) empty() bool {
+	return m.statusLoaded && len(m.rows()) == 0
+}
+
 // tick re-arms the poll. It is the ONLY timer; there is no goroutine.
 func tick(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -283,6 +290,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusAt = m.now()
 		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
 		m.list.top = m.railTop()
+		if m.empty() && m.screen == screenDetail {
+			m.screen = screenList
+		}
 		var cmds []tea.Cmd
 		if m.layout() == layoutSplit && len(m.rows()) > 0 && m.detail.name != m.rows()[m.list.cursor].Name {
 			var cmd tea.Cmd
@@ -419,6 +429,8 @@ func (m Model) footerView() string {
 	compactKey := key("c", compactLabel)
 	var keys []string
 	switch {
+	case m.empty():
+		keys = []string{key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit && m.screen == screenList:
 		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit:
