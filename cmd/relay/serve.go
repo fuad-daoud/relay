@@ -282,13 +282,7 @@ func cmdServeClients(args []string) error {
 		return err
 	}
 
-	for _, cl := range clients.List() {
-		line := fmt.Sprintf("%s  %s  enrolled %s", cl.ID, cl.Label, cl.EnrolledAt.Format("2006-01-02"))
-		if !cl.RevokedAt.IsZero() {
-			line += fmt.Sprintf("  revoked %s", cl.RevokedAt.Format("2006-01-02"))
-		}
-		fmt.Println(line)
-	}
+	fmt.Print(serve.RenderClients(clients.List()))
 	return nil
 }
 
