@@ -2,9 +2,6 @@ package remote
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"strings"
@@ -83,23 +80,53 @@ func TestParsePublicRejects(t *testing.T) {
 	}
 }
 
-func TestParsePrivateRejectsRSA(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa.GenerateKey: %v", err)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(rsaKey)
-	if err != nil {
-		t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{
+func TestParsePrivateRejectsWrongType(t *testing.T) {
+	block := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
-		Bytes: der,
+		Bytes: make([]byte, 64),
 	})
-
-	_, err = ParsePrivate(pemBytes)
+	_, err := ParsePrivate(block)
 	if !errors.Is(err, ErrKeyType) {
-		t.Fatalf("ParsePrivate(RSA): got %v, want ErrKeyType", err)
+		t.Fatalf("ParsePrivate(wrong type): got %v, want ErrKeyType", err)
+	}
+}
+
+func TestParsePrivateRejectsWrongLength(t *testing.T) {
+	block := pem.EncodeToMemory(&pem.Block{
+		Type:  "RELAY ED25519 PRIVATE KEY",
+		Bytes: make([]byte, 32),
+	})
+	_, err := ParsePrivate(block)
+	if !errors.Is(err, ErrKeyFormat) {
+		t.Fatalf("ParsePrivate(wrong length): got %v, want ErrKeyFormat", err)
+	}
+}
+
+func TestParsePrivateRejectsNotPEM(t *testing.T) {
+	_, err := ParsePrivate([]byte("garbage"))
+	if !errors.Is(err, ErrKeyFormat) {
+		t.Fatalf("ParsePrivate(not PEM): got %v, want ErrKeyFormat", err)
+	}
+}
+
+func TestMarshalPrivateType(t *testing.T) {
+	kp, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	pemBytes, err := MarshalPrivate(kp)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		t.Fatal("pem.Decode returned nil block")
+	}
+	if block.Type != "RELAY ED25519 PRIVATE KEY" {
+		t.Fatalf("block.Type = %q, want %q", block.Type, "RELAY ED25519 PRIVATE KEY")
+	}
+	if !bytes.Equal(block.Bytes, kp.Private) {
+		t.Fatalf("block.Bytes mismatch: got %x, want %x", block.Bytes, kp.Private)
 	}
 }
 

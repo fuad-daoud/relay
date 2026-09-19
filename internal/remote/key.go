@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -17,6 +16,8 @@ var ErrKeyFormat = errors.New("invalid key format")
 
 // ErrKeyType indicates that a key is not an ed25519 key.
 var ErrKeyType = errors.New("invalid key type; ed25519 required")
+
+const pemTypePrivate = "RELAY ED25519 PRIVATE KEY"
 
 // ClientID is "SHA256:" + base64.RawStdEncoding(sha256(raw 32-byte ed25519 public key)).
 // Same shape as ssh-keygen -l; 7 + 43 = 50 characters. Never empty.
@@ -46,37 +47,32 @@ func IDOf(pub ed25519.PublicKey) ClientID {
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]))
 }
 
-// MarshalPrivate encodes k's private key as PKCS#8 DER inside a PEM block of type "PRIVATE KEY".
+// MarshalPrivate encodes k's private key as a PEM block of type "RELAY ED25519 PRIVATE KEY".
 func MarshalPrivate(k Keypair) ([]byte, error) {
-	der, err := x509.MarshalPKCS8PrivateKey(k.Private)
-	if err != nil {
-		return nil, err
+	if len(k.Private) != ed25519.PrivateKeySize {
+		return nil, ErrKeyFormat
 	}
 	return pem.EncodeToMemory(&pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: der,
+		Type:  pemTypePrivate,
+		Bytes: []byte(k.Private),
 	}), nil
 }
 
-// ParsePrivate parses a PKCS#8 PEM-encoded private key. If the PEM block is not of type
-// "PRIVATE KEY" or the key is not ed25519, an error is returned.
-func ParsePrivate(pemBytes []byte) (Keypair, error) {
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "PRIVATE KEY" {
+// ParsePrivate parses a PEM-encoded private key. If the PEM block is not of type
+// "RELAY ED25519 PRIVATE KEY" or the key length is invalid, an error is returned.
+func ParsePrivate(data []byte) (Keypair, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
 		return Keypair{}, ErrKeyFormat
 	}
-	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return Keypair{}, fmt.Errorf("%w: %v", ErrKeyFormat, err)
-	}
-	priv, ok := parsedKey.(ed25519.PrivateKey)
-	if !ok {
+	if block.Type != pemTypePrivate {
 		return Keypair{}, ErrKeyType
 	}
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	if !ok {
-		return Keypair{}, ErrKeyType
+	if len(block.Bytes) != ed25519.PrivateKeySize {
+		return Keypair{}, ErrKeyFormat
 	}
+	priv := ed25519.PrivateKey(block.Bytes)
+	pub := priv.Public().(ed25519.PublicKey)
 	return Keypair{
 		Private: priv,
 		Public:  pub,
