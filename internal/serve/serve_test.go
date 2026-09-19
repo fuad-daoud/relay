@@ -8,10 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/remote"
 )
 
@@ -352,5 +355,286 @@ func TestNonV1Is426(t *testing.T) {
 	}
 	if errBody.Message != "this server speaks v1" {
 		t.Fatalf("error message = %q, want %q", errBody.Message, "this server speaks v1")
+	}
+}
+
+func TestCreateBinding(t *testing.T) {
+	s, root := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	pubLine := remote.MarshalPublic(kp.Public, "creator")
+	if _, err := s.clients.Add("creator", pubLine, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	req := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+	var view remote.BindingView
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("decode view: %v", err)
+	}
+	if view.Name != "api" || view.Round != 1 || view.State != "active" {
+		t.Fatalf("view mismatch: %+v", view)
+	}
+
+	// Bare repo exists at Serve.BareRepo
+	bareRepoPath := filepath.Join(root, "repos", string(id), "repo123.git")
+	if _, err := os.Stat(filepath.Join(bareRepoPath, "HEAD")); err != nil {
+		t.Fatalf("bare repo HEAD missing at %s: %v", bareRepoPath, err)
+	}
+
+	// binding.json has Owner
+	b, err := s.runtime(id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Owner != string(id) {
+		t.Fatalf("binding.Owner = %q, want %q", b.Owner, id)
+	}
+}
+
+func TestCreateInvalid(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubLine := remote.MarshalPublic(kp.Public, "user")
+	if _, err := s.clients.Add("user", pubLine, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bad name
+	badNameBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "invalid/name",
+		RepoID:     "repo1",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	req := signedRequest(t, kp, "POST", "/v1/bindings", badNameBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Code != remote.CodeInvalid {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+}
+
+func TestCreateDuplicate(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubLine := remote.MarshalPublic(kp.Public, "user")
+	if _, err := s.clients.Add("user", pubLine, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo1",
+		BaseCommit: strings.Repeat("b", 40),
+	})
+	req1 := signedRequest(t, kp, "POST", "/v1/bindings", body)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("status 1 = %d, want 201", rec1.Code)
+	}
+
+	req2 := signedRequest(t, kp, "POST", "/v1/bindings", body)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("status 2 = %d, want 409", rec2.Code)
+	}
+}
+
+func TestListIsOwnerScoped(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	kpB, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Client A creates "api"
+	bodyA, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo1",
+		BaseCommit: strings.Repeat("1", 40),
+	})
+	reqCreate := signedRequest(t, kpA, "POST", "/v1/bindings", bodyA)
+	recCreate := httptest.NewRecorder()
+	handler.ServeHTTP(recCreate, reqCreate)
+	if recCreate.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body: %s", recCreate.Code, recCreate.Body.String())
+	}
+
+	// Client B lists -> empty
+	reqList := signedRequest(t, kpB, "GET", "/v1/bindings", nil)
+	recList := httptest.NewRecorder()
+	handler.ServeHTTP(recList, reqList)
+	if recList.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", recList.Code)
+	}
+	var views []remote.BindingView
+	if err := json.NewDecoder(recList.Body).Decode(&views); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(views) != 0 {
+		t.Fatalf("B's list returned %d views, want 0", len(views))
+	}
+
+	// Client B GETs "api" -> 404
+	reqGet := signedRequest(t, kpB, "GET", "/v1/bindings/api", nil)
+	recGet := httptest.NewRecorder()
+	handler.ServeHTTP(recGet, reqGet)
+	if recGet.Code != http.StatusNotFound {
+		t.Fatalf("B's GET of api status = %d, want 404", recGet.Code)
+	}
+}
+
+func TestGetTouchesLastSeen(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo1",
+		BaseCommit: strings.Repeat("2", 40),
+	})
+	reqCreate := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
+	recCreate := httptest.NewRecorder()
+	handler.ServeHTTP(recCreate, reqCreate)
+	if recCreate.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", recCreate.Code)
+	}
+
+	// Check initial LastSeen
+	b, err := s.runtime(id).Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := b.Serve.LastSeen
+
+	time.Sleep(10 * time.Millisecond)
+
+	reqGet := signedRequest(t, kp, "GET", "/v1/bindings/api", nil)
+	recGet := httptest.NewRecorder()
+	handler.ServeHTTP(recGet, reqGet)
+	if recGet.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", recGet.Code)
+	}
+
+	bAfter, err := s.runtime(id).Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bAfter.Serve.LastSeen.After(initial) {
+		t.Fatalf("touched LastSeen = %v not after initial = %v", bAfter.Serve.LastSeen, initial)
+	}
+}
+
+func TestUnavailableGatesServerWide(t *testing.T) {
+	root := t.TempDir()
+	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	candPath := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(Config{
+		Root:       root,
+		Candidates: cSet,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler()
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idA := remote.IDOf(kpA.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A calls unavailable on token
+	unavailBody, _ := json.Marshal(remote.UnavailableRequest{
+		Token:  "claude/anthropic/haiku",
+		Reason: "rate limited test",
+	})
+	req := signedRequest(t, kpA, "POST", "/v1/unavailable", unavailBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Check server-wide ledger.json at root exists
+	serverLedgerPath := filepath.Join(root, "ledger.json")
+	if _, err := os.Stat(serverLedgerPath); err != nil {
+		t.Fatalf("server-wide ledger.json missing: %v", err)
+	}
+
+	// Check no per-owner store dir gains a ledger.json
+	ownerLedgerPath := filepath.Join(root, "bindings", string(idA), "ledger.json")
+	if _, err := os.Stat(ownerLedgerPath); err == nil {
+		t.Fatalf("per-owner ledger.json unexpectedly exists at %s", ownerLedgerPath)
 	}
 }

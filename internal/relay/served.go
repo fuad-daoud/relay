@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -110,4 +111,23 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
 	}
+}
+
+// PickServedCandidate resolves the builder candidate token and harness kind for a served binding.
+func PickServedCandidate(rt Runtime, token string) (string, string) {
+	if rt.Candidates == nil {
+		return token, ""
+	}
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
+	if err == nil {
+		return res.Candidate.Ref().String(), res.Candidate.Harness
+	}
+	if token != "" {
+		if ref, err := candidate.ParseRef(token); err == nil {
+			if c, err := rt.Candidates.Lookup(ref); err == nil {
+				return c.Ref().String(), c.Harness
+			}
+		}
+	}
+	return token, ""
 }

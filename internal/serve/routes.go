@@ -36,6 +36,14 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v1/whoami", s.handleWhoAmI)
+	mux.HandleFunc("POST /v1/bindings", s.handleCreateBinding)
+	mux.HandleFunc("GET /v1/bindings", s.handleListBindings)
+	mux.HandleFunc("GET /v1/bindings/{name}", s.handleGetBinding)
+	mux.HandleFunc("POST /v1/bindings/{name}/done", s.handleDone)
+	mux.HandleFunc("POST /v1/bindings/{name}/unbind", s.handleUnbind)
+	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
+	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
+	mux.HandleFunc("POST /v1/unavailable", s.handleUnavailable)
 
 	// Fallback for unknown /v1/...
 	mux.HandleFunc("/v1/", s.handleNotFound)
