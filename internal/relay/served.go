@@ -93,14 +93,17 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		}
 	}
 	var ackedRound int
+	var closedRound int
 	if b.Serve != nil {
 		ackedRound = b.Serve.AckedRound
+		closedRound = b.Serve.ClosedRound
 	}
 	return remote.BindingView{
 		Name:           b.Name,
 		State:          string(b.State),
 		Round:          b.Round,
 		RoundState:     rState,
+		ClosedRound:    closedRound,
 		Halt:           halt,
 		ResultCommit:   resultCommit,
 		DirtyCommit:    dirtyCommit,

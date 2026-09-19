@@ -47,6 +47,7 @@ type BindingView struct {
 	State          string     `json:"state"` // the store's State string
 	Round          int        `json:"round"`
 	RoundState     RoundState `json:"round_state"`
+	ClosedRound    int        `json:"closed_round"`
 	Halt           string     `json:"halt,omitempty"`
 	ResultCommit   string     `json:"result_commit,omitempty"`
 	DirtyCommit    string     `json:"dirty_commit,omitempty"`

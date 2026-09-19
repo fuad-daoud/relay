@@ -1370,3 +1370,50 @@ func TestInitBare(t *testing.T) {
 		t.Fatalf("second InitBare failed: %v", err)
 	}
 }
+
+func TestCreateBranch(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "initial")
+
+	headSHA, err := client.HeadCommit(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+
+	// Create branch succeeds
+	if err := client.CreateBranch(ctx, repoDir, "feature", headSHA); err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	// Verify branch resolves to headSHA
+	sha, ok, err := client.RefSHA(ctx, repoDir, "refs/heads/feature")
+	if err != nil || !ok {
+		t.Fatalf("RefSHA failed: ok=%v, err=%v", ok, err)
+	}
+	if sha != headSHA {
+		t.Fatalf("branch sha = %q, want %q", sha, headSHA)
+	}
+
+	// Second create on same branch returns ErrBranchExists
+	err = client.CreateBranch(ctx, repoDir, "feature", headSHA)
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("second CreateBranch got %v, want ErrBranchExists", err)
+	}
+
+	// Creating with refs/heads/ prefix also returns ErrBranchExists
+	err = client.CreateBranch(ctx, repoDir, "refs/heads/feature", headSHA)
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("prefixed CreateBranch got %v, want ErrBranchExists", err)
+	}
+}

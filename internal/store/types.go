@@ -28,6 +28,7 @@ type Mode string
 const (
 	ModePane     Mode = "pane"
 	ModeHeadless Mode = "headless"
+	ModeRemote   Mode = "remote"
 )
 
 // Endpoint is one side of a binding. PaneID moves when a pane is moved between
@@ -62,11 +63,20 @@ type Endpoint struct {
 	// startRound on a later round moves them. 0 means no stream was started.
 	StreamRound  int   `json:"stream_round,omitempty"`
 	StreamOffset int64 `json:"stream_offset,omitempty"`
+
+	// Remote builder endpoint fields
+	Server       string `json:"server,omitempty"`
+	LastShipped  string `json:"last_shipped,omitempty"`
+	LastKnown    string `json:"last_known,omitempty"`
+	RemoteStatus string `json:"remote_status,omitempty"`
 }
 
 // Headless reports whether this endpoint is a process relay runs rather than
 // a pane it watches. "" is pane.
 func (e Endpoint) Headless() bool { return e.Mode == ModeHeadless }
+
+// Remote reports whether this endpoint is hosted on a remote relay server.
+func (e Endpoint) Remote() bool { return e.Mode == ModeRemote }
 
 // Binding ties one planner pane to one builder pane over one working tree.
 type Binding struct {
@@ -216,6 +226,12 @@ type Binding struct {
 	// Serve is what the server records about the binding beyond the local
 	// fields; nil on local bindings.
 	Serve *ServeFacts `json:"serve,omitempty"`
+
+	// RemoteUnreachableSince is when the remote server first failed to respond;
+	// zero when reachable.
+	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
+	// RemoteAbsorbFailures counts consecutive absorb failures from the server.
+	RemoteAbsorbFailures int `json:"remote_absorb_failures,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
