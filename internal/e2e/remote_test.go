@@ -1,7 +1,9 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -653,5 +655,80 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	hd.mu.Unlock()
 	if promptsAfter != 1 {
 		t.Fatalf("step 4: prompts count after daemon tick = %d, want 1", promptsAfter)
+	}
+}
+
+// captureLogs swaps slog's default handler for one that writes to a buffer
+// for the test's lifetime and returns the buffer. Restores the previous
+// default in t.Cleanup. Not safe under t.Parallel (no e2e test uses it).
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// TestRemoteRoundTicksWithoutEscapeWarning checks that a running served round
+// does not trigger "escape check skipped" / "must be run in a work tree" on
+// server ticks (#192).
+func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := context.Background()
+
+	// steps 1-2: server, client (enrolled), repo, Add, Send
+	srv, url, fp, enroll, srvStore, _ := newServer(t)
+	rt, _, kp := newClient(t, url, fp)
+	pubLine := remote.MarshalPublic(kp.Public, "test client")
+	owner := enroll(pubLine)
+	repo := newRepo(t)
+
+	_, err := relay.Add(ctx, rt, relay.AddOptions{
+		Name:        "api",
+		Server:      "zen",
+		Repo:        repo,
+		PlannerPane: "p1",
+	})
+	if err != nil {
+		t.Fatalf("relay.Add: %v", err)
+	}
+
+	planFile := t.TempDir() + "/plan.md"
+	if err := os.WriteFile(planFile, []byte("# Plan\nDo work.\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
+		t.Fatalf("relay.Send: %v", err)
+	}
+
+	// tick the server twice -- this is where the warning fired before the fix
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatalf("srv.Tick 1: %v", err)
+	}
+	if err := srv.Tick(ctx); err != nil {
+		t.Fatalf("srv.Tick 2: %v", err)
+	}
+
+	// assert no escape warning in the logs
+	logStr := logs.String()
+	if strings.Contains(logStr, "escape check skipped") {
+		t.Errorf("unexpected 'escape check skipped' in logs:\n%s", logStr)
+	}
+	if strings.Contains(logStr, "must be run in a work tree") {
+		t.Errorf("unexpected 'must be run in a work tree' in logs:\n%s", logStr)
+	}
+
+	// prove the round is otherwise healthy: server binding has Serve != nil and RoundBaselineTree != ""
+	serverStore := srvStore(owner)
+	sb, err := serverStore.Load("api")
+	if err != nil {
+		t.Fatalf("serverStore.Load(api): %v", err)
+	}
+	if sb.Serve == nil {
+		t.Errorf("server binding Serve is nil, want non-nil")
+	}
+	if sb.RoundBaselineTree == "" {
+		t.Errorf("server binding RoundBaselineTree is empty, want non-empty")
 	}
 }

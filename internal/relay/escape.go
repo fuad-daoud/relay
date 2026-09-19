@@ -45,16 +45,44 @@ func escapeOutcome(treeUnchanged, repoDirty, hasReport bool) EscapeOutcome {
 	return EscapeHalt
 }
 
+// escapeApplies is the pure precondition behind escapeCheck: does this
+// binding have the two directories the check compares?
+//   - !b.Builder.Headless()      -> false (pane builders are out of scope, #192)
+//   - b.Repo == ""               -> false
+//   - b.RoundBaselineTree == ""  -> false
+//   - b.Serve != nil             -> false (served binding: b.Repo is the bare
+//     mirror, there is no source checkout to
+//     escape into and `git status` cannot run
+//     in a bare repo)
+//   - otherwise                  -> true
+func escapeApplies(b store.Binding) bool {
+	if !b.Builder.Headless() {
+		return false
+	}
+	if b.Repo == "" {
+		return false
+	}
+	if b.RoundBaselineTree == "" {
+		return false
+	}
+	if b.Serve != nil {
+		return false
+	}
+	return true
+}
+
 // escapeCheck gathers escapeOutcome's inputs and runs it, for one headless
 // round close (#192). It never fails the close it is called from: any git
 // error is a skipped check (EscapeNone), logged at Warn, not a reason to
 // hold up the round.
 //
 // Preconditions for running at all -- otherwise EscapeNone without touching
-// git: b.Builder.Headless(), b.Repo != "", b.RoundBaselineTree != "", and
-// rt.Git != nil.
+// git: b.Builder.Headless(), b.Repo != "", b.RoundBaselineTree != "",
+// b.Serve == nil (served bindings use a bare mirror as b.Repo; git status
+// cannot run in a bare repo and there is no source checkout to escape into),
+// and rt.Git != nil.
 func escapeCheck(ctx context.Context, rt Runtime, b store.Binding, hasReport bool) EscapeOutcome {
-	if !b.Builder.Headless() || b.Repo == "" || b.RoundBaselineTree == "" || rt.Git == nil {
+	if !escapeApplies(b) || rt.Git == nil {
 		return EscapeNone
 	}
 

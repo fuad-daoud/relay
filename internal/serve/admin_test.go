@@ -429,3 +429,67 @@ func TestAdminUnbindAmbiguousLabel(t *testing.T) {
 		t.Fatalf("AdminUnbind with ambiguous label: got err %v, want an 'ambiguous' error", err)
 	}
 }
+
+func TestRenderClients(t *testing.T) {
+	enrolled := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	revoked := time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC)
+
+	t.Run("empty input", func(t *testing.T) {
+		got := RenderClients(nil)
+		if got != "no clients\n" {
+			t.Errorf("RenderClients(nil) = %q, want %q", got, "no clients\n")
+		}
+	})
+
+	t.Run("one enrolled client", func(t *testing.T) {
+		clients := []Client{
+			{
+				ID:         remote.ClientID("SHA256:abcdefgh"),
+				Label:      "alice",
+				EnrolledAt: enrolled,
+			},
+		}
+		got := RenderClients(clients)
+		want := "SHA256:abcdefgh  alice  enrolled 2026-01-15\n"
+		if got != want {
+			t.Errorf("RenderClients(one enrolled) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("one revoked client", func(t *testing.T) {
+		clients := []Client{
+			{
+				ID:         remote.ClientID("SHA256:abcdefgh"),
+				Label:      "alice",
+				EnrolledAt: enrolled,
+				RevokedAt:  revoked,
+			},
+		}
+		got := RenderClients(clients)
+		want := "SHA256:abcdefgh  alice  enrolled 2026-01-15  revoked 2026-03-20\n"
+		if got != want {
+			t.Errorf("RenderClients(one revoked) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("two clients order preserved", func(t *testing.T) {
+		clients := []Client{
+			{
+				ID:         remote.ClientID("SHA256:aaaaaaaa"),
+				Label:      "bob",
+				EnrolledAt: enrolled,
+			},
+			{
+				ID:         remote.ClientID("SHA256:bbbbbbbb"),
+				Label:      "alice",
+				EnrolledAt: enrolled,
+				RevokedAt:  revoked,
+			},
+		}
+		got := RenderClients(clients)
+		want := "SHA256:aaaaaaaa  bob  enrolled 2026-01-15\nSHA256:bbbbbbbb  alice  enrolled 2026-01-15  revoked 2026-03-20\n"
+		if got != want {
+			t.Errorf("RenderClients(two clients) = %q, want %q", got, want)
+		}
+	})
+}

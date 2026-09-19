@@ -89,6 +89,27 @@ func RenderAdminStatus(owners []OwnerStatus) string {
 	return sb.String()
 }
 
+// RenderClients formats `relay serve clients`: one line per client,
+//
+//	"<id>  <label>  enrolled YYYY-MM-DD[  revoked YYYY-MM-DD]\n"
+//
+// in the order given. Empty input prints "no clients\n" -- the same shape
+// RenderAdminStatus gives an empty owner list.
+func RenderClients(clients []Client) string {
+	if len(clients) == 0 {
+		return "no clients\n"
+	}
+	var sb strings.Builder
+	for _, cl := range clients {
+		line := fmt.Sprintf("%s  %s  enrolled %s", cl.ID, cl.Label, cl.EnrolledAt.Format("2006-01-02"))
+		if !cl.RevokedAt.IsZero() {
+			line += fmt.Sprintf("  revoked %s", cl.RevokedAt.Format("2006-01-02"))
+		}
+		sb.WriteString(line + "\n")
+	}
+	return sb.String()
+}
+
 type GCAbandonedResult struct {
 	Owner    remote.ClientID
 	Label    string
