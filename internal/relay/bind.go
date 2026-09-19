@@ -74,6 +74,12 @@ type BindOptions struct {
 	// Headless makes the builder a process relay runs per round instead of
 	// a pane it watches (#99). Refused with BuilderPane and with Resume.
 	Headless bool
+
+	// Tier overrides the candidate/policy permission tier (#141).
+	Tier string
+
+	// AllowYolo permits Tier == "yolo" above policy max_tier for this command (#141).
+	AllowYolo bool
 }
 
 // BindResolved ties the calling planner pane to a builder over one working
@@ -261,6 +267,22 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 				}
 			}
 		}
+		if opts.BuilderPane == "" {
+			resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+			if err != nil {
+				return store.Binding{}, Resolution{}, err
+			}
+			if opts.Tier != "" {
+				tier := resolveTier(opts.Tier, resCandidate.Candidate, rt.Policy, "builder")
+				if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+					return store.Binding{}, Resolution{}, err
+				}
+				opts.Tier = string(tier)
+				b.Tier = string(tier)
+			} else if b.Tier != "" {
+				opts.Tier = b.Tier
+			}
+		}
 		var res2 Resolution
 		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
 		if err != nil {
@@ -294,6 +316,9 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
 			b.RoundClosedTree = ""
+			if opts.Tier != "" {
+				b.Tier = opts.Tier
+			}
 		}
 
 		if err := tx.Save(b); err != nil {
@@ -410,6 +435,19 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
 	}
 
+	var tier harness.Tier
+	if opts.BuilderPane == "" {
+		resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+		if err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+		tier = resolveTier(opts.Tier, resCandidate.Candidate, rt.Policy, "builder")
+		if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+		opts.Tier = string(tier)
+	}
+
 	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name, planner.PaneID)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -423,6 +461,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		BuilderCandidate: res.Token(),
 		Round:            1,
 		State:            store.StateActive,
+		Tier:             string(tier),
 	}
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
@@ -521,7 +560,14 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 
 	role, _ := harness.RoleByName("builder")
 	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
-	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
+	tier := harness.Tier(opts.Tier)
+	if tier == "" {
+		tier = harness.TierHarness
+	}
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	if err != nil {
+		return store.Endpoint{}, Resolution{}, err
+	}
 
 	paneID, err := openTab(ctx, rt, opts.WorkspaceID, opts.CWD, agentName)
 	if err != nil {

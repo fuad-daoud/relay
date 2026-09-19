@@ -67,6 +67,8 @@ type LogEntry struct {
 	Confirmed   bool       `json:"confirmed"`
 	Note        string     `json:"note,omitempty"`
 	Late        bool       `json:"late,omitempty"`
+	// Tier is the permission tier the round was sent at, on plan entries (#141).
+	Tier string `json:"tier,omitempty"`
 
 	// Commits and Tree are the round's commit facts, on diff entries only
 	// (#130): commits added since the round's baseline HEAD, and whether the

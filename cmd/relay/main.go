@@ -54,10 +54,10 @@ Usage:
   relay <command> [flags]
 
 Commands:
-  bind      bind this planner pane to a builder over the current working tree
-  add       attach an additional builder to this planner, on its own worktree
-  fork      branch a new binding from an earlier round with its own worktree
-  send      stage a plan file as the current round and prompt the builder
+  bind      bind this planner pane to a builder over the current working tree [--tier]
+  add       attach an additional builder to this planner, on its own worktree [--tier]
+  fork      branch a new binding from an earlier round with its own worktree [--tier]
+  send      stage a plan file as the current round and prompt the builder [--tier]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
@@ -597,6 +597,8 @@ func cmdBind(args []string) error {
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	headless := fs.Bool("headless", false,
 		"run the builder as a process per round instead of a pane; not with --resume or a pane id in --builder")
+	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -635,6 +637,8 @@ func cmdBind(args []string) error {
 		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
 		Headless:     *headless,
+		Tier:         *tier,
+		AllowYolo:    *allowYolo,
 	}
 	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
@@ -719,6 +723,8 @@ func cmdFork(args []string) error {
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
 	headless := fs.Bool("headless", false, "run the fork's builder as a process per round instead of a pane")
+	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -750,6 +756,8 @@ func cmdFork(args []string) error {
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 		Headless:    *headless,
+		Tier:        *tier,
+		AllowYolo:   *allowYolo,
 	}
 
 	res, err := relay.Fork(context.Background(), rt, opts)
@@ -782,6 +790,8 @@ func cmdAdd(args []string) error {
 	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
 	server := fs.String("server", "", "run the builder on this configured remote server instead of a local pane or process (relay servers)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -810,6 +820,8 @@ func cmdAdd(args []string) error {
 		Headless:    *headless,
 		Server:      *server,
 		Base:        *base,
+		Tier:        *tier,
+		AllowYolo:   *allowYolo,
 	})
 	if err != nil {
 		return err
@@ -1049,6 +1061,8 @@ func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the plan file to hand the builder")
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1066,7 +1080,10 @@ func cmdSend(args []string) error {
 		return err
 	}
 
-	res, err := relay.Send(context.Background(), rt, target, *file)
+	res, err := relay.Send(context.Background(), rt, target, *file, relay.SendOptions{
+		Tier:      *tier,
+		AllowYolo: *allowYolo,
+	})
 	if err != nil {
 		return err
 	}

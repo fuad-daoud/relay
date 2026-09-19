@@ -115,3 +115,32 @@ func TestLogLineClassify(t *testing.T) {
 		t.Errorf("got %q, want no p=", gotTimeout)
 	}
 }
+
+func TestLogLineTierOnPlanOnly(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	plan := store.LogEntry{
+		TS:        ts,
+		Round:     1,
+		Direction: store.DirToBuilder,
+		Kind:      store.KindPlan,
+		Path:      "/p/001-plan.md",
+		Tier:      "edit",
+	}
+	gotPlan := LogLine(plan)
+	if !strings.HasSuffix(gotPlan, " tier=edit") {
+		t.Errorf("expected suffix %q on plan line, got %q", " tier=edit", gotPlan)
+	}
+
+	report := store.LogEntry{
+		TS:        ts,
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindReport,
+		Path:      "/p/001-report.md",
+		Tier:      "edit",
+	}
+	gotReport := LogLine(report)
+	if strings.Contains(gotReport, "tier=") {
+		t.Errorf("report entry must not print tier: %q", gotReport)
+	}
+}

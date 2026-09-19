@@ -56,6 +56,12 @@ type Candidate struct {
 	ExtraArgs      []string `json:"extra_args,omitempty"`
 	LimitPatterns  []string `json:"limit_patterns,omitempty"`
 	DialogPatterns []string `json:"dialog_patterns,omitempty"`
+	// Tier is the candidate's default permission tier (#141); "" means "use the
+	// role default from policy, else harness". Validated by ParseTier.
+	Tier string `json:"tier,omitempty"`
+	// DenialPatterns replace the harness's default denial regexes for this
+	// candidate (#141), like LimitPatterns and DialogPatterns.
+	DenialPatterns []string `json:"denial_patterns,omitempty"`
 
 	// Plan marks a subscription lane (#142): the round's cost is a quota
 	// draw, and printers say "plan", never "$0" and never "free".
@@ -192,6 +198,16 @@ func Load(path string) (*Set, error) {
 		for j, pat := range c.DialogPatterns {
 			if _, err := regexp.Compile(pat); err != nil {
 				return nil, fmt.Errorf("candidates %s: candidate %d: dialog_patterns[%d]: %w", path, i, j, err)
+			}
+		}
+		if c.Tier != "" {
+			if _, err := harness.ParseTier(c.Tier); err != nil {
+				return nil, fmt.Errorf("candidates %s: candidate %d: tier: %v", path, i, err)
+			}
+		}
+		for j, pat := range c.DenialPatterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return nil, fmt.Errorf("candidates %s: candidate %d: denial_patterns[%d]: %w", path, i, j, err)
 			}
 		}
 		key := c.Ref().String()

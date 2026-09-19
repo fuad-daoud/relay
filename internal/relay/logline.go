@@ -37,6 +37,9 @@ func LogLine(e store.LogEntry) string {
 	if e.Late {
 		first += " late"
 	}
+	if e.Kind == store.KindPlan && e.Tier != "" {
+		first += " tier=" + e.Tier
+	}
 	if e.Usage == nil {
 		return first
 	}

@@ -53,12 +53,15 @@ func roundBudget(b store.Binding) time.Duration {
 // working tree filled in (headless spec §4.2, #192). Pure. An unknown kind
 // is an error, not a panic: Load validated the set, but a binding written
 // by a future relay could name a kind this one does not know.
-func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, budget time.Duration, prompt, dir string) ([]string, error) {
+func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir string) ([]string, error) {
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
 		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
 	}
-	l := h.Launch(c.Provider, c.Model, c.ExtraArgs, role)
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	if err != nil {
+		return nil, err
+	}
 	if l.PromptAt < 0 {
 		return nil, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
@@ -89,7 +92,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
 	role, _ := harness.RoleByName("builder")
-	argv, err := headlessLaunch(c, role, roundBudget(b), prompt, b.CWD)
+	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD)
 	if err != nil {
 		return b, err
 	}
@@ -230,14 +233,14 @@ func clearProcess(e store.Endpoint) store.Endpoint {
 // codeText is the exit code, or "unknown" when the supervisor's trailer is
 // missing (killed, or the log unreadable). The payload is the log's last
 // logTailLines lines, for the human; relay reads nothing out of it.
-func exitEntry(now time.Time, round int, logPath, codeText string) store.LogEntry {
+func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
 		Direction: store.DirToPlanner,
 		Kind:      store.KindExit,
 		Path:      logPath,
-		Note:      fmt.Sprintf("builder exited (code %s) without a report", codeText),
+		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
 		Payload:   logTail(logPath, logTailLines),
 		Confirmed: true,
 	}
@@ -396,7 +399,20 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	// Exited without a report.
 	now := rt.Now().UTC()
-	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText)); err != nil {
+	h, _ := harness.Lookup(b.Builder.Kind)
+	var c candidate.Candidate
+	if ref, err := candidate.ParseRef(b.BuilderCandidate); err == nil && rt.Candidates != nil {
+		if cand, err := rt.Candidates.Lookup(ref); err == nil {
+			c = cand
+		}
+	}
+	denialLine, isDenial := matchDenial(logTail(b.Builder.LogPath, limitScanLines), denialPatterns(c, h))
+	suffix := ""
+	if isDenial {
+		suffix = "; permission-blocked: " + denialLine
+	}
+
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix)); err != nil {
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
@@ -411,6 +427,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
 	if handled {
 		return next, err
+	}
+
+	if isDenial {
+		return haltBinding(ctx, rt, b, fmt.Sprintf(
+			"%s: builder exited (code %s) without a report after a permission denial (%q); not switched -- re-send with a higher tier (relay send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
+			b.Name, codeText, denialLine, b.Name, b.Builder.LogPath))
 	}
 
 	if !switchable {

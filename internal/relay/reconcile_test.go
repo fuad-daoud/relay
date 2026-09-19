@@ -27,7 +27,7 @@ func builderAgent(status string) herdr.Agent {
 func sentBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	rt, _ := seedBound(t, f)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -56,7 +56,7 @@ func sentBindingWithBuilderSession(t *testing.T, f *fakeHerdr, sessionID string)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err = rt.Store.Load("webshop")

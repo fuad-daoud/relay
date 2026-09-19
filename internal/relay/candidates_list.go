@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/ledger"
 )
 
@@ -38,8 +39,15 @@ func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("%-*s  %s", width, ref, strings.Join(c.Roles, ", ")))
+		if c.Tier != "" {
+			sb.WriteString("   tier: " + c.Tier)
+		}
 		if len(c.ExtraArgs) > 0 {
 			sb.WriteString("   [" + strings.Join(c.ExtraArgs, " ") + "]")
+		}
+		h, _ := harness.Lookup(c.Harness)
+		if flag := h.ExtraArgsPermissionFlag(c.ExtraArgs); flag != "" {
+			sb.WriteString(fmt.Sprintf(`   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag))
 		}
 		if rowGates := byToken[ref]; len(rowGates) > 0 {
 			parts := make([]string, len(rowGates))

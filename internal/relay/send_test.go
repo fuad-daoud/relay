@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -50,7 +52,7 @@ func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	src := writePlan(t, "# do the thing")
 
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestSendPromptCarriesNoPreamble(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f) // an agy candidate, the kind that used to get one
 	src := writePlan(t, "x")
-	if _, err := Send(context.Background(), rt, "webshop", src); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", src, SendOptions{}); err != nil {
 		t.Fatalf("round 1 Send: %v", err)
 	}
 	if len(f.prompts) != 1 {
@@ -109,7 +111,7 @@ func TestSendLogsThePlan(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -135,7 +137,7 @@ func TestSendStallThenFingerprintOnScreenIsLate(t *testing.T) {
 	f.prompts = nil
 	f.reads = nil
 
-	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -175,7 +177,7 @@ func TestSendStallWithoutFingerprintRetries(t *testing.T) {
 	f.readOut = "some other screen"
 	f.prompts = nil
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
 		t.Fatalf("Send must retry once past a stall: %v", err)
 	}
 	if len(f.prompts) != 1 {
@@ -204,7 +206,7 @@ func TestSendStallReadErrorStillRetries(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	f.prompts = nil
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 	if len(f.prompts) != 1 {
@@ -229,7 +231,7 @@ func TestSendUnknownBuilderAtDialogIsBlocked(t *testing.T) {
 	f.prompts = nil
 	f.reads = nil
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if !errors.Is(err, ErrBuilderBlocked) {
 		t.Fatalf("Send err = %v, want ErrBuilderBlocked", err)
 	}
@@ -259,7 +261,7 @@ func TestSendUnknownBuilderWithoutDialogSends(t *testing.T) {
 	f.readOut = "$ "
 	f.prompts = nil
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -276,7 +278,7 @@ func TestSendIdleBuilderNeverScansForDialog(t *testing.T) {
 	f.prompts = nil
 	f.reads = nil
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -292,7 +294,7 @@ func TestSendGivesUpAfterTwoStalls(t *testing.T) {
 	f := &fakeHerdr{stalls: 2}
 	rt, _ := seedBound(t, f)
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x")); err == nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err == nil {
 		t.Fatal("two stalls must fail rather than fire a third time")
 	}
 }
@@ -301,7 +303,7 @@ func TestSendSurfacesBlockedBuilder(t *testing.T) {
 	f := &fakeHerdr{promptErr: herdr.ErrAgentBlocked}
 	rt, _ := seedBound(t, f)
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if !errors.Is(err, ErrBuilderBlocked) {
 		t.Fatalf("got %v, want ErrBuilderBlocked", err)
 	}
@@ -352,7 +354,7 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 	rt.Git = fg
 
 	src := writePlan(t, "# test plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -380,7 +382,7 @@ func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# test plan")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# test plan"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -399,7 +401,7 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	rt.Git = fg
 
 	src := writePlan(t, "# test plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -430,7 +432,7 @@ func TestSendAddressesTheLocatedPane(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
 
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it")); err != nil {
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(f.prompts) != 1 {
@@ -446,7 +448,7 @@ func TestSendFailsAndStagesNothingWhenBuilderIsGone(t *testing.T) {
 	rt, _ := seedBound(t, f)
 	f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
 	if !errors.Is(err, ErrBuilderGone) {
 		t.Fatalf("err = %v, want ErrBuilderGone", err)
 	}
@@ -475,7 +477,7 @@ func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
 	// but the binding is present and healthy by the time the lock is held.
 	f.agents = []herdr.Agent{plannerAgent()}
 
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"))
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
 	if !errors.Is(err, ErrBuilderGone) {
 		t.Fatalf("err = %v, want ErrBuilderGone", err)
 	}
@@ -498,7 +500,7 @@ func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
 	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
 
 	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -535,7 +537,7 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 	}
 
 	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -602,7 +604,7 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 	}
 
 	src := writePlan(t, "plan round 2")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -629,7 +631,7 @@ func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
 	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
 
 	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -666,7 +668,7 @@ func TestSendFailedPromptPreservesRoundClosedTree(t *testing.T) {
 	}
 
 	src := writePlan(t, "plan")
-	_, err := Send(context.Background(), rt, "webshop", src)
+	_, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err == nil {
 		t.Fatal("expected Send to fail when prompt fails")
 	}
@@ -691,7 +693,7 @@ func TestSendFailedPromptPreservesRoundClosedTree(t *testing.T) {
 
 	// Subsequent successful send reports the drift
 	f.promptErr = nil
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("subsequent Send failed: %v", err)
 	}
@@ -750,7 +752,7 @@ func TestSendConcurrentRoundAdvanceSkipsDrift(t *testing.T) {
 	}
 
 	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -782,7 +784,7 @@ func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 	}
 
 	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src)
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -829,5 +831,174 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "Reply here with only the report path.") {
 		t.Errorf("prompt must end with the reply instruction, got:\n%s", got)
+	}
+}
+
+func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	fr := newFakeRunner()
+	// Create an agy candidate without extra_args so TierYolo adds --dangerously-skip-permissions cleanly
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+	rt.Runner = fr
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   "agy/test/m",
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Headless:    true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	src := writePlan(t, "# do yolo")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{Tier: "yolo", AllowYolo: true})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.RoundTier != "yolo" {
+		t.Errorf("RoundTier = %q, want %q", stored.RoundTier, "yolo")
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d specs, want 1", len(fr.specs))
+	}
+	hasYoloFlag := false
+	for _, arg := range fr.specs[0].Argv {
+		if arg == "--dangerously-skip-permissions" {
+			hasYoloFlag = true
+			break
+		}
+	}
+	if !hasYoloFlag {
+		t.Errorf("expected --dangerously-skip-permissions in argv, got %v", fr.specs[0].Argv)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var planEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+			planEntry = &entries[i]
+			break
+		}
+	}
+	if planEntry == nil {
+		t.Fatal("no plan entry found in log")
+	}
+	if planEntry.Tier != "yolo" {
+		t.Errorf("plan entry Tier = %q, want %q", planEntry.Tier, "yolo")
+	}
+
+	// Now round close via queueReport
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		entries, err := tx.ReadLog("webshop")
+		if err != nil {
+			return err
+		}
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test")
+		if err != nil {
+			return err
+		}
+		return tx.Save(next)
+	})
+	if err != nil {
+		t.Fatalf("queueReport round close: %v", err)
+	}
+
+	closedB, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after close: %v", err)
+	}
+	if closedB.RoundTier != "" {
+		t.Errorf("RoundTier after round close = %q, want empty", closedB.RoundTier)
+	}
+}
+
+func TestSendPaneBindingWithTierEditRefused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	if b.Builder.Headless() {
+		t.Fatal("seedBound must produce a pane builder")
+	}
+
+	src := writePlan(t, "# plan")
+	_, err := Send(context.Background(), rt, "webshop", src, SendOptions{Tier: "edit"})
+	if !errors.Is(err, ErrTierPaneFixed) {
+		t.Fatalf("Send err = %v, want ErrTierPaneFixed", err)
+	}
+
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Round != 1 || stored.RoundStartedAt != (time.Time{}) {
+		t.Errorf("round must not advance on refusal: round=%d, startedAt=%v", stored.Round, stored.RoundStartedAt)
+	}
+}
+
+func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, f, fr)
+
+	src := writePlan(t, "# do default")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var planEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+			planEntry = &entries[i]
+			break
+		}
+	}
+	if planEntry == nil {
+		t.Fatal("no plan entry found in log")
+	}
+	if planEntry.Tier != "harness" {
+		t.Errorf("plan entry Tier = %q, want %q", planEntry.Tier, "harness")
+	}
+
+	// Verify argv is identical to pre-#141 (contains extra_args from candidate)
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d specs, want 1", len(fr.specs))
+	}
+	planPath := rt.Store.PlanPath("webshop", 1)
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	donePath := rt.Store.DonePath("webshop", 1)
+	b, _ := rt.Store.Load("webshop")
+	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	wantArgv := []string{
+		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
+		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",
+		"--dangerously-skip-permissions",
+	}
+	if !reflect.DeepEqual(fr.specs[0].Argv, wantArgv) {
+		t.Errorf("argv =\n%v\nwant =\n%v", fr.specs[0].Argv, wantArgv)
 	}
 }

@@ -249,7 +249,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
 		t.Fatalf("step 2: relay.Send: %v", err)
 	}
 
@@ -410,7 +410,7 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
 		t.Fatalf("step 2: relay.Send: %v", err)
 	}
 
@@ -525,7 +525,7 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
 		t.Fatalf("step 2: relay.Send: %v", err)
 	}
 
@@ -588,7 +588,7 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile); err != nil {
+	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
 		t.Fatalf("step 2: relay.Send: %v", err)
 	}
 
