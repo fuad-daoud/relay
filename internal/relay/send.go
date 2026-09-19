@@ -276,6 +276,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.RoundBaselineHead = baselineHead
 		b.RoundClosedTree = ""
 		b.RoundStartedAt = rt.Now().UTC()
+		b.FinishPending = true
 		b.State = store.StateActive
 		b.Halt = ""
 		b.HaltAt = time.Time{}

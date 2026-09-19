@@ -23,10 +23,14 @@ type promptCall struct {
 }
 
 type fakeHerdr struct {
-	mu      sync.Mutex
-	agents  []herdr.Agent
-	prompts []struct{ Target, Text string }
-	notices []string
+	mu       sync.Mutex
+	agents   []herdr.Agent
+	prompts  []struct{ Target, Text string }
+	notices  []string
+	metadata []struct {
+		Pane string
+		Meta herdr.PaneMetadata
+	}
 }
 
 func (f *fakeHerdr) ListAgents(ctx context.Context) ([]herdr.Agent, error) {
@@ -44,10 +48,20 @@ func (f *fakeHerdr) Prompt(ctx context.Context, target, text string) error {
 	return nil
 }
 
-func (f *fakeHerdr) Notify(ctx context.Context, message string) error {
+func (f *fakeHerdr) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.notices = append(f.notices, message)
+	f.notices = append(f.notices, title)
+	return nil
+}
+
+func (f *fakeHerdr) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.metadata = append(f.metadata, struct {
+		Pane string
+		Meta herdr.PaneMetadata
+	}{Pane: paneID, Meta: m})
 	return nil
 }
 

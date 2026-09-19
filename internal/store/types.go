@@ -118,6 +118,14 @@ type Binding struct {
 	// tick rewriting State, which turned one notice into one per poll.
 	HaltNotifiedRound int `json:"halt_notified_round,omitempty"`
 
+	// FinishPending is true from the moment Send opens a round until the
+	// daemon has raised the one "all rounds finished" toast for this
+	// binding's planner (#182). It is deliberately NOT derived from State,
+	// for the same reason HaltNotifiedRound is not: a later step in the same
+	// tick may rewrite State. A binding written before this field existed
+	// has FinishPending == false and never toasts until its next Send.
+	FinishPending bool `json:"finish_pending,omitempty"`
+
 	// Halt is why the binding is NEEDS YOU when neither a blocked dialog nor a
 	// missing pane explains it, and HaltAt is when relay decided so. Halt is
 	// the sentence haltBinding already composes for the toast, minus the

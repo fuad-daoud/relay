@@ -1176,6 +1176,14 @@ claude   --agent architect --model opus
 opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
 ```
 
+**Wait inside the turn.** After `relay send`, the planner runs
+`relay wait <name> --timeout 9m` (looping while it exits 124) and then
+`relay pull <name>`, and ends its turn only when no binding has a round in
+flight. herdr then badges the planner's tab once, when the planner is
+actually finished, instead of after every round the daemon typed a report
+into it (#182). The daemon's typed delivery remains the fallback for a
+planner that is idle when a report lands.
+
 The architect designs and never implements: it produces a system overview,
 file structure, data structures, interface contracts, pseudocode, an error
 handling strategy and ordered implementation steps -- the plan a builder's
@@ -1210,6 +1218,10 @@ some candidate would load, and no candidate loads the planner.
   flagged. The binding and its round log stay on disk (`relay log <name>`
   still works as an audit trail) until `relay unbind` or `relay gc` removes them;
   a clean worktree is released at `done` so the branch is free to review.
+
+The daemon raises one "all rounds finished" toast (sound done) per planner
+when the planner is idle and none of its bindings has a round open, a payload
+pending or a switch due.
 
 ## The anti-clobber rule
 
@@ -1302,6 +1314,32 @@ detection and reports `unknown`. relay never treats `unknown` as done, so such
 a binding stalls rather than misbehaving — but it does stall. A binding whose
 builder reports no session id also never self-heals from `BROKEN`, since
 recovery requires matching the same herdr session (see below).
+
+### Sidebar tokens
+
+relay tags each pane builder's pane with three display tokens --
+`relay` (binding), `relay_round` (`007`), `relay_state`
+(`active|held|needs-you|done`) -- refreshed by the daemon within a tick
+of any change and cleared when the binding is done or unbound.
+Headless and remote builders have no pane and no tokens. Show them in
+herdr's sidebar with:
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "workspace", "tab"],
+  [{ token = "$relay", bold = true }, { token = "$relay_round", dim = true },
+   { token = "$relay_state", rules = [
+       { equals = "needs-you", fg = "#f55", bold = true },
+       { equals = "held",      fg = "#fc0" },
+       { equals = "done",      dim = true } ] }],
+]
+```
+
+Toasts carry a sound class: `request` when a builder is blocked at a
+dialog or a binding halts, `done` when a held report is ready and once
+when all of a planner's rounds have finished, `none` for a mid-round
+switch.
 
 ### opencode permission allowlist
 

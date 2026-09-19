@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -201,7 +202,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.RoundStartedAt = now
 
-	if err := rt.Herdr.Notify(ctx, fmt.Sprintf("%s: switched builder to %s (%s)", b.Name, res.Token(), reason)); err != nil {
+	if err := rt.Herdr.Notify(ctx, fmt.Sprintf("%s: switched builder to %s (%s)", b.Name, res.Token(), reason), reason, herdr.SoundNone); err != nil {
 		slog.Warn("switch notify failed", "binding", b.Name, "err", err)
 	}
 

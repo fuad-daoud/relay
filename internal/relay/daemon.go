@@ -25,6 +25,13 @@ type Daemon struct {
 	// changed and returns the Runtime the tick should use. Nil (the
 	// default) keeps today's behaviour: rt is used as given.
 	refresh func(Runtime) Runtime
+
+	// applied is what the daemon last reported to herdr per binding
+	// (#129): the pane it wrote to, the token fingerprint, and when. In
+	// memory only: a daemon restart re-applies everything on its first
+	// tick, and metadataRefresh bounds how stale a herdr restart can leave
+	// a pane.
+	applied map[string]appliedMeta
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -32,7 +39,7 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {
 		interval = minInterval
 	}
-	return &Daemon{rt: rt, interval: interval}
+	return &Daemon{rt: rt, interval: interval, applied: map[string]appliedMeta{}}
 }
 
 // WithRefresh installs a per-tick refresh on the daemon. nil (the default)
@@ -120,6 +127,14 @@ func (d *Daemon) Tick(ctx context.Context) error {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
 		}
 	}
+
+	fresh, err := d.rt.Store.List()
+	if err != nil {
+		slog.Warn("list bindings for metadata sync", "err", err)
+		return nil
+	}
+	syncPaneMetadata(ctx, d.rt, d.applied, fresh)
+	notifyFinished(ctx, d.rt, fresh, agents)
 
 	return nil
 }

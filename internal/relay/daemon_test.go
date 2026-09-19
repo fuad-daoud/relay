@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -517,5 +518,67 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 	}
 	if len(f.prompts) != 1 {
 		t.Errorf("an idle unfocused planner must receive the report, got %+v", f.prompts)
+	}
+}
+
+// TestTickSyncsMetadataAndFinishedAfterReconcile checks that Tick calls both
+// syncPaneMetadata and notifyFinished after the binding loop (#129, #182).
+// The finished-toast decision itself is covered by finished_test.go; here
+// only that Tick wires both into the pass, using a binding with a closed
+// round, no pending payload, and an idle planner so the toast fires within
+// this one tick.
+func TestTickSyncsMetadataAndFinishedAfterReconcile(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	b := store.Binding{
+		Name:             "webshop",
+		CWD:              "/repo",
+		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Builder:          store.Endpoint{PaneID: "w2:p4"},
+		BuilderCandidate: "agy",
+		Round:            2,
+		RoundCap:         10,
+		State:            store.StateActive,
+		FinishPending:    true,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save webshop: %v", err)
+	}
+
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if len(f.metadata) != 1 {
+		t.Fatalf("got %d metadata calls, want 1", len(f.metadata))
+	}
+	if f.metadata[0].Pane != "w2:p4" {
+		t.Errorf("metadata pane = %q, want w2:p4", f.metadata[0].Pane)
+	}
+	wantTokens := map[string]string{TokenName: "webshop", TokenRound: "002", TokenState: "active"}
+	if !reflect.DeepEqual(f.metadata[0].Meta.Tokens, wantTokens) {
+		t.Errorf("metadata tokens = %+v, want %+v", f.metadata[0].Meta.Tokens, wantTokens)
+	}
+	if _, ok := d.applied["webshop"]; !ok {
+		t.Errorf("d.applied = %+v, want an entry for webshop", d.applied)
+	}
+
+	if len(f.notices) != 1 {
+		t.Fatalf("got %d notices, want 1 (all rounds finished)", len(f.notices))
+	}
+	if f.sounds[0] != herdr.SoundDone {
+		t.Errorf("notice sound = %q, want %q", f.sounds[0], herdr.SoundDone)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.FinishPending {
+		t.Error("FinishPending = true after the toast, want false")
 	}
 }

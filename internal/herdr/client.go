@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,30 @@ var ErrPromptStalled = errors.New("herdr prompt stalled")
 // up before observing it. It is distinct from ErrPromptStalled: a timeout says
 // the state never arrived, not that herdr judged the prompt inert.
 var ErrWaitTimeout = errors.New("herdr wait timed out")
+
+// Sound is herdr's notification sound class (`notification show --sound`).
+type Sound string
+
+const (
+	SoundNone    Sound = "none"
+	SoundDone    Sound = "done"
+	SoundRequest Sound = "request"
+)
+
+// MetadataSource is the one `--source` relay ever reports under: herdr caps
+// a pane at 32 distinct sources, so relay is one source, never one per
+// binding (#129).
+const MetadataSource = "relay"
+
+// maxTokenValue is herdr's cap on a token value (80 chars, verified 0.9.1).
+const maxTokenValue = 80
+
+// PaneMetadata is one `herdr pane report-metadata` call: display-only.
+type PaneMetadata struct {
+	Tokens      map[string]string // --token NAME=VALUE, emitted sorted by NAME; values truncated to maxTokenValue
+	ClearTokens []string          // --clear-token NAME, emitted in slice order
+	Seq         int64             // --seq; a later write with a lower seq is ignored by herdr
+}
 
 // Client runs the herdr CLI. Every external call is bounded by timeout.
 type Client struct {
@@ -251,9 +276,51 @@ func (c *Client) StartAgent(ctx context.Context, name, kind, paneID string, args
 	return err
 }
 
-// Notify surfaces a non-invasive nudge in the herdr UI.
-func (c *Client) Notify(ctx context.Context, message string) error {
-	_, err := c.run(ctx, "notification", "show", message)
+// Notify shows a toast: `herdr notification show <title> [--body <body>] --sound <sound>`.
+// --body is omitted when body == ""; an empty sound is sent as SoundNone.
+func (c *Client) Notify(ctx context.Context, title, body string, sound Sound) error {
+	if sound == "" {
+		sound = SoundNone
+	}
+	args := []string{"notification", "show", title}
+	if body != "" {
+		args = append(args, "--body", body)
+	}
+	args = append(args, "--sound", string(sound))
+	_, err := c.run(ctx, args...)
+	return err
+}
+
+// ReportMetadata runs `herdr pane report-metadata <paneID> --source relay
+// [--token k=v ...] [--clear-token k ...] --seq <n>`. Tokens are emitted in
+// sorted key order so the argv is deterministic; a value longer than
+// maxTokenValue is truncated (rune-safe). A call with no tokens and no
+// clears is a no-op that returns nil without running herdr.
+func (c *Client) ReportMetadata(ctx context.Context, paneID string, m PaneMetadata) error {
+	if len(m.Tokens) == 0 && len(m.ClearTokens) == 0 {
+		return nil
+	}
+
+	args := []string{"pane", "report-metadata", paneID, "--source", MetadataSource}
+
+	names := make([]string, 0, len(m.Tokens))
+	for name := range m.Tokens {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := m.Tokens[name]
+		if r := []rune(value); len(r) > maxTokenValue {
+			value = string(r[:maxTokenValue])
+		}
+		args = append(args, "--token", name+"="+value)
+	}
+	for _, name := range m.ClearTokens {
+		args = append(args, "--clear-token", name)
+	}
+	args = append(args, "--seq", strconv.FormatInt(m.Seq, 10))
+
+	_, err := c.run(ctx, args...)
 	return err
 }
 

@@ -92,7 +92,11 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			// fire indefinitely instead of nudging once.
 			if b.State != store.StateHeld {
 				msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
-				if err := rt.Herdr.Notify(ctx, msg); err != nil {
+				body := "held: you are in the planner pane"
+				if pending.Note != "" {
+					body += "; " + pending.Note
+				}
+				if err := rt.Herdr.Notify(ctx, msg, body, herdr.SoundDone); err != nil {
 					return b, Delivery{}, fmt.Errorf("notify held delivery: %w", err)
 				}
 			}

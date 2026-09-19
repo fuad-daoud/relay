@@ -132,6 +132,12 @@ the report handoff, and nothing done inline appears in `relay status`.
   every plan you send must stand alone -- which the Output Structure above
   already guarantees. A step that needs a mid-round decision is a reason to
   split the plan, not to use a pane.
+- **Wait inside the turn.** After `relay send <name>`, run
+  `relay wait <name> --timeout 9m` in a loop while it exits 124, then
+  `relay pull <name>`. End your turn only when no binding you drive has a
+  round in flight: exit 3 (`NEEDS YOU`) means ask the human; exit 4 means
+  the binding is done. A turn that ends with a round open badges the
+  planner tab for nothing.
 - **Parallelism is instances, not harnesses.** Several builders are several
   `relay add` bindings of one harness, each on its own worktree. Never bind
   two harness kinds to two tasks as a way of parallelising. Omit `--builder`

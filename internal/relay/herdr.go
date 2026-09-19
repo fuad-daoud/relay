@@ -30,7 +30,8 @@ type Herdr interface {
 	ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error)
 	CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error)
 	StartAgent(ctx context.Context, name, kind, paneID string, args []string) error
-	Notify(ctx context.Context, message string) error
+	Notify(ctx context.Context, title, body string, sound herdr.Sound) error
+	ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error
 	ClosePane(ctx context.Context, paneID string) error
 }
 

@@ -375,6 +375,9 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 	if fg.snapshotCalls != 1 {
 		t.Errorf("snapshotCalls = %d, want 1", fg.snapshotCalls)
 	}
+	if !b.FinishPending {
+		t.Error("FinishPending = false, want true after Send opens a round")
+	}
 }
 
 func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
@@ -1000,5 +1003,8 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fr.specs[0].Argv, wantArgv) {
 		t.Errorf("argv =\n%v\nwant =\n%v", fr.specs[0].Argv, wantArgv)
+	}
+	if !b.FinishPending {
+		t.Error("FinishPending = false, want true after Send opens a round")
 	}
 }

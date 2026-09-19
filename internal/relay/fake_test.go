@@ -23,6 +23,12 @@ type tabCall struct {
 	WorkspaceID, CWD, Label string
 }
 
+// metadataCall is one recorded ReportMetadata call.
+type metadataCall struct {
+	Pane string
+	Meta herdr.PaneMetadata
+}
+
 type startCall struct {
 	Name, Kind, Pane string
 	Args             []string
@@ -326,7 +332,11 @@ type fakeHerdr struct {
 	keys      []keyCall
 	starts    []startCall
 	reads     []readCall
-	notices   []string
+	notices   []string      // titles, so every existing `f.notices[0]` assertion still reads the message text
+	bodies    []string      // parallel to notices
+	sounds    []herdr.Sound // parallel to notices
+	metadata  []metadataCall
+	metaErr   error // when set, ReportMetadata returns this error instead of recording the call
 	readOut   string
 	newPane   string
 	newTab    string
@@ -423,8 +433,18 @@ func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args 
 	return nil
 }
 
-func (f *fakeHerdr) Notify(_ context.Context, msg string) error {
-	f.notices = append(f.notices, msg)
+func (f *fakeHerdr) Notify(_ context.Context, title, body string, sound herdr.Sound) error {
+	f.notices = append(f.notices, title)
+	f.bodies = append(f.bodies, body)
+	f.sounds = append(f.sounds, sound)
+	return nil
+}
+
+func (f *fakeHerdr) ReportMetadata(_ context.Context, paneID string, m herdr.PaneMetadata) error {
+	if f.metaErr != nil {
+		return f.metaErr
+	}
+	f.metadata = append(f.metadata, metadataCall{Pane: paneID, Meta: m})
 	return nil
 }
 

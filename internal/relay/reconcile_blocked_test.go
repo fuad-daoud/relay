@@ -65,6 +65,38 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 	}
 }
 
+// TestBlockedDialogToastsOnce checks the blocked-builder toast (#129): it
+// fires once, when the question is queued, naming the dialog's first line.
+func TestBlockedDialogToastsOnce(t *testing.T) {
+	f := &fakeHerdr{readOut: "Allow edit to src/main.go?  1. Yes  2. No"}
+	rt, b := sentBinding(t, f)
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusBlocked)}
+
+	b, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("got %d notices, want 1", len(f.notices))
+	}
+	if !strings.Contains(f.notices[0], "blocked at a dialog") {
+		t.Errorf("notice title = %q, want it to contain %q", f.notices[0], "blocked at a dialog")
+	}
+	if !strings.Contains(f.bodies[0], "Allow edit to src/main.go?") {
+		t.Errorf("notice body = %q, want it to contain the dialog's first line", f.bodies[0])
+	}
+	if f.sounds[0] != herdr.SoundRequest {
+		t.Errorf("notice sound = %q, want %q", f.sounds[0], herdr.SoundRequest)
+	}
+
+	if _, err := reconcile(t, rt, b, agents); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(f.notices) != 1 {
+		t.Errorf("got %d notices after a second tick, want 1; a still-blocked builder must not re-toast", len(f.notices))
+	}
+}
+
 func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
@@ -174,6 +206,9 @@ func TestReconcileStopsAtRoundCap(t *testing.T) {
 	}
 	if len(f.notices) == 0 {
 		t.Error("hitting the round cap must notify")
+	}
+	if len(f.sounds) == 0 || f.sounds[0] != herdr.SoundRequest {
+		t.Errorf("sounds = %+v, want first sound %q", f.sounds, herdr.SoundRequest)
 	}
 }
 

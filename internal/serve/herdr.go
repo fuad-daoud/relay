@@ -16,8 +16,12 @@ func (stubHerdr) ListAgents(ctx context.Context) ([]herdr.Agent, error) {
 	return nil, nil
 }
 
-func (stubHerdr) Notify(ctx context.Context, message string) error {
-	slog.Info("notify", "message", message)
+func (stubHerdr) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
+	slog.Info("notify", "title", title, "body", body, "sound", sound)
+	return nil
+}
+
+func (stubHerdr) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
 	return nil
 }
 
