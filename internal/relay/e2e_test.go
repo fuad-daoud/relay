@@ -34,9 +34,10 @@ const (
 	e2eScreenTimeout = 5 * time.Second
 	e2ePoll          = 200 * time.Millisecond
 	// e2eEchoTimeout bounds waitEcho: the shim spends one real second per
-	// prompt line, and builderPrompt is twelve lines since it opens by
-	// naming the working tree and the git-status halt rule (#192).
-	e2eEchoTimeout = 15 * time.Second
+	// prompt line, and the rendered builder prompt is twenty-two lines: the
+	// origin line (#139), the working-tree halt rule (#192), the three
+	// paths and the report block skeleton (#133).
+	e2eEchoTimeout = 35 * time.Second
 )
 
 // startSession launches `herdr --session relay-e2e-<pid>` with no tty. The
