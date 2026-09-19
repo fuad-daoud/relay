@@ -34,9 +34,10 @@ const (
 	e2eScreenTimeout = 5 * time.Second
 	e2ePoll          = 200 * time.Millisecond
 	// e2eEchoTimeout bounds waitEcho: the shim spends one real second per
-	// prompt line, and builderPrompt is twelve lines since it opens by
-	// naming the working tree and the git-status halt rule (#192).
-	e2eEchoTimeout = 15 * time.Second
+	// prompt line, and the rendered builder prompt is twenty-two lines: the
+	// origin line (#139), the working-tree halt rule (#192), the three
+	// paths and the report block skeleton (#133).
+	e2eEchoTimeout = 35 * time.Second
 )
 
 // startSession launches `herdr --session relay-e2e-<pid>` with no tty. The
@@ -276,7 +277,7 @@ func TestE2E(t *testing.T) {
 	t.Run("marker_closes_round", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "marker", planner)
 		sendAt(t, rt, clock, 0, "marker")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		if err := os.WriteFile(rt.Store.ReportPath("marker", 1), []byte("builder's words"), 0o644); err != nil {
@@ -303,7 +304,7 @@ func TestE2E(t *testing.T) {
 	t.Run("idle_without_marker_nudges_once", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "nudge", planner)
 		sendAt(t, rt, clock, 0, "nudge")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, 5*time.Second, b) // inside startGrace
@@ -376,7 +377,7 @@ func TestE2E(t *testing.T) {
 	t.Run("still_screen_scrapes", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "scrape", planner)
 		sendAt(t, rt, clock, 0, "scrape")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
@@ -405,7 +406,7 @@ func TestE2E(t *testing.T) {
 	t.Run("screen_movement_resets_grace", func(t *testing.T) {
 		b := s.bindBuilder(t, rt, "moving", planner)
 		sendAt(t, rt, clock, 0, "moving")
-		s.waitScreen(t, b.Builder.PaneID, "Round 1 from the planner")
+		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
 		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge

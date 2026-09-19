@@ -60,3 +60,23 @@ func TestLogLineLateSuffix(t *testing.T) {
 		t.Errorf("expected suffix %q, got %q", "nudge late", gotLate)
 	}
 }
+
+func TestLogLineOutcomeAndFlagged(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	e := store.LogEntry{
+		TS:        ts,
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindReport,
+		Path:      "/p/001-report.md",
+		Note:      "noreport",
+		Outcome:   "halted",
+		Flagged:   2,
+		Late:      true,
+	}
+	got := LogLine(e)
+	want := ts.Local().Format("2006-01-02 15:04:05") + "  round 1   to_planner report    /p/001-report.md noreport outcome=halted flagged=2 late"
+	if got != want {
+		t.Errorf("\n got  %q\n want %q", got, want)
+	}
+}

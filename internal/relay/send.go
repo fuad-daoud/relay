@@ -54,11 +54,19 @@ there. If that fails, or reports a different directory or branch than you
 expect for this tree, stop: write a report saying so, create the done marker,
 and do nothing else.
 
-Round %d from the planner.
 Read: %s
 When you are done, write your report to: %s
 Then, as the very last thing you do -- after every edit, test and commit --
 create this empty file: %s
+End the report with this block as its last lines, filled in honestly:
+
+` + "```relay" + `
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # repo-relative files you changed
+commands_run: []        # commands you ran, e.g. ["make check"]
+not_done: []            # adjacent work you deliberately left
+` + "```" + `
 Reply here with only the report path.`
 
 // Target is the herdr target for an endpoint: its pane id, which Reconcile
@@ -278,8 +286,11 @@ func promptWithRetry(ctx context.Context, rt Runtime, target, text, fingerprint 
 	return nil
 }
 
-// composePrompt renders the builder prompt for this round. Nothing is
-// interpolated except the tree, the round number and the three paths.
+// composePrompt renders the builder prompt for this round. Line 1 is the
+// origin line naming the round and builder, followed by a blank line and the
+// handoff text (#139).
 func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
-	return fmt.Sprintf(builderPrompt, b.CWD, b.Round, planPath, reportPath, donePath)
+	origin := OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
+	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
+	return origin + "\n\n" + body
 }

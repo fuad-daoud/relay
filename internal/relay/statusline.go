@@ -117,10 +117,14 @@ func waiting(b BindingStatus) string {
 	case store.KindPlan:
 		return "plan sent"
 	case store.KindReport:
+		base := "report in"
 		if b.LastPayload.Note != "" {
-			return fmt.Sprintf("report in (%s)", b.LastPayload.Note)
+			base = fmt.Sprintf("report in (%s)", b.LastPayload.Note)
 		}
-		return "report in"
+		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
+			base += " · " + b.LastPayload.Outcome
+		}
+		return base
 	case store.KindQuestion:
 		return "question in"
 	case store.KindAnswer:

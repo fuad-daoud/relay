@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"time"
 
@@ -37,6 +38,10 @@ type Policy struct {
 	// no reset time can be parsed from the matched line. nil is
 	// DefaultLimitGate; a present value must be > 0.
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
+
+	// ScanPatterns is extra regular expressions appended to the built-in list
+	// of instruction-shaped line patterns (#139).
+	ScanPatterns []string `json:"scan_patterns,omitempty"`
 }
 
 // DefaultMaxSwitches is the switch limit used when MaxSwitches is nil: two
@@ -93,6 +98,12 @@ func Load(path string) (Policy, error) {
 
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
 		return Policy{}, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
+	}
+
+	for i, pat := range p.ScanPatterns {
+		if _, err := regexp.Compile(pat); err != nil {
+			return Policy{}, fmt.Errorf("%s: scan_patterns[%d]: %v: %w", path, i, err, ErrBadPolicy)
+		}
 	}
 
 	roles := make([]string, 0, len(p.Order))

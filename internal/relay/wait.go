@@ -30,6 +30,9 @@ const (
 	// WaitGone is the exit code for a binding that is DONE, or was unbound
 	// while Wait was polling it.
 	WaitGone = 4
+	// WaitHalted is the exit code for a round that closed and its report's
+	// Outcome is halted or blocked (#133).
+	WaitHalted = 5
 	// WaitTimeout is the exit code for a wait whose --timeout elapsed.
 	WaitTimeout = 124
 )
@@ -71,7 +74,11 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
 	if e, ok := lastReportEntry(entries, round); ok {
 		code := WaitClosed
-		if e.Note != "" {
+		// a marked round that halted is 5, not 0; an unmarked round that halted is
+		// also 5 -- the planner has to read why either way.
+		if e.Outcome == OutcomeHalted || e.Outcome == OutcomeBlocked {
+			code = WaitHalted
+		} else if e.Note != "" {
 			code = WaitUnmarked
 		}
 		line := e.Path

@@ -304,15 +304,28 @@ func handleBlockedBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		return b, fmt.Errorf("write question %s: %w", path, err)
 	}
 
+	flagged := ScanInstructionShaped([]byte(dialog), compileScanPatterns(rt.Policy))
+
 	payload := fmt.Sprintf(
 		"Builder is blocked at a dialog in round %d. Question: %s\n"+
 			"Read it, then answer with: relay answer --name %s (--keys <key> | --choice <n> | --text <s>)",
 		b.Round, path, b.Name)
 
+	if flagged > 0 {
+		pLines := strings.SplitN(payload, "\n", 2)
+		pFirst := pLines[0] + flaggedParenthetical(flagged)
+		if len(pLines) > 1 {
+			payload = pFirst + "\n" + pLines[1]
+		} else {
+			payload = pFirst
+		}
+	}
+
 	entry := store.LogEntry{
 		TS: rt.Now().UTC(), Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindQuestion,
 		Path: path, Payload: payload,
+		Flagged: flagged,
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
@@ -373,6 +386,17 @@ func joinNotes(a, b string) string {
 	default:
 		return a + " " + b
 	}
+}
+
+func flaggedParenthetical(flagged int) string {
+	if flagged <= 0 {
+		return ""
+	}
+	unit := "lines"
+	if flagged == 1 {
+		unit = "line"
+	}
+	return fmt.Sprintf(" (%d instruction-shaped %s flagged; see relay log)", flagged, unit)
 }
 
 // closeOnMarker closes an open round when the builder's completion marker
@@ -600,18 +624,54 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
+	body, _ := os.ReadFile(path)
+	tail, ok := ParseReportTail(body)
+	outcome := OutcomeUnstructured
+	if ok {
+		outcome = tail.Status
+	}
+	flagged := ScanInstructionShaped(body, compileScanPatterns(rt.Policy))
+
+	pLines := strings.SplitN(payload, "\n", 2)
+	pFirst := pLines[0]
+	pRest := ""
+	if len(pLines) > 1 {
+		pRest = "\n" + pLines[1]
+	}
+
+	if outcome != OutcomeDone && outcome != OutcomeUnstructured {
+		prefix := fmt.Sprintf("Builder finished round %d", b.Round)
+		if strings.HasPrefix(pFirst, prefix) {
+			replacement := prefix + " -- " + outcome
+			if tail.HaltedAt != "" {
+				replacement += fmt.Sprintf(" at %q", tail.HaltedAt)
+			}
+			pFirst = replacement + pFirst[len(prefix):]
+		} else {
+			pFirst = pFirst + fmt.Sprintf(" Outcome: %s.", outcome)
+		}
+	}
+	if flagged > 0 {
+		pFirst += flaggedParenthetical(flagged)
+	}
+	payload = pFirst + pRest
+
 	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
 		result := CaptureRoundDiff(ctx, rt, b)
 		facts := CommitFacts(ctx, rt, b)
 		closed = result.EndTree
+		diffNote := DiffSummary(result, facts)
+		if result.Available && ok && tail.ChangedPaths != nil && len(tail.ChangedPaths) != result.Stat.FilesChanged {
+			diffNote = joinNotes(diffNote, fmt.Sprintf("paths: report %d, diff %d", len(tail.ChangedPaths), result.Stat.FilesChanged))
+		}
 		diffEntry := store.LogEntry{
 			TS:        rt.Now().UTC(),
 			Round:     b.Round,
 			Direction: store.DirToPlanner,
 			Kind:      store.KindDiff,
 			Path:      result.Path,
-			Note:      DiffSummary(result, facts),
+			Note:      diffNote,
 			Confirmed: true,
 		}
 		if facts.Known {
@@ -633,7 +693,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		TS: now, Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindReport,
 		Path: path, Payload: payload, Note: note,
-		Usage: recordUsage(ctx, rt, roundSource(rt, b, roundStart, now)),
+		Usage:        recordUsage(ctx, rt, roundSource(rt, b, roundStart, now)),
+		Outcome:      outcome,
+		HaltedAt:     tail.HaltedAt,
+		ChangedPaths: tail.ChangedPaths,
+		CommandsRun:  tail.CommandsRun,
+		NotDone:      tail.NotDone,
+		Flagged:      flagged,
 	}
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err

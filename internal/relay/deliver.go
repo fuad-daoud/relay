@@ -41,6 +41,7 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 		e.TS = rt.Now().UTC()
 	}
 	e.Confirmed = false
+	e.Payload = WithOrigin(e.Payload, OriginLine(name, e.Round, e.Direction, e.Kind))
 
 	return tx.AppendLog(name, e)
 }

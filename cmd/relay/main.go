@@ -63,7 +63,7 @@ Commands:
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
-  wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 3 needs you, 4 done/unbound, 124 timeout
+  wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)

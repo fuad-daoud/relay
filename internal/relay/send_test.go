@@ -96,11 +96,12 @@ func TestSendPromptCarriesNoPreamble(t *testing.T) {
 	if strings.Contains(f.prompts[0].Text, "Activate your") {
 		t.Errorf("round 1 prompt must not carry a preamble:\n%s", f.prompts[0].Text)
 	}
-	if !strings.HasPrefix(f.prompts[0].Text, "Your working tree is: /repo") {
-		t.Errorf("prompt must start by naming the working tree (#192):\n%s", f.prompts[0].Text)
+	wantOrigin := OriginLine("webshop", 1, store.DirToBuilder, store.KindPlan)
+	if !strings.HasPrefix(f.prompts[0].Text, wantOrigin) {
+		t.Errorf("prompt must start with origin line:\n%s", f.prompts[0].Text)
 	}
-	if !strings.Contains(f.prompts[0].Text, "Round 1 from the planner.") {
-		t.Errorf("prompt must state the round:\n%s", f.prompts[0].Text)
+	if !strings.Contains(f.prompts[0].Text, "Your working tree is: /repo") {
+		t.Errorf("prompt must name the working tree (#192):\n%s", f.prompts[0].Text)
 	}
 }
 
@@ -805,9 +806,13 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
 	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
+	wantOrigin := OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
-	if firstLine != "Your working tree is: /repo/webshop" {
-		t.Errorf("first line = %q, want the working tree named first (#192)", firstLine)
+	if firstLine != wantOrigin {
+		t.Errorf("first line = %q, want origin line %q", firstLine, wantOrigin)
+	}
+	if !strings.Contains(got, "Your working tree is: /repo/webshop") {
+		t.Errorf("prompt must name the working tree (#192), got:\n%s", got)
 	}
 	if !strings.Contains(got, "create the done marker,\nand do nothing else.") {
 		t.Errorf("prompt must state the git-status halt rule, got:\n%s", got)
@@ -818,9 +823,6 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	done := strings.Index(got, "/s/003-done")
 	if plan < 0 || report < 0 || done < 0 || !(plan < report && report < done) {
 		t.Fatalf("paths must appear plan < report < marker, got:\n%s", got)
-	}
-	if !strings.Contains(got, "Round 3 from the planner.") {
-		t.Errorf("prompt must state the round, got:\n%s", got)
 	}
 	if !strings.Contains(got, "as the very last thing you do") {
 		t.Errorf("prompt must say the marker is the last action, got:\n%s", got)
