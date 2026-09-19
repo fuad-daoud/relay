@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote"
 )
 
 // Tick advances every binding across all client owners.
@@ -17,18 +18,25 @@ func (s *Server) Tick(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
-	if _, err := os.Stat(bindingsDir); err != nil {
+	entries, err := os.ReadDir(bindingsDir)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
 
-	for _, cl := range s.clients.List() {
-		rt := s.runtime(cl.ID)
+	for _, entry := range entries {
+		id, ok := remote.IDFromDir(entry.Name())
+		if !entry.IsDir() || !ok {
+			slog.Warn("unexpected entry in bindings dir", "entry", entry.Name())
+			continue
+		}
+		ownerPath := filepath.Join(bindingsDir, entry.Name())
+		rt := s.runtimeAt(ownerPath)
 		d := relay.NewDaemon(rt, s.cfg.Interval)
 		if err := d.Tick(ctx); err != nil {
-			slog.Error("tick owner failed", "owner", cl.ID, "err", err)
+			slog.Error("tick owner failed", "owner", id, "err", err)
 		}
 	}
 	return nil

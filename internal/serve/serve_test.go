@@ -152,6 +152,15 @@ func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 	return s, root
 }
 
+func testRuntime(t *testing.T, s *Server, id remote.ClientID) relay.Runtime {
+	t.Helper()
+	rt, err := s.runtime(id)
+	if err != nil {
+		t.Fatalf("runtime(%s): %v", id, err)
+	}
+	return rt
+}
+
 func TestAuthRejects(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	handler := s.Handler()
@@ -400,18 +409,106 @@ func TestCreateBinding(t *testing.T) {
 	}
 
 	// Bare repo exists at Serve.BareRepo
-	bareRepoPath := filepath.Join(root, "repos", string(id), "repo123.git")
+	idDir, ok := id.Dir()
+	if !ok {
+		t.Fatalf("id.Dir() failed for %s", id)
+	}
+	bareRepoPath := filepath.Join(root, "repos", idDir, "repo123.git")
 	if _, err := os.Stat(filepath.Join(bareRepoPath, "HEAD")); err != nil {
 		t.Fatalf("bare repo HEAD missing at %s: %v", bareRepoPath, err)
 	}
 
 	// binding.json has Owner
-	b, err := s.runtime(id).Store.Load("api")
+	b, err := testRuntime(t, s, id).Store.Load("api")
 	if err != nil {
 		t.Fatalf("Load binding: %v", err)
 	}
 	if b.Owner != string(id) {
 		t.Fatalf("binding.Owner = %q, want %q", b.Owner, id)
+	}
+}
+
+func TestOwnerDirIsFlatHex(t *testing.T) {
+	s, root := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	pubLine := remote.MarshalPublic(kp.Public, "creator")
+	if _, err := s.clients.Add("creator", pubLine, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	req := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+
+	bindingsDir := filepath.Join(root, "bindings")
+	entries, err := os.ReadDir(bindingsDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", bindingsDir, err)
+	}
+	t.Logf("ls %s:", bindingsDir)
+	for _, e := range entries {
+		t.Logf("  %s (isDir=%v)", e.Name(), e.IsDir())
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	expectedDir, ok := id.Dir()
+	if !ok {
+		t.Fatalf("id.Dir() failed for %s", id)
+	}
+	if entry.Name() != expectedDir {
+		t.Fatalf("entry name = %q, want %q", entry.Name(), expectedDir)
+	}
+	if len(entry.Name()) != 64 {
+		t.Fatalf("len(entry.Name()) = %d, want 64", len(entry.Name()))
+	}
+	for _, c := range entry.Name() {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Fatalf("entry name %q contains non-lower-hex char: %c", entry.Name(), c)
+		}
+	}
+	if !entry.IsDir() {
+		t.Fatalf("entry %s is not a directory", entry.Name())
+	}
+
+	ownerSubDir := filepath.Join(bindingsDir, entry.Name())
+	subEntries, err := os.ReadDir(ownerSubDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", ownerSubDir, err)
+	}
+	t.Logf("ls %s:", ownerSubDir)
+	for _, sub := range subEntries {
+		t.Logf("  %s", sub.Name())
+	}
+
+	bindingJSONPath := filepath.Join(ownerSubDir, "api", "bind.json")
+	if _, err := os.Stat(bindingJSONPath); err != nil {
+		t.Fatalf("bind.json missing at %s: %v", bindingJSONPath, err)
+	}
+	apiEntries, err := os.ReadDir(filepath.Join(ownerSubDir, "api"))
+	if err != nil {
+		t.Fatalf("ReadDir api: %v", err)
+	}
+	t.Logf("ls %s/api:", ownerSubDir)
+	for _, a := range apiEntries {
+		t.Logf("  %s", a.Name())
 	}
 }
 
@@ -566,7 +663,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 	}
 
 	// Check initial LastSeen
-	b, err := s.runtime(id).Store.Load("api")
+	b, err := testRuntime(t, s, id).Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +678,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 		t.Fatalf("get status = %d, want 200", recGet.Code)
 	}
 
-	bAfter, err := s.runtime(id).Store.Load("api")
+	bAfter, err := testRuntime(t, s, id).Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +737,11 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	}
 
 	// Check no per-owner store dir gains a ledger.json
-	ownerLedgerPath := filepath.Join(root, "bindings", string(idA), "ledger.json")
+	idADir, ok := idA.Dir()
+	if !ok {
+		t.Fatalf("idA.Dir() failed for %s", idA)
+	}
+	ownerLedgerPath := filepath.Join(root, "bindings", idADir, "ledger.json")
 	if _, err := os.Stat(ownerLedgerPath); err == nil {
 		t.Fatalf("per-owner ledger.json unexpectedly exists at %s", ownerLedgerPath)
 	}
@@ -853,6 +954,11 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 }
 
+func (env *testEnv) runtime(t *testing.T) relay.Runtime {
+	t.Helper()
+	return testRuntime(t, env.srv, env.id)
+}
+
 func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -887,7 +993,7 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
@@ -973,7 +1079,7 @@ func TestRoundResendSamePlanIs200(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
@@ -1012,7 +1118,7 @@ func TestRoundResendDifferentPlanIs409(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
@@ -1056,7 +1162,7 @@ func TestRoundStartNotFastForward(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
@@ -1125,7 +1231,7 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
@@ -1249,7 +1355,7 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	b, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatal(err)
@@ -1365,7 +1471,7 @@ func TestBundleWrongRoundIs404(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	rt := env.srv.runtime(env.id)
+	rt := env.runtime(t)
 	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
@@ -1500,6 +1606,10 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	formB, ctB := makeRoundForm(t, 1, "# Plan B", bytesB)
 	doSigned(t, ts, kpB, "POST", "/v1/bindings/binding-b/rounds", formB, ctB)
 
+	// Owner C: enrolled client with no bindings
+	kpC, _ := remote.Generate()
+	_, _ = srv.clients.Add("charlie", remote.MarshalPublic(kpC.Public, "charlie"), time.Now())
+
 	// Both owners have 1 running binding. Check initial alive calls count.
 	runner.mu.Lock()
 	initialAliveCount := len(runner.aliveHandles)
@@ -1510,18 +1620,22 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	// Assert runner.Alive was called for both
+	// Assert runner.Alive was called for A and B only, not for C (exactly 2 calls)
 	runner.mu.Lock()
 	newAliveHandles := runner.aliveHandles[initialAliveCount:]
+	specsCount := len(runner.specs)
 	runner.mu.Unlock()
 
-	if len(newAliveHandles) < 2 {
-		t.Fatalf("new alive calls = %d, want at least 2", len(newAliveHandles))
+	if len(newAliveHandles) != 2 {
+		t.Fatalf("new alive calls = %d, want exactly 2", len(newAliveHandles))
+	}
+	if specsCount != 2 {
+		t.Fatalf("runner specs count = %d, want 2", specsCount)
 	}
 
-	rtA := srv.runtime(idA)
+	rtA := testRuntime(t, srv, idA)
 	bA, _ := rtA.Store.Load("binding-a")
-	rtB := srv.runtime(idB)
+	rtB := testRuntime(t, srv, idB)
 	bB, _ := rtB.Store.Load("binding-b")
 
 	seenA, seenB := false, false

@@ -62,7 +62,16 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "rounds", b) {
+	if err != nil {
+		s.mu.Unlock()
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "rounds", b) {
 		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
@@ -213,7 +222,15 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "files", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "files", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
@@ -265,7 +282,16 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, _, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "bundle", b) {
+	if err != nil {
+		s.mu.Unlock()
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "bundle", b) {
 		s.mu.Unlock()
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
@@ -315,7 +341,15 @@ func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
 	name := r.PathValue("name")
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "ack", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "ack", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}

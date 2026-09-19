@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -31,22 +32,18 @@ func isHex(s string) bool {
 }
 
 func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding, relay.Runtime, error) {
-	if caller != "" {
-		rt := s.runtime(caller)
-		if b, err := rt.Store.Load(name); err == nil {
-			return b, rt, nil
-		}
+	if caller == "" {
+		return store.Binding{}, relay.Runtime{}, store.ErrNotFound
 	}
-	for _, cl := range s.clients.List() {
-		if cl.ID == caller {
-			continue
-		}
-		rt := s.runtime(cl.ID)
-		if b, err := rt.Store.Load(name); err == nil {
-			return b, rt, nil
-		}
+	rt, err := s.runtime(caller)
+	if err != nil {
+		return store.Binding{}, relay.Runtime{}, err
 	}
-	return store.Binding{}, relay.Runtime{}, store.ErrNotFound
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return store.Binding{}, relay.Runtime{}, err
+	}
+	return b, rt, nil
 }
 
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
@@ -73,14 +70,23 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	caller := callerOf(r)
-	rt := s.runtime(caller)
+	rt, err := s.runtime(caller)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
 
 	if _, err := rt.Store.Load(req.Name); err == nil {
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, "binding exists")
 		return
 	}
 
-	bare := filepath.Join(s.cfg.Root, "repos", string(caller), req.RepoID+".git")
+	repoRoot, err := s.repoRoot(caller)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	bare := filepath.Join(repoRoot, req.RepoID+".git")
 	if err := s.cfg.Git.InitBare(r.Context(), bare); err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
@@ -129,7 +135,11 @@ func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 
 	caller := callerOf(r)
-	rt := s.runtime(caller)
+	rt, err := s.runtime(caller)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
 
 	bindings, err := rt.Store.List()
 	if err != nil {
@@ -157,7 +167,15 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "get", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "get", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
@@ -181,7 +199,15 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "done", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "done", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
@@ -218,7 +244,15 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "unbind", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "unbind", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
@@ -240,7 +274,15 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
 	b, rt, err := s.loadBinding(caller, name)
-	if err != nil || !Allowed(caller, "resume", b) {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "resume", b) {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 		return
 	}
@@ -273,12 +315,24 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 
 	caller := callerOf(r)
-	rt := s.runtime(caller)
+	rt, err := s.runtime(caller)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
 
 	name := r.PathValue("name")
 	if name != "" {
 		b, _, err := s.loadBinding(caller, name)
-		if err != nil || !Allowed(caller, "unavailable", b) {
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+			return
+		}
+		if !Allowed(caller, "unavailable", b) {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
 			return
 		}

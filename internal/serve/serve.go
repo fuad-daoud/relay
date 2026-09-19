@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,8 +64,32 @@ func New(cfg Config) (*Server, error) {
 	}, nil
 }
 
-func (s *Server) runtime(owner remote.ClientID) relay.Runtime {
-	st := store.New(filepath.Join(s.cfg.Root, "bindings", string(owner)))
+func (s *Server) ownerRoot(owner remote.ClientID) (string, error) {
+	dir, ok := owner.Dir()
+	if !ok {
+		return "", errors.New("malformed client id")
+	}
+	return filepath.Join(s.cfg.Root, "bindings", dir), nil
+}
+
+func (s *Server) repoRoot(owner remote.ClientID) (string, error) {
+	dir, ok := owner.Dir()
+	if !ok {
+		return "", errors.New("malformed client id")
+	}
+	return filepath.Join(s.cfg.Root, "repos", dir), nil
+}
+
+func (s *Server) runtime(owner remote.ClientID) (relay.Runtime, error) {
+	root, err := s.ownerRoot(owner)
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+	return s.runtimeAt(root), nil
+}
+
+func (s *Server) runtimeAt(root string) relay.Runtime {
+	st := store.New(root)
 	return relay.Runtime{
 		Herdr:       stubHerdr{},
 		Git:         s.cfg.Git,
