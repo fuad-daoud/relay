@@ -842,6 +842,11 @@ func cmdAdd(args []string) error {
 	switch {
 	case res.Binding.Builder.Remote():
 		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.Server)
+		if res.Binding.Tier != "" {
+			fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
+		} else {
+			fmt.Printf("  tier server's choice (pre-tier server)\n")
+		}
 	case res.Binding.Builder.Headless():
 		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
 	default:

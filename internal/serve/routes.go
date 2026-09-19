@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 )
 
@@ -85,12 +86,18 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
 	label := s.clients.LabelOf(caller)
-	writeJSON(w, http.StatusOK, remote.WhoAmI{
+	who := remote.WhoAmI{
 		ID:            caller,
 		Label:         label,
 		ServerVersion: remote.Version,
 		Transports:    []string{"git-bundle"},
-	})
+	}
+	if rt, err := s.runtime(caller); err == nil {
+		who.Features = []string{remote.FeatureTier}
+		who.BuilderTier = string(relay.ServedBuilderTier(rt))
+		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
+	}
+	writeJSON(w, http.StatusOK, who)
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {

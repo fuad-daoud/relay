@@ -344,7 +344,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 	defer snap.Body.Close()
 
-	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body)
+	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "")
 	if err != nil {
 		t.Fatalf("StartRound: %v", err)
 	}

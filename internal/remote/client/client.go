@@ -275,7 +275,7 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 }
 
 // StartRound begins a round on the server, spooling the multipart form (plan + bundle).
-func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader) (remote.BindingView, error) {
+func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -296,6 +296,11 @@ func (c *Client) StartRound(ctx context.Context, server, name string, round int,
 	}
 	if err := mw.WriteField("plan", string(plan)); err != nil {
 		return remote.BindingView{}, fmt.Errorf("write plan field: %w", err)
+	}
+	if tier != "" {
+		if err := mw.WriteField("tier", tier); err != nil {
+			return remote.BindingView{}, fmt.Errorf("write tier field: %w", err)
+		}
 	}
 	if bundle != nil {
 		part, err := mw.CreateFormFile("bundle", "bundle.bundle")

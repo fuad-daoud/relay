@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -128,7 +129,56 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundStartedAt: b.RoundStartedAt,
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
+		Tier:           string(effectiveTier(b)),
 	}
+}
+
+// ResolveServedTier is the served counterpart of add.go's
+// resolveTier+checkTierCap. token is the candidate PickServedCandidate
+// chose (may be "" or unresolvable: then the candidate contributes no
+// tier); explicit is the wire tier ("" = none).
+//
+//	chain: explicit > candidate.Tier > rt.Policy.TierFor("builder") > harness
+//	cap:   checkTierCap(tier, rt.Policy, allowYolo=false) -- the server's
+//	       max_tier is a ceiling nothing on the wire lifts
+//
+// Errors: harness.ParseTier's error for a malformed explicit;
+// ErrTierAboveMax (wrapped, message names the ceiling) above the cap.
+// explicit == "" can still fail: a policy tier.builder above max_tier is a
+// policy authoring error and returns ErrTierAboveMax too, so the create
+// fails loudly instead of launching at a tier the policy forbids (add.go
+// behaves the same locally).
+func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error) {
+	var c candidate.Candidate
+	if rt.Candidates != nil && token != "" {
+		if ref, err := candidate.ParseRef(token); err == nil {
+			if c2, err := rt.Candidates.Lookup(ref); err == nil {
+				c = c2
+			}
+		}
+	}
+	if explicit != "" {
+		if _, err := harness.ParseTier(explicit); err != nil {
+			return "", err
+		}
+	}
+	tier := resolveTier(explicit, c, rt.Policy, "builder")
+	if err := checkTierCap(tier, rt.Policy, false); err != nil {
+		return tier, err
+	}
+	return tier, nil
+}
+
+// ServedBuilderTier is what WhoAmI reports and relay serve logs at startup:
+// ResolveServedTier(rt, PickServedCandidate(rt, ""), ""), falling back to
+// harness (not an error) when the chain refuses.
+func ServedBuilderTier(rt Runtime) harness.Tier {
+	token, _ := PickServedCandidate(rt, "")
+	tier, err := ResolveServedTier(rt, token, "")
+	if err != nil {
+		return harness.TierHarness
+	}
+	return tier
 }
 
 // PickServedCandidate resolves the builder candidate token and harness kind for a served binding.

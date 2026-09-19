@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -42,6 +43,14 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	if planText == "" {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "plan is required")
 		return
+	}
+
+	tierStr := r.FormValue("tier")
+	if tierStr != "" {
+		if _, err := harness.ParseTier(tierStr); err != nil {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			return
+		}
 	}
 
 	var bundlePart io.Reader
@@ -186,7 +195,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{})
+	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr})
 	if sendErr != nil {
 		if errors.Is(sendErr, relay.ErrRunnerUnavailable) {
 			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
@@ -194,6 +203,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(sendErr, relay.ErrBuilderBusy) {
 			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
+			return
+		}
+		if errors.Is(sendErr, relay.ErrTierAboveMax) {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
 			return
 		}
 		if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
