@@ -236,6 +236,46 @@ func frontmatterModel(raw []byte) string {
 	return "" // frontmatter ended with no model key
 }
 
+// pinnedModel returns the model pin recorded in an installed role
+// definition's raw bytes, dispatching on the kind's shipped format: a TOML
+// profile's top-level `model` key, or a Markdown definition's frontmatter
+// `model:` key.
+func pinnedModel(kind string, raw []byte) string {
+	if h, ok := harness.Lookup(kind); ok && h.DocExt == "toml" {
+		return tomlTopLevelModel(raw)
+	}
+	return frontmatterModel(raw)
+}
+
+// tomlTopLevelModel returns the value of a top-level `model = "..."` key,
+// or "" when there is none. The first `[table]` header ends the top level,
+// so a model key inside a table (e.g. [agents.researcher]) is not a pin
+// for the profile itself. `model_reasoning_effort` must not match: after
+// trimming the "model" prefix, the remainder starts with "_reasoning_effort",
+// which does not begin with "=" once trimmed, so the line is skipped.
+func tomlTopLevelModel(raw []byte) string {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			return ""
+		}
+		rest, ok := strings.CutPrefix(line, "model")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		rest, ok = strings.CutPrefix(rest, "=")
+		if !ok {
+			continue
+		}
+		v := strings.TrimSpace(rest)
+		if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+			return v[1 : len(v)-1]
+		}
+	}
+	return ""
+}
+
 // roleCheck probes one shipped role definition on disk.
 func roleCheck(env Env, kind string, r harness.Role) Check {
 	homeRel := "~/" + r.Path
@@ -263,9 +303,16 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	// what this row reports, and the model pin is a courtesy on top of
 	// that -- except on a kind whose pin would override the launch line.
 	if raw, err := env.ReadFile(fullPath); err == nil {
-		if model := frontmatterModel(raw); model != "" {
+		if model := pinnedModel(kind, raw); model != "" {
 			detail = fmt.Sprintf("%s (model: %s)", homeRel, model)
 			if r.ExpectModel != "" && model != r.ExpectModel {
+				if h, ok := harness.Lookup(kind); ok && h.DocExt == "toml" {
+					return Check{
+						Group: kind, Name: r.Name, Severity: SevWarn,
+						Detail: fmt.Sprintf("%s -- pins %s; relay ships %s", detail, model, r.ExpectModel),
+						Fix:    fmt.Sprintf("relay agent install --kind %s --role %s --force", kind, r.Name),
+					}
+				}
 				return Check{
 					Group: kind, Name: r.Name, Severity: SevWarn,
 					Detail: fmt.Sprintf("%s -- pins a tier; the candidate's --model is ignored", detail),

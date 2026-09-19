@@ -58,13 +58,58 @@ func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 	// a second writer in one tree destroys work rather than stalling.
 	const oneWriter = "Exactly one agent writes to this working tree, and it is you."
 
-	for _, kind := range []string{"claude", "opencode", "agy"} {
+	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
 		doc, err := AgentDoc("plan-executor", kind)
 		if err != nil {
 			t.Fatalf("AgentDoc(plan-executor, %s): %v", kind, err)
 		}
 		if !strings.Contains(string(doc), oneWriter) {
 			t.Errorf("plan-executor.%s.md must contain %q", kind, oneWriter)
+		}
+	}
+}
+
+// TestAgentDocCodexIsToml pins the string-level shape of every codex role
+// profile: no TOML parser is used (spec §11), so the checks are the plain
+// string invariants that make the file valid TOML with developer_instructions
+// as a top-level key.
+func TestAgentDocCodexIsToml(t *testing.T) {
+	const marker = "developer_instructions = '''\n"
+	for _, role := range []string{"plan-executor", "researcher", "reviewer", "architect"} {
+		doc, err := AgentDoc(role, "codex")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s, codex): %v", role, err)
+		}
+		s := string(doc)
+		idx := strings.Index(s, marker)
+		if idx < 0 {
+			t.Fatalf("%s: doc does not contain %q", role, marker)
+		}
+		after := s[idx+len(marker):]
+		if strings.Count(after, "'''") != 1 {
+			t.Errorf("%s: text after the marker must contain exactly one closing '''; got %d", role, strings.Count(after, "'''"))
+		}
+		switch role {
+		case "plan-executor":
+			for _, want := range []string{"[agents.researcher]", `config_file = "researcher.config.toml"`, "spawn_agent"} {
+				if !strings.Contains(s, want) {
+					t.Errorf("plan-executor doc must contain %q", want)
+				}
+			}
+			for _, banned := range []string{"subagent_type", "Agent tool"} {
+				if strings.Contains(s, banned) {
+					t.Errorf("plan-executor doc must not contain %q", banned)
+				}
+			}
+			if di, tbl := strings.Index(s, "developer_instructions"), strings.Index(s, "[agents.researcher]"); di < 0 || tbl < 0 || di >= tbl {
+				t.Errorf("plan-executor doc: developer_instructions (%d) must come before [agents.researcher] (%d)", di, tbl)
+			}
+		case "researcher":
+			for _, want := range []string{`model = "gpt-5.6-luna"`, `model_reasoning_effort = "medium"`} {
+				if !strings.Contains(s, want) {
+					t.Errorf("researcher doc must contain %q", want)
+				}
+			}
 		}
 	}
 }

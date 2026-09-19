@@ -62,7 +62,7 @@ func TestRenderRules(t *testing.T) {
 		"unknown type":        {"claude", `{"type":"brand_new"}`, []string{"[brand_new]"}},
 		"unknown event":       {"agy", `{"event":"brand_new"}`, []string{"[brand_new]"}},
 		"no type at all":      {"claude", `{"x":1}`, []string{"[?]"}},
-		"unknown kind":        {"codex", `{"type":"item"}`, []string{"[item]"}},
+		"unknown kind":        {"droid", `{"type":"item"}`, []string{"[item]"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -253,6 +253,96 @@ func TestOpencodeTable(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			if got := Render("opencode", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// codex's table is pinned from the 2026-09-19 capture (spec §7). This test
+// covers the branches the fixture cannot (the fixture covers the happy
+// shapes).
+func TestCodexTable(t *testing.T) {
+	cases := map[string]struct {
+		line string
+		want []string
+	}{
+		"thread.started is noise": {
+			`{"type":"thread.started","thread_id":"t1"}`,
+			nil,
+		},
+		"turn.started is noise": {
+			`{"type":"turn.started"}`,
+			nil,
+		},
+		"item.started is noise": {
+			`{"type":"item.started","item":{"id":"i1","type":"command_execution"}}`,
+			nil,
+		},
+		"turn.failed": {
+			`{"type":"turn.failed","error":{"message":"boom"}}`,
+			[]string{"  ⎿ error: boom"},
+		},
+		"top-level error": {
+			`{"type":"error","message":"top level boom"}`,
+			[]string{"  ⎿ error: top level boom"},
+		},
+		"item.completed agent_message": {
+			`{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}`,
+			[]string{"hi"},
+		},
+		"item.completed agent_message with empty text": {
+			`{"type":"item.completed","item":{"type":"agent_message","text":""}}`,
+			nil,
+		},
+		"item.completed reasoning is noise": {
+			`{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}`,
+			nil,
+		},
+		"item.completed error": {
+			`{"type":"item.completed","item":{"type":"error","message":"item boom"}}`,
+			[]string{"  ⎿ error: item boom"},
+		},
+		"command_execution success": {
+			`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"a\nb\n","exit_code":0}}`,
+			[]string{"● bash ls", "  ⎿ ok: a"},
+		},
+		"command_execution failure": {
+			`{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"nope","exit_code":2}}`,
+			[]string{"● bash ls", "  ⎿ error: exit 2: nope"},
+		},
+		"file_change with two changes": {
+			`{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"a.go"},{"path":"b.go"}]}}`,
+			[]string{"● edit a.go", "● edit b.go"},
+		},
+		"file_change with no changes": {
+			`{"type":"item.completed","item":{"type":"file_change","changes":[]}}`,
+			[]string{"[file_change]"},
+		},
+		"collab_tool_call spawn_agent": {
+			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","prompt":"go do it"}}`,
+			[]string{"● spawn_agent go do it"},
+		},
+		"collab_tool_call wait with a completed state": {
+			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"completed","message":"done"}}}}`,
+			[]string{"  ⎿ ok: done"},
+		},
+		"collab_tool_call wait with no completed states": {
+			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"wait","agents_states":{"a1":{"status":"pending_init","message":null}}}}`,
+			[]string{"[collab_tool_call wait]"},
+		},
+		"collab_tool_call other tool": {
+			`{"type":"item.completed","item":{"type":"collab_tool_call","tool":"frobnicate"}}`,
+			[]string{"[collab_tool_call frobnicate]"},
+		},
+		"item.completed unknown item type": {
+			`{"type":"item.completed","item":{"type":"foo"}}`,
+			[]string{"[foo]"},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Render("codex", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})

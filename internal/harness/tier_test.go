@@ -113,6 +113,12 @@ func TestPermissionArgsTable(t *testing.T) {
 		{"opencode", TierRead, nil, ErrTierUnsupported},
 		{"opencode", TierEdit, nil, ErrTierUnsupported},
 		{"opencode", TierYolo, []string{"--auto"}, nil},
+
+		// codex
+		{"codex", TierHarness, nil, nil},
+		{"codex", TierRead, []string{"-s", "read-only"}, nil},
+		{"codex", TierEdit, []string{"-s", "workspace-write"}, nil},
+		{"codex", TierYolo, []string{"--dangerously-bypass-approvals-and-sandbox"}, nil},
 	}
 
 	for _, tt := range tests {
@@ -279,6 +285,25 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--permission-mode=plan") {
 		t.Errorf("error %q should name --permission-mode=plan", err.Error())
+	}
+
+	// codex extra -s read-only at edit -> refused
+	codex, _ := Lookup("codex")
+	_, err = codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierEdit)
+	if !errors.Is(err, ErrExtraArgsPermission) {
+		t.Fatalf("codex Launch edit with extra perm flag error = %v, want ErrExtraArgsPermission", err)
+	}
+	if !strings.Contains(err.Error(), "-s") {
+		t.Errorf("error %q should name -s", err.Error())
+	}
+
+	// same extra at harness -> ok, extra passed through
+	cl, err := codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("codex Launch harness with extra perm flag unexpected error: %v", err)
+	}
+	if len(cl.Args) < 2 || cl.Args[len(cl.Args)-2] != "-s" || cl.Args[len(cl.Args)-1] != "read-only" {
+		t.Errorf("codex Args should end with -s read-only: %v", cl.Args)
 	}
 }
 

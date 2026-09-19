@@ -44,6 +44,8 @@ func Render(kind string, line []byte) []string {
 		return renderAgy(obj)
 	case "opencode":
 		return renderOpencode(obj)
+	case "codex":
+		return renderCodex(obj)
 	}
 	return []string{unknown(obj)}
 }
