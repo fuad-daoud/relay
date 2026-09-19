@@ -329,6 +329,26 @@ func (c *Client) CreateBranch(ctx context.Context, dir, branch, commit string) e
 	return nil
 }
 
+// DeleteBranch force-removes branch from dir. A branch that does not exist is
+// not an error: relay's own cleanup calls this on a branch it just created
+// itself, without knowing whether a later failure left it in place, so
+// idempotence keeps the caller from having to check first.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure -- never for a
+// missing branch.
+func (c *Client) DeleteBranch(ctx context.Context, dir, branch string) error {
+	branchName := strings.TrimPrefix(branch, "refs/heads/")
+	_, err := c.run(ctx, dir, nil, "branch", "-D", branchName)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not found") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // AddWorktree creates a worktree at path, checking out a NEW branch at commit.
 //
 // Preconditions:  path does not exist; branch does not exist; commit resolves.
