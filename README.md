@@ -250,6 +250,9 @@ inside every pane it manages, so it has to be run from inside one.
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--headless` applies as for `bind`.
+  `relay add --name N --server S [--base REF]` runs that builder on a
+  configured remote server instead (see "Remote builders: the client" below);
+  `--cwd` cannot be combined with `--server`.
 - `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
@@ -275,6 +278,16 @@ inside every pane it manages, so it has to be run from inside one.
   box is empty or its screen has been quiet for `--held-grace` (default 60s).
 - `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
 - `relay serve init|enroll|clients|revoke|fingerprint|status|gc` — server administration, on the server host.
+- `relay client init` — generate this machine's remote-builder identity (an
+  ed25519 keypair); prints the enrollment line a server admin runs
+  `relay serve enroll --key "<line>"` with.
+- `relay client add-server NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
+  record a remote server in `servers.json`; with `--fingerprint`, checks
+  enrollment once.
+- `relay client rm-server NAME` — forget a configured server; refused while
+  any binding still names it.
+- `relay servers` — one row per configured server: name, url, and this
+  client's enrollment on it.
 - `relay help` — the command list. `relay <command> -h` prints that command's
   flags.
 - `relay version` — the build's version.
@@ -418,6 +431,62 @@ On the server machine, the admin can inspect enrolled clients and all owners' ac
 - `relay serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 
 What `relay serve` does not do: it runs no planner, opens no tmux/herdr panes, and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+
+### Remote builders: the client
+
+A remote binding is an ordinary binding whose builder runs on someone else's
+machine, over a signed, pinned HTTPS connection instead of a local pane or
+process. It has no worktree and no pane of its own: `relay send` ships a
+bundle of your branch's history instead of typing into a terminal, and the
+daemon polls the server for the round's state the same way it polls a pane.
+
+Set up once per machine:
+1. `relay client init` generates this client's ed25519 keypair (in
+   `~/.config/relay/client.key` / `.pub`) and prints two lines: the client's
+   id, and an enrollment line (`ed25519 <base64> <user>@<host>`) to hand the
+   server admin.
+2. The admin runs `relay serve enroll --label <you> --key "<enrollment
+   line>"` on the server, and shares back that server's certificate
+   fingerprint (printed by `relay serve init` there).
+3. `relay client add-server <name> <url> --fingerprint sha256:<hex>` records
+   the server in `~/.config/relay/servers.json` and, having a fingerprint to
+   pin the connection with, checks enrollment immediately: "enrolled as
+   `<label>`", or "not enrolled on `<name>`: give the admin: `<enrollment
+   line>`" if step 2 has not happened yet. `--ca system` trusts the system CA
+   pool instead of pinning a fingerprint; `--insecure` allows plain HTTP, for
+   a server reachable only over an already-trusted tunnel.
+4. `relay servers` lists every configured server and this client's
+   enrollment on each: `enrolled as <label>`, `not enrolled`, `unreachable`,
+   or `cert changed` (the pinned fingerprint no longer matches -- a hard
+   refusal the client never overrides silently).
+
+Then, from any repository:
+```
+relay add --name api --server zen         # creates the server binding and
+                                           # the local branch relay/api, no worktree
+relay send --name api --file plan.md      # ships plan.md and a bundle of relay/api
+relay status                              # round state comes from the server, polled
+```
+
+What comes back as `relay/<name>`: the result of a closed round is fetched
+into your repository's own `refs/heads/relay/<name>` branch -- fast-forward
+only, exactly like a pane builder's worktree branch. If the round closed with
+uncommitted changes on the server, they land on a side ref,
+`refs/relay/<name>/round-<N>`, whose parent is that round's commit on
+`relay/<name>`; the report names it. If that fast-forward collides with a
+branch you have checked out locally, relay retries quietly next tick --
+check out something else, then `relay pull`.
+
+What is refused: `--cwd` cannot be combined with `--server` (a remote binding
+is add-only, never bound to an existing directory); `relay answer` ("remote
+builders take no dialogs" -- there is no pane to send keys into); `relay ask`
+("consults are local-only"); `relay fork` from a remote source ("fork across
+servers is not supported"); and `relay bind --resume --rebind` (or
+`--builder`/`--headless`) against a remote binding ("cannot change a remote
+builder; unbind and add" -- a binding's mode is fixed at creation, the same
+rule a headless binding follows). `relay done` and `relay unbind` tell the
+server first, and only change anything locally once it agrees (a 404 from
+the server is treated as already gone, and proceeds).
 
 ### Round budget
 

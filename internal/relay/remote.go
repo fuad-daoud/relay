@@ -605,3 +605,18 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 
 	return lines
 }
+
+// ServerInUse names every binding that names server -- the pure rule behind
+// `relay client rm-server`'s refusal (§4.7). A pure function over the
+// binding list rather than a store read, so the CLI (cmd/relay) can be
+// tested without touching herdr or the network -- the caller loads the
+// bindings and this function decides.
+func ServerInUse(bindings []store.Binding, server string) []string {
+	var names []string
+	for _, b := range bindings {
+		if b.Builder.Remote() && b.Builder.Server == server {
+			names = append(names, b.Name)
+		}
+	}
+	return names
+}

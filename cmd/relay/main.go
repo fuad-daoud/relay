@@ -30,6 +30,8 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
 	// usagepkg: this file already has a package-level const named "usage"
@@ -80,6 +82,11 @@ Commands:
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc
                             server administration, on the server host
+
+  client init|add-server|rm-server
+                            this machine's remote-builder identity and server list
+  servers   list configured remote servers and this client's enrollment on each
+  add --server <name> [--base <ref>]  attach a builder that runs on a configured remote server
 
   help      print this message
   version   print the relay version
@@ -242,6 +249,10 @@ func run(args []string) error {
 		return cmdAgent(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
+	case "client":
+		return cmdClient(args[1:])
+	case "servers":
+		return cmdServers(args[1:])
 	default:
 		return fmt.Errorf("unknown subcommand %q; run \"relay help\" for the command list", args[0])
 	}
@@ -324,10 +335,16 @@ func newRuntime() (relay.Runtime, error) {
 	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
 
 	st := store.New(root)
+	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
+
+	remoteClient, transport, err := newRemoteClient(configDir, gitClient)
+	if err != nil {
+		return relay.Runtime{}, err
+	}
 
 	return relay.Runtime{
 		Herdr:       herdr.NewClient("herdr", 30*time.Second),
-		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Git:         gitClient,
 		Runner:      proc.New(),
 		Store:       st,
 		Candidates:  candidates,
@@ -338,7 +355,37 @@ func newRuntime() (relay.Runtime, error) {
 		Prices:      prices,
 		Now:         time.Now,
 		Hooks:       dispatcher,
+		Remote:      remoteClient,
+		Transport:   transport,
 	}, nil
+}
+
+// newRemoteClient wires Runtime.Remote and Runtime.Transport (§4.7): both nil
+// when servers.json is absent or empty. A servers.json with no client key is
+// not fatal -- every remote path already reports ErrRemoteUnavailable on a
+// nil Runtime.Remote -- but it prints once, since a configured server the
+// client cannot reach is a setup mistake worth naming immediately rather
+// than only when a remote command is next run.
+func newRemoteClient(configDir string, gitClient *git.Client) (relay.RemoteClient, remote.TreeTransport, error) {
+	servers, err := client.LoadServers(client.ServersPath(configDir))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(servers) == 0 {
+		return nil, nil, nil
+	}
+
+	privPath, _ := client.KeyPaths(configDir)
+	key, err := client.LoadKey(privPath)
+	if err != nil {
+		if errors.Is(err, client.ErrNoKey) {
+			fmt.Fprintln(os.Stderr, "relay: servers.json present but no client key; run relay client init")
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+
+	return client.New(servers, key, time.Now), remote.NewBundleTransport(gitClient, ""), nil
 }
 
 // noteConsultRolesTooLong prints, after a successful bind/add/fork, the one
@@ -494,6 +541,10 @@ func cmdUnavailable(args []string) error {
 		if names := relay.BindingsOnProvider(bs, provider); len(names) > 0 {
 			fmt.Printf("the daemon will switch: %s\n", strings.Join(names, ", "))
 		}
+	}
+
+	for _, line := range relay.ForwardUnavailable(context.Background(), rt, token, *reason) {
+		fmt.Fprintln(os.Stderr, line)
 	}
 
 	return nil
@@ -725,6 +776,8 @@ func cmdAdd(args []string) error {
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
+	server := fs.String("server", "", "run the builder on this configured remote server instead of a local pane or process (relay servers)")
+	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -751,14 +804,19 @@ func cmdAdd(args []string) error {
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 		Headless:    *headless,
+		Server:      *server,
+		Base:        *base,
 	})
 	if err != nil {
 		return err
 	}
 
-	if res.Binding.Builder.Headless() {
+	switch {
+	case res.Binding.Builder.Remote():
+		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.Server)
+	case res.Binding.Builder.Headless():
 		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
-	} else {
+	default:
 		fmt.Printf("added %s: builder %s in pane %s\n",
 			res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
 	}
@@ -766,9 +824,12 @@ func cmdAdd(args []string) error {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick("builder", res.Resolution)
-	if res.Worktree != "" {
+	switch {
+	case res.Binding.Builder.Remote():
+		fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
+	case res.Worktree != "":
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
-	} else {
+	default:
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)

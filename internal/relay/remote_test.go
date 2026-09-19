@@ -1376,3 +1376,21 @@ func TestAnswerAskForkRefuseRemote(t *testing.T) {
 		}
 	})
 }
+
+func TestServerInUse(t *testing.T) {
+	bindings := []store.Binding{
+		remoteBinding("zen"),
+		func() store.Binding { b := remoteBinding("mars"); b.Name = "other"; return b }(),
+		{Name: "local", Builder: store.Endpoint{Mode: store.ModePane}},
+	}
+
+	if got := ServerInUse(bindings, "zen"); len(got) != 1 || got[0] != "api" {
+		t.Fatalf("ServerInUse(zen) = %v, want [api]", got)
+	}
+	if got := ServerInUse(bindings, "mars"); len(got) != 1 || got[0] != "other" {
+		t.Fatalf("ServerInUse(mars) = %v, want [other]", got)
+	}
+	if got := ServerInUse(bindings, "pluto"); len(got) != 0 {
+		t.Fatalf("ServerInUse(pluto) = %v, want none", got)
+	}
+}

@@ -1,0 +1,292 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/remote/client"
+	"github.com/fuad-daoud/relay/internal/store"
+)
+
+// cmdClient dispatches `relay client init|add-server|rm-server` (§4.7): this
+// machine's remote-builder identity (an ed25519 keypair) and its server
+// list (~/.config/relay/servers.json).
+func cmdClient(args []string) error {
+	const usage = `usage: relay client init
+       relay client add-server <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
+       relay client rm-server <name>`
+
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+
+	switch args[0] {
+	case "init":
+		return cmdClientInit(args[1:])
+	case "add-server":
+		return cmdClientAddServer(args[1:])
+	case "rm-server":
+		return cmdClientRmServer(args[1:])
+	case "help", "-h", "--help":
+		fmt.Println(usage)
+		return nil
+	default:
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+}
+
+// cmdClientInit generates this machine's client key (refusing to overwrite
+// one that exists) and prints the id and the enrollment line a server admin
+// runs `relay serve enroll --key "<line>"` with.
+func cmdClientInit(args []string) error {
+	fs := flag.NewFlagSet("relay client init", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	privPath, pubPath := client.KeyPaths(configDir)
+
+	kp, err := client.InitKey(privPath, pubPath)
+	if err != nil {
+		if errors.Is(err, client.ErrKeyExists) {
+			return fmt.Errorf("client key already exists at %s; remove it first to replace it", privPath)
+		}
+		return err
+	}
+
+	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
+
+	pubLine, err := os.ReadFile(pubPath)
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(pubLine))
+	return nil
+}
+
+// cmdClientAddServer records a server entry in servers.json and, when
+// --fingerprint pins it, checks enrollment once with WhoAmI (§4.7). A 401
+// here is not an error: it means the admin has not enrolled this client's
+// key yet, and the reply names the enrollment line to hand them.
+func cmdClientAddServer(args []string) error {
+	fs := flag.NewFlagSet("relay client add-server", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fingerprint := fs.String("fingerprint", "", "pin the server's certificate fingerprint (sha256:<hex>)")
+	ca := fs.String("ca", "", `trust the system CA pool instead of pinning ("system")`)
+	insecure := fs.Bool("insecure", false, "allow plain http (no TLS)")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rest := fs.Args()
+	if len(rest) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: relay client add-server <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
+		return exitCodeErr{code: 2}
+	}
+	name, rawURL := rest[0], rest[1]
+
+	set := 0
+	if *fingerprint != "" {
+		set++
+	}
+	if *ca != "" {
+		set++
+	}
+	if *insecure {
+		set++
+	}
+	if set > 1 {
+		fmt.Fprintln(os.Stderr, "relay client add-server: --fingerprint, --ca and --insecure are mutually exclusive")
+		return exitCodeErr{code: 2}
+	}
+
+	entry := client.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
+	if err := client.ValidateEntry(entry); err != nil {
+		return err
+	}
+
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	serversPath := client.ServersPath(configDir)
+	servers, err := client.LoadServers(serversPath)
+	if err != nil {
+		return err
+	}
+	servers[name] = entry
+	if err := client.SaveServers(serversPath, servers); err != nil {
+		return err
+	}
+	fmt.Printf("added server %s (%s)\n", name, rawURL)
+
+	if *fingerprint == "" {
+		// Pinned by --ca or plain --insecure: there is no fingerprint to pin
+		// the transport to, so there is nothing to enrollment-check yet.
+		return nil
+	}
+
+	privPath, pubPath := client.KeyPaths(configDir)
+	key, err := client.LoadKey(privPath)
+	if err != nil {
+		if errors.Is(err, client.ErrNoKey) {
+			fmt.Println("no client key yet; run relay client init, then relay client add-server again to check enrollment")
+			return nil
+		}
+		return err
+	}
+
+	c := client.New(servers, key, time.Now)
+	who, werr := c.WhoAmI(context.Background(), name)
+	if werr != nil {
+		var httpErr *client.HTTPError
+		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
+			pubLine, rerr := os.ReadFile(pubPath)
+			if rerr != nil {
+				return rerr
+			}
+			fmt.Printf("not enrolled on %s: give the admin: %s", name, string(pubLine))
+			return nil
+		}
+		return fmt.Errorf("%s: %w", name, werr)
+	}
+	fmt.Printf("enrolled as %s\n", who.Label)
+	return nil
+}
+
+// cmdClientRmServer refuses while any binding in the store still names the
+// server (relay.ServerInUse is the pure rule this checks; it is tested in
+// internal/relay so this thin wrapper needs no herdr or network access to
+// test the refusal shape -- see CLAUDE.md's CI rule).
+func cmdClientRmServer(args []string) error {
+	fs := flag.NewFlagSet("relay client rm-server", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: relay client rm-server <name>")
+		return exitCodeErr{code: 2}
+	}
+	name := rest[0]
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return err
+	}
+	st := store.New(root)
+	bindings, err := st.List()
+	if err != nil {
+		return err
+	}
+	if inUse := relay.ServerInUse(bindings, name); len(inUse) > 0 {
+		return fmt.Errorf("server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
+	}
+
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	serversPath := client.ServersPath(configDir)
+	servers, err := client.LoadServers(serversPath)
+	if err != nil {
+		return err
+	}
+	if _, ok := servers[name]; !ok {
+		return fmt.Errorf("no such server %q", name)
+	}
+	delete(servers, name)
+	if err := client.SaveServers(serversPath, servers); err != nil {
+		return err
+	}
+	fmt.Printf("removed server %s\n", name)
+	return nil
+}
+
+// cmdServers prints one row per configured server: name, url, and this
+// client's enrollment on it (§4.7).
+func cmdServers(args []string) error {
+	fs := flag.NewFlagSet("relay servers", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	serversPath := client.ServersPath(configDir)
+	servers, err := client.LoadServers(serversPath)
+	if err != nil {
+		return err
+	}
+	if len(servers) == 0 {
+		fmt.Println("no servers configured; relay client add-server <name> <url>")
+		return nil
+	}
+
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	privPath, _ := client.KeyPaths(configDir)
+	key, keyErr := client.LoadKey(privPath)
+	var c *client.Client
+	if keyErr == nil {
+		c = client.New(servers, key, time.Now)
+	}
+
+	width := 0
+	for _, n := range names {
+		if len(n) > width {
+			width = len(n)
+		}
+	}
+	for _, n := range names {
+		e := servers[n]
+		fmt.Printf("%-*s  %-40s  %s\n", width, n, e.URL, serverStatus(c, keyErr, n))
+	}
+	return nil
+}
+
+// serverStatus is one server's enrollment word: enrolled-as|not
+// enrolled|unreachable|cert changed|no client key (§4.7).
+func serverStatus(c *client.Client, keyErr error, name string) string {
+	if keyErr != nil {
+		return "no client key"
+	}
+	who, err := c.WhoAmI(context.Background(), name)
+	switch {
+	case err == nil:
+		return "enrolled as " + who.Label
+	case errors.Is(err, client.ErrCertChanged):
+		return "cert changed"
+	case errors.Is(err, client.ErrUnreachable):
+		return "unreachable"
+	default:
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 401 {
+			return "not enrolled"
+		}
+		return err.Error()
+	}
+}
