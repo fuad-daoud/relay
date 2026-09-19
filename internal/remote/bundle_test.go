@@ -1,0 +1,335 @@
+package remote
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/git"
+)
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\nOutput: %s", strings.Join(args, " "), dir, err, string(out))
+	}
+	return string(out)
+}
+
+func TestBundleTransportOutboundThenInbound(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	// Client repo
+	clientRepo := t.TempDir()
+	runGit(t, clientRepo, "init")
+	if err := os.WriteFile(filepath.Join(clientRepo, "f1.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientRepo, "add", "f1.txt")
+	runGit(t, clientRepo, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
+	branch := "refs/heads/relay/api"
+	runGit(t, clientRepo, "update-ref", branch, c1)
+
+	// Server bare repo
+	bareServer := t.TempDir()
+	runGit(t, bareServer, "init", "--bare")
+
+	// Round 1 OUTBOUND (client -> server)
+	lastShipped := ""
+	snap1, err := transport.Snapshot(ctx, clientRepo, []string{branch}, lastShipped)
+	if err != nil {
+		t.Fatalf("Snapshot round 1: %v", err)
+	}
+	if snap1.Empty || snap1.Body == nil {
+		t.Fatal("snap1 should not be empty")
+	}
+	moved, err := transport.Absorb(ctx, bareServer, snap1.ContentType, snap1.Body, []string{branch})
+	_ = snap1.Body.Close()
+	if err != nil {
+		t.Fatalf("Absorb round 1: %v", err)
+	}
+	if moved[branch] != c1 {
+		t.Fatalf("moved[%s] = %q, want %q", branch, moved[branch], c1)
+	}
+	lastShipped = snap1.Heads[branch]
+
+	// Round 1 INBOUND (server -> client): clean, nothing new
+	lastKnown := lastShipped
+	snapIn1, err := transport.Snapshot(ctx, bareServer, []string{branch}, lastKnown)
+	if err != nil {
+		t.Fatalf("Snapshot inbound round 1: %v", err)
+	}
+	if !snapIn1.Empty {
+		t.Fatal("expected empty snapshot for clean inbound round 1")
+	}
+
+	// Round 2 OUTBOUND: client adds c2
+	if err := os.WriteFile(filepath.Join(clientRepo, "f2.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientRepo, "add", "f2.txt")
+	runGit(t, clientRepo, "commit", "-m", "c2")
+	c2 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
+	runGit(t, clientRepo, "update-ref", branch, c2)
+
+	snap2, err := transport.Snapshot(ctx, clientRepo, []string{branch}, lastShipped)
+	if err != nil {
+		t.Fatalf("Snapshot round 2: %v", err)
+	}
+	if snap2.Empty || snap2.Body == nil {
+		t.Fatal("snap2 should not be empty")
+	}
+	moved2, err := transport.Absorb(ctx, bareServer, snap2.ContentType, snap2.Body, []string{branch})
+	_ = snap2.Body.Close()
+	if err != nil {
+		t.Fatalf("Absorb round 2: %v", err)
+	}
+	if moved2[branch] != c2 {
+		t.Fatalf("moved2[%s] = %q, want %q", branch, moved2[branch], c2)
+	}
+	lastShipped = snap2.Heads[branch]
+
+	// Server round 2 execution: produces commit c3
+	treeServer := strings.TrimSpace(runGit(t, bareServer, "rev-parse", c2+"^{tree}"))
+	c3, err := g.CommitTree(ctx, bareServer, treeServer, c2, "server commit c3")
+	if err != nil {
+		t.Fatalf("CommitTree c3: %v", err)
+	}
+	if err := g.UpdateRef(ctx, bareServer, branch, c3, c2); err != nil {
+		t.Fatalf("UpdateRef branch c3: %v", err)
+	}
+
+	// Server round 2 closed dirty: side ref refs/relay/api/round-2
+	sideRef := "refs/relay/api/round-2"
+	sideCommit, err := g.CommitTree(ctx, bareServer, treeServer, c3, "[relay] api: round 2, uncommitted work")
+	if err != nil {
+		t.Fatalf("CommitTree side: %v", err)
+	}
+	if err := g.UpdateRef(ctx, bareServer, sideRef, sideCommit, ""); err != nil {
+		t.Fatalf("UpdateRef side: %v", err)
+	}
+
+	// Round 2 INBOUND (server -> client)
+	inboundRefs := []string{branch, sideRef}
+	snapIn2, err := transport.Snapshot(ctx, bareServer, inboundRefs, lastKnown)
+	if err != nil {
+		t.Fatalf("Snapshot inbound round 2: %v", err)
+	}
+	if snapIn2.Empty || snapIn2.Body == nil {
+		t.Fatal("snapIn2 should not be empty")
+	}
+	movedIn2, err := transport.Absorb(ctx, clientRepo, snapIn2.ContentType, snapIn2.Body, inboundRefs)
+	_ = snapIn2.Body.Close()
+	if err != nil {
+		t.Fatalf("Absorb inbound round 2: %v", err)
+	}
+	if movedIn2[branch] != c3 || movedIn2[sideRef] != sideCommit {
+		t.Fatalf("unexpected movedIn2: %v", movedIn2)
+	}
+
+	// Assert client's refs/relay/api/round-2 exists and its parent is client's refs/heads/relay/api
+	clientSideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
+	if err != nil || !ok || clientSideSHA != sideCommit {
+		t.Fatalf("client sideRef: got (%q, %v, %v), want (%q, true, nil)", clientSideSHA, ok, err, sideCommit)
+	}
+	clientHeadSHA, ok, err := g.RefSHA(ctx, clientRepo, branch)
+	if err != nil || !ok || clientHeadSHA != c3 {
+		t.Fatalf("client branch: got (%q, %v, %v), want (%q, true, nil)", clientHeadSHA, ok, err, c3)
+	}
+
+	catOut := runGit(t, clientRepo, "cat-file", "-p", clientSideSHA)
+	if !strings.Contains(catOut, "parent "+clientHeadSHA) {
+		t.Fatalf("sideRef commit does not have branch head %q as parent:\n%s", clientHeadSHA, catOut)
+	}
+}
+
+func TestBundleTransportEmptySnapshot(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "init")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	ref := "refs/heads/master"
+	runGit(t, repo, "update-ref", ref, c1)
+
+	snap, err := transport.Snapshot(ctx, repo, []string{ref}, c1)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if !snap.Empty {
+		t.Fatal("expected Empty == true")
+	}
+	if snap.Body != nil {
+		t.Fatal("expected Body == nil")
+	}
+
+	// Absorb of a zero-length reader returns an empty map
+	moved, err := transport.Absorb(ctx, repo, ContentTypeGitBundle, bytes.NewReader(nil), []string{ref})
+	if err != nil {
+		t.Fatalf("Absorb empty: %v", err)
+	}
+	if len(moved) != 0 {
+		t.Fatalf("expected empty map from zero-length absorb, got: %v", moved)
+	}
+}
+
+func TestBundleTransportUnexpectedRef(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	repoA := t.TempDir()
+	runGit(t, repoA, "init")
+	if err := os.WriteFile(filepath.Join(repoA, "f.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "f.txt")
+	runGit(t, repoA, "commit", "-m", "c1")
+	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	refMain := "refs/heads/main"
+	refAPI := "refs/heads/relay/api"
+	runGit(t, repoA, "update-ref", refMain, c1)
+	runGit(t, repoA, "update-ref", refAPI, c1)
+
+	// Snapshot carrying both refs
+	snap, err := transport.Snapshot(ctx, repoA, []string{refMain, refAPI}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Body.Close()
+
+	bareB := t.TempDir()
+	runGit(t, bareB, "init", "--bare")
+
+	// Absorb only names refAPI, but bundle carries refMain too
+	_, err = transport.Absorb(ctx, bareB, snap.ContentType, snap.Body, []string{refAPI})
+	if !errors.Is(err, ErrUnexpectedRef) {
+		t.Fatalf("Absorb unexpected ref: got %v, want ErrUnexpectedRef", err)
+	}
+
+	// Assert nothing moved in bareB
+	_, ok, _ := g.RefSHA(ctx, bareB, refAPI)
+	if ok {
+		t.Fatal("bareB refAPI unexpectedly moved")
+	}
+}
+
+func TestBundleTransportSinceUnknown(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "c1")
+	ref := "refs/heads/master"
+	runGit(t, repo, "update-ref", ref, strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD")))
+
+	_, err := transport.Snapshot(ctx, repo, []string{ref}, "0123456789abcdef0123456789abcdef01234567")
+	if !errors.Is(err, ErrSinceUnknown) {
+		t.Fatalf("Snapshot since unknown: got %v, want ErrSinceUnknown", err)
+	}
+}
+
+func TestBundleTransportUnsupportedType(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+
+	_, err := transport.Absorb(ctx, repo, "application/json", strings.NewReader("{}"), []string{"refs/heads/master"})
+	if !errors.Is(err, ErrUnsupportedType) {
+		t.Fatalf("Absorb unsupported type: got %v, want ErrUnsupportedType", err)
+	}
+}
+
+func TestBundleTransportLeavesNoTempFiles(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	tmpDir := t.TempDir()
+	transport := NewBundleTransport(g, tmpDir)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "init")
+	c1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	ref := "refs/heads/master"
+	runGit(t, repo, "update-ref", ref, c1)
+
+	// 1. Snapshot and close
+	snap, err := transport.Snapshot(ctx, repo, []string{ref}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snap.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Empty snapshot
+	snapEmpty, err := transport.Snapshot(ctx, repo, []string{ref}, c1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapEmpty.Empty {
+		t.Fatal("expected empty")
+	}
+
+	// 3. Snapshot with error
+	_, _ = transport.Snapshot(ctx, repo, []string{ref}, "0123456789abcdef0123456789abcdef01234567")
+
+	// 4. Absorb error paths
+	_, _ = transport.Absorb(ctx, repo, "unsupported", strings.NewReader("bad"), []string{ref})
+	_, _ = transport.Absorb(ctx, repo, ContentTypeGitBundle, strings.NewReader("not a bundle"), []string{ref})
+	_, _ = transport.Absorb(ctx, repo, ContentTypeGitBundle, bytes.NewReader(nil), []string{ref})
+
+	// Check that tmpDir is completely empty
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("temp directory not empty: %v", names)
+	}
+}

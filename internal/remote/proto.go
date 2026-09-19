@@ -1,0 +1,123 @@
+package remote
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"time"
+)
+
+// Version is the remote protocol version.
+const Version = 1
+
+// ContentTypeGitBundle is the MIME content type for git bundles.
+const ContentTypeGitBundle = "application/x-git-bundle"
+
+// RoundState represents the execution state of a round on the server.
+type RoundState string
+
+const (
+	RoundIdle     RoundState = "idle"
+	RoundRunning  RoundState = "running"
+	RoundClosed   RoundState = "closed"
+	RoundNeedsYou RoundState = "needs_you"
+)
+
+// WhoAmI represents the response to an authentication identity check.
+type WhoAmI struct {
+	ID            ClientID `json:"id"`
+	Label         string   `json:"label"`
+	ServerVersion int      `json:"server_version"`
+	Transports    []string `json:"transports"` // ["git-bundle"]
+}
+
+// CreateBindingRequest holds the parameters for creating a new binding on the server.
+type CreateBindingRequest struct {
+	Name           string `json:"name"`        // required; store name rules apply on the server
+	RepoID         string `json:"repo_id"`     // required; RepoID()
+	BaseCommit     string `json:"base_commit"` // required; 40 hex
+	Candidate      string `json:"candidate,omitempty"`
+	RoundCap       int    `json:"round_cap,omitempty"`
+	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
+}
+
+// BindingView is the server's wire representation of a binding's state.
+type BindingView struct {
+	Name           string     `json:"name"`
+	State          string     `json:"state"` // the store's State string
+	Round          int        `json:"round"`
+	RoundState     RoundState `json:"round_state"`
+	Halt           string     `json:"halt,omitempty"`
+	ResultCommit   string     `json:"result_commit,omitempty"`
+	DirtyCommit    string     `json:"dirty_commit,omitempty"`
+	ReportOutcome  string     `json:"report_outcome,omitempty"` // relay.ReportTail.Status or "unstructured"
+	AckedRound     int        `json:"acked_round"`
+	Candidate      string     `json:"candidate,omitempty"`
+	RoundStartedAt time.Time  `json:"round_started_at,omitempty"`
+	RoundCap       int        `json:"round_cap"`
+	RoundTimeoutMS int        `json:"round_timeout_ms"`
+}
+
+// UnavailableRequest reports builder unavailability with a diagnostic reason.
+type UnavailableRequest struct {
+	Token  string `json:"token"`
+	Reason string `json:"reason"`
+}
+
+// Code represents a structured error code returned by the remote protocol.
+type Code string
+
+const (
+	CodeNotEnrolled    Code = "not_enrolled"
+	CodeRevoked        Code = "revoked"
+	CodeBadSignature   Code = "bad_signature"
+	CodeStale          Code = "stale"
+	CodeNotFound       Code = "not_found"
+	CodeRoundOpen      Code = "round_open"
+	CodeRoundStarted   Code = "round_started"
+	CodeNotFastForward Code = "not_fast_forward"
+	CodeNoRunner       Code = "no_runner"
+	CodeSpawnFailed    Code = "spawn_failed"
+	CodeTooLarge       Code = "too_large"
+	CodeVersion        Code = "version"
+)
+
+// ErrorBody represents a JSON error response returned by the server.
+type ErrorBody struct {
+	Code    Code   `json:"error"`
+	Message string `json:"message"`
+}
+
+// Error implements error, returning Message.
+func (e ErrorBody) Error() string {
+	return e.Message
+}
+
+// CodeOf maps auth sentinels to their respective error codes, returning "" for unknown errors.
+func CodeOf(err error) Code {
+	switch {
+	case errors.Is(err, ErrUnknownClient):
+		return CodeNotEnrolled
+	case errors.Is(err, ErrRevoked):
+		return CodeRevoked
+	case errors.Is(err, ErrBadSignature):
+		return CodeBadSignature
+	case errors.Is(err, ErrStale):
+		return CodeStale
+	default:
+		return ""
+	}
+}
+
+// ErrNoRoot indicates that an empty root commit SHA was passed to RepoID.
+var ErrNoRoot = errors.New("empty root commit")
+
+// RepoID returns the lower-case hex representation of sha256(rootCommit), where
+// rootCommit is the ASCII 40-hex string. Returns ErrNoRoot if rootCommit is empty.
+func RepoID(rootCommit string) (string, error) {
+	if rootCommit == "" {
+		return "", ErrNoRoot
+	}
+	sum := sha256.Sum256([]byte(rootCommit))
+	return hex.EncodeToString(sum[:]), nil
+}

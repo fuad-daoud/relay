@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -447,4 +448,272 @@ func (c *Client) Dirty(ctx context.Context, dir string) (bool, error) {
 		return false, err
 	}
 	return len(bytes.TrimSpace(out)) > 0, nil
+}
+
+// RootCommit returns the single root commit SHA of the repository at dir.
+// If the repository has several roots (a grafted or multi-root history), it
+// returns the lexicographically smallest root SHA so the result is deterministic.
+//
+// Preconditions:  dir is inside a git repository with at least one commit.
+// Postconditions: the repository is unchanged.
+// Errors: ErrNotRepo, ErrGitUnavailable, ErrRefMissing (empty repo with no HEAD),
+//
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) RootCommit(ctx context.Context, dir string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "rev-list", "--max-parents=0", "HEAD")
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", err
+		}
+		return "", ErrRefMissing
+	}
+	roots := strings.Fields(string(out))
+	if len(roots) == 0 {
+		return "", ErrRefMissing
+	}
+	sort.Strings(roots)
+	return roots[0], nil
+}
+
+// RefSHA resolves ref to a commit SHA.
+//
+// Preconditions:  dir is inside a git repository.
+// Postconditions: the repository is unchanged; returns (sha, true, nil) when ref
+//
+//	resolves, or ("", false, nil) when ref does not exist.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) RefSHA(ctx context.Context, dir, ref string) (sha string, ok bool, err error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", false, err
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	res := strings.TrimSpace(string(out))
+	if res == "" {
+		return "", false, nil
+	}
+	return res, true, nil
+}
+
+// UpdateRef updates ref to newSHA, optionally verifying that oldSHA matches.
+//
+// Preconditions:  dir is inside a git repository; newSHA is a valid object ID.
+//
+//	oldSHA is empty ("create or overwrite") or a commit SHA to compare-and-swap.
+//
+// Postconditions: ref points to newSHA.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure
+//
+//	(including CAS mismatch).
+func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
+	args := []string{"update-ref", ref, newSHA}
+	if oldSHA != "" {
+		args = append(args, oldSHA)
+	}
+	_, err := c.run(ctx, dir, nil, args...)
+	return err
+}
+
+// CommitTree creates a commit object directly from a tree and parent commit.
+//
+// The commit is created with fixed author and committer identity:
+//
+//	GIT_AUTHOR_NAME=relay GIT_AUTHOR_EMAIL=relay@localhost
+//	GIT_COMMITTER_NAME=relay GIT_COMMITTER_EMAIL=relay@localhost
+//
+// The environment variables are passed through run's env parameter, overriding
+// the caller's identity. A global commit.gpgsign does not apply because
+// commit-tree never signs unless -S is given.
+//
+// Preconditions:  dir is inside a git repository; tree is a valid tree SHA;
+//
+//	parent is empty or a valid commit SHA.
+//
+// Postconditions: the commit exists in the object database, unreferenced.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {
+	args := []string{"commit-tree", tree}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	args = append(args, "-m", message)
+	env := []string{
+		"GIT_AUTHOR_NAME=relay",
+		"GIT_AUTHOR_EMAIL=relay@localhost",
+		"GIT_COMMITTER_NAME=relay",
+		"GIT_COMMITTER_EMAIL=relay@localhost",
+	}
+	out, err := c.run(ctx, dir, env, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// BundleCreate creates a git bundle file at path containing refs relative to since.
+//
+// Preconditions:  every ref in refs resolves in dir's repository (else ErrRefMissing);
+//
+//	since is "" or a commit SHA in dir's repository that is an ancestor of every ref.
+//
+// Postconditions: if empty is false, file at path is a complete bundle;
+//
+//	heads maps each ref to its resolved SHA. If since is non-empty and
+//	every ref's head equals since, no bundle is created and empty is true.
+//
+// Errors: ErrRefMissing, ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded,
+//
+//	or a wrapped git failure.
+func (c *Client) BundleCreate(ctx context.Context, dir, path string, refs []string, since string) (map[string]string, bool, error) {
+	heads := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		sha, ok, err := c.RefSHA(ctx, dir, ref)
+		if err != nil {
+			return nil, false, err
+		}
+		if !ok {
+			return nil, false, fmt.Errorf("%w: %s", ErrRefMissing, ref)
+		}
+		heads[ref] = sha
+	}
+
+	if since != "" && len(heads) > 0 {
+		allEqual := true
+		for _, head := range heads {
+			if head != since {
+				allEqual = false
+				break
+			}
+		}
+		if allEqual {
+			return heads, true, nil
+		}
+	}
+
+	if since != "" {
+		for _, ref := range refs {
+			_, err := c.run(ctx, dir, nil, "merge-base", "--is-ancestor", since, ref)
+			if err != nil {
+				if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return nil, false, err
+				}
+				return nil, false, fmt.Errorf("%w: since is not an ancestor of %s", ErrRefMissing, ref)
+			}
+		}
+	}
+
+	args := []string{"bundle", "create", path}
+	for _, ref := range refs {
+		if since != "" {
+			args = append(args, since+".."+ref)
+		} else {
+			args = append(args, ref)
+		}
+	}
+
+	_, err := c.run(ctx, dir, nil, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	return heads, false, nil
+}
+
+// BundleHeads lists the heads carried in the bundle file at path.
+//
+// Preconditions:  path exists and is a readable git bundle file.
+// Postconditions: returns a map of ref name -> commit SHA.
+// Errors: ErrBadBundle (file is malformed), ErrNotRepo, ErrGitUnavailable,
+//
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]string, error) {
+	out, err := c.run(ctx, dir, nil, "bundle", "list-heads", path)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+
+	heads := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("%w: malformed bundle head entry %q", ErrBadBundle, line)
+		}
+		heads[parts[1]] = parts[0]
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+	return heads, nil
+}
+
+// FetchBundle verifies the bundle file at path and fetches each ref in refs that
+// the bundle carries into dir's repository.
+//
+// The fetch is performed one ref at a time, in refs order, using the refspec
+// <ref>:<ref> without a leading '+', enforcing that every update is a fast-forward.
+// If any ref update fails, execution stops and any refs already moved stay moved.
+// Callers treat a partial absorb as retryable; a re-run is idempotent because a ref
+// already at its target SHA is a no-op fetch.
+//
+// The fetch runs with `gc.autoDetach=false` so an auto-gc it triggers finishes
+// inside this call instead of forking a process that outlives it (and would race
+// a later worktree removal).
+//
+// Preconditions:  dir is inside a git repository; path is a bundle file.
+// Postconditions: refs carried by the bundle that appear in refs are updated to the
+//
+//	bundle's heads; returns a map of ref -> SHA for the refs fetched.
+//
+// Errors: ErrBadBundle (bundle verify fails or prerequisites missing),
+//
+//	ErrNotFastForward (a ref cannot be fast-forwarded), ErrNotRepo, ErrGitUnavailable,
+//	context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []string) (map[string]string, error) {
+	_, err := c.run(ctx, dir, nil, "bundle", "verify", path)
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrBadBundle, err)
+	}
+
+	heads, err := c.BundleHeads(ctx, dir, path)
+	if err != nil {
+		return nil, err
+	}
+
+	fetched := make(map[string]string)
+	for _, ref := range refs {
+		sha, ok := heads[ref]
+		if !ok {
+			continue
+		}
+		_, err := c.run(ctx, dir, nil, "-c", "gc.autoDetach=false", "fetch", "--no-tags", path, ref+":"+ref)
+		if err != nil {
+			if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fetched, err
+			}
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "non-fast-forward") || strings.Contains(errStr, "[rejected]") {
+				return fetched, ErrNotFastForward
+			}
+			return fetched, err
+		}
+		fetched[ref] = sha
+	}
+	return fetched, nil
 }

@@ -20,6 +20,15 @@ var ErrWorktreeDirty = errors.New("worktree has uncommitted changes")
 // is already checked out in another worktree.
 var ErrBranchCheckedOut = errors.New("branch is checked out in another worktree")
 
+// ErrNotFastForward reports that a ref update is not a fast-forward.
+var ErrNotFastForward = errors.New("ref update is not a fast-forward")
+
+// ErrBadBundle reports a bundle that is malformed or its prerequisites are missing.
+var ErrBadBundle = errors.New("bundle is malformed or its prerequisites are missing")
+
+// ErrRefMissing reports that a ref does not exist.
+var ErrRefMissing = errors.New("ref does not exist")
+
 // DefaultMaxPatchBytes is the default byte cap for patch bodies.
 const DefaultMaxPatchBytes = 4 << 20
 
