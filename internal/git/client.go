@@ -669,6 +669,10 @@ func (c *Client) BundleHeads(ctx context.Context, dir, path string) (map[string]
 // Callers treat a partial absorb as retryable; a re-run is idempotent because a ref
 // already at its target SHA is a no-op fetch.
 //
+// The fetch runs with `gc.autoDetach=false` so an auto-gc it triggers finishes
+// inside this call instead of forking a process that outlives it (and would race
+// a later worktree removal).
+//
 // Preconditions:  dir is inside a git repository; path is a bundle file.
 // Postconditions: refs carried by the bundle that appear in refs are updated to the
 //
@@ -698,7 +702,7 @@ func (c *Client) FetchBundle(ctx context.Context, dir, path string, refs []strin
 		if !ok {
 			continue
 		}
-		_, err := c.run(ctx, dir, nil, "fetch", "--no-tags", path, ref+":"+ref)
+		_, err := c.run(ctx, dir, nil, "-c", "gc.autoDetach=false", "fetch", "--no-tags", path, ref+":"+ref)
 		if err != nil {
 			if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return fetched, err
