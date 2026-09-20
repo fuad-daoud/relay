@@ -726,6 +726,8 @@ A role is relay's name for a job; the harness definition it selects is what `rel
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
+Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relay adds only its own state directory.
+
 Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
 
 > **Note on `--dangerously-skip-permissions`:** it lets the builder act without approval prompts, which makes an unattended relay loop work, but it is a real grant of trust. It is an `extra_args` entry you add once you have watched a few rounds and trust the loop with that tree; relay never adds it.
@@ -945,9 +947,11 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
-| codex | (none) | `-s read-only` | `-s workspace-write` | `--dangerously-bypass-approvals-and-sandbox` |
+| codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding state dir>"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
+
+codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relay stages under `~/.local/state/relay/<binding>/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relay adds the binding's state directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
 ### Ceiling semantics and ordering
 

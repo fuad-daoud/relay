@@ -131,9 +131,9 @@ func TestTableExactValues(t *testing.T) {
 			},
 			DialogPatterns: defaultDialogPatterns,
 			DenialPatterns: []string{
-				`(?i)(command|operation|write) (was )?(rejected|denied|blocked)`,
+				`(?i)patch rejected: writing outside of the project`,
+				`(?i)rejected by user approval settings`,
 				`(?i)sandbox.*(denied|blocked|not permitted)`,
-				`(?i)not permitted`,
 				`(?i)permission denied`,
 			},
 			DocExt: "toml",
@@ -689,8 +689,8 @@ func TestLaunchCodex(t *testing.T) {
 		t.Errorf("Print = %v, want %v", got.Print, wantPrint)
 	}
 
-	wantArgsEdit := append(append([]string(nil), wantArgs...), "-s", "workspace-write")
-	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write")
+	wantArgsEdit := append(append([]string(nil), wantArgs...), "-s", "workspace-write", "-c", StatePlaceholder)
+	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write", "-c", StatePlaceholder)
 	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() TierEdit error = %v", err)
@@ -700,6 +700,11 @@ func TestLaunchCodex(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Print, wantPrintEdit) {
 		t.Errorf("TierEdit Print = %v, want %v", got.Print, wantPrintEdit)
+	}
+
+	_, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierRead)
+	if !errors.Is(err, ErrTierUnsupported) {
+		t.Fatalf("Launch() TierRead error = %v, want %v", err, ErrTierUnsupported)
 	}
 
 	got, err = h.Launch("openai", "gpt-5.6-terra:high", []string{"--foo"}, builder, TierHarness)
@@ -714,7 +719,7 @@ func TestLaunchCodex(t *testing.T) {
 	}
 
 	printBefore := append([]string(nil), got.Print...)
-	rendered := got.PrintArgs("hi", time.Hour, "/w")
+	rendered := got.PrintArgs("hi", time.Hour, "/w", "/state")
 	wantRendered := []string{"exec", "hi", "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", "/w", "--foo"}
 	if !reflect.DeepEqual(rendered, wantRendered) {
 		t.Errorf("PrintArgs = %v, want %v", rendered, wantRendered)
@@ -752,7 +757,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	before := append([]string(nil), l.Print...)
 
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
-	got := l.PrintArgs(prompt, 90*time.Minute, "/w")
+	got := l.PrintArgs(prompt, 90*time.Minute, "/w", "/state")
 	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--add-dir", "/w", "--dangerously-skip-permissions"}
 	if !reflect.DeepEqual(got, want) {
@@ -775,19 +780,138 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	got = cl.PrintArgs("hello", time.Hour, "/w")
+	got = cl.PrintArgs("hello", time.Hour, "/w", "/state")
 	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
 	for _, a := range got {
-		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder || a == "/w" {
+		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder || a == StatePlaceholder || a == "/w" || a == "/state" {
 			t.Errorf("placeholder survived substitution, or an ignored dir leaked in: %v", got)
 		}
 	}
 
 	// Unknown kind: empty in, empty out, no panic.
-	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w"); len(got) != 0 {
+	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w", "/state"); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
+	}
+}
+
+func TestPrintArgsFillsState(t *testing.T) {
+	builder, _ := RoleByName("builder")
+	codex, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("Lookup(\"codex\") not found")
+	}
+	l, err := codex.Launch("openai", "gpt-5.6-terra", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("codex Launch() TierEdit error: %v", err)
+	}
+
+	stateDir := "/home/u/.local/state/relay/x"
+	got := l.PrintArgs("p", 0, "/wt", stateDir)
+	for _, a := range got {
+		if a == StatePlaceholder {
+			t.Errorf("StatePlaceholder survived PrintArgs: %v", got)
+		}
+	}
+	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relay/x"]`
+	found := false
+	for i, a := range got {
+		if a == "-s" && i+1 < len(got) && got[i+1] == "workspace-write" {
+			for j := i + 2; j < len(got)-1; j++ {
+				if got[j] == "-c" && got[j+1] == wantRoot {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("element after -c following workspace-write not found or != %s; got %v", wantRoot, got)
+	}
+
+	// a claude launch ignores state (identical to before)
+	claude, _ := Lookup("claude")
+	cl, err := claude.Launch("prov", "m/x", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("claude Launch() TierEdit error = %v", err)
+	}
+	clGot := cl.PrintArgs("p", 0, "/wt", stateDir)
+	wantClaude := []string{"-p", "p", "--model", "m/x", "--agent", "plan-executor",
+		"--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"}
+	if !reflect.DeepEqual(clGot, wantClaude) {
+		t.Errorf("claude PrintArgs = %v, want %v", clGot, wantClaude)
+	}
+}
+
+func TestPaneArgsFillsState(t *testing.T) {
+	builder, _ := RoleByName("builder")
+	codex, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("Lookup(\"codex\") not found")
+	}
+	l, err := codex.Launch("openai", "gpt-5.6-terra", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("codex Launch() TierEdit error: %v", err)
+	}
+
+	stateDir := "/home/u/.local/state/relay/x"
+	got := l.PaneArgs(stateDir)
+	for _, a := range got {
+		if a == StatePlaceholder {
+			t.Errorf("StatePlaceholder survived PaneArgs: %v", got)
+		}
+	}
+	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relay/x"]`
+	found := false
+	for i, a := range got {
+		if a == "-s" && i+1 < len(got) && got[i+1] == "workspace-write" {
+			for j := i + 2; j < len(got)-1; j++ {
+				if got[j] == "-c" && got[j+1] == wantRoot {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("element after -c following workspace-write not found or != %s; got %v", wantRoot, got)
+	}
+
+	// for claude/agy/opencode PaneArgs(state) equals Args
+	for _, kind := range []string{"claude", "agy", "opencode"} {
+		h, ok := Lookup(kind)
+		if !ok {
+			t.Fatalf("Lookup(%q) not found", kind)
+		}
+		tier := TierEdit
+		if kind == "opencode" {
+			tier = TierHarness
+		}
+		hl, err := h.Launch("prov", "m/x", nil, builder, tier)
+		if err != nil {
+			t.Fatalf("%s Launch() error: %v", kind, err)
+		}
+		paneArgs := hl.PaneArgs(stateDir)
+		if !reflect.DeepEqual(paneArgs, hl.Args) {
+			t.Errorf("%s PaneArgs = %v, want %v", kind, paneArgs, hl.Args)
+		}
+	}
+}
+
+func TestWritableRootsArgQuotes(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/path with space/dir", `sandbox_workspace_write.writable_roots=["/path with space/dir"]`},
+		{`/path/"quotes"/dir`, `sandbox_workspace_write.writable_roots=["/path/\"quotes\"/dir"]`},
+	}
+	for _, tt := range tests {
+		got := writableRootsArg(tt.path)
+		if got != tt.want {
+			t.Errorf("writableRootsArg(%q) = %q, want %q", tt.path, got, tt.want)
+		}
 	}
 }
 

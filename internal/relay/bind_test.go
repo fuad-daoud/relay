@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2005,15 +2006,48 @@ func TestBindWithTierEditOnClaude(t *testing.T) {
 	if len(f.starts) != 1 {
 		t.Fatalf("got %d agent starts, want 1", len(f.starts))
 	}
-	hasFlag := false
+	wantClaudeArgs := []string{"--model", "m", "--agent", "plan-executor", "--permission-mode", "acceptEdits"}
+	if !reflect.DeepEqual(f.starts[0].Args, wantClaudeArgs) {
+		t.Errorf("expected %v in starts[0].Args, got %v", wantClaudeArgs, f.starts[0].Args)
+	}
+}
+
+func TestBindPaneCodexTierEditFillsStateDir(t *testing.T) {
+	const codexCandidatesJSON = `[
+	  {"harness":"codex","provider":"test","model":"gpt-5.6-terra","roles":["builder"]}
+	]`
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, codexCandidatesJSON)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   "codex/test/gpt-5.6-terra",
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Tier:        "edit",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("got %d agent starts, want 1", len(f.starts))
+	}
+	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name))
+	found := false
 	for i, arg := range f.starts[0].Args {
-		if arg == "--permission-mode" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == "acceptEdits" {
-			hasFlag = true
+		if arg == "-c" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == wantRoot {
+			found = true
 			break
 		}
 	}
-	if !hasFlag {
-		t.Errorf("expected --permission-mode acceptEdits in starts[0].Args, got %v", f.starts[0].Args)
+	if !found {
+		t.Errorf("expected -c followed by %s in starts[0].Args, got %v", wantRoot, f.starts[0].Args)
+	}
+	for _, arg := range f.starts[0].Args {
+		if arg == harness.StatePlaceholder {
+			t.Errorf("StatePlaceholder survived in starts[0].Args: %v", f.starts[0].Args)
+		}
 	}
 }
 

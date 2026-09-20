@@ -598,7 +598,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 		return store.Endpoint{}, Resolution{}, err
 	}
 
-	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.Args); err != nil {
+	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.PaneArgs(rt.Store.Dir(name))); err != nil {
 		if tx != nil {
 			recordSpawnFailureLocked(rt, c.Ref().String(), name, err)
 		} else {

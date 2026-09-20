@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -270,11 +271,11 @@ var knownHarnesses = map[string]Harness{
 			`(?i)too many requests`,
 		},
 		DialogPatterns: defaultDialogPatterns,
-		// Denial patterns for codex; unverified against a real denied round; replace with the observed line when one is seen.
+		// Denial patterns for codex: first two observed 2026-09-20 (#230), the rest unverified.
 		DenialPatterns: []string{
-			`(?i)(command|operation|write) (was )?(rejected|denied|blocked)`,
+			`(?i)patch rejected: writing outside of the project`,
+			`(?i)rejected by user approval settings`,
 			`(?i)sandbox.*(denied|blocked|not permitted)`,
-			`(?i)not permitted`,
 			`(?i)permission denied`,
 		},
 		DocExt: "toml",
@@ -329,6 +330,11 @@ const (
 	PromptPlaceholder = "<prompt>"
 	BudgetPlaceholder = "<budget>"
 	DirPlaceholder    = "<dir>"
+	// StatePlaceholder stands, as its own element, for the codex writable-roots
+	// override: PrintArgs and PaneArgs replace the element with
+	// `sandbox_workspace_write.writable_roots=["<state dir>"]` (#230). It is
+	// only ever the element after a "-c".
+	StatePlaceholder = "<state>"
 )
 
 // Launch describes how to start an agent process for a specific role and
@@ -337,9 +343,11 @@ const (
 // Args is the interactive form herdr starts in a pane. Print is the
 // non-interactive form a headless builder runs (#99): one prompt in, the
 // process exits when it is done. Print holds PromptPlaceholder and, for kinds
-// with a timeout flag, BudgetPlaceholder as their own elements; PrintArgs
-// fills them. PromptAt is the index of PromptPlaceholder in Print, -1 when
-// the kind is unknown and Print is empty.
+// with a timeout flag, BudgetPlaceholder, as well as DirPlaceholder and
+// StatePlaceholder as their own elements; PrintArgs fills them. Args may also
+// carry StatePlaceholder (only for codex at tier edit) and must be passed
+// through PaneArgs. PromptAt is the index of PromptPlaceholder in Print, -1
+// when the kind is unknown and Print is empty.
 type Launch struct {
 	Kind     string
 	Args     []string
@@ -415,16 +423,27 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	}, nil
 }
 
-// PrintArgs is Print with the prompt, the round budget and the round's
-// working tree filled in: a fresh slice, so neither Print nor the caller's
-// extra is touched. The budget is rendered as a Go duration ("1h30m0s"),
-// which is what agy's --print-timeout parses. A kind whose Print has no
-// BudgetPlaceholder ignores budget, and one with no DirPlaceholder ignores
-// dir, the same rule.
+// writableRootsArg renders the -c value for state. state is quoted as a
+// TOML basic string with strconv.Quote (identical escapes for every path
+// this program produces). Precondition: state is absolute and non-empty.
+func writableRootsArg(state string) string {
+	return "sandbox_workspace_write.writable_roots=[" + strconv.Quote(state) + "]"
+}
+
+// PrintArgs is Print with the prompt, the round budget, the round's
+// working tree and the binding's state directory filled in: a fresh slice,
+// so neither Print nor the caller's extra is touched. The budget is rendered
+// as a Go duration ("1h30m0s"), which is what agy's --print-timeout parses.
+// A kind whose Print has no BudgetPlaceholder ignores budget, one with no
+// DirPlaceholder ignores dir, and one with no StatePlaceholder ignores state,
+// the same rule.
 //
-// Precondition: dir is absolute or empty. Postcondition: no placeholder
-// string remains in the result.
-func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []string {
+// Precondition: dir is absolute or empty; state is absolute or empty; when
+// empty and the placeholder is present, the element is filled with
+// writableRootsArg("") -- which codex rejects loudly -- so callers must pass
+// it; a test pins that every production caller does. Postcondition: no
+// placeholder string remains in the result.
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -434,6 +453,24 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []str
 			out = append(out, budget.String())
 		case DirPlaceholder:
 			out = append(out, dir)
+		case StatePlaceholder:
+			out = append(out, writableRootsArg(state))
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// PaneArgs is Args with StatePlaceholder filled; a fresh slice. Every
+// pane start goes through it, even for kinds with no placeholder, so the
+// rule has one home.
+func (l Launch) PaneArgs(state string) []string {
+	out := make([]string, 0, len(l.Args))
+	for _, a := range l.Args {
+		switch a {
+		case StatePlaceholder:
+			out = append(out, writableRootsArg(state))
 		default:
 			out = append(out, a)
 		}
