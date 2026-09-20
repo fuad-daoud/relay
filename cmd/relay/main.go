@@ -65,6 +65,8 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
+  history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
+  show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--json]
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
@@ -227,6 +229,10 @@ func run(args []string) error {
 		return cmdStatusline(args[1:])
 	case "log":
 		return cmdLog(args[1:])
+	case "history":
+		return cmdHistory(args[1:])
+	case "show":
+		return cmdShow(args[1:])
 	case "tab":
 		return cmdTab(args[1:])
 	case "wait":

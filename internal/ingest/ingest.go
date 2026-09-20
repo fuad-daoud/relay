@@ -134,6 +134,24 @@ func nonEmptyPtr(s string) *string {
 	return &s
 }
 
+// repoRefFromGit resolves dir's repo identity via g, returning nil when dir
+// is empty, RepoFacts errors (dir missing or not a git tree), or the facts
+// carry neither an origin nor a common dir.
+func repoRefFromGit(ctx context.Context, g GitFacts, dir string) *store.RepoRef {
+	if dir == "" {
+		return nil
+	}
+	originURL, commonDir, err := g.RepoFacts(ctx, dir)
+	if err != nil {
+		return nil
+	}
+	normalised := git.NormalizeOriginURL(originURL)
+	if normalised == "" && commonDir == "" {
+		return nil
+	}
+	return &store.RepoRef{OriginURL: normalised, CommonDir: commonDir}
+}
+
 // sourceOpener adapts a Source member to readAppendOnly's generic opener
 // shape, and returns the member's cursor key alongside it.
 func sourceOpener(src Source, member string) (func() (io.ReadCloser, error), string) {
@@ -182,13 +200,18 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 	var stats Stats
 	err = d.Tx(func(tx *db.Tx) error {
 		// -- repo
+		//
+		// Order: bind.json's own RepoRef when set; else facts from the
+		// binding's worktree; else facts from the source checkout it was
+		// cut from (b.Repo), which still resolves after the worktree is
+		// gc'd; else null. Applied for archive sources too -- an archived
+		// binding's b.CWD is always gone, so the b.Repo fallback is its
+		// only path to a repo row.
 		ref := b.RepoRef
-		if ref == nil && kind == "live" && deps.Git != nil {
-			if originURL, commonDir, gerr := deps.Git.RepoFacts(ctx, b.CWD); gerr == nil {
-				normalised := git.NormalizeOriginURL(originURL)
-				if normalised != "" || commonDir != "" {
-					ref = &store.RepoRef{OriginURL: normalised, CommonDir: commonDir}
-				}
+		if ref == nil && deps.Git != nil {
+			ref = repoRefFromGit(ctx, deps.Git, b.CWD)
+			if ref == nil && b.Repo != "" {
+				ref = repoRefFromGit(ctx, deps.Git, b.Repo)
 			}
 		}
 		var repoID *string
@@ -368,9 +391,6 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 			if n, ok := roundFromMember(m); ok {
 				roundSet[n] = true
 			}
-		}
-		if b.Round > 0 {
-			roundSet[b.Round] = true
 		}
 		rounds := make([]int, 0, len(roundSet))
 		for n := range roundSet {
