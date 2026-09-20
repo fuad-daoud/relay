@@ -1520,7 +1520,7 @@ func TestStatusLastUsageAndSpend(t *testing.T) {
 	if !strings.Contains(text, "  usage    "+usage.Line(*got.LastUsage)) {
 		t.Errorf("text lacks the usage row:\n%s", text)
 	}
-	if !strings.Contains(text, "  spend    2 rounds +1c · $0.40 · ~$0.02") {
+	if !strings.Contains(text, "  spend    2 rounds +1c · $0.40 · ~$0.02 · 330 tok") {
 		t.Errorf("text lacks the spend row:\n%s", text)
 	}
 }

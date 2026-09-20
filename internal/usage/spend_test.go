@@ -58,6 +58,8 @@ func TestSpendLine(t *testing.T) {
 		want string
 	}{
 		{Spend{Rounds: 4, Consults: 2, Measured: 1.23, Estimated: 0.40, Plan: 1, Unknown: 2}, "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown"},
+		{Spend{Rounds: 4, Consults: 2, Measured: 1.23, Estimated: 0.40, Plan: 1, Unknown: 2, Tokens: Tokens{In: 2_100_000}}, "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown · 2.1M tok"},
+		{Spend{Rounds: 1, Measured: 0.41}, "1 round · $0.41"},
 		{Spend{Rounds: 1, Measured: 0.30}, "1 round · $0.30"},
 		{Spend{Rounds: 3, Unknown: 3}, "3 rounds · 3 unknown"},
 		{Spend{Consults: 1, Estimated: 0.02}, "0 rounds +1c · ~$0.02"},
@@ -77,6 +79,8 @@ func TestMoneyShort(t *testing.T) {
 		want string
 	}{
 		{Spend{Rounds: 4, Measured: 1.23, Estimated: 0.40, Unknown: 2}, "$1.23 · ~$0.40 · 2 unknown"},
+		{Spend{Rounds: 4, Measured: 1.51, Tokens: Tokens{In: 2_100_000}}, "$1.51 · 2.1M tok"},
+		{Spend{Rounds: 2, Unknown: 2, Tokens: Tokens{In: 206_000}}, "2 unknown · 206k tok"},
 		{Spend{Rounds: 2, Plan: 2}, "2 plan"},
 		{Spend{Rounds: 2}, ""},
 		{Spend{}, ""},
