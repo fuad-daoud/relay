@@ -77,53 +77,12 @@ func scanLines(r io.Reader, fn func(line []byte)) {
 // usage is the sample (HasCost when total_cost_usd is present); with no
 // result event, the assistant events deduped by message.id are the
 // samples, tokens only. Model: last assistant message.model, else init.
+// The parser state lives on the carry (#234), so the same line loop feeds
+// the per-stream cache without drifting.
 func claudeStream(r io.Reader, fallbackProvider string) []Sample {
-	var (
-		model     string
-		result    *Sample
-		assistant []Sample
-		seen      = map[string]bool{}
-	)
-	scanLines(r, func(line []byte) {
-		var ev claudeEvent
-		if json.Unmarshal(line, &ev) != nil {
-			return
-		}
-		switch ev.Type {
-		case "system":
-			if ev.Subtype == "init" && ev.Model != "" && model == "" {
-				model = ev.Model
-			}
-		case "assistant":
-			if ev.Message == nil || ev.Message.Usage == nil || seen[ev.Message.ID] {
-				return
-			}
-			seen[ev.Message.ID] = true
-			if ev.Message.Model != "" {
-				model = ev.Message.Model
-			}
-			assistant = append(assistant, Sample{Provider: fallbackProvider, Model: ev.Message.Model, Tokens: ev.Message.Usage.tokens()})
-		case "result":
-			if ev.Usage == nil {
-				return
-			}
-			s := Sample{Provider: fallbackProvider, Tokens: ev.Usage.tokens()}
-			if ev.TotalCostUSD != nil {
-				s.USD, s.HasCost = *ev.TotalCostUSD, true
-			}
-			result = &s
-		}
-	})
-	if result != nil {
-		result.Model = model
-		return []Sample{*result}
-	}
-	for i := range assistant {
-		if assistant[i].Model == "" {
-			assistant[i].Model = model
-		}
-	}
-	return assistant
+	c, _ := newCarry("claude", fallbackProvider, "")
+	scanLines(r, c.feed)
+	return c.samples()
 }
 
 // claudeProject reads every *.jsonl under fsys (subagents included) and
