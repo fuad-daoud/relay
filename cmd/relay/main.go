@@ -65,6 +65,8 @@ Commands:
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
+  history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
+  show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--json]
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
@@ -79,6 +81,7 @@ Commands:
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
+  db        path|migrate|stats for relay's sqlite database
 
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind
@@ -226,6 +229,10 @@ func run(args []string) error {
 		return cmdStatusline(args[1:])
 	case "log":
 		return cmdLog(args[1:])
+	case "history":
+		return cmdHistory(args[1:])
+	case "show":
+		return cmdShow(args[1:])
 	case "tab":
 		return cmdTab(args[1:])
 	case "wait":
@@ -248,6 +255,8 @@ func run(args []string) error {
 		return cmdAvailable(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
+	case "db":
+		return cmdDB(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	case "client":
@@ -346,22 +355,22 @@ func newRuntime() (relay.Runtime, error) {
 	}
 
 	return relay.Runtime{
-		Herdr:       herdr.NewClient("herdr", 30*time.Second),
-		Git:         gitClient,
-		Runner:      proc.New(),
-		Store:       st,
-		Candidates:  candidates,
-		LedgerPath:  st.LedgerPath(),
-		HistoryPath: st.HistoryPath(),
-		Policy:      pol,
-		Classify:    cls,
-		Usage:       reader,
-		Sessions:    relay.HomeSessionLocator(home),
-		Prices:      prices,
-		Now:         time.Now,
-		Hooks:       dispatcher,
-		Remote:      remoteClient,
-		Transport:   transport,
+		Herdr:            herdr.NewClient("herdr", 30*time.Second),
+		Git:              gitClient,
+		Runner:           proc.New(),
+		Store:            st,
+		Candidates:       candidates,
+		LedgerPath:       st.LedgerPath(),
+		AvailabilityPath: st.AvailabilityPath(),
+		Policy:           pol,
+		Classify:         cls,
+		Usage:            reader,
+		Sessions:         relay.HomeSessionLocator(home),
+		Prices:           prices,
+		Now:              time.Now,
+		Hooks:            dispatcher,
+		Remote:           remoteClient,
+		Transport:        transport,
 	}, nil
 }
 
@@ -477,7 +486,7 @@ func cmdCandidates(args []string) error {
 // unreadable file as empty after one stderr line -- the same rule Gates
 // applies to the ledger.
 func loadHistory(rt relay.Runtime) history.History {
-	h, err := history.Load(rt.HistoryPath)
+	h, err := history.Load(rt.AvailabilityPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not read history: %v\n", err)
 		return history.History{}
@@ -602,6 +611,7 @@ func cmdBind(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -618,6 +628,12 @@ func cmdBind(args []string) error {
 	}
 	if *headless && isPaneID(*builderAlias) {
 		return fmt.Errorf("relay bind --headless spawns a process; it cannot adopt pane %s (drop --builder or name a candidate)", *builderAlias)
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -644,6 +660,7 @@ func cmdBind(args []string) error {
 		AllowYolo:    *allowYolo,
 		Gate:         *gate,
 		NoGate:       *noGate,
+		Feature:      *feature,
 	}
 	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
@@ -732,6 +749,7 @@ func cmdFork(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
 	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
+	feature := fs.String("feature", "", "label grouping this binding with others (default: inherits the source binding's feature)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -747,6 +765,12 @@ func cmdFork(args []string) error {
 	}
 	if *newName == "" {
 		return fmt.Errorf("relay fork requires --new-name NAME")
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -767,6 +791,7 @@ func cmdFork(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Feature:     *feature,
 	}
 
 	res, err := relay.Fork(context.Background(), rt, opts)
@@ -803,12 +828,19 @@ func cmdAdd(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *name == "" {
 		return fmt.Errorf("relay add requires --name NAME")
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -835,6 +867,7 @@ func cmdAdd(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Feature:     *feature,
 	})
 	if err != nil {
 		return err
@@ -1533,6 +1566,17 @@ func cmdUI(args []string) error {
 		return err
 	}
 
+	// An open failure never blocks the ui from starting -- it runs in
+	// live scope, with a sticky notice, exactly as pressing "a" with no
+	// database does (docs/specs/2026-09-20-persistence-design.md §6).
+	var notice string
+	if d, dbErr := openDB(rt.Store.DBPath()); dbErr != nil {
+		notice = fmt.Sprintf("no database: %v", dbErr)
+	} else {
+		rt.DB = d
+		defer d.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -1541,9 +1585,13 @@ func cmdUI(args []string) error {
 		return err
 	}
 
+	here, _ := os.Getwd()
+
 	return ui.Run(ctx, rt, ui.Options{
 		Interval:  *interval,
 		PrefsPath: filepath.Join(root, "ui.json"),
+		Here:      here,
+		Notice:    notice,
 	})
 }
 
@@ -1669,6 +1717,18 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	rt.HeldGrace = *heldGrace
+
+	// The database is opened only here (and by `relay db *`): the daemon
+	// is the process that writes it every tick; `relay serve`'s state root
+	// is its own and stays out of scope. An open failure never blocks the
+	// daemon from starting -- every ingest call site treats DB == nil like
+	// a machine with no database.
+	if d, derr := openDB(rt.Store.DBPath()); derr != nil {
+		slog.Warn("relay daemon: db unavailable; ingest disabled", "err", derr)
+	} else {
+		rt.DB = d
+		defer d.Close()
+	}
 
 	configDir, err := userConfigRoot()
 	if err != nil {

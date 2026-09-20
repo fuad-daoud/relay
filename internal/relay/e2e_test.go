@@ -451,13 +451,13 @@ func e2eRuntime(t *testing.T, clock *fakeClock) Runtime {
 		t.Fatalf("load candidates: %v", err)
 	}
 	return Runtime{
-		Herdr:       herdr.NewClient("herdr", 30*time.Second),
-		Git:         git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
-		Store:       store.New(filepath.Join(root, "state")),
-		Candidates:  set,
-		LedgerPath:  filepath.Join(root, "ledger.json"),
-		HistoryPath: filepath.Join(root, "history.json"),
-		Now:         clock.Now,
+		Herdr:            herdr.NewClient("herdr", 30*time.Second),
+		Git:              git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Store:            store.New(filepath.Join(root, "state")),
+		Candidates:       set,
+		LedgerPath:       filepath.Join(root, "ledger.json"),
+		AvailabilityPath: filepath.Join(root, "availability.json"),
+		Now:              clock.Now,
 	}
 }
 

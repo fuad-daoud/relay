@@ -63,9 +63,9 @@ func appendEntryLocked(rt Runtime, e ledger.Entry) error {
 	if err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
-	h, err := history.Load(rt.HistoryPath)
+	h, err := history.Load(rt.AvailabilityPath)
 	if err == nil {
-		err = history.Save(rt.HistoryPath, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
+		err = history.Save(rt.AvailabilityPath, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not record history: %v\n", err)

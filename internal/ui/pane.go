@@ -108,6 +108,13 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	return rows
 }
 
+// histPaneHead is paneHead for a hist (archived) detail: the identity line
+// (detailHeader) alone, padded to paneHead's row budget -- an archived
+// binding carries no live planner/builder/tree facts to show.
+func (m Model) histPaneHead() []string {
+	return []string{fgStyle.Render(m.detailHeader()), "", "", "", ""}
+}
+
 // builderStatusStyle: blocked is the one status a human must notice.
 func builderStatusStyle(status string) lipgloss.Style {
 	if status == "blocked" {
@@ -127,8 +134,8 @@ func spread(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// tabBar is the four tab words and, under them, a rule whose heavy accent
-// segment sits under the active word (spec §3.4). No numbers: 1-4 still
+// tabBar is the five tab words and, under them, a rule whose heavy accent
+// segment sits under the active word (spec §3.4). No numbers: 1-5 still
 // switch, the footer says so.
 func (m Model) tabBar() []string {
 	var words, rule []string
@@ -227,6 +234,8 @@ func (m Model) sourceLine() string {
 	}
 	var s string
 	switch m.detail.active {
+	case tabPlan:
+		s = fmt.Sprintf("plan r%d · %s", c.round, c.at.Local().Format("15:04"))
 	case tabReport:
 		s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
 	case tabTerminal:
@@ -267,6 +276,8 @@ func (m Model) sourceLine() string {
 		// The viewport carries the prose; the source line says only where
 		// it looked.
 		switch m.detail.active {
+		case tabPlan:
+			s = fmt.Sprintf("round %d", m.detail.round)
 		case tabReport:
 			s = "report"
 		case tabDiff:
@@ -328,7 +339,11 @@ func (m Model) paneView(width int) string {
 	}
 	b := row(m.report, m.detail.name)
 	rows := []string{}
-	rows = append(rows, m.paneHead(b)...)
+	if m.detail.name != "" && !m.detail.live {
+		rows = append(rows, m.histPaneHead()...)
+	} else {
+		rows = append(rows, m.paneHead(b)...)
+	}
 	rows = append(rows, m.tabBar()...)
 	rows = append(rows, m.sourceLine(), "")
 	budget := m.bodyRows() - len(rows)

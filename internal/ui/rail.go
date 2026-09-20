@@ -219,6 +219,156 @@ func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time,
 	return l
 }
 
+// histStateText is a hist row's state-slot text (in place of the state
+// word a live row shows): "archived <date>" when the binding is
+// archived, "done" otherwise -- a binding the database has recorded but
+// the live report no longer carries, never tarred (e.g. `relay done`
+// released it without `gc` archiving it yet).
+func histStateText(h relay.HistoryBinding) string {
+	if h.Archived {
+		return "archived " + h.ArchivedAt.Format("2006-01-02")
+	}
+	return "done"
+}
+
+// histFacts is a hist row's facts line: round count, last-activity age,
+// and its feature label when one is set.
+func histFacts(h relay.HistoryBinding, now time.Time) string {
+	parts := []string{fmt.Sprintf("r%d", h.Rounds), ago(h.LastActivity, now)}
+	if h.Feature != "" {
+		parts = append(parts, "feature "+h.Feature)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// histCardLines renders one hist row's card: name (archivedStyle, dim)
+// and its state-slot text on line 1, the facts line on line 2 -- never
+// attention-grouped, never re-ordered by attention (§5.8).
+func histCardLines(h relay.HistoryBinding, selected, focused bool, now time.Time, width int) []string {
+	gutter := " "
+	if selected && focused {
+		gutter = accentStyle.Render("▎")
+	} else if selected {
+		gutter = dimStyle.Render("▎")
+	}
+	const unreadSlot = "  "
+	state := histStateText(h)
+	nameWidth := width - 1 - 2 - lipgloss.Width(state) - 1
+	name := archivedStyle.Render(fit(h.Name, nameWidth))
+	l1 := gutter + unreadSlot + name + dimStyle.Render(state) + " "
+
+	indent := gutter + "  "
+	l2 := indent + dimStyle.Render(histFacts(h, now))
+
+	lines := []string{fit(l1, width), fit(l2, width)}
+	if selected {
+		for i, l := range lines {
+			lines[i] = selectedBg.Render(l)
+		}
+	}
+	return lines
+}
+
+// histCompactLine is histCardLines' one-line form, mirroring compactLine.
+func histCompactLine(h relay.HistoryBinding, selected, focused bool, width int) string {
+	gutter := " "
+	if selected {
+		if focused {
+			gutter = accentStyle.Render("▎")
+		} else {
+			gutter = dimStyle.Render("▎")
+		}
+	}
+	const unreadSlot = "  "
+	name := archivedStyle.Render(fit(h.Name, width-1-2-1))
+	l := fit(gutter+unreadSlot+name+" ", width)
+	if selected {
+		l = selectedBg.Render(l)
+	}
+	return l
+}
+
+// railLinesAll is railLines generalised to the rail's row set in either
+// scope: live rows attention-grouped exactly as railLines groups them
+// today, then (scope all) hist rows appended after -- dim, never grouped
+// by attention and never re-ordered (§5.8). cursor indexes rows itself
+// (the union), matching railSpan/railWindow's existing binding-index
+// contract, so a live-only rows slice renders identically to railLines.
+func railLinesAll(rows []railRow, cursor int, attention bool, now time.Time, focused bool, width int, compact bool) []railLine {
+	var out []railLine
+	card := func(i int) {
+		rr := rows[i]
+		switch {
+		case rr.live != nil:
+			if compact {
+				out = append(out, railLine{text: compactLine(*rr.live, i == cursor, !attention, now, focused, width), binding: i})
+				return
+			}
+			for _, l := range cardLines(*rr.live, i == cursor, !attention, now, focused, width) {
+				out = append(out, railLine{text: l, binding: i})
+			}
+		case rr.hist != nil:
+			if compact {
+				out = append(out, railLine{text: histCompactLine(*rr.hist, i == cursor, focused, width), binding: i})
+				return
+			}
+			for _, l := range histCardLines(*rr.hist, i == cursor, focused, now, width) {
+				out = append(out, railLine{text: l, binding: i})
+			}
+		}
+	}
+
+	if !attention {
+		for i := range rows {
+			card(i)
+		}
+		return out
+	}
+
+	for _, state := range groupOrder {
+		n := 0
+		for _, r := range rows {
+			if r.live != nil && r.live.Display == state {
+				n++
+			}
+		}
+		if n == 0 {
+			continue
+		}
+		header := " " + stateStyle(state).Render(state) + faintStyle.Render(fmt.Sprintf("  %d", n))
+		out = append(out, railLine{text: fit(header, width), binding: -1})
+		for i, r := range rows {
+			if r.live != nil && r.live.Display == state {
+				card(i)
+			}
+		}
+		out = append(out, railLine{text: fit("", width), binding: -1})
+	}
+	// A live state outside groupOrder (none today) would vanish; append it
+	// so nothing is ever hidden.
+	for i, r := range rows {
+		if r.live == nil {
+			continue
+		}
+		known := false
+		for _, s := range groupOrder {
+			if r.live.Display == s {
+				known = true
+			}
+		}
+		if !known {
+			card(i)
+		}
+	}
+	// Hist rows: dim, always after, never grouped, never re-ordered.
+	for i, r := range rows {
+		if r.hist != nil {
+			card(i)
+		}
+	}
+	return out
+}
+
 // groupOrder is the attention order of the rail's headers.
 var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 
@@ -343,16 +493,18 @@ func (m Model) railView(width int) string {
 		lines = []string{"cannot reach herdr — see the error above"}
 	case !m.statusLoaded:
 		lines = []string{"loading…"}
-	case m.empty() && m.layout() == layoutStack:
+	case m.empty() && m.scope == scopeLive && m.layout() == layoutStack:
 		// The stack list screen is the whole terminal at zero rows, so it
 		// reads the same prose block the pane shows in split layout,
 		// instead of the bare "no bindings" line below (that line stays
-		// the split layout's narrow rail summary).
+		// the split layout's narrow rail summary). Scope all keeps this
+		// branch only when there is truly nothing to show (below): a
+		// live-empty fleet with archived history still has a rail to draw.
 		return strings.Join(emptyPaneBlock(width, rows), "\n")
-	case len(m.rows()) == 0:
+	case len(m.railRows()) == 0:
 		lines = []string{"no bindings"}
 	default:
-		all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, cardWidth, m.compact)
+		all := railLinesAll(m.railRows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, cardWidth, m.compact)
 		first, last := railSpan(all, m.list.cursor)
 		start := railWindow(m.list.top, first, last, rows, len(all))
 		end := len(all)
@@ -378,7 +530,7 @@ func (m Model) railView(width int) string {
 // railTop re-windows the rail on the cursor's card. Called wherever the
 // cursor, the rows or the row budget changed.
 func (m Model) railTop() int {
-	all := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
+	all := railLinesAll(m.railRows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
 	first, last := railSpan(all, m.list.cursor)
 	return railWindow(m.list.top, first, last, m.bodyRows(), len(all))
 }

@@ -23,11 +23,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu and macos are the supported platforms; 1.22 is the floor
+        # ubuntu and macos are the supported platforms; 1.25 is the floor
         # declared in go.mod, and stable catches anything the newest toolchain
         # starts complaining about.
         os: [ubuntu-latest, macos-latest]
-        go: ['1.22', 'stable']
+        go: ['1.25', 'stable']
     steps:
       # The plugin-version drift check in make check needs the release tags,
       # and the default depth of 1 has none, which would make the check skip on

@@ -145,7 +145,17 @@ type fakeGit struct {
 	rootCommitCalls []rootCommitCall
 	rootCommitSHA   string
 	rootCommitErr   error
+
+	// repoFactsOrigin/repoFactsCommonDir configure RepoFacts's success
+	// return; repoFactsCommonDir defaults to "<dir>/.git" when unset, since
+	// that is what a real repo with no worktrees reports.
+	repoFactsOrigin    string
+	repoFactsCommonDir string
+	repoFactsErr       error
+	repoFactsCalls     []repoFactsCall
 }
+
+type repoFactsCall struct{ Dir string }
 
 func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) {
 	f.snapshotCalls++
@@ -305,6 +315,18 @@ func (f *fakeGit) RootCommit(ctx context.Context, dir string) (string, error) {
 		return f.rootCommitSHA, nil
 	}
 	return "fakerootcommit", nil
+}
+
+func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error) {
+	f.repoFactsCalls = append(f.repoFactsCalls, repoFactsCall{Dir: dir})
+	if f.repoFactsErr != nil {
+		return "", "", f.repoFactsErr
+	}
+	commonDir = f.repoFactsCommonDir
+	if commonDir == "" {
+		commonDir = dir + "/.git"
+	}
+	return f.repoFactsOrigin, commonDir, nil
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {

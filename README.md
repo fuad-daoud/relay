@@ -187,7 +187,7 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
   — start a binding between the calling planner pane (read from
   `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
   it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
@@ -236,6 +236,10 @@ inside every pane it manages, so it has to be run from inside one.
   waiting     set when the binding is stalled on a human: cause, line, since, hint
   ```
 - `relay log NAME` — the binding's append-only round log. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
+- `relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json]` —
+  one line per round across every binding relay has ever recorded, live or archived, newest first. See "The database" below.
+- `relay show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]` —
+  one round's plan, report, diff, drift, log or transcript, from a live binding's files or, for anything not live, from the database. See "The database" below.
 - `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
   tokens and cost across bindings, archived ones included.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
@@ -252,17 +256,18 @@ inside every pane it manages, so it has to be run from inside one.
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
   flow.
-- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--headless` applies as for `bind`.
   `relay add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR]` —
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
-  dedicated git worktree (or in `--cwd`).
+  dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
+  binding's own.
 - `relay candidates` — list the configured candidates and the roles each serves.
 - `relay policy` — show, per role, the candidates in the order relay would
   try them, which one it would pick right now, and any gap between
@@ -331,13 +336,21 @@ and never appends to round logs. It holds the state lock only for the duration
 of a read, exactly as `relay status` does.
 
 At 110 columns or more, a rail of bindings grouped by state sits beside a
-pane showing the selected binding's report, terminal, diff or log (`⏎`
-focuses the pane, `s` toggles attention and name order); narrower
-terminals get the list-then-detail flow. The pane's four tabs:
-- **report** — the newest planner-bound report or question payload.
+pane showing the selected binding's plan, report, terminal, diff or log
+(`⏎` focuses the pane, `s` toggles attention and name order); narrower
+terminals get the list-then-detail flow. The pane's five tabs:
+- **plan** — the round's own plan file, first in the order (#183).
+- **report** — that round's planner-bound report or question payload.
 - **terminal** — recent live terminal output from the builder agent's pane.
-- **diff** — the captured git patch from the newest completed round.
-- **log** — the formatted append-only round log.
+- **diff** — the captured git patch from the round.
+- **log** — the formatted append-only round log, scoped to the round.
+
+`[` and `]` step the round a tab reads, from round 1 through the binding's
+current round -- every tab refetches for the new round. Stepping onto a
+live binding's own open (not yet closed) round reads as prose, not an
+error: the report and diff tabs say so ("round N is open; report arrives
+when it closes", "diff is captured when round N closes") rather than
+showing stale content.
 
 For a claude pane builder the terminal tab is the round's own transcript:
 the daemon renders the harness's session record
@@ -345,6 +358,26 @@ the daemon renders the harness's session record
 moment the round was sent, so the tab scrolls, follows the tail and is
 styled exactly as a headless builder's. opencode and agy pane builders
 keep the live screen capture (#184).
+
+### `relay ui`'s `all` scope: every binding, not just today's
+
+`a` toggles the rail between `live` (today's bindings, the default) and
+`all` -- every binding the database has ever recorded (#172), read through
+the same `relay.Bindings` query `relay history --here` uses: inside a git
+repo, only that repo's bindings; otherwise every one. `all` is persisted in
+`ui.json`, so the ui reopens in whichever scope you left it.
+
+In `all` scope the rail is the live rows exactly as `live` shows them,
+followed by every database row not already live, dimmed and never
+reordered by attention: a name, `archived <date>` where the state word
+goes (or `done` for a binding the database recorded but no tarball ever
+archived), and a second line `rN · <age> · feature <label>` (the feature
+clause only when one is set). Selecting an archived row opens the same
+five tabs, reading the database instead of files -- `terminal` renders the
+round's stored transcript rows and does not follow a tail, since nothing
+about an archived round is still moving. A database relay cannot open
+shows `no database: <err>` in the rail and the scope stays on `live`;
+`relay ui` never exits over it.
 
 ### Panes are yours, always
 
@@ -621,6 +654,120 @@ own `git gc`.
 
 Neither command closes a pane — the builder's terminal stays where it is, for
 you to read and close yourself.
+
+**What a binding records.** Beyond its round history and live state, a fresh
+`bind`, `add` or `fork` fills in four more facts about the binding: which
+repository it works in (the origin URL, normalised, and the git common
+directory — best-effort, so a directory git can't read leaves this blank
+rather than failing the command), the `--feature` label grouping it with
+other bindings (a fork inherits its source's unless you pass your own), which
+binding and round it was forked from, and the planner's own harness
+transcript file path, when relay can locate one at bind time. None of this
+changes what you see day to day; it exists for the coming history database
+below.
+
+### The database
+
+relay keeps a pure-Go sqlite database at `~/.local/state/relay/relay.db`,
+beside `ledger.json` and `availability.json`. Files stay the write side --
+`bind.json`, `log.jsonl` and every round file are still what relay itself
+reads and writes day to day -- but an ingester reads a binding's directory,
+live or archived, and upserts everything it holds (the repo, the planner,
+the binding, every round with its outcome and builder, every log event,
+every plan/report/diff/drift/gate-log/question/answer/consult artifact, and
+every transcript record) into the database. The daemon runs it over every
+live binding at the end of each tick, with per-file cursors so an idle tick
+writes nothing; `relay db backfill` runs it once over every archived
+tarball and live directory on a machine, and is safe to re-run -- the same
+cursors make a second pass a no-op.
+
+```
+relay db path                                          print the database path
+relay db migrate                                       open the database (creating and migrating it if needed) and print its schema version
+relay db stats                                          row counts per table, on-disk size, schema version, and the newest round
+relay db backfill [--dry-run] [--archive-only|--live-only]
+                                                         ingest every archived tarball (oldest first) and every live binding once
+```
+
+`relay db backfill` prints one line per source -- `<name>  <stamp>  rounds N
+events N artifacts N transcript N`, or `<name>  FAILED: <err>` for a source
+it could not read -- and exits 1 if any source failed, after finishing the
+rest. `--dry-run` opens every source and ingests into a scratch database
+instead of the real one, so the printed counts (prefixed `would`) are real
+without writing anything the machine keeps; `--archive-only` and
+`--live-only` narrow it to one half of the state directory. A database built
+before events were linked to their rounds has every `event.round_id` null;
+delete `relay.db` and run `relay db backfill` again to rebuild it with the
+links so `relay show --log` and a past binding's `log` tab scope correctly.
+
+### relay history
+
+`relay history` reads the database, not the filesystem: one line per round
+across every binding relay has ever recorded -- live or archived -- newest
+first.
+
+```
+relay history [--here|--repo <url|dir>]   filter to a repo: --here resolves the current directory's
+                                           origin url (or its git common dir with no remote);
+                                           --repo takes either form directly
+              [--feature LABEL]           filter to a --feature label
+              [--binding NAME]            filter to one binding name
+              [--planner SESSION]         filter to one planner session id
+              [--harness K] [--provider P] [--model M]
+                                           filter to the round's builder columns
+              [--candidate TOKEN]         filter to one harness/provider/model token
+              [--outcome O]               filter to one round outcome: reported, halted, exited,
+                                           switched, done_no_report, open
+              [--since D] [--until D]     only rounds started in this window: 24h, 7d, or YYYY-MM-DD
+              [--archived|--live]         archived bindings only, or live bindings only (default: both)
+              [--limit N]                 max rows to print; 0 = all (default 200)
+              [--json]                    a JSON array of RoundRow, `[]` when empty
+```
+
+Every flag is one field of the shared `Filter` the ui's coming `all` scope
+and dashboard query too. `--archived` and `--live` together, and an
+`--outcome` outside the enum above, are usage errors. A plain line looks
+like:
+
+```
+2026-09-15 14:02  api-auth      r3  agy/antigravity/opus                      reported        +2 commits  clean  $0.42  (archived)
+```
+
+started time in the local zone; the binding name, truncated with `…` past
+12 characters; the round; the builder candidate; the outcome; commits
+(`-` when unknown); the worktree's tree state at close; cost (`$0.42`
+measured, `~$0.42` estimated, `unknown`, or `-` when the round recorded no
+usage at all); `(archived)` for a round from a binding `gc` has packed away.
+
+### relay show
+
+`relay show` prints one round's plan, report, diff, drift, log or
+transcript. A live binding is read straight from its files, exactly as
+today; anything not live -- an archived binding, or one this machine's
+database otherwise knows about -- is read from the database instead, so a
+round from months ago renders the same way a live one does.
+
+```
+relay show <name> [--round N]                      the round to read; default: the newest completed one
+                   [--plan|--report|--diff|--drift|--log|--transcript]
+                                                     which section; default: --plan; only one may be given
+                   [--json]                         the ShowResult as JSON (Events included for --log)
+```
+
+A header line goes to stderr -- `<name> round <N> of <Rounds> · <section>`,
+with `· archived <date>` appended for a non-live binding -- so stdout is
+always just the section itself and safe to pipe. A round with no such
+section (an open round with no diff yet, say) prints `no <section> for
+round N` and exits 0 rather than erroring. `--log` prints the round's
+events exactly as `relay log` does; `--transcript` prints the builder's
+rendered stream. Reading `--round N` outside the binding's round count, or
+naming a binding neither live nor in the database, exits 1:
+
+```
+$ relay show api-auth --report
+api-auth round 3 of 4 · report
+report text here
+```
 
 ### done and unbind are the destructive verbs
 
@@ -923,13 +1070,13 @@ An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you lau
 #### History
 
 Every gate relay records -- a limit you report, a spawn failure it hit
--- is also kept for 30 days in `~/.local/state/relay/history.json`, by
+-- is also kept for 30 days in `~/.local/state/relay/availability.json`, by
 provider and local hour. `relay policy` shows it twice: a `limited 3x
 around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relay unavailable` a provider
-before it bites.
+before it bites. Older installs are migrated on first read.
 
 ## Permission tiers
 

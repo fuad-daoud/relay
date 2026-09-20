@@ -15,7 +15,7 @@ import (
 func TestCaptureRoundDiff_NilGit(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -31,7 +31,7 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: git.ErrNotRepo}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -47,7 +47,7 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: errors.New("boom: git broken")}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -70,7 +70,7 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 		snapshotTreeID: "tree-end",
 		diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 0}},
 	}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -99,7 +99,7 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 			Truncated: true,
 		},
 	}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -131,7 +131,7 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 			Patch: []byte("--- a/file\n+++ b/file\n@@ ...\n"),
 		},
 	}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 2, RoundBaselineTree: "tree-start"}
 
 	// Must save binding so s.Dir("webshop") exists for writing the patch
@@ -188,7 +188,7 @@ func TestCaptureBaseline(t *testing.T) {
 	s := store.New(t.TempDir())
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
 	newRT := func(g Git) Runtime {
-		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	}
 
 	tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitID: "head-base"}), b)
@@ -217,7 +217,7 @@ func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeID: "tree-end"}
-	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+	rt := Runtime{Store: s, Git: fg, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: ""}
 
 	res := CaptureRoundDiff(ctx, rt, b)
@@ -342,7 +342,7 @@ func TestCaptureRoundDiff_EndTree(t *testing.T) {
 				}
 				g = fg
 			}
-			rt := Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+			rt := Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: tc.baseline}
 			if err := s.Save(b); err != nil {
 				t.Fatal(err)
@@ -373,7 +373,7 @@ func TestCommitFacts(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	newRT := func(g Git) Runtime {
-		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), HistoryPath: filepath.Join(t.TempDir(), "history.json")}
+		return Runtime{Store: s, Git: g, LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 	}
 	withHead := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"}
 

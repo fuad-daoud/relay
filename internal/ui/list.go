@@ -57,6 +57,35 @@ func (l *listModel) resolveSticky(rep relay.Report) {
 	l.sticky = rep.Bindings[l.cursor].Name
 }
 
+// resolveStickyRows is resolveSticky generalised to the rail's current row
+// set -- live rows only, or the live+hist union in scope all (railRows()) --
+// so list.cursor always indexes exactly what the rail draws, in either
+// scope. For a live-only rows slice it behaves identically to resolveSticky.
+func (l *listModel) resolveStickyRows(rows []railRow) {
+	if len(rows) == 0 {
+		l.cursor = 0
+		l.sticky = ""
+		return
+	}
+
+	if l.sticky != "" {
+		for i, r := range rows {
+			if r.name() == l.sticky {
+				l.cursor = i
+				return
+			}
+		}
+	}
+
+	if l.cursor >= len(rows) {
+		l.cursor = len(rows) - 1
+	}
+	if l.cursor < 0 {
+		l.cursor = 0
+	}
+	l.sticky = rows[l.cursor].name()
+}
+
 const maxErrorLines = 8
 
 // renderError wraps err across the terminal width, preserving the newlines the

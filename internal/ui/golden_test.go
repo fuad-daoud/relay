@@ -90,6 +90,41 @@ func allStatesRows() []relay.BindingStatus {
 	}
 }
 
+// histRows covers a hist row's rendering (§5.8): one truly archived (tarred
+// by `gc`), one done but never archived -- neither shares a name with
+// allStatesRows(), so scopeRows never dedupes them away.
+func histRows() []relay.HistoryBinding {
+	return []relay.HistoryBinding{
+		{
+			Name: "oldapi", Rounds: 3, Feature: "auth",
+			LastActivity: railNow.Add(-49 * 24 * time.Hour),
+			Archived:     true, ArchivedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Name:         "released",
+			Rounds:       1,
+			LastActivity: railNow.Add(-3 * time.Hour),
+		},
+	}
+}
+
+// goldenAllScopeModel is goldenModel with the rail in scope all: rep's
+// rows live, hist's rows the database's, exactly as a real statusMsg
+// carries both once scope is all (Task 3).
+func goldenAllScopeModel(t *testing.T, width, height int, rep relay.Report, hist []relay.HistoryBinding) Model {
+	t.Helper()
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	m.scope = scopeAll
+	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, _ = m.Update(statusMsg{report: rep, dbRows: hist})
+	return res.(Model)
+}
+
 func gatedGates() []ledger.Gate {
 	return []ledger.Gate{
 		{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)},
@@ -102,7 +137,7 @@ func gatedGates() []ledger.Gate {
 func feedTerminal(t *testing.T, m Model, name, body string) Model {
 	t.Helper()
 	m.detail.active = tabTerminal
-	res, _ := m.Update(tabMsg{name: name, t: tabTerminal, content: tabContent{loaded: true, body: body, at: railNow}})
+	res, _ := m.Update(tabMsg{name: name, round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body, at: railNow}})
 	return res.(Model)
 }
 
@@ -192,6 +227,39 @@ func TestGoldenViews(t *testing.T) {
 				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 				m = res.(Model)
 				return feedTerminal(t, m, m.detail.name, terminalBody)
+			},
+		},
+		{
+			// A short live list (unlike split-all-states' six), so the
+			// dim archived rows scope all appends actually fall inside
+			// the rendered window instead of scrolling off it.
+			name: "split-all-scope", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				rows := allStatesRows()[:2]
+				m := goldenAllScopeModel(t, 140, 40, relay.Report{Bindings: rows}, histRows())
+				m, _ = m.pointDetailAt(rows[0].Name)
+				return feedTerminal(t, m, m.detail.name, terminalBody)
+			},
+		},
+		{
+			name: "stack-all-scope", width: 80, height: 30,
+			build: func(t *testing.T) Model {
+				rows := allStatesRows()[:2]
+				return goldenAllScopeModel(t, 80, 30, relay.Report{Bindings: rows}, histRows())
+			},
+		},
+		{
+			name: "split-archived-detail", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				rows := allStatesRows()
+				m := goldenAllScopeModel(t, 140, 40, relay.Report{Bindings: rows}, histRows())
+				h := histRows()[0]
+				m, _ = m.pointDetailAtHist(h)
+				res, _ := m.Update(tabMsg{
+					name: h.Name, round: m.detail.round, t: tabPlan,
+					content: tabContent{loaded: true, round: m.detail.round, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"},
+				})
+				return res.(Model)
 			},
 		},
 	}

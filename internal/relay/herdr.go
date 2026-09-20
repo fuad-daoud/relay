@@ -11,9 +11,11 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/classify"
+	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -54,6 +56,10 @@ type Git interface {
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	MergeFF(ctx context.Context, dir, ref string) error
 	RootCommit(ctx context.Context, dir string) (string, error)
+	// RepoFacts reports dir's repository identity -- origin remote URL
+	// (raw, unnormalised) and the main worktree's absolute .git directory --
+	// for the coming history database (#172; captureRepo is the caller).
+	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 }
 
 // Runtime carries relay's dependencies explicitly, so every command and the
@@ -69,8 +75,16 @@ type Runtime struct {
 	Candidates *candidate.Set
 	LedgerPath string // the availability ledger file (#61 step 1)
 
-	// HistoryPath is the availability history file (#61 step 7).
-	HistoryPath string
+	// AvailabilityPath is the availability history file (#61 step 7, renamed
+	// availability.json by #172 q6).
+	AvailabilityPath string
+
+	// DB is relay's sqlite database (docs/specs/2026-09-20-persistence-design.md).
+	// Nil means no database: this round opens it only in `relay db *`, never
+	// in the shared runtime constructor, so nothing else reads it yet and
+	// every call site that will (later rounds) must treat nil the same as a
+	// machine with no db.
+	DB *db.DB
 
 	// Policy is ~/.config/relay/policy.json: the planner's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so
@@ -86,7 +100,9 @@ type Runtime struct {
 	// Sessions locates a pane builder's own session record so the daemon can
 	// render it into the round log the way it renders a headless stream
 	// (#184). Nil means pane builders keep the screen capture; tests that do
-	// not set it behave exactly as before.
+	// not set it behave exactly as before. plannerLocator (bind.go) also
+	// calls it at bind time to fill Planner.TranscriptLocator (#172), the
+	// same file path, for the coming history database.
 	Sessions SessionLocator
 
 	// Classify judges report and dialog paragraphs for instruction-shaped
@@ -112,6 +128,20 @@ type Runtime struct {
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.
 	NewID func() string
+}
+
+// IngestDeps builds internal/ingest's Deps from rt: Git carries through
+// nil-safe (a nil rt.Git converts to a nil ingest.GitFacts, since both are
+// true nil interfaces), Sessions is converted to ingest's own
+// SessionLocator type at this boundary (internal/ingest cannot import this
+// package -- it is ingest's caller -- so it declares an identical function
+// type rather than reusing SessionLocator directly), and Now is time.Now.
+func IngestDeps(rt Runtime) ingest.Deps {
+	return ingest.Deps{
+		Git:      rt.Git,
+		Sessions: ingest.SessionLocator(rt.Sessions),
+		Now:      time.Now,
+	}
 }
 
 // SameAgent reports whether a live agent is the one an endpoint records.

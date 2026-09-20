@@ -474,10 +474,10 @@ func TestExplainResolution(t *testing.T) {
 
 func TestCandidateKind(t *testing.T) {
 	rt := Runtime{
-		Candidates:  candidateSet(t, testCandidatesJSON),
-		LedgerPath:  filepath.Join(t.TempDir(), "ledger.json"),
-		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
-		Now:         func() time.Time { return baseTime },
+		Candidates:       candidateSet(t, testCandidatesJSON),
+		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
+		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
+		Now:              func() time.Time { return baseTime },
 	}
 	if got := CandidateKind(rt, testClaudeRef); got != "claude" {
 		t.Errorf("CandidateKind(%q) = %q, want claude", testClaudeRef, got)

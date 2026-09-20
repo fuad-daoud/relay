@@ -48,6 +48,10 @@ type AddOptions struct {
 	// NoGate opts this binding out of policy.json's gate.default even when
 	// Gate is empty (#132). Ignored when Gate is set.
 	NoGate bool
+
+	// Feature is the human-given label grouping this binding with others
+	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
+	Feature string
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -93,6 +97,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
+	}
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return AddResult{}, err
+		}
 	}
 	// Refuse here, not just inside resolveBuilder: Add cuts its worktree before
 	// that runs, and a name herdr would refuse must not leave a worktree
@@ -224,7 +233,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
+		// parent checkout the worktree is cut from (its git identity is
+		// what the coming history database wants), while cwd is the fresh
+		// worktree/peer directory -- a linked worktree reports the same
+		// facts once AddWorktree has run, but opts.Repo is always a real
+		// checkout, including on the --cwd escape hatch.
+		RepoRef: captureRepo(ctx, rt, opts.Repo),
+		Feature: opts.Feature,
 	}
+	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {

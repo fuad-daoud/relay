@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,14 +33,14 @@ func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher
 		g = fg
 	}
 	return Runtime{
-		Herdr:       f,
-		Git:         g,
-		Store:       store.New(t.TempDir()),
-		Candidates:  candidateSet(t, testCandidatesJSON),
-		LedgerPath:  filepath.Join(t.TempDir(), "ledger.json"),
-		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
-		Now:         func() time.Time { return baseTime },
-		Hooks:       hd,
+		Herdr:            f,
+		Git:              g,
+		Store:            store.New(t.TempDir()),
+		Candidates:       candidateSet(t, testCandidatesJSON),
+		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
+		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
+		Now:              func() time.Time { return baseTime },
+		Hooks:            hd,
 	}
 }
 
@@ -102,6 +103,111 @@ func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Bind
 		t.Fatal(err)
 	}
 	return loaded
+}
+
+// TestForkInheritsFeatureAndRecordsParent pins #172's inheritance rule: a
+// fork with no --feature inherits the source's, and copies the source's
+// RepoRef rather than re-capturing it.
+//
+// NOTE (round 3, #172): the plan for this test also asked for a check of a
+// structured `ForkedFrom{Name: src, Round: 2}` (store.ForkRef) on the
+// child. Binding already has a same-named ForkedFrom (string) field plus
+// ForkedAtRound (int) -- the existing free-text pair Fork already writes
+// and internal/relay/status.go and internal/ui/rail.go read -- so this
+// round could not add a second Go field of the same name beside it (see
+// the round 3 report for the halt). This test checks the existing pair
+// instead, which Fork continues to write unchanged.
+func TestForkInheritsFeatureAndRecordsParent(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Feature = "auth"
+	src.RepoRef = &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source:      "source",
+		Round:       2,
+		NewName:     "alt",
+		PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Fork failed: %v", err)
+	}
+
+	if res.Binding.Feature != "auth" {
+		t.Errorf("Feature = %q, want inherited %q", res.Binding.Feature, "auth")
+	}
+	if !reflect.DeepEqual(res.Binding.RepoRef, src.RepoRef) {
+		t.Errorf("RepoRef = %+v, want the source's %+v", res.Binding.RepoRef, src.RepoRef)
+	}
+	if res.Binding.ForkedFrom != "source" || res.Binding.ForkedAtRound != 2 {
+		t.Errorf("ForkedFrom/ForkedAtRound = %q/%d, want source/2", res.Binding.ForkedFrom, res.Binding.ForkedAtRound)
+	}
+
+	altLog, err := rt.Store.ReadLog("alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range altLog {
+		if e.Kind == store.KindFork && e.Note == "forked from source at round 2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("alt log is missing the %q note", "forked from source at round 2")
+	}
+}
+
+// TestForkFeatureOverride pins that an explicit --feature on fork wins over
+// the source binding's.
+func TestForkFeatureOverride(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Feature = "auth"
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source:      "source",
+		Round:       2,
+		NewName:     "alt",
+		PlannerPane: "w2:p3",
+		Feature:     "auth-2",
+	})
+	if err != nil {
+		t.Fatalf("Fork failed: %v", err)
+	}
+	if res.Binding.Feature != "auth-2" {
+		t.Errorf("Feature = %q, want the override %q", res.Binding.Feature, "auth-2")
+	}
 }
 
 func TestForkSuccess(t *testing.T) {

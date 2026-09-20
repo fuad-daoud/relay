@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
@@ -10,9 +12,27 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "s":
 		m.sort = !m.sort
-		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
+		m.list.resolveStickyRows(m.railRows())
 		m.list.top = m.railTop()
 		return m, m.save()
+	case "a":
+		// Toggle first, save, then guard: a scope that lands on all with
+		// no database reverts to live and leaves a sticky notice instead
+		// of ever failing the toggle or exiting (§5.8, §6).
+		if m.scope == scopeLive {
+			m.scope = scopeAll
+		} else {
+			m.scope = scopeLive
+		}
+		cmds := []tea.Cmd{m.save()}
+		if m.scope == scopeAll && m.rt.DB == nil {
+			m.scope = scopeLive
+			m.notice = fmt.Sprintf("no database: %v", relay.ErrNoDatabase)
+			return m, tea.Batch(cmds...)
+		}
+		m.statusInFlight = true
+		cmds = append(cmds, fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here))
+		return m, tea.Batch(cmds...)
 	case "<", ">":
 		if m.compact {
 			return m, nil
@@ -28,12 +48,23 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fillViewport()
 		m.list.top = m.railTop()
 		return m, m.save()
-	case "1", "2", "3", "4":
-		if m.empty() {
+	case "1", "2", "3", "4", "5":
+		if m.detail.name == "" {
 			return m, nil
 		}
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))
+		}
+	case "[", "]":
+		if m.detail.name == "" {
+			return m, nil
+		}
+		if m.paneVisible() {
+			delta := 1
+			if msg.String() == "[" {
+				delta = -1
+			}
+			return m.stepRound(delta)
 		}
 	}
 	railFocused := m.screen == screenList
@@ -48,7 +79,11 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.screen = screenDetail
-			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+			rows := m.railRows()
+			if len(rows) == 0 {
+				return m, nil
+			}
+			return m.pointAtRow(rows[m.list.cursor])
 		}
 		if m.layout() == layoutSplit {
 			if msg.Type == tea.KeyTab || msg.Type == tea.KeyShiftTab || msg.String() == "tab" || msg.String() == "shift+tab" || msg.String() == "back_tab" {
@@ -84,7 +119,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // moveCursor moves the rail cursor by delta, clamped, re-windows, and in
 // split layout points the pane at the new binding.
 func (m Model) moveCursor(delta int) (tea.Model, tea.Cmd) {
-	rows := m.rows()
+	rows := m.railRows()
 	if len(rows) == 0 {
 		return m, nil
 	}
@@ -96,10 +131,10 @@ func (m Model) moveCursor(delta int) (tea.Model, tea.Cmd) {
 		c = len(rows) - 1
 	}
 	m.list.cursor = c
-	m.list.sticky = rows[c].Name
+	m.list.sticky = rows[c].name()
 	m.list.top = m.railTop()
 	if m.layout() == layoutSplit {
-		return m.pointDetailAt(rows[c].Name)
+		return m.pointAtRow(rows[c])
 	}
 	return m, nil
 }
@@ -128,7 +163,7 @@ func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
 			lines = 1
 		}
 		return m, fetchFor(m.ctx, m.rt, next, m.detail.name,
-			m.detail.round, lines)
+			m.detail.round, lines, m.detail.live)
 	}
 	return m, nil
 }

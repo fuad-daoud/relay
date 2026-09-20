@@ -20,6 +20,17 @@ type Options struct {
 	// PrefsPath is the ui's own preference file (spec §6.0); "" keeps the
 	// ui stateless -- nothing loaded, nothing saved.
 	PrefsPath string
+
+	// Here is the cwd scope all resolves into a repo filter for
+	// relay.Bindings, exactly as `relay history --here` does; "" means
+	// every binding (docs/specs/2026-09-20-persistence-design.md §5.8).
+	Here string
+
+	// Notice is shown once, on the first frame, and cleared on the first
+	// keypress like any other notice -- cmdUI's own db-open failure
+	// ("no database: <err>") lands here so the ui still runs, in live
+	// scope, rather than ever failing to start over it (§6).
+	Notice string
 }
 
 const minInterval = 500 * time.Millisecond
@@ -54,6 +65,7 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 	if opts.PrefsPath != "" {
 		model = model.applyPrefs(loadPrefs(opts.PrefsPath))
 	}
+	model.notice = opts.Notice
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err = p.Run()

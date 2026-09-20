@@ -7,8 +7,8 @@
 ▎  agy · relay/webshop            │ usage    live · glm-5.3-flash · 4m · in 2k · cache 91k (95%) · write 3k · out 8k · $0.04                
                                   │ spend    1 round · $0.16 · 3.5M tok                                                                     
  HELD  1                          │                                                                                                         
-   ledger                      r3 │  report    terminal    diff    log                                                                      
-   report r3 · quiet 23s of 1m0s  │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────
+   ledger                      r3 │  plan    report    terminal    diff    log                                                              
+   report r3 · quiet 23s of 1m0s  │ ──────────────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────
    $1.23 · ~$0.40 · 1 unknown     │ %11 · captured 0s ago · 2 lines                                                                         
    agy · relay/ledger             │                                                                                                         
                                   │ $ go test ./...                                                                                         
@@ -37,4 +37,4 @@
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         
-↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   c compact   q quit              webshop NEEDS YOU   refreshed 0s ago
+↑↓ move   ⏎ focus pane   tab next pane   1-5 pane   s sort: attention   c compact   q quit              webshop NEEDS YOU   refreshed 0s ago

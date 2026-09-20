@@ -15,6 +15,9 @@ type prefs struct {
 	Sort     string `json:"sort"` // "attention" | "name"
 	Compact  bool   `json:"compact"`
 	RailCols int    `json:"rail_cols"`
+	// Scope is the rail's breadth (#172): "all" or "" -- "" reads as
+	// live, so a prefs file written before this round keeps opening live.
+	Scope string `json:"scope,omitempty"`
 }
 
 type prefsSavedMsg struct{}
@@ -72,7 +75,11 @@ func (m Model) prefs() prefs {
 	if !m.sort {
 		sort = "name"
 	}
-	return prefs{Sort: sort, Compact: m.compact, RailCols: m.railWidthStored()}
+	scope := ""
+	if m.scope == scopeAll {
+		scope = "all"
+	}
+	return prefs{Sort: sort, Compact: m.compact, RailCols: m.railWidthStored(), Scope: scope}
 }
 
 // applyPrefs sets the model from p; zero values mean the defaults.
@@ -82,6 +89,10 @@ func (m Model) applyPrefs(p prefs) Model {
 	m.railCols = railDefault
 	if p.RailCols > 0 {
 		m.railCols = p.RailCols
+	}
+	m.scope = scopeLive
+	if p.Scope == "all" {
+		m.scope = scopeAll
 	}
 	return m
 }

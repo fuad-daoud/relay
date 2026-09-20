@@ -1473,3 +1473,138 @@ func TestDeleteBranch(t *testing.T) {
 		t.Fatal("feature2 still exists after prefixed DeleteBranch")
 	}
 }
+
+// requireGit skips the test when git is not on PATH: RepoFacts's tests spin
+// up throwaway repositories, which is pointless on a machine without git.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+}
+
+// initRepo creates a throwaway git repository in t.TempDir(), with
+// commit/tag signing off so a fixture commit never tries to reach gpg.
+func initRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "init")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	return dir
+}
+
+func TestRepoFactsNoRemote(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := initRepo(t)
+
+	originURL, commonDir, err := client.RepoFacts(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("RepoFacts: %v", err)
+	}
+	if originURL != "" {
+		t.Errorf("originURL = %q, want empty", originURL)
+	}
+	wantCommonDir, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git")) // canonical, as RepoFacts returns it (macOS /var -> /private/var)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commonDir != wantCommonDir {
+		t.Errorf("commonDir = %q, want %q", commonDir, wantCommonDir)
+	}
+	if !filepath.IsAbs(commonDir) {
+		t.Errorf("commonDir %q is not absolute", commonDir)
+	}
+}
+
+func TestRepoFactsWithOrigin(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := initRepo(t)
+	runGit(t, repoDir, "remote", "add", "origin", "git@github.com:o/r.git")
+
+	originURL, commonDir, err := client.RepoFacts(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("RepoFacts: %v", err)
+	}
+	if originURL != "git@github.com:o/r.git" {
+		t.Errorf("originURL = %q, want the raw remote value unnormalised", originURL)
+	}
+	wantCommonDir, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git")) // canonical, as RepoFacts returns it (macOS /var -> /private/var)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commonDir != wantCommonDir {
+		t.Errorf("commonDir = %q, want %q", commonDir, wantCommonDir)
+	}
+}
+
+func TestRepoFactsFromWorktree(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := initRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "initial")
+	headSHA := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	if err := client.CreateBranch(ctx, repoDir, "wt", headSHA); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	worktreeDir := filepath.Join(t.TempDir(), "wt")
+	if err := client.CheckoutWorktree(ctx, repoDir, worktreeDir, "wt"); err != nil {
+		t.Fatalf("CheckoutWorktree: %v", err)
+	}
+
+	_, mainCommonDir, err := client.RepoFacts(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("RepoFacts(main): %v", err)
+	}
+	_, worktreeCommonDir, err := client.RepoFacts(ctx, worktreeDir)
+	if err != nil {
+		t.Fatalf("RepoFacts(worktree): %v", err)
+	}
+	if worktreeCommonDir != mainCommonDir {
+		t.Errorf("RepoFacts(worktree) commonDir = %q, want the main tree's %q", worktreeCommonDir, mainCommonDir)
+	}
+}
+
+func TestRepoFactsNotARepo(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	dir := t.TempDir()
+
+	_, _, err := client.RepoFacts(ctx, dir)
+	if err == nil {
+		t.Fatal("RepoFacts on a non-repo directory: got nil error, want one")
+	}
+}
+
+func TestNormalizeOriginURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"scp-like", "git@github.com:o/r.git", "https://github.com/o/r"},
+		{"ssh scheme", "ssh://git@github.com/o/r.git", "https://github.com/o/r"},
+		{"https trailing git and slash", "https://github.com/o/r.git/", "https://github.com/o/r"},
+		{"http stays http, host lowercased, path case kept", "http://GitHub.com/o/R", "http://github.com/o/R"},
+		{"unrecognised string returned trimmed", "  not a url  ", "not a url"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := NormalizeOriginURL(c.in); got != c.want {
+				t.Errorf("NormalizeOriginURL(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
