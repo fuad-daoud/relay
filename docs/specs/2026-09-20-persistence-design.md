@@ -289,7 +289,7 @@ All `omitempty`; a `bind.json` written before this change is byte-identical
 after it.
 
 ```
-Binding.Repo        *RepoRef  { OriginURL, CommonDir string }   // json "repo_ref" ("repo" is the server-side path on remote bindings); set at bind/add/fork
+Binding.RepoRef     *RepoRef  { OriginURL, CommonDir string }   // json "repo_ref"; Binding.Repo (string) already exists -- the add/fork source checkout (#192) -- and stays; set at bind/add/fork
 Binding.Feature     string                                       // --feature; fork inherits
 Binding.ForkedFrom  *ForkRef  { Name string; Round int }         // set by fork (beside the existing note)
 Endpoint.TranscriptLocator string   // on Planner: the harness file path when Sessions resolves it at bind

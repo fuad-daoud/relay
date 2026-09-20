@@ -23,7 +23,7 @@ byte-identical.
 ## 2. File structure
 
 ```
-internal/store/types.go                 + RepoRef, ForkRef; Binding.Repo, .Feature, .ForkedFrom; Endpoint.TranscriptLocator; ValidFeature()
+internal/store/types.go                 + RepoRef, ForkRef; Binding.RepoRef, .Feature, .ForkedFrom; Endpoint.TranscriptLocator; ValidFeature()
 internal/store/types_test.go            + round-trip and ValidFeature tests
 internal/git/client.go                  + RepoFacts(ctx, dir) (originURL, commonDir string, err error); + NormalizeOriginURL(string) string
 internal/git/client_test.go             + tests (throwaway repos with gpgsign off)
@@ -50,16 +50,14 @@ type ForkRef struct {
     Name  string `json:"name"`    // the source binding
     Round int    `json:"round"`   // the source round copied through
 }
-Binding.Repo        *RepoRef  `json:"repo_ref,omitempty"`   // NOTE: json name repo_ref -- `repo` is already taken on remote bindings (types.go: the server-side repo path)
+Binding.RepoRef     *RepoRef  `json:"repo_ref,omitempty"`   // NOTE: the Go field is RepoRef, not Repo -- Binding.Repo (string, json "repo") already exists: the add/fork source checkout that #192's escape detection keys on. Leave it untouched.
 Binding.Feature     string    `json:"feature,omitempty"`
 Binding.ForkedFrom  *ForkRef  `json:"forked_from,omitempty"`
 Endpoint.TranscriptLocator string `json:"transcript_locator,omitempty"`  // set on Planner only in this round
 ```
 
-Before choosing the json name for `Repo`, read `internal/store/types.go`
-and confirm what field currently serialises as `"repo"`; keep that one
-untouched and use `repo_ref` for the new struct. If no field serialises as
-`"repo"`, use `"repo"`.
+`Binding.Repo` (the existing string) and `Binding.RepoRef` (new) coexist;
+nothing in this round reads or writes the existing one.
 
 `ValidFeature(s string) error`: 1..64 bytes, every byte in
 `[A-Za-z0-9._ -]`, no leading or trailing space. Error text:
@@ -103,17 +101,17 @@ the same error as the CLI.
 
 ```
 Bind (bind.go, at the `b := store.Binding{` site ~479 and the resume path):
-    b.Repo = captureRepo(ctx, rt, opts.CWD)
+    b.RepoRef = captureRepo(ctx, rt, opts.CWD)
     b.Feature = opts.Feature
     b.Planner.TranscriptLocator = plannerLocator(rt, plannerKind, plannerSessionID)
     if b.CreatedAt.IsZero(): b.CreatedAt = now
-  resume/--rebind: keep the existing Repo/Feature/ForkedFrom; set Feature only when opts.Feature != ""; refresh TranscriptLocator when empty.
+  resume/--rebind: keep the existing RepoRef/Feature/ForkedFrom; set Feature only when opts.Feature != ""; refresh TranscriptLocator when empty.
 
 Add (add.go ~213 and remote.go ~221):
     same three lines; CWD is the new worktree's parent repo (opts.CWD) -- capture from opts.CWD, not the worktree path.
 
 Fork (fork.go ~259):
-    b.Repo = src.Repo (copy) ; if nil: captureRepo(ctx, rt, src.CWD)
+    b.RepoRef = src.RepoRef (copy) ; if nil: captureRepo(ctx, rt, src.CWD)
     b.Feature = opts.Feature if set, else src.Feature
     b.ForkedFrom = &ForkRef{Name: opts.Source, Round: opts.Round}
     b.Planner.TranscriptLocator = plannerLocator(...)
@@ -161,11 +159,11 @@ cmd/relay: fs.String("feature", "", "label grouping this binding with others (fo
 **Files:** `internal/relay/herdr.go`, `repo.go`, `repo_test.go`, `bind.go`, `add.go`, `remote.go`, `fork.go`, and every `fakeGit` in `internal/relay/*_test.go` (add a `RepoFacts` method returning configured values; default origin "" / commonDir `<cwd>/.git`).
 
 **Tests**
-- `TestBindRecordsRepoFeatureAndLocator`: fakeGit returns `git@github.com:o/r.git`; `rt.Sessions` returns `/home/x/.claude/projects/slug/S.jsonl`; after `Bind` the saved binding has `Repo{OriginURL: "https://github.com/o/r", CommonDir: ...}`, `Feature: "auth"`, `Planner.TranscriptLocator` set, `CreatedAt` non-zero.
-- `TestBindRepoFactsFailureIsNil`: fakeGit errors -> `Repo == nil`, bind succeeds.
+- `TestBindRecordsRepoFeatureAndLocator`: fakeGit returns `git@github.com:o/r.git`; `rt.Sessions` returns `/home/x/.claude/projects/slug/S.jsonl`; after `Bind` the saved binding has `RepoRef: &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: ...}`, `Feature: "auth"`, `Planner.TranscriptLocator` set, `CreatedAt` non-zero.
+- `TestBindRepoFactsFailureIsNil`: fakeGit errors -> `RepoRef == nil`, bind succeeds.
 - `TestBindRejectsBadFeature`: `Feature: "a/b"` -> error containing `feature:`.
 - `TestAddRecordsRepoFromCWDNotWorktree`.
-- `TestForkInheritsFeatureAndRecordsParent`: source has `Feature: "auth"`, fork with none -> child `Feature: "auth"`, `ForkedFrom{Name: src, Round: 2}`, `Repo` equal to the source's; the log still has the `forked from` note.
+- `TestForkInheritsFeatureAndRecordsParent`: source has `Feature: "auth"`, fork with none -> child `Feature: "auth"`, `ForkedFrom{Name: src, Round: 2}`, `RepoRef` equal to the source's; the log still has the `forked from` note.
 - `TestForkFeatureOverride`: fork with `Feature: "auth-2"` -> child has it.
 - `TestResumeKeepsFieldsAndRefreshesLocator`.
 
@@ -197,6 +195,5 @@ so in the report and treat the check as passed.
 ## Report
 
 Per task: what was done, the test names, the verify result. Then the commit
-sha and the `make check` result. Say which json name you used for
-`Binding.Repo` and why. If any step was impossible as written, say which
+sha and the `make check` result. Confirm the existing `Binding.Repo` string is untouched. If any step was impossible as written, say which
 and stop there.
