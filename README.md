@@ -634,19 +634,36 @@ transcript file path, when relay can locate one at bind time. None of this
 changes what you see day to day; it exists for the coming history database
 below.
 
-### relay db
+### The database
 
 relay keeps a pure-Go sqlite database at `~/.local/state/relay/relay.db`,
-beside `ledger.json` and `availability.json`:
+beside `ledger.json` and `availability.json`. Files stay the write side --
+`bind.json`, `log.jsonl` and every round file are still what relay itself
+reads and writes day to day -- but an ingester reads a binding's directory,
+live or archived, and upserts everything it holds (the repo, the planner,
+the binding, every round with its outcome and builder, every log event,
+every plan/report/diff/drift/gate-log/question/answer/consult artifact, and
+every transcript record) into the database. The daemon runs it over every
+live binding at the end of each tick, with per-file cursors so an idle tick
+writes nothing; `relay db backfill` runs it once over every archived
+tarball and live directory on a machine, and is safe to re-run -- the same
+cursors make a second pass a no-op.
 
 ```
-relay db path       print the database path
-relay db migrate    open the database (creating and migrating it if needed) and print its schema version
-relay db stats      row counts per table, on-disk size, schema version, and the newest round
+relay db path                                          print the database path
+relay db migrate                                       open the database (creating and migrating it if needed) and print its schema version
+relay db stats                                          row counts per table, on-disk size, schema version, and the newest round
+relay db backfill [--dry-run] [--archive-only|--live-only]
+                                                         ingest every archived tarball (oldest first) and every live binding once
 ```
 
-Nothing writes rows to it yet outside the tests and `relay db migrate`
-itself -- a later change fills it in from relay's existing state files.
+`relay db backfill` prints one line per source -- `<name>  <stamp>  rounds N
+events N artifacts N transcript N`, or `<name>  FAILED: <err>` for a source
+it could not read -- and exits 1 if any source failed, after finishing the
+rest. `--dry-run` opens every source and ingests into a scratch database
+instead of the real one, so the printed counts (prefixed `would`) are real
+without writing anything the machine keeps; `--archive-only` and
+`--live-only` narrow it to one half of the state directory.
 
 ### done and unbind are the destructive verbs
 

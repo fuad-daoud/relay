@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -127,6 +128,20 @@ type Runtime struct {
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.
 	NewID func() string
+}
+
+// IngestDeps builds internal/ingest's Deps from rt: Git carries through
+// nil-safe (a nil rt.Git converts to a nil ingest.GitFacts, since both are
+// true nil interfaces), Sessions is converted to ingest's own
+// SessionLocator type at this boundary (internal/ingest cannot import this
+// package -- it is ingest's caller -- so it declares an identical function
+// type rather than reusing SessionLocator directly), and Now is time.Now.
+func IngestDeps(rt Runtime) ingest.Deps {
+	return ingest.Deps{
+		Git:      rt.Git,
+		Sessions: ingest.SessionLocator(rt.Sessions),
+		Now:      time.Now,
+	}
 }
 
 // SameAgent reports whether a live agent is the one an endpoint records.
