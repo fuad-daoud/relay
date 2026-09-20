@@ -291,7 +291,7 @@ after it.
 ```
 Binding.RepoRef     *RepoRef  { OriginURL, CommonDir string }   // json "repo_ref"; Binding.Repo (string) already exists -- the add/fork source checkout (#192) -- and stays; set at bind/add/fork
 Binding.Feature     string                                       // --feature; fork inherits
-Binding.ForkedFrom  *ForkRef  { Name string; Round int }         // set by fork (beside the existing note)
+(fork parent: Binding.ForkedFrom string + ForkedAtRound int already exist, json "forked_from"/"forked_at_round"; nothing is added)
 Endpoint.TranscriptLocator string   // on Planner: the harness file path when Sessions resolves it at bind
 Binding.CreatedAt   time.Time                                    // already present on remote bindings; set for all
 ```
