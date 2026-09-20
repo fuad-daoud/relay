@@ -100,9 +100,22 @@ func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error
 	if err != nil {
 		return "", err
 	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
+	return versionField(string(out))
+}
+
+// versionField picks the version out of a --version line: the first
+// whitespace field that, after an optional leading "v", starts with a
+// digit; the first field when none does; an error on no fields.
+func versionField(out string) (string, error) {
+	fields := strings.Fields(strings.TrimSpace(out))
 	if len(fields) == 0 {
 		return "", errors.New("empty version output")
+	}
+	for _, f := range fields {
+		v := strings.TrimPrefix(f, "v")
+		if v != "" && v[0] >= '0' && v[0] <= '9' {
+			return f, nil
+		}
 	}
 	return fields[0], nil
 }

@@ -62,3 +62,34 @@ func TestRealEnvDaemonRunningWithoutDaemon(t *testing.T) {
 		t.Error("DaemonRunning on fresh temp root must be false")
 	}
 }
+
+func TestVersionField(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"codex-cli 0.155.1", "0.155.1", false},
+		{"opencode v2.0.8", "v2.0.8", false},
+		{"2.1.278 (Claude Code)", "2.1.278", false},
+		{"1.2.7", "1.2.7", false},
+		{"codex-cli", "codex-cli", false},
+		{"", "", true},
+	}
+	for _, tc := range cases {
+		got, err := versionField(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("versionField(%q): expected error, got %q", tc.input, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("versionField(%q) unexpected error: %v", tc.input, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("versionField(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
