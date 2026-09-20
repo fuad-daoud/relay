@@ -101,7 +101,8 @@ func Line(u Usage) string {
 // Parts is the round as short, separable parts for a surface that joins
 // them with its own separator and already names the harness elsewhere
 // (the ui's binding block): model (harness when there is none), duration,
-// "in N", "cache NN%", "out N", and the cost word. An unknown note that
+// the four token cells ("in N", "cache N (NN%)", "write N", "out N") and
+// the cost word. An unknown note that
 // ends in " for <provider>/<model>" loses that suffix -- the model is the
 // first part. Empty parts are omitted.
 func Parts(u Usage) []string {

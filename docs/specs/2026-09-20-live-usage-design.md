@@ -117,7 +117,7 @@ Worked examples (golden-tested):
 |---|---|
 | closed claude headless, measured | `claude/anthropic/claude-sonnet-5  14m  in 2k  cache 166k (91%)  write 14k  out 12k  $0.41` |
 | closed opencode, no cache writes | `opencode/cline-pass/glm-5.3-flash  5m  in 410k  cache 3.1M (88%)  write 0  out 7k  $0.16` |
-| unknown, no samples | `agy/google/gemini-3-pro  6m  unknown: agy keeps no usage record` |
+| unknown, no samples | `agy/google/gemini-3-pro  6m  unknown (agy keeps no usage record)` -- `Line` parenthesises the note, as it always has; `Parts` (the ui header) uses `unknown: note` |
 | plan lane | `claude/anthropic/opus  9m  in 1k  cache 88k (94%)  write 4k  out 6k  plan` |
 
 | input | `LiveParts` joined by ` · ` |
@@ -168,10 +168,14 @@ type streamCarry interface {
 }
 ```
 
-On `Peek`: stat the file; if `(size, mtime)` match, return the cached
-samples; otherwise seek to `offset`, parse the appended lines only,
-append, record the new `(size, offset, mtime)`. A file that shrank
-(truncated, or a new round reusing the path) resets the entry. The
+Entries are keyed by `StreamPath + "\x00" + Harness`: a mid-round builder
+switch reuses the round's path with a different harness and must never
+inherit the previous carry. On `Peek`: stat the file; if `(size, mtime)`
+match, return the cached samples; otherwise seek to `offset` (bytes
+consumed from disk, the held `tail` included -- the tail is prepended
+from memory, never re-read), parse every complete appended line, record
+the new `(size, offset, mtime)`. A file that shrank (truncated, or a new
+round reusing the path) resets the entry. The
 per-harness stream parsers gain a resumable form -- the same line loop,
 with the accumulator passed in rather than created -- so `claudeStream`
 and the cache do not drift. The map lives on the `reader` value held by
@@ -299,8 +303,10 @@ adjust; `--json` is `Spend` and is unchanged.
   Tokens still print. Same rule as the closed line.
 - **Stream reset.** A shrunk file resets the cache entry; a new round
   writes a new `NNN-builder.jsonl` so the path changes and the old entry
-  is simply never hit again. Entries for paths whose binding is gone are
-  dropped when `Status` sees no binding for them.
+  is simply never hit again. Entries are not evicted: the cache grows by
+  one entry per round a process has peeked -- a round's samples, a few KB
+  -- and lives as long as the process (`relay ui`, the daemon). Eviction
+  is a follow-up if a long-lived daemon ever shows it in a profile.
 - **Reader nil** (`rt.Usage == nil`, tests only): no live figure.
 
 ## 7. Testing
