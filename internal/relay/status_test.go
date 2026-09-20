@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,72 @@ func TestStatusMarksMissingAgentsAsGone(t *testing.T) {
 	}
 	if rep.Bindings[0].BuilderStatus != "gone" {
 		t.Errorf("builder status = %q, want gone", rep.Bindings[0].BuilderStatus)
+	}
+}
+
+// TestStatusDegradesWhenHerdrUnreachable pins the degrade contract (#, spec
+// §7.4): a failed ListAgents must not fail the report. The report carries
+// every row, carries the herdr error as data, and marks every pane endpoint
+// it could not look up as unknown -- not gone, because relay did not ask
+// and must not claim absence.
+func TestStatusDegradesWhenHerdrUnreachable(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	// listErr fails every ListAgents after the first; sentBinding's Bind
+	// already made the first, so the next Status call fails.
+	f.listErr = errors.New("no herdr server")
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status must degrade, not fail: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	if rep.HerdrError != "no herdr server" {
+		t.Errorf("HerdrError = %q, want the herdr error text", rep.HerdrError)
+	}
+	if got := rep.Bindings[0].PlannerStatus; got != "unknown" {
+		t.Errorf("PlannerStatus = %q, want unknown", got)
+	}
+	if got := rep.Bindings[0].BuilderStatus; got != "unknown" {
+		t.Errorf("BuilderStatus = %q, want unknown", got)
+	}
+}
+
+// TestStatusHerdrErrorEmptyOnSuccess pins that an *answered* lookup -- even
+// an answered empty agent list -- leaves HerdrError empty and the absent
+// word gone, not unknown.
+func TestStatusHerdrErrorEmptyOnSuccess(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = nil
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.HerdrError != "" {
+		t.Errorf("HerdrError = %q, want empty when herdr answered", rep.HerdrError)
+	}
+	if got := rep.Bindings[0].BuilderStatus; got != "gone" {
+		t.Errorf("builder status = %q, want gone for an answered empty list", got)
+	}
+}
+
+// TestRenderStatusHerdrHeader pins the `relay status` header: a report that
+// carried a herdr error opens with the unreachable line, then the ordinary
+// body; a report that did not renders byte-identical to today.
+func TestRenderStatusHerdrHeader(t *testing.T) {
+	out := RenderStatus(Report{HerdrError: "boom"})
+	if !strings.HasPrefix(out, "herdr unreachable: boom; pane statuses unknown\n\n") {
+		t.Errorf("missing header, got %q", out)
+	}
+	if !strings.Contains(out, "no bindings\n") {
+		t.Errorf("the no-bindings body must still render, got %q", out)
+	}
+	if strings.Contains(RenderStatus(Report{}), "herdr unreachable") {
+		t.Errorf("empty HerdrError must not add the header")
 	}
 }
 
@@ -313,6 +380,9 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
+	if _, ok := decoded["herdr_error"]; ok {
+		t.Errorf("empty HerdrError must be omitted from JSON, got %s", raw)
+	}
 
 	bindings, ok := decoded["bindings"].([]any)
 	if !ok || len(bindings) != 1 {
@@ -352,7 +422,7 @@ func TestStatusRowBranch(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
 	b.Branch = "relay/webshop"
-	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	row, err := statusRow(context.Background(), rt, b, nil, nil, agentGone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +430,7 @@ func TestStatusRowBranch(t *testing.T) {
 		t.Errorf("Branch = %q", row.Branch)
 	}
 	b.Branch = ""
-	row, _ = statusRow(context.Background(), rt, b, nil, nil)
+	row, _ = statusRow(context.Background(), rt, b, nil, nil, agentGone)
 	if row.Branch != "" {
 		t.Errorf("--cwd binding Branch = %q, want empty", row.Branch)
 	}
@@ -388,7 +458,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	row, err := statusRow(context.Background(), rt, b, nil, nil, agentGone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +469,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Errorf("Hint = %q", row.Waiting.Hint)
 	}
 	b.State = store.StateActive
-	row, _ = statusRow(context.Background(), rt, b, nil, nil)
+	row, _ = statusRow(context.Background(), rt, b, nil, nil, agentGone)
 	if row.Waiting != nil {
 		t.Errorf("active row Waiting = %+v, want nil", row.Waiting)
 	}
@@ -418,7 +488,7 @@ func TestStatusRowGatingShowsAge(t *testing.T) {
 		Round: b.Round, Command: "make check",
 	}
 
-	row, err := statusRow(context.Background(), rt, b, nil, nil)
+	row, err := statusRow(context.Background(), rt, b, nil, nil, agentGone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1192,6 +1262,26 @@ func TestHideDoneKeepsGated(t *testing.T) {
 	}
 	if len(out.Gated) != 1 || out.Gated[0].Token != "agy/test/m" {
 		t.Fatalf("Gated = %+v, want the gate carried through", out.Gated)
+	}
+}
+
+func TestHideDoneKeepsHerdrError(t *testing.T) {
+	in := Report{
+		HerdrError: "no herdr server",
+		Bindings: []BindingStatus{
+			{Name: "old", State: string(store.StateDone)},
+			{Name: "live", State: string(store.StateActive)},
+		},
+	}
+	out := HideDone(in)
+	if out.HerdrError != "no herdr server" {
+		t.Fatalf("HerdrError = %q, want \"no herdr server\" carried through", out.HerdrError)
+	}
+	if out.DoneHidden != 1 {
+		t.Errorf("DoneHidden = %d, want 1", out.DoneHidden)
+	}
+	if len(out.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(out.Bindings))
 	}
 }
 

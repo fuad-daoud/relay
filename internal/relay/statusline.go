@@ -228,5 +228,5 @@ func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error)
 			kept = append(kept, b)
 		}
 	}
-	return buildReport(ctx, rt, kept, nil)
+	return buildReport(ctx, rt, kept, nil, nil)
 }

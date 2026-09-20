@@ -193,6 +193,43 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 }
 
+// TestFooterMarksHerdrUnreachable: a report that degraded because herdr did
+// not answer still renders its rows and marks the footer once -- without the
+// error text itself, the way the refresh marker works (list_test.go) -- and
+// a report whose HerdrError is empty adds no marker.
+func TestFooterMarksHerdrUnreachable(t *testing.T) {
+	rows := []relay.BindingStatus{
+		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "unknown"},
+	}
+
+	// A report with an empty HerdrError adds no footer marker.
+	m := splitModel(t, 140, 40, rows...)
+	if strings.Contains(stripANSI(m.footerView()), "herdr unreachable") {
+		t.Errorf("empty HerdrError must not mark the footer: %q", m.footerView())
+	}
+
+	// The same model receiving a report whose HerdrError is set marks the
+	// footer without the error text, and keeps rendering the rows.
+	res, _ := m.Update(statusMsg{report: relay.Report{
+		HerdrError: "no herdr server",
+		Bindings:   rows,
+	}})
+	m = res.(Model)
+	f := stripANSI(m.footerView())
+	if !strings.Contains(f, "! herdr unreachable") {
+		t.Errorf("footer must mark herdr unreachable: %q", f)
+	}
+	if strings.Contains(f, "no herdr server") {
+		t.Errorf("the error text itself must not be shown in the footer: %q", f)
+	}
+	if strings.Contains(f, "refresh failed") {
+		t.Errorf("a degraded report is not a refresh failure: %q", f)
+	}
+	if !strings.Contains(stripANSI(m.View()), "api") {
+		t.Errorf("rows must still render, got:\n%s", m.View())
+	}
+}
+
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	rows := threeRows()
 	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
