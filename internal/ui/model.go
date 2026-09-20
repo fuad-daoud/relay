@@ -449,6 +449,9 @@ func (m Model) footerView() string {
 	if m.err != nil {
 		notes = append(notes, errorStyle.Render("! refresh failed (retrying)"))
 	}
+	if m.report.HerdrError != "" {
+		notes = append(notes, errorStyle.Render("! herdr unreachable"))
+	}
 	if m.paneVisible() {
 		for _, b := range m.report.Bindings {
 			if b.Name != m.detail.name && b.Display == "NEEDS YOU" {

@@ -21,6 +21,12 @@ import (
 // agentGone is the status shown for a binding endpoint herdr no longer knows.
 const agentGone = "gone"
 
+// agentUnknown is the status for a pane endpoint relay could not look up
+// because herdr did not answer. It means "relay did not ask and must not
+// claim absence", the same word headlessStatus and the remote path use for
+// "could not determine".
+const agentUnknown = "unknown"
+
 // BindingStatus is one row of relay status: stored binding plus live herdr state.
 type BindingStatus struct {
 	Name             string `json:"name"`
@@ -197,31 +203,51 @@ type Report struct {
 	// when nothing is gated, so a consumer that never learned the field
 	// sees the document it always did.
 	Gated []ledger.Gate `json:"gated,omitempty"`
+	// HerdrError is the error text herdr returned when Status asked for its
+	// agents. Empty exactly when the lookup succeeded -- including an
+	// answered empty agent list. When set, the report's rows were built
+	// from the store alone and every pane endpoint relay could not look up
+	// reads unknown, not gone (relay did not ask, so it must not claim
+	// absence). Absent from JSON when empty so a consumer that never
+	// learned the field sees the document it always did.
+	HerdrError string `json:"herdr_error,omitempty"`
 }
 
-// Status derives every row live from herdr, so it cannot disagree with reality.
+// Status derives every row live from herdr, so it cannot disagree with
+// reality. A herdr that fails to answer is reported, not fatal: the report
+// is still built from the store alone, the error rides along as
+// Report.HerdrError, and every pane endpoint it could not look up reads
+// unknown. Only store failures fail the call.
 func Status(ctx context.Context, rt Runtime) (Report, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return Report{}, err
 	}
 
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return Report{}, fmt.Errorf("list agents: %w", err)
+	agents, herdrErr := rt.Herdr.ListAgents(ctx)
+	if herdrErr != nil {
+		agents = nil
 	}
 
-	return buildReport(ctx, rt, bindings, agents)
+	return buildReport(ctx, rt, bindings, agents, herdrErr)
 }
 
-func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agents []herdr.Agent) (Report, error) {
+func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agents []herdr.Agent, herdrErr error) (Report, error) {
+	// The absent word for a pane endpoint relay cannot look up: gone when
+	// herdr answered (it knows the endpoint is not there), unknown when it
+	// did not (relay did not ask, so it must not claim absence).
+	absent := agentGone
+	if herdrErr != nil {
+		absent = agentUnknown
+	}
+
 	// Computed once, not per binding: it spans every binding, so it does not
 	// vary across rows.
 	known := knownEndpoints(bindings)
 
 	rows := make([]BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(ctx, rt, b, agents, known)
+		row, err := statusRow(ctx, rt, b, agents, known, absent)
 		if err != nil {
 			return Report{}, err
 		}
@@ -231,6 +257,9 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agen
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
 	rep := Report{Bindings: rows}
+	if herdrErr != nil {
+		rep.HerdrError = herdrErr.Error()
+	}
 	rep.Gated = Gates(rt)
 	return rep, nil
 }
@@ -238,7 +267,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agen
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
-func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint) (BindingStatus, error) {
+func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint, absent string) (BindingStatus, error) {
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
@@ -248,8 +277,8 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		Consults:         runningConsults(b),
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
-		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: agentGone,
-		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: agentGone,
+		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: absent,
+		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: absent,
 	}
 
 	// What relay acts on is what it shows (spec §7.4).
@@ -498,6 +527,10 @@ func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank boo
 func RenderStatus(r Report) string {
 	var sb strings.Builder
 
+	if r.HerdrError != "" {
+		fmt.Fprintf(&sb, "herdr unreachable: %s; pane statuses unknown\n\n", r.HerdrError)
+	}
+
 	switch {
 	case len(r.Bindings) == 0 && r.DoneHidden > 0:
 		// The footer says "clear" and not "free": gc frees disk only for
@@ -509,7 +542,10 @@ func RenderStatus(r Report) string {
 		return sb.String()
 
 	case len(r.Bindings) == 0 && len(r.Gated) == 0:
-		return "no bindings\n"
+		// Written to sb rather than returned as a literal so a herdr
+		// header, when present, precedes it.
+		sb.WriteString("no bindings\n")
+		return sb.String()
 
 	case len(r.Bindings) == 0:
 		sb.WriteString("no bindings\n")
