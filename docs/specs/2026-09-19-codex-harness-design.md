@@ -118,11 +118,11 @@ it. `AgentDoc` reads `agents/<Doc>.<ext>`, the embed pattern becomes
 | tier | args |
 |------|------|
 | harness | none (`~/.codex/config.toml` decides) |
-| read | `-s read-only` |
-| edit | `-s workspace-write` |
+| read | refuse (#230: read-only cannot write the report) |
+| edit | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding state dir>"]` |
 | yolo | `--dangerously-bypass-approvals-and-sandbox` |
 
-No refusal cell. `codex exec` is non-interactive: a command the sandbox
+One refusal cell, `read`, since #230. `codex exec` is non-interactive: a command the sandbox
 does not allow fails inside the run rather than raising a dialog, which is
 relay's `permission-blocked` outcome (#141), detected through
 `DenialPatterns` (§6).

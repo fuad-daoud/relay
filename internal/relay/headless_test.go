@@ -80,7 +80,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
 	}
 	for _, c := range cases {
-		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo")
+		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo", "/state/dir")
 		if err != nil {
 			t.Fatalf("%s: %v", c.token, err)
 		}
@@ -88,8 +88,51 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 			t.Errorf("%s:\n got %v\nwant %v", c.token, got, c.want)
 		}
 	}
-	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo"); err == nil {
+	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo", "/state/dir"); err == nil {
 		t.Error("unknown harness kind must be an error, not a panic or an empty argv")
+	}
+}
+
+func TestStartRoundPassesStateDir(t *testing.T) {
+	const codexCandidatesJSON = `[
+	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
+	]`
+	fr := newFakeRunner()
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+	rt.Candidates = candidateSet(t, codexCandidatesJSON)
+	rt.Runner = fr
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "codex-binding",
+		Candidate:   "codex/openai/gpt-5.6-terra",
+		PlannerPane: "w2:p3",
+		CWD:         "/repo",
+		Headless:    true,
+		Tier:        "edit",
+	})
+	if err != nil {
+		t.Fatalf("Bind --headless: %v", err)
+	}
+
+	_, err = startRound(context.Background(), rt, b, "the prompt")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	wantRoot := fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%q]`, rt.Store.Dir(b.Name))
+	found := false
+	for _, arg := range spec.Argv {
+		if arg == wantRoot {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected %s in spec.Argv, got %v", wantRoot, spec.Argv)
 	}
 }
 

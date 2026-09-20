@@ -200,7 +200,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	} else {
 		consult.Endpoint.PaneID = pane
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
-		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.Args); err != nil {
+		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.PaneArgs(rt.Store.Dir(opts.Name))); err != nil {
 			recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
 			consult.State = store.ConsultSilent
 			consult.Note = "start failed: " + brief(err)

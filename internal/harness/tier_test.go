@@ -91,34 +91,35 @@ func TestTierOrder(t *testing.T) {
 
 func TestPermissionArgsTable(t *testing.T) {
 	tests := []struct {
-		kind     string
-		tier     Tier
-		wantArgs []string
-		wantErr  error
+		kind       string
+		tier       Tier
+		wantArgs   []string
+		wantErr    error
+		wantSubstr string
 	}{
 		// claude
-		{"claude", TierHarness, nil, nil},
-		{"claude", TierRead, []string{"--permission-mode", "plan"}, nil},
-		{"claude", TierEdit, []string{"--permission-mode", "acceptEdits"}, nil},
-		{"claude", TierYolo, []string{"--dangerously-skip-permissions"}, nil},
+		{"claude", TierHarness, nil, nil, ""},
+		{"claude", TierRead, []string{"--permission-mode", "plan"}, nil, ""},
+		{"claude", TierEdit, []string{"--permission-mode", "acceptEdits"}, nil, ""},
+		{"claude", TierYolo, []string{"--dangerously-skip-permissions"}, nil, ""},
 
 		// agy
-		{"agy", TierHarness, nil, nil},
-		{"agy", TierRead, []string{"--mode", "plan"}, nil},
-		{"agy", TierEdit, []string{"--mode", "accept-edits"}, nil},
-		{"agy", TierYolo, []string{"--dangerously-skip-permissions"}, nil},
+		{"agy", TierHarness, nil, nil, ""},
+		{"agy", TierRead, []string{"--mode", "plan"}, nil, ""},
+		{"agy", TierEdit, []string{"--mode", "accept-edits"}, nil, ""},
+		{"agy", TierYolo, []string{"--dangerously-skip-permissions"}, nil, ""},
 
 		// opencode
-		{"opencode", TierHarness, nil, nil},
-		{"opencode", TierRead, nil, ErrTierUnsupported},
-		{"opencode", TierEdit, nil, ErrTierUnsupported},
-		{"opencode", TierYolo, []string{"--auto"}, nil},
+		{"opencode", TierHarness, nil, nil, ""},
+		{"opencode", TierRead, nil, ErrTierUnsupported, ""},
+		{"opencode", TierEdit, nil, ErrTierUnsupported, ""},
+		{"opencode", TierYolo, []string{"--auto"}, nil, ""},
 
 		// codex
-		{"codex", TierHarness, nil, nil},
-		{"codex", TierRead, []string{"-s", "read-only"}, nil},
-		{"codex", TierEdit, []string{"-s", "workspace-write"}, nil},
-		{"codex", TierYolo, []string{"--dangerously-bypass-approvals-and-sandbox"}, nil},
+		{"codex", TierHarness, nil, nil, ""},
+		{"codex", TierRead, nil, ErrTierUnsupported, "writable_roots"},
+		{"codex", TierEdit, []string{"-s", "workspace-write", "-c", StatePlaceholder}, nil, ""},
+		{"codex", TierYolo, []string{"--dangerously-bypass-approvals-and-sandbox"}, nil, ""},
 	}
 
 	for _, tt := range tests {
@@ -131,6 +132,9 @@ func TestPermissionArgsTable(t *testing.T) {
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("PermissionArgs(%s) error = %v, want %v", tt.tier, err, tt.wantErr)
+				}
+				if tt.wantSubstr != "" && !strings.Contains(err.Error(), tt.wantSubstr) {
+					t.Errorf("PermissionArgs(%s) error = %q, want containing %q", tt.tier, err.Error(), tt.wantSubstr)
 				}
 			} else {
 				if err != nil {
