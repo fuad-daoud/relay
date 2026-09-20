@@ -1507,7 +1507,7 @@ func TestRepoFactsNoRemote(t *testing.T) {
 	if originURL != "" {
 		t.Errorf("originURL = %q, want empty", originURL)
 	}
-	wantCommonDir, err := filepath.Abs(filepath.Join(repoDir, ".git"))
+	wantCommonDir, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git")) // canonical, as RepoFacts returns it (macOS /var -> /private/var)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1533,7 +1533,7 @@ func TestRepoFactsWithOrigin(t *testing.T) {
 	if originURL != "git@github.com:o/r.git" {
 		t.Errorf("originURL = %q, want the raw remote value unnormalised", originURL)
 	}
-	wantCommonDir, err := filepath.Abs(filepath.Join(repoDir, ".git"))
+	wantCommonDir, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git")) // canonical, as RepoFacts returns it (macOS /var -> /private/var)
 	if err != nil {
 		t.Fatal(err)
 	}
