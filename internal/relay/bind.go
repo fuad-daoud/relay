@@ -90,6 +90,12 @@ type BindOptions struct {
 	// NoGate opts this binding out of policy.json's gate.default even when
 	// Gate is empty (#132). Ignored when Gate is set.
 	NoGate bool
+
+	// Feature is the human-given label grouping this binding with others
+	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
+	// On resume, an empty Feature means "leave the binding's existing
+	// Feature untouched" rather than clearing it.
+	Feature string
 }
 
 // BindResolved ties the calling planner pane to a builder over one working
@@ -165,6 +171,12 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; ErrHeadlessAdopt;
 // ErrRunnerUnavailable; a wrapped herdr failure.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+	}
+
 	b, err := rt.Store.Load(opts.Name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -315,7 +327,22 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			return fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
 
+		// RepoRef and Feature are deliberately left untouched here (beyond
+		// the explicit Feature override below): a resume re-points endpoints,
+		// it does not rediscover facts a fresh bind already captured. The
+		// planner transcript locator is the one exception -- endpointOf wipes
+		// it, since a live agent carries no such field, so it is refreshed
+		// only when the binding did not already have one.
+		oldTranscriptLocator := b.Planner.TranscriptLocator
 		b.Planner = endpointOf(planner)
+		if oldTranscriptLocator == "" {
+			b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
+		} else {
+			b.Planner.TranscriptLocator = oldTranscriptLocator
+		}
+		if opts.Feature != "" {
+			b.Feature = opts.Feature
+		}
 		b.State = store.StateActive
 		if rebinding {
 			b.Builder = builder
@@ -432,6 +459,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	if err := store.ValidName(name); err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+	}
 
 	// Refuse a name that is already taken, before anything is spawned. Save
 	// would overwrite only bind.json: the round log and the NNN-*.md files
@@ -486,7 +518,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		State:            store.StateActive,
 		Tier:             string(tier),
 		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		RepoRef:          captureRepo(ctx, rt, opts.CWD),
+		Feature:          opts.Feature,
 	}
+	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
@@ -19,6 +20,41 @@ func addRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// TestAddRecordsRepoFromCWDNotWorktree pins #172: the peer's RepoRef is
+// captured from opts.Repo, the parent checkout the worktree is cut from --
+// not from the fresh worktree directory (which, before AddWorktree runs,
+// is nothing to capture facts about at all, and afterwards would merely
+// report the same facts back over an extra git call).
+func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		headCommitID:       "commit-head-123",
+		repoFactsOrigin:    "git@github.com:o/r.git",
+		repoFactsCommonDir: "/repo/.git",
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if len(fg.repoFactsCalls) != 1 {
+		t.Fatalf("RepoFacts calls = %d, want 1", len(fg.repoFactsCalls))
+	}
+	if fg.repoFactsCalls[0].Dir != repo {
+		t.Errorf("RepoFacts called with %q, want the source repo %q, not the fresh worktree path", fg.repoFactsCalls[0].Dir, repo)
+	}
+
+	wantRepoRef := &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	if !reflect.DeepEqual(got.Binding.RepoRef, wantRepoRef) {
+		t.Errorf("RepoRef = %+v, want %+v", got.Binding.RepoRef, wantRepoRef)
+	}
 }
 
 func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {

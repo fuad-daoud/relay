@@ -5,6 +5,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -30,6 +31,53 @@ const (
 	ModeHeadless Mode = "headless"
 	ModeRemote   Mode = "remote"
 )
+
+// RepoRef identifies the git repository a binding works in, for the coming
+// history database (docs/specs/2026-09-20-persistence-design.md §5.4). It is
+// captured best-effort at bind/add/fork; a nil RepoRef means it could not be
+// determined and never fails the caller.
+type RepoRef struct {
+	// OriginURL is the normalised `git remote get-url origin`; "" when the
+	// repo has no origin.
+	OriginURL string `json:"origin_url,omitempty"`
+	// CommonDir is the absolute path of the main worktree's .git
+	// (`git rev-parse --git-common-dir`, made absolute).
+	CommonDir string `json:"common_dir,omitempty"`
+}
+
+// ForkRef records the source binding and round a fork was cut from, as a
+// structured field for the history database. It sits beside the existing
+// free-text "forked from %s at round %d" log note, which stays exactly as it
+// was.
+type ForkRef struct {
+	Name  string `json:"name"`  // the source binding
+	Round int    `json:"round"` // the source round copied through
+}
+
+// ValidFeature reports whether s is a valid --feature label: 1..64 bytes,
+// every byte in [A-Za-z0-9._ -], no leading or trailing space.
+func ValidFeature(s string) error {
+	const errText = "feature: 1-64 chars of letters, digits, '.', '_', '-' and spaces"
+
+	if len(s) == 0 || len(s) > 64 {
+		return fmt.Errorf("%s", errText)
+	}
+	if s[0] == ' ' || s[len(s)-1] == ' ' {
+		return fmt.Errorf("%s", errText)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '.', c == '_', c == ' ', c == '-':
+		default:
+			return fmt.Errorf("%s", errText)
+		}
+	}
+	return nil
+}
 
 // Endpoint is one side of a binding. PaneID moves when a pane is moved between
 // workspaces; SessionID does not, so it is the durable identity.
@@ -69,6 +117,13 @@ type Endpoint struct {
 	LastShipped  string `json:"last_shipped,omitempty"`
 	LastKnown    string `json:"last_known,omitempty"`
 	RemoteStatus string `json:"remote_status,omitempty"`
+
+	// TranscriptLocator is the harness's own transcript file path for this
+	// endpoint's session, resolved at bind time when possible. Set on
+	// Planner only, for the coming history database
+	// (docs/specs/2026-09-20-persistence-design.md §5.4); "" when it could
+	// not be resolved.
+	TranscriptLocator string `json:"transcript_locator,omitempty"`
 }
 
 // Headless reports whether this endpoint is a process relay runs rather than
@@ -235,6 +290,33 @@ type Binding struct {
 	// worktree-escape detection (#192), since there is nothing to compare
 	// the worktree's drift against.
 	Repo string `json:"repo,omitempty"`
+
+	// RepoRef identifies the git repository this binding works in --
+	// normalised origin URL and common dir -- captured best-effort at
+	// bind/add/fork (docs/specs/2026-09-20-persistence-design.md §5.4). Note
+	// the Go field is RepoRef, not Repo: Repo (above) already exists and is
+	// the add/fork source checkout #192's escape detection keys on; the two
+	// coexist and nothing in this round reads or writes Repo. Nil when it
+	// could not be determined.
+	RepoRef *RepoRef `json:"repo_ref,omitempty"`
+
+	// Feature is the human-given label grouping this binding with others
+	// (--feature), inherited by fork when none is given. "" means
+	// ungrouped. For the coming history database.
+	Feature string `json:"feature,omitempty"`
+
+	// NOTE (round 3, #172): the plan for this round asked for a
+	// `ForkedFrom *ForkRef` field here (structured source binding + round,
+	// json "forked_from") for the coming history database. Binding already
+	// has ForkedFrom (string, json "forked_from") and ForkedAtRound (int)
+	// above -- the existing free-text provenance pair that
+	// internal/relay/fork.go, internal/relay/status.go and
+	// internal/ui/rail.go read -- so a second field of the same Go name and
+	// JSON tag cannot coexist with it; that is a compile error, not a style
+	// choice. None of those three files is in this round's declared file
+	// list, so resolving the collision (rename one side, or fold the two
+	// into one) is a decision for the plan, not this round. See the round 3
+	// report for the halt.
 
 	// Consults are the read-only one-shot agents attached to this binding,
 	// running and awaiting-reap alike. omitempty keeps every bind.json written

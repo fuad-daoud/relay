@@ -60,6 +60,11 @@ type ForkOptions struct {
 	// NoGate opts this fork out of a gate even when the source binding has
 	// one (#132). Ignored when Gate is set.
 	NoGate bool
+
+	// Feature is the human-given label grouping this binding with others
+	// (#172); "" inherits the source binding's Feature. Validated by
+	// store.ValidFeature when set.
+	Feature string
 }
 
 // ForkResult is what a fork produced, so the CLI can tell the human where the
@@ -96,6 +101,11 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 	if err := store.ValidName(opts.NewName); err != nil {
 		return ForkResult{}, err
+	}
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return ForkResult{}, err
+		}
 	}
 	// Refuse here, not just inside resolveBuilder: Fork cuts its worktree
 	// before that runs, and a name herdr would refuse must not leave a
@@ -256,6 +266,19 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		res.InheritedFrom = src.Name
 	}
 
+	// RepoRef is copied from the source when it has one (they share a
+	// working tree lineage); only a source bound before RepoRef existed
+	// falls back to a fresh capture. Feature inherits the source's unless
+	// the caller named its own.
+	repoRef := src.RepoRef
+	if repoRef == nil {
+		repoRef = captureRepo(ctx, rt, src.CWD)
+	}
+	feature := opts.Feature
+	if feature == "" {
+		feature = src.Feature
+	}
+
 	b := store.Binding{
 		Name:             opts.NewName,
 		CWD:              cwd,
@@ -272,9 +295,12 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		ForkedFrom:       src.Name,
 		ForkedAtRound:    opts.Round,
 		Repo:             src.Repo,
+		RepoRef:          repoRef,
+		Feature:          feature,
 		Tier:             string(tier),
 		Gate:             gate,
 	}
+	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 
 	now := time.Now().UTC()
 	if rt.Now != nil {

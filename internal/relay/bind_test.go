@@ -67,6 +67,77 @@ func TestBindSpawnsBuilderPane(t *testing.T) {
 	}
 }
 
+// TestBindRecordsRepoFeatureAndLocator pins #172: a fresh bind captures the
+// git repo identity (normalised), the human-given --feature label, and the
+// planner's own transcript file path (via rt.Sessions), and stamps CreatedAt.
+func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Git = &fakeGit{repoFactsOrigin: "git@github.com:o/r.git", repoFactsCommonDir: "/repo/.git"}
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		if kind == "claude" && sessionID == "planner-sess" {
+			return "/home/x/.claude/projects/slug/S.jsonl", true
+		}
+		return "", false
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Feature: "auth",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	wantRepoRef := &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	if !reflect.DeepEqual(b.RepoRef, wantRepoRef) {
+		t.Errorf("RepoRef = %+v, want %+v", b.RepoRef, wantRepoRef)
+	}
+	if b.Feature != "auth" {
+		t.Errorf("Feature = %q, want auth", b.Feature)
+	}
+	if b.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
+		t.Errorf("Planner.TranscriptLocator = %q, want the resolved session path", b.Planner.TranscriptLocator)
+	}
+	if b.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero, want set")
+	}
+}
+
+// TestBindRepoFactsFailureIsNil pins that a git failure never fails a bind:
+// captureRepo swallows it and RepoRef stays nil.
+func TestBindRepoFactsFailureIsNil(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Git = &fakeGit{repoFactsErr: errors.New("boom")}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.RepoRef != nil {
+		t.Errorf("RepoRef = %+v, want nil when RepoFacts errors", b.RepoRef)
+	}
+}
+
+// TestBindRejectsBadFeature pins that a bad --feature is refused before
+// anything is spawned, with the same error store.ValidFeature reports.
+func TestBindRejectsBadFeature(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Feature: "a/b",
+	})
+	if err == nil || !strings.Contains(err.Error(), "feature:") {
+		t.Fatalf("Bind err = %v, want one containing %q", err, "feature:")
+	}
+	if len(f.starts) != 0 {
+		t.Errorf("a rejected feature must spawn no builder, got %d starts", len(f.starts))
+	}
+}
+
 // TestBindRefusesABuilderNameHerdrWouldRefuse pins #64: a 25-character binding
 // name passes the store's own limit but builds a 33-character agent name, and
 // Bind must refuse it before any pane is split, any agent started or any
@@ -337,6 +408,90 @@ func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
 	}
 	if got.State != store.StateActive {
 		t.Errorf("state = %s, want active", got.State)
+	}
+}
+
+// TestResumeKeepsFieldsAndRefreshesLocator pins the resume rule for #172's
+// new fields: a planner-only resume leaves RepoRef and Feature exactly as
+// the binding already had them, and refreshes Planner.TranscriptLocator
+// (which endpointOf wipes along with the rest of the old Planner endpoint)
+// since it was previously empty.
+func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateOrphaned,
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"},
+		RepoRef: &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"},
+		Feature: "auth",
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		if kind == "claude" && sessionID == "planner-sess" {
+			return "/home/x/.claude/projects/slug/S.jsonl", true
+		}
+		return "", false
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("resume Bind: %v", err)
+	}
+
+	wantRepoRef := &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	if !reflect.DeepEqual(got.RepoRef, wantRepoRef) {
+		t.Errorf("RepoRef = %+v, want kept as %+v", got.RepoRef, wantRepoRef)
+	}
+	if got.Feature != "auth" {
+		t.Errorf("Feature = %q, want kept as auth", got.Feature)
+	}
+	if got.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
+		t.Errorf("Planner.TranscriptLocator = %q, want refreshed to the resolved session path", got.Planner.TranscriptLocator)
+	}
+}
+
+// TestResumeKeepsExistingLocatorWhenAlreadySet is the other half of the
+// refresh rule: when the binding already has a TranscriptLocator, resume
+// must not overwrite it with whatever rt.Sessions resolves for the new
+// planner pane's session.
+func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	rt := newRuntime(t, f)
+
+	existing := store.Binding{
+		Name:    "webshop",
+		CWD:     "/repo",
+		Round:   3,
+		State:   store.StateOrphaned,
+		Planner: store.Endpoint{PaneID: "w1:p1", TranscriptLocator: "/already/set.jsonl"},
+		Builder: store.Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"},
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatalf("seed existing binding: %v", err)
+	}
+
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		return "/would/overwrite.jsonl", true
+	}
+
+	got, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("resume Bind: %v", err)
+	}
+	if got.Planner.TranscriptLocator != "/already/set.jsonl" {
+		t.Errorf("Planner.TranscriptLocator = %q, want the existing value kept, not re-resolved", got.Planner.TranscriptLocator)
 	}
 }
 

@@ -55,6 +55,11 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
+	if opts.Feature != "" {
+		if err := store.ValidFeature(opts.Feature); err != nil {
+			return AddResult{}, err
+		}
+	}
 	if _, err := rt.Store.Load(opts.Name); err == nil {
 		return AddResult{}, fmt.Errorf("binding %q already exists locally", opts.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -235,7 +240,14 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             view.Tier,
+		// rt.Git is guaranteed non-nil here (checked at the top of
+		// addRemote), and opts.Repo is the client's local checkout the
+		// branch and bundle are cut from -- the same "parent repo" concept
+		// captureRepo uses for the local Add path.
+		RepoRef: captureRepo(ctx, rt, opts.Repo),
+		Feature: opts.Feature,
 	}
+	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.SessionID)
 
 	res := Resolution{
 		Candidate: cand,

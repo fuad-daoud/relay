@@ -187,7 +187,7 @@ inside every pane it manages, so it has to be run from inside one.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D]`
+- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
   — start a binding between the calling planner pane (read from
   `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
   it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
@@ -252,17 +252,18 @@ inside every pane it manages, so it has to be run from inside one.
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
   flow.
-- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--headless` applies as for `bind`.
   `relay add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR]` —
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
-  dedicated git worktree (or in `--cwd`).
+  dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
+  binding's own.
 - `relay candidates` — list the configured candidates and the roles each serves.
 - `relay policy` — show, per role, the candidates in the order relay would
   try them, which one it would pick right now, and any gap between
@@ -621,6 +622,17 @@ own `git gc`.
 
 Neither command closes a pane — the builder's terminal stays where it is, for
 you to read and close yourself.
+
+**What a binding records.** Beyond its round history and live state, a fresh
+`bind`, `add` or `fork` fills in four more facts about the binding: which
+repository it works in (the origin URL, normalised, and the git common
+directory — best-effort, so a directory git can't read leaves this blank
+rather than failing the command), the `--feature` label grouping it with
+other bindings (a fork inherits its source's unless you pass your own), which
+binding and round it was forked from, and the planner's own harness
+transcript file path, when relay can locate one at bind time. None of this
+changes what you see day to day; it exists for the coming history database
+below.
 
 ### relay db
 
