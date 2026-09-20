@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -580,5 +581,60 @@ func TestTickSyncsMetadataAndFinishedAfterReconcile(t *testing.T) {
 	}
 	if got.FinishPending {
 		t.Error("FinishPending = true after the toast, want false")
+	}
+}
+
+// TestTickIngestsLiveBindings guards the daemon's end-of-tick ingest hook
+// (docs/specs/2026-09-20-persistence-design.md §5.5): with a db configured,
+// a tick over a live, sent binding must leave a matching binding and round
+// row behind.
+func TestTickIngestsLiveBindings(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	rt.DB = d
+
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	b, found, err := d.Binding("webshop")
+	if err != nil {
+		t.Fatalf("Binding: %v", err)
+	}
+	if !found {
+		t.Fatal("Binding(webshop) not found after Tick")
+	}
+	rounds, err := d.Rounds(b.ID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Errorf("len(rounds) = %d, want 1", len(rounds))
+	}
+}
+
+// TestTickWithoutDBIsUnchanged guards the nil-DB path: every call site
+// (here, the ingest hook) must treat Runtime.DB == nil exactly like a
+// machine with no database -- no panic, and no relay.db file conjured into
+// existence by the mere act of ticking.
+func TestTickWithoutDBIsUnchanged(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if _, err := os.Stat(rt.Store.DBPath()); !os.IsNotExist(err) {
+		t.Errorf("relay.db stat = %v, want os.ErrNotExist (DB == nil must write nothing)", err)
 	}
 }

@@ -1,0 +1,7 @@
+diff --git a/auth.go b/auth.go
+index 4b825dc..9daeafb 100644
+--- a/auth.go
++++ b/auth.go
+@@ -1 +1,2 @@
+ package auth
++// drift

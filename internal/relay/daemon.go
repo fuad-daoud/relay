@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -136,5 +137,32 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	syncPaneMetadata(ctx, d.rt, d.applied, fresh)
 	notifyFinished(ctx, d.rt, fresh, agents)
 
+	ingestLiveBindings(ctx, d.rt, fresh)
+
 	return nil
+}
+
+// ingestLiveBindings runs internal/ingest over every live binding's
+// directory at the end of a tick, so the database stays current with what
+// files just recorded (docs/specs/2026-09-20-persistence-design.md §5.5).
+// d.rt.DB == nil (no database configured) is a no-op. A source or database
+// error is logged at Warn and that binding is skipped this tick -- it
+// never fails the tick or touches a binding, a round file, or a state.
+func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Binding) {
+	if rt.DB == nil {
+		return
+	}
+	deps := IngestDeps(rt)
+	for _, b := range bindings {
+		stats, err := ingest.Ingest(ctx, ingest.DirSource(rt.Store.Dir(b.Name)), rt.DB, deps)
+		if err != nil {
+			slog.Warn("ingest", "binding", b.Name, "err", err)
+			continue
+		}
+		if stats != (ingest.Stats{}) {
+			slog.Info("ingest", "binding", b.Name,
+				"rounds", stats.Rounds, "events", stats.Events,
+				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+		}
+	}
 }

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relay/internal/ingest"
 )
 
 // TestFormatStats pins the exact lines `relay db stats` prints over a
@@ -69,5 +71,49 @@ func TestFormatStatsEmptyNewest(t *testing.T) {
 	got := formatStats(s)
 	if got != want {
 		t.Errorf("formatStats() =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestFormatBackfillLine pins `relay db backfill`'s per-source lines as
+// pure functions of a literal ingest.Stats, never running the subcommand:
+// CI has no herdr, and backfill's own loop reaches store.Store and
+// internal/relay's runtime, so only the formatters are tested here.
+func TestFormatBackfillLine(t *testing.T) {
+	stats := ingest.Stats{Rounds: 3, Events: 9, Artifacts: 7, TranscriptRecords: 9, Skipped: 1}
+
+	got := formatBackfillLine("", "fixture", "2026-09-15T14:02:00Z", stats)
+	want := "fixture  2026-09-15T14:02:00Z  rounds 3 events 9 artifacts 7 transcript 9\n"
+	if got != want {
+		t.Errorf("formatBackfillLine() = %q, want %q", got, want)
+	}
+
+	gotLive := formatBackfillLine("", "fixture", "-", stats)
+	wantLive := "fixture  -  rounds 3 events 9 artifacts 7 transcript 9\n"
+	if gotLive != wantLive {
+		t.Errorf("formatBackfillLine() (live) = %q, want %q", gotLive, wantLive)
+	}
+
+	gotDry := formatBackfillLine("would ", "fixture", "-", stats)
+	wantDry := "would fixture  -  rounds 3 events 9 artifacts 7 transcript 9\n"
+	if gotDry != wantDry {
+		t.Errorf("formatBackfillLine() (dry-run) = %q, want %q", gotDry, wantDry)
+	}
+}
+
+// TestFormatBackfillFailure pins the "<name>  FAILED: <err>" line, prefixed
+// under --dry-run the same way formatBackfillLine is.
+func TestFormatBackfillFailure(t *testing.T) {
+	err := errors.New("tarball unreadable")
+
+	got := formatBackfillFailure("", "fixture", err)
+	want := "fixture  FAILED: tarball unreadable\n"
+	if got != want {
+		t.Errorf("formatBackfillFailure() = %q, want %q", got, want)
+	}
+
+	gotDry := formatBackfillFailure("would ", "fixture", err)
+	wantDry := "would fixture  FAILED: tarball unreadable\n"
+	if gotDry != wantDry {
+		t.Errorf("formatBackfillFailure() (dry-run) = %q, want %q", gotDry, wantDry)
 	}
 }

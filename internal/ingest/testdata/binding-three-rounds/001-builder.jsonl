@@ -1,0 +1,6 @@
+{"type":"text","part":{"text":"Adding the auth package."}}
+{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"path":"auth.go"},"output":"package auth\n"}}}
+{"type":"tool_use","part":{"tool":"write","state":{"status":"completed","input":{"path":"auth.go"},"output":""}}}
+{"type":"text","part":{"text":"Done."}}
+{"type":"error","error":{"message":"transient retry"}}
+not valid json at all {{{

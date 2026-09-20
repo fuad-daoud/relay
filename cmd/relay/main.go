@@ -1697,6 +1697,18 @@ func cmdDaemon(args []string) error {
 	}
 	rt.HeldGrace = *heldGrace
 
+	// The database is opened only here (and by `relay db *`): the daemon
+	// is the process that writes it every tick; `relay serve`'s state root
+	// is its own and stays out of scope. An open failure never blocks the
+	// daemon from starting -- every ingest call site treats DB == nil like
+	// a machine with no database.
+	if d, derr := openDB(rt.Store.DBPath()); derr != nil {
+		slog.Warn("relay daemon: db unavailable; ingest disabled", "err", derr)
+	} else {
+		rt.DB = d
+		defer d.Close()
+	}
+
 	configDir, err := userConfigRoot()
 	if err != nil {
 		return err
