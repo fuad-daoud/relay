@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // claudeCodeMargin is the number of cells Claude Code's chrome takes from
@@ -72,6 +73,12 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 			mid += " · " + harnessSegment(b.BuilderCandidate)
 		}
 		mid += " · " + waiting(b)
+		switch {
+		case b.LiveUsage != nil && usage.LiveShort(*b.LiveUsage) != "":
+			mid += " · " + usage.LiveShort(*b.LiveUsage)
+		case b.Spend != nil && usage.MoneyShort(*b.Spend) != "":
+			mid += " · " + usage.MoneyShort(*b.Spend)
+		}
 
 		displayWord := b.Display
 		switch b.Display {

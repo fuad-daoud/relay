@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 func TestAgeText(t *testing.T) {
@@ -363,6 +364,87 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 	}
 	if !strings.HasSuffix(plain, " 12m · ACTIVE") {
 		t.Errorf("line %q does not have right cell beginning %q", plain, "12m · ")
+	}
+}
+
+// TestRenderStatusLineLiveSegment pins the trailing live segment (#234):
+// a row whose round is running shows the live figure last in the middle
+// cell, before the right cell's clock and state.
+func TestRenderStatusLineLiveSegment(t *testing.T) {
+	b := BindingStatus{
+		Name:             "api",
+		Round:            1,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
+			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
+	}
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if !strings.Contains(plain, "plan sent · live $0.02 · 41k tok") {
+		t.Errorf("no live segment: %q", plain)
+	}
+	if !strings.HasSuffix(plain, "ACTIVE") {
+		t.Errorf("the right cell must survive: %q", plain)
+	}
+}
+
+// TestRenderStatusLineSpendSegment pins the closed-round segment: a row
+// with a spend and no live figure shows the spend last.
+func TestRenderStatusLineSpendSegment(t *testing.T) {
+	b := BindingStatus{
+		Name:             "api",
+		Round:            3,
+		Display:          "NEEDS YOU",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		Spend:            &usage.Spend{Rounds: 2, Measured: 1.51, Tokens: usage.Tokens{In: 2_100_000}},
+	}
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if !strings.Contains(plain, "· $1.51 · 2.1M tok") {
+		t.Errorf("no spend segment: %q", plain)
+	}
+}
+
+func TestRenderStatusLineLiveWinsOverSpend(t *testing.T) {
+	b := BindingStatus{
+		Name:             "api",
+		Round:            4,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		Spend:            &usage.Spend{Rounds: 3, Measured: 1.51, Tokens: usage.Tokens{In: 2_100_000}},
+		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
+			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
+	}
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
+	if !strings.Contains(plain, "live ") {
+		t.Errorf("the live figure must show: %q", plain)
+	}
+	if strings.Contains(plain, "$1.51") {
+		t.Errorf("spend must yield to the live figure, never share a line: %q", plain)
+	}
+}
+
+// TestRenderStatusLineNarrowDropsUsageFirst pins the placement: the usage
+// segment is the last thing in mid, so truncation drops it before the
+// waiting verb, and the right cell always survives.
+func TestRenderStatusLineNarrowDropsUsageFirst(t *testing.T) {
+	b := BindingStatus{
+		Name:             "api",
+		Round:            1,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
+			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
+	}
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 60))[0])
+	if !strings.HasSuffix(plain, "ACTIVE") {
+		t.Errorf("ACTIVE must survive the narrow row: %q", plain)
+	}
+	if strings.Contains(plain, "tok") {
+		t.Errorf("the usage segment must be the part truncated: %q", plain)
 	}
 }
 
