@@ -25,13 +25,13 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scope = scopeLive
 		}
 		cmds := []tea.Cmd{m.save()}
-		if m.scope == scopeAll && m.rt.DB == nil {
+		if m.scope == scopeAll && m.src.Base().DB == nil {
 			m.scope = scopeLive
 			m.notice = fmt.Sprintf("no database: %v", relay.ErrNoDatabase)
 			return m, tea.Batch(cmds...)
 		}
 		m.statusInFlight = true
-		cmds = append(cmds, fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here))
+		cmds = append(cmds, fetchStatus(m.ctx, m.src, m.scope, m.opts.Here))
 		return m, tea.Batch(cmds...)
 	case "<", ">":
 		if m.compact {
@@ -162,7 +162,7 @@ func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
 		if lines < 1 {
 			lines = 1
 		}
-		return m, fetchFor(m.ctx, m.rt, next, m.detail.name,
+		return m, fetchFor(m.ctx, m.src, next, m.detail.name,
 			m.detail.round, lines, m.detail.live)
 	}
 	return m, nil

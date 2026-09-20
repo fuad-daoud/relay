@@ -29,6 +29,12 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	if b.PlannerFocus {
 		planner += sep + dimStyle.Render("focused")
 	}
+	// On a serve box the pane belongs to a client, not to this planner: the
+	// client line replaces the planner line (empty OwnerLabel is a planner
+	// row, which renders today's line above).
+	if b.OwnerLabel != "" {
+		planner = label("client") + b.OwnerLabel + "  (" + dimStyle.Render(relay.ShortOwner(b.Owner)) + ")"
+	}
 
 	var bparts []string
 	if b.Headless != nil {

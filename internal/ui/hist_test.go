@@ -90,7 +90,7 @@ func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding)
 
 func histModel(t *testing.T, rt relay.Runtime, h relay.HistoryBinding) Model {
 	t.Helper()
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	m.scope = scopeAll
 	m.statusLoaded = true
@@ -109,7 +109,7 @@ func histModel(t *testing.T, rt relay.Runtime, h relay.HistoryBinding) Model {
 func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	m.scope = scopeAll
 

@@ -13,7 +13,7 @@ import (
 )
 
 type Model struct {
-	rt   relay.Runtime
+	src  Source
 	ctx  context.Context
 	opts Options
 
@@ -70,9 +70,9 @@ type Model struct {
 	dbRows []relay.HistoryBinding
 }
 
-func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
+func newModel(ctx context.Context, src Source, opts Options) Model {
 	return Model{
-		rt:             rt,
+		src:            src,
 		ctx:            ctx,
 		opts:           opts,
 		screen:         screenList,
@@ -123,14 +123,17 @@ func tick(d time.Duration) tea.Cmd {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here),
+		fetchStatus(m.ctx, m.src, m.scope, m.opts.Here),
 		tick(m.opts.Interval),
 	)
 }
 
-func row(rep relay.Report, name string) *relay.BindingStatus {
+// row finds a report row by key (BindingStatus.Key()): a planner row keys
+// by Name, a server row by owner/name, so two clients' same-named bindings
+// never collide.
+func row(rep relay.Report, key string) *relay.BindingStatus {
 	for i := range rep.Bindings {
-		if rep.Bindings[i].Name == name {
+		if rep.Bindings[i].Key() == key {
 			return &rep.Bindings[i]
 		}
 	}
@@ -158,32 +161,32 @@ func (m Model) visibleTabFetch() tea.Cmd {
 		// refetches on every visible tick regardless of cache; a hist
 		// row's terminal is transcript rows already in the database --
 		// static, fetched once like every other tab (not tail-following).
-		return fetchFor(m.ctx, m.rt, tabTerminal, m.detail.name, m.detail.round, lines, m.detail.live)
+		return fetchFor(m.ctx, m.src, tabTerminal, m.detail.name, m.detail.round, lines, m.detail.live)
 	}
 	if !m.detail.cache[t].loaded {
-		return fetchFor(m.ctx, m.rt, t, m.detail.name, m.detail.round, lines, m.detail.live)
+		return fetchFor(m.ctx, m.src, t, m.detail.name, m.detail.round, lines, m.detail.live)
 	}
 	return nil
 }
 
-// pointDetailAt re-targets the pane at the binding named: name, round
+// pointDetailAt re-targets the pane at the row keyed: key, round
 // (row.Round - 1), lastLogTS from row.Last, every cache cleared, every
 // parked scroll zeroed. The active tab is kept -- a human reading diffs
 // across bindings stays on diff. It issues the visible-tab fetch only if
 // tabInFlight is clear; a fetch already in flight for the previous
 // binding is discarded on arrival by tabMsg's name check, which exists
-// for exactly this. A no-op when the pane already shows name.
-func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
-	if m.detail.name == name {
+// for exactly this. A no-op when the pane already shows key.
+func (m Model) pointDetailAt(key string) (Model, tea.Cmd) {
+	if m.detail.name == key {
 		return m, nil
 	}
-	r := row(m.report, name)
+	r := row(m.report, key)
 	if r == nil {
 		return m, nil
 	}
 	vp := viewport.New(m.paneWidth(), m.viewportHeight())
 	m.detail = detailModel{
-		name:     name,
+		name:     key,
 		round:    r.Round - 1,
 		rounds:   r.Round,
 		live:     true,
@@ -246,7 +249,7 @@ func (m Model) pointDetailAtHist(h relay.HistoryBinding) (Model, tea.Cmd) {
 func (m Model) pointAtRow(rr railRow) (Model, tea.Cmd) {
 	switch {
 	case rr.live != nil:
-		return m.pointDetailAt(rr.live.Name)
+		return m.pointDetailAt(rr.live.Key())
 	case rr.hist != nil:
 		return m.pointDetailAtHist(*rr.hist)
 	}
@@ -369,7 +372,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.vp.Height = m.viewportHeight()
 		m.fillViewport()
 		m.list.top = m.railTop()
-		if m.layout() == layoutSplit && m.statusLoaded {
+		if m.layout() == layoutSplit {
 			if rows := m.railRows(); len(rows) > 0 {
 				return m.pointAtRow(rows[m.list.cursor])
 			}
@@ -381,7 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !m.statusInFlight {
 			m.statusInFlight = true
-			cmds = append(cmds, fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here))
+			cmds = append(cmds, fetchStatus(m.ctx, m.src, m.scope, m.opts.Here))
 		}
 
 		if !m.tabInFlight {
@@ -584,7 +587,7 @@ func (m Model) footerView() string {
 	}
 	if m.paneVisible() {
 		for _, b := range m.report.Bindings {
-			if b.Name != m.detail.name && b.Display == "NEEDS YOU" {
+			if b.Key() != m.detail.name && b.Display == "NEEDS YOU" {
 				notes = append(notes, stateNeedsYouStyle.Render(b.Name+" NEEDS YOU"))
 			}
 		}

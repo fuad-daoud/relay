@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
@@ -31,6 +30,11 @@ type Options struct {
 	// ("no database: <err>") lands here so the ui still runs, in live
 	// scope, rather than ever failing to start over it (§6).
 	Notice string
+
+	// PipeHint is the full refusal line RunSource prints when stdout is
+	// not a terminal -- not a suffix. "" keeps the planner's own text,
+	// which names `relay status` and `relay watch`.
+	PipeHint string
 }
 
 const minInterval = 500 * time.Millisecond
@@ -47,38 +51,11 @@ var stdoutStat = os.Stdout.Stat
 // Postconditions: the terminal is restored, including on panic.
 // Errors:         startup failures only. Refresh failures never escape.
 func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
-	info, err := stdoutStat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return errors.New("relay ui needs a terminal; use `relay status` or `relay watch` when piping")
+	if notTTY() {
+		return pipeRefusal(opts.PipeHint)
 	}
 	if rt.Herdr == nil || rt.Store == nil {
 		return errors.New("runtime requires Herdr and Store")
 	}
-
-	if opts.Interval <= 0 {
-		opts.Interval = defaultInterval
-	} else if opts.Interval < minInterval {
-		opts.Interval = minInterval
-	}
-
-	model := newModel(ctx, rt, opts)
-	if opts.PrefsPath != "" {
-		model = model.applyPrefs(loadPrefs(opts.PrefsPath))
-	}
-	model.notice = opts.Notice
-
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
-	_, err = p.Run()
-	return runResult(ctx, err)
-}
-
-// runResult maps bubbletea's exit into Run's contract: a cancelled context is a
-// clean exit, not an error. Kept separate from Run so it can be tested without
-// starting a terminal program -- the test that did that failed anywhere without
-// a tty, including every CI runner.
-func runResult(ctx context.Context, err error) error {
-	if ctx.Err() != nil && (errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)) {
-		return nil
-	}
-	return err
+	return RunSource(ctx, plannerSource{rt}, opts)
 }

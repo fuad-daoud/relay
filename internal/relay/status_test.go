@@ -1248,6 +1248,32 @@ func TestStatusPopulatesGated(t *testing.T) {
 	}
 }
 
+// TestBindingStatusKey: a planner row keys by Name; a server row keys by
+// owner/name, so two clients' same-named bindings never collide.
+func TestBindingStatusKey(t *testing.T) {
+	if got := (BindingStatus{Name: "api"}).Key(); got != "api" {
+		t.Errorf("planner key = %q, want api", got)
+	}
+	if got := (BindingStatus{Name: "api", Owner: "SHA256:abc"}).Key(); got != "SHA256:abc/api" {
+		t.Errorf("server key = %q, want SHA256:abc/api", got)
+	}
+}
+
+// TestShortOwner pins the truncation: a fingerprint id keeps "SHA256:" and
+// the first twelve characters, then an ellipsis; a short id, or one without
+// the prefix, is unchanged.
+func TestShortOwner(t *testing.T) {
+	if got := ShortOwner("SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"); got != "SHA256:VLERFMZnvN5H…" {
+		t.Errorf("ShortOwner(fingerprint) = %q", got)
+	}
+	if got := ShortOwner("SHA256:short"); got != "SHA256:short" {
+		t.Errorf("ShortOwner(short) = %q", got)
+	}
+	if got := ShortOwner("notanid"); got != "notanid" {
+		t.Errorf("ShortOwner(prefix-less) = %q", got)
+	}
+}
+
 // TestHideDoneKeepsGated pins that hiding DONE bindings does not drop the
 // machine-wide gated block: cmdStatus applies HideDone between Status and
 // RenderStatus, so a gate lost here never reaches the terminal.

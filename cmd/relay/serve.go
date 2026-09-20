@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/ui"
 )
 
 type hostSlice []string
@@ -122,6 +123,7 @@ func cmdServe(args []string) error {
        relay serve revoke <id> [--state <dir>]
        relay serve fingerprint [--state <dir>]
        relay serve status [--state <dir>]
+       relay serve ui [--state <dir>] [--interval 2s]
        relay serve gc --abandoned <duration> [--dry-run] [--state <dir>]
        relay serve unbind --owner <label|id> <name> [--state <dir>] [--force]`
 
@@ -143,6 +145,8 @@ func cmdServe(args []string) error {
 		return cmdServeFingerprint(args[1:])
 	case "status":
 		return cmdServeStatus(args[1:])
+	case "ui":
+		return cmdServeUI(args[1:])
 	case "gc":
 		return cmdServeGC(args[1:])
 	case "unbind":
@@ -457,6 +461,37 @@ func cmdServeStatus(args []string) error {
 
 	fmt.Print(serve.RenderAdminStatus(owners))
 	return nil
+}
+
+func cmdServeUI(args []string) error {
+	fs := flag.NewFlagSet("relay serve ui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	_ = fs.String("state", "", "state directory")
+	interval := fs.Duration("interval", 0, "poll interval (0 uses the ui default)")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	// The root resolves before any tty check, so an uninitialised --state
+	// dir reads as a state error and not a terminal one.
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := serve.New(serveAdminConfig(root))
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	return ui.RunSource(ctx, ui.ServerSource(srv), ui.Options{
+		Interval:  *interval,
+		PrefsPath: filepath.Join(root, "ui.json"),
+		PipeHint:  "relay serve ui needs a terminal; use relay serve status when piping",
+	})
 }
 
 func cmdServeUnbind(args []string) error {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -372,13 +373,16 @@ func railLinesAll(rows []railRow, cursor int, attention bool, now time.Time, foc
 // groupOrder is the attention order of the rail's headers.
 var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
 
-// railLines lays out every card. In attention order (which SortRows has
-// already applied to rows) a header opens each state group and a blank
-// line closes it; in name order it is cards back to back with the state
-// on each. cursor is the index in rows of the selected binding. focused is
-// "the rail has focus" (m.screen == screenList), threaded through to
-// cardLines so the selected card's gutter dims when the pane has focus.
-// compact emits compactLine's single tagged line per binding instead.
+// railLines lays out every card. Rows arrive owner-sorted (SortRows's
+// OwnerLabel is the primary key), so they partition into maximal runs of
+// equal OwnerLabel. One run with an empty label is a planner: today's
+// body, unchanged. Otherwise each owner run gets a header -- label, the
+// fingerprint, the count -- then the run's cards through today's logic
+// (including the per-state sub-headers when attention), then a blank line.
+// cursor is the index in rows of the selected binding. focused is "the
+// rail has focus" (m.screen == screenList), threaded through to cardLines
+// so the selected card's gutter dims when the pane has focus. compact
+// emits compactLine's single tagged line per binding instead.
 func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int, compact bool) []railLine {
 	var out []railLine
 	card := func(i int) {
@@ -390,43 +394,74 @@ func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.
 			out = append(out, railLine{text: l, binding: i})
 		}
 	}
-	if !attention {
-		for i := range rows {
-			card(i)
-		}
-		return out
-	}
-	for _, state := range groupOrder {
-		n := 0
-		for _, r := range rows {
-			if r.Display == state {
-				n++
+	// cards renders rows [lo, hi) through today's logic, with every card
+	// tagged its global row index. The state walk covers groupOrder first
+	// and appends any state outside it, so nothing is ever hidden.
+	cards := func(lo, hi int) {
+		if !attention {
+			for i := lo; i < hi; i++ {
+				card(i)
 			}
+			return
 		}
-		if n == 0 {
-			continue
+		for _, state := range groupOrder {
+			n := 0
+			for _, r := range rows[lo:hi] {
+				if r.Display == state {
+					n++
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			header := " " + stateStyle(state).Render(state) + faintStyle.Render(fmt.Sprintf("  %d", n))
+			out = append(out, railLine{text: fit(header, width), binding: -1})
+			for i := lo; i < hi; i++ {
+				if rows[i].Display == state {
+					card(i)
+				}
+			}
+			out = append(out, railLine{text: fit("", width), binding: -1})
 		}
-		header := " " + stateStyle(state).Render(state) + faintStyle.Render(fmt.Sprintf("  %d", n))
-		out = append(out, railLine{text: fit(header, width), binding: -1})
-		for i, r := range rows {
-			if r.Display == state {
+		for i := lo; i < hi; i++ {
+			known := false
+			for _, s := range groupOrder {
+				if rows[i].Display == s {
+					known = true
+				}
+			}
+			if !known {
 				card(i)
 			}
 		}
-		out = append(out, railLine{text: fit("", width), binding: -1})
 	}
-	// A state outside groupOrder (none today) would vanish; append it so
-	// nothing is ever hidden.
-	for i, r := range rows {
-		known := false
-		for _, s := range groupOrder {
-			if r.Display == s {
-				known = true
-			}
+
+	// Partition into maximal runs of equal OwnerLabel, in slice order.
+	type run struct {
+		lo, hi int
+		label  string
+	}
+	var runs []run
+	for i := 0; i < len(rows); {
+		j := i
+		for j < len(rows) && rows[j].OwnerLabel == rows[i].OwnerLabel {
+			j++
 		}
-		if !known {
-			card(i)
-		}
+		runs = append(runs, run{lo: i, hi: j, label: rows[i].OwnerLabel})
+		i = j
+	}
+
+	if len(runs) == 1 && runs[0].label == "" {
+		cards(0, len(rows))
+		return out
+	}
+
+	for _, r := range runs {
+		header := " " + r.label + "  (" + faintStyle.Render(relay.ShortOwner(rows[r.lo].Owner)) + ")  " +
+			faintStyle.Render(strconv.Itoa(r.hi-r.lo))
+		out = append(out, railLine{text: fit(header, width), binding: -1})
+		cards(r.lo, r.hi)
+		out = append(out, railLine{text: fit("", width), binding: -1})
 	}
 	return out
 }

@@ -9,7 +9,7 @@ import (
 
 type listModel struct {
 	cursor int    // index into Model.report.Bindings
-	sticky string // binding NAME the cursor is on
+	sticky string // row key (BindingStatus.Key()) the cursor is on
 	// top is the index of the first rendered row. It moves only as far as
 	// it must to keep cursor visible, so the list scrolls a row at a time
 	// at either edge rather than re-centring on every keystroke.
@@ -30,7 +30,7 @@ func (m Model) errorRows() int {
 	return strings.Count(renderError(m.err, m.width), "\n") + 1
 }
 
-// resolveSticky re-points cursor at the binding named by sticky after the
+// resolveSticky re-points cursor at the row keyed by sticky after the
 // list has changed, clamping and re-pointing sticky if it is gone.
 func (l *listModel) resolveSticky(rep relay.Report) {
 	if len(rep.Bindings) == 0 {
@@ -41,7 +41,7 @@ func (l *listModel) resolveSticky(rep relay.Report) {
 
 	if l.sticky != "" {
 		for i, b := range rep.Bindings {
-			if b.Name == l.sticky {
+			if b.Key() == l.sticky {
 				l.cursor = i
 				return
 			}
@@ -54,7 +54,7 @@ func (l *listModel) resolveSticky(rep relay.Report) {
 	if l.cursor < 0 {
 		l.cursor = 0
 	}
-	l.sticky = rep.Bindings[l.cursor].Name
+	l.sticky = rep.Bindings[l.cursor].Key()
 }
 
 // resolveStickyRows is resolveSticky generalised to the rail's current row

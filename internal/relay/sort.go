@@ -19,16 +19,23 @@ func rankOf(display string) int {
 	return len(attentionRank)
 }
 
-// SortRows orders status rows for a human. attention groups by display
-// state -- NEEDS YOU, HELD, ACTIVE, DONE -- and within a group puts the
-// most recent Last.TS first (a nil Last last), name as the tiebreak; name
-// is the order Status has always returned. Stable; never mutates its
-// input. Only `relay ui` calls it today; #143 moves `status` onto it.
+// SortRows orders status rows for a human. OwnerLabel is the primary key
+// (ascending, plain <): a client's cards stay contiguous under a header in
+// the serve ui. Then attention groups by display state -- NEEDS YOU, HELD,
+// ACTIVE, DONE -- and within a group puts the most recent Last.TS first (a
+// nil Last last), name as the tiebreak; name is the order Status has
+// always returned. With every label empty (a planner) the output is
+// exactly what the pre-owner implementation returned. Stable; never
+// mutates its input. Only `relay ui` calls it today; #143 moves `status`
+// onto it.
 func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 	out := make([]BindingStatus, len(rows))
 	copy(out, rows)
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if a.OwnerLabel != b.OwnerLabel {
+			return a.OwnerLabel < b.OwnerLabel
+		}
 		if attention {
 			if ra, rb := rankOf(a.Display), rankOf(b.Display); ra != rb {
 				return ra < rb

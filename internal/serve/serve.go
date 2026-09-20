@@ -83,12 +83,18 @@ func (s *Server) repoRoot(owner remote.ClientID) (string, error) {
 	return filepath.Join(s.cfg.Root, "repos", dir), nil
 }
 
-func (s *Server) runtime(owner remote.ClientID) (relay.Runtime, error) {
+// OwnerRuntime resolves owner's runtime: the same store-over-owner-dir
+// runtime every server verb uses, exported for the ui's server source.
+func (s *Server) OwnerRuntime(owner remote.ClientID) (relay.Runtime, error) {
 	root, err := s.ownerRoot(owner)
 	if err != nil {
 		return relay.Runtime{}, err
 	}
 	return s.runtimeAt(root), nil
+}
+
+func (s *Server) runtime(id remote.ClientID) (relay.Runtime, error) {
+	return s.OwnerRuntime(id)
 }
 
 func (s *Server) runtimeAt(root string) relay.Runtime {

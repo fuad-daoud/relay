@@ -112,6 +112,23 @@ type BindingStatus struct {
 	// resolves it. Nil otherwise, including for a switchable broken
 	// binding the daemon is about to fix itself.
 	Waiting *Waiting `json:"waiting,omitempty"`
+	// Owner is the client this row belongs to on a serve box: the client's
+	// "SHA256:<base64>" fingerprint. Empty on a planner, where every row
+	// belongs to the one runtime the UI is welded to.
+	Owner string `json:"owner,omitempty"`
+	// OwnerLabel is Owner rendered for a human: Clients.LabelOf, or
+	// ShortOwner(Owner) when that client has no label. Empty on a planner
+	// row. Renderers key new behaviour on OwnerLabel != "" only.
+	OwnerLabel string `json:"owner_label,omitempty"`
+}
+
+// Key is the UI's row identity. A planner row keys by Name; a server row
+// keys by owner/name, because two clients may share a binding name.
+func (b BindingStatus) Key() string {
+	if b.Owner == "" {
+		return b.Name
+	}
+	return b.Owner + "/" + b.Name
 }
 
 // HeadlessInfo is the process half of a headless builder's status row
@@ -447,6 +464,22 @@ func displayState(s store.State) string {
 	default:
 		return "ACTIVE"
 	}
+}
+
+// ShortOwner truncates a client id for a human: "SHA256:" plus the first
+// twelve characters after the prefix, then an ellipsis. An id without the
+// prefix, or one too short to truncate, is returned unchanged.
+func ShortOwner(id string) string {
+	const prefix = "SHA256:"
+	if !strings.HasPrefix(id, prefix) {
+		return id
+	}
+	// Ids are base64 ASCII, so runes and bytes agree here: unchanged unless
+	// the id is longer than the 19-rune "SHA256:" + 12 fingerprint prefix.
+	if len([]rune(id)) <= len([]rune(prefix))+12 {
+		return id
+	}
+	return id[:len(prefix)+12] + "…"
 }
 
 // HoldText is the human form of a held binding's clock, shared by
