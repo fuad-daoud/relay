@@ -105,7 +105,7 @@ Ingest(src):
     kind, origin := src.Origin()
     d.Tx(func(tx):
         -- repo
-        ref := b.Repo
+        ref := b.RepoRef                                   -- the *RepoRef added in round 2, NOT the pre-existing Binding.Repo string (the add/fork source checkout)
         if ref == nil and kind == "live" and deps.Git != nil: ref = from deps.Git.RepoFacts(b.CWD) (normalised via git.NormalizeOriginURL), nil on error
         repoID := tx.UpsertRepo(...) if ref has either field, else nil
         -- planner
