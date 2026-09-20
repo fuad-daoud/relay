@@ -31,6 +31,11 @@ var (
 	stateHeldStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("111"))
 	stateActiveStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	stateDoneStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+
+	// archivedStyle renders a non-live rail row (scope all, #172): dim and
+	// italic, so an archived binding reads as history rather than
+	// something a human could act on right now.
+	archivedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Italic(true)
 )
 
 // stateStyle colours a display word; the four states have four colours and

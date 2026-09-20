@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -275,7 +276,11 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	}
 }
 
-func TestLaggingRoundAcceptedForReport(t *testing.T) {
+// TestStaleRoundReplyDiscardedForReport pins #183's generalisation: report
+// is now round-scoped exactly like diff (fetchReport reads round's own
+// entry, not "the newest one logged"), so a reply for a round that is no
+// longer on screen must be discarded, not accepted as a legitimate lag.
+func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
@@ -285,24 +290,24 @@ func TestLaggingRoundAcceptedForReport(t *testing.T) {
 	m.detail.round = 4
 	m.detail.active = tabReport
 
-	laggingMsg := tabMsg{
+	staleMsg := tabMsg{
 		name:  "webshop",
-		round: 3, // legitimately lagging round
+		round: 3, // stale round
 		t:     tabReport,
 		content: tabContent{
 			loaded: true,
-			body:   "lagging report content",
+			body:   "stale report content",
 		},
 	}
 
-	res, _ := m.Update(laggingMsg)
+	res, _ := m.Update(staleMsg)
 	updated := res.(Model)
 
-	if !updated.detail.cache[tabReport].loaded {
-		t.Error("lagging report tabMsg must be accepted into cache")
+	if updated.detail.cache[tabReport].loaded {
+		t.Error("stale report tabMsg must be discarded and not update cache")
 	}
-	if updated.detail.cache[tabReport].body != "lagging report content" {
-		t.Errorf("expected lagging report content, got %q", updated.detail.cache[tabReport].body)
+	if updated.detail.cache[tabReport].body != "" {
+		t.Errorf("expected empty cache body, got %q", updated.detail.cache[tabReport].body)
 	}
 }
 
@@ -511,5 +516,131 @@ func TestEmptyFleetSnapsBackToList(t *testing.T) {
 	}
 	if n := strings.Count(m.notice, "is gone"); n != 1 {
 		t.Errorf("notice must carry exactly one \"is gone\", got %d: %q", n, m.notice)
+	}
+}
+
+// TestKeyAToggleWithoutDBNotices pins §6's error handling: pressing "a"
+// with no database leaves scope on live, sets a sticky notice, and never
+// exits or panics.
+func TestKeyAToggleWithoutDBNotices(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...) // rt.DB is nil: newFakeHerdr's runtime carries no *db.DB
+	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
+
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = res.(Model)
+
+	if m.scope != scopeLive {
+		t.Errorf("scope = %v, want scopeLive (no database: toggle must not stick)", m.scope)
+	}
+	if m.notice == "" {
+		t.Error("notice must be set when toggling to all with no database")
+	}
+	if !strings.Contains(m.notice, "no database") {
+		t.Errorf("notice = %q, want it to name the database", m.notice)
+	}
+	if cmd == nil {
+		t.Fatal("expected a save command even when the toggle reverts")
+	}
+}
+
+// TestStepRoundBackRefetchesEveryTab pins #183's round stepping end to end:
+// "[" and "]" move detail.round within [1, detail.rounds], clamping at
+// either edge, and invalidate every tab's cache -- not just the active
+// one -- so a later switch to any tab re-fetches instead of showing a
+// different round's stale content.
+func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	b.Round = 3 // rounds 1 and 2 closed; round 3 is open
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.width, m.height, m.ready = 140, 40, true
+	rep := relay.Report{Bindings: []relay.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}
+	res, _ := m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	if m.detail.round != 2 || m.detail.rounds != 3 {
+		t.Fatalf("after pointing: round=%d rounds=%d, want round=2 rounds=3", m.detail.round, m.detail.rounds)
+	}
+
+	// Populate every tab's cache so the invalidation is visible.
+	for tb := tab(0); tb < tabCount; tb++ {
+		m.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
+	}
+	m.tabInFlight = false
+
+	for i := 0; i < 2; i++ {
+		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+		m = res.(Model)
+		m.tabInFlight = false
+	}
+	if m.detail.round != 1 {
+		t.Fatalf("after \"[\" twice: round = %d, want 1", m.detail.round)
+	}
+	for tb := tab(0); tb < tabCount; tb++ {
+		if m.detail.cache[tb].loaded {
+			t.Errorf("tab %v cache still loaded after stepping back", tb)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+		m = res.(Model)
+		m.tabInFlight = false
+	}
+	if m.detail.round != 3 {
+		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", m.detail.round)
+	}
+
+	reportMsg := fetchReport(context.Background(), rt, name, m.detail.round)().(tabMsg)
+	wantReport := "round 3 is open; report arrives when it closes"
+	if reportMsg.content.empty != wantReport {
+		t.Errorf("report empty = %q, want %q", reportMsg.content.empty, wantReport)
+	}
+	diffMsg := fetchDiff(context.Background(), rt, name, m.detail.round)().(tabMsg)
+	wantDiff := "diff is captured when round 3 closes"
+	if diffMsg.content.empty != wantDiff {
+		t.Errorf("diff empty = %q, want %q", diffMsg.content.empty, wantDiff)
+	}
+}
+
+// TestStepRoundEdgesNoop pins #183's clamp: stepping past either edge of
+// [1, detail.rounds] changes nothing -- not the round, not the cache.
+func TestStepRoundEdgesNoop(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m.width, m.height, m.ready = 140, 40, true
+	m.detail.name = "webshop"
+	m.detail.round = 1
+	m.detail.rounds = 3
+	m.detail.active = tabReport
+	m.detail.cache[tabReport] = tabContent{loaded: true, body: "round 1"}
+
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	low := res.(Model)
+	if low.detail.round != 1 {
+		t.Errorf("\"[\" at round 1: round = %d, want 1 (no-op)", low.detail.round)
+	}
+	if !low.detail.cache[tabReport].loaded {
+		t.Error("\"[\" at round 1: cache must stay untouched (no-op)")
+	}
+
+	m.detail.round = 3
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	high := res.(Model)
+	if high.detail.round != 3 {
+		t.Errorf("\"]\" at round 3 (rounds=3): round = %d, want 3 (no-op)", high.detail.round)
+	}
+	if !high.detail.cache[tabReport].loaded {
+		t.Error("\"]\" at round 3: cache must stay untouched (no-op)")
 	}
 }

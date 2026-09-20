@@ -1566,6 +1566,17 @@ func cmdUI(args []string) error {
 		return err
 	}
 
+	// An open failure never blocks the ui from starting -- it runs in
+	// live scope, with a sticky notice, exactly as pressing "a" with no
+	// database does (docs/specs/2026-09-20-persistence-design.md §6).
+	var notice string
+	if d, dbErr := openDB(rt.Store.DBPath()); dbErr != nil {
+		notice = fmt.Sprintf("no database: %v", dbErr)
+	} else {
+		rt.DB = d
+		defer d.Close()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -1574,9 +1585,13 @@ func cmdUI(args []string) error {
 		return err
 	}
 
+	here, _ := os.Getwd()
+
 	return ui.Run(ctx, rt, ui.Options{
 		Interval:  *interval,
 		PrefsPath: filepath.Join(root, "ui.json"),
+		Here:      here,
+		Notice:    notice,
 	})
 }
 

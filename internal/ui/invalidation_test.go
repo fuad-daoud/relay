@@ -23,6 +23,7 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 
 	m.screen = screenDetail
 	m.detail.name = name
+	m.detail.live = true
 	m.detail.active = tabReport
 	m.detail.lastLogTS = ts
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "initial report"}
@@ -68,6 +69,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 
 	m.screen = screenDetail
 	m.detail.name = name
+	m.detail.live = true
 	m.detail.active = tabReport
 	m.detail.lastLogTS = ts
 	m.detail.vp = viewport.New(80, 20)
@@ -138,6 +140,7 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 
 	m.screen = screenDetail
 	m.detail.name = name
+	m.detail.live = true
 	m.detail.active = tabReport
 	m.detail.lastLogTS = ts
 	m.detail.vp = viewport.New(80, 20)
@@ -179,6 +182,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = name
+	m.detail.live = true
 	m.detail.active = tabTerminal
 	m.detail.vp = viewport.New(80, 20)
 	m.statusInFlight = false
@@ -219,6 +223,7 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
+	m.detail.live = true
 
 	// Report without "webshop"
 	emptyRep := relay.Report{

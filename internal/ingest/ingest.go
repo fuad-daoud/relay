@@ -409,6 +409,8 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 
 		now := deps.Now()
 
+		roundIDs := make(map[int]string, len(rounds))
+
 		for _, n := range rounds {
 			r := roundFacts(all, n)
 			r.BindingID = bindingID
@@ -439,6 +441,7 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 			if rerr != nil {
 				return fmt.Errorf("upsert round %d: %w", n, rerr)
 			}
+			roundIDs[n] = roundID
 			if !hadRound[n] {
 				stats.Rounds++
 			}
@@ -549,6 +552,16 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 			}
 		}
 
+		// -- link events to their rounds. Events are appended above before
+		// any round row exists, so every event.round_id is null the moment
+		// it is written; now that this tick's rounds all have ids, link
+		// every still-unlinked event (from this tick or an earlier one that
+		// predates this fix) whose decoded LogEntry.Round matches a round
+		// number seen here.
+		if err := linkEventsToRounds(tx, bindingID, roundIDs); err != nil {
+			return fmt.Errorf("link events to rounds: %w", err)
+		}
+
 		// -- planner transcript
 		if plannerID != nil && kind == "live" {
 			locator := b.Planner.TranscriptLocator
@@ -628,6 +641,49 @@ func logEntryToEvent(bindingID string, seq int, entryJSON string, e store.LogEnt
 		ev.FlaggedBy = &fb
 	}
 	return ev
+}
+
+// linkEventsToRounds sets round_id on every event of bindingID that is
+// still unlinked, for every round number in roundIDs, by decoding each
+// event's entry_json to recover the LogEntry.Round the live path filters
+// on. It queries the db rather than relying on this tick's in-memory
+// entries alone, so it also repairs events left unlinked by an ingest
+// before this fix existed.
+func linkEventsToRounds(tx *db.Tx, bindingID string, roundIDs map[int]string) error {
+	if len(roundIDs) == 0 {
+		return nil
+	}
+
+	events, err := tx.Events(bindingID, 0)
+	if err != nil {
+		return err
+	}
+
+	seqsByRound := make(map[int][]int)
+	for _, e := range events {
+		if e.RoundID != nil {
+			continue
+		}
+		var entry store.LogEntry
+		if json.Unmarshal([]byte(e.EntryJSON), &entry) != nil {
+			continue
+		}
+		if entry.Round <= 0 {
+			continue
+		}
+		seqsByRound[entry.Round] = append(seqsByRound[entry.Round], e.Seq)
+	}
+
+	for n, seqs := range seqsByRound {
+		roundID, ok := roundIDs[n]
+		if !ok {
+			continue
+		}
+		if err := tx.LinkEvents(bindingID, roundID, seqs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // lastAnswerPayload is the Payload of the last answer-kind entry for round

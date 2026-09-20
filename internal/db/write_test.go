@@ -247,6 +247,75 @@ func TestAppendEventsIgnoresKnownSeq(t *testing.T) {
 	}
 }
 
+func TestLinkEventsSetsRoundID(t *testing.T) {
+	d := openTestDB(t)
+	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	roundID, err := d.UpsertRound(newTestRound(bindingID, 1, OutcomeReported))
+	if err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+
+	mkEvent := func(seq int) Event {
+		return Event{BindingID: bindingID, Seq: seq, TS: time.Now(), Kind: "send", Direction: "planner_to_builder", EntryJSON: "{}"}
+	}
+	if _, err := d.AppendEvents(bindingID, []Event{mkEvent(1), mkEvent(2), mkEvent(3)}); err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.LinkEvents(bindingID, roundID, []int{1, 2})
+	}); err != nil {
+		t.Fatalf("LinkEvents: %v", err)
+	}
+
+	evs, err := d.Events(bindingID, 1)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("Events(round 1) = %d rows, want 2", len(evs))
+	}
+	for _, e := range evs {
+		if e.RoundID == nil || *e.RoundID != roundID {
+			t.Errorf("event seq %d RoundID = %v, want %q", e.Seq, e.RoundID, roundID)
+		}
+	}
+
+	// seq 3 was never linked, so it must not appear under round 1 and its
+	// round_id must still be null.
+	all, err := d.Events(bindingID, 0)
+	if err != nil {
+		t.Fatalf("Events(all): %v", err)
+	}
+	for _, e := range all {
+		if e.Seq == 3 && e.RoundID != nil {
+			t.Errorf("seq 3 RoundID = %v, want nil (never linked)", *e.RoundID)
+		}
+	}
+
+	// Calling LinkEvents again for a different round must not clobber an
+	// already-linked event (WHERE round_id IS NULL keeps it idempotent).
+	otherRoundID, err := d.UpsertRound(newTestRound(bindingID, 2, OutcomeReported))
+	if err != nil {
+		t.Fatalf("UpsertRound (2): %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.LinkEvents(bindingID, otherRoundID, []int{1})
+	}); err != nil {
+		t.Fatalf("LinkEvents (again): %v", err)
+	}
+	evs, err = d.Events(bindingID, 1)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(evs) != 2 {
+		t.Errorf("Events(round 1) after re-link = %d rows, want 2 (still linked to round 1)", len(evs))
+	}
+}
+
 func TestUpsertArtifactByKind(t *testing.T) {
 	d := openTestDB(t)
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))

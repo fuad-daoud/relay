@@ -2,11 +2,25 @@ package relay
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
 )
+
+func ptr[T any](v T) *T { return &v }
+
+func openTestHistoryDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
 
 func TestHistoryLineColumns(t *testing.T) {
 	commits := 2
@@ -117,6 +131,123 @@ func TestHistoryOptionsFilterHereNoRemote(t *testing.T) {
 	}
 	if f.Here != "" {
 		t.Errorf("Here = %q, want cleared", f.Here)
+	}
+}
+
+func TestBindingsNoDatabase(t *testing.T) {
+	rt := Runtime{}
+	_, err := Bindings(context.Background(), rt, "")
+	if !errors.Is(err, ErrNoDatabase) {
+		t.Errorf("err = %v, want ErrNoDatabase", err)
+	}
+}
+
+func TestBindingsHereResolvesRepo(t *testing.T) {
+	d := openTestHistoryDB(t)
+
+	repoA, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/a"), FirstSeen: time.Now()})
+	if err != nil {
+		t.Fatalf("UpsertRepo a: %v", err)
+	}
+	repoB, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/b"), FirstSeen: time.Now()})
+	if err != nil {
+		t.Fatalf("UpsertRepo b: %v", err)
+	}
+
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	if _, err := d.UpsertBinding(db.Binding{
+		Name: "alpha-old", RepoID: &repoA, CWD: "/work/a", BuilderMode: "pane",
+		CreatedAt: older, IngestSource: db.IngestLive,
+	}); err != nil {
+		t.Fatalf("UpsertBinding alpha-old: %v", err)
+	}
+	if _, err := d.UpsertBinding(db.Binding{
+		Name: "alpha-new", RepoID: &repoA, CWD: "/work/a", BuilderMode: "pane",
+		CreatedAt: newer, IngestSource: db.IngestLive,
+	}); err != nil {
+		t.Fatalf("UpsertBinding alpha-new: %v", err)
+	}
+	if _, err := d.UpsertBinding(db.Binding{
+		Name: "beta", RepoID: &repoB, CWD: "/work/b", BuilderMode: "pane",
+		CreatedAt: newer, IngestSource: db.IngestLive,
+	}); err != nil {
+		t.Fatalf("UpsertBinding beta: %v", err)
+	}
+
+	g := &fakeGit{repoFactsOrigin: "git@github.com:o/a.git"}
+	rt := Runtime{DB: d, Git: g}
+
+	got, err := Bindings(context.Background(), rt, "/work/repo")
+	if err != nil {
+		t.Fatalf("Bindings: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(Bindings) = %d, want 2 (only repo a's rows)", len(got))
+	}
+	if got[0].Name != "alpha-new" || got[1].Name != "alpha-old" {
+		t.Errorf("order = [%s, %s], want [alpha-new, alpha-old] (newest first)", got[0].Name, got[1].Name)
+	}
+}
+
+func TestBindingsHereNotARepoMeansAll(t *testing.T) {
+	d := openTestHistoryDB(t)
+
+	repoA, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/a"), FirstSeen: time.Now()})
+	if err != nil {
+		t.Fatalf("UpsertRepo a: %v", err)
+	}
+	repoB, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/b"), FirstSeen: time.Now()})
+	if err != nil {
+		t.Fatalf("UpsertRepo b: %v", err)
+	}
+	now := time.Now()
+	if _, err := d.UpsertBinding(db.Binding{
+		Name: "alpha", RepoID: &repoA, CWD: "/work/a", BuilderMode: "pane",
+		CreatedAt: now, IngestSource: db.IngestLive,
+	}); err != nil {
+		t.Fatalf("UpsertBinding alpha: %v", err)
+	}
+	if _, err := d.UpsertBinding(db.Binding{
+		Name: "beta", RepoID: &repoB, CWD: "/work/b", BuilderMode: "pane",
+		CreatedAt: now, IngestSource: db.IngestLive,
+	}); err != nil {
+		t.Fatalf("UpsertBinding beta: %v", err)
+	}
+
+	g := &fakeGit{repoFactsErr: errors.New("not a git repository")}
+	rt := Runtime{DB: d, Git: g}
+
+	got, err := Bindings(context.Background(), rt, "/tmp/not-a-repo")
+	if err != nil {
+		t.Fatalf("Bindings: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(Bindings) = %d, want 2 (a non-repo cwd means no filter)", len(got))
+	}
+}
+
+func TestHistoryBindingArchivedFacts(t *testing.T) {
+	d := seedShowArchiveDB(t)
+	rt := Runtime{DB: d}
+
+	got, err := Bindings(context.Background(), rt, "")
+	if err != nil {
+		t.Fatalf("Bindings: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(Bindings) = %d, want 1", len(got))
+	}
+	hb := got[0]
+	if hb.Name != "fixture" {
+		t.Errorf("Name = %q, want fixture", hb.Name)
+	}
+	if !hb.Archived {
+		t.Error("Archived = false, want true")
+	}
+	if hb.ArchivedAt.IsZero() {
+		t.Error("ArchivedAt is zero, want the tarball's stamp")
 	}
 }
 

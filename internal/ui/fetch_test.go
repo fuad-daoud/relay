@@ -26,6 +26,54 @@ func newTestBinding(name string) store.Binding {
 	}
 }
 
+func TestTabOrderStartsWithPlan(t *testing.T) {
+	if tabPlan != 0 {
+		t.Fatalf("tabPlan = %d, want 0 (first in the tab order)", tabPlan)
+	}
+	wantOrder := [tabCount]string{"plan", "report", "terminal", "diff", "log"}
+	if tabTitles != wantOrder {
+		t.Fatalf("tabTitles = %v, want %v", tabTitles, wantOrder)
+	}
+}
+
+func TestFetchPlanLive(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	planPath := st.PlanPath(name, 1)
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Round 1 plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := fetchPlan(context.Background(), rt, name, 1)
+	msg := cmd()
+	tMsg, ok := msg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg, got %T", msg)
+	}
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if tMsg.content.body != "# Round 1 plan\n" {
+		t.Fatalf("body = %q, want the plan file's content", tMsg.content.body)
+	}
+	if tMsg.t != tabPlan {
+		t.Errorf("t = %v, want tabPlan", tMsg.t)
+	}
+	if tMsg.round != 1 {
+		t.Errorf("round = %d, want 1", tMsg.round)
+	}
+}
+
 func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
@@ -34,7 +82,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 		Herdr: fh,
 	}
 
-	cmd := fetchStatus(context.Background(), rt)
+	cmd := fetchStatus(context.Background(), rt, scopeLive, "")
 	if cmd == nil {
 		t.Fatal("fetchStatus returned nil command")
 	}
@@ -72,7 +120,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), rt, name)
+	cmd := fetchReport(context.Background(), rt, name, 2)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -103,7 +151,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), rt, name)
+	cmd := fetchReport(context.Background(), rt, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -115,6 +163,43 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 	wantEmpty := "round 1 in flight; no report yet"
 	if tMsg.content.empty != wantEmpty {
 		t.Fatalf("expected empty %q, got %q", wantEmpty, tMsg.content.empty)
+	}
+}
+
+// TestFetchReportTakesRound pins #183: fetchReport now reads round's own
+// report entry, not the newest one logged -- stepping back to an earlier
+// round must show that round's report, not a later round's.
+func TestFetchReportTakesRound(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	entries := []store.LogEntry{
+		{TS: time.Now(), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 1 report"},
+		{TS: time.Now(), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 2 report"},
+	}
+	for _, e := range entries {
+		if err := st.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	msg := fetchReport(context.Background(), rt, name, 1)().(tabMsg)
+	if msg.content.body != "round 1 report" {
+		t.Errorf("round 1: body = %q, want %q", msg.content.body, "round 1 report")
+	}
+	if msg.round != 1 {
+		t.Errorf("round 1: tabMsg.round = %d, want 1", msg.round)
+	}
+
+	msg = fetchReport(context.Background(), rt, name, 2)().(tabMsg)
+	if msg.content.body != "round 2 report" {
+		t.Errorf("round 2: body = %q, want %q (not round 1's, even though it is the newest logged)", msg.content.body, "round 2 report")
 	}
 }
 
@@ -133,7 +218,7 @@ func TestFetchTerminalBuilderAbsent(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchTerminal(context.Background(), rt, name, 24)
+	cmd := fetchTerminal(context.Background(), rt, name, 2, 24)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -168,7 +253,7 @@ func TestFetchTerminalBuilderPresent(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchTerminal(context.Background(), rt, name, 24)
+	cmd := fetchTerminal(context.Background(), rt, name, 2, 24)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -204,7 +289,7 @@ func TestFetchTerminalPaneReadsRoundLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 24)()
+	msg := fetchTerminal(context.Background(), rt, name, 2, 24)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -246,7 +331,7 @@ func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 24)()
+	msg := fetchTerminal(context.Background(), rt, name, 2, 24)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -262,6 +347,34 @@ func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
 	}
 	if fh.readCalls != 1 {
 		t.Errorf("expected 1 ReadAgent call (the fallback), got %d", fh.readCalls)
+	}
+}
+
+// TestFetchTerminalNonCurrentPaneRoundIsEmptyProse pins #183: a plain pane
+// builder's terminal only ever shows the binding's live screen, which
+// only ever belongs to its current round; a past round it never captured
+// a log for reads as prose, not as an error, and must never reach herdr.
+func TestFetchTerminalNonCurrentPaneRoundIsEmptyProse(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name) // Round: 2, plain pane builder
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), rt, name, 1, 24)().(tabMsg)
+	if msg.content.err != nil {
+		t.Fatalf("unexpected error: %v", msg.content.err)
+	}
+	want := "terminal is live; round 1 left no log"
+	if msg.content.empty != want {
+		t.Errorf("empty = %q, want %q", msg.content.empty, want)
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("a non-current round must never touch herdr: readCalls = %d", fh.readCalls)
 	}
 }
 
@@ -350,7 +463,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	want := "2026-09-08 12:00:00  round 1   to_builder plan      /path/plan1.md started\n" +
 		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
-	cmd := fetchLog(context.Background(), rt, name)
+	cmd := fetchLog(context.Background(), rt, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -361,6 +474,41 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	}
 	if tMsg.content.body != want {
 		t.Fatalf("log mismatch:\ngot:\n%q\nwant:\n%q", tMsg.content.body, want)
+	}
+}
+
+// TestFetchLogFiltersRound pins #183: fetchLog now scopes to round rather
+// than dumping the whole binding log.
+func TestFetchLogFiltersRound(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
+	entries := []store.LogEntry{
+		{TS: now, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p1.md"},
+		{TS: now.Add(time.Minute), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p2.md"},
+	}
+	for _, e := range entries {
+		if err := st.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	msg := fetchLog(context.Background(), rt, name, 1)().(tabMsg)
+	if msg.content.err != nil {
+		t.Fatalf("unexpected error: %v", msg.content.err)
+	}
+	if strings.Count(strings.TrimRight(msg.content.body, "\n"), "\n")+1 != 1 {
+		t.Fatalf("body = %q, want exactly one line (round 1 only)", msg.content.body)
+	}
+	if !strings.Contains(msg.content.body, "round 1") || strings.Contains(msg.content.body, "round 2") {
+		t.Errorf("body = %q, want only round 1's entry", msg.content.body)
 	}
 }
 
@@ -375,8 +523,8 @@ func TestFetchForRouting(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	for _, tab := range []tab{tabReport, tabTerminal, tabDiff, tabLog} {
-		cmd := fetchFor(context.Background(), rt, tab, name, 1, 24)
+	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog} {
+		cmd := fetchFor(context.Background(), rt, tab, name, 1, 24, true)
 		if cmd == nil {
 			t.Fatalf("fetchFor returned nil for tab %v", tab)
 		}
@@ -410,7 +558,7 @@ func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
 	fh.readOut = "builder screen"
 	rt := relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
 
-	msg := fetchTerminal(context.Background(), rt, "relay-ui", 40)()
+	msg := fetchTerminal(context.Background(), rt, "relay-ui", 1, 40)()
 	tm, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -445,7 +593,7 @@ func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	// The lines argument is a pane-builder concern (#180's Task 2): the
 	// headless branch now always returns the whole log, capped only by
 	// headlessLogLines, so a request for 3 lines still gets all of it.
-	msg := fetchTerminal(context.Background(), rt, "webshop", 3)()
+	msg := fetchTerminal(context.Background(), rt, "webshop", 2, 3)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -481,7 +629,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 5)().(tabMsg)
+	msg := fetchTerminal(context.Background(), rt, name, 2, 5)().(tabMsg)
 	if got := strings.Count(msg.content.body, "\n") + 1; got != 40 {
 		t.Errorf("headless terminal body has %d lines, want all 40 regardless of the lines argument", got)
 	}
@@ -494,7 +642,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(strings.Join(linesOver, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg = fetchTerminal(context.Background(), rt, name, 5)().(tabMsg)
+	msg = fetchTerminal(context.Background(), rt, name, 2, 5)().(tabMsg)
 	lines := strings.Split(msg.content.body, "\n")
 	if len(lines) != headlessLogLines || !strings.HasSuffix(lines[len(lines)-1], fmt.Sprint(headlessLogLines+10)) {
 		t.Errorf("capped body: %d lines, last %q", len(lines), lines[len(lines)-1])
@@ -511,7 +659,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg := fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "headless builder; no round has run yet, so there is no log" {
 		t.Errorf("idle: empty = %q", tMsg.content.empty)
 	}
@@ -521,7 +669,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg = fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	tMsg = fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
 	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
 		t.Errorf("missing log: empty = %q", tMsg.content.empty)
 	}
@@ -551,7 +699,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tMsg := fetchTerminal(context.Background(), rt, "webshop", 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "" || tMsg.content.err != nil {
 		t.Fatalf("between rounds the last log must show: %+v", tMsg.content)
 	}

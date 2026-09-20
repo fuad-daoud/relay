@@ -102,20 +102,29 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 // showLive resolves opts against b's files, as `relay show` reads a live
 // binding today.
 func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error) {
-	rounds := b.Round
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		return ShowResult{}, err
+	}
+
+	// Rounds is the highest round number with a plan log entry, not
+	// b.Round: b.Round is the *next* round once a round has closed
+	// (finishRound does Round++), so it overcounts by one for an idle
+	// binding and undercounts nothing for one mid-round -- the round in
+	// flight has already logged its plan entry.
+	rounds := 0
+	completed := 0
+	for _, e := range entries {
+		if e.Kind == store.KindPlan && e.Round > rounds {
+			rounds = e.Round
+		}
+		if e.Kind == store.KindReport && e.Round > completed {
+			completed = e.Round
+		}
+	}
 
 	round := opts.Round
 	if round == 0 {
-		entries, err := rt.Store.ReadLog(b.Name)
-		if err != nil {
-			return ShowResult{}, err
-		}
-		completed := 0
-		for _, e := range entries {
-			if e.Kind == store.KindReport && e.Round > completed {
-				completed = e.Round
-			}
-		}
 		if completed == 0 {
 			completed = b.Round - 1
 		}
@@ -135,7 +144,6 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 		Section: opts.Section,
 	}
 
-	var err error
 	switch opts.Section {
 	case ShowPlan:
 		res.Text, res.Missing, err = readFileOrMissing(rt.Store.PlanPath(b.Name, round))
@@ -148,8 +156,6 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 	case ShowTranscript:
 		res.Text, res.Missing, err = readFileOrMissing(rt.Store.BuilderLogPath(b.Name, round))
 	case ShowLog:
-		var entries []store.LogEntry
-		entries, err = rt.Store.ReadLog(b.Name)
 		for _, e := range entries {
 			if e.Round == round {
 				res.Events = append(res.Events, e)
@@ -224,19 +230,14 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 			}
 		}
 	case ShowLog:
-		// db.Events(bindingID, round) filters on the event table's round_id
-		// column, which nothing in internal/ingest populates today (every
-		// event row is written before that round's row exists, in the same
-		// transaction, and never backfilled) -- passing round through would
-		// silently return zero rows for every round. entry_json carries the
-		// same LogEntry.Round the live path filters on, so round-scoping
-		// here instead, client-side, is correct regardless of that gap and
-		// loses nothing (spec: "entry_json is the LogEntry verbatim").
+		// internal/ingest links event.round_id to its round once that
+		// round's row exists (Task 0(a)), so db.Events(bindingID, round)
+		// itself scopes to round -- no client-side re-filtering needed.
 		var events []db.Event
-		events, err = rt.DB.Events(binding.ID, 0)
+		events, err = rt.DB.Events(binding.ID, round)
 		for _, e := range events {
 			var entry store.LogEntry
-			if jerr := json.Unmarshal([]byte(e.EntryJSON), &entry); jerr == nil && entry.Round == round {
+			if jerr := json.Unmarshal([]byte(e.EntryJSON), &entry); jerr == nil {
 				res.Events = append(res.Events, entry)
 			}
 		}

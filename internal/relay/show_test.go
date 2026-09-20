@@ -239,6 +239,54 @@ func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
 	}
 }
 
+// TestShowLiveRoundsIsHighestPlanned pins Task 0(b): for a live binding,
+// Rounds must be the highest round number with a plan log entry, not
+// b.Round -- b.Round is the *next* round once a round has closed
+// (finishRound does Round++), so a binding sitting idle after round 3
+// closed (Round: 4, no round-4 plan sent yet) must still report Rounds ==
+// 3, not 4.
+func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "idle",
+		CWD:   "/work/idle",
+		Round: 4,
+		State: store.StateDone,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(s.PlanPath("idle", 3), []byte("# Round 3 plan\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	entries := []store.LogEntry{
+		{TS: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 0, 1, 0, time.UTC), Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 1, 0, 0, time.UTC), Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 1, 1, 0, time.UTC), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+		{TS: time.Date(2026, 9, 10, 10, 2, 0, 0, time.UTC), Round: 3, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{TS: time.Date(2026, 9, 10, 10, 2, 1, 0, time.UTC), Round: 3, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true, Outcome: "done"},
+	}
+	for _, e := range entries {
+		if err := s.AppendLog("idle", e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	rt := Runtime{Store: s}
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "idle", Section: ShowPlan})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Rounds != 3 {
+		t.Errorf("Rounds = %d, want 3 (highest round with a plan entry, not b.Round == 4)", res.Rounds)
+	}
+	if res.Round != 3 {
+		t.Errorf("Round = %d, want 3", res.Round)
+	}
+}
+
 func TestShowLiveNoCompletedRound(t *testing.T) {
 	s := store.New(t.TempDir())
 	b := store.Binding{

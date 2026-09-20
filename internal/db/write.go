@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -352,6 +353,36 @@ func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 		added += int(n)
 	}
 	return added, nil
+}
+
+// LinkEvents sets round_id = roundID on every event of bindingID whose
+// round_id is still null and whose seq is in seqs. The ingester calls this
+// once a round's row exists (its id is not known when events are appended,
+// which happens first) -- and it is safe to call again on a later tick,
+// since the WHERE round_id IS NULL clause makes an already-linked row a
+// no-op rather than overwriting it.
+func (t *Tx) LinkEvents(bindingID, roundID string, seqs []int) error {
+	if roundID == "" {
+		return fmt.Errorf("db: link events: RoundID: %w", ErrInvalid)
+	}
+	if len(seqs) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(seqs))
+	args := make([]any, 0, len(seqs)+2)
+	args = append(args, roundID, bindingID)
+	for i, seq := range seqs {
+		placeholders[i] = "?"
+		args = append(args, seq)
+	}
+
+	query := `UPDATE event SET round_id = ? WHERE binding_id = ? AND round_id IS NULL AND seq IN (` +
+		strings.Join(placeholders, ",") + `)`
+	if _, err := t.exec(query, args...); err != nil {
+		return fmt.Errorf("db: link events: %w", mapBusy(err))
+	}
+	return nil
 }
 
 // SaveCursor inserts or replaces c by its natural key: source.
