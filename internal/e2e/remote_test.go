@@ -185,15 +185,15 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 	}
 
 	rt := relay.Runtime{
-		Herdr:       hd,
-		Git:         gitClient,
-		Store:       st,
-		Candidates:  cSet,
-		LedgerPath:  filepath.Join(t.TempDir(), "ledger.json"),
-		HistoryPath: filepath.Join(t.TempDir(), "history.json"),
-		Now:         time.Now,
-		Remote:      client.New(servers, kp, time.Now),
-		Transport:   remote.NewBundleTransport(gitClient, t.TempDir()),
+		Herdr:            hd,
+		Git:              gitClient,
+		Store:            st,
+		Candidates:       cSet,
+		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
+		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
+		Now:              time.Now,
+		Remote:           client.New(servers, kp, time.Now),
+		Transport:        remote.NewBundleTransport(gitClient, t.TempDir()),
 	}
 
 	return rt, hd, kp

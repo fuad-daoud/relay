@@ -515,8 +515,14 @@ func (s *Store) ReadArchivedLog(path string) ([]LogEntry, error) {
 // bind.json write.
 func (s *Store) LedgerPath() string { return filepath.Join(s.root, "ledger.json") }
 
-// HistoryPath is the availability history file (#61 step 7), beside ledger.json.
-func (s *Store) HistoryPath() string { return filepath.Join(s.root, "history.json") }
+// AvailabilityPath is the availability history file (#61 step 7), beside
+// ledger.json. Renamed from history.json (#172 q6) so "history" is free for
+// binding history; history.Load migrates an older install's file in place.
+func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availability.json") }
+
+// DBPath is relay's sqlite database file (docs/specs/2026-09-20-persistence-design.md
+// §4), beside ledger.json and availability.json.
+func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }
 
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and

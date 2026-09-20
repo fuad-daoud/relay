@@ -1,6 +1,8 @@
 package history
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -38,6 +40,59 @@ func TestRoundTrip(t *testing.T) {
 			e.Source != want.Source || e.Binding != want.Binding || e.Note != want.Note {
 			t.Errorf("event %d = %+v, want %+v", i, e, want)
 		}
+	}
+}
+
+func TestLoadMigratesLegacyHistoryFile(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "history.json")
+	newPath := filepath.Join(dir, "availability.json")
+
+	legacy := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"})
+	if err := Save(legacyPath, legacy); err != nil {
+		t.Fatalf("Save(legacy): %v", err)
+	}
+
+	got, err := Load(newPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Events) != 1 || got.Events[0].Provider != "anthropic" {
+		t.Fatalf("got %+v, want the legacy event", got.Events)
+	}
+
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("availability.json does not exist after migration: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("history.json still exists after migration: err = %v", err)
+	}
+}
+
+func TestLoadPrefersNewFileWhenBothExist(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "history.json")
+	newPath := filepath.Join(dir, "availability.json")
+
+	legacy := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "legacy", Source: "planner"})
+	if err := Save(legacyPath, legacy); err != nil {
+		t.Fatalf("Save(legacy): %v", err)
+	}
+	fresh := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "fresh", Source: "planner"})
+	if err := Save(newPath, fresh); err != nil {
+		t.Fatalf("Save(fresh): %v", err)
+	}
+
+	got, err := Load(newPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Events) != 1 || got.Events[0].Provider != "fresh" {
+		t.Fatalf("got %+v, want the fresh event", got.Events)
+	}
+
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Errorf("history.json was removed even though both files existed: %v", err)
 	}
 }
 

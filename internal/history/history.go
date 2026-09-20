@@ -1,6 +1,9 @@
 // Package history keeps the ledger's observations, kept for 30 days by
 // provider and hour, so `relay policy` can show when a provider tends to be
-// limited (#61 step 7); it decides nothing.
+// limited (#61 step 7); it decides nothing. The file is availability.json
+// (renamed from history.json, #172 q6, so "history" is free for binding
+// history); Load migrates an older install's history.json the first time it
+// finds no availability.json.
 package history
 
 import (
@@ -34,12 +37,19 @@ type History struct {
 	Events []Event `json:"events"`
 }
 
-// Load reads the availability history from disk. A missing file returns an
-// empty History without error, as a fresh install has recorded nothing yet.
+// Load reads the availability history from disk. A missing file with no
+// legacy history.json beside it returns an empty History without error, as a
+// fresh install has recorded nothing yet.
+//
+// When path itself is missing but <dir>/history.json (the pre-#172 name)
+// exists, Load migrates it in place: read the old file, write it back under
+// path (the next Save would anyway), remove the old file, then return the
+// events -- so the move happens on this first read and every later Load or
+// Save only ever sees availability.json.
 func Load(path string) (History, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return History{}, nil
+		return loadLegacy(path)
 	}
 	if err != nil {
 		return History{}, fmt.Errorf("read history %s: %w", path, err)
@@ -48,6 +58,34 @@ func Load(path string) (History, error) {
 	var h History
 	if err := json.Unmarshal(data, &h); err != nil {
 		return History{}, fmt.Errorf("decode history %s: %w", path, err)
+	}
+
+	return h, nil
+}
+
+// loadLegacy reads the pre-#172 history.json beside path, if any, migrating
+// it to path before returning.
+func loadLegacy(path string) (History, error) {
+	legacy := filepath.Join(filepath.Dir(path), "history.json")
+
+	data, err := os.ReadFile(legacy)
+	if errors.Is(err, os.ErrNotExist) {
+		return History{}, nil
+	}
+	if err != nil {
+		return History{}, fmt.Errorf("read history %s: %w", legacy, err)
+	}
+
+	var h History
+	if err := json.Unmarshal(data, &h); err != nil {
+		return History{}, fmt.Errorf("decode history %s: %w", legacy, err)
+	}
+
+	if err := Save(path, h); err != nil {
+		return History{}, err
+	}
+	if err := os.Remove(legacy); err != nil {
+		return History{}, fmt.Errorf("remove legacy history %s: %w", legacy, err)
 	}
 
 	return h, nil

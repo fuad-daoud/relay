@@ -622,6 +622,20 @@ own `git gc`.
 Neither command closes a pane — the builder's terminal stays where it is, for
 you to read and close yourself.
 
+### relay db
+
+relay keeps a pure-Go sqlite database at `~/.local/state/relay/relay.db`,
+beside `ledger.json` and `availability.json`:
+
+```
+relay db path       print the database path
+relay db migrate    open the database (creating and migrating it if needed) and print its schema version
+relay db stats      row counts per table, on-disk size, schema version, and the newest round
+```
+
+Nothing writes rows to it yet outside the tests and `relay db migrate`
+itself -- a later change fills it in from relay's existing state files.
+
 ### done and unbind are the destructive verbs
 
 `relay done` and `relay unbind` both require a binding name (`relay done ai`, or
@@ -923,13 +937,13 @@ An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you lau
 #### History
 
 Every gate relay records -- a limit you report, a spawn failure it hit
--- is also kept for 30 days in `~/.local/state/relay/history.json`, by
+-- is also kept for 30 days in `~/.local/state/relay/availability.json`, by
 provider and local hour. `relay policy` shows it twice: a `limited 3x
 around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
 cue to write a different order, or to `relay unavailable` a provider
-before it bites.
+before it bites. Older installs are migrated on first read.
 
 ## Permission tiers
 

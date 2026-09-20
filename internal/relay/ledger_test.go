@@ -30,7 +30,7 @@ func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
 // loadHistory reads the runtime's history for assertions.
 func loadHistory(t *testing.T, rt Runtime) history.History {
 	t.Helper()
-	h, err := history.Load(rt.HistoryPath)
+	h, err := history.Load(rt.AvailabilityPath)
 	if err != nil {
 		t.Fatalf("Load history: %v", err)
 	}
@@ -631,7 +631,7 @@ func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rt.HistoryPath = filepath.Join(blocker, "history.json")
+	rt.AvailabilityPath = filepath.Join(blocker, "availability.json")
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
