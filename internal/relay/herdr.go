@@ -55,6 +55,10 @@ type Git interface {
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	MergeFF(ctx context.Context, dir, ref string) error
 	RootCommit(ctx context.Context, dir string) (string, error)
+	// RepoFacts reports dir's repository identity -- origin remote URL
+	// (raw, unnormalised) and the main worktree's absolute .git directory --
+	// for the coming history database (#172; captureRepo is the caller).
+	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 }
 
 // Runtime carries relay's dependencies explicitly, so every command and the
@@ -95,7 +99,9 @@ type Runtime struct {
 	// Sessions locates a pane builder's own session record so the daemon can
 	// render it into the round log the way it renders a headless stream
 	// (#184). Nil means pane builders keep the screen capture; tests that do
-	// not set it behave exactly as before.
+	// not set it behave exactly as before. plannerLocator (bind.go) also
+	// calls it at bind time to fill Planner.TranscriptLocator (#172), the
+	// same file path, for the coming history database.
 	Sessions SessionLocator
 
 	// Classify judges report and dialog paragraphs for instruction-shaped

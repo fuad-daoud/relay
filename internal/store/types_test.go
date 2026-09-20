@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -229,6 +231,78 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	}
 	if decoded["stream_round"] != float64(3) || decoded["stream_offset"] != float64(4096) {
 		t.Errorf("stream cursor keys: %s", data)
+	}
+}
+
+// TestBindingNewFieldsRoundTrip covers RepoRef, Feature and
+// Planner.TranscriptLocator. It deliberately excludes ForkedFrom: the plan
+// for this round asked for a `Binding.ForkedFrom *ForkRef` field, but
+// Binding already has a same-named `ForkedFrom string` field (plus
+// ForkedAtRound int) that internal/relay/fork.go, internal/relay/status.go
+// and internal/ui/rail.go read -- a second Go field of the same name is a
+// compile error, not a style question, and none of those three files is in
+// this round's declared scope. See the round 3 report.
+func TestBindingNewFieldsRoundTrip(t *testing.T) {
+	b := newBinding("webshop", "/repo")
+	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	b.Feature = "auth"
+	b.Planner.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
+
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Binding
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(got, b) {
+		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, b)
+	}
+}
+
+func TestBindingWithoutNewFieldsIsByteIdentical(t *testing.T) {
+	b := newBinding("webshop", "/repo")
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// "forked_from" is deliberately not checked here: it is not a new key
+	// this round adds (see TestBindingNewFieldsRoundTrip's comment) -- it
+	// already existed, with omitempty, before this round.
+	for _, key := range []string{"repo_ref", "feature", "transcript_locator"} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Errorf("binding without the new fields serialised %q; field needs omitempty, got JSON: %s", key, raw)
+		}
+	}
+}
+
+func TestValidFeature(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		valid bool
+	}{
+		{"simple word", "auth", true},
+		{"space inside", "api v2", true},
+		{"dot underscore dash digit", "x.y_z-1", true},
+		{"empty", "", false},
+		{"too long", strings.Repeat("a", 65), false},
+		{"leading space", " lead", false},
+		{"trailing space", "trail ", false},
+		{"slash", "a/b", false},
+		{"non-ascii", "é", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidFeature(c.in)
+			if c.valid && err != nil {
+				t.Errorf("ValidFeature(%q) = %v, want nil", c.in, err)
+			}
+			if !c.valid && err == nil {
+				t.Errorf("ValidFeature(%q) = nil, want an error", c.in)
+			}
+		})
 	}
 }
 

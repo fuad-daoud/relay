@@ -605,6 +605,7 @@ func cmdBind(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -621,6 +622,12 @@ func cmdBind(args []string) error {
 	}
 	if *headless && isPaneID(*builderAlias) {
 		return fmt.Errorf("relay bind --headless spawns a process; it cannot adopt pane %s (drop --builder or name a candidate)", *builderAlias)
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -647,6 +654,7 @@ func cmdBind(args []string) error {
 		AllowYolo:    *allowYolo,
 		Gate:         *gate,
 		NoGate:       *noGate,
+		Feature:      *feature,
 	}
 	if isPaneID(*builderAlias) {
 		opts.BuilderPane = *builderAlias
@@ -735,6 +743,7 @@ func cmdFork(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
 	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
+	feature := fs.String("feature", "", "label grouping this binding with others (default: inherits the source binding's feature)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -750,6 +759,12 @@ func cmdFork(args []string) error {
 	}
 	if *newName == "" {
 		return fmt.Errorf("relay fork requires --new-name NAME")
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -770,6 +785,7 @@ func cmdFork(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Feature:     *feature,
 	}
 
 	res, err := relay.Fork(context.Background(), rt, opts)
@@ -806,12 +822,19 @@ func cmdAdd(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *name == "" {
 		return fmt.Errorf("relay add requires --name NAME")
+	}
+	if *feature != "" {
+		if err := store.ValidFeature(*feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -838,6 +861,7 @@ func cmdAdd(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Feature:     *feature,
 	})
 	if err != nil {
 		return err

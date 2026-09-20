@@ -786,6 +786,115 @@ func (c *Client) MergeFF(ctx context.Context, dir, ref string) error {
 	return nil
 }
 
+// RepoFacts reports dir's repository identity for the coming history
+// database (docs/specs/2026-09-20-persistence-design.md §5.4): the absolute
+// path of the main worktree's .git directory, and the origin remote's raw
+// URL (normalisation is the caller's job via NormalizeOriginURL).
+//
+// Preconditions:  dir exists.
+// Postconditions: the repository is unchanged. originURL is "" with no
+//
+//	error when dir has no origin remote; commonDir is the same
+//	absolute path for every worktree of one repository (rev-parse
+//	--git-common-dir), so a worktree and its main tree share it.
+//
+// Errors: ErrNotRepo (dir is not a git work tree), ErrGitUnavailable,
+// context.DeadlineExceeded, or a wrapped git failure. Never returned for a
+// missing origin remote.
+func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", "", err
+	}
+	commonDir = strings.TrimSpace(string(out))
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(dir, commonDir)
+	}
+
+	out, err = c.run(ctx, dir, nil, "remote", "get-url", "origin")
+	if err != nil {
+		if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", "", err
+		}
+		// No origin remote configured (git exits non-zero, "No such remote").
+		// That is not a failure relay reports: it simply has nothing to say
+		// about origin.
+		return "", commonDir, nil
+	}
+	originURL = strings.TrimSpace(string(out))
+
+	return originURL, commonDir, nil
+}
+
+// NormalizeOriginURL puts an origin remote URL into one comparable form, so
+// the same repository reached over SSH and HTTPS groups as one (spec §3
+// decision 6). Recognised forms:
+//
+//	git@host:owner/repo(.git)       -> https://host/owner/repo
+//	ssh://git@host/owner/repo(.git) -> https://host/owner/repo
+//	https://host/owner/repo(.git)/  -> https://host/owner/repo
+//	http://...                      stays http://
+//
+// The host is lowercased; the path keeps its case. Trailing "/" and ".git"
+// are removed. Anything else is returned trimmed and otherwise unchanged.
+func NormalizeOriginURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return s
+	}
+
+	// git@host:owner/repo(.git) -- scp-like syntax. Only matched when there
+	// is no "://" scheme, which the ssh:// and http(s):// forms below own.
+	if !strings.Contains(s, "://") {
+		if at := strings.Index(s, "@"); at >= 0 {
+			rest := s[at+1:]
+			if colon := strings.Index(rest, ":"); colon >= 0 {
+				host := rest[:colon]
+				path := rest[colon+1:]
+				if host != "" && path != "" && !strings.Contains(host, "/") {
+					return "https://" + strings.ToLower(host) + "/" + trimRepoPath(path)
+				}
+			}
+		}
+	}
+
+	if rest, ok := strings.CutPrefix(s, "ssh://"); ok {
+		if at := strings.Index(rest, "@"); at >= 0 {
+			rest = rest[at+1:]
+		}
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			host := rest[:slash]
+			path := rest[slash+1:]
+			return "https://" + strings.ToLower(host) + "/" + trimRepoPath(path)
+		}
+	}
+
+	for _, scheme := range []string{"https://", "http://"} {
+		rest, ok := strings.CutPrefix(s, scheme)
+		if !ok {
+			continue
+		}
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			return scheme + strings.ToLower(rest)
+		}
+		host := rest[:slash]
+		path := rest[slash+1:]
+		return scheme + strings.ToLower(host) + "/" + trimRepoPath(path)
+	}
+
+	return s
+}
+
+// trimRepoPath strips a trailing "/" and then a trailing ".git" (in that
+// order, since "owner/repo.git/" is a valid trailing form) from a repo path.
+func trimRepoPath(p string) string {
+	p = strings.TrimSuffix(p, "/")
+	p = strings.TrimSuffix(p, ".git")
+	p = strings.TrimSuffix(p, "/")
+	return p
+}
+
 // InitBare initializes a bare git repository at path.
 //
 // Preconditions:  path is the destination repository directory.
