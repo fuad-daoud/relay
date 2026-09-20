@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,20 @@ import (
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+type aliveRunner struct{}
+
+func (aliveRunner) Start(context.Context, relay.ProcSpec) (relay.ProcHandle, error) {
+	return relay.ProcHandle{}, nil
+}
+
+func (aliveRunner) Alive(context.Context, relay.ProcHandle) (bool, error) { return true, nil }
+
+func (aliveRunner) ExitCode(context.Context, relay.ProcHandle, string) (int, bool) {
+	return 0, false
+}
+
+func (aliveRunner) Kill(context.Context, relay.ProcHandle) error { return nil }
 
 func TestAdminStatusAllOwners(t *testing.T) {
 	root := t.TempDir()
@@ -126,6 +141,62 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	}
 	if got := RenderAdminStatus(noBindingsStatus); got != "charlie  no bindings\n" {
 		t.Errorf("RenderAdminStatus(no bindings) = %q, want %q", got, "charlie  no bindings\n")
+	}
+}
+
+func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	newServer := func(r relay.Runner) *Server {
+		t.Helper()
+		s, err := New(Config{Root: root, Now: func() time.Time { return now }, Runner: r})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		return s
+	}
+
+	s := newServer(aliveRunner{})
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := s.runtime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Store.Save(store.Binding{
+		Name:  "app",
+		Owner: string(id),
+		CWD:   rt.Store.WorktreePath("app"),
+		State: store.StateActive,
+		Round: 1,
+		Builder: store.Endpoint{
+			Kind: "claude", Mode: store.ModeHeadless, PID: 4242, LogPath: filepath.Join(root, "builder.log"),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus with runner: %v", err)
+	}
+	if got := statuses[0].Report.Bindings[0].BuilderStatus; got != "working" {
+		t.Errorf("BuilderStatus with runner = %q, want working", got)
+	}
+
+	statuses, err = AdminStatus(context.Background(), newServer(nil))
+	if err != nil {
+		t.Fatalf("AdminStatus without runner: %v", err)
+	}
+	if got := statuses[0].Report.Bindings[0].BuilderStatus; got != "unknown" {
+		t.Errorf("BuilderStatus without runner = %q, want unknown", got)
 	}
 }
 
