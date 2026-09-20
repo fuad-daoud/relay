@@ -810,6 +810,12 @@ func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDi
 	if !filepath.IsAbs(commonDir) {
 		commonDir = filepath.Join(dir, commonDir)
 	}
+	// Canonical: common_dir is a database key, and git resolves symlinks
+	// when answering from a worktree but not from the main tree (macOS
+	// /var -> /private/var), which would give one repo two keys.
+	if real, rerr := filepath.EvalSymlinks(commonDir); rerr == nil {
+		commonDir = real
+	}
 
 	out, err = c.run(ctx, dir, nil, "remote", "get-url", "origin")
 	if err != nil {
