@@ -37,6 +37,10 @@ type Source struct {
 // regardless.
 type Reader interface {
 	Read(ctx context.Context, src Source) (samples []Sample, note string)
+	// Peek is Read without waiting for the record to close (#234): what
+	// is on disk now, for a surface that shows a running round. It never
+	// blocks past ctx and never errors.
+	Peek(ctx context.Context, src Source) (samples []Sample, note string)
 }
 
 type reader struct {
@@ -51,7 +55,20 @@ func New(exec Exec, home string) Reader { return reader{exec: exec, home: home} 
 func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
-		return r.readStream(ctx, src)
+		return r.readStream(ctx, src, false)
+	case ModePane:
+		return r.readPane(ctx, src)
+	}
+	return nil, "no reader for mode " + string(src.Mode)
+}
+
+// Peek is Read without the wait for the exit trailer (#234): a headless
+// stream is read as it stands (it may still be open), a pane read is
+// already bounded by its window.
+func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
+	switch src.Mode {
+	case ModeHeadless:
+		return r.readStream(ctx, src, true)
 	case ModePane:
 		return r.readPane(ctx, src)
 	}
@@ -117,11 +134,16 @@ func waitClosed(ctx context.Context, path string) bool {
 	}
 }
 
-func (r reader) readStream(ctx context.Context, src Source) ([]Sample, string) {
+func (r reader) readStream(ctx context.Context, src Source, wait bool) ([]Sample, string) {
 	if _, err := os.Stat(src.StreamPath); err != nil {
 		return nil, "no stream"
 	}
-	closed := waitClosed(ctx, src.StreamPath)
+	closed := false
+	if wait {
+		closed = waitClosed(ctx, src.StreamPath)
+	} else {
+		closed = streamClosed(src.StreamPath)
+	}
 	f, err := os.Open(src.StreamPath)
 	if err != nil {
 		return nil, "no stream"
