@@ -80,11 +80,11 @@ func (m Model) hit(x, y int) (region, int, int) {
 	return hitPane, bodyRow, col
 }
 
-// railBindingAt is the index into rows() of the card drawn on rail line
-// row (0 = the first drawn line, m.list.top), or -1 for a header, a gap
-// or past the end.
+// railBindingAt is the index into railRows() of the card drawn on rail
+// line row (0 = the first drawn line, m.list.top), or -1 for a header, a
+// gap or past the end.
 func (m Model) railBindingAt(row int) int {
-	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
+	lines := railLinesAll(m.railRows(), m.list.cursor, m.sort, m.now(), m.screen == screenList, m.railWidth(), m.compact)
 	i := m.list.top + row
 	if i < 0 || i >= len(lines) {
 		return -1

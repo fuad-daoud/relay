@@ -336,13 +336,21 @@ and never appends to round logs. It holds the state lock only for the duration
 of a read, exactly as `relay status` does.
 
 At 110 columns or more, a rail of bindings grouped by state sits beside a
-pane showing the selected binding's report, terminal, diff or log (`⏎`
-focuses the pane, `s` toggles attention and name order); narrower
-terminals get the list-then-detail flow. The pane's four tabs:
-- **report** — the newest planner-bound report or question payload.
+pane showing the selected binding's plan, report, terminal, diff or log
+(`⏎` focuses the pane, `s` toggles attention and name order); narrower
+terminals get the list-then-detail flow. The pane's five tabs:
+- **plan** — the round's own plan file, first in the order (#183).
+- **report** — that round's planner-bound report or question payload.
 - **terminal** — recent live terminal output from the builder agent's pane.
-- **diff** — the captured git patch from the newest completed round.
-- **log** — the formatted append-only round log.
+- **diff** — the captured git patch from the round.
+- **log** — the formatted append-only round log, scoped to the round.
+
+`[` and `]` step the round a tab reads, from round 1 through the binding's
+current round -- every tab refetches for the new round. Stepping onto a
+live binding's own open (not yet closed) round reads as prose, not an
+error: the report and diff tabs say so ("round N is open; report arrives
+when it closes", "diff is captured when round N closes") rather than
+showing stale content.
 
 For a claude pane builder the terminal tab is the round's own transcript:
 the daemon renders the harness's session record
@@ -350,6 +358,26 @@ the daemon renders the harness's session record
 moment the round was sent, so the tab scrolls, follows the tail and is
 styled exactly as a headless builder's. opencode and agy pane builders
 keep the live screen capture (#184).
+
+### `relay ui`'s `all` scope: every binding, not just today's
+
+`a` toggles the rail between `live` (today's bindings, the default) and
+`all` -- every binding the database has ever recorded (#172), read through
+the same `relay.Bindings` query `relay history --here` uses: inside a git
+repo, only that repo's bindings; otherwise every one. `all` is persisted in
+`ui.json`, so the ui reopens in whichever scope you left it.
+
+In `all` scope the rail is the live rows exactly as `live` shows them,
+followed by every database row not already live, dimmed and never
+reordered by attention: a name, `archived <date>` where the state word
+goes (or `done` for a binding the database recorded but no tarball ever
+archived), and a second line `rN · <age> · feature <label>` (the feature
+clause only when one is set). Selecting an archived row opens the same
+five tabs, reading the database instead of files -- `terminal` renders the
+round's stored transcript rows and does not follow a tail, since nothing
+about an archived round is still moving. A database relay cannot open
+shows `no database: <err>` in the rail and the scope stays on `live`;
+`relay ui` never exits over it.
 
 ### Panes are yours, always
 
@@ -667,7 +695,10 @@ it could not read -- and exits 1 if any source failed, after finishing the
 rest. `--dry-run` opens every source and ingests into a scratch database
 instead of the real one, so the printed counts (prefixed `would`) are real
 without writing anything the machine keeps; `--archive-only` and
-`--live-only` narrow it to one half of the state directory.
+`--live-only` narrow it to one half of the state directory. A database built
+before events were linked to their rounds has every `event.round_id` null;
+delete `relay.db` and run `relay db backfill` again to rebuild it with the
+links so `relay show --log` and a past binding's `log` tab scope correctly.
 
 ### relay history
 

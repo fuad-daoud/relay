@@ -129,6 +129,7 @@ func longBody(n int) string {
 func TestWheelOverPaneScrollsWithoutMovingTheCursor(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.tabInFlight = false
+	m.detail.active = tabReport
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: longBody(200)}
 	m.fillViewport()
 	cursor := m.list.cursor
@@ -152,10 +153,10 @@ func TestWheelOverPaneKeepsTheTerminalFollowRule(t *testing.T) {
 	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/001-builder.log"}
 	m := splitModel(t, 140, 40, rows...)
 	m.tabInFlight = false
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
 	m.tabInFlight = false
-	res, _ = m.Update(tabMsg{name: m.detail.name, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
+	res, _ = m.Update(tabMsg{name: m.detail.name, round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
 	m = res.(Model)
 	px, py := m.railWidth()+railGap+10, headerRows+20
 	res, _ = m.Update(wheel(px, py, false))

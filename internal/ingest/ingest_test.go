@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -222,6 +223,64 @@ func TestIngestFixtureLive(t *testing.T) {
 	}
 	if len(r3t) != 0 {
 		t.Errorf("len(r3 transcript) = %d, want 0", len(r3t))
+	}
+}
+
+// TestIngestLinksEventsToRounds pins the Task 0(a) fix: events are appended
+// before any round row exists, so every event.round_id starts out null;
+// after ingest, db.Events(bindingID, round) must return exactly that
+// round's entries by following round_id, not by re-decoding entry_json
+// client-side.
+//
+// Mutation check: skip the link step (comment out the
+// linkEventsToRounds call in Ingest) and this must fail -- every
+// db.Events(bindingID, N) call returns zero rows instead of the round's
+// entries, since round_id stays null forever.
+func TestIngestLinksEventsToRounds(t *testing.T) {
+	dir := copyFixture(t)
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Now: func() time.Time { return now }}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	b := mustBinding(t, d, "fixture")
+
+	round2, err := d.Events(b.ID, 2)
+	if err != nil {
+		t.Fatalf("Events(round 2): %v", err)
+	}
+	if len(round2) != 3 {
+		t.Fatalf("Events(round 2) = %d rows, want 3", len(round2))
+	}
+	for _, e := range round2 {
+		var entry store.LogEntry
+		if err := json.Unmarshal([]byte(e.EntryJSON), &entry); err != nil {
+			t.Fatalf("unmarshal entry_json: %v", err)
+		}
+		if entry.Round != 2 {
+			t.Errorf("Events(round 2) returned a round %d entry (seq %d)", entry.Round, e.Seq)
+		}
+		if e.RoundID == nil {
+			t.Errorf("seq %d: RoundID is nil, want round 2's id", e.Seq)
+		}
+	}
+
+	round1, err := d.Events(b.ID, 1)
+	if err != nil {
+		t.Fatalf("Events(round 1): %v", err)
+	}
+	if len(round1) != 4 {
+		t.Fatalf("Events(round 1) = %d rows, want 4", len(round1))
+	}
+
+	round3, err := d.Events(b.ID, 3)
+	if err != nil {
+		t.Fatalf("Events(round 3): %v", err)
+	}
+	if len(round3) != 2 {
+		t.Fatalf("Events(round 3) = %d rows, want 2", len(round3))
 	}
 }
 

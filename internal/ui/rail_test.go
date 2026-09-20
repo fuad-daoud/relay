@@ -265,3 +265,50 @@ func TestFactsSpend(t *testing.T) {
 		t.Errorf("nil spend adds no fact: %q", f)
 	}
 }
+
+// TestRailArchivedRowFacts pins a hist row's rendering (#172, §5.8): the
+// state slot reads "archived <date>", the facts line reads
+// "rN · age · feature X", and the name is styled archivedStyle.
+func TestRailArchivedRowFacts(t *testing.T) {
+	h := relay.HistoryBinding{
+		Name: "old-feature", Rounds: 3, Feature: "auth",
+		LastActivity: railNow.Add(-2 * time.Hour),
+		Archived:     true, ArchivedAt: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
+	}
+
+	if got := histStateText(h); got != "archived 2026-08-30" {
+		t.Errorf("state = %q, want %q", got, "archived 2026-08-30")
+	}
+	if got := histFacts(h, railNow); got != "r3 · 2h · feature auth" {
+		t.Errorf("facts = %q, want %q", got, "r3 · 2h · feature auth")
+	}
+
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	lines := histCardLines(h, false, false, railNow, 60)
+	if len(lines) != 2 {
+		t.Fatalf("len(lines) = %d, want 2", len(lines))
+	}
+	stylePrefix := strings.SplitN(archivedStyle.Render("X"), "X", 2)[0]
+	if !strings.Contains(lines[0], stylePrefix) {
+		t.Errorf("name must be rendered with archivedStyle: %q", lines[0])
+	}
+	if !strings.Contains(plain(lines[0]), "old-feature") || !strings.Contains(plain(lines[0]), "archived 2026-08-30") {
+		t.Errorf("line 1 = %q, want the name and the archived date", plain(lines[0]))
+	}
+	if got := plain(lines[1]); got != "r3 · 2h · feature auth" {
+		t.Errorf("line 2 = %q, want %q", got, "r3 · 2h · feature auth")
+	}
+}
+
+// TestRailArchivedRowNotArchivedReadsDone pins the "done" fallback: a hist
+// row the database recorded but never archived (ArchivedAt unset) reads
+// "done" in the state slot, not a zero-value date.
+func TestRailArchivedRowNotArchivedReadsDone(t *testing.T) {
+	h := relay.HistoryBinding{Name: "x", Rounds: 1}
+	if got := histStateText(h); got != "done" {
+		t.Errorf("state = %q, want %q", got, "done")
+	}
+}

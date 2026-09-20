@@ -7,8 +7,8 @@
                                   │ foreign  %10  opencode  idle · researcher                                                               
                                   │ tree                                                                                                    
                                   │                                                                                                         
-                                  │  report    terminal    diff    log                                                                      
-                                  │ ──────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────
+                                  │  plan    report    terminal    diff    log                                                              
+                                  │ ──────────────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────
                                   │  · captured 0s ago · 2 lines                                                                            
                                   │                                                                                                         
                                   │ $ go test ./...                                                                                         
@@ -37,4 +37,4 @@
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         
-↑↓ move   ⏎ focus pane   tab next pane   1-4 pane   s sort: attention   c compact   q quit                                  refreshed 0s ago
+↑↓ move   ⏎ focus pane   tab next pane   1-5 pane   s sort: attention   c compact   q quit                                  refreshed 0s ago

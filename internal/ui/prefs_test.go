@@ -46,6 +46,37 @@ func TestApplyPrefs(t *testing.T) {
 	}
 }
 
+func TestPrefsScopeRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ui.json")
+	want := prefs{Sort: "attention", Scope: "all"}
+	if msg := savePrefs(path, want)(); msg != (prefsSavedMsg{}) {
+		t.Errorf("save returned %v", msg)
+	}
+	if got := loadPrefs(path); got != want {
+		t.Errorf("round trip: %+v, want %+v", got, want)
+	}
+
+	m := Model{}
+	m = m.applyPrefs(want)
+	if m.scope != scopeAll {
+		t.Errorf("applyPrefs(Scope: all): scope = %v, want scopeAll", m.scope)
+	}
+	if p := m.prefs(); p.Scope != "all" {
+		t.Errorf("prefs().Scope = %q, want %q", p.Scope, "all")
+	}
+}
+
+func TestPrefsScopeEmptyIsLive(t *testing.T) {
+	m := Model{scope: scopeAll}
+	m = m.applyPrefs(prefs{})
+	if m.scope != scopeLive {
+		t.Errorf("applyPrefs(zero prefs): scope = %v, want scopeLive", m.scope)
+	}
+	if p := m.prefs(); p.Scope != "" {
+		t.Errorf("prefs().Scope = %q, want empty (live)", p.Scope)
+	}
+}
+
 func TestChangesSaveWhenAPathIsSet(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")

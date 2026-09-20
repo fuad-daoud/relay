@@ -17,7 +17,7 @@ import (
 	"github.com/muesli/termenv"
 )
 
-func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
+func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
@@ -51,8 +51,8 @@ func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
 	if m.detail.name != name {
 		t.Fatalf("expected detail.name %s, got %s", name, m.detail.name)
 	}
-	if m.detail.active != tabReport {
-		t.Fatalf("expected active tabReport, got %v", m.detail.active)
+	if m.detail.active != tabPlan {
+		t.Fatalf("expected active tabPlan, got %v", m.detail.active)
 	}
 	if !m.tabInFlight {
 		t.Fatal("expected tabInFlight to be true on enter")
@@ -66,8 +66,8 @@ func TestEnteringDetailFetchesReportTabAndNoOther(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tabMsg from enter, got %T", msg)
 	}
-	if tMsg.t != tabReport {
-		t.Fatalf("expected tabReport fetch, got tab %v", tMsg.t)
+	if tMsg.t != tabPlan {
+		t.Fatalf("expected tabPlan fetch, got tab %v", tMsg.t)
 	}
 }
 
@@ -81,8 +81,8 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	m.detail.active = tabReport
 	m.detail.vp = viewport.New(80, 20)
 
-	// Switch to diff tab via key '3'
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	// Switch to diff tab via key '4'
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m = res.(Model)
 
 	if m.detail.active != tabDiff {
@@ -119,8 +119,8 @@ func TestScrollParkAndRestore(t *testing.T) {
 	// Set scroll offset on report tab
 	m.detail.vp.YOffset = 18
 
-	// Switch to terminal tab ('2')
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	// Switch to terminal tab ('3')
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
 	if m.detail.active != tabTerminal {
 		t.Fatalf("expected active tabTerminal, got %v", m.detail.active)
@@ -132,8 +132,8 @@ func TestScrollParkAndRestore(t *testing.T) {
 	// Change offset on terminal tab
 	m.detail.vp.YOffset = 7
 
-	// Switch back to report tab ('1')
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	// Switch back to report tab ('2')
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = res.(Model)
 	if m.detail.active != tabReport {
 		t.Fatalf("expected active tabReport, got %v", m.detail.active)
@@ -349,6 +349,7 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 2
+	m.detail.live = true
 	m.detail.active = tabTerminal
 	m.detail.scroll[tabDiff] = 85
 	m.detail.scroll[tabReport] = 40
@@ -408,8 +409,8 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 		key  string
 		tab  tab
 	}{
-		{name: "log", key: "4", tab: tabLog},
-		{name: "terminal", key: "2", tab: tabTerminal},
+		{name: "log", key: "5", tab: tabLog},
+		{name: "terminal", key: "3", tab: tabTerminal},
 	}
 
 	for _, tc := range tests {
@@ -437,7 +438,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	}
 }
 
-func TestFourTabsLoadContentEndToEnd(t *testing.T) {
+func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
@@ -463,10 +464,11 @@ func TestFourTabsLoadContentEndToEnd(t *testing.T) {
 		key string
 		t   tab
 	}{
-		{"1", tabReport},
-		{"2", tabTerminal},
-		{"3", tabDiff},
-		{"4", tabLog},
+		{"1", tabPlan},
+		{"2", tabReport},
+		{"3", tabTerminal},
+		{"4", tabDiff},
+		{"5", tabLog},
 	}
 
 	for _, tk := range tabKeys {

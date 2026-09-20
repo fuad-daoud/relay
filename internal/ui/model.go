@@ -59,6 +59,15 @@ type Model struct {
 	// statusAt is when the newest good statusMsg arrived; the footer's
 	// "refreshed Ns ago".
 	statusAt time.Time
+
+	// scope is the rail's breadth: live (today's bindings only, the
+	// default) or all (every binding the database has ever recorded);
+	// "a" toggles it (docs/specs/2026-09-20-persistence-design.md §5.8).
+	scope scope
+	// dbRows is the database's rows for scope all, fetched alongside the
+	// live report; nil in scope live, and nil (with a notice) when the
+	// database is unavailable.
+	dbRows []relay.HistoryBinding
 }
 
 func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
@@ -84,8 +93,27 @@ func (m Model) rows() []relay.BindingStatus {
 // empty reports whether the fleet has no rows to show. It is the one place
 // the zero-binding rule lives; paneView, footerView, the key and mouse
 // handlers and the statusMsg arm all ask it, never len(m.rows()) directly.
+// It is about the live report specifically -- scope all's archived rows
+// are browsable even when it is true; railRows(), not rows(), is what the
+// rail actually draws.
 func (m Model) empty() bool {
 	return m.statusLoaded && len(m.rows()) == 0
+}
+
+// railRows is the rail's current row set: live rows only in scope live
+// (each wrapped so railRows() behaves identically to rows() for every
+// existing, live-only call site), or the live+hist union in scope all
+// (scopeRows, §5.8). list.cursor always indexes this slice.
+func (m Model) railRows() []railRow {
+	live := m.rows()
+	if m.scope != scopeAll {
+		out := make([]railRow, len(live))
+		for i := range live {
+			out[i] = railRow{live: &live[i]}
+		}
+		return out
+	}
+	return scopeRows(live, m.dbRows)
 }
 
 // tick re-arms the poll. It is the ONLY timer; there is no goroutine.
@@ -95,7 +123,7 @@ func tick(d time.Duration) tea.Cmd {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		fetchStatus(m.ctx, m.rt),
+		fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here),
 		tick(m.opts.Interval),
 	)
 }
@@ -125,11 +153,15 @@ func (m Model) visibleTabFetch() tea.Cmd {
 		lines = 1
 	}
 	t := m.detail.active
-	if t == tabTerminal {
-		return fetchFor(m.ctx, m.rt, tabTerminal, m.detail.name, m.detail.round, lines)
+	if t == tabTerminal && m.detail.live {
+		// A live terminal shows the builder's screen right now, so it
+		// refetches on every visible tick regardless of cache; a hist
+		// row's terminal is transcript rows already in the database --
+		// static, fetched once like every other tab (not tail-following).
+		return fetchFor(m.ctx, m.rt, tabTerminal, m.detail.name, m.detail.round, lines, m.detail.live)
 	}
 	if !m.detail.cache[t].loaded {
-		return fetchFor(m.ctx, m.rt, t, m.detail.name, m.detail.round, lines)
+		return fetchFor(m.ctx, m.rt, t, m.detail.name, m.detail.round, lines, m.detail.live)
 	}
 	return nil
 }
@@ -153,6 +185,8 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 	m.detail = detailModel{
 		name:     name,
 		round:    r.Round - 1,
+		rounds:   r.Round,
+		live:     true,
 		active:   m.detail.active,
 		vp:       vp,
 		headless: r.Headless != nil,
@@ -168,6 +202,53 @@ func (m Model) pointDetailAt(name string) (Model, tea.Cmd) {
 	if cmd := m.visibleTabFetch(); cmd != nil {
 		m.tabInFlight = true
 		return m, cmd
+	}
+	return m, nil
+}
+
+// pointDetailAtHist re-targets the pane at h, a database row not in the
+// live report (#172, §5.8): live false, round the newest -- every one of
+// h's rounds is closed, unlike a live row's round-1 rule -- rounds h.Rounds,
+// archivedAt from h, follow false (a hist row's terminal is transcript
+// rows, never tailed). Every cache cleared, the active tab kept, exactly
+// like pointDetailAt. A no-op when the pane already shows h.Name.
+func (m Model) pointDetailAtHist(h relay.HistoryBinding) (Model, tea.Cmd) {
+	if m.detail.name == h.Name {
+		return m, nil
+	}
+	vp := viewport.New(m.paneWidth(), m.viewportHeight())
+	m.detail = detailModel{
+		name:       h.Name,
+		bindingID:  h.ID,
+		live:       false,
+		round:      h.Rounds,
+		rounds:     h.Rounds,
+		archivedAt: h.ArchivedAt,
+		active:     m.detail.active,
+		vp:         vp,
+		follow:     false,
+	}
+	m.fillViewport()
+	if m.tabInFlight {
+		return m, nil
+	}
+	if cmd := m.visibleTabFetch(); cmd != nil {
+		m.tabInFlight = true
+		return m, cmd
+	}
+	return m, nil
+}
+
+// pointAtRow dispatches rr to pointDetailAt or pointDetailAtHist, whichever
+// of its two fields is set -- the one place selection (moveCursor, enter,
+// a fresh statusMsg's cursor row) picks live vs hist so the two never
+// drift apart.
+func (m Model) pointAtRow(rr railRow) (Model, tea.Cmd) {
+	switch {
+	case rr.live != nil:
+		return m.pointDetailAt(rr.live.Name)
+	case rr.hist != nil:
+		return m.pointDetailAtHist(*rr.hist)
 	}
 	return m, nil
 }
@@ -189,15 +270,20 @@ func (m *Model) fillViewport() {
 }
 
 func (m Model) maybeInvalidate() (Model, tea.Cmd) {
-	if !m.paneVisible() || m.detail.name == "" {
+	if !m.paneVisible() || m.detail.name == "" || !m.detail.live {
+		// A hist row is never live: it is not in m.report to begin with,
+		// and its data never changes underneath a human reading it, so
+		// there is nothing here to invalidate against.
 		return m, nil
 	}
 	r := row(m.report, m.detail.name)
 	if r == nil {
 		m.screen = screenList
 		m.notice = fmt.Sprintf("%s is gone", m.detail.name)
-		if m.layout() == layoutSplit && len(m.rows()) > 0 {
-			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+		if m.layout() == layoutSplit {
+			if rows := m.railRows(); len(rows) > 0 {
+				return m.pointAtRow(rows[m.list.cursor])
+			}
 		}
 		return m, nil
 	}
@@ -210,7 +296,8 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 
 	m.detail.lastLogTS = r.Last.TS
 	m.detail.round = r.Round - 1
-	for _, t := range []tab{tabReport, tabDiff, tabLog} {
+	m.detail.rounds = r.Round
+	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
 		m.detail.cache[t] = tabContent{} // loaded=false
 		m.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
@@ -220,6 +307,32 @@ func (m Model) maybeInvalidate() (Model, tea.Cmd) {
 			m.tabInFlight = true
 			return m, cmd
 		}
+	}
+	return m, nil
+}
+
+// stepRound moves detail.round by delta, clamped to [1, detail.rounds] --
+// "[" and "]" step a binding's rounds, live and archived alike (#183). At
+// either edge it is a no-op with no notice. Every tab's cache is
+// invalidated (a round-keyed fetch is meaningless against the old round's
+// reply) and the active tab is re-fetched.
+func (m Model) stepRound(delta int) (tea.Model, tea.Cmd) {
+	next := m.detail.round + delta
+	if next < 1 || next > m.detail.rounds {
+		return m, nil
+	}
+	m.detail.round = next
+	for t := tab(0); t < tabCount; t++ {
+		m.detail.cache[t] = tabContent{} // loaded=false
+		m.detail.scroll[t] = 0           // reset parked offset on invalidation
+	}
+	m.fillViewport()
+	if m.tabInFlight {
+		return m, nil
+	}
+	if cmd := m.visibleTabFetch(); cmd != nil {
+		m.tabInFlight = true
+		return m, cmd
 	}
 	return m, nil
 }
@@ -256,8 +369,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.vp.Height = m.viewportHeight()
 		m.fillViewport()
 		m.list.top = m.railTop()
-		if m.layout() == layoutSplit && m.statusLoaded && len(m.rows()) > 0 {
-			return m.pointDetailAt(m.rows()[m.list.cursor].Name)
+		if m.layout() == layoutSplit && m.statusLoaded {
+			if rows := m.railRows(); len(rows) > 0 {
+				return m.pointAtRow(rows[m.list.cursor])
+			}
 		}
 		return m, nil
 
@@ -266,7 +381,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !m.statusInFlight {
 			m.statusInFlight = true
-			cmds = append(cmds, fetchStatus(m.ctx, m.rt))
+			cmds = append(cmds, fetchStatus(m.ctx, m.rt, m.scope, m.opts.Here))
 		}
 
 		if !m.tabInFlight {
@@ -288,16 +403,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.report = msg.report
 		m.statusAt = m.now()
-		m.list.resolveSticky(relay.Report{Bindings: m.rows()})
+		if m.scope == scopeAll {
+			if msg.dbErr != nil {
+				// db.ErrOpen or any other Bindings failure: the ui stays
+				// on live, never exits (§6). The notice is sticky until
+				// the next keypress, same as every other notice.
+				m.scope = scopeLive
+				m.dbRows = nil
+				m.notice = fmt.Sprintf("no database: %v", msg.dbErr)
+			} else {
+				m.dbRows = msg.dbRows
+			}
+		}
+		m.list.resolveStickyRows(m.railRows())
 		m.list.top = m.railTop()
 		if m.empty() && m.screen == screenDetail {
 			m.screen = screenList
 		}
 		var cmds []tea.Cmd
-		if m.layout() == layoutSplit && len(m.rows()) > 0 && m.detail.name != m.rows()[m.list.cursor].Name {
-			var cmd tea.Cmd
-			m, cmd = m.pointDetailAt(m.rows()[m.list.cursor].Name)
-			cmds = append(cmds, cmd)
+		if m.layout() == layoutSplit {
+			if rows := m.railRows(); len(rows) > 0 && m.detail.name != rows[m.list.cursor].name() {
+				var cmd tea.Cmd
+				m, cmd = m.pointAtRow(rows[m.list.cursor])
+				cmds = append(cmds, cmd)
+			}
 		}
 		var cmd tea.Cmd
 		m, cmd = m.maybeInvalidate()
@@ -312,11 +441,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.name != m.detail.name {
 			return m, nil
 		}
-		// Only the diff tab is round-keyed. The report tab reports the round of the
-		// entry it read, which may legitimately lag; the terminal shows the builder's
-		// screen right now; the log shows every round at once. Testing round equality
-		// against those three discards every reply they will ever send.
-		if msg.t == tabDiff && msg.round != m.detail.round {
+		// Every tab is round-keyed now (#183): plan, report, terminal and
+		// log all read the specific round fetchFor was called with, the
+		// same way diff always has. A reply for a round that is no longer
+		// the one on screen -- a slow fetch outlived by two presses of "]"
+		// -- is stale and must never land in the cache.
+		if msg.round != m.detail.round {
 			return m, nil
 		}
 		if msg.t != m.detail.active {
@@ -432,13 +562,13 @@ func (m Model) footerView() string {
 	case m.empty():
 		keys = []string{key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit && m.screen == screenList:
-		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
+		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit:
-		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-4", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
+		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.screen == screenList:
 		keys = []string{key("↑↓", "move"), key("⏎", "open"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	default:
-		keys = []string{key("esc", "back"), key("tab", "next pane"), key("1-4", "pane"), key("q", "quit")}
+		keys = []string{key("esc", "back"), key("tab", "next pane"), key("1-5", "pane"), key("q", "quit")}
 	}
 	left := strings.Join(keys, "   ")
 

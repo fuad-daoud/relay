@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -10,7 +11,8 @@ import (
 
 type detailModel struct {
 	name      string // binding under inspection
-	round     int    // newest COMPLETED round: row.Round - 1
+	round     int    // the round on screen; "[" / "]" step it (#183)
+	rounds    int    // how many rounds round can step through: live row.Round (the open round included) or a hist row's Rounds (every round closed)
 	active    tab
 	vp        viewport.Model // the live viewport; only ever shows `active`
 	scroll    [tabCount]int  // parked offsets for INACTIVE tabs
@@ -24,8 +26,22 @@ type detailModel struct {
 
 	// follow is the terminal tab's tail rule (spec §3.4): while true the
 	// viewport is pinned to the bottom on every refresh; scrolling up clears
-	// it, scrolling back to the bottom sets it. True on every re-point.
+	// it, scrolling back to the bottom sets it. True on every re-point; a
+	// hist row is never live, so it is always false there (#183).
 	follow bool
+
+	// live is false for a hist row's detail: every tab reads the database
+	// through fetchShow instead of live files (#172, §5.8).
+	live bool
+	// bindingID is the database row's id, set only when !live -- fetchShow
+	// does not need it (it re-resolves by name), but relay.Show's ShowResult
+	// does not carry it either, so it is here for the header and any future
+	// db-keyed lookup Task 5's goldens exercise.
+	bindingID string
+	// archivedAt is set only when !live and the binding was archived
+	// (tarred by `gc`); zero for a hist row the database recorded but the
+	// live store never released as an archive (e.g. `relay done`).
+	archivedAt time.Time
 }
 
 func styleFor(c tabContent) lipgloss.Style {
@@ -73,6 +89,21 @@ func wrapBody(body string, width int) string {
 		return body
 	}
 	return lipgloss.NewStyle().Width(width).Render(body)
+}
+
+// detailHeader is the detail pane's identity line (#183): name and round N
+// of M, plus "archived <date>" for a hist row the database recorded as
+// archived, plus "live" when the round on screen is a live binding's own
+// open (not yet closed) round.
+func (m Model) detailHeader() string {
+	s := fmt.Sprintf("%s · round %d of %d", m.detail.name, m.detail.round, m.detail.rounds)
+	if !m.detail.archivedAt.IsZero() {
+		s += " · archived " + m.detail.archivedAt.Format("2006-01-02")
+	}
+	if m.detail.live && m.detail.round == m.detail.rounds {
+		s += " · live"
+	}
+	return s
 }
 
 func (m Model) detailView() string {

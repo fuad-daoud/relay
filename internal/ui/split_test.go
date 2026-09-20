@@ -202,7 +202,7 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
 	m.tabInFlight = false
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
 	m.tabInFlight = false
 	if !m.detail.follow {
@@ -215,7 +215,7 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 		}
 		return strings.TrimRight(b.String(), "\n")
 	}
-	res, _ = m.Update(tabMsg{name: "api", t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
+	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
 	m = res.(Model)
 	if !m.detail.vp.AtBottom() {
 		t.Error("following: a refresh must land at the bottom")
@@ -229,7 +229,7 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 		t.Error("scrolling up must stop following")
 	}
 	y := m.detail.vp.YOffset
-	res, _ = m.Update(tabMsg{name: "api", t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
+	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
 	m = res.(Model)
 	if m.detail.vp.YOffset != y {
 		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, m.detail.vp.YOffset)
