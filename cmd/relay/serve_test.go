@@ -2,9 +2,15 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/relay"
 )
 
 func TestServeUsageOnNoArgs(t *testing.T) {
@@ -79,5 +85,38 @@ func TestServeFlagDefaults(t *testing.T) {
 	}
 	if sf.maxBundleBytes != 512<<20 {
 		t.Errorf("default maxBundleBytes = %d, want %d", sf.maxBundleBytes, 512<<20)
+	}
+}
+
+// TestServeTierRuntimeHasClock pins the #226 regression: cmdServeRun's
+// startup runtime is only used to log the builder tier, but that chain
+// (PickServedCandidate -> Gates) calls rt.Now(), so a runtime without a
+// clock panics before relay serve ever listens. It must build the runtime
+// the way cmdServeRun does and call relay.ServedBuilderTier on it -- no
+// shell-outs, no herdr, nothing outside t.TempDir().
+func TestServeTierRuntimeHasClock(t *testing.T) {
+	root := t.TempDir()
+
+	candidatesJSON := `[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`
+	candidatesPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candidatesPath, []byte(candidatesJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	candidates, err := candidate.Load(candidatesPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	pol, err := policy.Load(filepath.Join(root, "policy.json"))
+	if err != nil {
+		t.Fatalf("policy.Load: %v", err)
+	}
+
+	rt := serveTierRuntime(candidates, pol, root)
+	if rt.Now == nil {
+		t.Fatal("serveTierRuntime returned a Runtime without a clock")
+	}
+	tier := relay.ServedBuilderTier(rt) // this is the line that panicked in production
+	if tier == "" {
+		t.Fatal("expected a tier")
 	}
 }

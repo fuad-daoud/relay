@@ -115,6 +115,18 @@ func cmdServe(args []string) error {
 	}
 }
 
+// serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
+// tier at startup: candidates, policy, the server ledger and a clock.
+// It is a pure constructor: no I/O beyond what the caller already loaded.
+func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string) relay.Runtime {
+	return relay.Runtime{
+		Candidates: candidates,
+		Policy:     pol,
+		LedgerPath: filepath.Join(root, "ledger.json"),
+		Now:        time.Now,
+	}
+}
+
 func cmdServeRun(args []string) error {
 	fs, sf := serveFlagSet()
 	fs.SetOutput(os.Stderr)
@@ -140,7 +152,7 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	builderTierRT := relay.Runtime{Candidates: candidates, Policy: pol, LedgerPath: filepath.Join(root, "ledger.json")}
+	builderTierRT := serveTierRuntime(candidates, pol, root)
 	if builderTier := relay.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
 		slog.Warn(relay.ServerTierWarning(relay.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
 	} else {
