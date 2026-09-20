@@ -80,7 +80,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
 	}
 	for _, c := range cases {
-		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo")
+		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo", "/s")
 		if err != nil {
 			t.Fatalf("%s: %v", c.token, err)
 		}
@@ -88,7 +88,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 			t.Errorf("%s:\n got %v\nwant %v", c.token, got, c.want)
 		}
 	}
-	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo"); err == nil {
+	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo", "/s"); err == nil {
 		t.Error("unknown harness kind must be an error, not a panic or an empty argv")
 	}
 }

@@ -53,7 +53,7 @@ func roundBudget(b store.Binding) time.Duration {
 // working tree filled in (headless spec §4.2, #192). Pure. An unknown kind
 // is an error, not a panic: Load validated the set, but a binding written
 // by a future relay could name a kind this one does not know.
-func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir string) ([]string, error) {
+func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir, state string) ([]string, error) {
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
 		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
@@ -65,7 +65,7 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 	if l.PromptAt < 0 {
 		return nil, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	return append([]string{h.Binary}, l.PrintArgs(prompt, budget, dir)...), nil
+	return append([]string{h.Binary}, l.PrintArgs(prompt, budget, dir, state)...), nil
 }
 
 // startRound starts the round's process for a headless binding and records
@@ -92,7 +92,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
 	role, _ := harness.RoleByName("builder")
-	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD)
+	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}

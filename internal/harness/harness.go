@@ -326,9 +326,10 @@ func (h Harness) CanServe(role string) bool {
 // knows at send time. PrintArgs replaces them; they are exported so a test
 // or a caller can recognise them, never so a caller can build argv by hand.
 const (
-	PromptPlaceholder = "<prompt>"
-	BudgetPlaceholder = "<budget>"
-	DirPlaceholder    = "<dir>"
+	PromptPlaceholder   = "<prompt>"
+	BudgetPlaceholder   = "<budget>"
+	DirPlaceholder      = "<dir>"
+	StateDirPlaceholder = "<state>"
 )
 
 // Launch describes how to start an agent process for a specific role and
@@ -388,8 +389,8 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		if effort != "" {
 			cfg = append(cfg, "-c", "model_reasoning_effort="+effort)
 		}
-		base = cfg
-		print = append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder)
+		base = append(append([]string(nil), cfg...), "--add-dir", StateDirPlaceholder)
+		print = append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder, "--add-dir", StateDirPlaceholder)
 		promptAt = 1
 	}
 
@@ -415,16 +416,17 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	}, nil
 }
 
-// PrintArgs is Print with the prompt, the round budget and the round's
-// working tree filled in: a fresh slice, so neither Print nor the caller's
-// extra is touched. The budget is rendered as a Go duration ("1h30m0s"),
-// which is what agy's --print-timeout parses. A kind whose Print has no
-// BudgetPlaceholder ignores budget, and one with no DirPlaceholder ignores
-// dir, the same rule.
+// PrintArgs is Print with the prompt, the round budget, the round's working
+// tree and the binding's state dir filled in: a fresh slice, so neither
+// Print nor the caller's extra is touched. The budget is rendered as a Go
+// duration ("1h30m0s"), which is what agy's --print-timeout parses. state
+// is the binding's relay state dir, `--add-dir` on codex; a kind with no
+// StateDirPlaceholder ignores it. A kind whose Print has no BudgetPlaceholder
+// ignores budget, and one with no DirPlaceholder ignores dir, the same rule.
 //
 // Precondition: dir is absolute or empty. Postcondition: no placeholder
 // string remains in the result.
-func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []string {
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -434,6 +436,27 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir string) []str
 			out = append(out, budget.String())
 		case DirPlaceholder:
 			out = append(out, dir)
+		case StateDirPlaceholder:
+			out = append(out, state)
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// PaneArgs is Args with StateDirPlaceholder filled: a fresh slice, Args
+// untouched. Identity in content for a kind whose Args carry no
+// placeholder. Postcondition: no placeholder string remains.
+func (l Launch) PaneArgs(state string) []string {
+	if l.Args == nil {
+		return nil
+	}
+	out := make([]string, 0, len(l.Args))
+	for _, a := range l.Args {
+		switch a {
+		case StateDirPlaceholder:
+			out = append(out, state)
 		default:
 			out = append(out, a)
 		}

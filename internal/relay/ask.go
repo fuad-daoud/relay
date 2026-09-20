@@ -145,11 +145,13 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
 	var (
+		b       store.Binding
 		consult store.Consult
 		cwd     string
 	)
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load(opts.Name)
+		var err error
+		b, err = tx.Load(opts.Name)
 		if err != nil {
 			return err
 		}
@@ -200,7 +202,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	} else {
 		consult.Endpoint.PaneID = pane
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
-		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.Args); err != nil {
+		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.PaneArgs(rt.Store.Dir(b.Name))); err != nil {
 			recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
 			consult.State = store.ConsultSilent
 			consult.Note = "start failed: " + brief(err)

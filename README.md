@@ -722,9 +722,9 @@ A role is relay's name for a job; the harness definition it selects is what `rel
 | `agy` | `--model <model> --agent <role.Definition>` |
 | `claude` | `--model <model> --agent <role.Definition>` |
 | `opencode` | `--agent <role.Definition> -m <provider>/<model>` |
-| `codex` | `-p <role.Definition> -m <id> -c model_provider=<provider> [-c model_reasoning_effort=<effort>]` |
+| `codex` | `-p <role.Definition> -m <id> -c model_provider=<provider> [-c model_reasoning_effort=<effort>] --add-dir <state dir>` |
 
-For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
+For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates. `<state dir>` is `~/.local/state/relay/<binding>`, where the plan, report and findings live; codex's sandbox refuses writes outside the worktree without it.
 
 Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
 
@@ -948,6 +948,8 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | codex | (none) | `-s read-only` | `-s workspace-write` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
+
+At `harness`/`edit` the sandbox is `workspace-write` on the worktree plus relay's state dir; anything else outside the tree (a build cache such as Go's `~/.cache/go-build`) is read-only, so either run codex at `--tier yolo` or add `[sandbox_workspace_write]` / `writable_roots = ["/home/<you>/.cache/go-build"]` to `~/.codex/config.toml`. Under `yolo` the researcher profile's `sandbox_mode = "read-only"` is overridden by the bypass flag, and its read-only-ness rests on its instructions, as on claude and opencode.
 
 ### Ceiling semantics and ordering
 

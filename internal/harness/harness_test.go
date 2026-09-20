@@ -601,7 +601,7 @@ func TestLaunchPrintPerKind(t *testing.T) {
 		{
 			kind: "codex",
 			wantPrint: []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "m/x", "-c", "model_provider=prov",
-				"--json", "-C", DirPlaceholder},
+				"--json", "-C", DirPlaceholder, "--add-dir", StateDirPlaceholder},
 			wantPrompt: 1,
 		},
 	}
@@ -675,8 +675,8 @@ func TestLaunchCodex(t *testing.T) {
 		t.Fatal("Lookup(\"codex\") not found")
 	}
 
-	wantArgs := []string{"-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high"}
-	wantPrint := []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", DirPlaceholder}
+	wantArgs := []string{"-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--add-dir", StateDirPlaceholder}
+	wantPrint := []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", DirPlaceholder, "--add-dir", StateDirPlaceholder}
 
 	got, err := h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierHarness)
 	if err != nil {
@@ -713,9 +713,19 @@ func TestLaunchCodex(t *testing.T) {
 		t.Errorf("Print with extra must end in --foo: %v", got.Print)
 	}
 
+	argsBefore := append([]string(nil), got.Args...)
+	paneArgs := got.PaneArgs("/s")
+	wantPaneArgs := []string{"-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--add-dir", "/s", "--foo"}
+	if !reflect.DeepEqual(paneArgs, wantPaneArgs) {
+		t.Errorf("PaneArgs = %v, want %v", paneArgs, wantPaneArgs)
+	}
+	if !reflect.DeepEqual(got.Args, argsBefore) {
+		t.Errorf("PaneArgs mutated Args: got %v, want unchanged %v", got.Args, argsBefore)
+	}
+
 	printBefore := append([]string(nil), got.Print...)
-	rendered := got.PrintArgs("hi", time.Hour, "/w")
-	wantRendered := []string{"exec", "hi", "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", "/w", "--foo"}
+	rendered := got.PrintArgs("hi", time.Hour, "/w", "/s")
+	wantRendered := []string{"exec", "hi", "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", "/w", "--add-dir", "/s", "--foo"}
 	if !reflect.DeepEqual(rendered, wantRendered) {
 		t.Errorf("PrintArgs = %v, want %v", rendered, wantRendered)
 	}
@@ -752,7 +762,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	before := append([]string(nil), l.Print...)
 
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
-	got := l.PrintArgs(prompt, 90*time.Minute, "/w")
+	got := l.PrintArgs(prompt, 90*time.Minute, "/w", "/s")
 	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--add-dir", "/w", "--dangerously-skip-permissions"}
 	if !reflect.DeepEqual(got, want) {
@@ -775,7 +785,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	got = cl.PrintArgs("hello", time.Hour, "/w")
+	got = cl.PrintArgs("hello", time.Hour, "/w", "/s")
 	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
@@ -786,8 +796,26 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	}
 
 	// Unknown kind: empty in, empty out, no panic.
-	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w"); len(got) != 0 {
+	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w", "/s"); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
+	}
+}
+
+func TestPaneArgsIdentityForOtherKinds(t *testing.T) {
+	builder, _ := RoleByName("builder")
+	for _, kind := range []string{"agy", "claude", "opencode"} {
+		h, ok := Lookup(kind)
+		if !ok {
+			t.Fatalf("Lookup(%q) not found", kind)
+		}
+		l, err := h.Launch("prov", "m/x", nil, builder, TierHarness)
+		if err != nil {
+			t.Fatalf("%s Launch() error = %v", kind, err)
+		}
+		got := l.PaneArgs("/s")
+		if !reflect.DeepEqual(got, l.Args) {
+			t.Errorf("%s PaneArgs(\"/s\") = %v, want %v", kind, got, l.Args)
+		}
 	}
 }
 
