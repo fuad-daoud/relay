@@ -2,9 +2,11 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +49,7 @@ func copyFixtureAs(t *testing.T, bindFile string) string {
 		t.Fatalf("ReadDir fixture: %v", err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || e.Name() == "bind-legacy.json" {
+		if e.IsDir() || isBindVariant(e.Name()) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
@@ -58,7 +60,7 @@ func copyFixtureAs(t *testing.T, bindFile string) string {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
-	if bindFile != "bind.json" {
+	{
 		data, err := os.ReadFile(filepath.Join(fixtureDir, bindFile))
 		if err != nil {
 			t.Fatalf("read %s: %v", bindFile, err)
@@ -68,6 +70,17 @@ func copyFixtureAs(t *testing.T, bindFile string) string {
 		}
 	}
 	return dst
+}
+
+// isBindVariant reports whether name is one of the fixture's bind.json
+// stand-ins (bind.json itself, or a bind-*.json variant used by a specific
+// test), so copyFixtureAs never lets an unrelated variant leak into a
+// destination dir as a stray member.
+func isBindVariant(name string) bool {
+	if name == "bind.json" {
+		return true
+	}
+	return strings.HasPrefix(name, "bind-") && strings.HasSuffix(name, ".json")
 }
 
 func mustBinding(t *testing.T, d *db.DB, name string) db.BindingRow {
@@ -223,16 +236,11 @@ func assertArtifact(t *testing.T, d *db.DB, roundID, kind string, wantFound bool
 	}
 }
 
-func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
-	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	deps := Deps{Now: func() time.Time { return now }}
-
-	liveDir := copyFixture(t)
-	liveDB := openTestDB(t)
-	if _, err := Ingest(context.Background(), DirSource(liveDir), liveDB, deps); err != nil {
-		t.Fatalf("live Ingest: %v", err)
-	}
-
+// archiveFixtureAs packs the golden fixture, with bindFile standing in for
+// bind.json, into a tarball under a fresh temp state root and returns its
+// path -- the archive-source counterpart of copyFixtureAs.
+func archiveFixtureAs(t *testing.T, bindFile string) string {
+	t.Helper()
 	root := t.TempDir()
 	s := store.New(root)
 	if err := os.MkdirAll(s.Dir("fixture"), 0o755); err != nil {
@@ -243,7 +251,7 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 		t.Fatalf("ReadDir fixture: %v", err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || e.Name() == "bind-legacy.json" {
+		if e.IsDir() || isBindVariant(e.Name()) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
@@ -254,10 +262,31 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
+	bindData, err := os.ReadFile(filepath.Join(fixtureDir, bindFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", bindFile, err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir("fixture"), "bind.json"), bindData, 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
 	archivePath, err := s.Archive("fixture")
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
+	return archivePath
+}
+
+func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	deps := Deps{Now: func() time.Time { return now }}
+
+	liveDir := copyFixture(t)
+	liveDB := openTestDB(t)
+	if _, err := Ingest(context.Background(), DirSource(liveDir), liveDB, deps); err != nil {
+		t.Fatalf("live Ingest: %v", err)
+	}
+
+	archivePath := archiveFixtureAs(t, "bind.json")
 
 	archiveDB := openTestDB(t)
 	archiveSrc, err := TarSource(archivePath)
@@ -446,6 +475,92 @@ func TestIngestAppendsAfterNewRound(t *testing.T) {
 	}
 	if rounds[3].Number != 4 {
 		t.Errorf("rounds[3].Number = %d, want 4", rounds[3].Number)
+	}
+}
+
+// TestIngestNoPhantomRoundFromBindRound pins the round-3, backfill-found
+// rule: bind.json's "round" field is the *next* round number after
+// finishRound's Round++, so it names a round that has no files and no
+// events on a fully finished binding. bind-round4.json is exactly
+// binding-three-rounds with "round": 4 while every file and event still
+// only names rounds 1-3; Ingest must not manufacture an empty round 4 from
+// that field alone.
+//
+// Mutation check: re-adding `if b.Round > 0 { roundSet[b.Round] = true }`
+// to the round union in ingest.go must make this fail with 4 rounds.
+func TestIngestNoPhantomRoundFromBindRound(t *testing.T) {
+	dir := copyFixtureAs(t, "bind-round4.json")
+	d := openTestDB(t)
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	b := mustBinding(t, d, "fixture")
+	rounds := mustRounds(t, d, b.ID)
+	if len(rounds) != 3 {
+		t.Fatalf("len(rounds) = %d, want 3 (bind.json's round=4 must not create a phantom round)", len(rounds))
+	}
+	for _, r := range rounds {
+		if r.Number == 4 {
+			t.Errorf("round 4 exists, want no round from bind.json's round field alone")
+		}
+	}
+}
+
+// mapGitFacts answers RepoFacts per directory, erroring for any dir it was
+// not told about -- standing in for a gc'd worktree (RepoFacts fails
+// because the dir no longer exists) alongside a source checkout that still
+// resolves.
+type mapGitFacts map[string]struct{ originURL, commonDir string }
+
+func (m mapGitFacts) RepoFacts(ctx context.Context, dir string) (string, string, error) {
+	f, ok := m[dir]
+	if !ok {
+		return "", "", fmt.Errorf("no such repo: %s", dir)
+	}
+	return f.originURL, f.commonDir, nil
+}
+
+// TestIngestRepoFromSourceCheckoutWhenCWDGone pins the repo-fallback rule:
+// when bind.json carries no RepoRef and b.CWD's worktree is gone (the
+// archived-binding case -- RepoFacts(b.CWD) fails), Ingest falls back to
+// RepoFacts(b.Repo), the pre-existing source-checkout field. Exercised for
+// both a live and an archive source, since the old code gated the git
+// lookup on kind == "live" and skipped it entirely for archives.
+func TestIngestRepoFromSourceCheckoutWhenCWDGone(t *testing.T) {
+	deps := Deps{Git: mapGitFacts{
+		"/work/source-checkout": {originURL: "git@github.com:o/r.git", commonDir: "/work/source-checkout/.git"},
+	}}
+
+	dir := copyFixtureAs(t, "bind-cwd-gone.json")
+	d := openTestDB(t)
+	if _, err := Ingest(context.Background(), DirSource(dir), d, deps); err != nil {
+		t.Fatalf("live Ingest: %v", err)
+	}
+	b := mustBinding(t, d, "fixture")
+	if b.RepoID == nil {
+		t.Fatal("live: RepoID is nil, want a repo row resolved from b.Repo (the source checkout) when b.CWD is gone")
+	}
+	if !strEq(b.RepoOrigin, "https://github.com/o/r") {
+		t.Errorf("live: RepoOrigin = %v, want https://github.com/o/r", b.RepoOrigin)
+	}
+
+	archivePath := archiveFixtureAs(t, "bind-cwd-gone.json")
+	archiveDB := openTestDB(t)
+	archiveSrc, err := TarSource(archivePath)
+	if err != nil {
+		t.Fatalf("TarSource: %v", err)
+	}
+	if _, err := Ingest(context.Background(), archiveSrc, archiveDB, deps); err != nil {
+		t.Fatalf("archive Ingest: %v", err)
+	}
+	archB := mustBinding(t, archiveDB, "fixture")
+	if archB.RepoID == nil {
+		t.Fatal("archive: RepoID is nil, want a repo row resolved from b.Repo even for an archive source")
+	}
+	if !strEq(archB.RepoOrigin, "https://github.com/o/r") {
+		t.Errorf("archive: RepoOrigin = %v, want https://github.com/o/r", archB.RepoOrigin)
 	}
 }
 
