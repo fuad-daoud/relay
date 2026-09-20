@@ -1,0 +1,255 @@
+// Package db is relay's system of record: a pure-Go sqlite file at
+// <state root>/relay.db, behind this package alone -- it is the only place
+// a driver is imported, so the move to Turso later is a driver swap here,
+// not a migration anywhere else (docs/specs/2026-09-20-persistence-design.md).
+package db
+
+import "time"
+
+// Every id is a text ULID (26 chars, Crockford base32), minted by NewID.
+// Every time is time.Time in Go and RFC3339 UTC with millisecond precision
+// in the db. Nullable columns are pointers on the Go side.
+
+// Repo is a git repository relay has seen, identified by its normalised
+// origin URL, its git common dir, or both.
+type Repo struct {
+	ID        string
+	OriginURL *string
+	CommonDir *string
+	FirstSeen time.Time
+}
+
+// Planner is one (harness kind, session id) relay has observed at bind.
+type Planner struct {
+	ID                string
+	HarnessKind       string
+	SessionID         string
+	TranscriptLocator *string
+	FirstSeen         time.Time
+	LastSeen          time.Time
+}
+
+// Binding is one relay binding, live or archived.
+type Binding struct {
+	ID                  string
+	Name                string
+	RepoID              *string
+	PlannerID           *string
+	Feature             *string
+	ForkedFromBindingID *string
+	ForkedFromRound     *int
+	CWD                 string
+	Worktree            *string
+	Branch              *string
+	BaseCommit          *string
+	Tier                *string
+	Gate                *string
+	BuilderMode         string
+	Server              *string
+	CreatedAt           time.Time
+	FinalState          *string
+	ArchivedAt          *time.Time
+	ArchivePath         *string
+	IngestSource        string
+}
+
+// Round is one round of one binding.
+type Round struct {
+	ID               string
+	BindingID        string
+	Number           int
+	StartedAt        time.Time
+	ClosedAt         *time.Time
+	Outcome          string
+	BuilderCandidate *string
+	BuilderHarness   *string
+	BuilderProvider  *string
+	BuilderModel     *string
+	BuilderMode      *string
+	Tier             *string
+	Commits          *int
+	Tree             *string
+	GateResult       *string
+	GateExit         *int
+	GateDurationMS   *int64
+	InTokens         *int64
+	CacheTokens      *int64
+	WriteTokens      *int64
+	OutTokens        *int64
+	CostUSD          *float64
+	CostBasis        *string
+	ReportOutcome    *string
+	Switches         int
+}
+
+// Event is one binding-scoped log entry, projected from EntryJSON.
+type Event struct {
+	ID          string
+	BindingID   string
+	RoundID     *string
+	Seq         int
+	TS          time.Time
+	Kind        string
+	Direction   string
+	Note        *string
+	Path        *string
+	DeliveredAt *time.Time
+	Confirmed   bool
+	Late        bool
+	Flagged     *int
+	FlaggedBy   *string
+	EntryJSON   string
+}
+
+// Artifact is one captured file for a round: a plan, report, diff, drift
+// patch, gate log, or a consult's question/answer/ask/findings.
+type Artifact struct {
+	ID         string
+	RoundID    string
+	Kind       string
+	ConsultID  *string
+	Text       string
+	Bytes      int64
+	SHA256     string
+	CapturedAt time.Time
+}
+
+// TranscriptRecord is one record of a round's builder stream or a planner's
+// session, copied verbatim (RecordJSON) alongside its rendered line.
+type TranscriptRecord struct {
+	ID         string
+	OwnerKind  string
+	OwnerID    string
+	Seq        int
+	TS         *time.Time
+	RecordJSON string
+	Rendered   string
+}
+
+// Cursor tracks how far an append-only or whole-file source has been read.
+type Cursor struct {
+	Source     string
+	ByteOffset int64
+	HeadSHA    string
+	WholeSHA   *string
+	UpdatedAt  time.Time
+}
+
+// Filter is the shared query contract: the zero value of every field means
+// "no constraint" on that field.
+type Filter struct {
+	Repo, Here, Feature, Binding, Planner                string
+	Harness, Provider, Model, Candidate                  string
+	Outcome, ReportOutcome, State, GateResult, CostBasis string
+	Round                                                int
+	Since, Until                                         time.Time
+	Archived                                             *bool
+	Limit                                                int
+	Newest                                               bool
+}
+
+// RoundRow is the denormalised line `relay history` prints.
+type RoundRow struct {
+	BindingID, BindingName                                          string
+	Repo, Feature                                                   *string
+	Number                                                          int
+	StartedAt                                                       time.Time
+	ClosedAt                                                        *time.Time
+	Outcome                                                         string
+	BuilderCandidate, BuilderHarness, BuilderProvider, BuilderModel *string
+	Commits                                                         *int
+	Tree, GateResult                                                *string
+	CostUSD                                                         *float64
+	CostBasis                                                       *string
+	Archived                                                        bool
+	ArchivedAt                                                      *time.Time
+}
+
+// BindingRow is one binding plus its repo's identity and round summary, for
+// listing bindings newest activity first.
+type BindingRow struct {
+	Binding
+	RepoOrigin, RepoCommonDir *string
+	Rounds                    int
+	LastActivity              time.Time
+}
+
+// Stats summarises the database for `relay db stats`.
+type Stats struct {
+	Version     int
+	SizeBytes   int64
+	Rows        map[string]int
+	NewestRound *time.Time
+}
+
+// Round.Outcome values (spec §3 decision 8).
+const (
+	OutcomeReported     = "reported"
+	OutcomeHalted       = "halted"
+	OutcomeExited       = "exited"
+	OutcomeSwitched     = "switched"
+	OutcomeDoneNoReport = "done_no_report"
+	OutcomeOpen         = "open"
+)
+
+// ValidOutcome reports whether s is one of the Round.Outcome values.
+func ValidOutcome(s string) bool {
+	switch s {
+	case OutcomeReported, OutcomeHalted, OutcomeExited, OutcomeSwitched, OutcomeDoneNoReport, OutcomeOpen:
+		return true
+	}
+	return false
+}
+
+// Artifact.Kind values.
+const (
+	ArtifactPlan     = "plan"
+	ArtifactReport   = "report"
+	ArtifactDiff     = "diff"
+	ArtifactDrift    = "drift"
+	ArtifactGateLog  = "gate_log"
+	ArtifactQuestion = "question"
+	ArtifactAnswer   = "answer"
+	ArtifactAsk      = "ask"
+	ArtifactFindings = "findings"
+)
+
+// ValidArtifactKind reports whether s is one of the Artifact.Kind values.
+func ValidArtifactKind(s string) bool {
+	switch s {
+	case ArtifactPlan, ArtifactReport, ArtifactDiff, ArtifactDrift, ArtifactGateLog,
+		ArtifactQuestion, ArtifactAnswer, ArtifactAsk, ArtifactFindings:
+		return true
+	}
+	return false
+}
+
+// TranscriptRecord.OwnerKind values.
+const (
+	OwnerRound   = "round"
+	OwnerPlanner = "planner"
+)
+
+// ValidOwnerKind reports whether s is one of the TranscriptRecord.OwnerKind values.
+func ValidOwnerKind(s string) bool {
+	switch s {
+	case OwnerRound, OwnerPlanner:
+		return true
+	}
+	return false
+}
+
+// Binding.IngestSource values.
+const (
+	IngestLive    = "live"
+	IngestArchive = "archive"
+)
+
+// ValidIngestSource reports whether s is one of the Binding.IngestSource values.
+func ValidIngestSource(s string) bool {
+	switch s {
+	case IngestLive, IngestArchive:
+		return true
+	}
+	return false
+}

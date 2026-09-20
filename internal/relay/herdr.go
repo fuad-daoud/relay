@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/classify"
+	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -69,8 +70,16 @@ type Runtime struct {
 	Candidates *candidate.Set
 	LedgerPath string // the availability ledger file (#61 step 1)
 
-	// HistoryPath is the availability history file (#61 step 7).
-	HistoryPath string
+	// AvailabilityPath is the availability history file (#61 step 7, renamed
+	// availability.json by #172 q6).
+	AvailabilityPath string
+
+	// DB is relay's sqlite database (docs/specs/2026-09-20-persistence-design.md).
+	// Nil means no database: this round opens it only in `relay db *`, never
+	// in the shared runtime constructor, so nothing else reads it yet and
+	// every call site that will (later rounds) must treat nil the same as a
+	// machine with no db.
+	DB *db.DB
 
 	// Policy is ~/.config/relay/policy.json: the planner's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so

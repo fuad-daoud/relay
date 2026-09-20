@@ -79,6 +79,7 @@ Commands:
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
+  db        path|migrate|stats for relay's sqlite database
 
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind
@@ -248,6 +249,8 @@ func run(args []string) error {
 		return cmdAvailable(args[1:])
 	case "agent":
 		return cmdAgent(args[1:])
+	case "db":
+		return cmdDB(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	case "client":
@@ -346,22 +349,22 @@ func newRuntime() (relay.Runtime, error) {
 	}
 
 	return relay.Runtime{
-		Herdr:       herdr.NewClient("herdr", 30*time.Second),
-		Git:         gitClient,
-		Runner:      proc.New(),
-		Store:       st,
-		Candidates:  candidates,
-		LedgerPath:  st.LedgerPath(),
-		HistoryPath: st.HistoryPath(),
-		Policy:      pol,
-		Classify:    cls,
-		Usage:       reader,
-		Sessions:    relay.HomeSessionLocator(home),
-		Prices:      prices,
-		Now:         time.Now,
-		Hooks:       dispatcher,
-		Remote:      remoteClient,
-		Transport:   transport,
+		Herdr:            herdr.NewClient("herdr", 30*time.Second),
+		Git:              gitClient,
+		Runner:           proc.New(),
+		Store:            st,
+		Candidates:       candidates,
+		LedgerPath:       st.LedgerPath(),
+		AvailabilityPath: st.AvailabilityPath(),
+		Policy:           pol,
+		Classify:         cls,
+		Usage:            reader,
+		Sessions:         relay.HomeSessionLocator(home),
+		Prices:           prices,
+		Now:              time.Now,
+		Hooks:            dispatcher,
+		Remote:           remoteClient,
+		Transport:        transport,
 	}, nil
 }
 
@@ -477,7 +480,7 @@ func cmdCandidates(args []string) error {
 // unreadable file as empty after one stderr line -- the same rule Gates
 // applies to the ledger.
 func loadHistory(rt relay.Runtime) history.History {
-	h, err := history.Load(rt.HistoryPath)
+	h, err := history.Load(rt.AvailabilityPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: could not read history: %v\n", err)
 		return history.History{}

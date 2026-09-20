@@ -94,14 +94,14 @@ func (s *Server) runtime(owner remote.ClientID) (relay.Runtime, error) {
 func (s *Server) runtimeAt(root string) relay.Runtime {
 	st := store.New(root)
 	return relay.Runtime{
-		Herdr:       stubHerdr{},
-		Git:         s.cfg.Git,
-		Runner:      s.cfg.Runner,
-		Store:       st,
-		Candidates:  s.cfg.Candidates,
-		Policy:      s.cfg.Policy,
-		LedgerPath:  filepath.Join(s.cfg.Root, "ledger.json"), // server-wide, not st.LedgerPath()
-		HistoryPath: filepath.Join(s.cfg.Root, "history.json"),
-		Now:         s.cfg.Now,
+		Herdr:            stubHerdr{},
+		Git:              s.cfg.Git,
+		Runner:           s.cfg.Runner,
+		Store:            st,
+		Candidates:       s.cfg.Candidates,
+		Policy:           s.cfg.Policy,
+		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"), // server-wide, not st.LedgerPath()
+		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
+		Now:              s.cfg.Now,
 	}
 }
