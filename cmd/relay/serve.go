@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -63,11 +64,54 @@ func serveRoot(fs *flag.FlagSet) (string, error) {
 	if stateDir != "" {
 		return filepath.Join(stateDir, "serve"), nil
 	}
+	return defaultServeRoot()
+}
+
+func defaultServeRoot() (string, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(root, "serve"), nil
+}
+
+func pidAlive(pid int) bool {
+	// Windows does not support the Unix signal-zero liveness probe, so daemon
+	// pointers are ignored there and the default root is used.
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+func adminRoot(fs *flag.FlagSet) (string, error) {
+	var state string
+	if f := fs.Lookup("state"); f != nil {
+		state = f.Value.String()
+	}
+	def, err := defaultServeRoot()
+	if err != nil {
+		return "", err
+	}
+	root, note, err := serve.ResolveAdminRoot(state, def, pidAlive)
+	if err != nil {
+		return "", err
+	}
+	if note != "" {
+		fmt.Fprintf(os.Stderr, "relay serve: %s\n", note)
+	}
+	initialised, err := serve.Initialised(root)
+	if err != nil {
+		return "", err
+	}
+	if !initialised {
+		return "", fmt.Errorf("no serve state at %s: run relay serve init, or pass --state <dir> matching the daemon's", root)
+	}
+	return root, nil
 }
 
 func cmdServe(args []string) error {
@@ -127,6 +171,14 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string)
 	}
 }
 
+func serveAdminConfig(root string) serve.Config {
+	return serve.Config{
+		Root:   root,
+		Runner: proc.New(),
+		Now:    time.Now,
+	}
+}
+
 func cmdServeRun(args []string) error {
 	fs, sf := serveFlagSet()
 	fs.SetOutput(os.Stderr)
@@ -174,6 +226,20 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	def, _ := defaultServeRoot()
+	if err := serve.WritePointer(def, serve.DaemonPointer{
+		Root:      root,
+		PID:       os.Getpid(),
+		Listen:    sf.listen,
+		StartedAt: time.Now(),
+	}); err != nil {
+		slog.Warn("daemon pointer not written", "err", err)
+	}
+	defer func() { _ = serve.RemovePointer(def) }()
 
 	var cert *tls.Certificate
 	var fp string
@@ -292,7 +358,7 @@ func cmdServeClients(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := serveRoot(fs)
+	root, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
@@ -350,7 +416,7 @@ func cmdServeFingerprint(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := serveRoot(fs)
+	root, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
@@ -374,15 +440,12 @@ func cmdServeStatus(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := serveRoot(fs)
+	root, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 
-	srv, err := serve.New(serve.Config{
-		Root: root,
-		Now:  time.Now,
-	})
+	srv, err := serve.New(serveAdminConfig(root))
 	if err != nil {
 		return err
 	}
@@ -412,15 +475,12 @@ func cmdServeUnbind(args []string) error {
 	}
 
 	name := fs.Arg(0)
-	root, err := serveRoot(fs)
+	root, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 
-	srv, err := serve.New(serve.Config{
-		Root: root,
-		Now:  time.Now,
-	})
+	srv, err := serve.New(serveAdminConfig(root))
 	if err != nil {
 		return err
 	}
@@ -459,15 +519,12 @@ func cmdServeGC(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := serveRoot(fs)
+	root, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
 
-	srv, err := serve.New(serve.Config{
-		Root: root,
-		Now:  time.Now,
-	})
+	srv, err := serve.New(serveAdminConfig(root))
 	if err != nil {
 		return err
 	}

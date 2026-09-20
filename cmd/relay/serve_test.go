@@ -120,3 +120,33 @@ func TestServeTierRuntimeHasClock(t *testing.T) {
 		t.Fatal("expected a tier")
 	}
 }
+
+func TestServeAdminConfigHasRunnerAndClock(t *testing.T) {
+	cfg := serveAdminConfig("/x")
+	if cfg.Root != "/x" {
+		t.Errorf("Root = %q, want /x", cfg.Root)
+	}
+	if cfg.Runner == nil {
+		t.Error("Runner is nil")
+	}
+	if cfg.Now == nil {
+		t.Error("Now is nil")
+	}
+}
+
+func TestServeStatusRefusesUninitialisedRoot(t *testing.T) {
+	dir := t.TempDir()
+	err := cmdServeStatus([]string{"--state", dir})
+	if err == nil {
+		t.Fatal("cmdServeStatus error = nil, want an uninitialised-root error")
+	}
+	if !strings.Contains(err.Error(), "no serve state at ") {
+		t.Errorf("error = %q, want no serve state message", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "serve")) {
+		t.Errorf("error = %q, want root %q", err, filepath.Join(dir, "serve"))
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "serve", "tmp")); !os.IsNotExist(statErr) {
+		t.Errorf("serve/tmp exists or stat failed: %v", statErr)
+	}
+}
