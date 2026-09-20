@@ -410,6 +410,21 @@ no herdr, no `cmd/relay` test reaches a subcommand that needs it.
 - Backfill against this machine's real `.archive/` (49 tarballs) is a
   manual verification step in the plan, not a test.
 
+## 7a. What the first rounds showed
+
+Verified on this machine after round 5: 62 sources (49 archives, 13 live)
+backfill in under 3 s to 102 rounds, 459 events, 295 artifacts, 51k
+transcript rows, 118 MB; a second backfill is a no-op. Two facts for
+phase 2:
+
+- **Remote builders' usage is not measured.** A remote round's report
+  entry carries `Usage` with basis `unknown` (`shared cwd`) because the
+  client reads the harness record locally and it lives on the server. The
+  server must measure the round and ship the figure with the report
+  (#216); until then `history` prints `unknown` for remote rounds.
+- `relay serve` does not open a db; the server's state root is ingested by
+  nothing. Its rounds exist in the client's db only as the client saw them.
+
 ## 8. Out of scope
 
 Retention or pruning of any kind. Changing what `done`/`unbind`/`gc` do
