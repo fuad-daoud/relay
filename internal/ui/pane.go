@@ -75,8 +75,24 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	}
 	rows = append(rows, label("tree")+strings.Join(tparts, sep))
 	// usage and spend mirror `relay status`'s rows (#142): the newest
-	// round's line, then the binding's total. Both only when recorded.
-	if b.LastUsage != nil {
+	// round's line, then the binding's total. A running round shows its
+	// live figure instead of the last closed one's (#234); spend is
+	// closed rounds only and never shares a cell with the live figure.
+	if b.LiveUsage != nil {
+		parts := usage.LiveParts(*b.LiveUsage)
+		styled := make([]string, len(parts))
+		for i, p := range parts {
+			switch {
+			case i == 0:
+				styled[i] = accentStyle.Render(p) // the word "live" is the point
+			case i == len(parts)-1:
+				styled[i] = fgStyle.Render(p) // the cost word is the point
+			default:
+				styled[i] = dimStyle.Render(p)
+			}
+		}
+		rows = append(rows, label("usage")+strings.Join(styled, sep))
+	} else if b.LastUsage != nil {
 		parts := usage.Parts(*b.LastUsage)
 		styled := make([]string, len(parts))
 		for i, p := range parts {

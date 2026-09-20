@@ -126,11 +126,44 @@ func TestRenderTab(t *testing.T) {
 	if !strings.HasPrefix(tot, "total") || !strings.Contains(tot, "$0.70") {
 		t.Errorf("total row = %q", tot)
 	}
-	if !strings.Contains(api, "12k") { // 3 entries × 4000 prompt tokens
-		t.Errorf("api in-tokens = %q", api)
+	if !strings.Contains(api, "3k") || !strings.Contains(api, "9k") { // 3 entries × in 1000, cache read 3000
+		t.Errorf("api token cells = %q", api)
 	}
 	empty := RenderTab(TabReport{By: "binding"})
 	if !strings.Contains(empty, "no rounds with usage") {
 		t.Errorf("empty = %q", empty)
+	}
+}
+
+// TestRenderTabColumns pins the four token columns (#234): in, cache,
+// write and out, each the group's summed field in short form, no
+// percentage.
+func TestRenderTabColumns(t *testing.T) {
+	e := TabEntry{Binding: "web", Entry: store.LogEntry{TS: tabNow, Round: 1,
+		Direction: store.DirToPlanner, Kind: store.KindReport,
+		Usage: &usage.Usage{Harness: "h", Provider: "p", Model: "m",
+			Tokens: usage.Tokens{In: 2100, CacheRead: 166_000, CacheWrite: 14_000, Out: 12_000}, Samples: 1}}}
+	rows, total, err := TabRows([]TabEntry{e}, "binding", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := RenderTab(TabReport{By: "binding", Rows: rows, Total: total})
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[0], "write") {
+		t.Errorf("header = %q, want the write column", lines[0])
+	}
+	row := lines[1]
+	cells := []string{"2k", "166k", "14k", "12k"}
+	last := -1
+	for _, c := range cells {
+		i := strings.Index(row, c)
+		if i < 0 || i <= last {
+			t.Errorf("row = %q, want %v in that order", row, cells)
+			break
+		}
+		last = i
+	}
+	if strings.Contains(row, "%") {
+		t.Errorf("row = %q, want no percentage cell", row)
 	}
 }

@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"encoding/json"
 	"io"
 )
 
@@ -23,21 +22,10 @@ type codexEvent struct {
 // 26112 cached), hence the subtraction below; reasoning_output_tokens is a
 // subset of output_tokens and is not added; a sub-agent's tokens are
 // folded into the parent turn by codex and priced as the candidate's
-// model.
+// model. The parser state lives on the carry (#234), so the same line
+// loop feeds the per-stream cache without drifting.
 func codexStream(r io.Reader, provider, model string) []Sample {
-	var out []Sample
-	scanLines(r, func(line []byte) {
-		var ev codexEvent
-		if json.Unmarshal(line, &ev) != nil || ev.Type != "turn.completed" || ev.Usage == nil {
-			return
-		}
-		t := Tokens{
-			In:         ev.Usage.Input - ev.Usage.Cached,
-			CacheRead:  ev.Usage.Cached,
-			CacheWrite: ev.Usage.CacheWrite,
-			Out:        ev.Usage.Output,
-		}
-		out = append(out, Sample{Provider: provider, Model: model, Tokens: t})
-	})
-	return out
+	c, _ := newCarry("codex", provider, model)
+	scanLines(r, c.feed)
+	return c.samples()
 }

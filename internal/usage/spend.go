@@ -71,7 +71,8 @@ func moneyParts(s Spend) []string {
 	return p
 }
 
-// SpendLine: "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown".
+// SpendLine: "4 rounds +2c · $1.23 · ~$0.40 · 1 plan · 2 unknown", with a
+// trailing tok cell (#234) when the sum moved tokens: " · 2.1M tok".
 func SpendLine(s Spend) string {
 	if s.Rounds == 0 && s.Consults == 0 {
 		return "no rounds"
@@ -83,10 +84,20 @@ func SpendLine(s Spend) string {
 	if s.Consults > 0 {
 		head += fmt.Sprintf(" +%dc", s.Consults)
 	}
-	return strings.Join(append([]string{head}, moneyParts(s)...), " · ")
+	out := strings.Join(append([]string{head}, moneyParts(s)...), " · ")
+	if total := s.Tokens.Total(); total > 0 {
+		out += " · " + ShortTokens(total) + " tok"
+	}
+	return out
 }
 
-// MoneyShort is SpendLine without the rounds part, for the rail card.
+// MoneyShort is SpendLine without the rounds part, for the rail card and
+// the statusline (#234): "$1.51 · 2.1M tok". Just the tok cell when the
+// sum has tokens but no dollars to name.
 func MoneyShort(s Spend) string {
-	return strings.Join(moneyParts(s), " · ")
+	parts := moneyParts(s)
+	if total := s.Tokens.Total(); total > 0 {
+		parts = append(parts, ShortTokens(total)+" tok")
+	}
+	return strings.Join(parts, " · ")
 }

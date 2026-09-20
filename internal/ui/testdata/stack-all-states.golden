@@ -1,4 +1,4 @@
- relay   5 bindings · 1 needs you · 1 held    codex gated until 15:30  ·  14:02 
+ relay   6 bindings · 1 needs you · 1 held    codex gated until 15:30  ·  14:02 
 
  NEEDS YOU  1                                                                   
 ▎  webshop                     r4                                               
@@ -12,10 +12,14 @@
    $1.23 · ~$0.40 · 1 unknown                                                   
    agy · relay/ledger                                                           
                                                                                 
- ACTIVE  2                                                                      
+ ACTIVE  3                                                                      
    api                         r2                                               
    working · quiet 23s of 1m0s                                                  
    agy · relay/api                                                              
+   atlas                       r4                                               
+   working                                                                      
+   $0.16 · 3.5M tok · live $0.04 ·                                              
+   opencode · relay/atlas                                                       
    worker                      r2                                               
    working                                                                      
    opencode · headless · relay/wor                                              
@@ -23,8 +27,4 @@
  DONE  1                                                                        
    docs                        r1                                               
    done · 3h                                                                    
-   agy                                                                          
-                                                                                
-                                                                                
-                                                                                
 ↑↓ move   ⏎ open   s sort: attention   c compact   q quit       refreshed 0s ago

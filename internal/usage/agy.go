@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"encoding/json"
 	"io"
 )
 
@@ -34,37 +33,11 @@ type agyEvent struct {
 // the sample; with no result event, each agent_response step_update with
 // usage is a sample. agy reports no dollars. Model: the init event's, else
 // the candidate's. agy in a pane keeps no usage record at all (verified
-// 2026-09-18), so there is no pane reader.
+// 2026-09-18), so there is no pane reader. The parser state lives on the
+// carry (#234), so the same line loop feeds the per-stream cache without
+// drifting.
 func agyStream(r io.Reader, fallbackProvider, fallbackModel string) []Sample {
-	model := fallbackModel
-	var result *Sample
-	var steps []Sample
-	scanLines(r, func(line []byte) {
-		var ev agyEvent
-		if json.Unmarshal(line, &ev) != nil {
-			return
-		}
-		switch ev.Event {
-		case "init":
-			if ev.Init != nil && ev.Init.Model != "" {
-				model = ev.Init.Model
-			}
-		case "step_update":
-			if ev.StepUpdate != nil && ev.StepUpdate.StepType == "agent_response" && ev.StepUpdate.Usage != nil {
-				steps = append(steps, Sample{Provider: fallbackProvider, Tokens: ev.StepUpdate.Usage.tokens()})
-			}
-		case "result":
-			if ev.Result != nil && ev.Result.Usage != nil {
-				result = &Sample{Provider: fallbackProvider, Tokens: ev.Result.Usage.tokens()}
-			}
-		}
-	})
-	if result != nil {
-		result.Model = model
-		return []Sample{*result}
-	}
-	for i := range steps {
-		steps[i].Model = model
-	}
-	return steps
+	c, _ := newCarry("agy", fallbackProvider, fallbackModel)
+	scanLines(r, c.feed)
+	return c.samples()
 }

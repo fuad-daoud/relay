@@ -372,7 +372,7 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
 	head := m.paneHead(&b)
 	joined := stripANSI(strings.Join(head, "\n"))
-	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 15.0M · cache 100% · out 55k · $4.71") {
+	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 0 · out 55k · $4.71") {
 		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
 	}
 	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
@@ -388,5 +388,39 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	// The header no longer carries the spend: it belongs in the block.
 	if h := stripANSI(m.headerView()); strings.Contains(h, "spend") {
 		t.Errorf("header must not show spend: %q", h)
+	}
+}
+
+// TestPaneHeadLiveUsageRow pins the live figure's place in the header
+// (#234): a running round's `usage` row is the live one, exactly one, and
+// the closed round's row does not appear beside it; spend keeps its row.
+func TestPaneHeadLiveUsageRow(t *testing.T) {
+	rows := threeRows()
+	m := splitModel(t, 140, 40, rows...)
+	var b relay.BindingStatus
+	for _, r := range rows {
+		if r.Name == m.detail.name {
+			b = r
+		}
+	}
+	b.LastUsage = &usage.Usage{Harness: "agy", Provider: "google", Model: "gemini-3-pro", DurationMS: 6 * 60_000,
+		Cost: usage.Cost{Basis: usage.Unknown}, Note: "agy keeps no usage record"}
+	b.LiveUsage = &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+		Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
+		Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3}
+	b.Spend = &usage.Spend{Rounds: 2, Measured: 0.16}
+	head := m.paneHead(&b)
+	joined := stripANSI(strings.Join(head, "\n"))
+	if n := strings.Count(joined, "usage    "); n != 1 {
+		t.Errorf("%d usage rows, want exactly one:\n%s", n, joined)
+	}
+	if !strings.Contains(joined, "usage    live · glm-5.3-flash") {
+		t.Errorf("the usage row must be the live one:\n%s", joined)
+	}
+	if strings.Contains(joined, "gemini-3-pro") || strings.Contains(joined, "6m") {
+		t.Errorf("the closed round's row must yield to the live one:\n%s", joined)
+	}
+	if !strings.Contains(joined, "spend    2 rounds · $0.16") {
+		t.Errorf("no spend row:\n%s", joined)
 	}
 }

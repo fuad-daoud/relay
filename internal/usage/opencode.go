@@ -35,21 +35,13 @@ type opencodeEvent struct {
 
 // opencodeStream reads a headless round's `run --format json` stream: one
 // sample per step_finish part, dollars as opencode computed them. The
-// stream names no model, so provider and model are the candidate's.
+// stream names no model, so provider and model are the candidate's. The
+// parser state lives on the carry (#234), so the same line loop feeds the
+// per-stream cache without drifting.
 func opencodeStream(r io.Reader, provider, model string) []Sample {
-	var out []Sample
-	scanLines(r, func(line []byte) {
-		var ev opencodeEvent
-		if json.Unmarshal(line, &ev) != nil || ev.Type != "step_finish" || ev.Part == nil || ev.Part.Tokens == nil {
-			return
-		}
-		s := Sample{Provider: provider, Model: model, Tokens: ev.Part.Tokens.tokens()}
-		if ev.Part.Cost != nil {
-			s.USD, s.HasCost = *ev.Part.Cost, true
-		}
-		out = append(out, s)
-	})
-	return out
+	c, _ := newCarry("opencode", provider, model)
+	scanLines(r, c.feed)
+	return c.samples()
 }
 
 // OpencodeQuery is the one statement relay runs against opencode.db. The

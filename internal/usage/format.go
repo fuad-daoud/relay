@@ -53,6 +53,26 @@ func ShortDuration(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
+// tokenCells is the four token cells in order, or nil when there are no
+// samples (#234): "in 2k", "cache 166k (91%)", "write 14k", "out 12k".
+// `in` is uncached input; `cache` is CacheRead with its share of the
+// prompt in parentheses, omitted when the prompt total is 0; `write` is
+// printed even when it is 0, so a reader learns the field exists.
+func tokenCells(t Tokens, samples int) []string {
+	if samples == 0 {
+		return nil
+	}
+	prompt := t.In + t.CacheRead + t.CacheWrite
+	cache := "cache " + ShortTokens(t.CacheRead)
+	if prompt > 0 {
+		cache += fmt.Sprintf(" (%.0f%%)", t.CacheRatio()*100)
+	}
+	return []string{
+		"in " + ShortTokens(t.In), cache,
+		"write " + ShortTokens(t.CacheWrite), "out " + ShortTokens(t.Out),
+	}
+}
+
 // Line is the round line, issue #142's format. Parts are joined by two
 // spaces and omitted when empty; see the spec §2 for the exact rules.
 func Line(u Usage) string {
@@ -69,14 +89,7 @@ func Line(u Usage) string {
 	if d := ShortDuration(u.DurationMS); d != "" {
 		parts = append(parts, d)
 	}
-	if u.Samples > 0 {
-		prompt := u.Tokens.In + u.Tokens.CacheRead + u.Tokens.CacheWrite
-		in := "in " + ShortTokens(prompt)
-		if prompt > 0 {
-			in += fmt.Sprintf(" (cache %.0f%%)", u.Tokens.CacheRatio()*100)
-		}
-		parts = append(parts, in, "out "+ShortTokens(u.Tokens.Out))
-	}
+	parts = append(parts, tokenCells(u.Tokens, u.Samples)...)
 	money := Money(u.Cost)
 	if u.Cost.Basis == Unknown && !u.Cost.Plan && u.Note != "" {
 		money += " (" + u.Note + ")"
@@ -88,7 +101,8 @@ func Line(u Usage) string {
 // Parts is the round as short, separable parts for a surface that joins
 // them with its own separator and already names the harness elsewhere
 // (the ui's binding block): model (harness when there is none), duration,
-// "in N", "cache NN%", "out N", and the cost word. An unknown note that
+// the four token cells ("in N", "cache N (NN%)", "write N", "out N") and
+// the cost word. An unknown note that
 // ends in " for <provider>/<model>" loses that suffix -- the model is the
 // first part. Empty parts are omitted.
 func Parts(u Usage) []string {
@@ -102,18 +116,29 @@ func Parts(u Usage) []string {
 	if d := ShortDuration(u.DurationMS); d != "" {
 		parts = append(parts, d)
 	}
-	if u.Samples > 0 {
-		prompt := u.Tokens.In + u.Tokens.CacheRead + u.Tokens.CacheWrite
-		parts = append(parts, "in "+ShortTokens(prompt))
-		if prompt > 0 {
-			parts = append(parts, fmt.Sprintf("cache %.0f%%", u.Tokens.CacheRatio()*100))
-		}
-		parts = append(parts, "out "+ShortTokens(u.Tokens.Out))
-	}
+	parts = append(parts, tokenCells(u.Tokens, u.Samples)...)
 	money := Money(u.Cost)
 	if u.Cost.Basis == Unknown && !u.Cost.Plan && u.Note != "" {
 		note := strings.TrimSuffix(u.Note, " for "+u.Provider+"/"+u.Model)
 		money += ": " + note
 	}
 	return append(parts, money)
+}
+
+// LiveParts is Parts with the word "live" prepended (#234): a figure for a
+// round that is still running, read from the harness's record on this
+// call. The caller sets DurationMS to now - the round's start and takes
+// the cost word as Money renders it.
+func LiveParts(u Usage) []string {
+	return append([]string{"live"}, Parts(u)...)
+}
+
+// LiveShort is the card/statusline form of a live figure:
+// "live ~$0.04 · 103k tok". "" when there are no samples, so a surface
+// shows nothing rather than "live unknown".
+func LiveShort(u Usage) string {
+	if u.Samples == 0 {
+		return ""
+	}
+	return "live " + Money(u.Cost) + " · " + ShortTokens(u.Tokens.Total()) + " tok"
 }

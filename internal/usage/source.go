@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/harness"
@@ -37,21 +38,45 @@ type Source struct {
 // regardless.
 type Reader interface {
 	Read(ctx context.Context, src Source) (samples []Sample, note string)
+	// Peek is Read without waiting for the record to close (#234): what
+	// is on disk now, for a surface that shows a running round. It never
+	// blocks past ctx and never errors.
+	Peek(ctx context.Context, src Source) (samples []Sample, note string)
 }
 
+// reader is a value type; mu and cache are pointers so every copy shares
+// them (#234): the cache maps a StreamPath to its parse state, so Peek on
+// every ui tick parses the appended bytes only. Not persisted.
 type reader struct {
-	exec Exec
-	home string
+	exec  Exec
+	home  string
+	mu    *sync.Mutex
+	cache map[string]*streamCache
 }
 
 // New returns the production reader. exec may be nil (sqlite3 absent);
 // home is the user's home directory.
-func New(exec Exec, home string) Reader { return reader{exec: exec, home: home} }
+func New(exec Exec, home string) Reader {
+	return reader{exec: exec, home: home, mu: &sync.Mutex{}, cache: map[string]*streamCache{}}
+}
 
 func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
-		return r.readStream(ctx, src)
+		return r.readStream(ctx, src, true)
+	case ModePane:
+		return r.readPane(ctx, src)
+	}
+	return nil, "no reader for mode " + string(src.Mode)
+}
+
+// Peek is Read without the wait for the exit trailer (#234): a headless
+// stream is read as it stands (it may still be open), a pane read is
+// already bounded by its window.
+func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
+	switch src.Mode {
+	case ModeHeadless:
+		return r.readStream(ctx, src, false)
 	case ModePane:
 		return r.readPane(ctx, src)
 	}
@@ -117,32 +142,19 @@ func waitClosed(ctx context.Context, path string) bool {
 	}
 }
 
-func (r reader) readStream(ctx context.Context, src Source) ([]Sample, string) {
+func (r reader) readStream(ctx context.Context, src Source, wait bool) ([]Sample, string) {
 	if _, err := os.Stat(src.StreamPath); err != nil {
 		return nil, "no stream"
 	}
-	closed := waitClosed(ctx, src.StreamPath)
-	f, err := os.Open(src.StreamPath)
-	if err != nil {
-		return nil, "no stream"
+	closed := false
+	if wait {
+		closed = waitClosed(ctx, src.StreamPath)
+	} else {
+		closed = streamClosed(src.StreamPath)
 	}
-	defer f.Close()
-	var samples []Sample
-	switch src.Harness {
-	case "claude":
-		samples = claudeStream(f, src.Provider)
-	case "agy":
-		samples = agyStream(f, src.Provider, src.Model)
-	case "opencode":
-		samples = opencodeStream(f, src.Provider, src.Model)
-	case "codex":
-		model := src.Model
-		if id, _, err := harness.SplitEffort(src.Model); err == nil {
-			model = id
-		}
-		samples = codexStream(f, src.Provider, model)
-	default:
-		return nil, "no reader for " + src.Harness
+	samples, note := r.parseCached(src)
+	if note != "" {
+		return nil, note // "no reader for <harness>"
 	}
 	switch {
 	case len(samples) == 0:
@@ -151,6 +163,80 @@ func (r reader) readStream(ctx context.Context, src Source) ([]Sample, string) {
 		return samples, "stream still open"
 	}
 	return samples, ""
+}
+
+// parseCached reads src's stream through the per-stream cache (#234):
+// stat first; an unchanged (size, mtime) is answered from the carry
+// without opening the file, an appended file is parsed from where the
+// last read stopped, and a file that shrank (truncated, or a new round
+// reusing the path) resets the entry.
+func (r reader) parseCached(src Source) ([]Sample, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	info, err := os.Stat(src.StreamPath)
+	if err != nil {
+		return nil, "no stream"
+	}
+	// Keyed by path and harness: a different harness reading the same
+	// path must never pick up the previous harness's carry (a round's
+	// stream belongs to one builder, but a test -- and a mid-round
+	// builder switch -- can point two harnesses at one path).
+	key := src.StreamPath + "\x00" + src.Harness
+	e := r.cache[key]
+	if e == nil || info.Size() < e.offset {
+		model := src.Model
+		if src.Harness == "codex" {
+			if id, _, err := harness.SplitEffort(src.Model); err == nil {
+				model = id
+			}
+		}
+		c, ok := newCarry(src.Harness, src.Provider, model)
+		if !ok {
+			return nil, "no reader for " + src.Harness
+		}
+		e = &streamCache{carry: c}
+		r.cache[key] = e
+	}
+	if info.Size() == e.size && info.ModTime().Equal(e.mtime) {
+		return e.carry.samples(), ""
+	}
+	f, err := os.Open(src.StreamPath)
+	if err != nil {
+		return nil, "no stream"
+	}
+	defer f.Close()
+	if _, err := f.Seek(e.offset, io.SeekStart); err != nil {
+		return nil, "no stream"
+	}
+	read, err := io.ReadAll(f)
+	if err != nil {
+		return nil, "no stream"
+	}
+	buf := append(e.tail, read...)
+	last := 0
+	for i, b := range buf {
+		if b != '\n' {
+			continue
+		}
+		line := buf[last:i]
+		last = i + 1
+		if len(line) > 0 && line[0] == '{' && len(line) <= maxLine {
+			e.carry.feed(line)
+		}
+	}
+	e.tail = append([]byte(nil), buf[last:]...)
+	if len(e.tail) > maxLine {
+		// A pathological line: dropped, as scanLines drops one today.
+		e.tail = nil
+	}
+	// offset is the bytes of the file already read from disk, tail bytes
+	// included: the next parse seeks here, so the held tail is never
+	// re-read, and buf above (tail + new bytes) is the file's own
+	// sequence. (Reading from size-len(tail) instead would re-read the
+	// tail and double it inside buf.)
+	e.offset = info.Size()
+	e.size, e.mtime = info.Size(), info.ModTime()
+	return e.carry.samples(), ""
 }
 
 func (r reader) readPane(ctx context.Context, src Source) ([]Sample, string) {

@@ -583,10 +583,13 @@ func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
 // fakeUsage scripts what the usage reader returns and records the Source
 // it was asked for.
 type fakeUsage struct {
-	samples []usage.Sample
-	note    string
-	sources []usage.Source
-	block   bool // when true, Read waits for ctx and returns nothing
+	samples     []usage.Sample
+	note        string
+	sources     []usage.Source
+	block       bool // when true, Read waits for ctx and returns nothing
+	peekSamples []usage.Sample
+	peekNote    string
+	peeks       []usage.Source // recorded by Peek; Peek never blocks
 }
 
 func (f *fakeUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
@@ -596,4 +599,9 @@ func (f *fakeUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample,
 		return nil, "blocked"
 	}
 	return f.samples, f.note
+}
+
+func (f *fakeUsage) Peek(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
+	f.peeks = append(f.peeks, src)
+	return f.peekSamples, f.peekNote
 }

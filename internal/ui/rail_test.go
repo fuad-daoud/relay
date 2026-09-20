@@ -106,6 +106,26 @@ func TestCardLinesTruncateLongName(t *testing.T) {
 	}
 }
 
+// TestFactsLiveAndSpend pins the card's facts order (#234): spend first,
+// the live figure last, separate cells, never summed; and the exact words
+// the plan fixed, read at a rail width the line fits (at the default width
+// the existing truncation cuts it, live last).
+func TestFactsLiveAndSpend(t *testing.T) {
+	b := relay.BindingStatus{
+		Spend: &usage.Spend{Rounds: 1, Measured: 0.16, Tokens: usage.Tokens{In: 3_500_000}},
+		LiveUsage: &usage.Usage{Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+			Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
+			Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3},
+	}
+	if got := strings.Join(facts(b), " · "); got != "$0.16 · 3.5M tok · live $0.04 · 104k tok" {
+		t.Errorf("facts = %q", got)
+	}
+	card := cardLines(b, false, false, railNow, true, 44)
+	if !strings.Contains(stripANSI(card[2]), "$0.16 · 3.5M tok · live $0.04 · 104k tok") {
+		t.Errorf("card facts line = %q", stripANSI(card[2]))
+	}
+}
+
 func TestRailLinesGroupsAndTags(t *testing.T) {
 	rows := []relay.BindingStatus{
 		{Name: "n", Display: "NEEDS YOU", BuilderKind: "agy"},

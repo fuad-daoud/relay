@@ -36,11 +36,21 @@ func goldenModel(t *testing.T, width, height int, rep relay.Report) Model {
 }
 
 // allStatesRows covers every display state and the row facts the rail and
-// pane can show today: NEEDS YOU (blocked, dirty, consults), HELD (hold
-// clock), ACTIVE (pane builder, nudged), ACTIVE (headless, pid), DONE
-// (--cwd, no branch).
+// pane can show today: ACTIVE (a running round's live usage on the card
+// and in the header, #234), NEEDS YOU (blocked, dirty, consults), HELD
+// (hold clock), ACTIVE (pane builder, nudged), ACTIVE (headless, pid),
+// DONE (--cwd, no branch).
 func allStatesRows() []relay.BindingStatus {
 	return []relay.BindingStatus{
+		{
+			Name: "atlas", Round: 4, Display: "ACTIVE",
+			PlannerPane: "%6", PlannerKind: "claude", PlannerStatus: "working",
+			BuilderPane: "%11", BuilderKind: "opencode", BuilderStatus: "working", Branch: "relay/atlas",
+			LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+				Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
+				Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3},
+			Spend: &usage.Spend{Rounds: 1, Measured: 0.16, Tokens: usage.Tokens{In: 3_500_000}},
+		},
 		{
 			Name: "webshop", Round: 4, Display: "NEEDS YOU",
 			PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle",
@@ -109,6 +119,9 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model {
 				rows := allStatesRows()
 				m := goldenModel(t, 140, 40, relay.Report{Bindings: rows, Gated: gatedGates()})
+				// The pane points at the running-round binding, so the
+				// golden's header pins the live usage row (#234).
+				m, _ = m.pointDetailAt("atlas")
 				return feedTerminal(t, m, m.detail.name, terminalBody)
 			},
 		},
