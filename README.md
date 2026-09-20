@@ -1132,18 +1132,28 @@ with `"plan": true` on its candidate: its rounds record `cost.plan` and
 are shown as a quota draw, never as free.
 
 Where you see it: `relay log` prints the round line under each report
-(`⎿ claude/anthropic/claude-sonnet-5  14m  in 182k (cache 91%)  out 12k  ~$0.41`);
+(`⎿ opencode/cline-pass/glm-5.3-flash  14m  in 2k  cache 166k (91%)  write 14k  out 12k  $0.41`);
 `relay status` adds a `usage` row (newest round) and a `spend` row
-(the binding's total: `4 rounds +2c · $1.23 · ~$0.40 · 2 unknown`), both
+(the binding's total: `4 rounds +2c · $1.23 · ~$0.40 · 2 unknown · 2.1M tok`), both
 on `--json` as `last_usage` and `spend`; `relay ui` shows the total on
-the card and in the header. Across bindings:
+the card and in the header.
+
+While a round is running, `relay status` and `relay ui` show a `live`
+figure read from the harness's record on each refresh, and
+`relay statusline` appends `live $0.02 · 41k tok` to the row. On
+`status --json` it is carried as `live_usage`. The live figure is
+estimated (`~$`) unless the harness reports dollars per step (opencode);
+agy in a pane keeps no usage record, so it has none. It is never recorded
+and never added to `spend`. Across bindings:
 
 ```
 relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]
 ```
 
 sums every round relay has recorded, including bindings `gc` has
-archived, one row per group and a total. Measured and estimated dollars
+archived, one row per group and a total, with the four token columns
+`in`, `cache`, `write`, `out` (a sum across models has no meaningful
+ratio, so `cache` carries no percentage). Measured and estimated dollars
 never share a column; `plan` and `unknown` are counts of rounds. `tab`
 is the second exception to the #114 verb freeze, taken because its
 sums exist regardless (they are on `status --json`) and a cross-binding
