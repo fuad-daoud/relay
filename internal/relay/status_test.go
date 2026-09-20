@@ -1544,6 +1544,126 @@ func TestStatusNoUsageNoRows(t *testing.T) {
 	}
 }
 
+// statusLiveFixture is a headless binding with an open round (round 1
+// sent) and a live reader wired, with now moved past the round's start so
+// the live figure has a duration.
+func statusLiveFixture(t *testing.T, fu *fakeUsage) (Runtime, store.Binding) {
+	t.Helper()
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.Usage = fu
+	rt.Now = func() time.Time { return baseTime.Add(90 * time.Second) }
+	return rt, b
+}
+
+func TestStatusLiveUsageOnOpenRound(t *testing.T) {
+	rt, b := statusLiveFixture(t, &fakeUsage{peekSamples: []usage.Sample{
+		{Provider: "cline-pass", Model: "glm-5.3-flash", Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200}, USD: 0.04, HasCost: true},
+	}})
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	got := rep.Bindings[0]
+	if got.LiveUsage == nil {
+		t.Fatal("LiveUsage = nil on an open round")
+	}
+	if got.LiveUsage.Cost.Basis != usage.Measured || got.LiveUsage.Cost.USD != 0.04 {
+		t.Errorf("cost = %+v, want measured $0.04", got.LiveUsage.Cost)
+	}
+	if got.LiveUsage.DurationMS <= 0 {
+		t.Errorf("DurationMS = %d, want the round's running wall time", got.LiveUsage.DurationMS)
+	}
+	if got.LiveUsage.Harness != "agy" || got.LiveUsage.Provider != "cline-pass" {
+		t.Errorf("harness/provider = %q/%q, want agy/cline-pass", got.LiveUsage.Harness, got.LiveUsage.Provider)
+	}
+	// The live figure never touches Spend: with no recorded entries the
+	// spend is what the fixture entries give -- nil.
+	if got.Spend != nil {
+		t.Errorf("Spend = %+v, want nil (the live figure is never summed)", got.Spend)
+	}
+	if len(fuFrom(rt).peeks) != 1 {
+		t.Fatalf("%d peeks, want 1", len(fuFrom(rt).peeks))
+	}
+	if !fuFrom(rt).peeks[0].Start.Equal(b.RoundStartedAt) {
+		t.Errorf("peek window start = %v, want the round's start %v", fuFrom(rt).peeks[0].Start, b.RoundStartedAt)
+	}
+	if fuFrom(rt).peeks[0].Mode != usage.ModeHeadless {
+		t.Errorf("peek mode = %q, want headless for a headless builder", fuFrom(rt).peeks[0].Mode)
+	}
+}
+
+// fuFrom digs the fakeUsage back out of the runtime the tests wired.
+func fuFrom(rt Runtime) *fakeUsage { return rt.Usage.(*fakeUsage) }
+
+func TestStatusNoLiveUsageWhenRoundClosed(t *testing.T) {
+	rt, _ := seedClosedRound(t, "clean", 1)
+	fu := &fakeUsage{peekSamples: []usage.Sample{{Provider: "p", Tokens: usage.Tokens{In: 1}, USD: 0.01, HasCost: true}}}
+	rt.Usage = fu
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].LiveUsage != nil {
+		t.Errorf("LiveUsage = %+v on a closed round, want nil", rep.Bindings[0].LiveUsage)
+	}
+	if len(fu.peeks) != 0 {
+		t.Errorf("the reader was peeked %d times with no round open, want 0", len(fu.peeks))
+	}
+}
+
+func TestStatusNoLiveUsageWhenPeekEmpty(t *testing.T) {
+	rt, _ := statusLiveFixture(t, &fakeUsage{peekNote: "no usage events"})
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].LiveUsage != nil {
+		t.Errorf("LiveUsage = %+v when Peek found nothing, want nil", rep.Bindings[0].LiveUsage)
+	}
+}
+
+func TestStatusTextUsageRowPrefersLive(t *testing.T) {
+	rep := Report{Bindings: []BindingStatus{{
+		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
+		LastUsage: &usage.Usage{Harness: "agy", Provider: "google", Model: "gemini-3-pro", DurationMS: 6 * 60_000,
+			Cost: usage.Cost{Basis: usage.Unknown}, Note: "agy keeps no usage record"},
+		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
+			Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
+			Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3},
+	}}}
+	text := RenderStatus(rep)
+	lines := strings.Split(text, "\n")
+	n := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "  usage") {
+			n++
+			if !strings.HasPrefix(l, "  usage    live  ") {
+				t.Errorf("usage row must be the live figure:\n%s", l)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d usage rows, want exactly one (the live one):\n%s", n, text)
+	}
+}
+
+func TestStatusLiveUsageJSON(t *testing.T) {
+	with := BindingStatus{LiveUsage: &usage.Usage{Harness: "agy", Cost: usage.Cost{USD: 0.04, Basis: usage.Measured}}}
+	raw, err := json.Marshal(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"live_usage"`) {
+		t.Errorf("json = %s, want the live_usage key", raw)
+	}
+	raw, _ = json.Marshal(BindingStatus{})
+	if strings.Contains(string(raw), "live_usage") {
+		t.Errorf("json = %s, live_usage must be absent when nil", raw)
+	}
+}
+
 func TestRenderStatusOutcome(t *testing.T) {
 	t.Run("prints outcome when halted", func(t *testing.T) {
 		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)

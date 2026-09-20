@@ -64,6 +64,10 @@ type BindingStatus struct {
 	// always did.
 	LastUsage *usage.Usage `json:"last_usage,omitempty"`
 	Spend     *usage.Spend `json:"spend,omitempty"`
+	// LiveUsage is what the open round has consumed so far, read from the
+	// harness's record on this call (#234). nil when no round is open or
+	// nothing is readable yet. Never recorded, never summed into Spend.
+	LiveUsage *usage.Usage `json:"live_usage,omitempty"`
 	// Dirty is the rendered rule: the newest close left the tree dirty and
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
@@ -332,6 +336,15 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		s := usage.Sum(usages, consults)
 		row.Spend = &s
 	}
+	// A round that is still running gets its figure read live (#234):
+	// after Spend is set, so the recorded sums stay exactly what the log
+	// entries give. rt.Now is nil in some test runtimes; the clock falls
+	// back to the wall.
+	now := time.Now()
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	row.LiveUsage = peekUsage(ctx, rt, b, now)
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
 
 	// What relay acts on is what it shows: the clock starts where
@@ -580,7 +593,9 @@ func RenderStatus(r Report) string {
 			}
 			fmt.Fprint(&sb, "\n")
 		}
-		if b.LastUsage != nil {
+		if b.LiveUsage != nil {
+			fmt.Fprintf(&sb, "  usage    %s\n", strings.Join(usage.LiveParts(*b.LiveUsage), "  "))
+		} else if b.LastUsage != nil {
 			fmt.Fprintf(&sb, "  usage    %s\n", usage.Line(*b.LastUsage))
 		}
 		if b.Spend != nil {

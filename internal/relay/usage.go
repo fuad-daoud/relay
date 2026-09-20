@@ -14,6 +14,37 @@ import (
 // whatever the reader does; a slow read is a note, not a stall.
 const usageDeadline = 5 * time.Second
 
+// liveDeadline bounds one live usage read per binding (#234). Status runs
+// on every ui tick and statusline call across every binding, so a slow or
+// absent record shows nothing live rather than stalling the refresh.
+const liveDeadline = 500 * time.Millisecond
+
+// peekUsage reads what the binding's open round has consumed so far
+// (#234): the same reader and source recordUsage uses, asked without
+// waiting for the record to close. nil when no round is open, no reader
+// is wired, or nothing is readable yet. Never recorded, never summed.
+func peekUsage(ctx context.Context, rt Runtime, b store.Binding, now time.Time) *usage.Usage {
+	if rt.Usage == nil || b.RoundStartedAt.IsZero() || b.Builder.Kind == "" {
+		return nil
+	}
+	src := roundSource(rt, b, b.RoundStartedAt, now)
+	pctx, cancel := context.WithTimeout(ctx, liveDeadline)
+	defer cancel()
+	samples, note := rt.Usage.Peek(pctx, src)
+	if len(samples) == 0 {
+		return nil
+	}
+	u := usage.Fold(samples, rt.Prices, src.Plan, note)
+	u.Harness = src.Harness
+	if u.Provider == "" {
+		u.Provider = src.Provider
+	}
+	if !src.Start.IsZero() && src.End.After(src.Start) {
+		u.DurationMS = src.End.Sub(src.Start).Milliseconds()
+	}
+	return &u
+}
+
 // roundSource is everything the usage reader needs for the binding's
 // current round: the builder that closed it, its candidate's provider and
 // model when it was spawned from one, the round's stream file when
