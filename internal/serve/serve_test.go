@@ -26,6 +26,8 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 func signedRequest(t *testing.T, kp remote.Keypair, method, target string, body []byte) *http.Request {
@@ -1199,7 +1201,7 @@ type testEnv struct {
 	transport *remote.BundleTransport
 }
 
-func setupTestEnv(t *testing.T) *testEnv {
+func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	t.Helper()
 	ctx := context.Background()
 	gitClient := git.NewClient("git", 0, 0)
@@ -1238,13 +1240,17 @@ func setupTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	runner := newScriptRunner()
-	srv, err := New(Config{
+	srvCfg := Config{
 		Root:       serverRoot,
 		Candidates: cSet,
 		Runner:     runner,
 		Git:        gitClient,
 		Now:        time.Now,
-	})
+	}
+	for _, opt := range cfgOpts {
+		opt(&srvCfg)
+	}
+	srv, err := New(srvCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1788,6 +1794,136 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	_ = json.Unmarshal(body, &idleView)
 	if idleView.RoundState != remote.RoundIdle {
 		t.Fatalf("round_state = %q, want %q", idleView.RoundState, remote.RoundIdle)
+	}
+}
+
+// fakeStreamUsage is a usage.Reader fake: it answers a headless source
+// pointed at the round's stream with its samples, and nothing otherwise,
+// recording every source it was asked to read.
+type fakeStreamUsage struct {
+	samples []usage.Sample
+	note    string
+	sources []usage.Source
+}
+
+func (f *fakeStreamUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
+	f.sources = append(f.sources, src)
+	if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
+		return f.samples, f.note
+	}
+	return nil, "not the round's stream"
+}
+
+func (f *fakeStreamUsage) Peek(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
+	return nil, ""
+}
+
+// TestRoundCloseRecordsStreamUsage checks that the server measures a
+// closed remote round from the headless builder's stream (#216): the
+// report entry it queues at close carries the summed tokens and a
+// measured/estimated cost, not "no reader".
+func TestRoundCloseRecordsStreamUsage(t *testing.T) {
+	prices := usage.Prices{Models: map[string]usage.ModelPrice{
+		"anthropic/haiku": {In: 1, Out: 5},
+	}}
+	fu := &fakeStreamUsage{
+		samples: []usage.Sample{
+			{Provider: "anthropic", Model: "haiku", Tokens: usage.Tokens{In: 100, Out: 200}, USD: 0.05, HasCost: true},
+			{Provider: "anthropic", Model: "haiku", Tokens: usage.Tokens{In: 1_000_000}},
+		},
+	}
+	env := setupTestEnv(t, func(c *Config) {
+		c.Usage = fu
+		c.Prices = prices
+	})
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start status = %d, want 201", resp.StatusCode)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workFile := filepath.Join(b.Worktree, "result.txt")
+	if err := os.WriteFile(workFile, []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, b.Worktree, "add", "result.txt")
+	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
+
+	reportText := "# Report 1\nCompleted work.\n\n```relay\nstatus: done\n```\n"
+	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.setAlive(false)
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// The reader was asked about the round's stream, headless.
+	asked := false
+	for _, src := range fu.sources {
+		if src.Mode == usage.ModeHeadless && strings.HasSuffix(src.StreamPath, "001-builder.jsonl") {
+			asked = true
+		}
+	}
+	if !asked {
+		t.Fatalf("reader never asked for the round's stream; sources: %+v", fu.sources)
+	}
+
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindReport {
+			report = &entries[i]
+		}
+	}
+	if report == nil {
+		t.Fatal("no report entry after the round closed")
+	}
+	u := report.Usage
+	if u == nil {
+		t.Fatalf("report entry Usage = nil, want the stream's figure; note %q", report.Note)
+	}
+	if u.Tokens.In != 1_000_100 || u.Tokens.Out != 200 {
+		t.Fatalf("Usage.Tokens = %+v, want in 1000100 out 200", u.Tokens)
+	}
+	if u.Cost.Basis != usage.Estimated {
+		t.Fatalf("Usage.Cost.Basis = %q, want estimated", u.Cost.Basis)
+	}
+	// One measured sample (0.05) plus one estimated at 1/M input tokens
+	// over 1M input tokens (1.00).
+	if u.Cost.USD != 1.05 {
+		t.Fatalf("Usage.Cost.USD = %v, want 1.05", u.Cost.USD)
+	}
+	if u.Model != "haiku" {
+		t.Fatalf("Usage.Model = %q, want haiku", u.Model)
 	}
 }
 

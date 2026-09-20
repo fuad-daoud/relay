@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 func TestErrorBodyJSON(t *testing.T) {
@@ -131,5 +133,52 @@ func TestBindingViewJSONNames(t *testing.T) {
 	}
 	if strings.Contains(string(dataEmpty), "dirty_commit") {
 		t.Errorf("expected dirty_commit absent when empty, got: %s", string(dataEmpty))
+	}
+}
+
+// TestBindingViewUsageRoundTrip checks that a view carrying the closed
+// round's usage round-trips through the same JSON the log entry already
+// persists (#216), and that a view without one ships no "usage" key -- so
+// a pre-usage server stays indistinguishable from "no usage recorded".
+func TestBindingViewUsageRoundTrip(t *testing.T) {
+	bv := BindingView{
+		Name:        "api",
+		State:       "running",
+		Round:       2,
+		RoundState:  RoundClosed,
+		ClosedRound: 1,
+		Usage: &usage.Usage{
+			Harness: "opencode",
+			Model:   "haiku",
+			Tokens:  usage.Tokens{In: 1000, Out: 200},
+			Cost:    usage.Cost{USD: 0.12, Basis: usage.Measured},
+			Note:    "2 models",
+		},
+	}
+
+	data, err := json.Marshal(bv)
+	if err != nil {
+		t.Fatalf("Marshal BindingView: %v", err)
+	}
+
+	var got BindingView
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal BindingView: %v", err)
+	}
+	if got.Usage == nil {
+		t.Fatalf("Usage lost on the wire: %s", string(data))
+	}
+	if *got.Usage != *bv.Usage {
+		t.Fatalf("Usage round-trip = %+v, want %+v", *got.Usage, *bv.Usage)
+	}
+
+	// A view without usage ships no "usage" key.
+	bv.Usage = nil
+	data, err = json.Marshal(bv)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"usage"`) {
+		t.Errorf("expected no usage key when Usage is nil, got: %s", string(data))
 	}
 }
