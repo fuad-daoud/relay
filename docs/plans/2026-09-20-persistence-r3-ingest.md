@@ -115,7 +115,7 @@ Ingest(src):
         all := entries already in db (tx.Events(bindingID, 0)) + new      -- need the full list to derive rounds; read the whole file once when the cursor is at 0, else db rows + new lines
         -- binding
         createdAt := b.CreatedAt; if zero: first entry ts; if none: deps.Now()
-        bindingID := tx.UpsertBinding{Name, RepoID, PlannerID, Feature, ForkedFrom*, CWD, Worktree, Branch, Base, Tier, Gate, BuilderMode: b.Builder.Mode or "pane", Server, CreatedAt, FinalState: b.State, ArchivedAt/ArchivePath when kind=="archive" (ArchivedAt = tarball stamp), IngestSource: kind}
+        bindingID := tx.UpsertBinding{Name, RepoID, PlannerID, Feature, ForkedFromBindingID: id of tx.Binding(b.ForkedFrom) when b.ForkedFrom != "" and found (else null), ForkedFromRound: b.ForkedAtRound when > 0, CWD, Worktree, Branch, Base, Tier, Gate, BuilderMode: b.Builder.Mode or "pane", Server, CreatedAt, FinalState: b.State, ArchivedAt/ArchivePath when kind=="archive" (ArchivedAt = tarball stamp), IngestSource: kind}
         tx.AppendEvents(bindingID, new entries with Seq = line index (0-based from file start), EntryJSON = the raw line)
         -- rounds
         rounds := union of entry.Round for all entries, and every NNN parsed from members, and b.Round when b.Round > 0
