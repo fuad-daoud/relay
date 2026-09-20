@@ -237,11 +237,11 @@ Order inside one `Ingest`, one transaction:
 
 ```
 bind := src.Bind()
-repo := upsert repo from bind.Repo (fallback: deps.Git.Repo(bind.CWD) when the dir exists, else null)
+repo := upsert repo from bind.RepoRef (fallbacks: git facts of bind.CWD, then of bind.Repo -- the source checkout -- else null)
 planner := upsert planner from bind.Planner (kind, session id, locator)
 binding := upsert binding (natural key name+created_at; created_at from bind, else the log's first ts)
 events := read log.jsonl from the cursor; append new entries with seq = line number
-for each round number seen in events or in NNN-* members:
+for each round number seen in events or in NNN-* members (never bind.json's round: it is the next, unstarted one):
     outcome := deriveOutcome(events for round, members)     -- §5.3
     builder columns := from the last pick/switch note for that round, else bind.BuilderCandidate
     usage / gate / commits / tree := from the round's report and diff entries

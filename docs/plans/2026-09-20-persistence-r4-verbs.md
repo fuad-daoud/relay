@@ -121,6 +121,38 @@ cmdShow:
 
 ## 7. Ordered implementation steps
 
+### Task 0 -- two ingester fixes found by the planner's backfill (do this first)
+
+The real backfill over 49 archives showed two rule errors in round 3's
+plan. Both live in `internal/ingest/ingest.go`; fix them here so `history`
+reads correct rows.
+
+**(a) Phantom rounds.** `bind.json`'s `round` is the *next* round number
+after `finishRound`'s `Round++`, so adding `b.Round` to the round set
+creates an empty `open` round on every finished binding (55 of 156 rounds
+in the planner's db). Rule: a round exists only if it has at least one
+event or at least one `NNN-*` member. Remove `b.Round` from the union.
+
+**(b) Repo fallback.** For an archived binding, `b.CWD` is the gc'd
+worktree path, so `RepoFacts(b.CWD)` fails and 57/57 archives have a null
+repo. `bind.json` also carries the pre-existing `Repo` string (the source
+checkout at add/fork time, `internal/store/types.go` ~line 237). Rule, in
+order: `b.RepoRef` when set; else `deps.Git.RepoFacts(b.CWD)`; else
+`deps.Git.RepoFacts(b.Repo)` when `b.Repo != ""`; else null. Apply for
+archive sources too (drop the `kind == "live"` condition).
+
+**Files:** `internal/ingest/ingest.go`, `ingest_test.go`.
+
+**Tests**
+- `TestIngestNoPhantomRoundFromBindRound`: fixture with `round: 4` in
+  `bind.json` and files/events only for rounds 1-3 -> exactly 3 rounds.
+  **Mutation check:** re-add `b.Round` to the union and this must fail.
+- `TestIngestRepoFromSourceCheckoutWhenCWDGone`: `cwd` pointing at a
+  missing dir, `repo` pointing at a dir the fake `GitFacts` answers for ->
+  repo row created and linked; also with an archive source.
+
+**Verify:** `go test ./internal/ingest/`.
+
 ### Task 1 -- history formatting and filter
 
 **Files:** `internal/relay/history.go`, `history_test.go`.
@@ -172,7 +204,7 @@ Known: `scripts/plugin-build_test.sh` case 3 fails on a clone without tags
 so and treat the check as passed.
 
 **Commit** (one for the round):
-`feat(relay): history and show -- every round across live and archived bindings, one round's files from files or rows (#172, #183)`
+`feat(relay): history and show; ingest: no phantom round from bind round, repo from the source checkout -- every round across live and archived bindings, one round's files from files or rows (#172, #183)`
 
 ## Report
 
