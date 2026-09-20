@@ -109,6 +109,13 @@ func facts(b relay.BindingStatus) []string {
 			out = append(out, dimStyle.Render(s))
 		}
 	}
+	// A running round's figure is its own fact, last (#234): separate from
+	// the spend, never summed into it, cut by the width rule if at all.
+	if b.LiveUsage != nil {
+		if s := usage.LiveShort(*b.LiveUsage); s != "" {
+			out = append(out, dimStyle.Render(s))
+		}
+	}
 	return out
 }
 
