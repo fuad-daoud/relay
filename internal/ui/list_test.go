@@ -41,7 +41,7 @@ func TestListRowsBudget(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 
@@ -74,7 +74,7 @@ func tenBindings(t *testing.T, height int) Model {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = height
@@ -184,7 +184,7 @@ func TestListViewUnlimitedBeforeResize(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 0
@@ -203,7 +203,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -240,7 +240,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -279,7 +279,7 @@ func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -307,7 +307,7 @@ func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
@@ -352,7 +352,7 @@ func TestListScreenThreeStates(t *testing.T) {
 	rt := relay.Runtime{Store: st, Herdr: fh}
 
 	// 1. Fresh model with no message renders "loading…"
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -414,7 +414,7 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 
 	// 1. A three-line error renders as three lines with no line exceeding width
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 60
 	m.height = 24

@@ -60,6 +60,39 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, error) {
 	return owners, nil
 }
 
+// FlatStatus is the whole fleet as one report: every owner's bindings with
+// Owner/OwnerLabel stamped on each row. Owners arrive label-sorted from
+// AdminStatus and their rows keep their Report order, so a client's cards
+// stay contiguous. Gated is the first owner's slice -- the server-wide
+// ledger projects identically into every owner's report -- and is nil when
+// there are no owners. DoneHidden is 0 and HerdrError empty: neither
+// filter applies to a flattened fleet.
+func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
+	owners, err := AdminStatus(ctx, s)
+	if err != nil {
+		return relay.Report{}, err
+	}
+
+	rows := make([]relay.BindingStatus, 0)
+	for _, o := range owners {
+		label := o.Label
+		if label == "" {
+			label = relay.ShortOwner(string(o.Owner))
+		}
+		for _, row := range o.Report.Bindings {
+			row.Owner = string(o.Owner)
+			row.OwnerLabel = label
+			rows = append(rows, row)
+		}
+	}
+
+	out := relay.Report{Bindings: rows}
+	if len(owners) > 0 {
+		out.Gated = owners[0].Report.Gated
+	}
+	return out, nil
+}
+
 // RenderAdminStatus formats the admin status for all owners.
 // For each owner: a header line "<label>  (<id>)" then relay.RenderStatus(report)
 // indented two spaces; owners with no bindings print "<label>  no bindings".

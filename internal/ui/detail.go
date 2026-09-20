@@ -10,7 +10,7 @@ import (
 )
 
 type detailModel struct {
-	name      string // binding under inspection
+	name      string // row key (BindingStatus.Key()) under inspection
 	round     int    // the round on screen; "[" / "]" step it (#183)
 	rounds    int    // how many rounds round can step through: live row.Round (the open round included) or a hist row's Rounds (every round closed)
 	active    tab

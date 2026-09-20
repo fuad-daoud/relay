@@ -1,0 +1,149 @@
+package ui
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/serve"
+)
+
+// Source is everything the ui reads state through: one refresh of the
+// whole fleet, and a key resolver for the tabs.
+type Source interface {
+	// Status is one refresh: the whole fleet this UI shows.
+	Status(ctx context.Context) (relay.Report, error)
+	// Runtime resolves a row key to the runtime that owns it and the bare
+	// binding name inside that runtime's store. ok is false when the key
+	// cannot be resolved (server: malformed key or unknown owner); a
+	// planner source resolves every key.
+	Runtime(key string) (rt relay.Runtime, name string, ok bool)
+	// Base is the runtime for fleet-wide reads that are not per row: the
+	// database behind scope all and a hist row's tabs. On a planner it is
+	// the planner's own runtime. On the server it carries no DB, so scope
+	// all is refused there with the existing "no database" notice.
+	Base() relay.Runtime
+}
+
+// plannerSource is the single-runtime source `relay ui` always had: no
+// branch, every key resolves to rt under its own name.
+type plannerSource struct {
+	rt relay.Runtime
+}
+
+func (s plannerSource) Status(ctx context.Context) (relay.Report, error) {
+	return relay.Status(ctx, s.rt)
+}
+
+func (s plannerSource) Runtime(key string) (relay.Runtime, string, bool) {
+	return s.rt, key, true
+}
+
+// Base is the runtime itself: the planner's only runtime owns its
+// database, its store and everything else fleet-wide reads need.
+func (s plannerSource) Base() relay.Runtime {
+	return s.rt
+}
+
+// serverSource reads every enrolled client's store on a serve box, through
+// serve.FlatStatus and Server.OwnerRuntime.
+type serverSource struct {
+	srv *serve.Server
+}
+
+// ServerSource wraps a serve server as a ui Source.
+func ServerSource(srv *serve.Server) Source {
+	return serverSource{srv: srv}
+}
+
+func (s serverSource) Status(ctx context.Context) (relay.Report, error) {
+	return serve.FlatStatus(ctx, s.srv)
+}
+
+func (s serverSource) Runtime(key string) (relay.Runtime, string, bool) {
+	// The owner part is a ClientID ("SHA256:<base64>") whose base64
+	// alphabet includes '/', so the separator is the LAST slash, never
+	// the first: splitting at the first broke resolution outright for
+	// every client whose digest happens to contain one (~half of ids).
+	// Binding names cannot contain '/' (they are filesystem-safe), so
+	// the last slash is unambiguous.
+	i := strings.LastIndexByte(key, '/')
+	if i <= 0 || i == len(key)-1 {
+		return relay.Runtime{}, "", false
+	}
+	rt, err := s.srv.OwnerRuntime(remote.ClientID(key[:i]))
+	if err != nil {
+		return relay.Runtime{}, "", false
+	}
+	return rt, key[i+1:], true
+}
+
+// Base is a runtime with no database: the server box does not run
+// relay.db, so scope all is refused there with the existing "no
+// database" notice. Nothing else fleet-wide is read on a server.
+func (s serverSource) Base() relay.Runtime {
+	return relay.Runtime{Now: time.Now}
+}
+
+// notTTY reports whether stdout is not a character device -- the refusal
+// path's only testable seam is stdoutStat.
+func notTTY() bool {
+	info, err := stdoutStat()
+	return err != nil || info.Mode()&os.ModeCharDevice == 0
+}
+
+// pipeRefusal is the full refusal line: hint when set, today's planner
+// text otherwise.
+func pipeRefusal(hint string) error {
+	if hint == "" {
+		hint = "relay ui needs a terminal; use `relay status` or `relay watch` when piping"
+	}
+	return errors.New(hint)
+}
+
+// RunSource renders the fleet src reads until the user quits or ctx is
+// cancelled. It never mutates state.
+//
+// Preconditions:  stdout is a character device.
+// Postconditions: the terminal is restored, including on panic.
+// Errors:         startup failures only. Refresh failures never escape.
+//
+// The tty refusal prints opts.PipeHint when set -- the full refusal line,
+// not a suffix -- and the planner text otherwise.
+func RunSource(ctx context.Context, src Source, opts Options) error {
+	if notTTY() {
+		return pipeRefusal(opts.PipeHint)
+	}
+
+	if opts.Interval <= 0 {
+		opts.Interval = defaultInterval
+	} else if opts.Interval < minInterval {
+		opts.Interval = minInterval
+	}
+
+	model := newModel(ctx, src, opts)
+	if opts.PrefsPath != "" {
+		model = model.applyPrefs(loadPrefs(opts.PrefsPath))
+	}
+	model.notice = opts.Notice
+
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	_, err := p.Run()
+	return runResult(ctx, err)
+}
+
+// runResult maps bubbletea's exit into RunSource's (and Run's) contract: a
+// cancelled context is a clean exit, not an error. Kept separate so it can
+// be tested without starting a terminal program -- the test that did that
+// failed anywhere without a tty, including every CI runner.
+func runResult(ctx context.Context, err error) error {
+	if ctx.Err() != nil && (errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)) {
+		return nil
+	}
+	return err
+}

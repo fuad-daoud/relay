@@ -20,11 +20,13 @@ type railRow struct {
 	hist *relay.HistoryBinding
 }
 
-// name is the row's binding name, from whichever field is set.
+// name is the row's key: Key() for a live row, the bare binding name for
+// a hist row (its key everywhere in scope all -- planner-only, so no
+// owner prefix exists to add).
 func (r railRow) name() string {
 	switch {
 	case r.live != nil:
-		return r.live.Name
+		return r.live.Key()
 	case r.hist != nil:
 		return r.hist.Name
 	}

@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -50,7 +51,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
 	m.tabInFlight = false
@@ -72,7 +73,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
 	m.tabInFlight = true
@@ -94,7 +95,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -114,7 +115,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -143,7 +144,7 @@ func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
 	m.statusInFlight = true
@@ -171,7 +172,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -206,7 +207,7 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.ready = false
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -249,7 +250,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 4
@@ -284,7 +285,7 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
 	m.detail.round = 4
@@ -315,7 +316,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	name := "webshop"
 	ts := time.Now()
 
@@ -360,7 +361,7 @@ func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.statusInFlight = false
 	rep := relay.Report{
 		Bindings: []relay.BindingStatus{
@@ -387,7 +388,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
 		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
@@ -404,7 +405,7 @@ func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if m.statusLoaded {
 		t.Fatal("newModel must start with statusLoaded = false")
@@ -427,7 +428,7 @@ func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 func TestEmptyFleetFooter(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
@@ -543,6 +544,36 @@ func TestKeyAToggleWithoutDBNotices(t *testing.T) {
 	}
 }
 
+// TestScopeAllRefusedOnServer pins §2's seam end to end: a model built
+// over a serverSource presses "a", and because the server box carries no
+// database (serverSource.Base().DB == nil), the toggle refuses -- scope
+// stays live and the sticky notice names the missing database.
+func TestScopeAllRefusedOnServer(t *testing.T) {
+	srv, err := serve.New(serve.Config{Root: t.TempDir(), Now: time.Now})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m := newModel(context.Background(), ServerSource(srv), Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = res.(Model)
+	m.statusInFlight = false
+	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
+
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = res.(Model)
+
+	if m.scope != scopeLive {
+		t.Errorf("scope = %v, want scopeLive (the server has no database)", m.scope)
+	}
+	if m.notice == "" {
+		t.Error("notice must be set when the server refuses scope all")
+	}
+	if !strings.Contains(m.notice, "no database") {
+		t.Errorf("notice = %q, want it to name the database", m.notice)
+	}
+}
+
 // TestStepRoundBackRefetchesEveryTab pins #183's round stepping end to end:
 // "[" and "]" move detail.round within [1, detail.rounds], clamping at
 // either edge, and invalidate every tab's cache -- not just the active
@@ -560,7 +591,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	rep := relay.Report{Bindings: []relay.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}
 	res, _ := m.Update(statusMsg{report: rep})
@@ -599,12 +630,12 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", m.detail.round)
 	}
 
-	reportMsg := fetchReport(context.Background(), rt, name, m.detail.round)().(tabMsg)
+	reportMsg := fetchReport(context.Background(), plannerSource{rt}, name, m.detail.round)().(tabMsg)
 	wantReport := "round 3 is open; report arrives when it closes"
 	if reportMsg.content.empty != wantReport {
 		t.Errorf("report empty = %q, want %q", reportMsg.content.empty, wantReport)
 	}
-	diffMsg := fetchDiff(context.Background(), rt, name, m.detail.round)().(tabMsg)
+	diffMsg := fetchDiff(context.Background(), plannerSource{rt}, name, m.detail.round)().(tabMsg)
 	wantDiff := "diff is captured when round 3 closes"
 	if diffMsg.content.empty != wantDiff {
 		t.Errorf("diff empty = %q, want %q", diffMsg.content.empty, wantDiff)
@@ -617,7 +648,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
-	m := newModel(context.Background(), rt, Options{Interval: time.Millisecond})
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	m.detail.name = "webshop"
 	m.detail.round = 1

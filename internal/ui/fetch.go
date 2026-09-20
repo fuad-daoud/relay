@@ -75,8 +75,9 @@ type statusMsg struct {
 	dbErr  error
 }
 
-// tabMsg carries name and round so a late reply that no longer matches the
-// current selection is discarded rather than shown.
+// tabMsg carries a row key (BindingStatus.Key()) and round so a late reply
+// that no longer matches the current selection is discarded rather than
+// shown.
 type tabMsg struct {
 	name    string
 	round   int
@@ -84,20 +85,27 @@ type tabMsg struct {
 	content tabContent
 }
 
-// fetchStatus calls relay.Status(ctx, rt) and returns statusMsg{report,
-// err}. In scope all it also calls relay.Bindings(ctx, rt, here), carrying
+// unresolvedKey is the error a fetcher reports when the source cannot
+// resolve a row key: the same prose a gone binding's own store read
+// produces, so an unknown owner's tab reads exactly like a vanished one.
+func unresolvedKey(key string) error {
+	return fmt.Errorf("%s: %w", key, store.ErrNotFound)
+}
+
+// fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. In
+// scope all it also calls relay.Bindings(ctx, src.Base(), here), carrying
 // its rows or its error alongside the (always live) report -- a database
 // failure never blocks the live report from refreshing. It never returns a
 // partial report alongside a report-level error.
-func fetchStatus(ctx context.Context, rt relay.Runtime, sc scope, here string) tea.Cmd {
+func fetchStatus(ctx context.Context, src Source, sc scope, here string) tea.Cmd {
 	return func() tea.Msg {
-		rep, err := relay.Status(ctx, rt)
+		rep, err := src.Status(ctx)
 		if err != nil {
 			return statusMsg{err: err}
 		}
 		msg := statusMsg{report: rep}
 		if sc == scopeAll {
-			rows, berr := relay.Bindings(ctx, rt, here)
+			rows, berr := relay.Bindings(ctx, src.Base(), here)
 			if berr != nil {
 				msg.dbErr = berr
 			} else {
@@ -111,11 +119,25 @@ func fetchStatus(ctx context.Context, rt relay.Runtime, sc scope, here string) t
 // fetchPlan reads round's plan file. It is small enough not to need
 // relay.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
-func fetchPlan(ctx context.Context, rt relay.Runtime, name string, round int) tea.Cmd {
+func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabPlan,
+				content: tabContent{
+					loaded: true,
+					at:     time.Now(),
+					round:  round,
+					err:    unresolvedKey(key),
+				},
+			}
+		}
 		if round < 1 {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabPlan,
 				content: tabContent{
@@ -130,7 +152,7 @@ func fetchPlan(ctx context.Context, rt relay.Runtime, name string, round int) te
 		if err != nil {
 			if os.IsNotExist(err) {
 				return tabMsg{
-					name:  name,
+					name:  key,
 					round: round,
 					t:     tabPlan,
 					content: tabContent{
@@ -142,7 +164,7 @@ func fetchPlan(ctx context.Context, rt relay.Runtime, name string, round int) te
 				}
 			}
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabPlan,
 				content: tabContent{
@@ -154,7 +176,7 @@ func fetchPlan(ctx context.Context, rt relay.Runtime, name string, round int) te
 			}
 		}
 		return tabMsg{
-			name:  name,
+			name:  key,
 			round: round,
 			t:     tabPlan,
 			content: tabContent{
@@ -173,12 +195,25 @@ func fetchPlan(ctx context.Context, rt relay.Runtime, name string, round int) te
 // nothing for round: an empty log at round 1 keeps the familiar "round 1 in
 // flight" prose; anything else reads as round being the open round, not yet
 // closed (#183).
-func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) tea.Cmd {
+func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabReport,
+				content: tabContent{
+					loaded: true,
+					at:     time.Now(),
+					err:    unresolvedKey(key),
+				},
+			}
+		}
 		entries, err := rt.Store.ReadLog(name)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabReport,
 				content: tabContent{
@@ -198,7 +233,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) 
 				(e.Kind == store.KindReport || e.Kind == store.KindQuestion || e.Kind == store.KindFindings) {
 				if e.Payload == "" {
 					return tabMsg{
-						name:  name,
+						name:  key,
 						round: round,
 						t:     tabReport,
 						content: tabContent{
@@ -210,7 +245,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) 
 					}
 				}
 				return tabMsg{
-					name:  name,
+					name:  key,
 					round: round,
 					t:     tabReport,
 					content: tabContent{
@@ -225,7 +260,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) 
 
 		if len(entries) == 0 && round == 1 {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabReport,
 				content: tabContent{
@@ -237,7 +272,7 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) 
 		}
 
 		return tabMsg{
-			name:  name,
+			name:  key,
 			round: round,
 			t:     tabReport,
 			content: tabContent{
@@ -256,7 +291,8 @@ func fetchReport(ctx context.Context, rt relay.Runtime, name string, round int) 
 // what the tab says instead: the pane branch falls back to the capture, the
 // headless branch keeps its own "log not written yet" prose. (Extracted
 // from the headless branch of fetchTerminal; that branch now calls it.)
-func logTab(name, logPath string) (tabMsg, bool) {
+// key names the reply's row and name the store path the log was read from.
+func logTab(key, name, logPath string) (tabMsg, bool) {
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		return tabMsg{}, false
@@ -266,7 +302,7 @@ func logTab(name, logPath string) (tabMsg, bool) {
 		body = strings.Join(all[len(all)-headlessLogLines:], "\n")
 	}
 	return tabMsg{
-		name: name,
+		name: key,
 		t:    tabTerminal,
 		content: tabContent{
 			loaded:     true,
@@ -284,15 +320,28 @@ func logTab(name, logPath string) (tabMsg, bool) {
 // viewed; only the binding's current round (b.Round) has a live pane to
 // read, so a pane builder's non-current round with no round log of its own
 // reads as the empty prose "terminal is live; round N left no log" (#183).
-func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, lines int) tea.Cmd {
+func fetchTerminal(ctx context.Context, src Source, key string, round, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
 	}
 	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabTerminal,
+				content: tabContent{
+					loaded: true,
+					at:     time.Now(),
+					err:    unresolvedKey(key),
+				},
+			}
+		}
 		b, err := rt.Store.Load(name)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -309,12 +358,12 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 			if round != b.Round {
 				// A past round: its own file, canonically named, is the
 				// only place it could be.
-				if msg, ok := logTab(name, rt.Store.BuilderLogPath(name, round)); ok {
+				if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
 					msg.round = round
 					return msg
 				}
 				return tabMsg{
-					name:  name,
+					name:  key,
 					round: round,
 					t:     tabTerminal,
 					content: tabContent{
@@ -335,7 +384,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 			}
 			if logPath == "" {
 				return tabMsg{
-					name:  name,
+					name:  key,
 					round: round,
 					t:     tabTerminal,
 					content: tabContent{
@@ -345,12 +394,12 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 					},
 				}
 			}
-			if msg, ok := logTab(name, logPath); ok {
+			if msg, ok := logTab(key, name, logPath); ok {
 				msg.round = round
 				return msg
 			}
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -364,7 +413,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		// A claude pane builder's own session record is rendered into the
 		// round log the same way (#184), for whichever round is being
 		// viewed; any other pane builder has no record relay can read.
-		if msg, ok := logTab(name, rt.Store.BuilderLogPath(name, round)); ok {
+		if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
 			msg.round = round
 			return msg
 		}
@@ -373,7 +422,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		// binding's current round.
 		if round != b.Round {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -387,7 +436,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		agents, err := rt.Herdr.ListAgents(ctx)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -401,7 +450,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		agent, ok := relay.FindAgent(agents, b.Builder)
 		if !ok {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -422,7 +471,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		out, err := rt.Herdr.ReadAgent(ctx, agent.PaneID, lines)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabTerminal,
 				content: tabContent{
@@ -434,7 +483,7 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 		}
 
 		return tabMsg{
-			name:  name,
+			name:  key,
 			round: round,
 			t:     tabTerminal,
 			content: tabContent{
@@ -447,11 +496,11 @@ func fetchTerminal(ctx context.Context, rt relay.Runtime, name string, round, li
 }
 
 // fetchDiff retrieves the stored patch for the specified round.
-func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) tea.Cmd {
+func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	if round < 1 {
 		return func() tea.Msg {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabDiff,
 				content: tabContent{
@@ -465,10 +514,24 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 	}
 
 	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabDiff,
+				content: tabContent{
+					loaded: true,
+					at:     time.Now(),
+					round:  round,
+					err:    unresolvedKey(key),
+				},
+			}
+		}
 		patch, ok, err := relay.ReadDiff(rt, name, round)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabDiff,
 				content: tabContent{
@@ -487,7 +550,7 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 				empty = fmt.Sprintf("diff is captured when round %d closes", round)
 			}
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabDiff,
 				content: tabContent{
@@ -500,7 +563,7 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 		}
 
 		return tabMsg{
-			name:  name,
+			name:  key,
 			round: round,
 			t:     tabDiff,
 			content: tabContent{
@@ -514,12 +577,25 @@ func fetchDiff(ctx context.Context, rt relay.Runtime, name string, round int) te
 }
 
 // fetchLog formats round's log entries with the cmdLog layout.
-func fetchLog(ctx context.Context, rt relay.Runtime, name string, round int) tea.Cmd {
+func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabLog,
+				content: tabContent{
+					loaded: true,
+					at:     time.Now(),
+					err:    unresolvedKey(key),
+				},
+			}
+		}
 		entries, err := rt.Store.ReadLog(name)
 		if err != nil {
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabLog,
 				content: tabContent{
@@ -547,7 +623,7 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string, round int) tea
 				empty = "no entries yet"
 			}
 			return tabMsg{
-				name:  name,
+				name:  key,
 				round: round,
 				t:     tabLog,
 				content: tabContent{
@@ -559,7 +635,7 @@ func fetchLog(ctx context.Context, rt relay.Runtime, name string, round int) tea
 		}
 
 		return tabMsg{
-			name:  name,
+			name:  key,
 			round: round,
 			t:     tabLog,
 			content: tabContent{
@@ -661,26 +737,28 @@ func fetchShow(ctx context.Context, rt relay.Runtime, name string, round int, se
 // fetchFor dispatches to the right command for a tab, so switchTab and
 // visibleTabFetch share one mapping instead of two switches that can drift.
 // live is false for a hist row's detail (#172, §5.8): every tab goes
-// through fetchShow instead of live's own fetchers.
+// through fetchShow instead of live's own fetchers. A hist row's key is
+// its bare name (hist rows are planner-only; the server never has them),
+// read through src.Base().
 //
 // It takes explicit parameters rather than a Model: fetch.go is built in
 // Step 2 and Model does not exist until Step 3, so a Model parameter here
 // would not compile in the step that introduces it.
-func fetchFor(ctx context.Context, rt relay.Runtime, t tab, name string, round, lines int, live bool) tea.Cmd {
+func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines int, live bool) tea.Cmd {
 	if !live {
-		return fetchShow(ctx, rt, name, round, sectionForTab(t))
+		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))
 	}
 	switch t {
 	case tabPlan:
-		return fetchPlan(ctx, rt, name, round)
+		return fetchPlan(ctx, src, key, round)
 	case tabReport:
-		return fetchReport(ctx, rt, name, round)
+		return fetchReport(ctx, src, key, round)
 	case tabTerminal:
-		return fetchTerminal(ctx, rt, name, round, lines)
+		return fetchTerminal(ctx, src, key, round, lines)
 	case tabDiff:
-		return fetchDiff(ctx, rt, name, round)
+		return fetchDiff(ctx, src, key, round)
 	case tabLog:
-		return fetchLog(ctx, rt, name, round)
+		return fetchLog(ctx, src, key, round)
 	default:
 		return nil
 	}

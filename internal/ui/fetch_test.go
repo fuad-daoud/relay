@@ -54,7 +54,7 @@ func TestFetchPlanLive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := fetchPlan(context.Background(), rt, name, 1)
+	cmd := fetchPlan(context.Background(), plannerSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -82,7 +82,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 		Herdr: fh,
 	}
 
-	cmd := fetchStatus(context.Background(), rt, scopeLive, "")
+	cmd := fetchStatus(context.Background(), plannerSource{rt}, scopeLive, "")
 	if cmd == nil {
 		t.Fatal("fetchStatus returned nil command")
 	}
@@ -120,7 +120,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), rt, name, 2)
+	cmd := fetchReport(context.Background(), plannerSource{rt}, name, 2)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -151,7 +151,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchReport(context.Background(), rt, name, 1)
+	cmd := fetchReport(context.Background(), plannerSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -189,7 +189,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 		}
 	}
 
-	msg := fetchReport(context.Background(), rt, name, 1)().(tabMsg)
+	msg := fetchReport(context.Background(), plannerSource{rt}, name, 1)().(tabMsg)
 	if msg.content.body != "round 1 report" {
 		t.Errorf("round 1: body = %q, want %q", msg.content.body, "round 1 report")
 	}
@@ -197,7 +197,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 		t.Errorf("round 1: tabMsg.round = %d, want 1", msg.round)
 	}
 
-	msg = fetchReport(context.Background(), rt, name, 2)().(tabMsg)
+	msg = fetchReport(context.Background(), plannerSource{rt}, name, 2)().(tabMsg)
 	if msg.content.body != "round 2 report" {
 		t.Errorf("round 2: body = %q, want %q (not round 1's, even though it is the newest logged)", msg.content.body, "round 2 report")
 	}
@@ -218,7 +218,7 @@ func TestFetchTerminalBuilderAbsent(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchTerminal(context.Background(), rt, name, 2, 24)
+	cmd := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -253,7 +253,7 @@ func TestFetchTerminalBuilderPresent(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchTerminal(context.Background(), rt, name, 2, 24)
+	cmd := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -289,7 +289,7 @@ func TestFetchTerminalPaneReadsRoundLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 2, 24)()
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -331,7 +331,7 @@ func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 2, 24)()
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -365,7 +365,7 @@ func TestFetchTerminalNonCurrentPaneRoundIsEmptyProse(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 1, 24)().(tabMsg)
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 1, 24)().(tabMsg)
 	if msg.content.err != nil {
 		t.Fatalf("unexpected error: %v", msg.content.err)
 	}
@@ -383,7 +383,7 @@ func TestFetchDiffRoundZero(t *testing.T) {
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{Store: st, Herdr: fh}
 
-	cmd := fetchDiff(context.Background(), rt, "webshop", 0)
+	cmd := fetchDiff(context.Background(), plannerSource{rt}, "webshop", 0)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -409,7 +409,7 @@ func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	cmd := fetchDiff(context.Background(), rt, name, 1)
+	cmd := fetchDiff(context.Background(), plannerSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -463,7 +463,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	want := "2026-09-08 12:00:00  round 1   to_builder plan      /path/plan1.md started\n" +
 		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
-	cmd := fetchLog(context.Background(), rt, name, 1)
+	cmd := fetchLog(context.Background(), plannerSource{rt}, name, 1)
 	msg := cmd()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
@@ -500,7 +500,7 @@ func TestFetchLogFiltersRound(t *testing.T) {
 		}
 	}
 
-	msg := fetchLog(context.Background(), rt, name, 1)().(tabMsg)
+	msg := fetchLog(context.Background(), plannerSource{rt}, name, 1)().(tabMsg)
 	if msg.content.err != nil {
 		t.Fatalf("unexpected error: %v", msg.content.err)
 	}
@@ -524,7 +524,7 @@ func TestFetchForRouting(t *testing.T) {
 	}
 
 	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog} {
-		cmd := fetchFor(context.Background(), rt, tab, name, 1, 24, true)
+		cmd := fetchFor(context.Background(), plannerSource{rt}, tab, name, 1, 24, true)
 		if cmd == nil {
 			t.Fatalf("fetchFor returned nil for tab %v", tab)
 		}
@@ -558,7 +558,7 @@ func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
 	fh.readOut = "builder screen"
 	rt := relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
 
-	msg := fetchTerminal(context.Background(), rt, "relay-ui", 1, 40)()
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, "relay-ui", 1, 40)()
 	tm, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -593,7 +593,7 @@ func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	// The lines argument is a pane-builder concern (#180's Task 2): the
 	// headless branch now always returns the whole log, capped only by
 	// headlessLogLines, so a request for 3 lines still gets all of it.
-	msg := fetchTerminal(context.Background(), rt, "webshop", 2, 3)()
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 3)()
 	tMsg, ok := msg.(tabMsg)
 	if !ok {
 		t.Fatalf("expected tabMsg, got %T", msg)
@@ -629,7 +629,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	msg := fetchTerminal(context.Background(), rt, name, 2, 5)().(tabMsg)
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 5)().(tabMsg)
 	if got := strings.Count(msg.content.body, "\n") + 1; got != 40 {
 		t.Errorf("headless terminal body has %d lines, want all 40 regardless of the lines argument", got)
 	}
@@ -642,7 +642,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(strings.Join(linesOver, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg = fetchTerminal(context.Background(), rt, name, 2, 5)().(tabMsg)
+	msg = fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 5)().(tabMsg)
 	lines := strings.Split(msg.content.body, "\n")
 	if len(lines) != headlessLogLines || !strings.HasSuffix(lines[len(lines)-1], fmt.Sprint(headlessLogLines+10)) {
 		t.Errorf("capped body: %d lines, last %q", len(lines), lines[len(lines)-1])
@@ -659,7 +659,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg := fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "headless builder; no round has run yet, so there is no log" {
 		t.Errorf("idle: empty = %q", tMsg.content.empty)
 	}
@@ -669,7 +669,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	tMsg = fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
+	tMsg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
 		t.Errorf("missing log: empty = %q", tMsg.content.empty)
 	}
@@ -699,7 +699,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tMsg := fetchTerminal(context.Background(), rt, "webshop", 2, 24)().(tabMsg)
+	tMsg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
 	if tMsg.content.empty != "" || tMsg.content.err != nil {
 		t.Fatalf("between rounds the last log must show: %+v", tMsg.content)
 	}

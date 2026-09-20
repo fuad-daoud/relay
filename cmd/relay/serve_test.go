@@ -134,6 +134,23 @@ func TestServeAdminConfigHasRunnerAndClock(t *testing.T) {
 	}
 }
 
+// TestServeUIRefusesUninitialisedRoot: relay serve ui resolves its root
+// like the other admin verbs, so an uninitialised --state dir fails before
+// any tty check (CI-safe: no tty, no herdr) and creates nothing.
+func TestServeUIRefusesUninitialisedRoot(t *testing.T) {
+	dir := t.TempDir()
+	err := cmdServeUI([]string{"--state", dir})
+	if err == nil {
+		t.Fatal("cmdServeUI error = nil, want an uninitialised-root error")
+	}
+	if !strings.Contains(err.Error(), "no serve state at ") {
+		t.Errorf("error = %q, want no serve state message", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "serve")); !os.IsNotExist(statErr) {
+		t.Errorf("serve dir exists or stat failed: %v", statErr)
+	}
+}
+
 func TestServeStatusRefusesUninitialisedRoot(t *testing.T) {
 	dir := t.TempDir()
 	err := cmdServeStatus([]string{"--state", dir})

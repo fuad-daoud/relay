@@ -26,7 +26,7 @@ func goldenModel(t *testing.T, width, height int, rep relay.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -115,7 +115,7 @@ func goldenAllScopeModel(t *testing.T, width, height int, rep relay.Report, hist
 	t.Helper()
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	m.scope = scopeAll
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -197,7 +197,7 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model {
 				st := store.New(t.TempDir())
 				fh := newFakeHerdr(t)
-				m := newModel(context.Background(), relay.Runtime{Store: st, Herdr: fh}, Options{Interval: time.Second})
+				m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
 				m.now = func() time.Time { return railNow }
 				res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 				m = res.(Model)
