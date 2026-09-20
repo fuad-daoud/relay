@@ -1265,6 +1265,26 @@ func TestHideDoneKeepsGated(t *testing.T) {
 	}
 }
 
+func TestHideDoneKeepsHerdrError(t *testing.T) {
+	in := Report{
+		HerdrError: "no herdr server",
+		Bindings: []BindingStatus{
+			{Name: "old", State: string(store.StateDone)},
+			{Name: "live", State: string(store.StateActive)},
+		},
+	}
+	out := HideDone(in)
+	if out.HerdrError != "no herdr server" {
+		t.Fatalf("HerdrError = %q, want \"no herdr server\" carried through", out.HerdrError)
+	}
+	if out.DoneHidden != 1 {
+		t.Errorf("DoneHidden = %d, want 1", out.DoneHidden)
+	}
+	if len(out.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(out.Bindings))
+	}
+}
+
 func TestRenderStatusCoverageRowPerKind(t *testing.T) {
 	base := func(kind, vis string) BindingStatus {
 		return BindingStatus{

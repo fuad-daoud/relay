@@ -479,7 +479,11 @@ func HideDone(r Report) Report {
 		// Gated is machine-wide, not per binding: hiding DONE rows must not
 		// hide a rate limit (#61). Found by rendering a hand-written ledger
 		// through the real binary; the renderer tests could not see it.
+		// HerdrError is likewise report-wide, not per binding, so it must
+		// survive the same rebuild.
 		Gated: r.Gated,
+
+		HerdrError: r.HerdrError,
 	}
 	for _, b := range r.Bindings {
 		if b.State == string(store.StateDone) {
