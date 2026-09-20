@@ -129,6 +129,43 @@ rail line for hist row: archivedStyle.Render(fit(name)) ... "archived 2026-08-30
 
 ## 7. Ordered implementation steps
 
+### Task 0 -- two fixes from round 4's verification (do this first)
+
+**(a) `event.round_id` is never set.** `internal/ingest/ingest.go` appends
+events before the round rows exist and never links them, so
+`db.Events(bindingID, round)` with `round > 0` returns nothing and
+`relay show --log` filters client-side. Fix in the ingester: after the
+rounds loop has upserted every round (so each number has an id), update
+`event.round_id` for every event of this binding whose `round_id` is null
+and whose decoded `LogEntry.Round` matches a round number (one `UPDATE`
+per round: `UPDATE event SET round_id = ? WHERE binding_id = ? AND round_id
+IS NULL AND seq IN (...)`, or per event -- either is fine; add a
+`(*Tx).LinkEvents(bindingID, roundID string, seqs []int) error` to
+`internal/db/write.go` for it). Then make `relay.Show`'s log section use
+`db.Events(bindingID, round)` directly and drop the client-side filter.
+Existing dbs are rebuilt by `relay db backfill` after deleting `relay.db`;
+say so in the README's `relay db` section (one sentence).
+
+**(b) Live rounds count.** `relay.Show` reports `Rounds` as `b.Round` for a
+live binding, but `b.Round` is the *next* round once a round has closed
+(`finishRound` does `Round++`); the ui already uses "newest completed =
+`row.Round - 1`". Rule: for a live binding, `Rounds` = the highest round
+number that has a `plan` entry in the log (0 when none). `round N of M`
+then reads correctly for idle and in-flight bindings alike.
+
+**Files:** `internal/db/write.go` (+test), `internal/ingest/ingest.go`
+(+test), `internal/relay/show.go` (+test), `README.md`.
+
+**Tests**
+- `TestLinkEventsSetsRoundID` (`internal/db`).
+- `TestIngestLinksEventsToRounds` (`internal/ingest`): after ingesting the
+  fixture, `db.Events(bindingID, 2)` returns exactly round 2's entries.
+  **Mutation check:** skip the link step and this must fail.
+- `TestShowLiveRoundsIsHighestPlanned` (`internal/relay`): a live binding
+  with `Round: 4` and plan entries for 1..3 -> `Rounds == 3`.
+
+**Verify:** `go test ./internal/db/ ./internal/ingest/ ./internal/relay/`.
+
 ### Task 1 -- `relay.Bindings` and `HistoryBinding`
 
 **Files:** `internal/relay/history.go`, `history_test.go`.
@@ -196,7 +233,7 @@ Known: `scripts/plugin-build_test.sh` case 3 fails on a clone without tags
 so and treat the check as passed.
 
 **Commit** (one for the round):
-`feat(ui): all scope over the database, plan tab, [ ] round stepping, archived bindings render from rows (#172, #183)`
+`feat(ui): all scope over the database, plan tab, [ ] round stepping, archived bindings render from rows; ingest links events to rounds (#172, #183)`
 
 ## Report
 
