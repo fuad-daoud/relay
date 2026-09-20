@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // servedTierCandidatesJSON has one builder candidate with a "read" tier
@@ -254,6 +255,60 @@ func TestServedViewDiffFacts(t *testing.T) {
 	viewNoDiff := ServedView(b, entries[:1])
 	if viewNoDiff.DiffNote != "" || viewNoDiff.DiffCommits != 0 || viewNoDiff.DiffTree != "" {
 		t.Fatalf("diff facts with no matching entry: got %+v, want all zero", viewNoDiff)
+	}
+}
+
+// TestServedViewCarriesClosedRoundUsage checks that the view ships the
+// closed round's usage the way it ships ReportOutcome (#216): from the
+// newest KindReport entry for Serve.ClosedRound, and only from it.
+func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
+	closed := usage.Usage{
+		Harness: "opencode",
+		Model:   "haiku",
+		Tokens:  usage.Tokens{In: 1000, Out: 200},
+		Cost:    usage.Cost{USD: 0.12, Basis: usage.Measured},
+	}
+	old := usage.Usage{
+		Harness: "claude",
+		Cost:    usage.Cost{Basis: usage.Unknown},
+		Note:    "shared cwd",
+	}
+	b := store.Binding{
+		Name:             "api",
+		State:            store.StateActive,
+		Round:            3,
+		BuilderCandidate: "claude-sonnet",
+		Serve: &store.ServeFacts{
+			ClosedRound: 2,
+			AckedRound:  1,
+		},
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Outcome: "done", Usage: &old},
+		{Round: 2, Kind: store.KindReport, Outcome: "blocked", Usage: &closed},
+	}
+
+	view := ServedView(b, entries)
+	if view.Usage == nil || *view.Usage != closed {
+		t.Fatalf("Usage = %+v, want the closed round's report entry's usage", view.Usage)
+	}
+
+	// The closed round's report carries no usage: nil, not the older
+	// round's figure.
+	entriesNoUsage := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Outcome: "done", Usage: &old},
+		{Round: 2, Kind: store.KindReport, Outcome: "blocked"},
+	}
+	viewNoUsage := ServedView(b, entriesNoUsage)
+	if viewNoUsage.Usage != nil {
+		t.Fatalf("Usage = %+v, want nil when the closed round's report has none", viewNoUsage.Usage)
+	}
+
+	// No report at all: nil.
+	viewNoReports := ServedView(b, nil)
+	if viewNoReports.Usage != nil {
+		t.Fatalf("Usage with no entries = %+v, want nil", viewNoReports.Usage)
 	}
 }
 

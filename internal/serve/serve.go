@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 type Config struct {
@@ -25,6 +26,8 @@ type Config struct {
 	Now            func() time.Time
 	Interval       time.Duration // daemon tick, floored by relay.NewDaemon
 	MaxBundleBytes int64         // default 512 << 20
+	Usage          usage.Reader  // nil = the server records "no reader", as today
+	Prices         usage.Prices  // zero value = embedded defaults via usage.Fold's rules
 }
 
 type Server struct {
@@ -102,6 +105,8 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		Policy:           s.cfg.Policy,
 		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"), // server-wide, not st.LedgerPath()
 		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
+		Usage:            s.cfg.Usage,
+		Prices:           s.cfg.Prices,
 		Now:              s.cfg.Now,
 	}
 }

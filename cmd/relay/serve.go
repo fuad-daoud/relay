@@ -211,6 +211,8 @@ func cmdServeRun(args []string) error {
 		slog.Info("builder tier", "tier", builderTier)
 	}
 
+	reader, prices := newUsageReader(configDir)
+
 	cfg := serve.Config{
 		Root:           root,
 		Candidates:     candidates,
@@ -220,6 +222,8 @@ func cmdServeRun(args []string) error {
 		Now:            time.Now,
 		Interval:       sf.interval,
 		MaxBundleBytes: sf.maxBundleBytes,
+		Usage:          reader,
+		Prices:         prices,
 	}
 
 	srv, err := serve.New(cfg)

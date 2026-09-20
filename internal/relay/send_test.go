@@ -968,7 +968,7 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil)
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil)
 		if err != nil {
 			return err
 		}

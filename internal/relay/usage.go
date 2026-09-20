@@ -98,6 +98,23 @@ func fillCandidate(src *usage.Source, rt Runtime, token string) {
 	src.Provider, src.Model, src.Plan = c.Provider, c.Model, c.Plan
 }
 
+// remoteNoUsage is what the client records for a remote round whose
+// server's view carried no usage (#216): the same shape recordUsage
+// returns for an unreadable round, with an honest note instead of a
+// figure guessed from a record the client does not have.
+func remoteNoUsage(rt Runtime, b store.Binding, start, end time.Time) *usage.Usage {
+	src := roundSource(rt, b, start, end)
+	u := usage.Fold(nil, rt.Prices, src.Plan, "remote: server sent no usage")
+	u.Harness = src.Harness
+	if u.Provider == "" {
+		u.Provider = src.Provider
+	}
+	if !src.Start.IsZero() && src.End.After(src.Start) {
+		u.DurationMS = src.End.Sub(src.Start).Milliseconds()
+	}
+	return &u
+}
+
 // recordUsage reads src and folds it with the runtime's prices. It never
 // returns nil and never errors: no reader, a reader that finds nothing,
 // and a reader that overruns usageDeadline are all Basis unknown with a

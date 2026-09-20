@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // ErrServerPreTier is a client-side refusal that happens before any server
@@ -927,7 +928,14 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	if view.DirtyCommit != "" {
 		note = fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n)
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil)
+	var u *usage.Usage = view.Usage
+	if u == nil {
+		// A pre-usage server ships no figure: record honestly that the
+		// server sent none rather than reading a record the client does
+		// not have.
+		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
+	}
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u)
 	if err != nil {
 		return b, err
 	}

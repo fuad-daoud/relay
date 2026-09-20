@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // Version is the remote protocol version.
@@ -74,6 +76,12 @@ type BindingView struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	Tier           string    `json:"tier,omitempty"` // effectiveTier(b) on the server; "" from a pre-tier server
+
+	// Usage is the closed round's usage as the server recorded it on its
+	// report entry (usage.Usage is already JSON-tagged; it is the same
+	// struct store.LogEntry.Usage holds). nil from a pre-usage server, or
+	// when the closed round has no report entry.
+	Usage *usage.Usage `json:"usage,omitempty"`
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.

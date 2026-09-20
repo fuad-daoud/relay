@@ -1285,6 +1285,12 @@ Where you see it: `relay log` prints the round line under each report
 on `--json` as `last_usage` and `spend`; `relay ui` shows the total on
 the card and in the header.
 
+A remote builder's round is measured on the server, from the builder's
+own stream there, and shipped with the round: the client keeps the
+server's figure verbatim instead of reading a record it does not have. A
+server built before this ships no figure, and its rounds print
+`unknown · remote: server sent no usage`.
+
 While a round is running, `relay status` and `relay ui` show a `live`
 figure read from the harness's record on each refresh, and
 `relay statusline` appends `live $0.02 · 41k tok` to the row. On

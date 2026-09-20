@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // RoundStateOf returns the execution state of an owned binding (remote-builders spec §3.1).
@@ -85,10 +86,12 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		dirtyCommit = b.Serve.DirtyCommit
 	}
 	var reportOutcome string
+	var reportUsage *usage.Usage
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		for i := len(entries) - 1; i >= 0; i-- {
 			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindReport {
 				reportOutcome = entries[i].Outcome
+				reportUsage = entries[i].Usage
 				break
 			}
 		}
@@ -130,6 +133,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
+		Usage:          reportUsage,
 	}
 }
 

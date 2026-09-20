@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/usage"
 )
 
 // scrapeLines bounds the fallback terminal read.
@@ -474,7 +475,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)+gateSuffix, joinNotes("", note), rec)
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)+gateSuffix, joinNotes("", note), rec, nil)
 		if err != nil {
 			return b, false, false, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -482,7 +483,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath)+gateSuffix, joinNotes("noreport", note), rec)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath)+gateSuffix, joinNotes("noreport", note), rec, nil)
 	if err != nil {
 		return b, false, false, fmt.Errorf("close round on marker: %w", err)
 	}
@@ -547,7 +548,7 @@ func handleIdleBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
 		}
-		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked", nil)
+		return queueReport(ctx, rt, tx, next, entries, reportPath, payload, "unmarked", nil, nil)
 	}
 	slog.Info("builder quiescent, scraping report", "binding", next.Name, "round", next.Round, "quiet", quiet)
 	return scrapeReport(ctx, rt, tx, next, entries, reportPath)
@@ -662,10 +663,10 @@ func scrapeReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		"Builder finished round %d but never wrote its report file. SCRAPED from its terminal (may be truncated): %s",
 		b.Round, reportPath)
 
-	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, noteScraped, nil)
+	return queueReport(ctx, rt, tx, b, entries, reportPath, payload, noteScraped, nil, nil)
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage) (store.Binding, error) {
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
@@ -749,11 +750,24 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 	}
 
+	// The closed round's usage: what the caller measured (a remote
+	// binding's server measured its own round and shipped it), or a local
+	// read when the caller sent none. entryUsage's type is inferred from
+	// the parameter: the parameter's name shadows the usage package in
+	// this body, so the type cannot be written out here.
+	var entryUsage = usage
+	if entryUsage != nil {
+		copied := *entryUsage
+		entryUsage = &copied
+	} else {
+		entryUsage = recordUsage(ctx, rt, roundSource(rt, b, roundStart, now))
+	}
+
 	entry := store.LogEntry{
 		TS: now, Round: b.Round,
 		Direction: store.DirToPlanner, Kind: store.KindReport,
 		Path: path, Payload: payload, Note: note,
-		Usage:        recordUsage(ctx, rt, roundSource(rt, b, roundStart, now)),
+		Usage:        entryUsage,
 		Outcome:      outcome,
 		HaltedAt:     tail.HaltedAt,
 		ChangedPaths: tail.ChangedPaths,
