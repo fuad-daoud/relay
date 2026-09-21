@@ -72,6 +72,19 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 			Timestamp: rt.Now().UTC(),
 		})
 	}
+	// One builder_stalled per episode, on the zero -> set edge (#252). The
+	// clear emits nothing: the hook payload has no new fields, and a resumed
+	// builder is unremarkable.
+	if orig.StalledSince.IsZero() && !next.StalledSince.IsZero() {
+		rt.Hooks.Dispatch(ctx, hooks.Event{
+			Type:      hooks.EventBuilderStalled,
+			BindingID: next.Name,
+			State:     string(next.State),
+			OldState:  string(orig.State),
+			Round:     next.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
 }
 
 // refreshEndpoint updates an endpoint from the live agent it was located by.
@@ -810,6 +823,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 	b.GateRun = nil
+	// A closed round is over: a stall stamped against it says nothing about
+	// the next one (#252).
+	b.StalledSince = time.Time{}
 
 	return b, nil
 }

@@ -134,6 +134,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
 		Usage:          reportUsage,
+		StalledSince:   b.StalledSince,
 	}
 }
 

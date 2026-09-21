@@ -293,6 +293,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.HaltNotifiedRound = 0
 		b.RoundSwitches = 0
 		b.RoundExcluded = nil
+		// A fresh send is a fresh process: any stall stamp from the previous
+		// round is gone (#252).
+		b.StalledSince = time.Time{}
 
 		return tx.Save(b)
 	})

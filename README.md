@@ -499,6 +499,16 @@ What is different from a pane builder:
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 
+A live headless builder whose stream file (`NNN-builder.jsonl`) has not grown
+for `stall_after_ms` (default fifteen minutes) is labelled `stalled <age>` in
+`relay status` and `relay ui`, in place of `working`. It is an observation,
+not a judgement: the process may be thinking, or it may be hung, and relay
+never acts on the label. Killing stays the human's decision -- `relay done`,
+`relay unbind`, or `relay stop` -- and a stalled binding is still `ACTIVE`
+with `relay wait` still waiting. The label clears when the stream moves again
+or the process exits; the daemon fires one `builder_stalled` hook event per
+episode and none when it clears.
+
 When a round stops -- exit without the marker, a quiescent pane, or the
 round budget -- relay scans the builder's last output for the harness's
 rate-limit text and records a `rate_limited` gate (`source relay`, the
@@ -1025,6 +1035,7 @@ candidates in, per role:
   "max_tier": "edit",
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
+  "stall_after_ms": 900000,
   "scan_patterns": ["(?i)<instruction-tag"],
   "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 },
   "gate": { "default": "make check", "timeout_ms": 600000 }
@@ -1048,7 +1059,10 @@ how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
 `limit_gate_default_ms` is how long a rate limit relay detects itself
 gates the provider when the matched line names no reset time; absent
-defaults to one hour. `scan_patterns` is an optional list of extra
+defaults to one hour. `stall_after_ms` is how long a live headless
+builder's stream may go without an event before `relay status` and
+`relay ui` label it `stalled`; absent defaults to fifteen minutes, and
+must be `> 0` when present. `scan_patterns` is an optional list of extra
 regular expressions appended to relay's built-in instruction-shaped scan list;
 each pattern must compile. `gate` configures the default acceptance command
 (see [Gate](#gate) below): `default` is the command a binding gets when it
@@ -1561,12 +1575,13 @@ relay supports user-defined hook scripts dispatched during binding lifecycle eve
 
 - `state_changed` (`~/.config/relay/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
 - `round_started` (`~/.config/relay/hooks/round_started.d/`) — fires whenever a new round starts.
+- `builder_stalled` (`~/.config/relay/hooks/builder_stalled.d/`) — fires once when a live headless builder's stream goes quiet for `stall_after_ms` (#252). Clearing the stall fires nothing.
 
 ### Hook execution & environment
 
 Each hook script is executed asynchronously in a detached process with a 10-second timeout. relay injects the following environment variables:
 
-- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`).
+- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`).
 - `RELAY_BINDING`: The name of the binding.
 - `RELAY_STATE`: The current state of the binding.
 - `RELAY_OLD_STATE`: The previous state of the binding.

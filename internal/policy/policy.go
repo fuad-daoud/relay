@@ -39,6 +39,11 @@ type Policy struct {
 	// DefaultLimitGate; a present value must be > 0.
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
 
+	// StallAfterMS is how long a live headless builder's stream may go
+	// without an event before relay labels it stalled (#252). nil is
+	// DefaultStallAfter; a present value must be > 0.
+	StallAfterMS *int `json:"stall_after_ms,omitempty"`
+
 	// ScanPatterns is extra regular expressions appended to the built-in list
 	// of instruction-shaped line patterns (#139).
 	ScanPatterns []string `json:"scan_patterns,omitempty"`
@@ -111,6 +116,11 @@ const DefaultMaxSwitches = 2
 // reset time can be parsed from the matched line and LimitGateDefaultMS is nil.
 const DefaultLimitGate = time.Hour
 
+// DefaultStallAfter is how long a live headless builder's stream may go
+// without an event before relay labels it stalled (#252): long enough that a
+// thinking builder is never labelled, short enough that a hung one is.
+const DefaultStallAfter = 15 * time.Minute
+
 // DefaultGateTimeout bounds one gate run when neither the binding nor
 // policy.json's gate.timeout_ms sets one (#132).
 const DefaultGateTimeout = 10 * time.Minute
@@ -130,6 +140,15 @@ func (p Policy) LimitGateDefault() time.Duration {
 		return DefaultLimitGate
 	}
 	return time.Duration(*p.LimitGateDefaultMS) * time.Millisecond
+}
+
+// StallAfter is StallAfterMS converted to time.Duration with the default
+// applied (#252).
+func (p Policy) StallAfter() time.Duration {
+	if p.StallAfterMS == nil {
+		return DefaultStallAfter
+	}
+	return time.Duration(*p.StallAfterMS) * time.Millisecond
 }
 
 // MaxTierOrDefault returns MaxTier as a harness.Tier, or DefaultMaxTier when empty (#141).
@@ -206,6 +225,10 @@ func Load(path string) (Policy, error) {
 
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
 		return Policy{}, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
+	}
+
+	if p.StallAfterMS != nil && *p.StallAfterMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
 	}
 
 	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {

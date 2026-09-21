@@ -312,6 +312,29 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 	}
 }
 
+// TestServedViewCarriesStalledSince pins #252's wire field: a stalled binding
+// ships its stamp to the client, and an unstalled one ships the zero time.
+func TestServedViewCarriesStalledSince(t *testing.T) {
+	b := store.Binding{
+		Name:  "api",
+		State: store.StateActive,
+		Round: 1,
+	}
+	stalled := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	b.StalledSince = stalled
+
+	view := ServedView(b, nil)
+	if !view.StalledSince.Equal(stalled) {
+		t.Fatalf("StalledSince = %s, want %s", view.StalledSince, stalled)
+	}
+
+	b.StalledSince = time.Time{}
+	view = ServedView(b, nil)
+	if !view.StalledSince.IsZero() {
+		t.Fatalf("StalledSince = %s, want zero for an unstalled binding", view.StalledSince)
+	}
+}
+
 func TestCloseServedRoundClean(t *testing.T) {
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)

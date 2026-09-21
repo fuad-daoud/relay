@@ -307,12 +307,15 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 	if b.Builder.Headless() {
 		row.BuilderPane = "headless"
-		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b.Builder)
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b)
 	} else if b.Builder.Remote() {
 		row.BuilderPane = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
 		if row.BuilderStatus == "" {
 			row.BuilderStatus = "unknown"
+		}
+		if !b.StalledSince.IsZero() && row.BuilderStatus == "running" {
+			row.BuilderStatus = "stalled " + AgeText(rt.Now().Sub(b.StalledSince))
 		}
 	} else if a, ok := FindAgent(agents, b.Builder); ok {
 		row.BuilderStatus = effectiveStatus(b.Builder, a)

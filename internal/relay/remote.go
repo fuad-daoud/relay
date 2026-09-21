@@ -598,6 +598,10 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	switch view.RoundState {
 	case remote.RoundRunning:
+		// The server is the only place that can see the builder's stream; a
+		// running round carries its stall stamp across so the client shows
+		// the same "stalled <age>" (#252).
+		b.StalledSince = view.StalledSince
 		rc, err := rt.Remote.RoundFile(ctx, server, name, b.Round, "log")
 		if err != nil {
 			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", b.Round, "err", err)
@@ -611,6 +615,7 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, false, nil
 
 	case remote.RoundNeedsYou:
+		b.StalledSince = view.StalledSince
 		b, err := haltBinding(ctx, rt, b, name+": "+view.Halt)
 		return b, false, err
 

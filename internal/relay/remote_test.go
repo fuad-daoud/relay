@@ -1407,6 +1407,59 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 	}
 }
 
+// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
+// round's stall stamp rides from the server view onto the client binding,
+// status shows it, and a later view without one clears it.
+func TestObserveRemoteCopiesStalledSince(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	stalled := baseTime.Add(-20 * time.Minute)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
+		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !got.StalledSince.Equal(stalled) {
+		t.Fatalf("StalledSince = %s, want the view's %s", got.StalledSince, stalled)
+	}
+
+	// Status reads the stamp and labels the remote row stalled.
+	if err := st.Save(got); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	if status := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(status, "stalled ") {
+		t.Fatalf("BuilderStatus = %q, want it to start with %q", status, "stalled ")
+	} else if !strings.Contains(status, AgeText(baseTime.Sub(stalled))) {
+		t.Errorf("BuilderStatus = %q, want it to contain the age %q", status, AgeText(baseTime.Sub(stalled)))
+	}
+
+	// A later view with a zero stamp clears it.
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	got2, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (cleared): %v", err)
+	}
+	if !got2.StalledSince.IsZero() {
+		t.Fatalf("StalledSince = %s, want zero once the view has none", got2.StalledSince)
+	}
+}
+
 // TestReconcileRemoteRefreshesCandidate checks that a server-side switch
 // (the round is now running a different candidate than this binding last
 // recorded) updates the token and harness kind and logs a switch entry
