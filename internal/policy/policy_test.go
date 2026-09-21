@@ -295,6 +295,129 @@ func TestStallAfterDefaultAndOverride(t *testing.T) {
 	}
 }
 
+// TestProgressIntervalDefaultAndOverride pins #135's sampling key: nil is the
+// 30s default, a present value is that many milliseconds, and 0 is a load error
+// naming the key.
+func TestProgressIntervalDefaultAndOverride(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.ProgressInterval(); got != DefaultProgressInterval {
+		t.Fatalf("ProgressInterval() with no key = %v, want %v", got, DefaultProgressInterval)
+	}
+	if DefaultProgressInterval != 30*time.Second {
+		t.Fatalf("DefaultProgressInterval = %v, want 30s", DefaultProgressInterval)
+	}
+
+	p, err = load(t, `{"progress_interval_ms":5000}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.ProgressInterval(); got != 5*time.Second {
+		t.Fatalf("ProgressInterval() with 5000 = %v, want 5s", got)
+	}
+
+	_, err = load(t, `{"progress_interval_ms":0}`)
+	if err == nil {
+		t.Fatalf("Load with progress_interval_ms 0: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"progress_interval_ms", "must be > 0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	if got := (Policy{}).ProgressInterval(); got != DefaultProgressInterval {
+		t.Fatalf("Policy{}.ProgressInterval() = %v, want %v", got, DefaultProgressInterval)
+	}
+}
+
+// TestExploreAfterDefaultAndOverride pins #135's exploring key: nil is the 20m
+// default, a present value is that many milliseconds, and 0 is a load error
+// naming the key.
+func TestExploreAfterDefaultAndOverride(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.ExploreAfter(); got != DefaultExploreAfter {
+		t.Fatalf("ExploreAfter() with no key = %v, want %v", got, DefaultExploreAfter)
+	}
+	if DefaultExploreAfter != 20*time.Minute {
+		t.Fatalf("DefaultExploreAfter = %v, want 20m", DefaultExploreAfter)
+	}
+
+	p, err = load(t, `{"explore_after_ms":600000}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.ExploreAfter(); got != 10*time.Minute {
+		t.Fatalf("ExploreAfter() with 600000 = %v, want 10m", got)
+	}
+
+	_, err = load(t, `{"explore_after_ms":0}`)
+	if err == nil {
+		t.Fatalf("Load with explore_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"explore_after_ms", "must be > 0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	if got := (Policy{}).ExploreAfter(); got != DefaultExploreAfter {
+		t.Fatalf("Policy{}.ExploreAfter() = %v, want %v", got, DefaultExploreAfter)
+	}
+}
+
+// TestStaleAfterDefaultAndOverride pins #135's stale key: nil is the 4h default,
+// a present value is that many milliseconds, and 0 is a load error naming the
+// key.
+func TestStaleAfterDefaultAndOverride(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.StaleAfter(); got != DefaultStaleAfter {
+		t.Fatalf("StaleAfter() with no key = %v, want %v", got, DefaultStaleAfter)
+	}
+	if DefaultStaleAfter != 4*time.Hour {
+		t.Fatalf("DefaultStaleAfter = %v, want 4h", DefaultStaleAfter)
+	}
+
+	p, err = load(t, `{"stale_after_ms":1800000}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.StaleAfter(); got != 30*time.Minute {
+		t.Fatalf("StaleAfter() with 1800000 = %v, want 30m", got)
+	}
+
+	_, err = load(t, `{"stale_after_ms":0}`)
+	if err == nil {
+		t.Fatalf("Load with stale_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"stale_after_ms", "must be > 0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	if got := (Policy{}).StaleAfter(); got != DefaultStaleAfter {
+		t.Fatalf("Policy{}.StaleAfter() = %v, want %v", got, DefaultStaleAfter)
+	}
+}
+
 func TestGatePolicy(t *testing.T) {
 	t.Run("nil Gate defaults", func(t *testing.T) {
 		p := Policy{}

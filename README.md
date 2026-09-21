@@ -571,15 +571,39 @@ What is different from a pane builder:
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 
-A live headless builder whose stream file (`NNN-builder.jsonl`) has not grown
-for `stall_after_ms` (default fifteen minutes) is labelled `stalled <age>` in
-`relay status` and `relay ui`, in place of `working`. It is an observation,
-not a judgement: the process may be thinking, or it may be hung, and relay
-never acts on the label. Killing stays the human's decision -- `relay done`,
-`relay unbind`, or `relay stop` -- and a stalled binding is still `ACTIVE`
-with `relay wait` still waiting. The label clears when the stream moves again
-or the process exits; the daemon fires one `builder_stalled` hook event per
-episode and none when it clears.
+### Progress labels
+
+relay keeps a progress clock on every local binding with an open round and
+labels what it sees. The labels are observations, never actions: relay never
+kills, nudges, switches or halts on them, and the round budget stays the only
+automatic halt. Killing a stalled builder stays the human's decision -- `relay
+done`, `relay unbind`, or `relay stop`.
+
+The signals are the working tree (its fingerprint is `HEAD` plus `git status
+--porcelain`, hashed -- no diff, no snapshot) and the builder's output: a pane
+builder's screen, or a headless builder's stream file (`NNN-builder.jsonl`)
+mtime. Each signal keeps the time it last changed, and the daemon samples at
+most once every `progress_interval_ms` (default thirty seconds).
+
+- **`stalled <age>`** -- no signal has moved for `stall_after_ms` (default
+  fifteen minutes) while the round is open and the builder is not blocked. The
+  label replaces `working` in `relay status` and `relay ui`; a stalled binding
+  is still `ACTIVE` with `relay wait` still waiting. The label clears when a
+  signal moves again or the process exits, and the daemon fires one
+  `builder_stalled` hook event and one notification per episode and none when
+  it clears.
+- **`exploring <age>`** -- the output or screen is changing but the tree has
+  not for `explore_after_ms` (default twenty minutes). A label only: some plans
+  are read-heavy, so it fires no hook event and no notification.
+- **`stale <age>`** -- a `NEEDS YOU` or `HELD` binding has sat unacted for
+  `stale_after_ms` (default four hours). The age is measured from the halt, or
+  from the newest log entry when the binding has none. The word follows the
+  state word in `relay status`, joins the card in `relay ui`, and puts the row
+  first inside its attention group; the daemon fires one `binding_stale` hook
+  event and one notification per episode.
+
+A binding with no readable signal at all -- no git, no pane and no stream --
+is never labelled.
 
 When a round stops -- exit without the marker, a quiescent pane, or the
 round budget -- relay scans the builder's last output for the harness's
@@ -1189,6 +1213,9 @@ candidates in, per role:
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
   "stall_after_ms": 900000,
+  "progress_interval_ms": 30000,
+  "explore_after_ms": 1200000,
+  "stale_after_ms": 14400000,
   "scan_patterns": ["(?i)<instruction-tag"],
   "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 },
   "gate": { "default": "make check", "timeout_ms": 600000, "regate": 0 }
@@ -1215,7 +1242,15 @@ gates the provider when the matched line names no reset time; absent
 defaults to one hour. `stall_after_ms` is how long a live headless
 builder's stream may go without an event before `relay status` and
 `relay ui` label it `stalled`; absent defaults to fifteen minutes, and
-must be `> 0` when present. `scan_patterns` is an optional list of extra
+must be `> 0` when present. `progress_interval_ms` is how often the
+daemon samples a binding's progress signals while its round is open;
+absent defaults to thirty seconds, and must be `> 0` when present.
+`explore_after_ms` is how long a builder's output or screen may keep
+moving while its tree has not before relay labels it `exploring`; absent
+defaults to twenty minutes, and must be `> 0` when present.
+`stale_after_ms` is how long a `NEEDS YOU` or `HELD` binding may sit
+unacted before relay labels it `stale`; absent defaults to four hours,
+and must be `> 0` when present. `scan_patterns` is an optional list of extra
 regular expressions appended to relay's built-in instruction-shaped scan list;
 each pattern must compile. `gate` configures the default acceptance command
 (see [Gate](#gate) below): `default` is the command a binding gets when it
@@ -1788,13 +1823,14 @@ relay supports user-defined hook scripts dispatched during binding lifecycle eve
 
 - `state_changed` (`~/.config/relay/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
 - `round_started` (`~/.config/relay/hooks/round_started.d/`) — fires whenever a new round starts.
-- `builder_stalled` (`~/.config/relay/hooks/builder_stalled.d/`) — fires once when a live headless builder's stream goes quiet for `stall_after_ms` (#252). Clearing the stall fires nothing.
+- `builder_stalled` (`~/.config/relay/hooks/builder_stalled.d/`) — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
+- `binding_stale` (`~/.config/relay/hooks/binding_stale.d/`) — fires once when a `NEEDS YOU` or `HELD` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
 
 ### Hook execution & environment
 
 Each hook script is executed asynchronously in a detached process with a 10-second timeout. relay injects the following environment variables:
 
-- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`).
+- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`, `binding_stale`).
 - `RELAY_BINDING`: The name of the binding.
 - `RELAY_STATE`: The current state of the binding.
 - `RELAY_OLD_STATE`: The previous state of the binding.

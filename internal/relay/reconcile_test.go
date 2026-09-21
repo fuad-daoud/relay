@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -231,8 +232,16 @@ func TestNudgeStallLateRecordsLate(t *testing.T) {
 	if len(f.reads) < 1 {
 		t.Fatalf("expected at least 1 read, got %d", len(f.reads))
 	}
-	if f.reads[0].Source != "visible" || f.reads[0].Lines != lateScanLines {
-		t.Errorf("read[0] = %+v, want visible with %d lines", f.reads[0], lateScanLines)
+	// #135's pane progress sample reads the scrollback first, so the late
+	// visible-source read is not necessarily reads[0].
+	var late []readCall
+	for _, r := range f.reads {
+		if r.Source == "visible" {
+			late = append(late, r)
+		}
+	}
+	if len(late) != 1 || late[0].Lines != lateScanLines {
+		t.Errorf("visible reads = %+v, want one with %d lines", late, lateScanLines)
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")
@@ -3096,5 +3105,136 @@ func TestReportEntryNoSessionIsNil(t *testing.T) {
 	}
 	if strings.Contains(string(blob), "builder_session") {
 		t.Errorf("JSON of a session-less entry carries builder_session: %s", blob)
+	}
+}
+
+// TestReconcilePaneStampsStall pins #135's pane path: a pane builder that has
+// been working with an unchanged tree, screen and round for longer than
+// stall_after_ms is stamped StalledSince, and the daemon raises one
+// builder_stalled hook event and one advisory notice. The stall is an
+// observation: the process is untouched and the binding stays ACTIVE.
+func TestReconcilePaneStampsStall(t *testing.T) {
+	f := &fakeHerdr{readOut: "unchanged screen"}
+	fg := &fakeGit{treeFingerprints: []string{"tree-1"}}
+	rt, b := sentBinding(t, f)
+	rt.Git = fg
+	disp := &recordDispatcher{}
+	rt.Hooks = disp
+
+	rt = at(rt, 16*time.Minute)
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.StalledSince.IsZero() {
+		t.Fatalf("StalledSince is zero; want a stall after 16m with no signal moving")
+	}
+	if got.State != store.StateActive {
+		t.Errorf("State = %s, want ACTIVE: a stall is never an action", got.State)
+	}
+	if got.Builder.PID != b.Builder.PID || got.Round != b.Round {
+		t.Errorf("a stall must not touch the builder or the round: pid=%d round=%d", got.Builder.PID, got.Round)
+	}
+
+	var stalled int
+	for _, e := range disp.getEvents() {
+		if e.Type == hooks.EventBuilderStalled {
+			stalled++
+		}
+	}
+	if stalled != 1 {
+		t.Fatalf("got %d builder_stalled events, want 1: %+v", stalled, disp.getEvents())
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("got %d notices, want 1: %v", len(f.notices), f.notices)
+	}
+	if !strings.Contains(f.notices[0], "stalled") {
+		t.Errorf("notice = %q, want it to name the stall", f.notices[0])
+	}
+	if f.sounds[0] != herdr.SoundRequest {
+		t.Errorf("sound = %q, want %q", f.sounds[0], herdr.SoundRequest)
+	}
+}
+
+// TestReconcileNeedsYouGoesStale pins #135's stale path: a binding that has
+// been NEEDS YOU past stale_after_ms is stamped from its halt time, fires one
+// binding_stale event and one notice, and a second tick adds neither. A human
+// Send clears the stamp and the notification bookkeeping.
+func TestReconcileNeedsYouGoesStale(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	disp := &recordDispatcher{}
+	rt.Hooks = disp
+
+	haltedAt := baseTime.Add(-5 * time.Hour)
+	b.State = store.StateNeedsYou
+	b.Halt = "builder blocked at a dialog"
+	b.HaltAt = haltedAt
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !got.StaleSince.Equal(haltedAt) {
+		t.Fatalf("StaleSince = %s, want the halt time %s", got.StaleSince, haltedAt)
+	}
+
+	var stale int
+	for _, e := range disp.getEvents() {
+		if e.Type == hooks.EventBindingStale {
+			stale++
+		}
+	}
+	if stale != 1 {
+		t.Fatalf("got %d binding_stale events, want 1: %+v", stale, disp.getEvents())
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("got %d notices, want 1: %v", len(f.notices), f.notices)
+	}
+	if !strings.Contains(f.notices[0], "NEEDS YOU") {
+		t.Errorf("notice = %q, want it to name the wait", f.notices[0])
+	}
+
+	// A second tick is not a second episode.
+	got2, err := reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("Reconcile (second tick): %v", err)
+	}
+	if !got2.StaleSince.Equal(haltedAt) {
+		t.Errorf("StaleSince after a second tick = %s, want it unchanged at %s", got2.StaleSince, haltedAt)
+	}
+	var stale2 int
+	for _, e := range disp.getEvents() {
+		if e.Type == hooks.EventBindingStale {
+			stale2++
+		}
+	}
+	if stale2 != 1 {
+		t.Errorf("got %d binding_stale events after a second tick, want 1", stale2)
+	}
+	if len(f.notices) != 1 {
+		t.Errorf("got %d notices after a second tick, want 1: %v", len(f.notices), f.notices)
+	}
+
+	// A human send is a fresh attempt: the stale stamp and its notification
+	// bookkeeping are gone.
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	loaded, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.StaleSince.IsZero() {
+		t.Errorf("StaleSince = %s after Send, want zero", loaded.StaleSince)
+	}
+	if !loaded.StaleNotifiedAt.IsZero() {
+		t.Errorf("StaleNotifiedAt = %s after Send, want zero", loaded.StaleNotifiedAt)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -266,6 +268,27 @@ func (c *Client) HeadCommit(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// TreeFingerprint returns a short, stable hash of dir's HEAD commit and its
+// porcelain status -- the cheap "did the tree move?" signal the daemon's
+// progress clock samples (#135). It reads no diff and writes no snapshot, so
+// sampling costs one status walk.
+//
+// An unborn branch is not an error: rev-parse HEAD fails there, and the
+// fingerprint is taken from the status alone.
+// Errors: ErrNotRepo, ErrGitUnavailable, or a wrapped git failure from status.
+func (c *Client) TreeFingerprint(ctx context.Context, dir string) (string, error) {
+	head, err := c.run(ctx, dir, nil, "rev-parse", "HEAD")
+	if err != nil {
+		head = nil // unborn HEAD: the status still tells an empty tree from a full one
+	}
+	st, err := c.run(ctx, dir, nil, "status", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(string(head)) + "\n" + string(st)))
+	return hex.EncodeToString(sum[:])[:16], nil
 }
 
 // RevListCount returns the number of commits reachable from to and not from

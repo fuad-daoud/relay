@@ -34,8 +34,15 @@ func TestReconcileCapturesBlockingDialogOnce(t *testing.T) {
 	// An approval dialog is drawn on the alternate screen, which never reaches
 	// the scrollback recent-unwrapped reads. Reading the wrong source would
 	// capture empty or unrelated text, and the planner's whole answer decision
-	// rests on this file.
-	if len(f.reads) != 1 || f.reads[0].Source != DialogSource {
+	// rests on this file. The pane progress clock (#135) reads the scrollback
+	// once before this, so the dialog read is not necessarily the first.
+	var dialogReads []readCall
+	for _, r := range f.reads {
+		if r.Source == DialogSource {
+			dialogReads = append(dialogReads, r)
+		}
+	}
+	if len(dialogReads) != 1 {
 		t.Fatalf("dialog reads = %+v, want one %q read", f.reads, DialogSource)
 	}
 
@@ -125,16 +132,25 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	haltAt := got.HaltAt
 
 	// A second tick against the same already-halted binding must not notify
-	// again: haltBinding's guard is per-transition, not per-tick.
+	// again: haltBinding's guard is per-transition, not per-tick. (#135's stall
+	// notice fires on the first tick too, so both are counted by their text.)
 	second, err := reconcile(t, rt, got, agents)
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	if len(f.notices) != 1 {
-		t.Errorf("got %d notices, want 1; a still-timed-out binding must not renotify", len(f.notices))
+	var halts int
+	for _, n := range f.notices {
+		if strings.Contains(n, "run past") {
+			halts++
+		}
 	}
-	if len(f.reads) != 1 {
-		t.Errorf("reads = %d, want exactly one limit scan, on the halting tick", len(f.reads))
+	if halts != 1 {
+		t.Errorf("got %d timeout notices, want 1; a still-timed-out binding must not renotify: %v", halts, f.notices)
+	}
+	// The first tick's reads are #135's one progress sample plus the one limit
+	// scan; the later ticks add neither.
+	if len(f.reads) != 2 {
+		t.Errorf("reads = %d, want 2: one progress sample and one limit scan, on the halting tick", len(f.reads))
 	}
 	if !second.HaltAt.Equal(haltAt) {
 		t.Errorf("HaltAt = %v after a second tick, want unchanged %v", second.HaltAt, haltAt)
@@ -257,8 +273,18 @@ func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
 				}
 			}
 
-			if len(f.notices) != 1 {
-				t.Errorf("got %d notices over 5 ticks, want 1: %v", len(f.notices), f.notices)
+			// #135 adds one stall notice on the first tick (the round has been
+			// quiet past stall_after_ms); the halt itself must still notify
+			// exactly once over all five ticks, which is what guards against
+			// the storm this test exists for.
+			var halts int
+			for _, n := range f.notices {
+				if strings.Contains(n, "run past") {
+					halts++
+				}
+			}
+			if halts != 1 {
+				t.Errorf("got %d timeout notices over 5 ticks, want 1: %v", halts, f.notices)
 			}
 			if b.State != store.StateNeedsYou {
 				t.Errorf("state = %s, want needs_you to survive every tick", b.State)
@@ -292,8 +318,16 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 	if _, err := reconcile(t, rt, b, agents); err != nil {
 		t.Fatalf("second round Reconcile: %v", err)
 	}
-	if len(f.notices) != 2 {
-		t.Errorf("got %d notices, want one per timed-out round: %v", len(f.notices), f.notices)
+	// One timeout notice per timed-out round, not one per binding. (#135's
+	// stall notice is separate and fires once for the episode.)
+	var halts int
+	for _, n := range f.notices {
+		if strings.Contains(n, "run past") {
+			halts++
+		}
+	}
+	if halts != 2 {
+		t.Errorf("got %d timeout notices, want one per timed-out round: %v", halts, f.notices)
 	}
 }
 

@@ -91,6 +91,11 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 			age = ago(b.Last.TS, now)
 		}
 	}
+	// #135: an unacted NEEDS YOU or HELD row says how long it has waited,
+	// right where a human reads what it is waiting on.
+	if (b.Display == "NEEDS YOU" || b.Display == "HELD") && b.Stale != "" {
+		what += " · " + b.Stale
+	}
 	return what, age
 }
 

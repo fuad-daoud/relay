@@ -1058,12 +1058,12 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 	}
 }
 
-// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core: a live
-// process whose stream file has not moved for stall_after_ms is stamped
-// StalledSince = the stream's last activity, and nothing else happens. The
-// second case is the mutation target: with the stream only 5m quiet the
-// comparison must not fire, so inverting it (or comparing `<` for `>=`) makes
-// both cases fail.
+// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core under
+// #135's shared clock: a live process whose stream file has not moved for
+// stall_after_ms is stamped StalledSince = the stream's last activity, one
+// advisory notice is raised, and nothing else happens. The second case is the
+// mutation target: with the stream only 5m quiet the comparison must not fire,
+// so inverting it (or comparing `<` for `>=`) makes both cases fail.
 func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1099,8 +1099,17 @@ func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 			if got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
 				t.Errorf("a stalled binding stays active and keeps its process: state=%s pid=%d", got.State, got.Builder.PID)
 			}
-			if len(fr.kills) != 0 || len(fr.specs) != 1 || len(f.notices) != 0 {
-				t.Errorf("a stall is never an action: kills=%d specs=%d notices=%v", len(fr.kills), len(fr.specs), f.notices)
+			if len(fr.kills) != 0 || len(fr.specs) != 1 {
+				t.Errorf("a stall is never an action: kills=%d specs=%d", len(fr.kills), len(fr.specs))
+			}
+			// #135 makes a stall one advisory notice per episode; a stream that
+			// is quiet but under stall_after_ms must stay silent.
+			wantNotices := 0
+			if tc.stalled {
+				wantNotices = 1
+			}
+			if len(f.notices) != wantNotices {
+				t.Errorf("notices = %v, want %d", f.notices, wantNotices)
 			}
 			if tc.stalled {
 				if !got.StalledSince.Equal(quietAt) {
@@ -1149,12 +1158,14 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 		t.Fatalf("StalledSince is zero; want the stall stamped before the clear case")
 	}
 
-	// The stream moves again: the next tick clears the stamp.
+	// The stream moves again: the next tick clears the stamp. The clock must
+	// tick past progress_interval_ms first -- #135 samples at most once per
+	// interval, so a tick at the same instant records nothing.
 	moved := now
 	if err := os.Chtimes(stream, moved, moved); err != nil {
 		t.Fatalf("chtimes back: %v", err)
 	}
-	cleared, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	cleared, err := reconcile(t, at(rt, 11*time.Minute), got, []herdr.Agent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile (moved): %v", err)
 	}

@@ -442,12 +442,18 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.RoundSwitches = 0
 		b.RoundExcluded = nil
 		// A fresh send is a fresh process: any stall stamp from the previous
-		// round is gone (#252).
+		// round is gone (#252), and so is the whole progress clock -- the
+		// tree, the output and the stale stamp all describe the round that
+		// just ended (#135).
 		b.StalledSince = time.Time{}
 		// A new round supersedes any stop requested for the old one (#138):
 		// the builder is being asked to work again, not to wrap up.
 		b.StopRequestedAt = time.Time{}
 		b.StopGraceMS = 0
+		b.Progress = nil
+		b.ExploringSince = time.Time{}
+		b.StaleSince = time.Time{}
+		b.StaleNotifiedAt = time.Time{}
 		// A human send is a fresh attempt, so the repair bookkeeping from the
 		// old rounds says nothing about this one (#132 part 2): the budget
 		// starts unspent and no previous failure is held against the builder.

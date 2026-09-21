@@ -41,6 +41,12 @@ func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 			if ra, rb := rankOf(a.Display), rankOf(b.Display); ra != rb {
 				return ra < rb
 			}
+			// #135: inside one attention group the rows a human has left the
+			// longest come first, so an unacted NEEDS YOU or HELD row does not
+			// drift down the list behind fresher ones.
+			if sa, sb := a.Stale != "", b.Stale != ""; sa != sb {
+				return sa
+			}
 			switch {
 			case a.Last != nil && b.Last != nil && !a.Last.TS.Equal(b.Last.TS):
 				return a.Last.TS.After(b.Last.TS)

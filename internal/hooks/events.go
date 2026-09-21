@@ -15,6 +15,11 @@ const (
 	// stall episode; clearing the stall emits nothing. It is an observation,
 	// never an action: relay never kills or switches on it.
 	EventBuilderStalled EventType = "builder_stalled"
+	// EventBindingStale reports that a NEEDS YOU or HELD binding sat unacted
+	// for policy.json's stale_after_ms (#135). It fires once per stale
+	// episode; clearing the stamp emits nothing. Like builder_stalled it is
+	// an observation, never an action.
+	EventBindingStale EventType = "binding_stale"
 )
 
 // Event encapsulates the context of a state transition or action.

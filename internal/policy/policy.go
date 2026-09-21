@@ -44,6 +44,21 @@ type Policy struct {
 	// DefaultStallAfter; a present value must be > 0.
 	StallAfterMS *int `json:"stall_after_ms,omitempty"`
 
+	// ProgressIntervalMS is how often the daemon samples a binding's progress
+	// signals while its round is open (#135). nil is DefaultProgressInterval;
+	// a present value must be > 0.
+	ProgressIntervalMS *int `json:"progress_interval_ms,omitempty"`
+
+	// ExploreAfterMS is how long a builder's output or screen may keep moving
+	// while its tree has not before relay labels it exploring (#135). nil is
+	// DefaultExploreAfter; a present value must be > 0.
+	ExploreAfterMS *int `json:"explore_after_ms,omitempty"`
+
+	// StaleAfterMS is how long a NEEDS YOU or HELD binding may sit unacted
+	// before relay labels it stale (#135). nil is DefaultStaleAfter; a present
+	// value must be > 0.
+	StaleAfterMS *int `json:"stale_after_ms,omitempty"`
+
 	// ScanPatterns is extra regular expressions appended to the built-in list
 	// of instruction-shaped line patterns (#139).
 	ScanPatterns []string `json:"scan_patterns,omitempty"`
@@ -125,6 +140,23 @@ const DefaultLimitGate = time.Hour
 // thinking builder is never labelled, short enough that a hung one is.
 const DefaultStallAfter = 15 * time.Minute
 
+// DefaultProgressInterval is how often the daemon samples a binding's progress
+// signals while its round is open (#135): often enough that a label appears
+// promptly, rare enough that the sampling costs one git status and one screen
+// read per binding per interval.
+const DefaultProgressInterval = 30 * time.Second
+
+// DefaultExploreAfter is how long a builder's output or screen may keep moving
+// while its tree has not before relay labels it exploring (#135): long enough
+// that a read-heavy plan is never labelled, short enough that a plan which has
+// stopped writing is.
+const DefaultExploreAfter = 20 * time.Minute
+
+// DefaultStaleAfter is how long a NEEDS YOU or HELD binding may sit unacted
+// before relay labels it stale (#135): hours, not minutes, because a human's
+// decision may wait on their next working day.
+const DefaultStaleAfter = 4 * time.Hour
+
 // DefaultGateTimeout bounds one gate run when neither the binding nor
 // policy.json's gate.timeout_ms sets one (#132).
 const DefaultGateTimeout = 10 * time.Minute
@@ -153,6 +185,33 @@ func (p Policy) StallAfter() time.Duration {
 		return DefaultStallAfter
 	}
 	return time.Duration(*p.StallAfterMS) * time.Millisecond
+}
+
+// ProgressInterval is ProgressIntervalMS converted to time.Duration with the
+// default applied (#135).
+func (p Policy) ProgressInterval() time.Duration {
+	if p.ProgressIntervalMS == nil {
+		return DefaultProgressInterval
+	}
+	return time.Duration(*p.ProgressIntervalMS) * time.Millisecond
+}
+
+// ExploreAfter is ExploreAfterMS converted to time.Duration with the default
+// applied (#135).
+func (p Policy) ExploreAfter() time.Duration {
+	if p.ExploreAfterMS == nil {
+		return DefaultExploreAfter
+	}
+	return time.Duration(*p.ExploreAfterMS) * time.Millisecond
+}
+
+// StaleAfter is StaleAfterMS converted to time.Duration with the default
+// applied (#135).
+func (p Policy) StaleAfter() time.Duration {
+	if p.StaleAfterMS == nil {
+		return DefaultStaleAfter
+	}
+	return time.Duration(*p.StaleAfterMS) * time.Millisecond
 }
 
 // MaxTierOrDefault returns MaxTier as a harness.Tier, or DefaultMaxTier when empty (#141).
@@ -242,6 +301,18 @@ func Load(path string) (Policy, error) {
 
 	if p.StallAfterMS != nil && *p.StallAfterMS <= 0 {
 		return Policy{}, fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
+	}
+
+	if p.ProgressIntervalMS != nil && *p.ProgressIntervalMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: progress_interval_ms: must be > 0, got %d: %w", path, *p.ProgressIntervalMS, ErrBadPolicy)
+	}
+
+	if p.ExploreAfterMS != nil && *p.ExploreAfterMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: explore_after_ms: must be > 0, got %d: %w", path, *p.ExploreAfterMS, ErrBadPolicy)
+	}
+
+	if p.StaleAfterMS != nil && *p.StaleAfterMS <= 0 {
+		return Policy{}, fmt.Errorf("%s: stale_after_ms: must be > 0, got %d: %w", path, *p.StaleAfterMS, ErrBadPolicy)
 	}
 
 	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
