@@ -187,6 +187,46 @@ func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }
 
+// ViewedPath is the sidecar stamped when a human last looked at a binding's
+// live diff, log or show output (#143): its mtime is the "viewed" instant.
+// `relay diff`/`log`/`show` write it after a successful print; `relay ui`
+// never writes it directly (it stamps through the same MarkViewed call), so
+// it stays read-only of everything else in the binding's directory.
+// Layout: <binding dir>/.viewed
+func (s *Store) ViewedPath(name string) string {
+	return filepath.Join(s.Dir(name), ".viewed")
+}
+
+// MarkViewed stamps name's .viewed sidecar with mtime at, creating the file
+// first if it does not exist yet (touch semantics). Errors are the caller's
+// to ignore: a read verb must not fail because a stamp could not be written.
+func (s *Store) MarkViewed(name string, at time.Time) error {
+	path := s.ViewedPath(name)
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		f, ferr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, bindingFileMode)
+		if ferr != nil {
+			return ferr
+		}
+		if cerr := f.Close(); cerr != nil {
+			return cerr
+		}
+	}
+	return os.Chtimes(path, at, at)
+}
+
+// ViewedAt returns name's .viewed mtime and true, or the zero time and false
+// when the binding has never been viewed.
+func (s *Store) ViewedAt(name string) (time.Time, bool) {
+	fi, err := os.Stat(s.ViewedPath(name))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
 // AskPath is where a consult's question is staged.
 // Layout: <binding dir>/NNN-<id>-ask.md
 //

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -88,6 +89,7 @@ func cmdShow(args []string) error {
 	// (docs/specs/2026-09-20-persistence-design.md §4: "show on a live
 	// binding still works ... and on a non-live one exits 1 with the
 	// error").
+	live := false
 	if _, loadErr := rt.Store.Load(name); loadErr != nil {
 		if !errors.Is(loadErr, store.ErrNotFound) {
 			return loadErr
@@ -99,6 +101,16 @@ func cmdShow(args []string) error {
 		}
 		defer d.Close()
 		rt.DB = d
+	} else {
+		live = true
+	}
+	// #143: a successful print is what "viewed" means, for a live binding
+	// only -- there is no .viewed sidecar for a database-only (archived)
+	// binding to stamp. Best-effort: never fails the read.
+	markViewed := func() {
+		if live {
+			_ = rt.Store.MarkViewed(name, time.Now())
+		}
 	}
 
 	opts := relay.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
@@ -111,7 +123,11 @@ func cmdShow(args []string) error {
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(res)
+		if err := enc.Encode(res); err != nil {
+			return err
+		}
+		markViewed()
+		return nil
 	}
 
 	header := fmt.Sprintf("%s round %d of %d · %s", res.Name, res.Round, res.Rounds, res.Section)
@@ -122,6 +138,7 @@ func cmdShow(args []string) error {
 
 	if res.Missing {
 		fmt.Printf("no %s for round %d\n", res.Section, res.Round)
+		markViewed()
 		return nil
 	}
 
@@ -129,6 +146,7 @@ func cmdShow(args []string) error {
 		for _, e := range res.Events {
 			fmt.Println(relay.LogLine(e))
 		}
+		markViewed()
 		return nil
 	}
 
@@ -137,5 +155,6 @@ func cmdShow(args []string) error {
 		text += "\n"
 	}
 	fmt.Print(text)
+	markViewed()
 	return nil
 }

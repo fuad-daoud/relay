@@ -42,6 +42,11 @@ type Herdr interface {
 type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+	// DiffWorktreeStat compares tree against dir's current working tree and
+	// returns just the stat, no patch (#143): the live "+N/-M in F" a status
+	// row shows while a round is open, cheaper than DiffTrees because it
+	// never reads the patch body.
+	DiffWorktreeStat(ctx context.Context, dir, tree string) (git.Stat, error)
 	HeadCommit(ctx context.Context, dir string) (string, error)
 	// TreeFingerprint hashes dir's HEAD and porcelain status into one short
 	// string that changes when the tree does (#135). It never reads a diff or

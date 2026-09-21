@@ -124,6 +124,12 @@ type fakeGit struct {
 	lastDiffFrom string
 	lastDiffTo   string
 
+	worktreeStat         git.Stat
+	worktreeStatErr      error
+	worktreeStatCalls    int
+	lastWorktreeStatDir  string
+	lastWorktreeStatTree string
+
 	headCommitID  string
 	headCommitErr error
 	headCalls     int
@@ -258,6 +264,16 @@ func (f *fakeGit) DiffTrees(ctx context.Context, dir, from, to string) (git.Diff
 		return git.Diff{}, f.diffErr
 	}
 	return f.diffResult, nil
+}
+
+func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.Stat, error) {
+	f.worktreeStatCalls++
+	f.lastWorktreeStatDir = dir
+	f.lastWorktreeStatTree = tree
+	if f.worktreeStatErr != nil {
+		return git.Stat{}, f.worktreeStatErr
+	}
+	return f.worktreeStat, nil
 }
 
 func (f *fakeGit) HeadCommit(ctx context.Context, dir string) (string, error) {

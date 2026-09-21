@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -2146,5 +2147,255 @@ func TestSendClearsLanded(t *testing.T) {
 	}
 	if rep.Bindings[0].Landed != "" {
 		t.Errorf("status still says %q after a new round", rep.Bindings[0].Landed)
+	}
+}
+
+// TestStatusRowsAreAttentionOrdered pins #143: Status (and its JSON) now
+// return rows in the same attention-first order ui has always used --
+// NEEDS YOU, HELD, ACTIVE, PAUSED, DONE -- instead of plain name order.
+//
+// Mutation check: restore `sort.Slice(rows, func(i, j int) bool { return
+// rows[i].Name < rows[j].Name })` in buildReport in place of `SortRows(rows,
+// true)` and this fails, because "a" (ACTIVE) would then sort before "b"
+// (NEEDS YOU).
+func TestStatusRowsAreAttentionOrdered(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	a := store.Binding{Name: "a", CWD: "/repo-a", State: store.StateActive, Round: 1}
+	b := store.Binding{Name: "b", CWD: "/repo-b", State: store.StateNeedsYou, Round: 1}
+	c := store.Binding{Name: "c", CWD: "/repo-c", State: store.StateDone, Round: 1}
+	for _, binding := range []store.Binding{a, b, c} {
+		if err := rt.Store.Save(binding); err != nil {
+			t.Fatalf("Save %s: %v", binding.Name, err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	var gotNames []string
+	for _, row := range rep.Bindings {
+		gotNames = append(gotNames, row.Name)
+	}
+	want := []string{"b", "a", "c"}
+	if len(gotNames) != len(want) {
+		t.Fatalf("got %v, want %v", gotNames, want)
+	}
+	for i := range want {
+		if gotNames[i] != want[i] {
+			t.Fatalf("Status order = %v, want %v", gotNames, want)
+		}
+	}
+
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	ia, ib, ic := strings.Index(string(data), `"name":"a"`), strings.Index(string(data), `"name":"b"`), strings.Index(string(data), `"name":"c"`)
+	if !(ib < ia && ia < ic) {
+		t.Errorf("status --json order wrong: b@%d a@%d c@%d", ib, ia, ic)
+	}
+}
+
+// TestStatusLiveDiffWhileRoundOpen pins #143's live diff figure: a --cwd
+// binding (no worktree of its own) is marked Shared, a binding whose round
+// is not open gets no Live at all, and RenderStatus prints the figure.
+func TestStatusLiveDiffWhileRoundOpen(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	fg := &fakeGit{worktreeStat: git.Stat{FilesChanged: 6, Insertions: 120, Deletions: 30}}
+	rt.Git = fg
+
+	open := store.Binding{
+		Name: "open", CWD: "/repo-open", State: store.StateActive, Round: 2,
+		RoundStartedAt:    baseTime,
+		RoundBaselineTree: "tree-open",
+		Worktree:          "/wt-open",
+	}
+	shared := store.Binding{
+		Name: "shared", CWD: "/repo-shared", State: store.StateActive, Round: 2,
+		RoundStartedAt:    baseTime,
+		RoundBaselineTree: "tree-shared",
+		// Worktree left empty: a --cwd binding shares the planner's own tree.
+	}
+	closedRound := store.Binding{
+		Name: "closed", CWD: "/repo-closed", State: store.StateActive, Round: 2,
+		RoundBaselineTree: "tree-closed",
+		Worktree:          "/wt-closed",
+		// RoundStartedAt left zero: no round is open.
+	}
+	for _, binding := range []store.Binding{open, shared, closedRound} {
+		if err := rt.Store.Save(binding); err != nil {
+			t.Fatalf("Save %s: %v", binding.Name, err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	rows := map[string]BindingStatus{}
+	for _, r := range rep.Bindings {
+		rows[r.Name] = r
+	}
+
+	want := LiveDiff{Files: 6, Added: 120, Removed: 30}
+	if got := rows["open"].Live; got == nil || *got != want {
+		t.Errorf("open Live = %+v, want %+v", got, want)
+	}
+	if got := rows["shared"].Live; got == nil || !got.Shared {
+		t.Errorf("shared Live = %+v, want Shared true", got)
+	}
+	if got := rows["closed"].Live; got != nil {
+		t.Errorf("closed Live = %+v, want nil (round not open)", got)
+	}
+
+	text := RenderStatus(rep)
+	if !strings.Contains(text, "+120/-30 in 6") {
+		t.Errorf("RenderStatus missing live diff line:\n%s", text)
+	}
+}
+
+// TestStatusLiveDiffCached pins #143's 5s per-binding cache: two Status
+// calls within the window make one DiffWorktreeStat call; once the fake
+// clock has moved past the window, a third call makes a second.
+func TestStatusLiveDiffCached(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	now := baseTime
+	rt.Now = func() time.Time { return now }
+	fg := &fakeGit{worktreeStat: git.Stat{FilesChanged: 2, Insertions: 10, Deletions: 3}}
+	rt.Git = fg
+
+	b := store.Binding{
+		Name: "cached", CWD: "/repo-cached", State: store.StateActive, Round: 2,
+		RoundStartedAt:    now,
+		RoundBaselineTree: "tree-cached",
+		Worktree:          "/wt-cached",
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Status(context.Background(), rt); err != nil {
+		t.Fatalf("Status 1: %v", err)
+	}
+	if _, err := Status(context.Background(), rt); err != nil {
+		t.Fatalf("Status 2: %v", err)
+	}
+	if fg.worktreeStatCalls != 1 {
+		t.Fatalf("worktreeStatCalls after two calls within 5s = %d, want 1", fg.worktreeStatCalls)
+	}
+
+	now = now.Add(6 * time.Second)
+	if _, err := Status(context.Background(), rt); err != nil {
+		t.Fatalf("Status 3: %v", err)
+	}
+	if fg.worktreeStatCalls != 2 {
+		t.Fatalf("worktreeStatCalls after 6s = %d, want 2", fg.worktreeStatCalls)
+	}
+}
+
+// TestStatusQuietForOnActive pins #143's quiet age: only an ACTIVE row with
+// an open, sampled round gets one; a NEEDS YOU row with the same progress
+// data gets none.
+func TestStatusQuietForOnActive(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	now := baseTime
+	progressAt := now.Add(-12 * time.Second)
+
+	active := store.Binding{
+		Name: "quiet-active", CWD: "/repo-active", State: store.StateActive, Round: 2,
+		RoundStartedAt: now.Add(-time.Hour),
+		Progress: &store.Progress{
+			SampledAt: now, Tree: "t1", TreeAt: progressAt,
+			Output: "o1", OutputAt: progressAt,
+		},
+	}
+	needsYou := store.Binding{
+		Name: "quiet-needsyou", CWD: "/repo-ny", State: store.StateNeedsYou, Round: 1,
+		RoundStartedAt: now.Add(-time.Hour),
+		Progress: &store.Progress{
+			SampledAt: now, Tree: "t2", TreeAt: progressAt,
+			Output: "o2", OutputAt: progressAt,
+		},
+	}
+	for _, binding := range []store.Binding{active, needsYou} {
+		if err := rt.Store.Save(binding); err != nil {
+			t.Fatalf("Save %s: %v", binding.Name, err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	rows := map[string]BindingStatus{}
+	for _, r := range rep.Bindings {
+		rows[r.Name] = r
+	}
+
+	want := AgeText(now.Sub(progressAt))
+	if got := rows["quiet-active"].QuietFor; got != want {
+		t.Errorf("QuietFor = %q, want %q", got, want)
+	}
+	if got := rows["quiet-needsyou"].QuietFor; got != "" {
+		t.Errorf("NEEDS YOU QuietFor = %q, want empty", got)
+	}
+}
+
+// TestStatusUnreadUntilViewed pins #143's unread marker: a report entry
+// with no .viewed stamp reads Unread; MarkViewed clears it; a newer report
+// sets it again.
+func TestStatusUnreadUntilViewed(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	b := store.Binding{Name: "unread", CWD: "/repo-unread", State: store.StateNeedsYou, Round: 2}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		TS: baseTime, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog 1: %v", err)
+	}
+
+	unreadOf := func(rep Report) bool {
+		for _, r := range rep.Bindings {
+			if r.Name == "unread" {
+				return r.Unread
+			}
+		}
+		t.Fatal("unread binding missing from status")
+		return false
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status 1: %v", err)
+	}
+	if !unreadOf(rep) {
+		t.Fatal("Unread = false before any view, want true")
+	}
+
+	if err := rt.Store.MarkViewed(b.Name, baseTime.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkViewed: %v", err)
+	}
+	rep, err = Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status 2: %v", err)
+	}
+	if unreadOf(rep) {
+		t.Fatal("Unread = true after MarkViewed, want false")
+	}
+
+	if err := rt.Store.AppendLog(b.Name, store.LogEntry{
+		TS: baseTime.Add(2 * time.Minute), Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog 2: %v", err)
+	}
+	rep, err = Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status 3: %v", err)
+	}
+	if !unreadOf(rep) {
+		t.Fatal("Unread = false after a newer report, want true")
 	}
 }

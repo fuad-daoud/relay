@@ -146,6 +146,56 @@ func TestClientSnapshotAndDiff(t *testing.T) {
 	}
 }
 
+func TestDiffWorktreeStat(t *testing.T) {
+	ctx := context.Background()
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-m", "initial")
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	tree := strings.TrimSpace(runGit(t, repoDir, "write-tree"))
+
+	// A clean worktree against its own tree diffs to zero.
+	stat, err := client.DiffWorktreeStat(ctx, repoDir, tree)
+	if err != nil {
+		t.Fatalf("DiffWorktreeStat clean: %v", err)
+	}
+	if !stat.Empty() {
+		t.Fatalf("expected empty stat on a clean worktree, got %+v", stat)
+	}
+
+	// Edit the tracked file and stage a new one: the tree is now behind both.
+	if err := os.WriteFile(filepath.Join(repoDir, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "b.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "b.txt")
+
+	stat, err = client.DiffWorktreeStat(ctx, repoDir, tree)
+	if err != nil {
+		t.Fatalf("DiffWorktreeStat dirty: %v", err)
+	}
+	if stat.FilesChanged != 2 || stat.Insertions != 2 || stat.Deletions != 0 {
+		t.Fatalf("unexpected stat: %+v", stat)
+	}
+
+	// Not a repository -> ErrNotRepo.
+	if _, err := client.DiffWorktreeStat(ctx, t.TempDir(), tree); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("DiffWorktreeStat outside a repo: got %v, want ErrNotRepo", err)
+	}
+}
+
 func TestClientDiffTruncation(t *testing.T) {
 	ctx := context.Background()
 	repoDir := t.TempDir()

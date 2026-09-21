@@ -160,6 +160,34 @@ func TestPathsAreZeroPaddedUnderBindingDir(t *testing.T) {
 	}
 }
 
+// TestViewedRoundTrip pins #143's .viewed sidecar: no stamp reads ok false,
+// MarkViewed creates and stamps the file, and ViewedAt then reads that mtime
+// back within a second.
+func TestViewedRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/repo")
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, ok := s.ViewedAt("webshop"); ok {
+		t.Fatal("ViewedAt before any stamp: got ok true, want false")
+	}
+
+	at := time.Now().UTC().Truncate(time.Second)
+	if err := s.MarkViewed("webshop", at); err != nil {
+		t.Fatalf("MarkViewed: %v", err)
+	}
+
+	got, ok := s.ViewedAt("webshop")
+	if !ok {
+		t.Fatal("ViewedAt after MarkViewed: got ok false, want true")
+	}
+	if diff := got.Sub(at); diff < -time.Second || diff > time.Second {
+		t.Errorf("ViewedAt = %s, want within a second of %s", got, at)
+	}
+}
+
 func TestValidName(t *testing.T) {
 	for _, ok := range []string{"webshop", "a", "money-ai", "x_1"} {
 		if err := ValidName(ok); err != nil {

@@ -287,12 +287,18 @@ inside every pane it manages, so it has to be run from inside one.
   A headless builder takes no dialogs; `answer` is refused and points at the
   round's log.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
-  panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
-  `--json` also carries three fields the prose above does not spell out:
+  panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Rows are attention-first -- NEEDS YOU, HELD, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relay ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+  While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the planner's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (see `.viewed` below).
+  `--json` also carries fields the prose above does not spell out:
   ```
   branch      the binding's worktree branch; absent for a --cwd binding
   waiting     set when the binding is stalled on a human: cause, line, since, hint
   last_seq    the Seq of the binding's newest log entry; 0 when the log is empty
+  live        the round's live diff stat against its baseline tree (files/added/removed,
+              shared true for a --cwd binding); absent when no round is open
+  quiet_for   an ACTIVE row's age since its last progress sample; absent otherwise
+  unread      true when the binding's newest report is newer than its .viewed stamp
+              (or there is no stamp and a report exists)
   ```
 - `relay log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
   A hook or script that has already seen up to a known `seq` asks only for the rest:
@@ -952,7 +958,13 @@ to forget).
 
 A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
 `~/.local/state/relay/<name>/`): `bind.json`, `log.jsonl`, and every round's
-plan, report, patch (`NNN-diff.patch`) and captured dialog. `relay done` stops relaying and, when the binding's worktree is clean and
+plan, report, patch (`NNN-diff.patch`) and captured dialog. It also holds a
+`.viewed` sidecar (#143): `relay diff`, `relay log` and `relay show` each
+stamp its mtime after a successful print of a live binding, and `status`'s
+`unread`/`●new` compares the binding's newest report against that stamp.
+`relay ui` never writes it directly -- it stamps through the same call `diff`/
+`log`/`show` use, keeping `ui` itself read-only of `bind.json` and everything
+else in the directory. `relay done` stops relaying and, when the binding's worktree is clean and
 no round is open, removes the worktree so its branch can be checked out
 in the main repo (`removed worktree ... (branch relay/x is free to check
 out)`); a dirty tree or an open pane round is kept and `relay gc` retries

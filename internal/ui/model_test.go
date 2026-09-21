@@ -675,3 +675,34 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 		t.Error("\"]\" at round 3: cache must stay untouched (no-op)")
 	}
 }
+
+// TestPointDetailAtMarksViewed pins #143: pointing the pane at a binding
+// stamps its .viewed sidecar through the Source, exercised here against the
+// real plannerSource (the ui package has no separate fake Source double;
+// plannerSource's own MarkViewed writes through rt.Store, which is exactly
+// the write pointDetailAt is supposed to trigger).
+func TestPointDetailAtMarksViewed(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m.report = relay.Report{Bindings: []relay.BindingStatus{
+		{Name: "webshop", Round: 2, Display: "ACTIVE"},
+	}}
+
+	if _, ok := st.ViewedAt("webshop"); ok {
+		t.Fatal("ViewedAt before pointDetailAt: got ok true, want false")
+	}
+
+	m, _ = m.pointDetailAt("webshop")
+
+	if _, ok := st.ViewedAt("webshop"); !ok {
+		t.Fatal("pointDetailAt did not stamp .viewed through the Source")
+	}
+	if m.detail.name != "webshop" {
+		t.Errorf("pointDetailAt must still re-target the pane: detail.name = %q", m.detail.name)
+	}
+}
