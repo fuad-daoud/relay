@@ -407,6 +407,32 @@ func (c *Client) Unavailable(ctx context.Context, server, name, token, reason st
 	return nil
 }
 
+// Available lifts the rate-limit gate on subject's provider on the server's
+// own (server-wide) ledger, answering with the provider it resolved and how
+// many entries it removed. There is no binding-scoped counterpart: the ledger
+// is server-wide.
+func (c *Client) Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	reqBody, err := json.Marshal(remote.AvailableRequest{Subject: subject})
+	if err != nil {
+		return remote.AvailableResponse{}, fmt.Errorf("marshal available request: %w", err)
+	}
+	sum := sha256.Sum256(reqBody)
+	resp, err := c.do(ctx, server, "POST", "/v1/available", reqBody, sum[:], "application/json")
+	if err != nil {
+		return remote.AvailableResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var respBody remote.AvailableResponse
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		return remote.AvailableResponse{}, fmt.Errorf("decode available: %w", err)
+	}
+	return respBody, nil
+}
+
 // Done marks a binding as complete on the server.
 func (c *Client) Done(ctx context.Context, server, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)

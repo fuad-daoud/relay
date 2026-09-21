@@ -44,6 +44,8 @@ type fakeRemote struct {
 	ackResp           remote.BindingView
 	ackErr            error
 	unavailableErr    error
+	availableResp     remote.AvailableResponse
+	availableErr      error
 	doneErr           error
 	unbindErr         error
 	resumeResp        remote.BindingView
@@ -107,6 +109,11 @@ func (f *fakeRemote) Ack(ctx context.Context, server, name string, round int) (r
 func (f *fakeRemote) Unavailable(ctx context.Context, server, name, token, reason string) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unavailable:%s:%s:%s", server, name, token))
 	return f.unavailableErr
+}
+
+func (f *fakeRemote) Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error) {
+	f.calls = append(f.calls, fmt.Sprintf("Available:%s:%s", server, subject))
+	return f.availableResp, f.availableErr
 }
 
 func (f *fakeRemote) Done(ctx context.Context, server, name string) error {
@@ -2309,6 +2316,83 @@ func TestForwardUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(target, "open-remote") {
 		t.Fatalf("the one call = %q, want it naming open-remote", target)
+	}
+}
+
+// TestForwardAvailablePostsToEveryServerOnce: a gate can matter most when
+// nothing runs, so ForwardAvailable names every server this client's remote
+// bindings point at -- open round or not, active or DONE -- once each, sorted,
+// with one answer line per server. Filtering to open rounds (as
+// ForwardUnavailable does) must fail this: alpha would still be called, beta
+// would not.
+func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	// Two remote bindings on alpha: one with an open round, one idle.
+	openA := remoteBinding("alpha")
+	openA.Name = "open-alpha"
+	openA.CWD = "/fake/open-alpha"
+	if err := st.Save(openA); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("open-alpha", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		t.Fatal(err)
+	}
+
+	idleA := remoteBinding("alpha")
+	idleA.Name = "idle-alpha"
+	idleA.CWD = "/fake/idle-alpha"
+	if err := st.Save(idleA); err != nil {
+		t.Fatal(err)
+	}
+
+	// One remote binding on beta, whose work is done.
+	doneB := remoteBinding("beta")
+	doneB.Name = "done-beta"
+	doneB.CWD = "/fake/done-beta"
+	doneB.State = store.StateDone
+	if err := st.Save(doneB); err != nil {
+		t.Fatal(err)
+	}
+
+	// One local binding: not a server, so it must never be called.
+	local := remoteBinding("")
+	local.Name = "local"
+	local.CWD = "/fake/local"
+	local.Builder = store.Endpoint{PaneID: "w2:p4", Mode: store.ModePane}
+	if err := st.Save(local); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{availableResp: remote.AvailableResponse{Provider: "anthropic", Removed: 1}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	lines := ForwardAvailable(ctx, rt, "claude/anthropic/haiku")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %v, want one line per server (alpha, beta)", lines)
+	}
+
+	var calls []string
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Available:") {
+			calls = append(calls, c)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("Available calls = %d, want exactly 2 (one per server): %v", len(calls), fr.calls)
+	}
+	if calls[0] != "Available:alpha:claude/anthropic/haiku" {
+		t.Errorf("call 0 = %q, want alpha first", calls[0])
+	}
+	if calls[1] != "Available:beta:claude/anthropic/haiku" {
+		t.Errorf("call 1 = %q, want beta second", calls[1])
+	}
+	if !strings.Contains(lines[0], "alpha") {
+		t.Errorf("line 0 = %q, want it naming alpha", lines[0])
+	}
+	if !strings.Contains(lines[1], "beta") {
+		t.Errorf("line 1 = %q, want it naming beta", lines[1])
 	}
 }
 

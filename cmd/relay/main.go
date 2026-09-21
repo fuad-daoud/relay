@@ -32,6 +32,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
+	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
 )
@@ -74,7 +75,7 @@ Commands:
   candidates   list the configured harness/provider/model candidates
   policy       show, per role, which candidate relay would pick right now and why
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
-  available    clear a recorded rate limit: relay available <provider|token>
+  available    clear a recorded rate limit locally and on every server your bindings name: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
   db        path|migrate|stats for relay's sqlite database
 
@@ -573,10 +574,25 @@ func cmdAvailable(args []string) error {
 
 	if removed == 0 {
 		fmt.Printf("nothing was gating %s\n", provider)
-		return nil
+	} else {
+		fmt.Printf("cleared %s (%d entries)\n", provider, removed)
 	}
 
-	fmt.Printf("cleared %s (%d entries)\n", provider, removed)
+	// The local clear is done either way; every server the bindings name is
+	// asked, and each answer is printed -- these are answers, not warnings.
+	ctx := context.Background()
+	for _, line := range relay.ForwardAvailable(ctx, rt, subject) {
+		fmt.Println(line)
+	}
+
+	// On a box that also runs a serve daemon, the client ledger just cleared
+	// is not the ledger that gates anything: the daemon reads its own.
+	if defRoot, err := store.DefaultRoot(); err == nil {
+		if p, ok, _ := serve.ReadPointer(defRoot); ok && pidAlive(p.PID) {
+			fmt.Printf("note: a relay serve daemon runs here with its own ledger (%s); use relay serve gates / relay serve available\n", filepath.Join(p.Root, "ledger.json"))
+		}
+	}
+
 	return nil
 }
 

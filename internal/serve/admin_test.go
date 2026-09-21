@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -665,4 +666,83 @@ func TestRenderClients(t *testing.T) {
 			t.Errorf("RenderClients(two clients) = %q, want %q", got, want)
 		}
 	})
+}
+
+// TestAdminGatesAvailableUnavailable: the server-side gate verbs read and
+// write the one server-wide ledger. AdminGates on an empty ledger is empty and
+// RenderGates says so; AdminUnavailable records a gate RenderGates names; and
+// AdminAvailable lifts it. The lock store the ledger mutates through must not
+// make an uninitialised root look initialised.
+func TestAdminGatesAvailableUnavailable(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	candPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	candidates, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+
+	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	initialisedBefore, err := Initialised(root)
+	if err != nil {
+		t.Fatalf("Initialised: %v", err)
+	}
+
+	if gates := AdminGates(s); len(gates) != 0 {
+		t.Fatalf("AdminGates = %v, want none on an empty ledger", gates)
+	}
+	if out := RenderGates(AdminGates(s), now); out != "no gates\n" {
+		t.Errorf("RenderGates(empty) = %q, want %q", out, "no gates\n")
+	}
+
+	provider, err := AdminUnavailable(s, "claude/t/m", time.Time{}, "quota")
+	if err != nil {
+		t.Fatalf("AdminUnavailable: %v", err)
+	}
+	if provider != "t" {
+		t.Errorf("AdminUnavailable provider = %q, want t", provider)
+	}
+
+	gates := AdminGates(s)
+	if len(gates) != 1 {
+		t.Fatalf("AdminGates = %v, want one gate", gates)
+	}
+	if gates[0].Kind != ledger.RateLimited {
+		t.Errorf("gate kind = %q, want %q", gates[0].Kind, ledger.RateLimited)
+	}
+	out := RenderGates(gates, now)
+	if !strings.Contains(out, "claude/t/m") {
+		t.Errorf("RenderGates = %q, want it naming claude/t/m", out)
+	}
+	if !strings.Contains(out, "quota") {
+		t.Errorf("RenderGates = %q, want it naming quota", out)
+	}
+
+	provider, removed, err := AdminAvailable(s, "t")
+	if err != nil {
+		t.Fatalf("AdminAvailable: %v", err)
+	}
+	if provider != "t" || removed != 1 {
+		t.Errorf("AdminAvailable = %q, %d, want t, 1", provider, removed)
+	}
+
+	if gates := AdminGates(s); len(gates) != 0 {
+		t.Errorf("AdminGates = %v, want none after AdminAvailable", gates)
+	}
+
+	initialisedAfter, err := Initialised(root)
+	if err != nil {
+		t.Fatalf("Initialised: %v", err)
+	}
+	if initialisedAfter != initialisedBefore {
+		t.Errorf("Initialised(root) = %v after the admin calls, want %v: the lock store must not fake an init", initialisedAfter, initialisedBefore)
+	}
 }

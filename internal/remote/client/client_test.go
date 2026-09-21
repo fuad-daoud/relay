@@ -3,9 +3,11 @@ package client_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -437,5 +439,48 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 	if ackView.AckedRound != 1 {
 		t.Fatalf("ackView.AckedRound = %d, want 1", ackView.AckedRound)
+	}
+}
+
+// TestAvailableRoundTrip: there is no Unavailable client test to copy, so the
+// Available client is covered by a bare httptest round-trip -- the handler
+// records the request and answers with an AvailableResponse, which the client
+// must decode.
+func TestAvailableRoundTrip(t *testing.T) {
+	var gotPath, gotBody, gotContentType string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotContentType = r.Header.Get("Content-Type")
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(remote.AvailableResponse{Provider: "anthropic", Removed: 2})
+	}))
+	defer ts.Close()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := client.Servers{
+		"zen": client.ServerEntry{URL: ts.URL, Insecure: true},
+	}
+	cl := client.New(servers, kp, time.Now)
+
+	resp, err := cl.Available(context.Background(), "zen", "claude/anthropic/haiku")
+	if err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if resp.Provider != "anthropic" || resp.Removed != 2 {
+		t.Fatalf("Available = %+v, want provider anthropic, removed 2", resp)
+	}
+	if gotPath != "/v1/available" {
+		t.Errorf("path = %q, want /v1/available", gotPath)
+	}
+	if !strings.Contains(gotBody, `"subject":"claude/anthropic/haiku"`) {
+		t.Errorf("body = %q, want it naming the subject", gotBody)
+	}
+	if gotContentType != "application/json" {
+		t.Errorf("content-type = %q, want application/json", gotContentType)
 	}
 }

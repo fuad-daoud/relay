@@ -123,6 +123,9 @@ func cmdServe(args []string) error {
        relay serve revoke <id> [--state <dir>]
        relay serve fingerprint [--state <dir>]
        relay serve status [--state <dir>]
+       relay serve gates [--state <dir>]
+       relay serve available <provider|token> [--state <dir>]
+       relay serve unavailable <token> [--for D] [--reason S] [--state <dir>]
        relay serve ui [--state <dir>] [--interval 2s]
        relay serve gc --abandoned <duration> [--dry-run] [--state <dir>]
        relay serve unbind --owner <label|id> <name> [--state <dir>] [--force]`
@@ -145,6 +148,12 @@ func cmdServe(args []string) error {
 		return cmdServeFingerprint(args[1:])
 	case "status":
 		return cmdServeStatus(args[1:])
+	case "gates":
+		return cmdServeGates(args[1:])
+	case "available":
+		return cmdServeAvailable(args[1:])
+	case "unavailable":
+		return cmdServeUnavailable(args[1:])
 	case "ui":
 		return cmdServeUI(args[1:])
 	case "gc":
@@ -183,6 +192,51 @@ func serveAdminConfig(root string) serve.Config {
 	}
 }
 
+// loadCandidatesAndPolicy reads the machine's candidates.json and
+// policy.json, the pair every candidate-aware command needs. It is the one
+// copy of that loading: cmdServeRun starts a daemon with it, and the gate
+// verbs require it.
+func loadCandidatesAndPolicy(configDir string) (*candidate.Set, policy.Policy, error) {
+	candidates, err := candidate.Load(filepath.Join(configDir, "relay", "candidates.json"))
+	if err != nil {
+		return nil, policy.Policy{}, err
+	}
+	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
+	if err != nil {
+		return nil, policy.Policy{}, err
+	}
+	return candidates, pol, nil
+}
+
+// serveAdminConfigWithCandidates is serveAdminConfig plus the configured
+// candidates and policy, which the gate verbs need: `relay serve gates`
+// projects the ledger onto the candidate set, and the two edit verbs refuse a
+// token no candidate names (#251).
+//
+// Unlike cmdServeRun, a missing candidates.json is an error here: with no
+// candidate set to project onto, a ledger full of gates would render as
+// "no gates", which reads as "nothing is gated" -- the same false negative
+// this round exists to remove.
+func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return serve.Config{}, err
+	}
+	candPath := filepath.Join(configDir, "relay", "candidates.json")
+	if _, err := os.Stat(candPath); err != nil {
+		return serve.Config{}, fmt.Errorf("no candidates at %s", candPath)
+	}
+	candidates, pol, err := loadCandidatesAndPolicy(configDir)
+	if err != nil {
+		return serve.Config{}, err
+	}
+
+	cfg := serveAdminConfig(root)
+	cfg.Candidates = candidates
+	cfg.Policy = pol
+	return cfg, nil
+}
+
 func cmdServeRun(args []string) error {
 	fs, sf := serveFlagSet()
 	fs.SetOutput(os.Stderr)
@@ -199,11 +253,7 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	candidates, err := candidate.Load(filepath.Join(configDir, "relay", "candidates.json"))
-	if err != nil {
-		return err
-	}
-	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
+	candidates, pol, err := loadCandidatesAndPolicy(configDir)
 	if err != nil {
 		return err
 	}
@@ -464,6 +514,136 @@ func cmdServeStatus(args []string) error {
 	}
 
 	fmt.Print(serve.RenderAdminStatus(owners))
+	return nil
+}
+
+// cmdServeGates lists the gates on the server-wide ledger: `relay serve
+// gates` is the answer to `relay available` printing "nothing was gating"
+// on a box whose gates live on the serve root's ledger, not the caller's.
+func cmdServeGates(args []string) error {
+	fs := flag.NewFlagSet("relay serve gates", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := serveAdminConfigWithCandidates(root)
+	if err != nil {
+		return fmt.Errorf("relay serve gates: %w", err)
+	}
+	srv, err := serve.New(cfg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(serve.RenderGates(serve.AdminGates(srv), time.Now()))
+	return nil
+}
+
+// cmdServeAvailable lifts the server-side gate on a provider, in place, with
+// no forwarding: this is the verb for the box that runs the daemon.
+func cmdServeAvailable(args []string) error {
+	fs := flag.NewFlagSet("relay serve available", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: relay serve available <provider|token> [--state <dir>]")
+		return exitCodeErr{code: 2}
+	}
+	subject := fs.Arg(0)
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := serveAdminConfigWithCandidates(root)
+	if err != nil {
+		return fmt.Errorf("relay serve available: %w", err)
+	}
+	srv, err := serve.New(cfg)
+	if err != nil {
+		return err
+	}
+
+	provider, removed, err := serve.AdminAvailable(srv, subject)
+	if err != nil {
+		return err
+	}
+
+	if removed == 0 {
+		fmt.Printf("nothing was gating %s\n", provider)
+		return nil
+	}
+	fmt.Printf("cleared %s (%d entries)\n", provider, removed)
+	return nil
+}
+
+// cmdServeUnavailable records a server-side gate: the server ledger's
+// counterpart to cmdUnavailable, with no daemon-switch line and no forwarding
+// (the gate is already on the ledger the daemon reads).
+func cmdServeUnavailable(args []string) error {
+	fs := flag.NewFlagSet("relay serve unavailable", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relay serve available`")
+	reason := fs.String("reason", "", "why, for the record")
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: relay serve unavailable <token> [--for D] [--reason S] [--state <dir>]")
+		return exitCodeErr{code: 2}
+	}
+	token := fs.Arg(0)
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := serveAdminConfigWithCandidates(root)
+	if err != nil {
+		return fmt.Errorf("relay serve unavailable: %w", err)
+	}
+	srv, err := serve.New(cfg)
+	if err != nil {
+		return err
+	}
+
+	until, err := parseFor(*forFlag, time.Now())
+	if err != nil {
+		return err
+	}
+
+	provider, err := serve.AdminUnavailable(srv, token, until, *reason)
+	if err != nil {
+		return err
+	}
+
+	count := 0
+	for _, ref := range cfg.Candidates.Refs() {
+		parsed, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		if parsed.Provider == provider {
+			count++
+		}
+	}
+
+	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relay.GateUntilText(until))
 	return nil
 }
 

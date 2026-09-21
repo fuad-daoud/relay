@@ -1072,6 +1072,112 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	}
 }
 
+// TestAvailableClearsServerWideGate: POST /v1/available mirrors
+// /v1/unavailable. It clears the server-wide ledger's rate-limit gate for the
+// subject's provider, answers with that provider and how many entries went,
+// takes a bare provider (so a second call is a no-op, not an error), refuses
+// an empty subject, and reads an unknown token as the client mistake it is.
+func TestAvailableClearsServerWideGate(t *testing.T) {
+	root := t.TempDir()
+	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	candPath := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(Config{
+		Root:       root,
+		Candidates: cSet,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler()
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Gate the provider through the server-wide endpoint.
+	unavailBody, _ := json.Marshal(remote.UnavailableRequest{
+		Token:  "claude/anthropic/haiku",
+		Reason: "rate limited test",
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/unavailable", unavailBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Lift it by bare provider.
+	availBody, _ := json.Marshal(remote.AvailableRequest{Subject: "anthropic"})
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", availBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("available status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var resp remote.AvailableResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode available response: %v", err)
+	}
+	if resp.Removed != 1 {
+		t.Errorf("removed = %d, want 1", resp.Removed)
+	}
+	if resp.Provider != "anthropic" {
+		t.Errorf("provider = %q, want anthropic", resp.Provider)
+	}
+
+	// The server-wide ledger has no rate_limited entry left.
+	l, err := ledger.Load(filepath.Join(root, "ledger.json"))
+	if err != nil {
+		t.Fatalf("ledger.Load: %v", err)
+	}
+	for _, e := range l.Entries {
+		if e.Kind == ledger.RateLimited {
+			t.Errorf("ledger still holds %+v, want the rate-limit gate gone", e)
+		}
+	}
+
+	// A second call lifts nothing, and is not an error.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", availBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second available status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	resp = remote.AvailableResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode second available response: %v", err)
+	}
+	if resp.Removed != 0 {
+		t.Errorf("second removed = %d, want 0", resp.Removed)
+	}
+
+	// An empty subject is a bad request.
+	emptyBody, _ := json.Marshal(remote.AvailableRequest{Subject: ""})
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", emptyBody))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("empty subject status = %d, want 400", rec.Code)
+	}
+
+	// An unknown token is a client mistake, not a server failure.
+	unknownBody, _ := json.Marshal(remote.AvailableRequest{Subject: "claude/anthropic/nope"})
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", unknownBody))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("unknown token status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

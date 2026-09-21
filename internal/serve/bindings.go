@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -373,4 +374,51 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleAvailable lifts the server-wide ledger's rate-limit gate on a
+// subject's provider. It is handleUnavailable minus the binding-scoped
+// branch: the ledger is server-wide, so there is nothing binding-scoped to
+// check and no /v1/bindings/{name}/available route. A bare provider that
+// gates nothing is a 200 with Removed 0, matching the local verb.
+func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	caller := callerOf(r)
+	rt, err := s.runtime(caller)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+
+	var req remote.AvailableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+		return
+	}
+	if req.Subject == "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "subject is required")
+		return
+	}
+
+	// relay.Available resolves a token to its provider but -- unlike
+	// relay.Unavailable -- does not check it against the configured
+	// candidates, so a typo would read as "nothing was gating" instead of
+	// being refused. The check lives here: an unknown token is the client's
+	// mistake (422), while an unparseable bare provider is allowed through.
+	if ref, perr := candidate.ParseRef(req.Subject); perr == nil && rt.Candidates != nil {
+		if _, cerr := rt.Candidates.Lookup(ref); cerr != nil {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, cerr.Error())
+			return
+		}
+	}
+
+	provider, removed, err := relay.Available(rt, req.Subject)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, remote.AvailableResponse{Provider: provider, Removed: removed})
 }

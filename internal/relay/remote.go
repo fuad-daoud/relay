@@ -987,6 +987,52 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 	return lines
 }
 
+// ForwardAvailable tells every server this client's bindings name that a
+// rate-limit gate can be lifted, so the server-wide ledger stops gating a
+// provider the local ledger just cleared. Every remote binding counts, in any
+// state and whether or not its round is open: a gate matters most when nothing
+// is running. One call and one answer line per distinct server, sorted, and it
+// never fails the caller -- a server relay could not reach is named in the
+// returned lines instead, and `relay available`'s local behaviour (the ledger
+// clear) proceeds either way.
+func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string {
+	if rt.Remote == nil {
+		return nil
+	}
+
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return []string{fmt.Sprintf("list bindings: %v", err)}
+	}
+
+	var servers []string
+	seen := make(map[string]bool)
+	for _, b := range bindings {
+		if !b.Builder.Remote() || seen[b.Builder.Server] {
+			continue
+		}
+		seen[b.Builder.Server] = true
+		servers = append(servers, b.Builder.Server)
+	}
+	sort.Strings(servers)
+
+	var lines []string
+	for _, server := range servers {
+		resp, err := rt.Remote.Available(ctx, server, subject)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("%s: %v", server, err))
+			continue
+		}
+		if resp.Removed == 0 {
+			lines = append(lines, fmt.Sprintf("%s: nothing was gating %s", server, resp.Provider))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s: cleared %s (%d entries)", server, resp.Provider, resp.Removed))
+	}
+
+	return lines
+}
+
 // ServerInUse names every binding that names server -- the pure rule behind
 // `relay client rm-server`'s refusal (§4.7). A pure function over the
 // binding list rather than a store read, so the CLI (cmd/relay) can be

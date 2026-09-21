@@ -90,6 +90,19 @@ type UnavailableRequest struct {
 	Reason string `json:"reason"`
 }
 
+// AvailableRequest lifts recorded unavailability: subject is a provider name
+// or a candidate token, as relay.Available takes.
+type AvailableRequest struct {
+	Subject string `json:"subject"`
+}
+
+// AvailableResponse reports what Available lifted: the provider it resolved
+// subject to, and how many rate-limit entries it removed.
+type AvailableResponse struct {
+	Provider string `json:"provider"`
+	Removed  int    `json:"removed"`
+}
+
 type CandidateView struct {
 	Token string `json:"token"` // canonical harness/provider/model token
 	Kind  string `json:"kind"`  // harness kind: agy | claude | opencode
