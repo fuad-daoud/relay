@@ -947,3 +947,309 @@ func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
 		t.Errorf("consults = %d, want 0 (no reservation written)", len(b.Consults))
 	}
 }
+
+// ── ask --round: resuming a closed round's builder session ─────────────
+
+// seedRoundReport writes round's report entry -- the one that carries the
+// builder session -- and moves the binding on to the next round, so the round
+// is closed and `ask --round` has something to resume. A nil session seeds the
+// report entry a round built before relay recorded sessions leaves behind.
+func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.BuilderSession) {
+	t.Helper()
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS:             rt.Now(),
+			Round:          round,
+			Direction:      store.DirToPlanner,
+			Kind:           store.KindReport,
+			Confirmed:      true,
+			BuilderSession: session,
+		}); err != nil {
+			return err
+		}
+		b.Round = round + 1
+		return tx.Save(b)
+	})
+	if err != nil {
+		t.Fatalf("seed closed round %d: %v", round, err)
+	}
+}
+
+// TestAskRoundResumesTheSession is the whole feature: a round with a recorded
+// builder session is resumed in the harness's own resume form, read-only, with
+// the question staged and the ask logged against the current round.
+//
+// Mutation check: launching the plain headless print form instead of Resume
+// leaves out --resume and this fails on the argv.
+func TestAskRoundResumesTheSession(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+	res, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "why X?", Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Ask --round: %v", err)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
+	}
+	argv := fr.specs[0].Argv
+	if argv[0] != "claude" {
+		t.Errorf("argv[0] = %q, want the harness binary claude", argv[0])
+	}
+	if !containsAdjacentPair(argv, "--resume", "sess-1") {
+		t.Errorf("argv = %v, want --resume sess-1", argv)
+	}
+	if !containsAdjacentPair(argv, "--permission-mode", "plan") {
+		t.Errorf("argv = %v, want the read tier's --permission-mode plan", argv)
+	}
+
+	var prompt string
+	for _, a := range argv {
+		if strings.Contains(a, "You built round 1") {
+			prompt = a
+		}
+	}
+	if prompt == "" {
+		t.Fatalf("argv carries no round prompt: %v", argv)
+	}
+	if !strings.Contains(prompt, res.Consult.AskPath) {
+		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
+	}
+
+	body, err := os.ReadFile(res.Consult.AskPath)
+	if err != nil {
+		t.Fatalf("read ask file: %v", err)
+	}
+	if !strings.Contains(string(body), "why X?") {
+		t.Errorf("ask file = %q, want the inline question", body)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Consults) != 1 {
+		t.Fatalf("consults = %+v, want 1", got.Consults)
+	}
+	c := got.Consults[0]
+	if c.Role != "round" {
+		t.Errorf("role = %q, want the round label", c.Role)
+	}
+	if c.Endpoint.Kind != "claude" {
+		t.Errorf("endpoint kind = %q, want the session's kind claude", c.Endpoint.Kind)
+	}
+	if !c.Endpoint.Headless() {
+		t.Errorf("endpoint mode = %q, want headless", c.Endpoint.Mode)
+	}
+	if c.Round != 2 {
+		t.Errorf("consult round = %d, want the asking round 2", c.Round)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var note string
+	for _, e := range entries {
+		if e.Kind == store.KindPick && e.Round == c.Round {
+			t.Errorf("round consult logged a candidate pick: %+v", e)
+		}
+		if e.Kind == store.KindAsk && e.Direction == store.DirToConsult {
+			note = e.Note
+		}
+	}
+	if !strings.Contains(note, "round 1 session claude:sess-1") {
+		t.Errorf("ask note = %q, want it to name the resumed session", note)
+	}
+}
+
+// TestAskRoundRefusesOpenRound: the open round's builder is live, and resuming
+// it would put two writers in one session. The refusal comes before anything
+// is reserved or a file staged.
+func TestAskRoundRefusesOpenRound(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+	_, err := Ask(context.Background(), rt, AskOptions{Round: 2, Question: "x", Name: "webshop"})
+	if err == nil || !strings.Contains(err.Error(), "open round") {
+		t.Fatalf("err = %v, want an open-round refusal", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0: the refusal is before any process", len(fr.specs))
+	}
+	if matches, _ := filepath.Glob(filepath.Join(rt.Store.Dir("webshop"), "*-ask.md")); len(matches) != 0 {
+		t.Errorf("a refused round ask must stage no question file, found %v", matches)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none reserved", b.Consults)
+	}
+}
+
+// TestAskRoundRefusesNoSession: a round closed before relay recorded sessions
+// has nothing to resume, and guessing a session would resume the wrong one.
+func TestAskRoundRefusesNoSession(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, nil)
+
+	_, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "x", Name: "webshop"})
+	if err == nil || !strings.Contains(err.Error(), "recorded no builder session") {
+		t.Fatalf("err = %v, want a no-session refusal", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0: the refusal is before any process", len(fr.specs))
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none reserved", b.Consults)
+	}
+}
+
+// TestAskRoundRefusesCodex: codex resume is not verified, so the round is
+// refused with the kind named rather than run with a guessed flag.
+func TestAskRoundRefusesCodex(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "codex", ID: "thread-1"})
+
+	_, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "x", Name: "webshop"})
+	if !errors.Is(err, harness.ErrResumeUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrResumeUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "codex") {
+		t.Errorf("err = %v, want it to name codex", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0: the refusal is before any process", len(fr.specs))
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none reserved", b.Consults)
+	}
+}
+
+// TestAskRoundOpencodeForksOnHarnessTier: opencode has no read-only flag, so
+// the round runs at harness tier -- no permission flag, no --auto -- and
+// --fork keeps the original session untouched.
+func TestAskRoundOpencodeForksOnHarnessTier(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "opencode", ID: "ses-1"})
+
+	if _, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "x", Name: "webshop"}); err != nil {
+		t.Fatalf("Ask --round: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
+	}
+	argv := fr.specs[0].Argv
+	if !containsAdjacentPair(argv, "--session", "ses-1") {
+		t.Errorf("argv = %v, want --session ses-1", argv)
+	}
+	if !containsAdjacentPair(argv, "--fork", "--format") {
+		t.Errorf("argv = %v, want --fork", argv)
+	}
+	for _, bad := range []string{"--auto", "--permission-mode", "--mode"} {
+		for _, a := range argv {
+			if a == bad {
+				t.Errorf("argv = %v, want no %s at harness tier", argv, bad)
+			}
+		}
+	}
+}
+
+// TestAskRoundNeedsExactlyOneQuestion: the round path takes either a file or
+// an inline question, never both and never neither.
+func TestAskRoundNeedsExactlyOneQuestion(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+	for _, opts := range []AskOptions{
+		{Round: 1, Name: "webshop"},
+		{Round: 1, File: writeQuestion(t, "x"), Question: "x", Name: "webshop"},
+	} {
+		_, err := Ask(context.Background(), rt, opts)
+		if err == nil || !strings.Contains(err.Error(), "--file or -q") {
+			t.Errorf("Ask(%+v) err = %v, want a --file or -q refusal", opts, err)
+		}
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0", len(fr.specs))
+	}
+}
+
+// TestAskRoundFinalMessageBecomesFindings reuses the headless consult's
+// delivery: the resumed process's last message is the findings, written to
+// FindingsPath and queued to the planner. No reconcile code is round-aware;
+// the headless branch carries it.
+func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+	res, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "why X?", Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Ask --round: %v", err)
+	}
+	c := res.Consult
+
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
+		"relay-exit:0\n"
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 0)
+
+	b := tickConsults(t, rt, f)
+
+	if b.Consults[0].State != store.ConsultDone {
+		t.Fatalf("state = %q, want done", b.Consults[0].State)
+	}
+	body, err := os.ReadFile(c.FindingsPath)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(body), "FINDINGS BODY") {
+		t.Errorf("findings = %q, want the final message", body)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("findings were not queued: found=%v err=%v", found, err)
+	}
+	if pending.Kind != store.KindFindings || pending.Path != c.FindingsPath {
+		t.Errorf("entry = %s path=%q, want findings at %q", pending.Kind, pending.Path, c.FindingsPath)
+	}
+}
