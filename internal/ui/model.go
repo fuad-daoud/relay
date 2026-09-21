@@ -768,13 +768,13 @@ func (m Model) footerView() string {
 	case m.empty():
 		keys = []string{key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit && m.screen == screenList:
-		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
+		keys = []string{key("↑↓", "move"), key("⏎", "focus pane"), key("tab", "next pane"), key("[ ]", "round"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.layout() == layoutSplit:
-		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
+		keys = []string{key("↑↓", "scroll"), key("esc", "back to rail"), key("tab", "next pane"), key("[ ]", "round"), key("1-5", "pane"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	case m.screen == screenList:
 		keys = []string{key("↑↓", "move"), key("⏎", "open"), key("s", "sort: "+order), compactKey, key("q", "quit")}
 	default:
-		keys = []string{key("esc", "back"), key("tab", "next pane"), key("1-5", "pane"), key("q", "quit")}
+		keys = []string{key("esc", "back"), key("tab", "next pane"), key("[ ]", "round"), key("1-5", "pane"), key("q", "quit")}
 	}
 	left := strings.Join(keys, "   ")
 

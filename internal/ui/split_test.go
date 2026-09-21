@@ -299,6 +299,9 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if !strings.Contains(f, "webshop NEEDS YOU") {
 		t.Errorf("another binding at NEEDS YOU must be a footer notice: %q", f)
 	}
+	if !strings.Contains(f, "[ ] round") {
+		t.Errorf("footer must show the [ ] round hint next to the tab hint: %q", f)
+	}
 	if !strings.HasSuffix(strings.TrimRight(f, " "), "refreshed 2s ago") {
 		t.Errorf("footer must end with the refresh age: %q", f)
 	}
