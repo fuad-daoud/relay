@@ -195,7 +195,8 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 			}
 
 			logEntries, _ := rt.Store.ReadLog(b.Name)
-			if relay.RoundStateOf(b, logEntries) == remote.RoundRunning {
+			switch relay.RoundStateOf(b, logEntries) {
+			case remote.RoundRunning, remote.RoundQueued:
 				continue
 			}
 

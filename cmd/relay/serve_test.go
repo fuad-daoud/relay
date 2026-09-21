@@ -86,6 +86,26 @@ func TestServeFlagDefaults(t *testing.T) {
 	if sf.maxBundleBytes != 512<<20 {
 		t.Errorf("default maxBundleBytes = %d, want %d", sf.maxBundleBytes, 512<<20)
 	}
+	if sf.maxBuilders != 0 {
+		t.Errorf("default maxBuilders = %d, want 0 (policy/default)", sf.maxBuilders)
+	}
+}
+
+// TestServeFlagMaxBuilders pins #285's flag: --max-builders parses into
+// serveFlags.maxBuilders, which cmdServeRun assigns straight to
+// serve.Config.MaxBuilders. This only exercises flag parsing -- no server
+// starts, no herdr, no systemd (this package's TestMain isolates HOME,
+// XDG_CONFIG_HOME and XDG_STATE_HOME already).
+func TestServeFlagMaxBuilders(t *testing.T) {
+	fs, sf := serveFlagSet()
+
+	if err := fs.Parse([]string{"--max-builders", "3"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if sf.maxBuilders != 3 {
+		t.Errorf("maxBuilders = %d, want 3", sf.maxBuilders)
+	}
 }
 
 // TestServeTierRuntimeHasClock pins the #226 regression: cmdServeRun's

@@ -489,8 +489,11 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	if len(who.Features) != 1 || who.Features[0] != remote.FeatureTier {
-		t.Fatalf("Features = %v, want [%s]", who.Features, remote.FeatureTier)
+	if len(who.Features) != 2 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue {
+		t.Fatalf("Features = %v, want [%s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue)
+	}
+	if who.Builders == nil || who.Builders.Cap <= 0 {
+		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
 	}
 	if who.BuilderTier != "harness" {
 		t.Fatalf("BuilderTier = %q, want harness", who.BuilderTier)
@@ -1195,19 +1198,26 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+// scriptRunner is a fake relay.Runner. Liveness is tracked per pid (#285):
+// two bindings' processes must be tellable apart, which a single shared
+// flag cannot do. setAlive(a) flips every pid this runner has ever started
+// to a -- the shape every pre-#285 test wants, since each of them tracks
+// exactly one binding's process, so "every pid" and "the one pid" agree.
+// finish(pid) flips exactly one pid dead, for a test with more than one
+// binding in flight at once.
 type scriptRunner struct {
 	mu           sync.Mutex
 	specs        []relay.ProcSpec
 	aliveHandles []relay.ProcHandle
-	alive        bool
-	pidSeq       int
+	alive        map[int]bool
+	nextPID      int
 	// startErr, when set, is returned by Start instead of starting anything
 	// -- a builder spawn failure (#250 items 1 and 3).
 	startErr error
 }
 
 func newScriptRunner() *scriptRunner {
-	return &scriptRunner{alive: true}
+	return &scriptRunner{alive: map[int]bool{}, nextPID: 4242}
 }
 
 func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
@@ -1216,42 +1226,65 @@ func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.Pr
 	if r.startErr != nil {
 		return relay.ProcHandle{}, r.startErr
 	}
+	pid := r.nextPID
+	r.nextPID++
 	r.specs = append(r.specs, spec)
-	r.pidSeq++
-	r.alive = true
+	r.alive[pid] = true
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return relay.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
+	return relay.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
 }
 
 func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aliveHandles = append(r.aliveHandles, h)
-	return r.alive, nil
+	return r.alive[h.PID], nil
 }
 
 func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (code int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.alive {
+	alive, tracked := r.alive[h.PID]
+	if !tracked {
+		// A pid this runner never started (a fresh runner standing in for a
+		// daemon restart, #285) has no exit trailer to report: "unknown",
+		// the same as a real relay-exit: trailer that was never written
+		// because the supervisor died with the process. This is what tells
+		// "confirmed dead, code 0" (tracked, not alive) apart from "lost,
+		// no idea" (never tracked) -- headless.go's restart-requeue check
+		// keys on exactly that difference.
 		return 0, false
 	}
-	return 0, true
+	return 0, !alive
 }
 
 func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.alive = false
+	r.alive[h.PID] = false
 	return nil
 }
 
+// setAlive flips every pid this runner has started to a. Kept for every
+// test that predates per-pid liveness and tracks exactly one binding's
+// process.
 func (r *scriptRunner) setAlive(a bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.alive = a
+	for pid := range r.alive {
+		r.alive[pid] = a
+	}
+}
+
+// finish marks pid exited without disturbing any other pid this runner is
+// tracking -- what a multi-binding test (#285's admit tests) needs that
+// setAlive cannot give it.
+func (r *scriptRunner) finish(pid int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alive[pid] = false
 }
 
 func doSigned(t *testing.T, ts *httptest.Server, kp remote.Keypair, method, path string, body []byte, contentType string) (*http.Response, []byte) {
@@ -1796,16 +1829,22 @@ func TestRoundResendSamePlanIs200(t *testing.T) {
 	}
 }
 
-// TestRoundResendThatCannotStartIs409 pins #250 items 1 and 3: when the
-// server's relay.Send fails at startRound (a builder spawn failure) and the
-// binding ends up needs_you, the server must answer 409 round_halted with
-// the halt text instead of 201 -- a 201 tells the client "sent round N" when
-// nothing ran.
+// TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync pins #285's async
+// admit contract, which supersedes #250 items 1 and 3's synchronous
+// guarantee (this test used to be TestRoundResendThatCannotStartIs409 and
+// asserted the opposite): Send now only stages a round (Defer); the spawn
+// happens in admit, after the round is already accepted, so a spawn
+// failure no longer fails the send itself. POST /rounds returns 201 and
+// the binding halts to needs_you -- visible on this very response because
+// a single binding under the cap admits synchronously within the same
+// request, and durably in the store either way. The round's plan log entry
+// stays: the round really was staged, only the spawn (a later, separate
+// step) failed.
 //
-// Mutation check: restore the unconditional 201 branch (writeJSON(w,
-// http.StatusCreated, relay.ServedView(b, entries)) instead of the 409
-// writeErr) and this test must fail.
-func TestRoundResendThatCannotStartIs409(t *testing.T) {
+// Mutation check: make admit's per-round spawn failure propagate out of
+// admit() as handleStartRound's send error, and this test must fail on
+// status != 201.
+func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
@@ -1839,19 +1878,19 @@ func TestRoundResendThatCannotStartIs409(t *testing.T) {
 
 	formBytes, ct := makeRoundForm(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes)
 	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("start round status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
 	}
 
-	var errBody remote.ErrorBody
-	if err := json.Unmarshal(body, &errBody); err != nil {
-		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
+	var view remote.BindingView
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatalf("unmarshal binding view: %v; body: %s", err, string(body))
 	}
-	if errBody.Code != remote.CodeRoundHalted {
-		t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeRoundHalted)
+	if view.State != string(store.StateNeedsYou) {
+		t.Errorf("response state = %q, want needs_you", view.State)
 	}
-	if !strings.Contains(errBody.Message, "spawn failed") {
-		t.Errorf("error message = %q, want it to contain %q", errBody.Message, "spawn failed")
+	if view.Halt == "" || !strings.Contains(view.Halt, "spawn failed") {
+		t.Errorf("response Halt = %q, want it to contain %q", view.Halt, "spawn failed")
 	}
 
 	rt := env.runtime(t)
@@ -1870,10 +1909,14 @@ func TestRoundResendThatCannotStartIs409(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
 	}
+	var sawPlan bool
 	for _, e := range entries {
 		if e.Round == 1 && e.Kind == store.KindPlan {
-			t.Errorf("found a round 1 plan log entry, want none: %+v", e)
+			sawPlan = true
 		}
+	}
+	if !sawPlan {
+		t.Error("want a round 1 plan log entry: the round was staged, only the spawn failed")
 	}
 }
 

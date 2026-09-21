@@ -909,6 +909,13 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			return err
 		}
 
+		// A served binding still queued (#285) has no process to stop and no
+		// completed round to hand back; refuse the same way the wire does, so
+		// the server-local `relay serve` admin verbs agree with it.
+		if b.Owner != "" && !b.QueuedAt.IsZero() {
+			return fmt.Errorf("round %d is queued; unbind to drop it", b.Round)
+		}
+
 		// A remote binding's server is told first (§4.6): the server is the
 		// one place that knows whether the round is still open, and it must
 		// agree before this binding stops relaying locally.

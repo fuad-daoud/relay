@@ -180,6 +180,44 @@ func TestRoundStateOf(t *testing.T) {
 	}
 }
 
+// TestRoundStateOfQueued pins #285: an open plan entry with a non-zero
+// QueuedAt is queued, not running; zero QueuedAt is running as before; and
+// needs_you still wins over queued, exactly as it wins over running.
+//
+// Mutation check: drop the `!b.QueuedAt.IsZero()` arm from RoundStateOf and
+// this fails on the first case.
+func TestRoundStateOfQueued(t *testing.T) {
+	entries := []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+	}
+
+	queued := store.Binding{
+		State:    store.StateActive,
+		Round:    1,
+		QueuedAt: time.Unix(1_700_000_000, 0),
+	}
+	if got := RoundStateOf(queued, entries); got != remote.RoundQueued {
+		t.Fatalf("open plan + QueuedAt set: got %v, want %v", got, remote.RoundQueued)
+	}
+
+	running := store.Binding{
+		State: store.StateActive,
+		Round: 1,
+	}
+	if got := RoundStateOf(running, entries); got != remote.RoundRunning {
+		t.Fatalf("open plan + zero QueuedAt: got %v, want %v", got, remote.RoundRunning)
+	}
+
+	needsYou := store.Binding{
+		State:    store.StateNeedsYou,
+		Round:    1,
+		QueuedAt: time.Unix(1_700_000_000, 0),
+	}
+	if got := RoundStateOf(needsYou, entries); got != remote.RoundNeedsYou {
+		t.Fatalf("needs_you + QueuedAt set: got %v, want %v (needs_you wins)", got, remote.RoundNeedsYou)
+	}
+}
+
 func TestServedViewReportOutcome(t *testing.T) {
 	b := store.Binding{
 		Name:             "api",

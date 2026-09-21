@@ -775,6 +775,41 @@ func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Bi
 	return rt, b
 }
 
+// TestReconcileHeadlessSkipsQueued pins #285: a queued round (Send(Defer)'s
+// QueuedAt, PID still 0) has no process and no clocks, so Reconcile leaves
+// it untouched -- no spawn, no halt -- until relay.Admit starts it.
+//
+// Mutation check: drop the `!b.QueuedAt.IsZero()` early return in
+// reconcileHeadless and this fails on fr.specs no longer being 0 (the PID==0
+// "spawn failed earlier" branch would otherwise treat it as NEEDS YOU-quiet,
+// but a policy/candidate change could make it try to spawn).
+func TestReconcileHeadlessSkipsQueued(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, f, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !store.SameBinding(b, got) {
+		t.Errorf("queued binding changed: before=%+v after=%+v", b, got)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0 (no spawn while queued)", len(fr.specs))
+	}
+	if got.Halt != "" {
+		t.Errorf("Halt = %q, want empty", got.Halt)
+	}
+}
+
 // TestVerifyRoundStartsOnHeadlessClose pins #144's headless close path: the
 // same reviewer a pane round's close starts must start when a headless round
 // closes on its marker. The builder's own process is the first entry in
@@ -1470,6 +1505,62 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	}
 	if len(fr.specs) != 2 {
 		t.Errorf("specs after second tick = %d, want still 2", len(fr.specs))
+	}
+}
+
+// TestLostBuilderRequeuesOnServer pins #285: on a server (Owner set), a
+// builder lost to a daemon restart is re-queued at the head of the queue
+// instead of relaunched -- a box reboot must not relaunch every builder past
+// the cap. TestReconcileHeadlessLostToDaemonRestartRelaunches above is the
+// mirror for Owner == "" (the local daemon): it must keep relaunching
+// exactly as it does today.
+//
+// Mutation check: drop the `b.Owner != ""` branch in headless.go's lost
+// handling and this fails on fr.specs staying at 1.
+func TestLostBuilderRequeuesOnServer(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	b.Owner = "owner1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	wantQueuedAt := b.RoundStartedAt
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
+	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1 (no relaunch)", len(fr.specs))
+	}
+	if !got.QueuedAt.Equal(wantQueuedAt) {
+		t.Errorf("QueuedAt = %v, want the old RoundStartedAt %v", got.QueuedAt, wantQueuedAt)
+	}
+	if !got.RoundStartedAt.IsZero() {
+		t.Errorf("RoundStartedAt = %v, want zero", got.RoundStartedAt)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("PID = %d, want 0", got.Builder.PID)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var queueEntries []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindQueue {
+			queueEntries = append(queueEntries, e)
+		}
+	}
+	if len(queueEntries) != 1 || queueEntries[0].Note != "re-queued (builder lost to a restart)" {
+		t.Errorf("queue entries = %+v, want one with note %q", queueEntries, "re-queued (builder lost to a restart)")
 	}
 }
 

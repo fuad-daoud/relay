@@ -15,6 +15,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -221,7 +222,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr})
+	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr, Defer: true})
 	if sendErr != nil {
 		if errors.Is(sendErr, relay.ErrRunnerUnavailable) {
 			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
@@ -250,8 +251,44 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 		b = reloaded
 	}
+
+	// The accept-time census, logged before admit: Send's deferred branch
+	// does not know the census, so handleStartRound writes the audit entry
+	// itself, still under s.mu (#285). If admit below starts the round at
+	// once, the log shows "queued (0/3 busy)" followed by "started after 0s
+	// queued" -- intended, the log is the audit trail.
+	acceptCensus, censusErr := s.census()
+	if censusErr != nil {
+		slog.Warn("census failed at round accept", "binding", name, "err", censusErr)
+	}
+	if err := rt.Store.AppendLog(name, store.LogEntry{
+		TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+		Note: fmt.Sprintf("queued (%d/%d builders busy)", acceptCensus.Running, s.cap()),
+	}); err != nil {
+		slog.Warn("append queue entry failed", "binding", name, "err", err)
+	}
+
+	if s.cfg.Hooks != nil {
+		s.cfg.Hooks.Dispatch(r.Context(), hooks.Event{
+			Type:      hooks.EventRoundQueued,
+			BindingID: name,
+			State:     string(b.State),
+			Round:     b.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+
+	if err := s.admit(r.Context()); err != nil {
+		slog.Warn("admit failed", "binding", name, "err", err)
+	}
+
+	if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
+		b = reloaded
+	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusCreated, relay.ServedView(b, entries))
+	view := relay.ServedView(b, entries)
+	view.Queue = s.queuePositionView(b, view, caller)
+	writeJSON(w, http.StatusCreated, view)
 }
 
 func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {

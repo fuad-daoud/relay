@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,11 @@ import (
 
 // ErrBadPolicy reports a policy.json that does not validate.
 var ErrBadPolicy = errors.New("bad policy")
+
+// memoryMaxPattern is serve.scope.memory_max's shape: digits with an
+// optional single-letter unit suffix (K, M, G, T), the systemd MemoryMax=
+// grammar this value is passed straight through to.
+var memoryMaxPattern = regexp.MustCompile(`^[0-9]+[KMGT]?$`)
 
 // Policy is the planner's candidate preferences, loaded from policy.json.
 type Policy struct {
@@ -89,6 +95,28 @@ type Policy struct {
 	// Notify configures webhook sinks that receive lifecycle events over
 	// HTTP, beside the hooks.d script dispatcher (#4).
 	Notify *NotifyPolicy `json:"notify,omitempty"`
+
+	// Serve configures relay serve (#285). nil is every default.
+	Serve *ServePolicy `json:"serve,omitempty"`
+}
+
+// ServePolicy configures relay serve (#285).
+type ServePolicy struct {
+	// MaxBuilders caps headless builders running at once across all
+	// owners. nil = max(1, runtime.NumCPU()-1). A value below 1 is a Load error.
+	MaxBuilders *int `json:"max_builders,omitempty"`
+	// Scope is the per-round systemd scope (part 3 uses it). nil = defaults.
+	Scope *ScopePolicy `json:"scope,omitempty"`
+}
+
+// ScopePolicy configures the per-round systemd scope a served headless
+// builder runs under (part 3 uses this; defined and validated here).
+type ScopePolicy struct {
+	Enabled   *bool  `json:"enabled,omitempty"`    // nil = true
+	Slice     string `json:"slice,omitempty"`      // "" = systemd default; else must end in ".slice"
+	CPUWeight int    `json:"cpu_weight,omitempty"` // 0 = 100; else 1..10000
+	MemoryMax string `json:"memory_max,omitempty"` // "" = none; else ^[0-9]+[KMGT]?$
+	TasksMax  int    `json:"tasks_max,omitempty"`  // 0 = none; else >= 1
 }
 
 // NotifyPolicy configures webhook delivery of lifecycle events (#4).
@@ -318,6 +346,18 @@ func (p Policy) VerifyDefault() bool {
 	return p.Verify.Default
 }
 
+// MaxBuildersOrDefault is serve.max_builders with the default applied:
+// max(1, runtime.NumCPU()-1) when Serve is nil or MaxBuilders is nil (#285).
+func (p Policy) MaxBuildersOrDefault() int {
+	if p.Serve == nil || p.Serve.MaxBuilders == nil {
+		if n := runtime.NumCPU() - 1; n > 1 {
+			return n
+		}
+		return 1
+	}
+	return *p.Serve.MaxBuilders
+}
+
 // Load reads and validates a policy file. A missing file is the zero Policy
 // and no error, so every machine without a policy.json behaves exactly as it
 // did before this file existed. A present file that does not validate is an
@@ -370,6 +410,26 @@ func Load(path string) (Policy, error) {
 
 	if p.Gate != nil && p.Gate.Regate != nil && *p.Gate.Regate < 0 {
 		return Policy{}, fmt.Errorf("%s: gate.regate: must be >= 0, got %d: %w", path, *p.Gate.Regate, ErrBadPolicy)
+	}
+
+	if p.Serve != nil && p.Serve.MaxBuilders != nil && *p.Serve.MaxBuilders < 1 {
+		return Policy{}, fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
+	}
+
+	if p.Serve != nil && p.Serve.Scope != nil {
+		sc := p.Serve.Scope
+		if sc.Slice != "" && !strings.HasSuffix(sc.Slice, ".slice") {
+			return Policy{}, fmt.Errorf("%s: serve.scope.slice: must end in \".slice\", got %q: %w", path, sc.Slice, ErrBadPolicy)
+		}
+		if sc.CPUWeight != 0 && (sc.CPUWeight < 1 || sc.CPUWeight > 10000) {
+			return Policy{}, fmt.Errorf("%s: serve.scope.cpu_weight: must be 1..10000, got %d: %w", path, sc.CPUWeight, ErrBadPolicy)
+		}
+		if sc.MemoryMax != "" && !memoryMaxPattern.MatchString(sc.MemoryMax) {
+			return Policy{}, fmt.Errorf("%s: serve.scope.memory_max: must match ^[0-9]+[KMGT]?$, got %q: %w", path, sc.MemoryMax, ErrBadPolicy)
+		}
+		if sc.TasksMax != 0 && sc.TasksMax < 1 {
+			return Policy{}, fmt.Errorf("%s: serve.scope.tasks_max: must be at least 1, got %d: %w", path, sc.TasksMax, ErrBadPolicy)
+		}
 	}
 
 	for i, pat := range p.ScanPatterns {

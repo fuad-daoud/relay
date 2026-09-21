@@ -565,6 +565,36 @@ func TestDoneStopsRelaying(t *testing.T) {
 	}
 }
 
+// TestDoneRefusesQueued pins #285: a served binding still queued (Owner set,
+// QueuedAt non-zero) has no process to stop and nothing to hand back, so
+// Done refuses it the same way the wire does, and state does not change.
+//
+// Mutation check: drop the `b.Owner != "" && !b.QueuedAt.IsZero()` guard
+// from Done and this fails.
+func TestDoneRefusesQueued(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.Owner = "owner1"
+	b.QueuedAt = rt.Now()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Done(context.Background(), rt, b.Name); err == nil {
+		t.Fatal("Done: want an error refusing a queued round")
+	} else if !strings.Contains(err.Error(), "is queued") || !strings.Contains(err.Error(), "unbind to drop it") {
+		t.Fatalf("Done err = %q, want it to mention the round is queued and to unbind", err.Error())
+	}
+
+	got, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State == store.StateDone {
+		t.Error("state must not become done")
+	}
+}
+
 func TestDoneReleasesCleanWorktree(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)

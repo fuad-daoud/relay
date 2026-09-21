@@ -208,7 +208,9 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 	_ = rt.Store.Save(b)
 
 	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+	view := relay.ServedView(b, entries)
+	view.Queue = s.queuePositionView(b, view, caller)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
@@ -233,8 +235,12 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	if relay.RoundStateOf(b, entries) == remote.RoundRunning {
+	switch relay.RoundStateOf(b, entries) {
+	case remote.RoundRunning:
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is open")
+		return
+	case remote.RoundQueued:
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is queued; unbind to drop it", b.Round))
 		return
 	}
 

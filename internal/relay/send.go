@@ -98,6 +98,11 @@ type SendOptions struct {
 	// nil takes policy.json verify.default, so a plain send honours the
 	// planner's configured default and --verify/--no-verify overrides it.
 	Verify *bool
+	// Defer stages the round -- plan written, log entry appended, State ==
+	// active -- but does not spawn a builder; the caller (serve.admit or
+	// relay.Admit) starts it later (#285, server only). A pane binding
+	// ignores Defer: the pane path has no spawn.
+	Defer bool
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -355,27 +360,34 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		text := composePrompt(b, planPath, reportPath, donePath)
 
+		// Defer stages the round without spawning: the caller (serve.admit
+		// or relay.Admit) starts the builder later (#285). A pane binding
+		// has no spawn to defer.
+		deferred := opts.Defer && b.Builder.Headless()
+
 		late := false
 		if b.Builder.Headless() {
-			started, err := startRound(ctx, rt, b, text)
-			if err != nil {
-				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
-					_ = os.Remove(planPath)
+			if !deferred {
+				started, err := startRound(ctx, rt, b, text)
+				if err != nil {
+					if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+						_ = os.Remove(planPath)
+						return err
+					}
+					// The plan is staged and the round is open; nothing was
+					// started. NEEDS YOU says so in status, and the ledger's
+					// spawn_failed (written by startRound) gates the candidate
+					// for the next pick, as a pane spawn failure would.
+					b.State = store.StateNeedsYou
+					b.Halt = "builder spawn failed: " + err.Error()
+					b.HaltAt = rt.Now().UTC()
+					if saveErr := tx.Save(b); saveErr != nil {
+						return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
+					}
 					return err
 				}
-				// The plan is staged and the round is open; nothing was
-				// started. NEEDS YOU says so in status, and the ledger's
-				// spawn_failed (written by startRound) gates the candidate
-				// for the next pick, as a pane spawn failure would.
-				b.State = store.StateNeedsYou
-				b.Halt = "builder spawn failed: " + err.Error()
-				b.HaltAt = rt.Now().UTC()
-				if saveErr := tx.Save(b); saveErr != nil {
-					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
-				}
-				return err
+				b = started
 			}
-			b = started
 		} else {
 			if builder.Status == herdr.StatusUnknown {
 				patterns := dialogPatterns(rt, builder.Kind, b.BuilderCandidate)
@@ -435,7 +447,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.RoundBaselineTree = baseline
 		b.RoundBaselineHead = baselineHead
 		b.RoundClosedTree = ""
-		b.RoundStartedAt = rt.Now().UTC()
+		if deferred {
+			b.QueuedAt = rt.Now().UTC()
+		} else {
+			b.RoundStartedAt = rt.Now().UTC()
+		}
 		b.FinishPending = true
 		b.State = store.StateActive
 		b.Halt = ""

@@ -18,8 +18,12 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	if b.State == store.StateNeedsYou {
 		return remote.RoundNeedsYou
 	}
-	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+	open := HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+	if open && !b.QueuedAt.IsZero() {
+		return remote.RoundQueued
+	}
+	if open {
 		return remote.RoundRunning
 	}
 	if b.Serve != nil && b.Serve.ClosedRound > b.Serve.AckedRound {
