@@ -63,6 +63,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds/{n}/ack", s.handleAckRound)
 	mux.HandleFunc("POST /v1/bindings/{name}/unavailable", s.handleUnavailable)
 	mux.HandleFunc("POST /v1/unavailable", s.handleUnavailable)
+	mux.HandleFunc("POST /v1/available", s.handleAvailable)
 
 	// Fallback for unknown /v1/...
 	mux.HandleFunc("/v1/", s.handleNotFound)

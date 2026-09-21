@@ -289,7 +289,10 @@ inside every pane it manages, so it has to be run from inside one.
   the service unit runs. A held payload is injected into a focused planner once its input
   box is empty or its screen has been quiet for `--held-grace` (default 60s).
 - `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
-- `relay serve init|enroll|clients|revoke|fingerprint|status|gc|unbind` — server administration, on the server host.
+- `relay serve init|enroll|clients|revoke|fingerprint|status|gates|available|unavailable|gc|unbind` — server administration, on the server host.
+- `relay serve gates [--state DIR]` — list the gates on the server's own ledger.
+- `relay serve available <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
+- `relay serve unavailable <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
 - `relay client init` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
   `relay serve enroll --key "<line>"` with.
@@ -1098,6 +1101,10 @@ A limit gates the **provider** (every candidate with `provider: anthropic`),
 because that is who enforces the quota, not the model. Without `--for` it
 stays gated until you run `relay available`, because relay does not know
 your provider's reset schedule.
+
+`relay available` also clears the gate on every server your bindings name and
+prints each server's answer; on a box running `relay serve`, use `relay serve
+available`.
 
 Spawn failures need no command: relay records one itself when starting an
 agent fails, gating that one candidate for ten minutes, and it expires on

@@ -167,3 +167,40 @@ func TestServeStatusRefusesUninitialisedRoot(t *testing.T) {
 		t.Errorf("serve/tmp exists or stat failed: %v", statErr)
 	}
 }
+
+// TestServeGatesRefusesUninitialisedRoot: relay serve gates resolves its root
+// like the other admin verbs, so an uninitialised --state dir fails at
+// adminRoot before anything else can run. CI-safe: it reaches no herdr.
+func TestServeGatesRefusesUninitialisedRoot(t *testing.T) {
+	dir := t.TempDir()
+	err := cmdServeGates([]string{"--state", dir})
+	if err == nil {
+		t.Fatal("cmdServeGates error = nil, want an uninitialised-root error")
+	}
+	if !strings.Contains(err.Error(), "no serve state at ") {
+		t.Errorf("error = %q, want no serve state message", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "serve")) {
+		t.Errorf("error = %q, want root %q", err, filepath.Join(dir, "serve"))
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "serve", "tmp")); !os.IsNotExist(statErr) {
+		t.Errorf("serve/tmp exists or stat failed: %v", statErr)
+	}
+}
+
+func TestServeAvailableWithoutSubjectExits2(t *testing.T) {
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "available"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("expected nothing on stdout, got %q", string(stdout))
+	}
+	if !strings.Contains(string(stderr), "usage") {
+		t.Errorf("expected a usage line on stderr, got %q", string(stderr))
+	}
+}

@@ -218,6 +218,7 @@ type RemoteClient interface {
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
 	Unavailable(ctx context.Context, server, name, token, reason string) error
+	Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error)
 	Done(ctx context.Context, server, name string) error
 	Unbind(ctx context.Context, server, name string) error
 	Resume(ctx context.Context, server, name string) (remote.BindingView, error)

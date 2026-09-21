@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 type OwnerStatus struct {
@@ -293,4 +295,63 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 		}
 		return "", fmt.Errorf("label %q is ambiguous: %s", owner, strings.Join(ids, ", "))
 	}
+}
+
+// ledgerRuntime is the runtime the server-side gate verbs run on: the one
+// server-wide ledger at <root>/ledger.json, not any owner's. Its store is
+// over the serve root only because relay's ledger mutation takes its lock
+// through rt.Store; these verbs never list bindings from it.
+//
+// store.New creates nothing on its own -- the root and its .lock file appear
+// only once WithLock runs -- and neither is one of Initialised's markers
+// (clients.json, server.key, bindings), so locking through this store cannot
+// make an uninitialised root report as initialised.
+func ledgerRuntime(s *Server) relay.Runtime {
+	return relay.Runtime{
+		Candidates:       s.cfg.Candidates,
+		Policy:           s.cfg.Policy,
+		Store:            store.New(s.cfg.Root),
+		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"),
+		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
+		Now:              s.cfg.Now,
+		Herdr:            stubHerdr{},
+	}
+}
+
+// AdminGates lists the server-wide ledger's live gates, projected onto the
+// configured candidates. Nil candidates means there is nothing to project
+// onto, which relay.Gates already answers as nil.
+func AdminGates(s *Server) []ledger.Gate {
+	return relay.Gates(ledgerRuntime(s))
+}
+
+// AdminAvailable clears every rate-limit gate on subject's provider in the
+// server-wide ledger.
+func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
+	return relay.Available(ledgerRuntime(s), subject)
+}
+
+// AdminUnavailable records a rate-limit gate on token's provider in the
+// server-wide ledger.
+func AdminUnavailable(s *Server, token string, until time.Time, reason string) (provider string, err error) {
+	return relay.Unavailable(ledgerRuntime(s), token, until, reason)
+}
+
+// RenderGates formats `relay serve gates`: one line per gate,
+//
+//	"<token>  <kind>  <until>  <note>\n"
+//
+// in the order given, using the same wording status, candidates and doctor
+// use (GateKindText, GateUntilText). Empty input prints "no gates\n", the
+// shape RenderAdminStatus and RenderClients give an empty list.
+func RenderGates(gates []ledger.Gate, now time.Time) string {
+	if len(gates) == 0 {
+		return "no gates\n"
+	}
+
+	var sb strings.Builder
+	for _, g := range gates {
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", g.Token, relay.GateKindText(g.Kind), relay.GateUntilText(g.Until), g.Note)
+	}
+	return sb.String()
 }
