@@ -156,6 +156,62 @@ func TestBuilderForRoundStripsEffortSuffix(t *testing.T) {
 	}
 }
 
+func TestParsePickNoteForms(t *testing.T) {
+	tests := []struct {
+		note string
+		want string
+	}{
+		{"picked claude/anthropic/sonnet for builder: order #1", "claude/anthropic/sonnet"},
+		{"picked opencode/openrouter/z-ai/glm-5.3-flash on host1: spawn", "opencode/openrouter/z-ai/glm-5.3-flash"},
+		{"picked agy/test/m: explicit, policy bypassed", "agy/test/m"},
+		{"picked codex/openai/gpt-5.6-terra:high for builder: order #2", "codex/openai/gpt-5.6-terra:high"},
+		{"picked opencode/cline-pass/cline-pass/glm-5.3-flash#high on h: s", "opencode/cline-pass/cline-pass/glm-5.3-flash#high"},
+		{"picked x/y/z", "x/y/z"},
+		{"nothing picked", ""},
+	}
+	for _, tt := range tests {
+		if got := parsePickNote(tt.note); got != tt.want {
+			t.Errorf("parsePickNote(%q) = %q, want %q", tt.note, got, tt.want)
+		}
+	}
+}
+
+func TestParseSwitchNoteForms(t *testing.T) {
+	tests := []struct {
+		note string
+		want string
+	}{
+		{"switched builder (exited (code 1) without a report): picked claude/anthropic/sonnet for builder: order #5", "claude/anthropic/sonnet"},
+		{"switched a/b/c -> d/e/f", "d/e/f"},
+		{"switched builder (reason): cannot switch", ""},
+	}
+	for _, tt := range tests {
+		if got := parseSwitchNote(tt.note); got != tt.want {
+			t.Errorf("parseSwitchNote(%q) = %q, want %q", tt.note, got, tt.want)
+		}
+	}
+}
+
+func TestBuilderForRoundFromSwitchEntry(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPick, Note: "picked a/b/c for builder: order #1"},
+		{Round: 1, Kind: store.KindSwitch, Note: "switched builder (exited (code 1) without a report): picked claude/anthropic/sonnet for builder: order #5"},
+	}
+	b := store.Binding{BuilderCandidate: "x/y/z"}
+
+	tok, ref, ok := builderForRound(events, 1, b)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if tok != "claude/anthropic/sonnet" {
+		t.Errorf("token = %q", tok)
+	}
+	want := candidateRef(t, "claude", "anthropic", "sonnet")
+	if ref != want {
+		t.Errorf("ref = %+v, want %+v", ref, want)
+	}
+}
+
 func TestSwitchesForRound(t *testing.T) {
 	events := []store.LogEntry{
 		{Round: 1, Kind: store.KindSwitch},
