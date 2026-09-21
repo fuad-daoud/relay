@@ -329,6 +329,27 @@ func (c *Client) CreateBranch(ctx context.Context, dir, branch, commit string) e
 	return nil
 }
 
+// CreateTrackingBranch creates branch in dir as a local branch tracking
+// upstream -- `git branch --track <branch> <upstream>`. It is the
+// existing-branch form of branch creation: unlike CreateBranch it does not
+// accept a start point, because the upstream ref is the start point.
+//
+// Preconditions:  upstream resolves in dir's repository; branch does not exist.
+// Postconditions: refs/heads/<branch> exists and its upstream is upstream.
+// Errors: ErrBranchExists, ErrNotRepo, ErrGitUnavailable, wrapped git failure.
+func (c *Client) CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error {
+	branchName := strings.TrimPrefix(branch, "refs/heads/")
+	_, err := c.run(ctx, dir, nil, "branch", "--track", branchName, upstream)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "already exists") {
+			return ErrBranchExists
+		}
+		return err
+	}
+	return nil
+}
+
 // DeleteBranch force-removes branch from dir. A branch that does not exist is
 // not an error: relay's own cleanup calls this on a branch it just created
 // itself, without knowing whether a later failure left it in place, so

@@ -265,6 +265,16 @@ inside every pane it manages, so it has to be run from inside one.
   `relay add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
+  `relay add --branch B` checks an existing branch out into relay's own
+  worktree instead of cutting `relay/<name>`: a local `B` is used first, and
+  `origin/B` is made a local tracking branch only when no local `B` exists
+  (a branch on neither is refused). A branch already checked out in another
+  worktree is refused; free it first. `--name` is optional with `--branch`
+  and defaults to the branch's last path segment, lowercased and reduced to
+  the characters a binding name accepts. The binding records
+  `existing_branch: true`, and relay never deletes a branch it did not
+  create. Works with `--headless` and with `--server`; not with `--cwd`.
+  `relay fork --branch` is not available yet.
 - `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
@@ -694,6 +704,10 @@ when it is clean. The binding directory itself is never removed by `done`
 branch at the same path; a DONE binding may then be rebound with
 `--rebind`, since the old builder pane cannot work in the recreated
 directory (`bind` names it so you can close it).
+
+relay deletes a branch in **zero** places: not at `unbind`, `gc`, `done`, nor
+on an add rollback. The one exception is a `relay/<name>` branch `add --server`
+created seconds earlier and must undo because the server refused the binding.
 
 ```
 relay unbind ai              # delete the binding and its whole directory
