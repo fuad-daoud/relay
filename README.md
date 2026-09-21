@@ -1549,6 +1549,51 @@ herdr's session for the pane. It is absent when neither named one -- relay
 never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is
 what `ask --round` (coming) resumes.
 
+### Verify
+
+`relay send --verify` -- or `policy.json` `"verify": {"default": true}` -- marks
+the round: when it closes, **after the gate** so the reviewer sees the gate's
+own output, relay runs a read-only **reviewer** over the finished round and
+records its verdict. `--no-verify` overrides the policy default for one send;
+the two flags are exclusive.
+
+The reviewer is an ordinary consult (`relay ask --role reviewer`) with two
+differences. It runs **headless**, so its findings are its final message rather
+than a file, and it runs in a **throwaway worktree**: relay creates a detached
+worktree at the builder's HEAD under
+`~/.local/state/relay/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
+there, and removes the tree once the consult reaches any terminal state. That
+isolation is what lets the reviewer run tests without touching the builder's
+tree or the planner's checkout, and it is why the reviewer consult's tier is
+`policy.json` `tier.reviewer` when set, else the candidate's, else **yolo** --
+for this consult only, in this tree only. The reviewer's role definition still
+tells it not to edit; relay cannot observe writes.
+
+The question names the round's plan, report, diff and gate log, and asks the
+reviewer to end its findings with exactly this block:
+
+```
+verdict: accepted | rejected
+reasons: ["..."]
+```
+
+relay parses the last ` ```relay ` block for those two lines. Anything else --
+no block, an unreadable one, a verdict that is neither word -- is recorded as
+`unstructured` and delivered as prose for the planner to read. `verdict` and
+`reasons` ride on the findings entry, and the newest verdict shows in
+`relay status` as `verdict: rejected (2 reasons)` for as long as it judges the
+round just closed.
+
+**A verdict decides nothing.** `rejected` does not reopen the round, stop the
+binding, or summon a human: the report is delivered exactly as it always was,
+and the human still judges. `relay wait --verdict` is a follow-up.
+
+A round whose reviewer could not be started -- no reviewer candidate, every one
+of them gated, no runner, a worktree that could not be created -- closes
+normally with one `verify skipped: <why>` note in the log. A crashed relay can
+leave a tree under `.worktrees/.verify/`; remove it with
+`git worktree remove <path>`.
+
 ## Consults: asking a reviewer
 
 A **consult** is a one-shot agent spawned beside a binding to answer one

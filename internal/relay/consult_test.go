@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -10,6 +11,71 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// verifyConsultID is the deterministic id the verify tests mint.
+const verifyConsultID = "7f2a3c1d"
+
+// claudeStream renders a claude harness stream whose last assistant text is
+// text: the shape transcript.FinalText reads (#147).
+func claudeStream(t *testing.T, text string) []byte {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": text}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal stream: %v", err)
+	}
+	return append(line, '\n')
+}
+
+// startVerifyRound puts webshop one reconcile past a verify round's close:
+// the round closed, the reviewer was started in its throwaway worktree, and
+// the process is scripted to have exited 0. The caller writes the stream the
+// reviewer left behind, then ticks the consult.
+func startVerifyRound(t *testing.T, f *fakeHerdr) (Runtime, *fakeRunner, *fakeGit, store.Binding) {
+	t.Helper()
+	rt, b := sentBinding(t, f)
+	fr := newFakeRunner()
+	fg := &fakeGit{headCommitID: "head1"}
+	rt.Runner = fr
+	rt.Git = fg
+	rt.NewID = func() string { return verifyConsultID }
+
+	b.RoundVerify = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.handles) != 1 {
+		t.Fatalf("verify consult processes = %d, want 1", len(fr.handles))
+	}
+	return rt, fr, fg, got
+}
+
+// leaveVerifyStream writes what the reviewer's process left on its stream and
+// scripts it as exited with code 0.
+func leaveVerifyStream(t *testing.T, rt Runtime, fr *fakeRunner, text string) {
+	t.Helper()
+	streamPath := rt.Store.ConsultStreamPath("webshop", 1, verifyConsultID)
+	if err := os.WriteFile(streamPath, claudeStream(t, text), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	pid := fr.handles[0].PID
+	fr.script(pid, false)
+	fr.exit(pid, 0)
+}
 
 // consultAgent is the live pane a seeded consult occupies.
 func consultAgent(status string) herdr.Agent {
@@ -511,5 +577,138 @@ func TestReconcileIgnoresAConsultSubAgentsIdle(t *testing.T) {
 	}
 	if !c.NudgedAt.IsZero() {
 		t.Errorf("NudgedAt = %v, want zero", c.NudgedAt)
+	}
+}
+
+// TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
+// verify consult whose findings end with `verdict: rejected` records the
+// verdict and its two reasons on the findings entry and on the binding, names
+// them in the payload, removes the throwaway worktree, and shows in `relay
+// status` until the round after next.
+func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, fr, fg, _ := startVerifyRound(t, f)
+	leaveVerifyStream(t, rt, fr, "checked it\n\n```relay\nverdict: rejected\nreasons: [\"a\",\"b\"]\n```\n")
+
+	b := tickConsults(t, rt, f)
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindFindings {
+			findings = &entries[i]
+		}
+	}
+	if findings == nil {
+		t.Fatalf("no findings entry queued: %+v", entries)
+	}
+	if findings.Verdict != "rejected" {
+		t.Errorf("findings verdict = %q, want rejected", findings.Verdict)
+	}
+	if len(findings.Reasons) != 2 || findings.Reasons[0] != "a" || findings.Reasons[1] != "b" {
+		t.Errorf("findings reasons = %v, want [a b]", findings.Reasons)
+	}
+	if !strings.Contains(findings.Payload, "verdict rejected · 2 reasons") {
+		t.Errorf("payload = %q, want it to carry the verdict line", findings.Payload)
+	}
+
+	if b.LastVerdict == nil {
+		t.Fatal("LastVerdict is nil after a verdict")
+	}
+	if b.LastVerdict.Round != 1 || b.LastVerdict.Verdict != "rejected" {
+		t.Errorf("LastVerdict = %+v, want round 1 rejected", b.LastVerdict)
+	}
+
+	wantWT := rt.Store.VerifyWorktreePath("webshop", 1)
+	removed := false
+	for _, c := range fg.removeWorktreeCalls {
+		if c.Path == wantWT && c.Force {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Errorf("verify worktree %s not removed with force: %+v", wantWT, fg.removeWorktreeCalls)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep.Bindings[0].Verdict; got != "verdict: rejected (2 reasons)" {
+		t.Errorf("status verdict = %q, want \"verdict: rejected (2 reasons)\"", got)
+	}
+
+	// The next round closes without a verdict of its own, and the stale one
+	// stops being shown: it judged round 1, and b.Round-1 is now 2.
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it again"), SendOptions{}); err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 2), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 2))
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+	closed, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile round 2: %v", err)
+	}
+	// The daemon persists what Reconcile returned; status reads the store.
+	if err := rt.Store.Save(closed); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if closed.Round != 3 {
+		t.Fatalf("round = %d, want 3 after the second close", closed.Round)
+	}
+
+	rep, err = Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep.Bindings[0].Verdict; got != "" {
+		t.Errorf("status verdict = %q after the next round, want it dropped", got)
+	}
+}
+
+// TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
+// a readable block are delivered as unstructured rather than guessed at.
+func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, fr, _, _ := startVerifyRound(t, f)
+	leaveVerifyStream(t, rt, fr, "I read it; it looks fine to me, no block here.\n")
+
+	b := tickConsults(t, rt, f)
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindFindings {
+			findings = &entries[i]
+		}
+	}
+	if findings == nil {
+		t.Fatalf("no findings entry queued: %+v", entries)
+	}
+	if findings.Verdict != "unstructured" {
+		t.Errorf("findings verdict = %q, want unstructured", findings.Verdict)
+	}
+	if len(findings.Reasons) != 0 {
+		t.Errorf("findings reasons = %v, want none", findings.Reasons)
+	}
+	if findings.Path == "" {
+		t.Errorf("unstructured findings must still name the findings file")
+	}
+
+	if b.LastVerdict == nil || b.LastVerdict.Verdict != "unstructured" {
+		t.Errorf("LastVerdict = %+v, want unstructured", b.LastVerdict)
 	}
 }

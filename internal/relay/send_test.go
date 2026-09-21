@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -1394,5 +1395,36 @@ func TestRenderDryRunShape(t *testing.T) {
 	d.GateNote = "rate-limited until 00:26; the daemon would switch after start"
 	if !strings.Contains(RenderDryRun(d), "(rate-limited until 00:26; the daemon would switch after start)") {
 		t.Errorf("the gate note must render on the builder line:\n%s", RenderDryRun(d))
+	}
+}
+
+// TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
+// wins, and a plain Send takes policy.json verify.default.
+func TestVerifyPolicyDefault(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !b.RoundVerify {
+		t.Errorf("RoundVerify = false, want true from policy verify.default")
+	}
+
+	// An explicit --no-verify beats the policy default.
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "again"), SendOptions{Verify: ptr(false)}); err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundVerify {
+		t.Errorf("RoundVerify = true after Send{Verify: false}, want false")
 	}
 }

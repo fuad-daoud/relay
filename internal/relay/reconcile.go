@@ -330,6 +330,9 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
 		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
 		closedRound := b.Round
+		// queueReport's reset block clears RoundVerify: read the round's
+		// verify flag before the close consumes it (#144).
+		wantVerify := b.RoundVerify
 		next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, "")
 		if err != nil {
 			return b, err
@@ -338,6 +341,19 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			return next, nil
 		}
 		if closed {
+			// The gate result -> report queued -> verify consult started ->
+			// delivery (#144). The reviewer sees the gate's output, so it
+			// starts after the gate and before the planner is told.
+			if wantVerify {
+				gateLogPath := ""
+				if rec != nil {
+					gateLogPath = rec.LogPath
+				}
+				next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
+				if err != nil {
+					return next, err
+				}
+			}
 			next, err = deliverAndSettle(ctx, rt, tx, next, agents)
 			if err != nil {
 				return next, err
@@ -960,6 +976,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0
 	b.RoundExcluded = nil
+	// The round's verify flag has been acted on by the close (#144): the
+	// consult, when there is one, is already running.
+	b.RoundVerify = false
 	b.RoundTier = ""
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""

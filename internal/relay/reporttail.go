@@ -40,37 +40,14 @@ func parseReportTail(report []byte) (ReportTail, bool, string) {
 		return ReportTail{}, false, ""
 	}
 
-	rawLines := bytes.Split(report, []byte("\n"))
-	lines := make([]string, len(rawLines))
-	for i, l := range rawLines {
-		lines[i] = string(bytes.TrimRight(l, "\r"))
-	}
+	lines := splitFenceLines(report)
 
-	openIdx := -1
-	for i, line := range lines {
-		if strings.TrimRight(line, " \t") == "```relay" {
-			openIdx = i
-		}
-	}
+	openIdx, closeIdx, reason := findRelayBlock(lines)
 	if openIdx == -1 {
 		return ReportTail{}, false, ""
 	}
-
-	closeIdx := -1
-	for i := openIdx + 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], " \t") == "```" {
-			closeIdx = i
-			break
-		}
-	}
-	if closeIdx == -1 {
-		return ReportTail{}, false, "tail: unclosed fence"
-	}
-
-	for i := closeIdx + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != "" {
-			return ReportTail{}, false, "tail: prose after closing fence"
-		}
+	if reason != "" {
+		return ReportTail{}, false, reason
 	}
 
 	var (
@@ -138,6 +115,57 @@ func parseReportTail(report []byte) (ReportTail, bool, string) {
 	tail.HaltedAt = strings.TrimSpace(unquoteScalar(haltedAtRaw))
 
 	return tail, true, ""
+}
+
+// findRelayBlock locates the LAST ```relay fence among lines and its closing
+// fence, returning their indices. There is no block when openIdx is -1.
+//
+// reason is "" when a block was found and is well formed, and non-empty when
+// a fence was found but unusable (unclosed, or followed by prose). Callers
+// use it to tell "the writer omitted the block" from "the writer's block
+// could not be read". Shared by the report tail (#133) and the reviewer
+// verdict (#144) so the two agree on what a block is.
+func findRelayBlock(lines []string) (openIdx, closeIdx int, reason string) {
+	openIdx = -1
+	for i, line := range lines {
+		if strings.TrimRight(line, " \t") == "```relay" {
+			openIdx = i
+		}
+	}
+	if openIdx == -1 {
+		return -1, -1, ""
+	}
+
+	closeIdx = -1
+	for i := openIdx + 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], " \t") == "```" {
+			closeIdx = i
+			break
+		}
+	}
+	if closeIdx == -1 {
+		return openIdx, -1, "tail: unclosed fence"
+	}
+
+	for i := closeIdx + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			return openIdx, closeIdx, "tail: prose after closing fence"
+		}
+	}
+
+	return openIdx, closeIdx, ""
+}
+
+// splitLines splits body into CR-trimmed lines, the form findRelayBlock
+// expects. The report tail and the reviewer verdict must split the same way,
+// or the two would disagree about the same bytes.
+func splitFenceLines(body []byte) []string {
+	rawLines := bytes.Split(body, []byte("\n"))
+	lines := make([]string, len(rawLines))
+	for i, l := range rawLines {
+		lines[i] = string(bytes.TrimRight(l, "\r"))
+	}
+	return lines
 }
 
 func listOf(tail ReportTail, key string) []string {

@@ -78,6 +78,19 @@ type Policy struct {
 	// Gate configures the acceptance command relay runs on a binding's
 	// completion marker when the binding itself has none (#132).
 	Gate *GatePolicy `json:"gate,omitempty"`
+
+	// Verify configures the default for `relay send --verify` (#144): when
+	// verify.default is true, a plain `relay send` marks the round for a
+	// read-only reviewer at round close.
+	Verify *VerifyPolicy `json:"verify,omitempty"`
+}
+
+// VerifyPolicy configures the default verify flag for the rounds `relay
+// send` opens (#144).
+type VerifyPolicy struct {
+	// Default is what Send uses when neither --verify nor --no-verify was
+	// given. Absent, or false, means no reviewer: a human opts in.
+	Default bool `json:"default,omitempty"`
 }
 
 // GatePolicy configures the default gate command and its timeout (#132).
@@ -267,6 +280,16 @@ func (p Policy) GateRegate() int {
 		return 0
 	}
 	return *p.Gate.Regate
+}
+
+// VerifyDefault is verify.default with the absent-file case applied: false
+// when Verify is nil, so a machine without `verify` in policy.json behaves
+// exactly as it did before the key existed (#144).
+func (p Policy) VerifyDefault() bool {
+	if p.Verify == nil {
+		return false
+	}
+	return p.Verify.Default
 }
 
 // Load reads and validates a policy file. A missing file is the zero Policy

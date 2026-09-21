@@ -3238,3 +3238,226 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 		t.Errorf("StaleNotifiedAt = %s after Send, want zero", loaded.StaleNotifiedAt)
 	}
 }
+
+// TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins #144's close path:
+// a round sent with --verify closes exactly as before, and the close then
+// creates a detached worktree at the builder's HEAD and launches one read-only
+// headless reviewer in it -- with a question that names the ask file, whose
+// content asks the reviewer to verify round 1 with no gate.
+//
+// Mutation check (run and report): delete the wantVerify block from
+// Reconcile's close path and this fails on addDetachedWorktreeCalls.
+func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	fg := &fakeGit{headCommitID: "head1"}
+	rt, _ := seedBound(t, f)
+	rt.Runner = fr
+	rt.Git = fg
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
+	rt.NewID = func() string { return verifyConsultID }
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Verify: ptr(true)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !b.RoundVerify {
+		t.Fatal("RoundVerify = false after Send{Verify: true}")
+	}
+
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2: the round closed", got.Round)
+	}
+	if got.RoundVerify {
+		t.Errorf("RoundVerify = true after the close, want cleared")
+	}
+
+	wantWT := rt.Store.VerifyWorktreePath("webshop", 1)
+	if len(fg.addDetachedWorktreeCalls) != 1 {
+		t.Fatalf("AddDetachedWorktree calls = %v, want exactly 1", fg.addDetachedWorktreeCalls)
+	}
+	if call := fg.addDetachedWorktreeCalls[0]; call.Dir != b.CWD || call.Path != wantWT || call.Commit != "head1" {
+		t.Errorf("AddDetachedWorktree = %+v, want {%s %s head1}", call, b.CWD, wantWT)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("Start calls = %d, want 1 reviewer process", len(fr.specs))
+	}
+	if fr.specs[0].Dir != wantWT {
+		t.Errorf("reviewer Dir = %q, want the throwaway worktree %q", fr.specs[0].Dir, wantWT)
+	}
+
+	askPath := rt.Store.AskPath("webshop", 1, verifyConsultID)
+	if argv := strings.Join(fr.specs[0].Argv, " "); !strings.Contains(argv, askPath) {
+		t.Errorf("reviewer argv does not name the ask file %s:\n%s", askPath, argv)
+	}
+	question, err := os.ReadFile(askPath)
+	if err != nil {
+		t.Fatalf("read ask file: %v", err)
+	}
+	for _, want := range []string{"Verify round 1", "Gate:   none"} {
+		if !strings.Contains(string(question), want) {
+			t.Errorf("ask file does not contain %q:\n%s", want, question)
+		}
+	}
+
+	var consult *store.Consult
+	for i := range got.Consults {
+		if got.Consults[i].Role == verifyRole {
+			consult = &got.Consults[i]
+		}
+	}
+	if consult == nil {
+		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	}
+	if consult.Round != 1 {
+		t.Errorf("consult round = %d, want 1", consult.Round)
+	}
+	if consult.State != store.ConsultRunning {
+		t.Errorf("consult state = %q, want running", consult.State)
+	}
+
+	// The report was delivered as today: nothing pends for the planner.
+	if pending, found, err := rt.Store.PendingForPlanner("webshop"); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Errorf("report must have been delivered, still pending: %+v", pending)
+	}
+}
+
+// TestVerifyGateLogIsPassed pins #144's gate handoff: the reviewer is told
+// where the closed round's gate log is, because seeing the gate's own output
+// is the point of running verify after the gate.
+func TestVerifyGateLogIsPassed(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	rt.Git = &fakeGit{headCommitID: "head1"}
+	rt.NewID = func() string { return verifyConsultID }
+
+	b.RoundVerify = true
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+
+	// First tick starts the gate and holds the round open.
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("round = %d, want 1 while the gate runs", got.Round)
+	}
+
+	// The gate exits 0; the next tick closes the round and starts the reviewer.
+	fr.script(fr.handles[0].PID, false)
+	fr.exit(fr.handles[0].PID, 0)
+	got, err = reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the gate passed", got.Round)
+	}
+
+	question, err := os.ReadFile(rt.Store.AskPath("webshop", 1, verifyConsultID))
+	if err != nil {
+		t.Fatalf("read ask file: %v", err)
+	}
+	wantLog := rt.Store.GateLogPath("webshop", 1)
+	if !strings.Contains(string(question), "Gate:   "+wantLog) {
+		t.Errorf("ask file does not name the gate log %s:\n%s", wantLog, question)
+	}
+}
+
+// candidateSetWithoutReviewerJSON serves builder and nothing else, so
+// resolveCandidate refuses every reviewer.
+const candidateSetWithoutReviewerJSON = `[
+  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
+  {"harness":"agy","provider":"test","model":"m","roles":["builder"]}
+]`
+
+// TestVerifySkippedWhenNoReviewerCandidate pins #144's error handling: a
+// round with no reviewer candidate closes normally, logs one "verify skipped:"
+// note, starts nothing, and leaves no throwaway worktree behind.
+func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	fg := &fakeGit{headCommitID: "head1"}
+	rt.Git = fg
+	rt.Candidates = candidateSet(t, candidateSetWithoutReviewerJSON)
+
+	b.RoundVerify = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2: a missing reviewer is not a round failure", got.Round)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Start calls = %d, want none without a reviewer candidate", len(fr.specs))
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := ""
+	for _, e := range entries {
+		if strings.HasPrefix(e.Note, "verify skipped:") {
+			note = e.Note
+		}
+	}
+	if note == "" {
+		t.Fatalf("no \"verify skipped:\" note in the log: %+v", entries)
+	}
+
+	// Whatever the order, no throwaway worktree is left behind.
+	wantWT := rt.Store.VerifyWorktreePath("webshop", 1)
+	if len(fg.addDetachedWorktreeCalls) > 0 {
+		removed := false
+		for _, c := range fg.removeWorktreeCalls {
+			if c.Path == wantWT && c.Force {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Errorf("worktree %s was created but never removed (removals: %+v)", wantWT, fg.removeWorktreeCalls)
+		}
+	}
+}

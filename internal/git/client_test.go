@@ -1824,6 +1824,86 @@ func TestTreeFingerprintUnbornHead(t *testing.T) {
 	}
 }
 
+// TestAddDetachedWorktree pins #144's throwaway tree: AddDetachedWorktree
+// produces a working tree at the requested commit with a DETACHED HEAD (no
+// branch, so `git symbolic-ref -q HEAD` fails), leaves the source tree's
+// status and HEAD untouched, and the tree is removable afterwards.
+func TestAddDetachedWorktree(t *testing.T) {
+	ctx := context.Background()
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "first commit")
+	commit1 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "commit", "-am", "second commit")
+	commit2 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	statusBefore := runGit(t, repoDir, "status", "--porcelain")
+	branchesBefore := runGit(t, repoDir, "branch", "--format=%(refname)")
+
+	wtDir := filepath.Join(t.TempDir(), "verify-001")
+	if err := client.AddDetachedWorktree(ctx, repoDir, wtDir, commit1); err != nil {
+		t.Fatalf("AddDetachedWorktree failed: %v", err)
+	}
+
+	if fi, err := os.Stat(wtDir); err != nil || !fi.IsDir() {
+		t.Fatalf("worktree directory %s does not exist or is not a directory", wtDir)
+	}
+
+	// HEAD is the requested commit...
+	wtHead, err := client.HeadCommit(ctx, wtDir)
+	if err != nil {
+		t.Fatalf("HeadCommit on worktree: %v", err)
+	}
+	if wtHead != commit1 {
+		t.Fatalf("worktree HEAD is %s, want %s", wtHead, commit1)
+	}
+
+	// ...and detached: symbolic-ref refuses to name a branch for it.
+	cmd := exec.Command("git", "-C", wtDir, "symbolic-ref", "-q", "HEAD")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("symbolic-ref succeeded on a detached worktree: %s", string(out))
+	}
+
+	// The source tree is untouched.
+	statusAfter := runGit(t, repoDir, "status", "--porcelain")
+	if statusAfter != statusBefore {
+		t.Fatalf("source tree status changed: got %q, want %q", statusAfter, statusBefore)
+	}
+	srcHead, err := client.HeadCommit(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("HeadCommit on repo: %v", err)
+	}
+	if srcHead != commit2 {
+		t.Fatalf("repo HEAD is %s, want %s", srcHead, commit2)
+	}
+	// No branch was created for the throwaway tree.
+	if branchesAfter := runGit(t, repoDir, "branch", "--format=%(refname)"); branchesAfter != branchesBefore {
+		t.Fatalf("branches changed: got %q, want %q", branchesAfter, branchesBefore)
+	}
+
+	// Removing it works, and removes the directory.
+	if err := client.RemoveWorktree(ctx, repoDir, wtDir, true); err != nil {
+		t.Fatalf("RemoveWorktree: %v", err)
+	}
+	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
+		t.Fatalf("worktree still present after removal: %v", err)
+	}
+}
+
 func TestNormalizeOriginURL(t *testing.T) {
 	cases := []struct {
 		name string

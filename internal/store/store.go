@@ -553,6 +553,17 @@ func (s *Store) WorktreePath(name string) string {
 	return filepath.Join(s.WorktreeDir(), name)
 }
 
+// VerifyWorktreePath is the throwaway worktree a verify consult runs in for
+// one closed round (#144): <WorktreeDir()>/.verify/<name>-<NNN>.
+//
+// It lives under its own dot-prefixed subdirectory so a human can see at a
+// glance which trees are leftovers from a crashed verify -- `git worktree
+// remove` takes them away -- and so nothing mistakes one for a binding's
+// worktree (Store.WorktreePath is the only path relay ever removes).
+func (s *Store) VerifyWorktreePath(name string, round int) string {
+	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
+}
+
 // archive packs a binding's directory into a gzipped tarball and removes the
 // directory, so the name frees for a fresh bind while log.jsonl and every
 // round file survive. Relay's state is small text, which gzips well enough
