@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	diffpatch "github.com/fuad-daoud/relay/internal/patch"
 	"github.com/fuad-daoud/relay/internal/pick"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
@@ -57,7 +58,8 @@ Commands:
   send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
-  diff      print a round's captured patch to stdout
+  diff      print a round's captured patch to stdout [--anchors]
+  review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
   answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
@@ -253,6 +255,8 @@ func run(args []string) error {
 		return cmdPull(args[1:])
 	case "diff":
 		return cmdDiff(args[1:])
+	case "review":
+		return cmdReview(args[1:])
 	case "answer":
 		return cmdAnswer(args[1:])
 	case "status":
@@ -1388,6 +1392,7 @@ func cmdDiff(args []string) error {
 	round := fs.Int("round", 0, "round to diff (default: newest completed round, or the open round with --drift)")
 	stat := fs.Bool("stat", false, "print summary line instead of patch body")
 	drift := fs.Bool("drift", false, "show between-rounds drift instead of round diff (default: the open round)")
+	anchors := fs.Bool("anchors", false, "prefix each hunk and line with its path:line, for a review comments file")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1460,6 +1465,13 @@ func cmdDiff(args []string) error {
 			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, target)
 		}
 		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
+	}
+
+	if *anchors {
+		patch, err = diffpatch.Annotate(patch)
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err = os.Stdout.Write(patch)
