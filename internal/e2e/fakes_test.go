@@ -89,6 +89,10 @@ func (f *fakeHerdr) ClosePane(ctx context.Context, paneID string) error {
 	return errors.New("not in e2e")
 }
 
+func (f *fakeHerdr) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
+	return nil, herdr.ErrNoSocket
+}
+
 type scriptRunner struct {
 	mu    sync.Mutex
 	specs []relay.ProcSpec

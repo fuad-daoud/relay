@@ -581,6 +581,22 @@ type fakeHerdr struct {
 
 	// startErr is returned by StartAgent when set, after recording the call. The strand-on-start path had no test because the fake could not fail a start.
 	startErr error
+
+	// subscribeCh/subscribeErr script Subscribe (#146): subscribeErr, when
+	// set, makes every call fail with it; otherwise a non-nil subscribeCh is
+	// returned. Neither set is the default -- Subscribe fails with
+	// herdr.ErrNoSocket, the same "no socket" behaviour every other fake and
+	// stub Herdr gets, so every daemon and reconcile test that never scripts
+	// events keeps polling exactly as before. subscribeCalls records the
+	// pane id slice handed to each call, in order.
+	//
+	// onSubscribe, when set, overrides both per call -- the reconnect tests
+	// need a fresh channel on the second Subscribe, which a single scripted
+	// subscribeCh cannot express.
+	subscribeCh    <-chan herdr.Event
+	subscribeErr   error
+	subscribeCalls [][]string
+	onSubscribe    func() (<-chan herdr.Event, error)
 }
 
 func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
@@ -678,6 +694,20 @@ func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
 	}
 	f.closed = append(f.closed, paneID)
 	return nil
+}
+
+func (f *fakeHerdr) Subscribe(_ context.Context, paneIDs []string) (<-chan herdr.Event, error) {
+	f.subscribeCalls = append(f.subscribeCalls, append([]string(nil), paneIDs...))
+	if f.onSubscribe != nil {
+		return f.onSubscribe()
+	}
+	if f.subscribeErr != nil {
+		return nil, f.subscribeErr
+	}
+	if f.subscribeCh != nil {
+		return f.subscribeCh, nil
+	}
+	return nil, herdr.ErrNoSocket
 }
 
 func TestFakeSatisfiesHerdr(t *testing.T) {

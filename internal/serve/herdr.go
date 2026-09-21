@@ -52,3 +52,7 @@ func (stubHerdr) StartAgent(ctx context.Context, name, kind, paneID string, args
 func (stubHerdr) ClosePane(ctx context.Context, paneID string) error {
 	return errNoHerdr
 }
+
+func (stubHerdr) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
+	return nil, herdr.ErrNoSocket
+}
