@@ -1581,40 +1581,6 @@ closes on the marker, the report is still delivered, and the human still
 judges the diff; the gate only adds a `gate=<result>` note and a `Gate:`
 line to the payload, plus a structured record on the report's log entry.
 
-### Repair rounds
-
-A failing gate does nothing on its own: the round closes, the report goes to
-the planner, and a human judges the diff. A binding can opt into a **repair
-round** instead, with `--regate N` on `relay bind`, `relay add`, `relay fork`
-or `relay send`, or with `"regate": N` under `gate` in `policy.json` (the
-default for new bindings, which `relay fork` inherits from its source). `N` is
-how many repair rounds relay may open after failing gates; `0` -- the default
--- turns the loop off, and `--regate` on a binding with no gate is accepted and
-inert, since a binding with no gate never fails one.
-
-When a round closes with `gate=fail` and the budget is not yet spent, relay
-stages round N+1 in the same tick, after the report has been queued. Its plan
-file is written for the builder rather than by the planner: it names the failed
-round's acceptance check and the original plan, and carries the last 200
-non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
-check reports and to halt and report if no code change can fix it. The hand-off
-is exactly a send's -- a fresh process for a headless binding, a prompt for a
-pane -- and the new round's plan entry is logged with `repair k/M`.
-
-Two bounds end the loop with `NEEDS YOU` instead of another repair round:
-
-- the budget is spent: `gate failed after M repair round(s) (regate N)`;
-- the new failure's normalised output equals the previous failure's -- the
-  builder changed nothing that mattered -- reported as `gate output unchanged
-  after repair`. Timestamps, durations, large integers, hex digests and `/tmp`
-  paths are stripped before the two are compared.
-
-The failed round stays closed either way: its own report, diff and `gate=fail`
-stand, and relay never writes or removes `NNN-done`. A passing gate or a human
-`relay send` resets the count, so the next failure gets a fresh budget.
-Headless bindings are the intended case -- the server runs the same reconcile,
-so a remote headless binding gets repair rounds too.
-
 While the gate runs, the round is held: nothing else acts on the
 builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
@@ -1702,6 +1668,40 @@ of them gated, no runner, a worktree that could not be created -- closes
 normally with one `verify skipped: <why>` note in the log. A crashed relay can
 leave a tree under `.worktrees/.verify/`; remove it with
 `git worktree remove <path>`.
+
+### Repair rounds
+
+A failing gate does nothing on its own: the round closes, the report goes to
+the planner, and a human judges the diff. A binding can opt into a **repair
+round** instead, with `--regate N` on `relay bind`, `relay add`, `relay fork`
+or `relay send`, or with `"regate": N` under `gate` in `policy.json` (the
+default for new bindings, which `relay fork` inherits from its source). `N` is
+how many repair rounds relay may open after failing gates; `0` -- the default
+-- turns the loop off, and `--regate` on a binding with no gate is accepted and
+inert, since a binding with no gate never fails one.
+
+When a round closes with `gate=fail` and the budget is not yet spent, relay
+stages round N+1 in the same tick, after the report has been queued. Its plan
+file is written for the builder rather than by the planner: it names the failed
+round's acceptance check and the original plan, and carries the last 200
+non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
+check reports and to halt and report if no code change can fix it. The hand-off
+is exactly a send's -- a fresh process for a headless binding, a prompt for a
+pane -- and the new round's plan entry is logged with `repair k/M`.
+
+Two bounds end the loop with `NEEDS YOU` instead of another repair round:
+
+- the budget is spent: `gate failed after M repair round(s) (regate N)`;
+- the new failure's normalised output equals the previous failure's -- the
+  builder changed nothing that mattered -- reported as `gate output unchanged
+  after repair`. Timestamps, durations, large integers, hex digests and `/tmp`
+  paths are stripped before the two are compared.
+
+The failed round stays closed either way: its own report, diff and `gate=fail`
+stand, and relay never writes or removes `NNN-done`. A passing gate or a human
+`relay send` resets the count, so the next failure gets a fresh budget.
+Headless bindings are the intended case -- the server runs the same reconcile,
+so a remote headless binding gets repair rounds too.
 
 ## Consults: asking a reviewer
 
