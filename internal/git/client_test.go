@@ -1732,6 +1732,98 @@ func TestCommitAllCommitsEverything(t *testing.T) {
 	}
 }
 
+// TestTreeFingerprintChangesOnEditAndCommit pins #135's tree signal: the same
+// tree twice is one fingerprint; an edit of a tracked file is a second; a
+// commit is a third; an untracked file is a fourth.
+func TestTreeFingerprintChangesOnEditAndCommit(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "a.txt")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	first, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint: %v", err)
+	}
+	again, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint (again): %v", err)
+	}
+	if first != again {
+		t.Fatalf("fingerprint changed with no edit: %q then %q", first, again)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint (edited): %v", err)
+	}
+	if edited == first {
+		t.Fatalf("fingerprint unchanged after editing a tracked file: %q", edited)
+	}
+
+	runGit(t, dir, "add", "a.txt")
+	runGit(t, dir, "commit", "-m", "edit")
+	committed, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint (committed): %v", err)
+	}
+	if committed == edited {
+		t.Fatalf("fingerprint unchanged after committing: %q", committed)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	untracked, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint (untracked): %v", err)
+	}
+	if untracked == committed {
+		t.Fatalf("fingerprint unchanged after adding an untracked file: %q", untracked)
+	}
+}
+
+// TestTreeFingerprintUnbornHead pins the branch a fresh repo lands on: rev-parse
+// HEAD fails with no commit, and the fingerprint must still be taken from the
+// status alone rather than erroring.
+func TestTreeFingerprintUnbornHead(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	fp, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint on an unborn branch: %v", err)
+	}
+	if fp == "" {
+		t.Fatal("fingerprint on an unborn branch is empty")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := client.TreeFingerprint(ctx, dir)
+	if err != nil {
+		t.Fatalf("TreeFingerprint (untracked): %v", err)
+	}
+	if edited == fp {
+		t.Fatalf("fingerprint unchanged after adding an untracked file: %q", edited)
+	}
+}
+
 func TestNormalizeOriginURL(t *testing.T) {
 	cases := []struct {
 		name string

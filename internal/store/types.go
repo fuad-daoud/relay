@@ -143,6 +143,30 @@ func (e Endpoint) Headless() bool { return e.Mode == ModeHeadless }
 // Remote reports whether this endpoint is hosted on a remote relay server.
 func (e Endpoint) Remote() bool { return e.Mode == ModeRemote }
 
+// Progress is the current round's sampled progress clock (#135): the tree
+// fingerprint and the builder's output, each with the time it last changed.
+// It is the raw material for the stalled and exploring labels; relay never
+// acts on it.
+type Progress struct {
+	// SampledAt is when the last sample was taken. The daemon samples at most
+	// once per policy.json's progress_interval_ms; every other tick returns
+	// the binding unchanged.
+	SampledAt time.Time `json:"sampled_at"`
+	// Tree is the last tree fingerprint: HEAD and the porcelain status,
+	// hashed. "" when no tree signal was ever readable.
+	Tree string `json:"tree,omitempty"`
+	// TreeAt is when Tree last changed, and the round's start when it never
+	// has.
+	TreeAt time.Time `json:"tree_at"`
+	// Output is the pane builder's last screen fingerprint. Headless builders
+	// do not use it: their output is the stream file's mtime, carried in
+	// OutputAt alone.
+	Output string `json:"output,omitempty"`
+	// OutputAt is when the pane's screen last changed; for a headless builder
+	// it is the stream's last activity.
+	OutputAt time.Time `json:"output_at"`
+}
+
 // Binding ties one planner pane to one builder pane over one working tree.
 type Binding struct {
 	Name    string   `json:"name"`
@@ -241,7 +265,9 @@ type Binding struct {
 	// daemon judged the live-but-quiet builder stalled (#252): zero means not
 	// stalled. Set/cleared only by reconcileHeadless (and copied from the
 	// server view for remote bindings); cleared by Send and round close.
-	// relay never acts on it -- killing stays the human's decision.
+	// relay never acts on it -- killing stays the human's decision. Since
+	// #135 it is set by progressStep for every local builder mode, from the
+	// later of the tree's and the output's last change.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
 	// StopRequestedAt is when `relay stop` asked this pane round's builder to
@@ -251,6 +277,29 @@ type Binding struct {
 	// never outlives the round it was made for.
 	StopRequestedAt time.Time `json:"stop_requested_at,omitempty"`
 	StopGraceMS     int       `json:"stop_grace_ms,omitempty"`
+	// Progress is the current round's sampled progress clock (#135): the
+	// tree fingerprint and the builder's output, each with the time it last
+	// changed. Transient: nil before the round's first sample, and cleared by
+	// Send, resume/rebind and round close.
+	Progress *Progress `json:"progress,omitempty"`
+
+	// ExploringSince is the tree's last change when the daemon judged the
+	// builder exploring (#135): output or screen is moving while the tree has
+	// not for policy.json's explore_after_ms. Zero means not exploring. It is
+	// a label only -- no hook event -- because some plans are read-heavy.
+	// Cleared by Send, resume/rebind and round close.
+	ExploringSince time.Time `json:"exploring_since,omitempty"`
+
+	// StaleSince is when a NEEDS YOU or HELD binding last changed state (the
+	// halt time, or the newest log entry, whichever is available) once it has
+	// been unacted for policy.json's stale_after_ms (#135). Zero means not
+	// stale. Cleared by Send, resume/rebind and round close.
+	StaleSince time.Time `json:"stale_since,omitempty"`
+
+	// StaleNotifiedAt is when relay last raised the one stale notification for
+	// the current episode (#135), so a stale binding notifies once and not once
+	// per tick. Reset with StaleSince.
+	StaleNotifiedAt time.Time `json:"stale_notified_at,omitempty"`
 
 	// RoundBaselineTree is the git tree object the CURRENT round started from,
 	// written by Send and consumed (then cleared) when the round's report is

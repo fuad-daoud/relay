@@ -426,19 +426,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if err != nil {
 			return b, err
 		}
-		// The process is alive; the stream file is the one signal that
-		// separates "thinking" from "hung" (#252). A stream quiet for
-		// stall_after_ms is a stall; a stream that moves again clears it.
-		last := streamLastActivity(rt, next)
-		if now.Sub(last) >= rt.Policy.StallAfter() {
-			if next.StalledSince.IsZero() {
-				next.StalledSince = last
-				slog.Warn("headless builder stalled", "binding", next.Name, "round", next.Round, "pid", next.Builder.PID, "quiet", now.Sub(last).Truncate(time.Second))
-			}
-		} else if !next.StalledSince.IsZero() {
-			next.StalledSince = time.Time{}
-			slog.Info("headless builder resumed", "binding", next.Name, "round", next.Round)
-		}
+		// The process is alive; the progress clock (#135) replaces #252's
+		// stream-only rule: the tree and the stream are both signals, and a
+		// stall is quiet on both. sampleSignals gets no agents -- a headless
+		// builder is not in herdr's list, so it can never be "blocked".
+		next = progressStep(rt, next, now, sampleSignals(ctx, rt, next, nil))
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
@@ -653,8 +645,10 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 		return "unknown", info
 	}
 	if alive {
-		if !b.StalledSince.IsZero() {
-			return "stalled " + AgeText(rt.Now().Sub(b.StalledSince)), info
+		// #252's label is now one of #135's progress labels, so a live
+		// headless builder can also read "exploring <age>".
+		if working, _ := labelsOf(b, rt.Now()); working != "" {
+			return working, info
 		}
 		return "working", info
 	}

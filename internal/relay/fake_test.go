@@ -172,6 +172,14 @@ type fakeGit struct {
 	// tags is what ListTags returns; ListTagsErr makes it fail.
 	tags        map[string]string
 	listTagsErr error
+
+	// treeFingerprints is the sequence TreeFingerprint returns, one entry
+	// per call; the last repeats once the sequence is exhausted, so a test
+	// that wants a constant signal sets one entry. treeFingerprintErr makes
+	// every call fail.
+	treeFingerprints     []string
+	treeFingerprintErr   error
+	treeFingerprintCalls int
 }
 
 type repoFactsCall struct{ Dir string }
@@ -368,6 +376,23 @@ func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonD
 		commonDir = dir + "/.git"
 	}
 	return f.repoFactsOrigin, commonDir, nil
+}
+
+// TreeFingerprint returns the next configured fingerprint; the last repeats
+// once the sequence is exhausted. No entries means "".
+func (f *fakeGit) TreeFingerprint(ctx context.Context, dir string) (string, error) {
+	if f.treeFingerprintErr != nil {
+		return "", f.treeFingerprintErr
+	}
+	if len(f.treeFingerprints) == 0 {
+		return "", nil
+	}
+	i := f.treeFingerprintCalls
+	f.treeFingerprintCalls++
+	if i >= len(f.treeFingerprints) {
+		i = len(f.treeFingerprints) - 1
+	}
+	return f.treeFingerprints[i], nil
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {

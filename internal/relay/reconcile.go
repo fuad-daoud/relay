@@ -85,6 +85,78 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 			Timestamp: rt.Now().UTC(),
 		})
 	}
+	// One binding_stale per episode, on the zero -> set edge (#135). As with
+	// builder_stalled, the clear emits nothing.
+	if orig.StaleSince.IsZero() && !next.StaleSince.IsZero() {
+		rt.Hooks.Dispatch(ctx, hooks.Event{
+			Type:      hooks.EventBindingStale,
+			BindingID: next.Name,
+			State:     string(next.State),
+			OldState:  string(orig.State),
+			Round:     next.Round,
+			Timestamp: rt.Now().UTC(),
+		})
+	}
+}
+
+// stampStale maintains the stale clock (#135) for a NEEDS YOU or HELD binding:
+// it stamps StaleSince on the moment the binding started waiting -- the halt
+// time when there is one, otherwise the newest log entry -- once that moment is
+// stale_after_ms old. Every other state carries no stale stamp. It never
+// clears StaleNotifiedAt; Send, resume/rebind and round close do that, which is
+// what makes a notification one per episode rather than one per tick.
+func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
+	switch b.State {
+	case store.StateNeedsYou, store.StateHeld:
+	default:
+		b.StaleSince = time.Time{}
+		return b
+	}
+	if !b.StaleSince.IsZero() {
+		return b
+	}
+
+	since := b.HaltAt
+	if since.IsZero() {
+		entries, err := tx.ReadLog(b.Name)
+		if err != nil || len(entries) == 0 {
+			return b
+		}
+		since = entries[len(entries)-1].TS
+	}
+	if rt.Now().UTC().Sub(since) >= rt.Policy.StaleAfter() {
+		b.StaleSince = since
+	}
+	return b
+}
+
+// emitProgressNotices raises the one advisory notification each progress label
+// gets (#135): one when a builder goes stalled, and one when a NEEDS YOU or
+// HELD binding goes stale. Unlike a halt notification, a failure here is logged
+// and the tick carries on. It returns the binding with StaleNotifiedAt set, so
+// the once-per-episode dedup survives into the saved binding.
+func emitProgressNotices(ctx context.Context, rt Runtime, orig, next store.Binding) store.Binding {
+	if rt.Herdr == nil {
+		return next
+	}
+	now := rt.Now().UTC()
+
+	if orig.StalledSince.IsZero() && !next.StalledSince.IsZero() {
+		msg := fmt.Sprintf("%s: builder stalled (no progress for %s)", next.Name, AgeText(now.Sub(next.StalledSince)))
+		if err := rt.Herdr.Notify(ctx, msg, fmt.Sprintf("round %d", next.Round), herdr.SoundRequest); err != nil {
+			slog.Warn("stall notify failed", "binding", next.Name, "err", err)
+		}
+	}
+
+	if !next.StaleSince.IsZero() && next.StaleNotifiedAt.IsZero() {
+		msg := fmt.Sprintf("%s: NEEDS YOU for %s", next.Name, AgeText(now.Sub(next.StaleSince)))
+		if err := rt.Herdr.Notify(ctx, msg, fmt.Sprintf("round %d", next.Round), herdr.SoundRequest); err != nil {
+			slog.Warn("stale notify failed", "binding", next.Name, "err", err)
+		}
+		next.StaleNotifiedAt = now
+	}
+
+	return next
 }
 
 // refreshEndpoint updates an endpoint from the live agent it was located by.
@@ -139,7 +211,11 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	orig := b
 	defer func() {
 		if err == nil {
+			// The stale clock (#135) is stamped on whatever state the tick
+			// settled on, before the mutations and notices read it.
+			out = stampStale(rt, tx, out)
 			emitMutations(ctx, rt, orig, out)
+			out = emitProgressNotices(ctx, rt, orig, out)
 		}
 	}()
 	// Consults reconcile before the builder is located, and before the DONE
@@ -297,6 +373,14 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			return b, err
 		}
 		return b, nil
+	}
+
+	// The progress clock (#135) is sampled for an open round only, and only
+	// while the builder is relay's to judge: a binding already asking a human
+	// (needs_you) or holding a payload belongs to the stale clock, and a
+	// closed round has no tree or output that means anything.
+	if !b.RoundStartedAt.IsZero() && b.State != store.StateNeedsYou && b.State != store.StateHeld {
+		b = progressStep(rt, b, now, sampleSignals(ctx, rt, b, agents))
 	}
 
 	var next store.Binding
@@ -889,12 +973,17 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		b.LastGateSig = ""
 	}
 	// A closed round is over: a stall stamped against it says nothing about
-	// the next one (#252).
+	// the next one (#252), and neither do the progress sample or the stale
+	// clock (#135).
 	b.StalledSince = time.Time{}
 	// A request to stop belonged to the round that just closed (#138): the
 	// stop bookkeeping never outlives it.
 	b.StopRequestedAt = time.Time{}
 	b.StopGraceMS = 0
+	b.Progress = nil
+	b.ExploringSince = time.Time{}
+	b.StaleSince = time.Time{}
+	b.StaleNotifiedAt = time.Time{}
 
 	return b, nil
 }

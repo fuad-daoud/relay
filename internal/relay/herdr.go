@@ -43,6 +43,10 @@ type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
 	HeadCommit(ctx context.Context, dir string) (string, error)
+	// TreeFingerprint hashes dir's HEAD and porcelain status into one short
+	// string that changes when the tree does (#135). It never reads a diff or
+	// writes a snapshot, so a binding's progress sample is cheap.
+	TreeFingerprint(ctx context.Context, dir string) (string, error)
 	RevListCount(ctx context.Context, dir, from, to string) (int, error)
 	BranchExists(ctx context.Context, dir, branch string) (bool, error)
 	CreateBranch(ctx context.Context, dir, branch, commit string) error

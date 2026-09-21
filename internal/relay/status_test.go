@@ -1929,3 +1929,113 @@ func TestDisplayStatePaused(t *testing.T) {
 		t.Fatal("paused binding missing from status")
 	}
 }
+
+// TestStatusLabelsStalledExploringStale pins #135's three labels on the status
+// row: a stalled pane builder, an exploring headless one, and a stale NEEDS YOU
+// one, plus the four structured JSON fields.
+func TestStatusLabelsStalledExploringStale(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}}
+	rt := newRuntime(t, f)
+	rt.Runner = newFakeRunner()
+	rt.Runner.(*fakeRunner).script(48211, true)
+	now := baseTime
+
+	paneAt := now.Add(-17 * time.Minute)
+	pane := store.Binding{
+		Name: "pane", CWD: "/repo-pane", State: store.StateActive, Round: 4,
+		RoundStartedAt: now.Add(-time.Hour),
+		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		Builder:        store.Endpoint{Kind: "agy", PaneID: "w2:p4"},
+		StalledSince:   paneAt,
+		Progress: &store.Progress{
+			SampledAt: now, Tree: "tree-1", TreeAt: now.Add(-time.Hour),
+			Output: "screen-1", OutputAt: paneAt,
+		},
+	}
+	exploreAt := now.Add(-22 * time.Minute)
+	headless := store.Binding{
+		Name: "headless", CWD: "/repo-headless", State: store.StateActive, Round: 2,
+		RoundStartedAt: now.Add(-time.Hour),
+		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		Builder: store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless, PID: 48211,
+			StartedAt: now.Add(-time.Hour).Unix()},
+		ExploringSince: exploreAt,
+	}
+	staleAt := now.Add(-4*time.Hour - 10*time.Minute)
+	stale := store.Binding{
+		Name: "stale", CWD: "/repo-stale", State: store.StateNeedsYou, Round: 1,
+		RoundStartedAt: now.Add(-time.Hour),
+		Planner:        store.Endpoint{Kind: "claude", PaneID: "w2:p3"},
+		Builder:        store.Endpoint{Kind: "agy", PaneID: "w2:p9"},
+		StaleSince:     staleAt,
+	}
+	for _, b := range []store.Binding{pane, headless, stale} {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save %s: %v", b.Name, err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 3 {
+		t.Fatalf("got %d rows, want 3: %+v", len(rep.Bindings), rep.Bindings)
+	}
+	rows := map[string]BindingStatus{}
+	for _, r := range rep.Bindings {
+		rows[r.Name] = r
+	}
+
+	wantStall := "stalled " + AgeText(now.Sub(paneAt))
+	if got := rows["pane"].BuilderStatus; got != wantStall {
+		t.Errorf("pane BuilderStatus = %q, want %q", got, wantStall)
+	}
+	if got := rows["pane"].Stall; got != wantStall {
+		t.Errorf("pane Stall = %q, want %q", got, wantStall)
+	}
+	if !rows["pane"].LastProgressAt.Equal(paneAt) {
+		t.Errorf("pane LastProgressAt = %s, want %s", rows["pane"].LastProgressAt, paneAt)
+	}
+
+	wantExplore := "exploring " + AgeText(now.Sub(exploreAt))
+	if got := rows["headless"].BuilderStatus; got != wantExplore {
+		t.Errorf("headless BuilderStatus = %q, want %q", got, wantExplore)
+	}
+	if got := rows["headless"].Exploring; got != wantExplore {
+		t.Errorf("headless Exploring = %q, want %q", got, wantExplore)
+	}
+	if got := rows["headless"].Stall; got != "" {
+		t.Errorf("headless Stall = %q, want empty", got)
+	}
+
+	wantStale := "stale " + AgeText(now.Sub(staleAt))
+	if got := rows["stale"].Stale; got != wantStale {
+		t.Errorf("stale Stale = %q, want %q", got, wantStale)
+	}
+	if got := rows["stale"].BuilderStatus; got == "" {
+		t.Error("stale BuilderStatus is empty, want the absent word for a missing pane")
+	}
+
+	// The structured fields, per row: each label's own key is present, and a
+	// sampled row carries when its signals last moved.
+	assertHasKey := func(name, key string) {
+		t.Helper()
+		raw, err := json.Marshal(rows[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("%s row JSON is missing %q: %s", name, key, raw)
+		}
+	}
+	assertHasKey("pane", "stall")
+	assertHasKey("pane", "last_progress_at")
+	assertHasKey("headless", "exploring")
+	assertHasKey("stale", "stale")
+	assertHasKey("stale", "last_progress_at")
+}

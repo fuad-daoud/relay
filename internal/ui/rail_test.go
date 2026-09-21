@@ -328,3 +328,17 @@ func TestRailArchivedRowNotArchivedReadsDone(t *testing.T) {
 		t.Errorf("state = %q, want %q", got, "done")
 	}
 }
+
+// TestCardLinesShowsStaleLabel pins #135's rail surface: a NEEDS YOU row
+// carries its stale age on the card's second line.
+func TestCardLinesShowsStaleLabel(t *testing.T) {
+	b := relay.BindingStatus{
+		Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
+		Stale:   "stale 4h 0m",
+		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
+	}
+	got := plain(cardLines(b, false, false, railNow, true, railDefault)[1])
+	if !strings.Contains(got, "· stale 4h 0m") {
+		t.Errorf("card line = %q, want it to carry %q", got, "· stale 4h 0m")
+	}
+}

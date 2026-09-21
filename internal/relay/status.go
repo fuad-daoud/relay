@@ -115,6 +115,19 @@ type BindingStatus struct {
 	// Branch is the binding's worktree branch; "" for a --cwd binding,
 	// which has no worktree of its own.
 	Branch string `json:"branch,omitempty"`
+	// LastProgressAt is when one of the binding's progress signals last
+	// changed (#135): the later of the tree's and the output's last change.
+	// The zero time when the open round has not been sampled.
+	LastProgressAt time.Time `json:"last_progress_at,omitempty"`
+	// Stall is #135's stalled label ("stalled 17m") while the binding is
+	// stalled; "" otherwise. Relay never acts on it.
+	Stall string `json:"stall,omitempty"`
+	// Exploring is #135's exploring label ("exploring 22m") while the
+	// builder's output is moving and its tree is not; "" otherwise.
+	Exploring string `json:"exploring,omitempty"`
+	// Stale is #135's stale label ("stale 4h 0m") for a NEEDS YOU or HELD
+	// binding that has sat unacted past stale_after_ms; "" otherwise.
+	Stale string `json:"stale,omitempty"`
 	// Waiting is set when the binding is stalled on a human (WaitingOn):
 	// the cause, the one-line reason, since when, and the verb that
 	// resolves it. Nil otherwise, including for a switchable broken
@@ -328,6 +341,33 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	} else if a, ok := FindAgent(agents, b.Builder); ok {
 		row.BuilderStatus = effectiveStatus(b.Builder, a)
 		row.BuilderPane = a.PaneID
+	}
+
+	// #135's progress labels. The stale label is the row's own; the working
+	// label replaces "working" for a pane builder (a headless row already
+	// carries it out of headlessStatus, and a remote row's status comes from
+	// the server). This runs before the gate override so a gated row still
+	// reads "gating ...".
+	labelsNow := time.Now()
+	if rt.Now != nil {
+		labelsNow = rt.Now()
+	}
+	working, staleLabel := labelsOf(b, labelsNow)
+	row.Stale = staleLabel
+	if b.Progress != nil {
+		row.LastProgressAt = b.Progress.TreeAt
+		if b.Progress.OutputAt.After(row.LastProgressAt) {
+			row.LastProgressAt = b.Progress.OutputAt
+		}
+	}
+	switch {
+	case strings.HasPrefix(working, "stalled "):
+		row.Stall = working
+	case strings.HasPrefix(working, "exploring "):
+		row.Exploring = working
+	}
+	if !b.Builder.Headless() && !b.Builder.Remote() && row.BuilderStatus == herdr.StatusWorking && working != "" {
+		row.BuilderStatus = working
 	}
 
 	// A gate in flight overrides whatever the builder itself reports (#132):
@@ -620,6 +660,11 @@ func RenderStatus(r Report) string {
 	for _, b := range r.Bindings {
 		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
 			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
+		// #135's stale age sits right after the state word, where a human
+		// scanning for what has been waiting the longest looks.
+		if b.Stale != "" {
+			fmt.Fprintf(&sb, "  %s", b.Stale)
+		}
 		if b.Dirty {
 			fmt.Fprint(&sb, " dirty")
 		}

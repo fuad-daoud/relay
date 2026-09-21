@@ -358,6 +358,14 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		}
 		wasPaused := b.State == store.StatePaused
 		b.State = store.StateActive
+		// A resume or a rebind is a fresh attempt, so the previous round's
+		// progress clock, stall, exploring and stale stamps say nothing about
+		// it (#135).
+		b.StalledSince = time.Time{}
+		b.Progress = nil
+		b.ExploringSince = time.Time{}
+		b.StaleSince = time.Time{}
+		b.StaleNotifiedAt = time.Time{}
 		if rebinding {
 			b.Builder = builder
 			b.BuilderCandidate = res.Token() // "" when adopting a pane

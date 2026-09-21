@@ -167,3 +167,22 @@ func TestSortRowsNameOrder(t *testing.T) {
 		t.Errorf("input mutated: %v -> %v", before, names(rows))
 	}
 }
+
+// TestSortStaleFirst pins #135's ordering rule: inside one attention group a
+// stale row sorts before a fresh one, even when the fresh row has a newer
+// Last.TS. attention=false still ignores the flag and orders by name.
+func TestSortStaleFirst(t *testing.T) {
+	t0 := time.Date(2026, 9, 17, 14, 0, 0, 0, time.UTC)
+	rows := []BindingStatus{
+		{Name: "fresh", Display: "NEEDS YOU", Last: &LastEvent{TS: t0}},
+		{Name: "stale", Display: "NEEDS YOU", Stale: "stale 4h 0m", Last: &LastEvent{TS: t0.Add(-time.Hour)}},
+		{Name: "held-stale", Display: "HELD", Stale: "stale 5h 0m", Last: &LastEvent{TS: t0.Add(-2 * time.Hour)}},
+		{Name: "held", Display: "HELD", Last: &LastEvent{TS: t0.Add(-3 * time.Hour)}},
+	}
+	if got, want := names(SortRows(rows, true)), []string{"stale", "fresh", "held-stale", "held"}; !equalNames(got, want) {
+		t.Errorf("attention order: got %v want %v", got, want)
+	}
+	if got, want := names(SortRows(rows, false)), []string{"fresh", "held", "held-stale", "stale"}; !equalNames(got, want) {
+		t.Errorf("name order: got %v want %v", got, want)
+	}
+}
