@@ -1067,7 +1067,7 @@ An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you lau
 
 `aliases.json` from earlier versions is no longer read.
 
-#### History
+#### Availability history
 
 Every gate relay records -- a limit you report, a spawn failure it hit
 -- is also kept for 30 days in `~/.local/state/relay/availability.json`, by
