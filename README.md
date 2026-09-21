@@ -1464,6 +1464,15 @@ Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
 while the gate is running, and `relay log` appends ` gate=<result>` to the
 round's report entry.
 
+A round's report entry also carries its **builder session**, `builder_session`
+in the JSON that `relay log --json` and `relay show --json` print: the harness
+session that built the closed round, so a report read two rounds later can
+still name the session that wrote it. For a headless builder it is the session
+the round's stream announced in its first event; for a pane builder it is
+herdr's session for the pane. It is absent when neither named one -- relay
+never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is
+what `ask --round` (coming) resumes.
+
 ## Consults: asking a reviewer
 
 A **consult** is a one-shot agent spawned beside a binding to answer one

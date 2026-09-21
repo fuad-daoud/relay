@@ -165,3 +165,30 @@ func TestLogLineGateSuffix(t *testing.T) {
 		t.Errorf("no gate= expected without a Gate record: %q", got2)
 	}
 }
+
+// TestLogLineSessionSuffix pins #147: a report entry with a BuilderSession
+// appends " session=<kind>:<id8>" (the id cut to eight characters); an entry
+// with none carries no suffix.
+func TestLogLineSessionSuffix(t *testing.T) {
+	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
+	withSession := store.LogEntry{
+		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Path:           "/p/001-report.md",
+		BuilderSession: &store.BuilderSession{Kind: "claude", ID: "0123456789abcdef"},
+	}
+	if got := LogLine(withSession); !strings.HasSuffix(got, " session=claude:01234567") {
+		t.Errorf("expected suffix %q, got %q", " session=claude:01234567", got)
+	}
+
+	short := withSession
+	short.BuilderSession = &store.BuilderSession{Kind: "agy", ID: "conv-1"}
+	if got := LogLine(short); !strings.HasSuffix(got, " session=agy:conv-1") {
+		t.Errorf("expected suffix %q, got %q", " session=agy:conv-1", got)
+	}
+
+	noSession := withSession
+	noSession.BuilderSession = nil
+	if got := LogLine(noSession); strings.Contains(got, "session=") {
+		t.Errorf("no session= expected without a BuilderSession: %q", got)
+	}
+}

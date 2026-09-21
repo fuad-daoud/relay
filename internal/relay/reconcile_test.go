@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -3022,5 +3023,78 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 	}
 	if got.Regate != 3 {
 		t.Errorf("Regate = %d, want 3 persisted by send --regate", got.Regate)
+	}
+}
+
+// roundReportEntry is webshop's queued report entry for round. It is the
+// non-e2e form of e2e_test.go's reportEntry, which is behind the e2e tag.
+func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
+	t.Helper()
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			return e
+		}
+	}
+	t.Fatalf("no report entry for round %d", round)
+	return store.LogEntry{}
+}
+
+// TestReportEntryCarriesPaneSession pins #147: a pane builder's report entry
+// names the session herdr reports for it, refreshed onto the endpoint on the
+// tick that closes the round.
+func TestReportEntryCarriesPaneSession(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	builder := builderAgent(herdr.StatusIdle)
+	builder.Session = herdr.Session{Value: "builder-sess-7"}
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builder}
+	if _, err := reconcile(t, rt, b, agents); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	entry := roundReportEntry(t, rt, 1)
+	if entry.BuilderSession == nil {
+		t.Fatal("BuilderSession = nil, want {agy builder-sess-7}")
+	}
+	if entry.BuilderSession.Kind != "agy" || entry.BuilderSession.ID != "builder-sess-7" {
+		t.Errorf("BuilderSession = %+v, want {agy builder-sess-7}", *entry.BuilderSession)
+	}
+}
+
+// TestReportEntryNoSessionIsNil pins #147's never-guess rule: a pane whose
+// agent reports no session leaves BuilderSession nil, and the entry's JSON
+// carries no builder_session key.
+func TestReportEntryNoSessionIsNil(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+	if _, err := reconcile(t, rt, b, agents); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	entry := roundReportEntry(t, rt, 1)
+	if entry.BuilderSession != nil {
+		t.Errorf("BuilderSession = %+v, want nil when no session is known", entry.BuilderSession)
+	}
+	blob, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), "builder_session") {
+		t.Errorf("JSON of a session-less entry carries builder_session: %s", blob)
 	}
 }

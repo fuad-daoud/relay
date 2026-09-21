@@ -124,6 +124,18 @@ type LogEntry struct {
 	// classifier did not answer and Paragraphs, Above, Max and InputTokens are
 	// zero; the regex count in Flagged stands alone.
 	Classify *ClassifyRecord `json:"classify,omitempty"`
+
+	// BuilderSession names the harness session that built the round, on
+	// report entries (#147). Nil when neither herdr nor the round's stream
+	// named one -- never guessed.
+	BuilderSession *BuilderSession `json:"builder_session,omitempty"`
+}
+
+// BuilderSession is the harness session a closed round's report names the
+// builder by (#147).
+type BuilderSession struct {
+	Kind string `json:"kind"` // harness kind: claude | opencode | agy | codex
+	ID   string `json:"id"`   // the harness's own session/conversation/thread id, verbatim
 }
 
 type ClassifyRecord struct {

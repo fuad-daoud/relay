@@ -116,6 +116,12 @@ type Endpoint struct {
 	StreamRound  int   `json:"stream_round,omitempty"`
 	StreamOffset int64 `json:"stream_offset,omitempty"`
 
+	// StreamSessionID is the session id the round's stream announced, set
+	// once per round by drainStream from the harness's own event (#147).
+	// Headless only; startRound clears it, because a new process begins a new
+	// session. Pane builders keep using SessionID (from herdr).
+	StreamSessionID string `json:"stream_session_id,omitempty"`
+
 	// Remote builder endpoint fields
 	Server       string `json:"server,omitempty"`
 	LastShipped  string `json:"last_shipped,omitempty"`

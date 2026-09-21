@@ -139,6 +139,9 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	// A new process announces its own session on the stream (#147): the
+	// previous round's id must not survive the start.
+	b.Builder.StreamSessionID = "sess-from-the-previous-process"
 
 	got, err := startRound(context.Background(), rt, b, "the prompt")
 	if err != nil {
@@ -173,6 +176,9 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	}
 	if !got.Builder.Headless() || got.Builder.PaneID != "" {
 		t.Errorf("mode or pane changed: %+v", got.Builder)
+	}
+	if got.Builder.StreamSessionID != "" {
+		t.Errorf("StreamSessionID after startRound = %q; a new process announces its own", got.Builder.StreamSessionID)
 	}
 }
 
@@ -2698,5 +2704,101 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 	}
 	if got.RepairCount != 1 || got.LastGateSig == "" {
 		t.Errorf("repairs=%d sig=%q, want 1 and a signature", got.RepairCount, got.LastGateSig)
+	}
+}
+
+// claudeStreamLines is internal/usage/testdata/claude-stream.jsonl's lines,
+// without their trailing newlines: the shape a claude builder's stream has,
+// and the fixture TestDrainStreamRecordsSessionIDOnce feeds it.
+func claudeStreamLines(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "usage", "testdata", "claude-stream.jsonl"))
+	if err != nil {
+		t.Fatalf("read claude fixture: %v", err)
+	}
+	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+}
+
+// sentClaudeHeadless is sentHeadless with a claude builder, so its stream is
+// the claude fixture's shape -- the harness whose id arrives as session_id.
+func sentClaudeHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+	t.Helper()
+	f.agents = []herdr.Agent{plannerAgent()}
+	rt := newRuntime(t, f)
+	rt.Runner = fr
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testClaudeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return rt, b
+}
+
+// TestDrainStreamRecordsSessionIDOnce pins #147: the first drained line that
+// names a session records it on the endpoint, and a later line naming another
+// (a sub-agent's) leaves it alone.
+func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentClaudeHeadless(t, &fakeHerdr{}, fr)
+	lines := claudeStreamLines(t)
+	streamWrite(t, rt, lines[0]+"\n"+lines[1]+"\n")
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.StreamSessionID != "sess-1" {
+		t.Fatalf("StreamSessionID = %q, want sess-1", got.Builder.StreamSessionID)
+	}
+
+	// A sub-agent's line carries a different session id; the first one stands.
+	streamWrite(t, rt, `{"type":"assistant","session_id":"sub-agent-sess","message":{}}`+"\n")
+	again, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if again.Builder.StreamSessionID != "sess-1" {
+		t.Errorf("StreamSessionID = %q after a second session id; want the first, sess-1", again.Builder.StreamSessionID)
+	}
+}
+
+// TestReportEntryCarriesHeadlessSession pins #147: the report entry of a
+// closed headless round names the stream's session, and the id is cleared
+// from the endpoint once the round has closed.
+func TestReportEntryCarriesHeadlessSession(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentClaudeHeadless(t, &fakeHerdr{}, fr)
+	lines := claudeStreamLines(t)
+	streamWrite(t, rt, lines[0]+"\n"+lines[1]+"\n")
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want the marker to close round 1", got.Round)
+	}
+	entry := roundReportEntry(t, rt, 1)
+	if entry.BuilderSession == nil {
+		t.Fatal("BuilderSession = nil, want {claude sess-1}")
+	}
+	if entry.BuilderSession.Kind != "claude" || entry.BuilderSession.ID != "sess-1" {
+		t.Errorf("BuilderSession = %+v, want {claude sess-1}", *entry.BuilderSession)
+	}
+	if got.Builder.StreamSessionID != "" {
+		t.Errorf("StreamSessionID after the close = %q, want it cleared", got.Builder.StreamSessionID)
 	}
 }
