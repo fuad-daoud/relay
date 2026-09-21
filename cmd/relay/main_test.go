@@ -63,6 +63,20 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
+// TestAskRoundNeedsAQuestion pins that `relay ask --round` without a question
+// is refused before a runtime is built: a round ask takes --file or -q, and a
+// CI runner with no herdr must fail on the missing flag, not on the
+// environment.
+func TestAskRoundNeedsAQuestion(t *testing.T) {
+	err := run([]string{"ask", "--round", "1", "x"})
+	if err == nil {
+		t.Fatal("relay ask --round without a question must be rejected")
+	}
+	if !strings.Contains(err.Error(), "--file or -q") {
+		t.Errorf("error must point at --file or -q, got %q", err)
+	}
+}
+
 // TestSendRegateNegativeIsRejected pins #132 part 2's flag validation. The
 // flag's -1 default means "not given", so a negative value the human typed is
 // a bad value, not an omission: it exits 2, and the check runs before any

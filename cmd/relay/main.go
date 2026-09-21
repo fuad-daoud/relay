@@ -1256,17 +1256,31 @@ func cmdAsk(args []string) error {
 	role := fs.String("role", "", "consult role: reviewer, researcher")
 	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in policy.json order[<role>]")
 	file := fs.String("file", "", "file containing the question")
+	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
+	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
+	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	nameFlag := fs.String("name", "", "binding name")
 	workspace := fs.String("workspace", "", "workspace for the consult's tab (default: $HERDR_WORKSPACE_ID)")
 	headless := fs.Bool("headless", false, "run the consult as a one-shot process instead of a pane; findings are its final message")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if *role == "" {
-		return fmt.Errorf("relay ask needs --role ROLE")
-	}
-	if *file == "" {
-		return fmt.Errorf("relay ask needs --file PATH")
+	if *round > 0 {
+		// The round's recorded session fixes the role and the candidate, so
+		// neither is required; --role is only worth a note.
+		if *role != "" {
+			fmt.Fprintln(os.Stderr, "note: relay ask --round ignores --role; the resumed session fixes the role")
+		}
+		if (*file != "") == (*question != "") {
+			return fmt.Errorf("relay ask --round needs --file or -q")
+		}
+	} else {
+		if *role == "" {
+			return fmt.Errorf("relay ask needs --role ROLE")
+		}
+		if *file == "" {
+			return fmt.Errorf("relay ask needs --file PATH")
+		}
 	}
 
 	rt, err := newRuntime()
@@ -1283,6 +1297,8 @@ func cmdAsk(args []string) error {
 		Role:        *role,
 		Candidate:   *cand,
 		File:        *file,
+		Question:    *question,
+		Round:       *round,
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		WorkspaceID: workspaceOrEnv(*workspace),
@@ -1290,6 +1306,13 @@ func cmdAsk(args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if *round > 0 {
+		fmt.Printf("asked round %d's builder (%s session %s) on %s (pid %d)\nfindings will appear at: %s\n",
+			*round, res.Consult.Endpoint.Kind, res.Consult.Endpoint.SessionID, res.Binding,
+			res.Consult.Endpoint.PID, res.Consult.FindingsPath)
+		return nil
 	}
 
 	if res.Consult.Endpoint.Headless() {

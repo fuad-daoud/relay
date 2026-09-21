@@ -45,6 +45,17 @@ Reply here with only that path. Do not modify any file in this repository.`
 // message from the stream at exit and writes FindingsPath itself.
 const consultHeadlessPrompt = "Read: %s\n\nAnswer as your final message: your findings, complete, in markdown. Do not modify any file in this repository. Do not write a findings file; relay records your final message."
 
+// roundRole is the record label for a consult that asks a closed round's own
+// builder (#147 part 2). It is a label, not a role table entry: the session
+// the round resumes already fixes what the consult runs as, so no role is
+// resolved and no harness.RoleSpec is needed.
+const roundRole = "round"
+
+// roundAskPrompt is the whole prompt a round consult runs with. Its origin
+// line is a literal because OriginLine has no form for DirToConsult: this
+// payload is addressed to a builder, but it is not a round.
+const roundAskPrompt = "relay: consult · to builder of round %d · about binding %q (not the human)\n\nYou built round %d of this binding. Answer from what you did and why; do not change anything, do not run tools that write.\n\nRead: %s\n\nAnswer as your final message, complete, in markdown; relay records it."
+
 // AskOptions describes one consult request.
 type AskOptions struct {
 	Role        string // consult role to spawn; required
@@ -58,6 +69,14 @@ type AskOptions struct {
 	// It needs rt.Runner; a candidate whose harness cannot honour the tier is
 	// refused exactly as a pane consult's is.
 	Headless bool
+
+	// Round > 0 asks the builder that built this closed round instead of
+	// spawning a role: it implies Headless, and Role and Candidate are
+	// ignored, because the round's recorded session fixes both (#147 part 2).
+	Round int
+	// Question is an inline question. With Round > 0 exactly one of File and
+	// Question must be set; without Round it is unused.
+	Question string
 }
 
 // AskResult is what an ask produced, so the CLI can tell the planner where the
@@ -76,6 +95,12 @@ type AskResult struct {
 
 // Ask spawns one read-only, one-shot consult beside a binding's builder and
 // returns immediately. The daemon watches for its findings.
+//
+// With opts.Round > 0 the ask is a round consult (#147 part 2): it resumes the
+// harness session that built closed round opts.Round and asks it the question,
+// headless and read-only, instead of resolving a role and a candidate. It then
+// requires exactly one of opts.File and opts.Question, and no opts.PlannerPane:
+// a resumed process opens no pane.
 //
 // Preconditions:  opts.PlannerPane names a live agent pane; opts.File is
 //
@@ -102,6 +127,10 @@ type AskResult struct {
 //	ErrTreelessUnsupported, ErrConsultCap, store.ErrNotFound, a wrapped
 //	herdr failure, or a wrapped store error from either phase.
 func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
+	if opts.Round > 0 {
+		return askRound(ctx, rt, opts)
+	}
+
 	if opts.PlannerPane == "" {
 		return AskResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
 	}
@@ -160,48 +189,8 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	}
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
-	var (
-		consult store.Consult
-		cwd     string
-	)
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load(opts.Name)
-		if err != nil {
-			return err
-		}
-		if b.Builder.Remote() {
-			return errors.New("consults are local-only")
-		}
-		if b.State == store.StateBroken || b.State == store.StateDone || b.State == store.StatePaused {
-			return fmt.Errorf("binding %q is %s; a consult needs a live binding to attach to", b.Name, b.State)
-		}
-		if runningConsults(b) >= consultCap(b) {
-			return fmt.Errorf("binding %q has %d running consults (cap %d), `relay reap` to free a slot: %w",
-				b.Name, runningConsults(b), consultCap(b), ErrConsultCap)
-		}
-
-		consult = store.Consult{
-			ID:           id,
-			Role:         role.Name,
-			Round:        b.Round,
-			AskPath:      rt.Store.AskPath(b.Name, b.Round, id),
-			FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, id),
-			Endpoint:     store.Endpoint{AgentName: agentName, Kind: l.Kind},
-			State:        store.ConsultSpawning,
-			SpawnedAt:    rt.Now().UTC(),
-		}
-
-		if err := os.WriteFile(consult.AskPath, body, 0o644); err != nil {
-			return fmt.Errorf("stage question at %s: %w", consult.AskPath, err)
-		}
-
-		b.Consults = append(b.Consults, consult)
-		if err := tx.Save(b); err != nil {
-			return err
-		}
-		cwd = b.CWD
-		return nil
-	})
+	consult, cwd, err := reserveConsult(rt, opts, id, role.Name,
+		store.Endpoint{AgentName: agentName, Kind: l.Kind}, body)
 	if err != nil {
 		return AskResult{}, err
 	}
@@ -273,8 +262,84 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	}
 
 	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
-	saveErr := rt.Store.WithLock(func(tx *store.Tx) error {
+	var pick *store.LogEntry
+	if consult.State == store.ConsultRunning {
+		p := pickEntry(rt.Now(), consult.Round, role.Name, res)
+		pick = &p
+	}
+	saveErr := recordConsult(rt, opts.Name, consult, pick, role.Name+" "+consult.ID)
+	if saveErr != nil {
+		if spawnErr != nil {
+			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, strandError(spawnErr, saveErr)
+		}
+		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
+	}
+
+	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, spawnErr
+}
+
+// reserveConsult is the reserve phase every consult shares: under the lock,
+// load the binding, refuse a remote one, a closed one and one at its consult
+// cap, write the record, stage the question, and save. roleName is the
+// record's role label and endpoint its endpoint minus the fields the spawn
+// fills in: every consult but a round one takes both from the candidate it
+// resolved. Nothing here reads the role table or a harness.RoleSpec:
+// roleName is a label, which is what lets a round consult call itself
+// roundRole.
+func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint store.Endpoint, body []byte) (store.Consult, string, error) {
+	var (
+		consult store.Consult
+		cwd     string
+	)
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
+		if err != nil {
+			return err
+		}
+		if b.Builder.Remote() {
+			return errors.New("consults are local-only")
+		}
+		if b.State == store.StateBroken || b.State == store.StateDone || b.State == store.StatePaused {
+			return fmt.Errorf("binding %q is %s; a consult needs a live binding to attach to", b.Name, b.State)
+		}
+		if runningConsults(b) >= consultCap(b) {
+			return fmt.Errorf("binding %q has %d running consults (cap %d), `relay reap` to free a slot: %w",
+				b.Name, runningConsults(b), consultCap(b), ErrConsultCap)
+		}
+
+		consult = store.Consult{
+			ID:           id,
+			Role:         roleName,
+			Round:        b.Round,
+			AskPath:      rt.Store.AskPath(b.Name, b.Round, id),
+			FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, id),
+			Endpoint:     endpoint,
+			State:        store.ConsultSpawning,
+			SpawnedAt:    rt.Now().UTC(),
+		}
+
+		if err := os.WriteFile(consult.AskPath, body, 0o644); err != nil {
+			return fmt.Errorf("stage question at %s: %w", consult.AskPath, err)
+		}
+
+		b.Consults = append(b.Consults, consult)
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		cwd = b.CWD
+		return nil
+	})
+	return consult, cwd, err
+}
+
+// recordConsult is the record phase every consult shares: upsert the record
+// and, when it is running, append its log entries. pick is the candidate-pick
+// entry a consult chosen from a candidate writes; nil for the round path,
+// which resumes a named session rather than resolving one. askNote is the ask
+// entry's Note, and the only thing that tells the two apart in the log.
+func recordConsult(rt Runtime, name string, consult store.Consult, pick *store.LogEntry, askNote string) error {
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(name)
 		if err != nil {
 			return err
 		}
@@ -292,8 +357,10 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		}
 
 		if consult.State == store.ConsultRunning {
-			if err := tx.AppendLog(b.Name, pickEntry(rt.Now(), consult.Round, role.Name, res)); err != nil {
-				return err
+			if pick != nil {
+				if err := tx.AppendLog(b.Name, *pick); err != nil {
+					return err
+				}
 			}
 
 			entry := store.LogEntry{
@@ -302,7 +369,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 				Direction: store.DirToConsult,
 				Kind:      store.KindAsk,
 				Path:      consult.AskPath,
-				Note:      role.Name + " " + consult.ID,
+				Note:      askNote,
 				Confirmed: true,
 			}
 			if err := tx.AppendLog(b.Name, entry); err != nil {
@@ -312,14 +379,126 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 		return tx.Save(b)
 	})
-	if saveErr != nil {
-		if spawnErr != nil {
-			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, strandError(spawnErr, saveErr)
+}
+
+// askRound is `ask --round N`: it resumes the session that built closed round
+// N, read-only where the harness has a read tier, and asks it one question,
+// headless. The round is closed, so the resumed turn cannot race a live
+// builder; claude and agy continue that session in place, opencode forks.
+// Everything else -- the reservation, the staged question, the ask entry, and
+// the findings the headless reconcile delivers -- is the headless consult's:
+// the round consult differs in its argv, its role label and its prompt, and
+// in nothing else.
+func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
+	if (opts.File == "") == (opts.Question == "") {
+		return AskResult{}, errors.New("ask --round needs --file or -q")
+	}
+	body := []byte(opts.Question)
+	if opts.File != "" {
+		var err error
+		body, err = os.ReadFile(opts.File)
+		if err != nil {
+			return AskResult{}, fmt.Errorf("read question %s: %w", opts.File, err)
 		}
-		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
 	}
 
-	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, spawnErr
+	if rt.Runner == nil {
+		// Phase 0: a round consult runs a process, so a runtime with no
+		// Runner refuses before anything is reserved.
+		return AskResult{}, ErrRunnerUnavailable
+	}
+
+	b, err := rt.Store.Load(opts.Name)
+	if err != nil {
+		return AskResult{}, err
+	}
+	if b.Builder.Remote() {
+		return AskResult{}, errors.New("consults are local-only")
+	}
+	if opts.Round >= b.Round {
+		return AskResult{}, fmt.Errorf("round %d is the open round; talk to the live builder or wait for it to close", opts.Round)
+	}
+
+	entries, err := rt.Store.ReadLog(opts.Name)
+	if err != nil {
+		return AskResult{}, err
+	}
+	s, ok := roundSession(entries, opts.Round)
+	if !ok {
+		return AskResult{}, fmt.Errorf("round %d of %q recorded no builder session (built before relay recorded sessions, or the harness printed none); nothing to resume", opts.Round, opts.Name)
+	}
+
+	newID := rt.NewID
+	if newID == nil {
+		newID = randomConsultID
+	}
+	id := newID()
+	agentName := opts.Name + "-" + roundRole + "-" + id
+	if err := herdr.ValidateAgentName(agentName); err != nil {
+		return AskResult{}, fmt.Errorf(
+			"consult agent name %q: %w -- binding %q needs a name of at most %d characters to run %q consults",
+			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+roundRole+"-")-8, roundRole)
+	}
+
+	// claude and agy have a read tier and resume in it. opencode has none, so
+	// it runs at harness and --fork is what keeps the original session
+	// untouched. codex has no verified resume form and Resume refuses it.
+	h, _ := harness.Lookup(s.Kind)
+	tier := harness.TierHarness
+	if s.Kind == "claude" || s.Kind == "agy" {
+		tier = harness.TierRead
+	}
+	askPath := rt.Store.AskPath(opts.Name, b.Round, id)
+	prompt := fmt.Sprintf(roundAskPrompt, opts.Round, opts.Name, opts.Round, askPath)
+	argv, err := h.Resume(s.ID, prompt, tier)
+	if err != nil {
+		return AskResult{}, fmt.Errorf("%s session %s: %w", s.Kind, short8(s.ID), err)
+	}
+
+	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
+	consult, cwd, err := reserveConsult(rt, opts, id, roundRole,
+		store.Endpoint{AgentName: agentName, Kind: s.Kind, SessionID: s.ID}, body)
+	if err != nil {
+		return AskResult{}, err
+	}
+
+	// ── phase 2: spawn ──────────────────────────────────────── no lock held
+	var spawnErr error
+	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
+	if handle, err := rt.Runner.Start(ctx, ProcSpec{
+		Dir:        cwd,
+		Argv:       append([]string{h.Binary}, argv...),
+		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
+		StreamPath: streamPath,
+	}); err != nil {
+		consult.State = store.ConsultSilent
+		consult.Note = "spawn failed: " + brief(err)
+		spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
+	} else {
+		consult.Endpoint = store.Endpoint{
+			AgentName: consult.Endpoint.AgentName,
+			SessionID: consult.Endpoint.SessionID,
+			Kind:      consult.Endpoint.Kind,
+			Mode:      store.ModeHeadless,
+			PID:       handle.PID,
+			StartedAt: handle.StartedAt.Unix(),
+			LogPath:   streamPath,
+		}
+		consult.State = store.ConsultRunning
+	}
+
+	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
+	saveErr := recordConsult(rt, opts.Name, consult, nil,
+		fmt.Sprintf("round %d session %s:%s", opts.Round, s.Kind, short8(s.ID)))
+	result := AskResult{Consult: consult, Binding: opts.Name}
+	if saveErr != nil {
+		if spawnErr != nil {
+			return result, strandError(spawnErr, saveErr)
+		}
+		return result, fmt.Errorf("consult %s is running but could not be recorded: %w", consult.ID, saveErr)
+	}
+
+	return result, spawnErr
 }
 
 // runningConsults counts ConsultSpawning as well as ConsultRunning. A

@@ -1697,6 +1697,38 @@ relay ask --role reviewer --candidate claude/anthropic/opus --file q.md webshop
 Until a candidate lists `reviewer`, `ask` fails with
 `no configured candidate serves role "reviewer"`.
 
+### Asking a past round's builder
+
+A closed round's report names the harness session that built it, so you can ask
+that session what it did and why without reopening the round:
+
+```
+relay ask --round 1 -q "why did you stop at the second migration?" webshop
+```
+
+`--round N` looks the session up on round N's report entry and resumes it as a
+headless consult with the harness's own resume form — claude `--resume`, agy
+`--conversation`, opencode `run --session … --fork`. The answer is the
+process's final message, which relay writes to the usual
+`NNN-<id>-findings.md` and queues to the planner exactly as any consult's
+findings are. `--role` and `--candidate` are ignored (with a note on stderr if
+you passed one): resuming a session fixes both. The question comes from
+`--file` or `-q`, and exactly one of them is required.
+
+Round N must be closed. Resuming the open round's builder would put two writers
+in one session, so `--round` refuses the current round and says which; a round
+whose report names no session — built before relay recorded sessions, or by a
+harness that printed none — is refused too, because relay will not guess which
+session to resume.
+
+Resuming mutates the session on claude and agy: the resumed turn is appended to
+it. That is why relay reaches for this only once the round has closed, and why
+the prompt tells the builder to change nothing and run no writing tool — but it
+is the session's own history that changes, not the tree. opencode has no
+read-only flag, so its round consult runs at `harness` tier and its `--fork`
+leaves the original session untouched: the resumed turn lands in a copy. codex
+has no verified resume form, and `relay ask --round` refuses it by name.
+
 ## The planner: architect
 
 relay ships one more definition it never launches: `architect`, the planner's
