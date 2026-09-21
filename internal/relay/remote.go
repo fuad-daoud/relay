@@ -977,7 +977,14 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		if !strings.HasPrefix(branchRef, "refs/heads/") {
 			branchRef = "refs/heads/" + branchRef
 		}
-		refs := []string{branchRef}
+		// The server always cuts its own relay/<name> branch and ships that:
+		// handleRoundBundle snapshots refs/heads/<server branch>, and a server
+		// binding's branch is relay/<name>. A binding that adopted a branch
+		// (#263) keeps the adopted name locally, so the allow-list names the
+		// server's ref -- not b.Branch -- and the adopted branch is fast
+		// forwarded to the absorbed result below.
+		serverRef := "refs/heads/relay/" + name
+		refs := []string{serverRef}
 		if view.DirtyCommit != "" {
 			refs = append(refs, fmt.Sprintf("refs/relay/%s/round-%d", name, n))
 		}
@@ -997,6 +1004,40 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 			return b, nil
 		}
 		checkedOutWarned.Delete(name)
+
+		// An adopted binding's own branch is the one relay keeps current, so
+		// bring it to the absorbed result with a compare-and-swap against the
+		// sha it had (an empty old means "create or overwrite", which is what
+		// a branch that does not exist locally yet needs). An ordinary
+		// binding has serverRef == branchRef, so this is a no-op for it.
+		if serverRef != branchRef {
+			sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, serverRef)
+			if err != nil {
+				return b, fmt.Errorf("resolve server branch %s after absorb: %w", serverRef, err)
+			}
+			if !ok {
+				return b, fmt.Errorf("server branch %s missing after absorb", serverRef)
+			}
+			old, _, _ := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+			if err := rt.Git.UpdateRef(ctx, b.Repo, branchRef, sha, old); err != nil {
+				// The fast-forward can collide with the same branch being
+				// checked out locally; that is the same quiet retry the
+				// absorb above gets, not an absorb failure.
+				if strings.Contains(strings.ToLower(err.Error()), "checked out") {
+					if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
+						slog.Info("checkout another branch, then relay pull", "binding", name, "branch", b.Branch)
+					} else {
+						slog.Debug("still checked out", "binding", name, "branch", b.Branch)
+					}
+					return b, nil
+				}
+				b.RemoteAbsorbFailures++
+				if b.RemoteAbsorbFailures >= 10 {
+					return haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot fast-forward %s to round %d from %s: %s", name, b.Branch, n, server, err.Error()))
+				}
+				return b, nil
+			}
+		}
 	}
 
 	// 3. b.Builder.LastKnown = view.ResultCommit; b.RemoteAbsorbFailures = 0
