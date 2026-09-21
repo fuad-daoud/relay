@@ -98,6 +98,52 @@ func TestStatusRemoteRowUnknownStatus(t *testing.T) {
 	}
 }
 
+// TestStatusRowQueuedText pins #285's queued text: RemoteQueue facts render
+// "queued (3/3 busy on contabo, 2 ahead, 4m)", and a queued row with no
+// facts yet (part 1's tolerance) falls back to the bare "queued".
+//
+// Mutation check: drop queueText's format string (or the RemoteQueue
+// branch in statusRow) and this test fails.
+func TestStatusRowQueuedText(t *testing.T) {
+	f := &fakeHerdr{}
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	b.Builder.RemoteStatus = "queued"
+	b.Builder.RemoteQueue = &store.QueueFacts{
+		Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: baseTime.Add(-4 * time.Minute),
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
+	f.agents = []herdr.Agent{plannerAgent()}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := "queued (3/3 busy on contabo, 2 ahead, 4m)"
+	if got := rep.Bindings[0].BuilderStatus; got != want {
+		t.Fatalf("BuilderStatus = %q, want %q", got, want)
+	}
+
+	// Nil facts (accepted but not yet reported) fall back to the bare word.
+	st2 := store.New(t.TempDir())
+	b2 := remoteBinding("contabo")
+	b2.Builder.RemoteStatus = "queued"
+	if err := st2.Save(b2); err != nil {
+		t.Fatal(err)
+	}
+	rt2 := Runtime{Store: st2, Herdr: f, Now: func() time.Time { return baseTime }}
+	rep2, err := Status(context.Background(), rt2)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep2.Bindings[0].BuilderStatus; got != "queued" {
+		t.Fatalf("BuilderStatus with no facts = %q, want %q", got, "queued")
+	}
+}
+
 func TestStatusMarksMissingAgentsAsGone(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := sentBinding(t, f)

@@ -127,6 +127,9 @@ type Endpoint struct {
 	LastShipped  string `json:"last_shipped,omitempty"`
 	LastKnown    string `json:"last_known,omitempty"`
 	RemoteStatus string `json:"remote_status,omitempty"`
+	// RemoteQueue is what the server's last GET said while the round was
+	// queued (#285); nil in every other round state.
+	RemoteQueue *QueueFacts `json:"remote_queue,omitempty"`
 
 	// TranscriptLocator is the harness's own transcript file path for this
 	// endpoint's session, resolved at bind time when possible. Set on
@@ -134,6 +137,16 @@ type Endpoint struct {
 	// (docs/specs/2026-09-20-persistence-design.md §5.4); "" when it could
 	// not be resolved.
 	TranscriptLocator string `json:"transcript_locator,omitempty"`
+}
+
+// QueueFacts is what the server's last GET said about a queued round's
+// place in its builder queue (#285), copied onto Endpoint.RemoteQueue.
+type QueueFacts struct {
+	Position int       `json:"position"` // 1-based
+	Ahead    int       `json:"ahead"`
+	Running  int       `json:"running"`
+	Cap      int       `json:"cap"`
+	Since    time.Time `json:"since"`
 }
 
 // Headless reports whether this endpoint is a process relay runs rather than

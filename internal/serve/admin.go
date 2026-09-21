@@ -21,18 +21,36 @@ type OwnerStatus struct {
 	Report relay.Report // relay.Status over that owner's runtime
 }
 
-// AdminStatus returns the status of every owner who has a bindings directory, sorted by Label.
-func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, error) {
+// AdminStatus returns the status of every owner who has a bindings
+// directory, sorted by Label, plus the server's builder census (#285):
+// running and queued counts against cap. Every queued row's BindingStatus
+// gains Queued (the same position handleGetBinding computes for the wire)
+// and its BuilderStatus is overwritten from "idle" to "queued <age> (<ahead>
+// ahead)", read from the one census() walk this call makes -- RenderAdminStatus
+// prints that text unchanged, and FlatStatus's flattened rows carry it too.
+func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.BuildersView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	builders := remote.BuildersView{Cap: s.cap()}
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, builders, nil
 		}
-		return nil, err
+		return nil, remote.BuildersView{}, err
+	}
+
+	c, _ := s.census()
+	builders.Running = c.Running
+	builders.Queued = len(c.Queued)
+
+	now := s.cfg.Now()
+	position := make(map[string]int, len(c.Queued))
+	for i, q := range c.Queued {
+		position[string(q.Owner)+"/"+q.Name] = i
 	}
 
 	var owners []OwnerStatus
@@ -45,7 +63,17 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, error) {
 		rt := s.runtimeAt(ownerPath)
 		rep, err := relay.Status(ctx, rt)
 		if err != nil {
-			return nil, err
+			return nil, remote.BuildersView{}, err
+		}
+		for ri := range rep.Bindings {
+			row := &rep.Bindings[ri]
+			i, ok := position[string(id)+"/"+row.Name]
+			if !ok {
+				continue
+			}
+			q := c.Queued[i]
+			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
+			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", relay.AgeText(now.Sub(q.QueuedAt)), i)
 		}
 		label := s.clients.LabelOf(id)
 		owners = append(owners, OwnerStatus{
@@ -59,7 +87,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, error) {
 		return owners[i].Label < owners[j].Label
 	})
 
-	return owners, nil
+	return owners, builders, nil
 }
 
 // FlatStatus is the whole fleet as one report: every owner's bindings with
@@ -70,7 +98,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, error) {
 // there are no owners. DoneHidden is 0 and HerdrError empty: neither
 // filter applies to a flattened fleet.
 func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
-	owners, err := AdminStatus(ctx, s)
+	owners, _, err := AdminStatus(ctx, s)
 	if err != nil {
 		return relay.Report{}, err
 	}
@@ -95,16 +123,21 @@ func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
 	return out, nil
 }
 
-// RenderAdminStatus formats the admin status for all owners.
-// For each owner: a header line "<label>  (<id>)" then relay.RenderStatus(report)
-// indented two spaces; owners with no bindings print "<label>  no bindings".
-// Empty input prints "no owners\n".
-func RenderAdminStatus(owners []OwnerStatus) string {
+// RenderAdminStatus formats the admin status for all owners. The first line
+// is the server's builder census (#285): "builders <running>/<cap>, queued
+// <n>". Then, for each owner: a header line "<label>  (<id>)" then
+// relay.RenderStatus(report) indented two spaces; owners with no bindings
+// print "<label>  no bindings". "no owners\n" follows the census line when
+// there are none.
+func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "builders %d/%d, queued %d\n", builders.Running, builders.Cap, builders.Queued)
+
 	if len(owners) == 0 {
-		return "no owners\n"
+		sb.WriteString("no owners\n")
+		return sb.String()
 	}
 
-	var sb strings.Builder
 	for _, o := range owners {
 		if len(o.Report.Bindings) == 0 {
 			fmt.Fprintf(&sb, "%s  no bindings\n", o.Label)

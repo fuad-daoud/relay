@@ -193,7 +193,7 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	statuses, err := AdminStatus(ctx, s)
+	statuses, builders, err := AdminStatus(ctx, s)
 	if err != nil {
 		t.Fatalf("AdminStatus: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestAdminStatusAllOwners(t *testing.T) {
 		t.Errorf("bob bindings = %+v, want [app-b]", statuses[1].Report.Bindings)
 	}
 
-	rendered := RenderAdminStatus(statuses)
+	rendered := RenderAdminStatus(statuses, builders)
 	if !strings.Contains(rendered, "alice  (") {
 		t.Errorf("rendered missing alice header: %q", rendered)
 	}
@@ -234,16 +234,16 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	}
 
 	// Empty input
-	if got := RenderAdminStatus(nil); got != "no owners\n" {
-		t.Errorf("RenderAdminStatus(nil) = %q, want %q", got, "no owners\n")
+	if got := RenderAdminStatus(nil, remote.BuildersView{}); got != "builders 0/0, queued 0\nno owners\n" {
+		t.Errorf("RenderAdminStatus(nil) = %q, want %q", got, "builders 0/0, queued 0\nno owners\n")
 	}
 
 	// Owner with no bindings
 	noBindingsStatus := []OwnerStatus{
 		{Owner: idA, Label: "charlie", Report: relay.Report{}},
 	}
-	if got := RenderAdminStatus(noBindingsStatus); got != "charlie  no bindings\n" {
-		t.Errorf("RenderAdminStatus(no bindings) = %q, want %q", got, "charlie  no bindings\n")
+	if got := RenderAdminStatus(noBindingsStatus, remote.BuildersView{}); got != "builders 0/0, queued 0\ncharlie  no bindings\n" {
+		t.Errorf("RenderAdminStatus(no bindings) = %q, want %q", got, "builders 0/0, queued 0\ncharlie  no bindings\n")
 	}
 }
 
@@ -286,7 +286,7 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	statuses, err := AdminStatus(context.Background(), s)
+	statuses, _, err := AdminStatus(context.Background(), s)
 	if err != nil {
 		t.Fatalf("AdminStatus with runner: %v", err)
 	}
@@ -294,12 +294,54 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 		t.Errorf("BuilderStatus with runner = %q, want working", got)
 	}
 
-	statuses, err = AdminStatus(context.Background(), newServer(nil))
+	statuses, _, err = AdminStatus(context.Background(), newServer(nil))
 	if err != nil {
 		t.Fatalf("AdminStatus without runner: %v", err)
 	}
 	if got := statuses[0].Report.Bindings[0].BuilderStatus; got != "unknown" {
 		t.Errorf("BuilderStatus without runner = %q, want unknown", got)
+	}
+}
+
+// TestAdminStatusBuildersHeader pins #285's admin rendering: with cap 1, one
+// running owner and one queued owner, AdminStatus's Builders return is
+// {Running:1 Queued:1 Cap:1}, RenderAdminStatus's first line is "builders
+// 1/1, queued 1", and the queued row's builder status reads "queued <age>
+// (<ahead> ahead)" in place of "idle".
+//
+// Mutation check: drop the Builders return (or the row.BuilderStatus
+// overwrite) in AdminStatus and this test fails.
+func TestAdminStatusBuildersHeader(t *testing.T) {
+	clock := time.Now()
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Now = func() time.Time { return clock }
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	owners, builders, err := AdminStatus(context.Background(), env.srv)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	if builders.Running != 1 || builders.Queued != 1 || builders.Cap != 1 {
+		t.Errorf("Builders = %+v, want {Running:1 Queued:1 Cap:1 ...}", builders)
+	}
+
+	rendered := RenderAdminStatus(owners, builders)
+	if !strings.HasPrefix(rendered, "builders 1/1, queued 1\n") {
+		t.Fatalf("rendered does not start with the builders header; got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "queued 0s (0 ahead)") {
+		t.Errorf("rendered missing the queued row's builder status; got:\n%s", rendered)
 	}
 }
 
