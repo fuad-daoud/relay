@@ -867,6 +867,25 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		}
 	}
 
+	// The harness's own record, NNN-builder.jsonl (#240). A server that serves
+	// no stream file answers 404, which is fine, exactly like the log.
+	rcStream, err := rt.Remote.RoundFile(ctx, server, name, n, "stream")
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 404 {
+			// fine (no stream file)
+		} else {
+			slog.Warn("fetch stream failed", "server", server, "name", name, "round", n, "err", err)
+			return b, nil
+		}
+	} else {
+		defer rcStream.Close()
+		if err := writeTempAndRename(rt.Store.BuilderStreamPath(name, n), rcStream); err != nil {
+			slog.Warn("write stream failed", "path", rt.Store.BuilderStreamPath(name, n), "err", err)
+			return b, nil
+		}
+	}
+
 	// 2. RoundBundle
 	rcBundle, err := rt.Remote.RoundBundle(ctx, server, name, n, b.Builder.LastKnown)
 	if err != nil {

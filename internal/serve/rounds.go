@@ -291,6 +291,8 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 		path = rt.Store.DiffPath(name, n)
 	case "log":
 		path = rt.Store.BuilderLogPath(name, n)
+	case "stream":
+		path = rt.Store.BuilderStreamPath(name, n)
 	case "plan":
 		path = rt.Store.PlanPath(name, n)
 	default:

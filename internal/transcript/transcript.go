@@ -109,6 +109,17 @@ func errLine(msg string) string {
 	return "  ⎿ error: " + msg
 }
 
+// firstNonEmpty is the first non-empty string among vals, or "" when all are
+// empty.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // oneLine keeps the first line of s and at most maxArg bytes of it, cut on
 // a rune boundary and marked with "...".
 func oneLine(s string) string {

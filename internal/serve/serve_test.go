@@ -1921,6 +1921,11 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	streamText := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n" +
+		`{"type":"error","message":"Unexpected server error"}` + "\n"
+	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	env.runner.setAlive(false)
 
 	if err := env.srv.Tick(ctx); err != nil {
@@ -1965,6 +1970,14 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get log status = %d, want 200", resp.StatusCode)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/stream", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get stream status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != streamText {
+		t.Fatalf("stream body = %q, want %q", string(body), streamText)
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
@@ -2243,7 +2256,7 @@ func TestFilesBeforeCloseIs404(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	for _, kind := range []string{"report", "diff", "plan"} {
+	for _, kind := range []string{"report", "diff", "plan", "stream"} {
 		resp, _ := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/"+kind, nil, "")
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("GET files/%s status = %d, want 404", kind, resp.StatusCode)

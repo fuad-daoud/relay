@@ -45,6 +45,8 @@ func renderClaude(obj map[string]any) []string {
 			out = append(out, r)
 		}
 		return out
+	case "error":
+		return []string{errLine(firstNonEmpty(str(obj["message"]), str(asMap(obj["error"])["message"])))}
 	case "system", "rate_limit_event":
 		return nil
 	}

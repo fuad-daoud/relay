@@ -1983,6 +1983,97 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	}
 }
 
+func TestCatchUpFetchesStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	streamBody := "{\"type\":\"assistant\"}\n{\"type\":\"error\",\"message\":\"boom\"}\n"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "stream":
+				return io.NopCloser(strings.NewReader(streamBody)), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got, err := os.ReadFile(st.BuilderStreamPath("api", 1))
+	if err != nil {
+		t.Fatalf("read stream file: %v", err)
+	}
+	if string(got) != streamBody {
+		t.Fatalf("stream file = %q, want %q", string(got), streamBody)
+	}
+	found := false
+	for _, c := range fr.calls {
+		if c == "RoundFile:zen:api:1:stream" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catch-up never fetched the stream file: %v", fr.calls)
+	}
+}
+
+func TestCatchUpStreamMissingIsFine(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("a missing stream file must not halt: %+v", got)
+	}
+	if _, err := os.Stat(st.BuilderStreamPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("stream file exists (stat err = %v), want none", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			hasReport = true
+		}
+	}
+	if !hasReport {
+		t.Fatal("no report entry: catch-up must still complete")
+	}
+}
+
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
 // server measured and shipped with the round (#216): the client's report
 // entry stores it verbatim instead of re-measuring a round whose record
