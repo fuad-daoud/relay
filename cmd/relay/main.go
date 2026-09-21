@@ -79,6 +79,7 @@ Commands:
   available    clear a recorded rate limit locally and on every server your bindings name: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)
   db        path|migrate|stats for relay's sqlite database
+  init      write starter candidates.json and policy.json from the harnesses on PATH, and install role definitions
 
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind
@@ -254,6 +255,8 @@ func run(args []string) error {
 		return cmdAgent(args[1:])
 	case "db":
 		return cmdDB(args[1:])
+	case "init":
+		return cmdInit(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	case "client":
