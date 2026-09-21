@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -55,14 +54,6 @@ type FileClaims struct {
 // becomes "_", plus the ".json" extension.
 func ClaimFileName(pane string) string {
 	return strings.ReplaceAll(pane, ":", "_") + ".json"
-}
-
-func defaultClaimAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func (f *FileClaims) alive(pid int) bool {
