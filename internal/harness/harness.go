@@ -373,7 +373,14 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		promptAt = 1
 	case "opencode":
 		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
-		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json"}
+		// --standalone (opencode 2.x, #256): without it, `run` is a thin
+		// client of the one `opencode serve --service` per user, and a
+		// process-group kill of the client (proc.Runner.Kill) leaves the
+		// agent session running inside the service, still editing the
+		// worktree relay has switched away from. --standalone starts a
+		// private server instead, so a headless round's kill is a real kill
+		// again. Print-only: an interactive pane still shares the service.
+		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--standalone"}
 		promptAt = 1
 	// 2026-09-18 probe: agy's stream `init` event reports `cwd` = the
 	// process directory, yet its first `run_command` ran outside any

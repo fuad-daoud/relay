@@ -623,11 +623,17 @@ What is different from a pane builder:
   exists only on `stop`.
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
-- **opencode 2.x** runs a shared service: one `opencode serve --service` per
-  user hosts every `opencode run` on that machine, so keep concurrent
-  opencode headless builders on one machine to two or three. After a switch
-  away from an opencode 2.x builder, check the worktree for a second writer
-  before re-sending (`git status`, file mtimes) (#256).
+- **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
+  each headless round gets its own private server instead of the one
+  `opencode serve --service` shared by every `opencode run` on that machine,
+  so a kill, `relay done`/`unbind`, a `relay stop`, or a mid-round switch
+  stops the agent for real -- before the fix, the client process died but the
+  agent session kept running inside the shared service, still editing the
+  worktree relay had already switched away from. An *interactive* (pane)
+  opencode builder still shares the service, so keep concurrent opencode
+  panes on one machine to two or three. `relay doctor` notes the shared
+  service (and, when readable, its session count from opencode.db) whenever
+  `~/.config/opencode/service.json` exists.
 
 ### Progress labels
 

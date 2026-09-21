@@ -590,12 +590,12 @@ func TestLaunchPrintPerKind(t *testing.T) {
 		},
 		{
 			kind:       "opencode",
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json"},
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--standalone"},
 			wantPrompt: 1,
 		},
 		{
 			kind: "opencode", extra: []string{"--auto"},
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--auto"},
+			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--standalone", "--auto"},
 			wantPrompt: 1,
 		},
 		{

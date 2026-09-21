@@ -41,6 +41,12 @@ type Env interface {
 	BinaryVersion(ctx context.Context, path string) (string, error)
 	// Probe tests whether dir is writable by creating and removing a temporary file.
 	Probe(dir string) error
+	// Command runs bin with args and returns its stdout, for a doctor check
+	// that reads a local fact no other Env method exposes (#256: opencode's
+	// session count, read from opencode.db via sqlite3 -- no network call,
+	// no credential). bin not being on PATH is a plain error, like any other
+	// exec.CommandContext failure.
+	Command(ctx context.Context, bin string, args ...string) ([]byte, error)
 }
 
 type realEnv struct {
@@ -118,6 +124,10 @@ func versionField(out string) (string, error) {
 		}
 	}
 	return fields[0], nil
+}
+
+func (e *realEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, bin, args...).Output()
 }
 
 func (e *realEnv) Probe(dir string) error {
