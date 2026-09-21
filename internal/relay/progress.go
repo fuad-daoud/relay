@@ -58,6 +58,19 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding, agents []he
 	return s
 }
 
+// progressDue reports whether a binding's progress sources are due to be
+// sampled at now (#135 follow-up). A binding that has never sampled is due at
+// once; every later sample waits out the interval, which progressStep measures
+// from SampledAt. Callers gate the read with it, so a tick inside the interval
+// costs no herdr or git call at all -- progressStep's own cadence check stays as
+// a harmless second guard for direct callers.
+func progressDue(b store.Binding, now time.Time, interval time.Duration) bool {
+	if b.Progress == nil {
+		return true
+	}
+	return now.Sub(b.Progress.SampledAt) >= interval
+}
+
 // progressStep advances a binding's progress clock by one tick (#135).
 //
 // Precondition: the round is open (RoundStartedAt non-zero). The first call

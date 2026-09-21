@@ -429,8 +429,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// The process is alive; the progress clock (#135) replaces #252's
 		// stream-only rule: the tree and the stream are both signals, and a
 		// stall is quiet on both. sampleSignals gets no agents -- a headless
-		// builder is not in herdr's list, so it can never be "blocked".
-		next = progressStep(rt, next, now, sampleSignals(ctx, rt, next, nil))
+		// builder is not in herdr's list, so it can never be "blocked". The
+		// read is gated on the interval (#135 follow-up): a tick inside it
+		// samples nothing.
+		if progressDue(next, now, rt.Policy.ProgressInterval()) {
+			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next, nil))
+		}
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 

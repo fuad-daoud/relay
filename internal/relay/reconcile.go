@@ -380,7 +380,12 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	// (needs_you) or holding a payload belongs to the stale clock, and a
 	// closed round has no tree or output that means anything.
 	if !b.RoundStartedAt.IsZero() && b.State != store.StateNeedsYou && b.State != store.StateHeld {
-		b = progressStep(rt, b, now, sampleSignals(ctx, rt, b, agents))
+		// Sample only when the interval is due: sampleSignals is the read
+		// (one screen fingerprint, one git status), and a tick inside the
+		// interval must not pay for it (#135 follow-up).
+		if progressDue(b, now, rt.Policy.ProgressInterval()) {
+			b = progressStep(rt, b, now, sampleSignals(ctx, rt, b, agents))
+		}
 	}
 
 	var next store.Binding
