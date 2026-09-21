@@ -525,7 +525,7 @@ func (m Model) railView(width int) string {
 	var lines []string
 	switch {
 	case !m.statusLoaded && m.err != nil:
-		lines = []string{"cannot reach herdr — see the error above"}
+		lines = []string{"status unavailable — see the error above"}
 	case !m.statusLoaded:
 		lines = []string{"loading…"}
 	case m.empty() && m.scope == scopeLive && m.layout() == layoutStack:

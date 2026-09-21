@@ -114,26 +114,32 @@ func parseBuilderNote(kind store.Kind, note string) string {
 	return ""
 }
 
-// parsePickNote parses "picked <token> on <server>: ..." or
-// "picked <token>: ...".
+// parsePickNote parses "picked <token> ...": a candidate token never
+// contains a space, so the token is the first space-delimited word after
+// "picked ", with one trailing ":" stripped. This keeps " for builder"
+// (the local pick note) and a model's ":effort" suffix out of the cut.
 func parsePickNote(note string) string {
 	const prefix = "picked "
 	if !strings.HasPrefix(note, prefix) {
 		return ""
 	}
 	rest := note[len(prefix):]
-	if i := strings.Index(rest, " on "); i >= 0 {
-		return strings.TrimSpace(rest[:i])
+	tok := rest
+	if i := strings.IndexByte(rest, ' '); i >= 0 {
+		tok = rest[:i]
 	}
-	if i := strings.Index(rest, ":"); i >= 0 {
-		return strings.TrimSpace(rest[:i])
-	}
-	return strings.TrimSpace(rest)
+	return strings.TrimSuffix(tok, ":")
 }
 
-// parseSwitchNote parses "... -> <token>)" or "... -> <token>": the token
-// after the last "->", trimmed of a trailing ")" and whitespace.
+// parseSwitchNote parses the token from a switch entry's note. When the
+// note carries the "picked <tok> ..." clause relay actually writes
+// ("switched builder (<reason>): picked <tok> for builder: ...") the pick
+// rule applies; otherwise it is the token after the last "->", trimmed of
+// a trailing ")" and whitespace.
 func parseSwitchNote(note string) string {
+	if i := strings.LastIndex(note, "picked "); i >= 0 {
+		return parsePickNote(note[i:])
+	}
 	i := strings.LastIndex(note, "->")
 	if i < 0 {
 		return ""
