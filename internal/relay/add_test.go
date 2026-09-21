@@ -24,6 +24,64 @@ func addRepo(t *testing.T) string {
 	return dir
 }
 
+// TestAddRecordsBaseRef pins #136: a peer cut from a checkout records the
+// branch that checkout had checked out, asked of the source repo -- not of
+// the fresh worktree -- so `relay land` knows what to rebase onto.
+func TestAddRecordsBaseRef(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if got.Binding.BaseRef != "main" {
+		t.Errorf("BaseRef = %q, want %q", got.Binding.BaseRef, "main")
+	}
+	stored, err := rt.Store.Load("frontend")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.BaseRef != "main" {
+		t.Errorf("stored BaseRef = %q, want %q", stored.BaseRef, "main")
+	}
+	if len(fg.currentBranchCalls) != 1 {
+		t.Fatalf("CurrentBranch calls = %+v, want 1", fg.currentBranchCalls)
+	}
+	if fg.currentBranchCalls[0].Dir != repo {
+		t.Errorf("CurrentBranch asked about %q, want the source repo %q, not the fresh worktree",
+			fg.currentBranchCalls[0].Dir, repo)
+	}
+}
+
+// TestAddRecordsNoBaseRefWithoutBranch pins the other half: CurrentBranch
+// failing (a detached source HEAD, or no repository at all) records ""
+// rather than the literal "HEAD", so land asks for --onto instead of
+// fetching a ref that does not exist.
+func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		headCommitID:     "commit-head-123",
+		currentBranchErr: errors.New("detached"),
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got.Binding.BaseRef != "" {
+		t.Errorf("BaseRef = %q, want \"\"", got.Binding.BaseRef)
+	}
+}
+
 // TestAddRecordsRepoFromCWDNotWorktree pins #172: the peer's RepoRef is
 // captured from opts.Repo, the parent checkout the worktree is cut from --
 // not from the fresh worktree directory (which, before AddWorktree runs,

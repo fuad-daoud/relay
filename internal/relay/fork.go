@@ -204,6 +204,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		worktree string
 		branch   string
 		base     string
+		baseRef  string
 	)
 
 	if opts.CWD != "" {
@@ -236,6 +237,12 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 			return ForkResult{}, err
 		}
 		worktree = cwd
+		// The branch the cut came from, for `relay land` (#136). The source
+		// checkout is src.Repo -- src.CWD is the source binding's own tree --
+		// and "" for a --cwd fork, where nothing was cut.
+		if ref, err := rt.Git.CurrentBranch(ctx, src.Repo); err == nil {
+			baseRef = ref
+		}
 	}
 
 	rollback := func() {
@@ -305,6 +312,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Worktree:         worktree,
 		Branch:           branch,
 		Base:             base,
+		BaseRef:          baseRef,
 		ForkedFrom:       src.Name,
 		ForkedAtRound:    opts.Round,
 		Repo:             src.Repo,

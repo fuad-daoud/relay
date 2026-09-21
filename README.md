@@ -854,6 +854,56 @@ relay stop webshop --now         # skip the prompt: abandon the pane at once
   the round it was made for. `stop` refuses a remote binding (`relay done`
   ends one) and a binding that is already `DONE` or `PAUSED`.
 
+### Landing a branch
+
+`relay land <name>` is the mechanical version of the sequence a planner
+types by hand after a green round. It runs, in order, and stops at the first
+failure with **nothing pushed** except where noted:
+
+```
+relay land webshop            # fetch, rebase onto origin/main, gate, push, print the PR command
+relay land webshop --pr       # ... and run `gh pr create --head relay/webshop --base main --fill`
+relay land webshop --merge    # merge origin/main in instead of rebasing (no rewrite, no force)
+relay land webshop --onto trunk   # for a binding that recorded no base branch
+relay land webshop --force    # land while a round is still open
+relay land webshop --no-gate  # skip the gate for this land (the result says "skipped")
+```
+
+1. **Preconditions.** The binding must be a local binding with a worktree of
+   its own (`--cwd` bindings have none), must not be `PAUSED` or `DONE`, and
+   must have a clean tree -- `land` will not commit for you, and it will not
+   rebase a tree a builder is still writing to. A round still open is refused
+   unless you pass `--force`.
+2. **Fetch and rebase.** `git fetch origin <base>`, then
+   `git rebase origin/<base>`. A conflict aborts the rebase, lists the
+   conflicting paths, changes nothing and exits **3**.
+3. **Gate.** The binding's gate runs on the rebased tree (`sh -c "<gate>
+   2>&1"`), with its output in `~/.local/state/relay/<name>/land-gate.log`. A
+   failing gate pushes nothing and exits **2**.
+4. **Push.** `git push -u origin <branch>`, with `--force-with-lease` when the
+   branch already exists on the remote -- the rebase rewrote it.
+5. **PR.** With `--pr` and `gh` on PATH, `gh pr create --head <branch> --base
+   <base> --fill` runs and its URL is recorded. Otherwise the exact command is
+   printed for you to run. If `gh` fails *after* the push, relay says so: the
+   branch is on origin, and only the PR is missing.
+6. **Log.** `landed <branch> -> <base> [pr <url>]`, with the time recorded on
+   the binding. `relay status` then shows `landed` on the round line until the
+   next `relay send` clears it.
+
+The base *branch* is recorded at `add`/`fork` time: the branch the source
+checkout had checked out (e.g. `main`). An older binding, a `--cwd` binding,
+and a `--branch` adoption have none, so `land` asks you for `--onto`. Use
+`--merge` when the branch must keep its history or when someone else may be
+working on top of it; the base is then merged in rather than rebased onto, and
+because nothing is rewritten the push needs no lease.
+
+**`land` never merges a pull request, and never deletes a branch or a
+worktree.** It is the mechanical half of the job and stops at the PR. Merging
+is a separate, deliberate act: merge only after `gh pr checks <n> --watch`
+has finished with every job passing -- a green first job is not a green CI
+(the rule in `CLAUDE.md`, repeated here because `land` is where it is easiest
+to forget).
+
 ### Cleaning up finished bindings
 
 A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to

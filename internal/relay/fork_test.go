@@ -756,3 +756,76 @@ func TestForkHeadlessSpawnsNothing(t *testing.T) {
 		t.Errorf("source builder changed: %+v", src.Builder)
 	}
 }
+
+// TestForkRecordsBaseRef pins #136: a fork cut from the source's checkout
+// records the branch that checkout (src.Repo) had checked out, so `relay
+// land` knows what to rebase the fork's branch onto.
+func TestForkRecordsBaseRef(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Repo = "/repo"
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+
+	if res.Binding.BaseRef != "main" {
+		t.Errorf("BaseRef = %q, want %q", res.Binding.BaseRef, "main")
+	}
+	stored, err := rt.Store.Load("alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BaseRef != "main" {
+		t.Errorf("stored BaseRef = %q, want %q", stored.BaseRef, "main")
+	}
+	if len(fg.currentBranchCalls) != 1 {
+		t.Fatalf("CurrentBranch calls = %+v, want 1", fg.currentBranchCalls)
+	}
+	if fg.currentBranchCalls[0].Dir != "/repo" {
+		t.Errorf("CurrentBranch asked about %q, want the source checkout src.Repo", fg.currentBranchCalls[0].Dir)
+	}
+}
+
+// TestForkRecordsNoBaseRefForACWDFork pins the escape hatch: a --cwd fork
+// cuts nothing, so it records no base ref and land asks for --onto.
+func TestForkRecordsNoBaseRefForACWDFork(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	seedFourRoundBinding(t, rt, "source", t.TempDir())
+	cwd := t.TempDir()
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", CWD: cwd,
+	})
+	if err != nil {
+		t.Fatalf("Fork --cwd: %v", err)
+	}
+	if res.Binding.BaseRef != "" {
+		t.Errorf("BaseRef = %q, want \"\" for a --cwd fork", res.Binding.BaseRef)
+	}
+	if len(fg.currentBranchCalls) != 0 {
+		t.Errorf("a --cwd fork cuts nothing, so it must not ask for a branch: %+v", fg.currentBranchCalls)
+	}
+}

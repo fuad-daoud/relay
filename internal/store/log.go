@@ -61,6 +61,11 @@ const (
 
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path
+
+	// KindLand is relay -> log only: `relay land` rebased the binding's
+	// branch onto its base, ran the gate and pushed (#136). The note names
+	// the branch, the base and the PR URL when one was created.
+	KindLand Kind = "land"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also

@@ -1074,3 +1074,154 @@ func (c *Client) InitBare(ctx context.Context, path string) error {
 	_, err := c.run(ctx, dir, nil, "init", "--bare", path)
 	return err
 }
+
+// CurrentBranch returns dir's checked-out branch name, or "" when HEAD is
+// detached.
+//
+// `git rev-parse --abbrev-ref HEAD` answers the literal "HEAD" for a detached
+// worktree, which is not a branch name and must never be recorded as one
+// (relay land would then try to fetch and rebase onto a ref called HEAD).
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure -- including an unborn HEAD, which git cannot
+// abbreviate to a branch.
+func (c *Client) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "HEAD" {
+		return "", nil
+	}
+	return name, nil
+}
+
+// Fetch fetches ref from remote into dir's repository: `git fetch <remote>
+// <ref>`. git opportunistically updates the matching remote-tracking ref
+// (refs/remotes/<remote>/<ref>) when the remote is configured with a fetch
+// refspec, which is what makes "origin/<base>" resolvable afterwards.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure (an unknown remote or ref).
+func (c *Client) Fetch(ctx context.Context, dir, remote, ref string) error {
+	_, err := c.run(ctx, dir, nil, "fetch", remote, ref)
+	return err
+}
+
+// Rebase rebases dir's current branch onto onto: `git rebase <onto>`.
+//
+// Preconditions:  dir is inside a git worktree whose branch is checked out.
+// Postconditions: on success dir's branch is rewritten onto onto. On a
+// conflict the unmerged paths are returned, the rebase is aborted, and the
+// worktree and HEAD are exactly where they were -- nothing is left half
+// rebased.
+// Errors: ErrMergeConflict (with the conflicting paths), ErrNotRepo,
+// ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) Rebase(ctx context.Context, dir, onto string) ([]string, error) {
+	_, err := c.run(ctx, dir, nil, "rebase", onto)
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, err
+	}
+
+	paths, perr := c.unmergedPaths(ctx, dir)
+	if perr != nil {
+		return nil, perr
+	}
+	// No unmerged path means this was not a conflict at all -- an unresolvable
+	// onto, a missing committer identity, a dirty index -- so the original
+	// failure is the honest answer. The abort still runs: git may have left a
+	// rebase in progress before failing.
+	if len(paths) == 0 {
+		_, _ = c.run(ctx, dir, nil, "rebase", "--abort")
+		return nil, err
+	}
+	if _, aerr := c.run(ctx, dir, nil, "rebase", "--abort"); aerr != nil {
+		return nil, fmt.Errorf("%w: rebase %s: %v; and rebase --abort failed: %v", ErrMergeConflict, onto, err, aerr)
+	}
+	return paths, ErrMergeConflict
+}
+
+// Merge merges ref into dir's current branch: `git merge --no-edit <ref>`.
+// It is the --merge escape hatch: it integrates the base without rewriting
+// the branch, so the push that follows needs no lease.
+//
+// Preconditions:  dir is inside a git worktree whose branch is checked out.
+// Postconditions: on success ref is merged. On a conflict the unmerged paths
+// are returned, the merge is aborted, and the worktree and HEAD are exactly
+// where they were.
+// Errors: ErrMergeConflict (with the conflicting paths), ErrNotRepo,
+// ErrGitUnavailable, context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) Merge(ctx context.Context, dir, ref string) ([]string, error) {
+	_, err := c.run(ctx, dir, nil, "merge", "--no-edit", ref)
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, err
+	}
+
+	paths, perr := c.unmergedPaths(ctx, dir)
+	if perr != nil {
+		return nil, perr
+	}
+	// As in Rebase: no unmerged path means the failure was not a conflict, so
+	// the original error is returned instead of inventing one.
+	if len(paths) == 0 {
+		_, _ = c.run(ctx, dir, nil, "merge", "--abort")
+		return nil, err
+	}
+	if _, aerr := c.run(ctx, dir, nil, "merge", "--abort"); aerr != nil {
+		return nil, fmt.Errorf("%w: merge %s: %v; and merge --abort failed: %v", ErrMergeConflict, ref, err, aerr)
+	}
+	return paths, ErrMergeConflict
+}
+
+// unmergedPaths lists the paths git marked unmerged in dir
+// (`git diff --name-only --diff-filter=U`), the conflict set Rebase and Merge
+// return.
+func (c *Client) unmergedPaths(ctx context.Context, dir string) ([]string, error) {
+	out, err := c.run(ctx, dir, nil, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimRight(line, "\r"); strings.TrimSpace(line) != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
+
+// Push pushes branch to remote and sets it as branch's upstream: `git push -u
+// <remote> <branch>`, with --force-with-lease when forceWithLease is true. A
+// rebase rewrites the branch, so a branch that already exists on the remote
+// needs the lease; --merge does not rewrite it and does not.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure (rejected push, no such remote).
+func (c *Client) Push(ctx context.Context, dir, remote, branch string, forceWithLease bool) error {
+	args := []string{"push", "-u", remote, branch}
+	if forceWithLease {
+		args = append(args, "--force-with-lease")
+	}
+	_, err := c.run(ctx, dir, nil, args...)
+	return err
+}
+
+// RemoteBranchExists reports whether remote already has a branch named branch:
+// `git ls-remote --heads <remote> <branch>` printing anything at all.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure (an unreachable remote).
+func (c *Client) RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error) {
+	out, err := c.run(ctx, dir, nil, "ls-remote", "--heads", remote, branch)
+	if err != nil {
+		return false, err
+	}
+	return len(strings.TrimSpace(string(out))) > 0, nil
+}

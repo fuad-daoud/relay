@@ -1904,6 +1904,230 @@ func TestAddDetachedWorktree(t *testing.T) {
 	}
 }
 
+// writeGitFile writes one fixture file into dir, failing the test on error.
+func writeGitFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFetchRebasePush drives the land flow's git primitives against real
+// repositories: a work clone on feat fetches and rebases onto origin/main
+// after origin moves, pushes, and -- after origin moves again -- pushes again
+// with --force-with-lease, which a rewritten branch needs.
+func TestFetchRebasePush(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 10*time.Second, DefaultMaxPatchBytes)
+
+	seed := initRepo(t)
+	runGit(t, seed, "checkout", "-b", "main")
+	writeGitFile(t, seed, "base.txt", "v1\n")
+	runGit(t, seed, "add", "base.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "main 1")
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, filepath.Dir(origin), "clone", "--bare", seed, origin)
+	runGit(t, seed, "remote", "add", "origin", origin)
+
+	work := filepath.Join(t.TempDir(), "work")
+	runGit(t, filepath.Dir(work), "clone", origin, work)
+	runGit(t, work, "checkout", "-b", "feat")
+	// A clone carries no local identity, and the client runs git without the
+	// runGit fixture env: a rebase that replays a commit needs one here.
+	runGit(t, work, "config", "user.name", "Test")
+	runGit(t, work, "config", "user.email", "test@example.com")
+	writeGitFile(t, work, "feat.txt", "feat\n")
+	runGit(t, work, "add", "feat.txt")
+	runGit(t, work, "-c", "commit.gpgsign=false", "commit", "-m", "feat 1")
+
+	// 1. origin/main gains a commit the work clone has not seen.
+	writeGitFile(t, seed, "main2.txt", "v2\n")
+	runGit(t, seed, "add", "main2.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "main 2")
+	runGit(t, seed, "push", "origin", "main")
+
+	if err := client.Fetch(ctx, work, "origin", "main"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	paths, err := client.Rebase(ctx, work, "origin/main")
+	if err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("Rebase conflicts = %v, want none", paths)
+	}
+	// feat now contains origin's commit. runGit fails the test when this is
+	// not an ancestor, which is exactly the assertion asked for.
+	runGit(t, work, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+
+	if err := client.Push(ctx, work, "origin", "feat", false); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	exists, err := client.RemoteBranchExists(ctx, work, "origin", "feat")
+	if err != nil {
+		t.Fatalf("RemoteBranchExists: %v", err)
+	}
+	if !exists {
+		t.Fatal("RemoteBranchExists = false after Push, want true")
+	}
+
+	// 2. origin/main moves again, so the rebase that follows rewrites feat and
+	// the push needs the lease.
+	writeGitFile(t, seed, "main3.txt", "v3\n")
+	runGit(t, seed, "add", "main3.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "main 3")
+	runGit(t, seed, "push", "origin", "main")
+
+	if err := client.Fetch(ctx, work, "origin", "main"); err != nil {
+		t.Fatalf("Fetch (2): %v", err)
+	}
+	if paths, err := client.Rebase(ctx, work, "origin/main"); err != nil || len(paths) != 0 {
+		t.Fatalf("Rebase (2) = (%v, %v), want no conflicts", paths, err)
+	}
+	if err := client.Push(ctx, work, "origin", "feat", true); err != nil {
+		t.Fatalf("Push --force-with-lease: %v", err)
+	}
+}
+
+// TestRebaseConflictAbortsAndListsPaths pins the conflict contract: unmerged
+// paths come back, ErrMergeConflict is returned, the rebase is aborted, and
+// the worktree and HEAD are exactly where they were.
+func TestRebaseConflictAbortsAndListsPaths(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 10*time.Second, DefaultMaxPatchBytes)
+
+	seed := initRepo(t)
+	runGit(t, seed, "checkout", "-b", "main")
+	writeGitFile(t, seed, "file.txt", "base\n")
+	runGit(t, seed, "add", "file.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "base")
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, filepath.Dir(origin), "clone", "--bare", seed, origin)
+	runGit(t, seed, "remote", "add", "origin", origin)
+
+	work := filepath.Join(t.TempDir(), "work")
+	runGit(t, filepath.Dir(work), "clone", origin, work)
+	runGit(t, work, "checkout", "-b", "feat")
+	// A clone carries no local identity; see TestFetchRebasePush.
+	runGit(t, work, "config", "user.name", "Test")
+	runGit(t, work, "config", "user.email", "test@example.com")
+	writeGitFile(t, work, "file.txt", "feat\n")
+	runGit(t, work, "add", "file.txt")
+	runGit(t, work, "-c", "commit.gpgsign=false", "commit", "-m", "feat edit")
+	featHead := strings.TrimSpace(runGit(t, work, "rev-parse", "HEAD"))
+
+	// origin/main edits the same file, so the rebase cannot apply cleanly.
+	writeGitFile(t, seed, "file.txt", "main\n")
+	runGit(t, seed, "add", "file.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "main edit")
+	runGit(t, seed, "push", "origin", "main")
+
+	if err := client.Fetch(ctx, work, "origin", "main"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	paths, err := client.Rebase(ctx, work, "origin/main")
+	if !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("Rebase err = %v, want ErrMergeConflict", err)
+	}
+	if len(paths) != 1 || paths[0] != "file.txt" {
+		t.Errorf("conflict paths = %v, want [file.txt]", paths)
+	}
+	if out := strings.TrimSpace(runGit(t, work, "status", "--porcelain")); out != "" {
+		t.Errorf("worktree is not clean after rebase --abort: %q", out)
+	}
+	if got := strings.TrimSpace(runGit(t, work, "rev-parse", "HEAD")); got != featHead {
+		t.Errorf("HEAD = %s, want %s (the abort must leave it where it was)", got, featHead)
+	}
+}
+
+// TestMergeConflictAborts is TestRebaseConflictAbortsAndListsPaths for the
+// --merge escape hatch.
+func TestMergeConflictAborts(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 10*time.Second, DefaultMaxPatchBytes)
+
+	seed := initRepo(t)
+	runGit(t, seed, "checkout", "-b", "main")
+	writeGitFile(t, seed, "file.txt", "base\n")
+	runGit(t, seed, "add", "file.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "base")
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, filepath.Dir(origin), "clone", "--bare", seed, origin)
+	runGit(t, seed, "remote", "add", "origin", origin)
+
+	work := filepath.Join(t.TempDir(), "work")
+	runGit(t, filepath.Dir(work), "clone", origin, work)
+	runGit(t, work, "checkout", "-b", "feat")
+	// A clone carries no local identity; see TestFetchRebasePush.
+	runGit(t, work, "config", "user.name", "Test")
+	runGit(t, work, "config", "user.email", "test@example.com")
+	writeGitFile(t, work, "file.txt", "feat\n")
+	runGit(t, work, "add", "file.txt")
+	runGit(t, work, "-c", "commit.gpgsign=false", "commit", "-m", "feat edit")
+	featHead := strings.TrimSpace(runGit(t, work, "rev-parse", "HEAD"))
+
+	writeGitFile(t, seed, "file.txt", "main\n")
+	runGit(t, seed, "add", "file.txt")
+	runGit(t, seed, "-c", "commit.gpgsign=false", "commit", "-m", "main edit")
+	runGit(t, seed, "push", "origin", "main")
+
+	if err := client.Fetch(ctx, work, "origin", "main"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	paths, err := client.Merge(ctx, work, "origin/main")
+	if !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("Merge err = %v, want ErrMergeConflict", err)
+	}
+	if len(paths) != 1 || paths[0] != "file.txt" {
+		t.Errorf("conflict paths = %v, want [file.txt]", paths)
+	}
+	if out := strings.TrimSpace(runGit(t, work, "status", "--porcelain")); out != "" {
+		t.Errorf("worktree is not clean after merge --abort: %q", out)
+	}
+	if got := strings.TrimSpace(runGit(t, work, "rev-parse", "HEAD")); got != featHead {
+		t.Errorf("HEAD = %s, want %s (the abort must leave it where it was)", got, featHead)
+	}
+}
+
+// TestCurrentBranchDetached: a detached HEAD is not a branch name, so
+// CurrentBranch reports "" for it. `git rev-parse --abbrev-ref HEAD` answers
+// the literal "HEAD" there, which land must never record as a base branch.
+func TestCurrentBranchDetached(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repo := initRepo(t)
+	writeGitFile(t, repo, "file.txt", "v1\n")
+	runGit(t, repo, "add", "file.txt")
+	runGit(t, repo, "-c", "commit.gpgsign=false", "commit", "-m", "first")
+
+	name, err := client.CurrentBranch(ctx, repo)
+	if err != nil {
+		t.Fatalf("CurrentBranch: %v", err)
+	}
+	if name == "" || name == "HEAD" {
+		t.Errorf("CurrentBranch = %q, want the checked-out branch name", name)
+	}
+
+	sha := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "checkout", "--detach", sha)
+
+	name, err = client.CurrentBranch(ctx, repo)
+	if err != nil {
+		t.Fatalf("CurrentBranch (detached): %v", err)
+	}
+	if name != "" {
+		t.Errorf("CurrentBranch (detached) = %q, want %q", name, "")
+	}
+}
+
 func TestNormalizeOriginURL(t *testing.T) {
 	cases := []struct {
 		name string
