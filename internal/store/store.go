@@ -581,6 +581,10 @@ func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availa
 // §4), beside ledger.json and availability.json.
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }
 
+// ChannelsDir is where relay mcp's claim files live, one per planner pane
+// (docs/specs/2026-09-21-planner-channel-design.md §3.2).
+func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
+
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.

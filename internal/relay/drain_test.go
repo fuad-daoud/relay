@@ -1,0 +1,286 @@
+package relay
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"testing"
+
+	"github.com/fuad-daoud/relay/internal/store"
+)
+
+// recordedPush is one call a fakePusher captured.
+type recordedPush struct {
+	content string
+	meta    map[string]string
+}
+
+// fakePusher is the fake Pusher the plan asks Drain's tests to use: it
+// records every push, and its first failCalls calls fail (so a test can
+// prove a push failure leaves the entry pending and a later poll retries).
+type fakePusher struct {
+	pushes    []recordedPush
+	failCalls int
+	calls     int
+}
+
+func (f *fakePusher) Push(_ context.Context, content string, meta map[string]string) error {
+	f.calls++
+	if f.calls <= f.failCalls {
+		return fmt.Errorf("push %d failed", f.calls)
+	}
+	cp := make(map[string]string, len(meta))
+	for k, v := range meta {
+		cp[k] = v
+	}
+	f.pushes = append(f.pushes, recordedPush{content: content, meta: cp})
+	return nil
+}
+
+func saveDrainBinding(t *testing.T, s *store.Store, name, pane string, state store.State) store.Binding {
+	t.Helper()
+	b := store.Binding{
+		Name:    name,
+		CWD:     "/repo/" + name,
+		Planner: store.Endpoint{PaneID: pane},
+		Builder: store.Endpoint{PaneID: "b:1"},
+		Round:   1,
+		State:   state,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("save binding %q: %v", name, err)
+	}
+	return b
+}
+
+func queueDrainEntry(t *testing.T, s *store.Store, name string, round int, kind store.Kind, path, payload string) {
+	t.Helper()
+	entry := store.LogEntry{Round: round, Direction: store.DirToPlanner, Kind: kind, Path: path, Payload: payload}
+	if err := s.WithLock(func(tx *store.Tx) error { return tx.AppendLog(name, entry) }); err != nil {
+		t.Fatalf("append log for %q: %v", name, err)
+	}
+}
+
+func TestDrainRequiresPane(t *testing.T) {
+	rt := Runtime{Store: store.New(t.TempDir())}
+	if _, err := Drain(context.Background(), rt, &DrainState{}, &fakePusher{}); err == nil {
+		t.Fatal("Drain with an empty Pane must error")
+	}
+}
+
+func TestDrainPushesThenConfirms(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "judge", pane, store.StateActive)
+	queueDrainEntry(t, s, "judge", 3, store.KindReport, "/x/003-report.md", "the report body")
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+
+	res, err := Drain(context.Background(), rt, st, pusher)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if res.Pushed != 1 {
+		t.Fatalf("Pushed = %d, want 1", res.Pushed)
+	}
+	if len(pusher.pushes) != 1 {
+		t.Fatalf("pushes = %+v, want one", pusher.pushes)
+	}
+
+	got := pusher.pushes[0]
+	if got.content != "the report body" {
+		t.Errorf("content = %q, want the payload verbatim", got.content)
+	}
+	want := map[string]string{"binding": "judge", "round": "3", "kind": "report", "seq": "1", "path": "/x/003-report.md"}
+	if !reflect.DeepEqual(got.meta, want) {
+		t.Errorf("meta = %+v, want %+v", got.meta, want)
+	}
+
+	if _, pending, err := s.PendingForPlanner("judge"); err != nil || pending {
+		t.Errorf("a pushed entry must be confirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+func TestDrainOmitsPathMetaWhenEntryHasNone(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "judge", pane, store.StateActive)
+	queueDrainEntry(t, s, "judge", 1, store.KindAnswer, "", "an answer, no file")
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if _, ok := pusher.pushes[0].meta["path"]; ok {
+		t.Errorf("meta must omit path when the entry has none, got %+v", pusher.pushes[0].meta)
+	}
+}
+
+func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "judge", pane, store.StateActive)
+	queueDrainEntry(t, s, "judge", 1, store.KindReport, "", "payload one")
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{failCalls: 1}
+
+	res, err := Drain(context.Background(), rt, st, pusher)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if res.Pushed != 0 || len(res.Failed) != 1 || res.Failed[0] != "judge" {
+		t.Fatalf("first poll result = %+v, want Pushed 0, Failed [judge]", res)
+	}
+	if _, pending, err := s.PendingForPlanner("judge"); err != nil || !pending {
+		t.Errorf("a failed push must leave the entry pending: pending=%v err=%v", pending, err)
+	}
+
+	res, err = Drain(context.Background(), rt, st, pusher)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if res.Pushed != 1 {
+		t.Fatalf("second poll result = %+v, want Pushed 1", res)
+	}
+	if _, pending, err := s.PendingForPlanner("judge"); err != nil || pending {
+		t.Errorf("the retried push must confirm: pending=%v err=%v", pending, err)
+	}
+}
+
+func TestDrainSkipsForeignAndOwnedBindings(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "mine", pane, store.StateActive)
+	saveDrainBinding(t, s, "other-pane", "w9:p9", store.StateActive)
+	owned := store.Binding{
+		Name: "owned", CWD: "/repo/owned",
+		Planner: store.Endpoint{PaneID: pane}, Owner: "client-1",
+		Round: 1, State: store.StateActive,
+	}
+	if err := s.Save(owned); err != nil {
+		t.Fatalf("save owned binding: %v", err)
+	}
+
+	queueDrainEntry(t, s, "mine", 1, store.KindReport, "", "payload")
+	queueDrainEntry(t, s, "other-pane", 1, store.KindReport, "", "payload")
+	queueDrainEntry(t, s, "owned", 1, store.KindReport, "", "payload")
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+	res, err := Drain(context.Background(), rt, st, pusher)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if res.Pushed != 1 {
+		t.Fatalf("Pushed = %d, want 1 (only the binding on this pane, not owned)", res.Pushed)
+	}
+	if len(pusher.pushes) != 1 || pusher.pushes[0].meta["binding"] != "mine" {
+		t.Fatalf("pushes = %+v, want only 'mine'", pusher.pushes)
+	}
+}
+
+// TestDrainStateEdges walks the transitions spec §3.6 calls out: a
+// transition into needs_you/broken/orphaned pushes once, staying in one
+// pushes nothing more, and leaving one pushes nothing.
+func TestDrainStateEdges(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+
+	b := saveDrainBinding(t, s, "judge", pane, store.StateActive)
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+
+	// First sight in "active" (not a channel state): nothing pushed.
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 0 {
+		t.Fatalf("first sight in active must not push, got %d", len(pusher.pushes))
+	}
+
+	// active -> needs_you: pushes once.
+	b.State = store.StateNeedsYou
+	b.Halt = "builder asked a question"
+	if err := s.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 1 {
+		t.Fatalf("active->needs_you must push once, got %d", len(pusher.pushes))
+	}
+	meta := pusher.pushes[0].meta
+	if meta["state"] != "needs_you" || meta["old_state"] != "active" || meta["kind"] != "state" || meta["binding"] != "judge" {
+		t.Errorf("state push meta = %+v", meta)
+	}
+
+	// Staying in needs_you: pushes nothing more.
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 1 {
+		t.Fatalf("staying in needs_you must not push again, got %d total", len(pusher.pushes))
+	}
+
+	// needs_you -> active: pushes nothing.
+	b.State = store.StateActive
+	b.Halt = ""
+	if err := s.Save(b); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 1 {
+		t.Fatalf("needs_you->active must not push, got %d total", len(pusher.pushes))
+	}
+
+	// A different binding's first-ever sight already in "broken": pushes once,
+	// with an empty old_state.
+	saveDrainBinding(t, s, "storefront", pane, store.StateBroken)
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 2 {
+		t.Fatalf("first sight already broken must push once, got %d total", len(pusher.pushes))
+	}
+	last := pusher.pushes[len(pusher.pushes)-1]
+	if last.meta["binding"] != "storefront" || last.meta["state"] != "broken" || last.meta["old_state"] != "" {
+		t.Errorf("broken-at-first-sight meta = %+v", last.meta)
+	}
+}
+
+func TestDrainDropsGoneBindingsFromMemory(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "judge", pane, store.StateNeedsYou)
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if _, ok := st.Last["judge"]; !ok {
+		t.Fatalf("Last must remember judge after its first poll")
+	}
+
+	if err := s.Delete("judge"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if _, ok := st.Last["judge"]; ok {
+		t.Errorf("Last must drop a binding once it disappears from the store")
+	}
+}

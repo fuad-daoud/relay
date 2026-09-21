@@ -78,6 +78,9 @@ Commands:
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
+  mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/answer/done
+            as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
+            NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
   candidates   list the configured harness/provider/model candidates
   policy       show, per role, which candidate relay would pick right now and why
@@ -288,6 +291,8 @@ func run(args []string) error {
 		return cmdEdge(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
+	case "mcp":
+		return cmdMCP(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
 	case "candidates":
@@ -444,6 +449,7 @@ func newRuntime() (relay.Runtime, error) {
 		Remote:           remoteClient,
 		Transport:        transport,
 		Roles:            harness.OSRoleChecker(),
+		Channels:         &relay.FileClaims{Root: st.ChannelsDir()},
 	}, nil
 }
 
