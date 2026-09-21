@@ -255,6 +255,149 @@ func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
 	}
 }
 
+func TestAppendLogAssignsSeq(t *testing.T) {
+	s, name := seedBinding(t)
+
+	for i := 1; i <= 3; i++ {
+		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
+			t.Fatalf("AppendLog %d: %v", i, err)
+		}
+	}
+	// A caller-supplied Seq is overwritten: appendLog owns the numbering.
+	if err := s.AppendLog(name, LogEntry{Seq: 99, Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
+		t.Fatalf("AppendLog 4: %v", err)
+	}
+
+	got, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("got %d entries, want 4", len(got))
+	}
+	for i, e := range got {
+		if e.Seq != i+1 {
+			t.Errorf("entry %d: Seq = %d, want %d", i, e.Seq, i+1)
+		}
+	}
+}
+
+func TestReadLogFillsSeqForPreSeqFile(t *testing.T) {
+	s, name := seedBinding(t)
+
+	// Three raw lines with no seq key: a file written before Seq existed.
+	raw := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
+{"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":true}
+{"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true}
+`
+	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
+		t.Fatalf("seed pre-Seq log: %v", err)
+	}
+
+	got, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d entries, want 3", len(got))
+	}
+	for i, e := range got {
+		if e.Seq != i+1 {
+			t.Errorf("pre-Seq entry %d: Seq = %d, want %d", i, e.Seq, i+1)
+		}
+	}
+
+	if err := s.AppendLog(name, LogEntry{Round: 2, Direction: DirToPlanner, Kind: KindReport}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	got, err = s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog after append: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("got %d entries, want 4", len(got))
+	}
+	for i, e := range got {
+		if e.Seq != i+1 {
+			t.Errorf("entry %d after append: Seq = %d, want %d", i, e.Seq, i+1)
+		}
+	}
+}
+
+func TestConfirmIndexKeepsSeq(t *testing.T) {
+	s, name := seedBinding(t)
+
+	raw := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
+{"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":false}
+{"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true}
+`
+	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+
+	if err := s.ConfirmIndex(name, 1); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+
+	got, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for i, e := range got {
+		if e.Seq != i+1 {
+			t.Errorf("confirmed entry %d: Seq = %d, want %d", i, e.Seq, i+1)
+		}
+	}
+
+	// The rewrite writes Seq through: the second line now carries "seq":2.
+	data, err := os.ReadFile(s.logPath(name))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("rewritten file has %d lines, want 3", len(lines))
+	}
+	if !strings.Contains(lines[1], `"seq":2`) {
+		t.Errorf("second line = %s, want it to contain %q", lines[1], `"seq":2`)
+	}
+}
+
+func TestReadLogAfter(t *testing.T) {
+	s, name := seedBinding(t)
+
+	for i := 1; i <= 3; i++ {
+		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
+			t.Fatalf("AppendLog %d: %v", i, err)
+		}
+	}
+
+	got, err := s.ReadLogAfter(name, 2)
+	if err != nil {
+		t.Fatalf("ReadLogAfter(2): %v", err)
+	}
+	if len(got) != 1 || got[0].Seq != 3 {
+		t.Fatalf("ReadLogAfter(2) = %+v, want just Seq 3", got)
+	}
+
+	none, err := s.ReadLogAfter(name, 3)
+	if err != nil {
+		t.Fatalf("ReadLogAfter(3): %v", err)
+	}
+	if none != nil {
+		t.Errorf("ReadLogAfter(3) = %+v, want nil", none)
+	}
+
+	all, err := s.ReadLogAfter(name, 0)
+	if err != nil {
+		t.Fatalf("ReadLogAfter(0): %v", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("ReadLogAfter(0) returned %d entries, want 3", len(all))
+	}
+}
+
 func TestLogEntryUsageRoundTrip(t *testing.T) {
 	s := New(t.TempDir())
 	with := LogEntry{

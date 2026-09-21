@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,6 +59,10 @@ const (
 // relay's pending-delivery record, which is what makes a crash mid-delivery
 // recoverable without a second file to keep in sync.
 type LogEntry struct {
+	// Seq is the 1-based position of the entry in its binding's log; assigned
+	// by appendLog, filled on read for files written before Seq existed.
+	// Callers never set it; appendLog overwrites whatever a caller passed.
+	Seq         int        `json:"seq,omitempty"`
 	TS          time.Time  `json:"ts"`
 	Round       int        `json:"round"`
 	Direction   Direction  `json:"direction"`
@@ -162,6 +167,18 @@ func (s *Store) ReadLog(name string) ([]LogEntry, error) {
 	return entries, err
 }
 
+// ReadLogAfter returns the entries whose Seq is greater than after, acquiring
+// the state lock for the operation. It returns nil, nil when none match.
+func (s *Store) ReadLogAfter(name string, after int) ([]LogEntry, error) {
+	var entries []LogEntry
+	err := s.WithLock(func(tx *Tx) error {
+		var err error
+		entries, err = tx.ReadLogAfter(name, after)
+		return err
+	})
+	return entries, err
+}
+
 // PendingForPlanner returns the oldest undelivered payload bound for the
 // planner, acquiring the state lock for the operation. It drops the entry's
 // index: a caller that only reads cannot confirm, and a caller that intends to
@@ -195,6 +212,12 @@ func (t *Tx) ReadLog(name string) ([]LogEntry, error) {
 	return t.s.readLog(name)
 }
 
+// ReadLogAfter reads the entries whose Seq is greater than after under the
+// held lock.
+func (t *Tx) ReadLogAfter(name string, after int) ([]LogEntry, error) {
+	return t.s.readLogAfter(name, after)
+}
+
 // PendingForPlanner reads the oldest undelivered planner payload and its index
 // under the held lock.
 func (t *Tx) PendingForPlanner(name string) (LogEntry, int, bool, error) {
@@ -210,7 +233,8 @@ func (t *Tx) ConfirmIndex(name string, idx int) error {
 // Unexported methods implement the actual logic, assuming the lock is held
 // via Tx. They never take the lock themselves.
 
-// appendLog appends one entry, stamping TS when the caller left it zero.
+// appendLog appends one entry, stamping TS when the caller left it zero and
+// assigning Seq from the file itself.
 func (s *Store) appendLog(name string, e LogEntry) error {
 	if err := ValidName(name); err != nil {
 		return err
@@ -219,7 +243,17 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 		e.TS = time.Now().UTC()
 	}
 
-	raw, err := json.Marshal(e)
+	// Seq is the number of newline-terminated lines already in the file, plus
+	// one. Reading the whole file is cheap -- maxLogEntries caps it at 10000
+	// lines -- and counting bytes '\n' needs no decode. A file that is absent
+	// counts zero.
+	raw, err := os.ReadFile(s.logPath(name))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read log for %q: %w", name, err)
+	}
+	e.Seq = bytes.Count(raw, []byte{'\n'}) + 1
+
+	encoded, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("encode log entry: %w", err)
 	}
@@ -234,7 +268,7 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	}
 	defer f.Close()
 
-	if _, err := f.Write(append(raw, '\n')); err != nil {
+	if _, err := f.Write(append(encoded, '\n')); err != nil {
 		return fmt.Errorf("append log for %q: %w", name, err)
 	}
 
@@ -262,10 +296,31 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 	return entries, nil
 }
 
+// readLogAfter returns the entries whose Seq is greater than after. A log
+// with no such entry yields nil, nil.
+func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
+	entries, err := s.readLog(name)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []LogEntry
+	for _, e := range entries {
+		if e.Seq > after {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // decodeLog scans a log.jsonl stream, one LogEntry per line, refusing to
 // read past maxLogEntries rather than silently truncating: since a log is
 // append-only, truncating would drop the newest entries. Shared by readLog
 // (the live file) and ReadArchivedLog (a tarball member).
+//
+// A file written before Seq existed has no seq key: each decoded entry's Seq
+// is then its 1-based position among the decoded entries, so such a file
+// reads back exactly as a new one would, and nothing is rewritten.
 func decodeLog(r io.Reader) ([]LogEntry, error) {
 	entries := make([]LogEntry, 0, 64)
 	scanner := bufio.NewScanner(r)
@@ -280,6 +335,12 @@ func decodeLog(r io.Reader) ([]LogEntry, error) {
 		var e LogEntry
 		if err := json.Unmarshal(line, &e); err != nil {
 			return nil, fmt.Errorf("decode log entry: %w", err)
+		}
+
+		// i counts decoded entries, so a skipped empty line does not advance
+		// the numbering.
+		if e.Seq == 0 {
+			e.Seq = len(entries) + 1
 		}
 
 		entries = append(entries, e)
