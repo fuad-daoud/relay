@@ -137,9 +137,35 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	syncPaneMetadata(ctx, d.rt, d.applied, fresh)
 	notifyFinished(ctx, d.rt, fresh, agents)
 
+	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,
+	// after every binding this tick reconciled has been saved (#37): a
+	// fire-mode edge armed by Reconcile above is in fresh already, and one
+	// left armed by a daemon that crashed between arming it and running it
+	// is picked back up the same way, since armedFires reads every
+	// binding's saved state rather than just what changed this tick. Firing
+	// happens here, outside every WithLock the per-binding loop took, so
+	// Send's own lock on the target never nests inside the source's.
+	runFires(ctx, d.rt, armedFires(fresh))
+
 	ingestLiveBindings(ctx, d.rt, fresh)
 
 	return nil
+}
+
+// armedFires collects every fire-mode edge left armed across every binding:
+// Result == "firing" and Fired == false. evaluateEdges sets exactly that
+// pair on a fire-mode edge whose artifact was ready but whose Send has not
+// yet run (#37).
+func armedFires(bindings []store.Binding) []firePending {
+	var pendings []firePending
+	for _, b := range bindings {
+		for _, e := range b.Edges {
+			if !e.Fired && e.Result == "firing" {
+				pendings = append(pendings, firePending{Source: b.Name, Edge: e})
+			}
+		}
+	}
+	return pendings
 }
 
 // ingestLiveBindings runs internal/ingest over every live binding's

@@ -389,6 +389,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				return next, err
 			}
 		}
+		// Edges evaluate right after the verify hook and before delivery
+		// (#37), exactly as the pane path orders it: see reconcile.go's
+		// matching comment for why the pendings return value is discarded.
+		next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
+		if err != nil {
+			return next, err
+		}
 		next, err = deliverAndSettle(ctx, rt, tx, next, agents)
 		if err != nil {
 			return next, err
