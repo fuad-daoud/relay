@@ -332,6 +332,9 @@ inside every pane it manages, so it has to be run from inside one.
   the characters a binding name accepts. The binding records
   `existing_branch: true`, and relay never deletes a branch it did not
   create. Works with `--headless` and with `--server`; not with `--cwd`.
+  For a `--server` binding the server's own `refs/heads/relay/<name>` ref is
+  kept in the repository beside the adopted branch: every closed round
+  absorbs it and fast-forwards `B` to it, and relay deletes neither.
   `relay fork --branch` is not available yet.
 - `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying

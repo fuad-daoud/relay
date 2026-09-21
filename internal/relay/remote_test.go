@@ -176,6 +176,25 @@ func (f *fakeTransport) Absorb(ctx context.Context, repo, contentType string, bo
 	return f.absorbResp, nil
 }
 
+// recordingTransport drives a real transport -- bundles and all -- and keeps
+// what the last Absorb did, so a test can show why an absorb was rejected
+// (#274) instead of inferring it from the refs that did not move.
+type recordingTransport struct {
+	inner remote.TreeTransport
+	moved map[string]string
+	err   error
+}
+
+func (r *recordingTransport) Snapshot(ctx context.Context, repo string, refs []string, since string) (remote.Snapshot, error) {
+	return r.inner.Snapshot(ctx, repo, refs, since)
+}
+
+func (r *recordingTransport) Absorb(ctx context.Context, repo, contentType string, body io.Reader, refs []string) (map[string]string, error) {
+	moved, err := r.inner.Absorb(ctx, repo, contentType, body, refs)
+	r.moved, r.err = moved, err
+	return moved, err
+}
+
 // TestProbeServersStates checks ProbeServers' one-state-per-outcome mapping
 // over fakeRemote (#100 step 5): no client key, enrolled, not enrolled, a
 // changed certificate, unreachable, and an unrecognised error.
@@ -1882,15 +1901,17 @@ func newRemoteClientRepo(t *testing.T, name string) (dir, headSHA string) {
 	return dir, headSHA
 }
 
-// newRoundResultBundle clones base (at baseSHA on refs/heads/relay/<name>),
-// adds one commit there, and returns a real bundle -- built the same way
+// newRoundResultBundle clones base (sitting at baseSHA on ref), adds one
+// commit there, and returns a real bundle -- built the same way
 // BundleTransport.Snapshot always does -- carrying just that new commit,
-// plus its sha.
-func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base, name, baseSHA string) (io.ReadCloser, string) {
+// plus its sha. ref is the full ref the server ships, which for an
+// adopted-branch binding is refs/heads/relay/<name> even though the client's
+// own branch keeps the adopted name (#274).
+func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base, ref, baseSHA string) (io.ReadCloser, string) {
 	t.Helper()
 	resultDir := t.TempDir()
 	runGit(t, resultDir, "clone", base, ".")
-	runGit(t, resultDir, "checkout", "relay/"+name)
+	runGit(t, resultDir, "checkout", strings.TrimPrefix(ref, "refs/heads/"))
 	if err := os.WriteFile(filepath.Join(resultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1899,7 +1920,7 @@ func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base
 	headSHA := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD"))
 
 	transport := remote.NewBundleTransport(g, t.TempDir())
-	snap, err := transport.Snapshot(ctx, resultDir, []string{"refs/heads/relay/" + name}, baseSHA)
+	snap, err := transport.Snapshot(ctx, resultDir, []string{ref}, baseSHA)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -1995,7 +2016,7 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 
 	// Next tick: a clean bundle carrying only the allowed ref, so the absorb
 	// succeeds.
-	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
 	fr.roundBundleResp = bundle
 	fr.getBindingResp.ResultCommit = headSHA
 
@@ -2219,6 +2240,119 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	}
 	if !strings.Contains(reportEntry.Payload, "Diff:") {
 		t.Fatalf("report payload = %q, want a Diff: line from DiffLineFromNote", reportEntry.Payload)
+	}
+}
+
+// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
+// (#274): `add --server --branch feature/x` adopts a branch relay did not
+// create, but the server still cuts its own branch and the round bundle it
+// ships always names refs/heads/relay/<name> (handleRoundBundle snapshots
+// refs/heads/<server branch>, and the server's branch is relay/<name>).
+// Catch-up must allow the server's ref through Absorb, then fast-forward the
+// adopted branch to it, so the planner's own branch is the one carrying the
+// round's result.
+func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+
+	// The client repo: an adopted branch feature/x at base. relay creates no
+	// local relay/<name> branch when it adopts feature/x, so the round bundle
+	// is cut here from refs/heads/relay/api -- the server's own branch name,
+	// this repo standing in for the server repo the bundle really comes from.
+	// Catch-up absorbs that ref (moving it here) and then fast-forwards the
+	// adopted feature/x to it.
+	clientRepo := t.TempDir()
+	runGit(t, clientRepo, "init")
+	if err := os.WriteFile(filepath.Join(clientRepo, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientRepo, "add", "seed.txt")
+	runGit(t, clientRepo, "commit", "-m", "seed")
+	c1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
+	runGit(t, clientRepo, "update-ref", "refs/heads/feature/x", c1)
+	runGit(t, clientRepo, "update-ref", "refs/heads/relay/api", c1)
+
+	bundle, c2 := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Branch = "feature/x"
+	b.ExistingBranch = true
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: c2,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+		roundBundleResp: bundle,
+	}
+	trans := &recordingTransport{inner: remote.NewBundleTransport(g, t.TempDir())}
+	rt := Runtime{
+		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: trans, Git: g,
+		Now: func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// Mutation target: allow refs/heads/<b.Branch> instead of the server's
+	// ref and this reads "unexpected ref: refs/heads/relay/api" -- the
+	// bundle is rejected, nothing is absorbed, and no ref moves below.
+	if trans.err != nil {
+		t.Fatalf("Absorb rejected the server's bundle: %v", trans.err)
+	}
+	if moved := trans.moved["refs/heads/relay/api"]; moved != c2 {
+		t.Fatalf("Absorb moved refs/heads/relay/api to %q, want the bundle tip %q", moved, c2)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatal("the binding needs you after catch-up, want the round absorbed")
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+	if got.Builder.LastKnown != c2 {
+		t.Fatalf("LastKnown = %q, want the bundle tip %q", got.Builder.LastKnown, c2)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: the server's ref must absorb, not fail", got.RemoteAbsorbFailures)
+	}
+
+	adoptedSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/feature/x")
+	if err != nil || !ok || adoptedSHA != c2 {
+		t.Fatalf("refs/heads/feature/x: got (%q, %v, %v), want (%q, true, nil): the adopted branch must be fast-forwarded to the round's result", adoptedSHA, ok, err, c2)
+	}
+	serverSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
+	if err != nil || !ok || serverSHA != c2 {
+		t.Fatalf("refs/heads/relay/api: got (%q, %v, %v), want (%q, true, nil): the server's own ref stays beside the adopted branch", serverSHA, ok, err, c2)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			foundReport = true
+		}
+	}
+	if !foundReport {
+		t.Fatal("no report entry queued after catch-up")
 	}
 }
 
@@ -2456,7 +2590,7 @@ func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
 	// repo's current branch, which is what makes the fetch below collide.
 	runGit(t, clientRepo, "checkout", "relay/api")
 
-	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
 
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -2537,7 +2671,7 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 	// Check the binding's own branch out, which makes the absorb below collide.
 	runGit(t, clientRepo, "checkout", "relay/api")
 
-	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
 	bundleBytes, err := io.ReadAll(bundle)
 	if err != nil {
 		t.Fatalf("read bundle: %v", err)
