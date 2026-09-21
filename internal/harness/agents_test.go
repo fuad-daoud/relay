@@ -69,6 +69,67 @@ func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 	}
 }
 
+func TestPlanExecutorGateRunsInForegroundOnEveryKind(t *testing.T) {
+	// #241: an agy builder launched the plan's gate command as a background
+	// task, reported that it was waiting, and exited without ever reading an
+	// exit code. A gate command is a fact only once it has exited.
+	const waits = "runs in the foreground: you wait for it to finish and read its exit code"
+	const neverReportsPassed = "never report it as passed before it has exited"
+
+	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
+		doc, err := AgentDoc("plan-executor", kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(plan-executor, %s): %v", kind, err)
+		}
+		for _, want := range []string{waits, neverReportsPassed} {
+			if !strings.Contains(string(doc), want) {
+				t.Errorf("plan-executor.%s.md must contain %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestPlanExecutorVerifiesAHalfDoneTree(t *testing.T) {
+	// #241: a replacement builder started from scratch on a tree that already
+	// carried the first builder's uncommitted edit. The tree part-way through
+	// a plan is verified, not redone.
+	const fragment = "do not redo the step: verify what is there against the step's text"
+
+	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
+		doc, err := AgentDoc("plan-executor", kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(plan-executor, %s): %v", kind, err)
+		}
+		if !strings.Contains(string(doc), fragment) {
+			t.Errorf("plan-executor.%s.md must contain %q", kind, fragment)
+		}
+	}
+}
+
+func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
+	// #252 side note: opencode 2.x refuses to run a subagent whose definition
+	// carries no mode:, so the researcher the plan-executor dispatches through
+	// the Task tool must declare itself one.
+	cases := []struct {
+		role string
+		mode string
+	}{
+		{"architect", "primary"},
+		{"plan-executor", "all"},
+		{"researcher", "subagent"},
+	}
+	for _, tc := range cases {
+		doc, err := AgentDoc(tc.role, "opencode")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s, opencode): %v", tc.role, err)
+		}
+		fm := frontmatter(t, doc)
+		if !strings.Contains(fm, "\nmode: "+tc.mode+"\n") {
+			t.Errorf("opencode %s must declare mode: %s", tc.role, tc.mode)
+		}
+	}
+}
+
 // TestAgentDocCodexIsToml pins the string-level shape of every codex role
 // profile: no TOML parser is used (spec §11), so the checks are the plain
 // string invariants that make the file valid TOML with developer_instructions

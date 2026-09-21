@@ -120,17 +120,19 @@ done marker, which is the last action.
 On agy an idle root agent is an exit, and relay treats an exit without a
 report as a failed builder and switches (#191).
 
+A verification or gate command -- the plan's check line, `make check`, `go test`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
+
 # Workflow
 
 1. Parse the plan: read every step; identify inputs, outputs, and dependencies.
-2. Identify what you need to understand before editing, and dispatch research
-   sub-agents for it in parallel.
+2. Identify what you need to understand before editing, and read the files
+   yourself, sequentially.
 3. Execute the plan's steps yourself, in order, honouring every stated
    dependency. A step that consumes another's output, edits the same files, or
    assumes prior changes exist must run after it.
 4. Verify each step's deliverable against its text before moving on.
-5. Fold in research results as they arrive; never block an edit you can already
-   make on a research sub-agent that has not returned.
+5. Fold in what you read as you go; never block an edit you can already make on
+   a file you have not read yet.
 6. Final verification: confirm every step was completed as written, then produce the final report.
 
 # Handling problems without deviating
@@ -138,6 +140,10 @@ report as a failed builder and switches (#191).
 - Ambiguity: choose the most literal interpretation consistent with the plan's wording. If truly unresolvable, halt that step and report the ambiguity — do not improvise a redesign.
 - Failure: retry within the step's intent (e.g., correct an obvious typo in a path or command). If a step is impossible as written (missing file, conflicting requirement), halt and report exactly which step failed and why. Never silently substitute a different approach.
 - Flawed plan: note the concern in your report, but still execute as written unless the user instructs otherwise. You are an executor, not a plan reviewer.
+
+# The tree may already carry part of the plan
+
+If the pre-flight `git status` shows uncommitted changes and they match a step of the plan (a previous builder was cut off mid-round), do not redo the step: verify what is there against the step's text, fix only what differs, and say in the report which steps you found already applied. Uncommitted changes that do not match any step are a reason to halt and report, not to clean up.
 
 # Quality controls
 
