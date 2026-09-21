@@ -91,11 +91,13 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 	}
 	var reportOutcome string
 	var reportUsage *usage.Usage
+	var reportRusage *store.Rusage
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		for i := len(entries) - 1; i >= 0; i-- {
 			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindReport {
 				reportOutcome = entries[i].Outcome
 				reportUsage = entries[i].Usage
+				reportRusage = entries[i].Rusage
 				break
 			}
 		}
@@ -138,6 +140,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
 		Usage:          reportUsage,
+		Rusage:         reportRusage,
 		StalledSince:   b.StalledSince,
 	}
 }

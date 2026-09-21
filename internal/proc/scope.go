@@ -1,0 +1,107 @@
+package proc
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/relay"
+)
+
+// ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as
+// a transient systemd --scope unit instead: systemd-run execs inner in
+// place once the scope is registered, so the pid Start records is inner's
+// own pid (#244).
+func ScopeArgv(s relay.ScopeSpec, inner []string) []string {
+	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + s.Unit + ".scope"}
+	if s.Slice != "" {
+		argv = append(argv, "--slice="+s.Slice)
+	}
+	argv = append(argv, "-p", "CPUWeight="+strconv.Itoa(s.CPUWeight))
+	if s.MemoryMax != "" {
+		argv = append(argv, "-p", "MemoryMax="+s.MemoryMax)
+	}
+	if s.TasksMax != 0 {
+		argv = append(argv, "-p", "TasksMax="+strconv.Itoa(s.TasksMax))
+	}
+	argv = append(argv, "--")
+	argv = append(argv, inner...)
+	return argv
+}
+
+// ProbeScopes confirms systemd-run can start a scope under slice before the
+// daemon relies on it for every served round: a throwaway scope that runs
+// "true" and exits. nil means scopes work; a non-nil error names why they
+// do not (systemd-run missing, the user manager refusing), and the caller
+// runs served builders unscoped instead.
+func ProbeScopes(ctx context.Context, slice string) error {
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		return fmt.Errorf("systemd-run: %s", err.Error())
+	}
+	spec := relay.ScopeSpec{Unit: "relay-probe-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100}
+	argv := ScopeArgv(spec, []string{"true"})
+
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		line := firstNonEmptyLine(stderr.String())
+		if line == "" {
+			line = err.Error()
+		}
+		return fmt.Errorf("systemd-run: %s", line)
+	}
+	return nil
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// RusageTrailer prefixes the line the supervisor appends, inside a
+// relay-round-*.scope cgroup only, right before the exit trailer:
+// "relay-rusage:cpu_usec=<n> mem_peak=<n>".
+const RusageTrailer = "relay-rusage:"
+
+// ParseRusageTrailer parses a RusageTrailer line. Fields are
+// space-separated key=value; either may be absent (that field stays
+// zero); unknown keys are ignored; a malformed number leaves that field
+// zero. A line not starting with RusageTrailer reports ok false.
+func ParseRusageTrailer(line string) (relay.ProcRusage, bool) {
+	if !strings.HasPrefix(line, RusageTrailer) {
+		return relay.ProcRusage{}, false
+	}
+	var r relay.ProcRusage
+	rest := strings.TrimPrefix(line, RusageTrailer)
+	for _, field := range strings.Fields(rest) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "cpu_usec":
+			if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+				r.CPUMS = n / 1000
+			}
+		case "mem_peak":
+			if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+				r.PeakMemBytes = n
+			}
+		}
+	}
+	return r, true
+}

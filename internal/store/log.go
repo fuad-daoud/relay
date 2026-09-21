@@ -118,6 +118,12 @@ type LogEntry struct {
 	// reader that treats nil as "free" is wrong -- nil is unknown.
 	Usage *usage.Usage `json:"usage,omitempty"`
 
+	// Rusage is what the supervisor measured for the round's systemd scope
+	// (#244, #216), on report entries of a headless round the server ran
+	// as a scope. Nil when the round was not a scope (a plain spawn, a
+	// pane builder, or a pre-scope server), or when the trailer was absent.
+	Rusage *Rusage `json:"rusage,omitempty"`
+
 	// Outcome, HaltedAt, ChangedPaths, CommandsRun, and NotDone are parsed
 	// from the builder's trailing relay block, on report entries only (#133).
 	// Outcome is one of "done", "halted", "blocked", "deferred", or "unstructured";

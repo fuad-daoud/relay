@@ -1132,7 +1132,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		// not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u, view.Rusage)
 	if err != nil {
 		return b, err
 	}

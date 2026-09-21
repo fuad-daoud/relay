@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,44 @@ func TestServeFlagMaxBuilders(t *testing.T) {
 
 	if sf.maxBuilders != 3 {
 		t.Errorf("maxBuilders = %d, want 3", sf.maxBuilders)
+	}
+}
+
+// TestScopeFromPolicy pins scopeFromPolicy's defaults and overrides (#244,
+// #216): scopes are on unless the policy explicitly turns them off, a
+// zero CPUWeight defaults to 100, and every other field passes through.
+func TestScopeFromPolicy(t *testing.T) {
+	enabledFalse := false
+	cases := map[string]struct {
+		pol  policy.Policy
+		want *relay.ScopeSpec
+	}{
+		"nil policy defaults on": {
+			pol:  policy.Policy{},
+			want: &relay.ScopeSpec{CPUWeight: 100},
+		},
+		"enabled false is nil": {
+			pol:  policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{Enabled: &enabledFalse}}},
+			want: nil,
+		},
+		"zero weight defaults to 100": {
+			pol:  policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{}}},
+			want: &relay.ScopeSpec{CPUWeight: 100},
+		},
+		"slice and memory pass through": {
+			pol: policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{
+				Slice: "relay.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 64,
+			}}},
+			want: &relay.ScopeSpec{Slice: "relay.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 64},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := scopeFromPolicy(c.pol)
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("scopeFromPolicy = %+v, want %+v", got, c.want)
+			}
+		})
 	}
 }
 

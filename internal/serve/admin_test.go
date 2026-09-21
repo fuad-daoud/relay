@@ -30,6 +30,10 @@ func (aliveRunner) ExitCode(context.Context, relay.ProcHandle, string) (int, boo
 
 func (aliveRunner) Kill(context.Context, relay.ProcHandle) error { return nil }
 
+func (aliveRunner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
+	return relay.ProcRusage{}, false
+}
+
 // TestFlatStatusStampsOwnersAndDedupsGates: FlatStatus is the whole fleet
 // as one report -- Owner/OwnerLabel stamped on every row, owners by label,
 // Key() distinct across two owners that share a binding name, and the

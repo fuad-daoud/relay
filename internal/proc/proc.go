@@ -48,7 +48,23 @@ const DefaultKillGrace = 5 * time.Second
 // mid-line leaves it on a line of its own; the blank line before it is
 // rendered as nothing (transcript rule 1). It goes to stdout -- the stream
 // file -- so the stream is the complete raw record and ExitCode reads one file.
-const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true; "$@" </dev/null; printf '\nrelay-exit:%s\n' "$?"`
+//
+// When Start wrapped this script in a systemd scope (#244, #216), the
+// supervisor also reads its own cgroup's cpu.stat and memory.peak after the
+// builder exits and prints a relay-rusage: line before the exit trailer.
+// The case guard is the contract: outside a relay-round-*.scope,
+// /proc/self/cgroup would name the whole service, not this round, so no
+// rusage line is printed at all.
+const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
+"$@" </dev/null; rc=$?
+cg=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
+case "$cg" in */relay-round-*.scope)
+  u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
+  m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
+  printf '\nrelay-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
+  ;;
+esac
+printf '\nrelay-exit:%s\n' "$rc"`
 
 // Runner is the local relay.Runner.
 type Runner struct {
@@ -66,6 +82,16 @@ func (r *Runner) grace() time.Duration {
 		return r.KillGrace
 	}
 	return DefaultKillGrace
+}
+
+// buildArgv builds the argv Start execs: bin run under supervisorScript,
+// wrapped in a systemd scope when spec.Scope is set (#244, #216).
+func buildArgv(spec relay.ProcSpec, bin string) []string {
+	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", bin}, spec.Argv[1:]...)
+	if spec.Scope != nil {
+		return ScopeArgv(*spec.Scope, inner)
+	}
+	return inner
 }
 
 // Start launches spec under a detached supervisor and returns its handle
@@ -104,7 +130,7 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	}
 	defer streamf.Close()
 
-	argv := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", bin}, spec.Argv[1:]...)
+	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
 	cmd.Env = ChildEnv(os.Environ(), DeniedEnv, spec.Env)
@@ -201,6 +227,19 @@ func (r *Runner) Kill(ctx context.Context, h relay.ProcHandle) error {
 	return nil
 }
 
+// Rusage reads the last two non-empty lines of streamPath. If the
+// second-to-last line is the relay-rusage: trailer, it parses that; ok is
+// false when the stream is too short, or that line is not the trailer
+// (plain spawn, killed supervisor, still running). The handle is unused:
+// the stream is the record, as for ExitCode.
+func (r *Runner) Rusage(_ context.Context, _ relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
+	lines, ok := lastLines(streamPath, 2)
+	if !ok || len(lines) < 2 {
+		return relay.ProcRusage{}, false
+	}
+	return ParseRusageTrailer(lines[0])
+}
+
 var errNoProcess = errors.New("proc: no such process")
 
 // psLayout is what `ps -o lstart=` prints on Linux (procps) and macOS:
@@ -237,14 +276,26 @@ func psInfo(ctx context.Context, pid int) (started time.Time, state string, err 
 // lastLine returns the final line of the file (ignoring trailing newlines),
 // reading only its tail. ok is false for a missing or empty file.
 func lastLine(path string) (string, bool) {
+	lines, ok := lastLines(path, 1)
+	if !ok {
+		return "", false
+	}
+	return lines[len(lines)-1], true
+}
+
+// lastLines returns up to the final n non-empty lines of the file, oldest
+// first (ignoring trailing newlines), reading only its tail. ok is false
+// for a missing or empty file; a file with fewer than n lines in its tail
+// returns as many as were read.
+func lastLines(path string, n int) ([]string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || info.Size() == 0 {
-		return "", false
+		return nil, false
 	}
 	const tail = 4096
 	off := info.Size() - tail
@@ -253,14 +304,15 @@ func lastLine(path string) (string, bool) {
 	}
 	buf, err := io.ReadAll(io.NewSectionReader(f, off, info.Size()-off))
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	s := strings.TrimRight(string(buf), "\n")
 	if s == "" {
-		return "", false
+		return nil, false
 	}
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		s = s[i+1:]
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
 	}
-	return s, true
+	return lines, true
 }

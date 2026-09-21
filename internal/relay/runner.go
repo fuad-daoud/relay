@@ -9,11 +9,28 @@ import (
 // ProcSpec is one process a headless builder round runs (#99, spec §3.4;
 // #168 split the output).
 type ProcSpec struct {
-	Dir        string   // working directory: the binding's CWD
-	Argv       []string // Argv[0] is the binary name, resolved on PATH by the runner
-	Env        []string // additions to the parent environment; nil for none
-	LogPath    string   // stderr, appended, created if absent
-	StreamPath string   // stdout and the exit trailer, appended, created if absent
+	Dir        string     // working directory: the binding's CWD
+	Argv       []string   // Argv[0] is the binary name, resolved on PATH by the runner
+	Env        []string   // additions to the parent environment; nil for none
+	LogPath    string     // stderr, appended, created if absent
+	StreamPath string     // stdout and the exit trailer, appended, created if absent
+	Scope      *ScopeSpec // non-nil launches the process as a transient systemd scope (#244, #216)
+}
+
+// ScopeSpec asks the runner to start the process as a transient systemd
+// scope (#244, #285). nil on ProcSpec means a plain spawn.
+type ScopeSpec struct {
+	Unit      string // "relay-round-<owner8>-<name>-<round>"; the runner appends ".scope"
+	Slice     string // "" = omit --slice
+	CPUWeight int    // >= 1; always emitted
+	MemoryMax string // "" = omit
+	TasksMax  int    // 0 = omit
+}
+
+// ProcRusage is what the supervisor measured for the round's cgroup.
+type ProcRusage struct {
+	CPUMS        int64
+	PeakMemBytes int64
 }
 
 // ProcHandle names a running process well enough to tell it from a later
@@ -40,6 +57,10 @@ type Runner interface {
 	Alive(ctx context.Context, h ProcHandle) (bool, error)
 	ExitCode(ctx context.Context, h ProcHandle, logPath string) (code int, ok bool)
 	Kill(ctx context.Context, h ProcHandle) error
+	// Rusage reports the relay-rusage: trailer the supervisor left as the
+	// stream's second-to-last line; ok false when absent (plain spawn,
+	// killed supervisor, still running).
+	Rusage(ctx context.Context, h ProcHandle, streamPath string) (ProcRusage, bool)
 }
 
 // ErrRunnerUnavailable is returned by a headless path when Runtime.Runner is

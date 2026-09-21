@@ -2624,6 +2624,67 @@ func TestCatchUpKeepsServerUsage(t *testing.T) {
 	}
 }
 
+// TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
+// the server's cgroup measurement rides the same view as Usage, and lands
+// on the report entry catchUp writes (#244, #216).
+func TestCatchUpRecordsRusage(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	sentRusage := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+			Rusage: &sentRusage,
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no report entry written")
+	}
+	if reportEntry.Rusage == nil {
+		t.Fatal("report entry Rusage = nil, want the server's figure")
+	}
+	if *reportEntry.Rusage != sentRusage {
+		t.Fatalf("report entry Rusage = %+v, want the server's figure %+v", *reportEntry.Rusage, sentRusage)
+	}
+}
+
 // TestCatchUpPreUsageServerNotes checks the honest answer for a server
 // built before this (#216): with no usage in the view, the client's report
 // entry says the server sent none -- basis unknown -- rather than reading

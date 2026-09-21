@@ -107,6 +107,10 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()
 		who.Builders = &remote.BuildersView{Running: c.Running, Queued: len(c.Queued), Cap: s.cap()}
+		who.Builders.Scopes = s.cfg.Scope != nil
+		if s.cfg.Scope != nil {
+			who.Builders.Slice = s.cfg.Scope.Slice
+		}
 	}
 	writeJSON(w, http.StatusOK, who)
 }

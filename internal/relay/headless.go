@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/transcript"
 )
@@ -31,6 +32,39 @@ var ErrBuilderBusy = errors.New("builder's previous process is still running; wa
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
 func handleOf(e store.Endpoint) ProcHandle {
 	return ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
+}
+
+// scopeUnitName is the per-round systemd scope unit's base name (the
+// runner appends ".scope"): "relay-round-<owner8>-<name>-<round>" (#244,
+// #216). owner8 is the first 8 hex characters of the owning client's id
+// ("local" for a binding with no owner; "unknown" for a non-empty Owner
+// that does not parse as a ClientID, which never happens for what the
+// server itself wrote, but must never block a round).
+func scopeUnitName(b store.Binding) string {
+	owner8 := "local"
+	if b.Owner != "" {
+		owner8 = "unknown"
+		if dir, ok := remote.ClientID(b.Owner).Dir(); ok {
+			owner8 = dir[:8]
+		}
+	}
+	return "relay-round-" + owner8 + "-" + safeUnitPart(b.Name) + "-" + strconv.Itoa(b.Round)
+}
+
+// safeUnitPart replaces every rune outside [A-Za-z0-9:_.-] with '-', for a
+// string destined for a systemd unit name.
+func safeUnitPart(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == ':', r == '_', r == '.', r == '-':
+			sb.WriteRune(r)
+		default:
+			sb.WriteByte('-')
+		}
+	}
+	return sb.String()
 }
 
 // defaultRoundBudget mirrors the store's default round timeout, for a
@@ -106,11 +140,21 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	// drainStream fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
 	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
-	h, err := rt.Runner.Start(ctx, ProcSpec{
+	spec := ProcSpec{
 		Dir: b.CWD, Argv: argv,
 		LogPath:    logPath,
 		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
-	})
+	}
+	if rt.Scope != nil {
+		spec.Scope = &ScopeSpec{
+			Unit:      scopeUnitName(b),
+			Slice:     rt.Scope.Slice,
+			CPUWeight: rt.Scope.CPUWeight,
+			MemoryMax: rt.Scope.MemoryMax,
+			TasksMax:  rt.Scope.TasksMax,
+		}
+	}
+	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
 		return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
@@ -496,7 +540,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil)
 		if err != nil {
 			return b, err
 		}

@@ -41,6 +41,10 @@ type Config struct {
 	MaxBuilders int
 	// Hooks dispatches lifecycle events (#285); nil means none, as today.
 	Hooks hooks.Dispatcher
+	// Scope is the systemd scope template served rounds launch under
+	// (#244, #216); nil means no scopes -- cmdServeRun sets it from policy
+	// only after ProbeScopes confirms systemd-run works on this box.
+	Scope *relay.ScopeSpec
 }
 
 type Server struct {
@@ -130,5 +134,6 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		StartedAt:        s.cfg.StartedAt,
 		Roles:            s.cfg.Roles,
 		Hooks:            s.cfg.Hooks,
+		Scope:            s.cfg.Scope,
 	}
 }

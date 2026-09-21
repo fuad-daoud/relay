@@ -1232,6 +1232,74 @@ func TestBindRacesSessionLookupAndReconcileRecovers(t *testing.T) {
 	}
 }
 
+// TestQueueReportRecordsRusage: a headless round's report entry gets
+// Rusage from rt.Runner.Rusage when the runner has one, and stays nil
+// when it does not (#244, #216).
+func TestQueueReportRecordsRusage(t *testing.T) {
+	setup := func(t *testing.T) (Runtime, store.Binding, *fakeRunner) {
+		t.Helper()
+		fr := newFakeRunner()
+		rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+		b.Builder.PID = 9001
+		b.Builder.StartedAt = 1_700_000_000
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rt.Store.ReportPath(b.Name, b.Round), []byte("report body"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return rt, b, fr
+	}
+	closeRound := func(t *testing.T, rt Runtime, b store.Binding) store.LogEntry {
+		t.Helper()
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			cur, err := tx.Load(b.Name)
+			if err != nil {
+				return err
+			}
+			entries, err := tx.ReadLog(b.Name)
+			if err != nil {
+				return err
+			}
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil)
+			if err != nil {
+				return err
+			}
+			return tx.Save(next)
+		})
+		if err != nil {
+			t.Fatalf("queueReport: %v", err)
+		}
+		entries, err := rt.Store.ReadLog(b.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.Round == b.Round && e.Kind == store.KindReport {
+				return e
+			}
+		}
+		t.Fatalf("no report entry for round %d in %+v", b.Round, entries)
+		return store.LogEntry{}
+	}
+
+	t.Run("ok true", func(t *testing.T) {
+		rt, b, fr := setup(t)
+		fr.setRusage(b.Builder.PID, ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
+		entry := closeRound(t, rt, b)
+		if entry.Rusage == nil || entry.Rusage.CPUMS != 12300 || entry.Rusage.PeakMemBytes != 850<<20 {
+			t.Errorf("report entry Rusage = %+v, want {12300 %d}", entry.Rusage, int64(850<<20))
+		}
+	})
+	t.Run("ok false", func(t *testing.T) {
+		rt, b, _ := setup(t)
+		entry := closeRound(t, rt, b)
+		if entry.Rusage != nil {
+			t.Errorf("report entry Rusage = %+v, want nil", entry.Rusage)
+		}
+	})
+}
+
 func TestQueueReport_RoundClosedTree(t *testing.T) {
 	t.Run("ordinary close", func(t *testing.T) {
 		f := &fakeHerdr{}
