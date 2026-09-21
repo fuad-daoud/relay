@@ -583,6 +583,78 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	}
 }
 
+// TestRepeatedHaltKeepsHaltAt pins the fix in this round: HaltAt marks when
+// a halt begins, not every tick that repeats it. haltBinding called three
+// times with the same message keeps HaltAt at the first call's time; a
+// different message restamps it; and clearing Halt by hand (as Send does)
+// and repeating the same message restamps it too, since that is a fresh
+// halt beginning from the caller's point of view.
+//
+// Mutation check: stamp HaltAt unconditionally (round 1's behavior) and the
+// first assertion below fails, since the second and third calls would each
+// advance it by a minute.
+func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+
+	first, err := haltBinding(context.Background(), rt, b, "webshop: same reason")
+	if err != nil {
+		t.Fatalf("haltBinding #1: %v", err)
+	}
+	firstHaltAt := first.HaltAt
+	if firstHaltAt.IsZero() {
+		t.Fatal("HaltAt is zero after the first halt, want set")
+	}
+
+	second, err := haltBinding(context.Background(), at(rt, time.Minute), first, "webshop: same reason")
+	if err != nil {
+		t.Fatalf("haltBinding #2: %v", err)
+	}
+	if !second.HaltAt.Equal(firstHaltAt) {
+		t.Errorf("HaltAt = %v after a repeated halt, want unchanged %v", second.HaltAt, firstHaltAt)
+	}
+	if second.Halt != "same reason" {
+		t.Errorf("Halt = %q after a repeated halt, want unchanged %q", second.Halt, "same reason")
+	}
+
+	third, err := haltBinding(context.Background(), at(rt, 2*time.Minute), second, "webshop: same reason")
+	if err != nil {
+		t.Fatalf("haltBinding #3: %v", err)
+	}
+	if !third.HaltAt.Equal(firstHaltAt) {
+		t.Errorf("HaltAt = %v after a third repeated halt, want unchanged %v", third.HaltAt, firstHaltAt)
+	}
+
+	// A different message is a new halt: HaltAt restamps to that call's time.
+	fourth, err := haltBinding(context.Background(), at(rt, 3*time.Minute), third, "webshop: different reason")
+	if err != nil {
+		t.Fatalf("haltBinding #4: %v", err)
+	}
+	wantFourthHaltAt := baseTime.Add(3 * time.Minute)
+	if !fourth.HaltAt.Equal(wantFourthHaltAt) {
+		t.Errorf("HaltAt = %v after a new-text halt, want %v", fourth.HaltAt, wantFourthHaltAt)
+	}
+	if fourth.Halt != "different reason" {
+		t.Errorf("Halt = %q after a new-text halt, want %q", fourth.Halt, "different reason")
+	}
+
+	// Halt cleared by hand (as Send does) and the same message again is,
+	// from haltBinding's point of view, a new halt beginning: HaltAt
+	// restamps even though the text matches what it was before clearing.
+	fourth.Halt = ""
+	fifth, err := haltBinding(context.Background(), at(rt, 4*time.Minute), fourth, "webshop: different reason")
+	if err != nil {
+		t.Fatalf("haltBinding #5: %v", err)
+	}
+	wantFifthHaltAt := baseTime.Add(4 * time.Minute)
+	if !fifth.HaltAt.Equal(wantFifthHaltAt) {
+		t.Errorf("HaltAt = %v after a cleared-then-repeated halt, want %v", fifth.HaltAt, wantFifthHaltAt)
+	}
+	if fifth.Halt != "different reason" {
+		t.Errorf("Halt = %q after a cleared-then-repeated halt, want %q", fifth.Halt, "different reason")
+	}
+}
+
 func TestAllGatedHalts(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentSwitchable(t, f)
