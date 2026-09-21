@@ -59,6 +59,10 @@ type commitTreeCall struct {
 	Dir, Tree, Parent, Message string
 }
 
+type commitAllCall struct {
+	Dir, Message string
+}
+
 type mergeFFCall struct {
 	Dir, Ref string
 }
@@ -145,6 +149,10 @@ type fakeGit struct {
 	commitTreeCalls []commitTreeCall
 	commitTreeSHA   string
 	commitTreeErr   error
+
+	commitAllCalls []commitAllCall
+	commitAllSHA   string
+	commitAllErr   error
 
 	mergeFFCalls []mergeFFCall
 	mergeFFErr   error
@@ -317,6 +325,14 @@ func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message str
 		return f.commitTreeSHA, nil
 	}
 	return "fakecommit", nil
+}
+
+func (f *fakeGit) CommitAll(ctx context.Context, dir, message string) (string, error) {
+	f.commitAllCalls = append(f.commitAllCalls, commitAllCall{Dir: dir, Message: message})
+	if f.commitAllErr != nil {
+		return "", f.commitAllErr
+	}
+	return f.commitAllSHA, nil
 }
 
 func (f *fakeGit) MergeFF(ctx context.Context, dir, ref string) error {

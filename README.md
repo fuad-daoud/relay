@@ -498,7 +498,8 @@ shows `no database: <err>` in the rail and the scope stays on `live`;
 ### Panes are yours, always
 
 relay never opens, closes or kills a pane except the one builder pane it spawns
-for you at `bind`. The one process it stops is a *headless* builder it started
+for you at `bind`, and the one it closes when you ask for it with `relay pause`
+(below). The one process it stops is a *headless* builder it started
 itself (below). For pane builders:
 
 - `done` and `unbind` leave the builder running. Its terminal is often the only
@@ -748,6 +749,43 @@ relay fork webshop --round 2 --new-name webshop-alt
 - **Teardown rule:** Relay removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relay unbind` and `relay gc` leave the worktree untouched and report the exact command to inspect or remove it manually.
 
 
+### Pausing a binding
+
+`relay pause` is the third lifecycle state between ACTIVE and DONE. It
+releases what an idle binding is holding — its worktree on disk and its
+builder pane in memory (an idle opencode pane is roughly 800 MB) — while
+keeping the branch and the round log. `relay bind --resume --name <n>` brings
+it back at the same path on the same branch.
+
+```
+relay pause webshop            # release the worktree and close the builder pane
+relay pause webshop --commit   # commit everything on the binding branch first, then release
+relay bind --resume --name webshop   # restore the worktree and spawn a fresh builder
+```
+
+- **Refused while a round is open**: wait for it, or `relay done`. There is a
+  builder that may still be writing.
+- **A dirty tree is refused** unless `--commit`. With `--commit`, everything in
+  the tree is committed on the binding's branch (message
+  `[relay] <name>: paused after round N`) before the worktree is removed. relay
+  prints the commit's short sha.
+- **The branch is never removed** and neither is the log; pausing keeps the
+  record and the commits, exactly as `done` does.
+- **Pane bindings**: pause closes the paused binding's builder pane. This is
+  the third place relay closes a pane (see **Panes are yours, always**), and it
+  happens only because you asked for the pause. A headless binding has no pane
+  and none is closed; a pane that is already gone or that herdr refuses to close
+  is not an error — relay says so and names `herdr pane close <id>`.
+- **Resume rebinds**: a paused binding has no builder identity left, so
+  `bind --resume` implies `--rebind` and starts a fresh builder on the candidate
+  order (or a fresh headless endpoint). The round number is unchanged and the
+  log records `resumed`.
+- **Remote and `--cwd` bindings are refused**: a remote binding has no local
+  worktree or pane (`relay done` ends it), and a `--cwd` binding drives a tree
+  relay did not create, so there is nothing to release.
+- **`gc` leaves PAUSED alone** — it sweeps only `DONE`. `relay unbind` works on
+  a paused binding when you want it gone; use `--archive` to keep the log.
+
 ### Cleaning up finished bindings
 
 A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
@@ -782,9 +820,11 @@ archiving is effectively free. To read one back:
 tar -xzf ~/.local/state/relay/.archive/ai-20260905-121500.tar.gz -O ai/log.jsonl
 ```
 
-`gc` only touches bindings the planner marked `DONE`. A `BROKEN` or `ORPHANED`
-one is left alone: it still needs a human, and clearing it would throw away the
-state that explains why it stopped.
+`gc` only touches bindings the planner marked `DONE`. A `PAUSED`, a `BROKEN`
+or an `ORPHANED` one is left alone: the broken/orphaned pair still needs a
+human, and clearing it would throw away the state that explains why it stopped,
+while a paused binding is released but alive — `relay bind --resume` brings it
+back, and `relay unbind` is how to clear it.
 
 Snapshot tree objects created during round diff capture are written directly to
 git's object database unreferenced. They never alter repository refs, branches,
@@ -1602,7 +1642,7 @@ some candidate would load, and no candidate loads the planner.
 
 ## Display states
 
-`relay status` collapses the binding's internal state into four:
+`relay status` collapses the binding's internal state into five:
 
 - **ACTIVE** — someone is working (planner or builder), nothing needs a human
   yet.
@@ -1614,6 +1654,9 @@ some candidate would load, and no candidate loads the planner.
   shows the hold's clock on the `pending` line: how long the planner's screen
   has been quiet against `--held-grace`, or that the clock has not started
   because the screen could not be read.
+- **PAUSED** — `relay pause` released the binding's worktree and builder pane
+  between rounds; the branch and the round log stay, and `relay bind --resume`
+  restores it. Nothing needs a human, and `gc` leaves it alone.
 - **DONE** — the planner declared the work verified via `relay done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for

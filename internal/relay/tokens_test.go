@@ -14,15 +14,24 @@ func TestTokenStateIsTotal(t *testing.T) {
 	states := []store.State{
 		store.StateActive, store.StateHeld, store.StateNeedsYou,
 		store.StateBroken, store.StateOrphaned, store.StateDone,
+		store.StatePaused,
 		store.State(""),
 	}
-	want := map[string]bool{"active": true, "held": true, "needs-you": true, "done": true}
+	want := map[string]bool{"active": true, "held": true, "needs-you": true, "done": true, "paused": true}
 
 	for _, s := range states {
 		got := tokenState(s)
 		if !want[got] {
-			t.Errorf("tokenState(%q) = %q, want one of active/held/needs-you/done", s, got)
+			t.Errorf("tokenState(%q) = %q, want one of active/held/needs-you/done/paused", s, got)
 		}
+	}
+}
+
+// TestTokenStatePaused pins the exact token, not just that it is one of the
+// known set: a paused binding's pane must read relay_state=paused.
+func TestTokenStatePaused(t *testing.T) {
+	if got := tokenState(store.StatePaused); got != "paused" {
+		t.Errorf("tokenState(paused) = %q, want paused", got)
 	}
 }
 

@@ -395,3 +395,31 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 		t.Errorf("binding was not archived: %+v", r)
 	}
 }
+
+// TestGCIgnoresPaused: gc sweeps only DONE, so a paused binding -- worktree
+// released but the binding very much alive -- survives it untouched.
+func TestGCIgnoresPaused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	b := store.Binding{
+		Name: "parked", CWD: "/repo-parked", Worktree: "/wt/parked",
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{Kind: "agy"},
+		Round:   3, State: store.StatePaused,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save paused: %v", err)
+	}
+
+	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("gc considered %+v, want no paused binding", got)
+	}
+	if _, err := rt.Store.Load("parked"); err != nil {
+		t.Fatalf("paused binding must survive gc: %v", err)
+	}
+}

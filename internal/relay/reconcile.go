@@ -162,7 +162,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		return b, err
 	}
 
-	if b.State == store.StateDone {
+	if b.State == store.StateDone || b.State == store.StatePaused {
 		return b, nil
 	}
 

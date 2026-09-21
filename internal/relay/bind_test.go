@@ -948,6 +948,68 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 	}
 }
 
+// TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
+// restores the released worktree and rebinds a fresh builder even though the
+// caller passed neither --rebind nor --builder, because a paused binding has
+// no builder identity left to keep.
+func TestResumePausedRestoresAndRebinds(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	rt := newRuntime(t, f)
+	fg := &fakeGit{}
+	rt.Git = fg
+	fg.branchExists = true // relay/webshop lives in the caller's repo
+	rt.Policy = orderOf("builder", testAgyRef)
+
+	wt := filepath.Join(t.TempDir(), "gone")
+	existing := store.Binding{
+		Name:     "webshop",
+		CWD:      wt, // an add binding's CWD is its worktree
+		Worktree: wt,
+		Branch:   "relay/webshop",
+		Round:    4,
+		State:    store.StatePaused,
+		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Builder:  store.Endpoint{Kind: "agy"}, // pause cleared PaneID, kept Kind
+	}
+	if err := rt.Store.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+
+	got, res, err := BindResolved(context.Background(), rt, BindOptions{
+		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("BindResolved: %v", err)
+	}
+	if !res.WasPaused {
+		t.Error("WasPaused = false, want true")
+	}
+	if len(fg.checkoutWorktreeCalls) != 1 {
+		t.Fatalf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))
+	}
+	if len(f.starts) != 1 {
+		t.Fatalf("builder starts = %d, want 1 (PAUSED implies rebinding)", len(f.starts))
+	}
+	if got.State != store.StateActive {
+		t.Errorf("State = %s, want active", got.State)
+	}
+	if got.Round != 4 {
+		t.Errorf("Round = %d, want 4 (unchanged)", got.Round)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := entries[len(entries)-1]
+	if last.Kind != store.KindResume {
+		t.Errorf("last log kind = %s, want resume", last.Kind)
+	}
+	if last.Note != "resumed" {
+		t.Errorf("last log note = %q, want resumed", last.Note)
+	}
+}
+
 func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
 	rt := newRuntime(t, f)

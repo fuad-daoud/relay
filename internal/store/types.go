@@ -19,6 +19,10 @@ const (
 	StateBroken   State = "broken"    // builder pane is gone
 	StateOrphaned State = "orphaned"  // planner session is gone
 	StateDone     State = "done"      // planner declared the work verified
+	// StatePaused is the third lifecycle state between ACTIVE and DONE:
+	// worktree and pane released by `relay pause`; branch and log kept;
+	// `relay bind --resume` restores it.
+	StatePaused State = "paused"
 )
 
 // Mode is the shape of a builder: a herdr pane relay watches, or a process

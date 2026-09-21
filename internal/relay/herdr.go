@@ -59,6 +59,10 @@ type Git interface {
 	RefSHA(ctx context.Context, dir, ref string) (string, bool, error)
 	UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
+	// CommitAll stages the whole working tree (git add -A) and commits it
+	// with relay's fixed identity, returning the new HEAD sha, or ("", nil)
+	// when there was nothing to commit (#137).
+	CommitAll(ctx context.Context, dir, message string) (string, error)
 	MergeFF(ctx context.Context, dir, ref string) error
 	RootCommit(ctx context.Context, dir string) (string, error)
 	// ListTags maps each of dir's tags (short name) to the commit it points

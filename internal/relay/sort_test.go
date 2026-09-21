@@ -25,8 +25,29 @@ func equalNames(a, b []string) bool {
 	return true
 }
 
+// TestAttentionRankPaused: PAUSED sorts after ACTIVE and before DONE.
+func TestAttentionRankPaused(t *testing.T) {
+	if attentionRank["PAUSED"] <= attentionRank["ACTIVE"] {
+		t.Errorf("PAUSED rank %d must follow ACTIVE rank %d", attentionRank["PAUSED"], attentionRank["ACTIVE"])
+	}
+	if attentionRank["PAUSED"] >= attentionRank["DONE"] {
+		t.Errorf("PAUSED rank %d must precede DONE rank %d", attentionRank["PAUSED"], attentionRank["DONE"])
+	}
+
+	rows := []BindingStatus{
+		{Name: "d", Display: "DONE"},
+		{Name: "p", Display: "PAUSED"},
+		{Name: "a", Display: "ACTIVE"},
+	}
+	got := names(SortRows(rows, true))
+	want := []string{"a", "p", "d"}
+	if !equalNames(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
 // TestSortRowsAttentionOrder: every display state, in every input order,
-// lands NEEDS YOU, HELD, ACTIVE, DONE.
+// lands NEEDS YOU, HELD, ACTIVE, PAUSED, DONE.
 func TestSortRowsAttentionOrder(t *testing.T) {
 	rows := []BindingStatus{
 		{Name: "d", Display: "DONE"},

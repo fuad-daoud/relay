@@ -1866,3 +1866,39 @@ func TestStatusReportsLastSeq(t *testing.T) {
 		t.Errorf("status JSON does not carry last_seq 3: %s", data)
 	}
 }
+
+// TestDisplayStatePaused: a paused binding shows as PAUSED, after ACTIVE and
+// before DONE.
+func TestDisplayStatePaused(t *testing.T) {
+	if got := displayState(store.StatePaused); got != "PAUSED" {
+		t.Errorf("displayState(paused) = %q, want PAUSED", got)
+	}
+
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	if err := rt.Store.Save(store.Binding{
+		Name: "parked", CWD: "/repo-parked",
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{Kind: "agy"},
+		Round:   3, State: store.StatePaused,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	found := false
+	for _, row := range rep.Bindings {
+		if row.Name == "parked" {
+			found = true
+			if row.Display != "PAUSED" {
+				t.Errorf("Display = %q, want PAUSED", row.Display)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("paused binding missing from status")
+	}
+}

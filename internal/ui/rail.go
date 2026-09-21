@@ -80,6 +80,11 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 		if b.Nudge != nil {
 			age = relay.NudgeText(*b.Nudge)
 		}
+	case "PAUSED":
+		what = "paused"
+		if b.Last != nil && b.Last.Kind == "pause" {
+			age = ago(b.Last.TS, now)
+		}
 	case "DONE":
 		what = "done"
 		if b.Last != nil {
@@ -371,7 +376,7 @@ func railLinesAll(rows []railRow, cursor int, attention bool, now time.Time, foc
 }
 
 // groupOrder is the attention order of the rail's headers.
-var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "DONE"}
+var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "PAUSED", "DONE"}
 
 // railLines lays out every card. Rows arrive owner-sorted (SortRows's
 // OwnerLabel is the primary key), so they partition into maximal runs of

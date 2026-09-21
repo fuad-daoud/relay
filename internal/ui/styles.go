@@ -49,6 +49,10 @@ func stateStyle(display string) lipgloss.Style {
 		return stateHeldStyle
 	case "ACTIVE":
 		return stateActiveStyle
+	case "PAUSED":
+		// PAUSED shares DONE's dim style: both are "not working now", and
+		// the header already names the state.
+		return stateDoneStyle
 	case "DONE":
 		return stateDoneStyle
 	}

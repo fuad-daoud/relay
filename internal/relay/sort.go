@@ -9,7 +9,8 @@ var attentionRank = map[string]int{
 	"NEEDS YOU": 0,
 	"HELD":      1,
 	"ACTIVE":    2,
-	"DONE":      3,
+	"PAUSED":    3,
+	"DONE":      4,
 }
 
 func rankOf(display string) int {

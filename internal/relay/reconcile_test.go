@@ -691,6 +691,36 @@ func TestReconcileIgnoresWorkingBuilder(t *testing.T) {
 	}
 }
 
+// TestReconcileSkipsPaused: Reconcile returns immediately for a PAUSED
+// binding, exactly as it does for DONE. A stale builder pane left in herdr's
+// list must not mark it broken and must not be nudged.
+func TestReconcileSkipsPaused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	b.State = store.StatePaused
+	b.Builder = store.Endpoint{Kind: "agy"} // pause cleared the pane id
+	b.RoundStartedAt = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save paused: %v", err)
+	}
+
+	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StatePaused {
+		t.Errorf("State = %s, want paused", got.State)
+	}
+	if !got.BuilderMissingSince.IsZero() {
+		t.Errorf("BuilderMissingSince = %v, want zero", got.BuilderMissingSince)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("a paused binding must not be nudged: %+v", f.prompts)
+	}
+}
+
 func TestReconcileNeverTreatsUnknownAsDone(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)
