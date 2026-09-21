@@ -1,14 +1,17 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +38,7 @@ type fakeRemote struct {
 	startRoundResp    remote.BindingView
 	startRoundErr     error
 	startRoundTier    string
+	startRoundTags    []remote.TagRef
 	roundFileResp     io.ReadCloser
 	roundFileErr      error
 	roundBundleResp   io.ReadCloser
@@ -79,9 +83,10 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
 	f.startRoundTier = tier
+	f.startRoundTags = tags
 	return f.startRoundResp, f.startRoundErr
 }
 
@@ -1113,6 +1118,63 @@ func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 	}
 }
 
+func TestSendRemoteShipsTags(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relay/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:        store.ModeRemote,
+			Server:      "zen",
+			LastShipped: "",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+		},
+		tags: map[string]string{
+			"v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"v0": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	}
+	fr := &fakeRemote{
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(ctx, rt, "api", planFile, SendOptions{}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	want := []remote.TagRef{
+		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}
+	if !slices.Equal(fr.startRoundTags, want) {
+		t.Fatalf("StartRound tags = %+v, want %+v (sorted by name)", fr.startRoundTags, want)
+	}
+}
+
 func TestSendRemoteSetsLastShipped(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -1924,6 +1986,97 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	}
 }
 
+func TestCatchUpFetchesStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	streamBody := "{\"type\":\"assistant\"}\n{\"type\":\"error\",\"message\":\"boom\"}\n"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "stream":
+				return io.NopCloser(strings.NewReader(streamBody)), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got, err := os.ReadFile(st.BuilderStreamPath("api", 1))
+	if err != nil {
+		t.Fatalf("read stream file: %v", err)
+	}
+	if string(got) != streamBody {
+		t.Fatalf("stream file = %q, want %q", string(got), streamBody)
+	}
+	found := false
+	for _, c := range fr.calls {
+		if c == "RoundFile:zen:api:1:stream" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catch-up never fetched the stream file: %v", fr.calls)
+	}
+}
+
+func TestCatchUpStreamMissingIsFine(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("a missing stream file must not halt: %+v", got)
+	}
+	if _, err := os.Stat(st.BuilderStreamPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("stream file exists (stat err = %v), want none", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			hasReport = true
+		}
+	}
+	if !hasReport {
+		t.Fatal("no report entry: catch-up must still complete")
+	}
+}
+
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
 // server measured and shipped with the round (#216): the client's report
 // entry stores it verbatim instead of re-measuring a round whose record
@@ -2112,6 +2265,99 @@ func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
 		if strings.HasPrefix(c, "Ack:") {
 			t.Fatalf("Ack called despite the absorb never completing: %v", fr.calls)
 		}
+	}
+}
+
+// captureHandler is a slog.Handler that records every record it sees, so a
+// test can count how often a message was logged (#253).
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(ctx context.Context, level slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(ctx context.Context, r slog.Record) error {
+	h.mu.Lock()
+	h.records = append(h.records, r.Clone())
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+
+func (h *captureHandler) WithGroup(name string) slog.Handler { return h }
+
+func (h *captureHandler) snapshot() []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.records)
+}
+
+func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+	// Check the binding's own branch out, which makes the absorb below collide.
+	runGit(t, clientRepo, "checkout", "relay/api")
+
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "api", c1)
+	bundleBytes, err := io.ReadAll(bundle)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	_ = bundle.Close()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bundleBytes)), nil
+		},
+	}
+	rt := Runtime{
+		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	// Ordering between tests cannot leak: this binding starts unwarned.
+	checkedOutWarned.Delete("api")
+
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cur := b
+	for i := 0; i < 3; i++ {
+		next, err := reconcile(t, rt, cur, []herdr.Agent{plannerAgent()})
+		if err != nil {
+			t.Fatalf("Reconcile %d: %v", i, err)
+		}
+		cur = next
+	}
+
+	count := 0
+	for _, r := range h.snapshot() {
+		if r.Level == slog.LevelInfo && r.Message == "checkout another branch, then relay pull" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Info 'checkout another branch, then relay pull' logged %d times, want exactly 1", count)
 	}
 }
 

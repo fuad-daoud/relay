@@ -34,8 +34,12 @@ elif [ -e "$work/sub/relay" ]; then
 	echo "FAIL: missing go left a binary behind"; fail=1
 fi
 
-# 3. A tagless clone with a reachable remote fetches tags and describes.
-git clone -q --no-tags "$root" "$work/withremote"
+# 3. A tagless clone with a reachable, tagged remote fetches tags and describes.
+git clone -q "$root" "$work/origin"                       # carries the enclosing repo's tags if any
+if ! git -C "$work/origin" describe --tags >/dev/null 2>&1; then
+	git -C "$work/origin" -c tag.gpgsign=false tag v0.0.0-fixture     # hermetic: the fixture provides its own tag
+fi
+git clone -q --no-tags "$work/origin" "$work/withremote"
 mkdir -p "$work/withremote/from-source"
 if (cd "$work/withremote/from-source" && sh ../scripts/plugin-build.sh >/dev/null 2>&1); then
 	v=$("$work/withremote/from-source/relay" version); v=${v#relay }

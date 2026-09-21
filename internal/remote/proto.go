@@ -52,6 +52,15 @@ type CreateBindingRequest struct {
 	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
 }
 
+// TagRef is one tag a client ships beside a round's bundle, so a server
+// worktree can `git describe --tags` (#242). The wire field is the multipart
+// form value "tags" on POST /v1/bindings/{name}/rounds: a JSON array of
+// TagRef sorted by Name. Absent or empty = no tags.
+type TagRef struct {
+	Name string `json:"name"` // tag name without refs/tags/, e.g. "v0.4.0"; non-empty
+	SHA  string `json:"sha"`  // the COMMIT the tag points at (annotated tags peeled); 40 hex
+}
+
 // BindingView is the server's wire representation of a binding's state.
 type BindingView struct {
 	Name          string     `json:"name"`

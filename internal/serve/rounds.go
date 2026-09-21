@@ -2,13 +2,16 @@ package serve
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
@@ -156,6 +159,29 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The client's tags ship as data beside the bundle (#242). Set the ones
+	// whose commit is already here; a tag for a commit the server does not
+	// have is expected (an unrelated tag) and is skipped. Idempotent: a tag
+	// already at that sha is a no-op, and old = "" means unconditional, so a
+	// tag the client moved moves here too.
+	if rawTags := r.FormValue("tags"); rawTags != "" {
+		var tags []remote.TagRef
+		if err := json.Unmarshal([]byte(rawTags), &tags); err != nil {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "tags: "+err.Error())
+			return
+		}
+		for _, tag := range tags {
+			if err := validTagRef(tag); err != nil {
+				slog.Debug("tag skipped", "tag", tag.Name, "err", err)
+				continue
+			}
+			if err := s.cfg.Git.UpdateRef(r.Context(), bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
+				slog.Debug("tag not set", "tag", tag.Name, "err", err)
+				continue
+			}
+		}
+	}
+
 	if _, statErr := os.Stat(b.Worktree); os.IsNotExist(statErr) {
 		if err := s.cfg.Git.UpdateRef(r.Context(), bare, "refs/heads/"+b.Branch, outSHA, ""); err != nil {
 			writeErr(w, http.StatusInternalServerError, "", err.Error())
@@ -263,6 +289,8 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 		path = rt.Store.DiffPath(name, n)
 	case "log":
 		path = rt.Store.BuilderLogPath(name, n)
+	case "stream":
+		path = rt.Store.BuilderStreamPath(name, n)
 	case "plan":
 		path = rt.Store.PlanPath(name, n)
 	default:
@@ -287,6 +315,41 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, f)
+}
+
+// validTagRef reports whether a shipped tag is well formed enough to set as a
+// ref. Git tag names may legally contain "/" (release/1.0, v1/rc2), so this
+// follows git's ref-name rules loosely rather than refusing any slash; a
+// name that still fails is skipped by the caller, never a 400 for the whole
+// round start (#242 follow-up).
+func validTagRef(tag remote.TagRef) error {
+	name := tag.Name
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid tag name %q", name)
+		}
+	}
+	if strings.Contains(name, "@{") || strings.ContainsAny(name, `\~^:?*[`) {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	if strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".lock") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") {
+			return fmt.Errorf("invalid tag name %q", name)
+		}
+	}
+	if len(tag.SHA) != 40 || strings.Trim(tag.SHA, "0123456789abcdefABCDEF") != "" {
+		return fmt.Errorf("invalid tag sha %q", tag.SHA)
+	}
+	return nil
 }
 
 func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {

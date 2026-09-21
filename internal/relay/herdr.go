@@ -56,6 +56,9 @@ type Git interface {
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	MergeFF(ctx context.Context, dir, ref string) error
 	RootCommit(ctx context.Context, dir string) (string, error)
+	// ListTags maps each of dir's tags (short name) to the commit it points
+	// at, annotated tags peeled (#242).
+	ListTags(ctx context.Context, dir string) (map[string]string, error)
 	// RepoFacts reports dir's repository identity -- origin remote URL
 	// (raw, unnormalised) and the main worktree's absolute .git directory --
 	// for the coming history database (#172; captureRepo is the caller).
@@ -213,7 +216,7 @@ type RemoteClient interface {
 	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
 	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
 	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
-	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error)
+	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)

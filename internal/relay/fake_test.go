@@ -153,6 +153,10 @@ type fakeGit struct {
 	repoFactsCommonDir string
 	repoFactsErr       error
 	repoFactsCalls     []repoFactsCall
+
+	// tags is what ListTags returns; ListTagsErr makes it fail.
+	tags        map[string]string
+	listTagsErr error
 }
 
 type repoFactsCall struct{ Dir string }
@@ -315,6 +319,13 @@ func (f *fakeGit) RootCommit(ctx context.Context, dir string) (string, error) {
 		return f.rootCommitSHA, nil
 	}
 	return "fakerootcommit", nil
+}
+
+func (f *fakeGit) ListTags(ctx context.Context, dir string) (map[string]string, error) {
+	if f.listTagsErr != nil {
+		return nil, f.listTagsErr
+	}
+	return f.tags, nil
 }
 
 func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error) {

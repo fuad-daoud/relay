@@ -110,6 +110,10 @@ func TestClaudeTable(t *testing.T) {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":""}]}}`,
 			[]string{"  ⎿ ok"},
 		},
+		"error event with a message": {
+			`{"type":"error","message":"Unexpected server error","ref":"err_a1d49da9"}`,
+			[]string{"  ⎿ error: Unexpected server error"},
+		},
 		"final result with denials and error": {
 			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"gave up","permission_denials":[{"tool_name":"Bash"},{"tool_name":"Edit"}]}`,
 			[]string{"denied: Bash", "denied: Edit", "result: error_during_execution", "gave up"},

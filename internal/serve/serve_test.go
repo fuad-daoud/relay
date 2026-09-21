@@ -1293,6 +1293,37 @@ func makeRoundForm(t *testing.T, round int, plan string, bundleBytes []byte) ([]
 	return buf.Bytes(), mw.FormDataContentType()
 }
 
+// makeRoundFormTags is makeRoundForm with the optional "tags" field (#242).
+func makeRoundFormTags(t *testing.T, round int, plan string, bundleBytes []byte, tagsJSON string) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if tagsJSON != "" {
+		if err := mw.WriteField("tags", tagsJSON); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(bundleBytes) > 0 {
+		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bundleBytes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
 type testEnv struct {
 	srv       *Server
 	ts        *httptest.Server
@@ -1454,6 +1485,102 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 	}
 	if specs[0].Dir != b.Worktree {
 		t.Fatalf("runner spec Dir = %q, want %q", specs[0].Dir, b.Worktree)
+	}
+}
+
+func TestRoundStartSetsShippedTags(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	// The client tags its base commit, and also ships a tag for a commit the
+	// server has never seen: the round must still start, that tag skipped.
+	runGit(t, env.clientDir, "-c", "tag.gpgsign=false", "tag", "v1.2.3", env.headSHA)
+	missingSHA := strings.Repeat("f", 40)
+
+	outRef := "refs/relay/api/out"
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snap body: %v", err)
+	}
+
+	tagsJSON, err := json.Marshal([]remote.TagRef{
+		{Name: "v1.2.3", SHA: env.headSHA},
+		{Name: "unrelated", SHA: missingSHA},
+		{Name: "release/1.0", SHA: env.headSHA},
+		{Name: "..", SHA: env.headSHA},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	formBytes, ct := makeRoundFormTags(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes, string(tagsJSON))
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+
+	got, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/v1.2.3")
+	if err != nil || !ok {
+		t.Fatalf("bare refs/tags/v1.2.3: %v, ok=%v", err, ok)
+	}
+	if got != env.headSHA {
+		t.Fatalf("refs/tags/v1.2.3 = %q, want the base sha %q", got, env.headSHA)
+	}
+
+	if _, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/unrelated"); err != nil || ok {
+		t.Fatalf("refs/tags/unrelated: ok=%v err=%v, want it absent", ok, err)
+	}
+
+	got, ok, err = env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/release/1.0")
+	if err != nil || !ok {
+		t.Fatalf("bare refs/tags/release/1.0: %v, ok=%v", err, ok)
+	}
+	if got != env.headSHA {
+		t.Fatalf("refs/tags/release/1.0 = %q, want the base sha %q", got, env.headSHA)
+	}
+
+	if _, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/.."); err != nil || ok {
+		t.Fatalf("refs/tags/..: ok=%v err=%v, want it absent (skipped, invalid tag)", ok, err)
+	}
+
+	// release/1.0 now shares headSHA with v1.2.3, so "describe --tags" is
+	// free to report either; check the worktree sees both tags instead.
+	pointsAtHead := strings.TrimSpace(runGit(t, b.Worktree, "tag", "--points-at", "HEAD"))
+	for _, want := range []string{"v1.2.3", "release/1.0"} {
+		found := false
+		for _, tag := range strings.Split(pointsAtHead, "\n") {
+			if tag == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("worktree tag --points-at HEAD = %q, want it to include %q", pointsAtHead, want)
+		}
 	}
 }
 
@@ -1819,6 +1946,11 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	if err := os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	streamText := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n" +
+		`{"type":"error","message":"Unexpected server error"}` + "\n"
+	if err := os.WriteFile(rt.Store.BuilderStreamPath("api", 1), []byte(streamText), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	env.runner.setAlive(false)
 
 	if err := env.srv.Tick(ctx); err != nil {
@@ -1863,6 +1995,14 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get log status = %d, want 200", resp.StatusCode)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/stream", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get stream status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != streamText {
+		t.Fatalf("stream body = %q, want %q", string(body), streamText)
 	}
 
 	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/bundle?since="+env.headSHA, nil, "")
@@ -2141,7 +2281,7 @@ func TestFilesBeforeCloseIs404(t *testing.T) {
 		t.Fatalf("start status = %d, want 201", resp.StatusCode)
 	}
 
-	for _, kind := range []string{"report", "diff", "plan"} {
+	for _, kind := range []string{"report", "diff", "plan", "stream"} {
 		resp, _ := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/"+kind, nil, "")
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("GET files/%s status = %d, want 404", kind, resp.StatusCode)

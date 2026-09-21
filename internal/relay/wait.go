@@ -33,6 +33,9 @@ const (
 	// WaitHalted is the exit code for a round that closed and its report's
 	// Outcome is halted or blocked (#133).
 	WaitHalted = 5
+	// WaitNotStarted is the exit code for a round that has no plan entry:
+	// nothing is in flight, so waiting for it can only time out (#253).
+	WaitNotStarted = 6
 	// WaitTimeout is the exit code for a wait whose --timeout elapsed.
 	WaitTimeout = 124
 )
@@ -94,6 +97,17 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 
 	if w, ok := WaitingOn(b, entries, questionOf); ok {
 		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
+	}
+
+	// Nothing in flight: the round was never sent, so no later poll can see
+	// it close. A nudge is not a send, so HasEntry excludes it, as
+	// DefaultWaitRound does.
+	if !HasEntry(entries, round, store.DirToBuilder, store.KindPlan) {
+		return WaitResult{
+			Code: WaitNotStarted,
+			Line: fmt.Sprintf("round %d was never sent to %s's builder", round, b.Name),
+			Done: true,
+		}
 	}
 
 	return WaitResult{}

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,9 +183,12 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
-	t.Run("active with an open round and no report is not done", func(t *testing.T) {
+	t.Run("active with an open, sent round and no report is not done", func(t *testing.T) {
 		b := store.Binding{Round: 1, State: store.StateActive}
-		got := WaitOutcome(b, nil, 1, noQuestion)
+		entries := []store.LogEntry{
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
 		if got.Done {
 			t.Errorf("WaitOutcome = %+v, want Done == false", got)
 		}
@@ -345,6 +349,78 @@ func TestWaitTimesOut(t *testing.T) {
 	}
 	if name != "" || res.Code != WaitTimeout || !res.Done {
 		t.Errorf("Wait = (%q, %+v), want (\"\", {%d ... true})", name, res, WaitTimeout)
+	}
+}
+
+func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+
+	// A binding that was never sent: no log entries at all.
+	unsent := store.Binding{
+		Name: "unsent", CWD: "/repo/unsent", Round: 1, State: store.StateActive,
+	}
+	if err := rt.Store.Save(unsent); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tick := 0
+	rt.Now = func() time.Time {
+		now := baseTime.Add(time.Duration(tick) * time.Minute)
+		tick++
+		return now
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	name, res, err := Wait(ctx, rt, WaitOptions{Names: []string{"unsent"}, Timeout: time.Hour, Interval: time.Millisecond})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "unsent" || res.Code != WaitNotStarted || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want (\"unsent\", {%d ... true})", name, res, WaitNotStarted)
+	}
+	if !strings.Contains(res.Line, "never sent") {
+		t.Fatalf("Wait line = %q, want it to say never sent", res.Line)
+	}
+	if tick > 1 {
+		t.Fatalf("Now called %d times, want at most 1: it must not poll to the timeout", tick)
+	}
+}
+
+func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Round 3 has no plan entry: nothing is in flight.
+	name, res, err := Wait(ctx, rt, WaitOptions{Names: []string{b.Name}, Round: 3, Timeout: time.Hour, Interval: time.Millisecond})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != b.Name || res.Code != WaitNotStarted || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want (%q, {%d ... true})", name, res, b.Name, WaitNotStarted)
+	}
+	if !strings.Contains(res.Line, "never sent") {
+		t.Fatalf("Wait line = %q, want it to say never sent", res.Line)
+	}
+
+	// Round 1 was sent: the same binding keeps waiting and times out.
+	tick := 0
+	rt.Now = func() time.Time {
+		now := baseTime.Add(time.Duration(tick) * time.Minute)
+		tick++
+		return now
+	}
+	name, res, err = Wait(ctx, rt, WaitOptions{Names: []string{b.Name}, Round: 1, Timeout: 5 * time.Minute, Interval: time.Millisecond})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "" || res.Code != WaitTimeout || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want (\"\", {%d ... true})", name, res, WaitTimeout)
 	}
 }
 
