@@ -142,6 +142,7 @@ type runConfig struct {
 	usagePrices   string
 	usageOpencode bool
 	extra         []Check
+	stateRoot     string
 }
 
 // WithAdopted scopes the per-kind checks to an adopted pane: the user launched
@@ -184,6 +185,16 @@ func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
 func WithExtraChecks(checks []Check) RunOption {
 	return func(cfg *runConfig) {
 		cfg.extra = append(cfg.extra, checks...)
+	}
+}
+
+// WithStateRoot lets the opencode branch check opencode's own
+// permission.external_directory allowlist against relay's state root, where
+// plans and reports are staged (#236). Empty disables the check, which is
+// what a caller without a store wants.
+func WithStateRoot(root string) RunOption {
+	return func(cfg *runConfig) {
+		cfg.stateRoot = root
 	}
 }
 
@@ -584,6 +595,13 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					}
 					checks = append(checks, roleCheck(env, kind, r))
 				}
+			}
+
+			// #236: opencode's own config decides whether a headless builder
+			// can read its plan under relay's state root. Adopted panes are
+			// the user's own agent, so that path stays quiet.
+			if kind == "opencode" && cfg.stateRoot != "" {
+				checks = append(checks, opencodeAllowlistCheck(env, cfg.stateRoot))
 			}
 		}
 	}

@@ -237,10 +237,17 @@ func cmdDoctor(args []string) error {
 		extraChecks = serverChecks(relay.ProbeServers(context.Background(), rt, servers, enrollLine))
 	}
 
+	// #236: the opencode branch checks opencode's own external_directory
+	// allowlist against the state root relay stages plans and reports under.
+	// store has no root accessor on rt.Store, so resolve it the way
+	// newRuntime did (main.go). A failure here just leaves the check off.
+	stateRoot, _ := store.DefaultRoot()
+
 	rep := doctor.Run(context.Background(), env, kinds,
 		doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)),
 		doctor.WithUsage(pricesPath, opencodeConfigured),
-		doctor.WithExtraChecks(extraChecks))
+		doctor.WithExtraChecks(extraChecks),
+		doctor.WithStateRoot(stateRoot))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",
