@@ -811,6 +811,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		Classify:     sc.Record,
 		Gate:         gate,
 	}
+	entry.BuilderSession = builderSessionOf(b)
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
 	}
@@ -837,6 +838,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
 	b.RoundClosedTree = closed
+	// The stream id was the closed round's; the next round's process
+	// announces its own (a pane builder has none) (#147).
+	b.Builder.StreamSessionID = ""
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 	b.GateRun = nil

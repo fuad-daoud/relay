@@ -102,6 +102,9 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		// round) keeps rendering the file both processes append to.
 		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
 	}
+	// A new process announces its own session on its own stream (#147);
+	// drainStream fills this in again from the first line it writes.
+	b.Builder.StreamSessionID = ""
 	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
 	h, err := rt.Runner.Start(ctx, ProcSpec{
 		Dir: b.CWD, Argv: argv,
@@ -126,6 +129,10 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 // StreamRound, not b.Round, so a round that closed on its marker while the
 // builder was still flushing keeps draining until the next round starts.
 //
+// The first drained line that names the harness's own session records it on
+// the endpoint (#147); later lines cannot change it, so a sub-agent's session
+// appearing mid-round is ignored. A line that names none is not an error.
+//
 // It never fails the tick: every problem is a slog.Warn and an unchanged
 // binding, and the cursor advances only after the append succeeded, so a
 // failed write renders the same lines again next tick rather than dropping
@@ -139,7 +146,14 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 		rt.Store.BuilderLogPath(b.Name, round),
 		rt.Store.BuilderStreamPath(b.Name, round),
 		b.Builder.StreamOffset,
-		func(line []byte) []string { return transcript.Render(b.Builder.Kind, line) },
+		func(line []byte) []string {
+			if b.Builder.StreamSessionID == "" {
+				if id := transcript.SessionID(b.Builder.Kind, line); id != "" {
+					b.Builder.StreamSessionID = id
+				}
+			}
+			return transcript.Render(b.Builder.Kind, line)
+		},
 		"stream", "binding", b.Name, "round", round,
 	)
 	return b

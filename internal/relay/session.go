@@ -77,6 +77,27 @@ func armSessionCursor(rt Runtime, b store.Binding) store.Binding {
 	return b
 }
 
+// builderSessionOf names the harness session that built the binding's closed
+// round (#147), for the report entry: a headless builder's stream id when the
+// round's stream announced one, else a pane builder's herdr session. Remote
+// builders and any binding with neither answer nil -- never guessed.
+func builderSessionOf(b store.Binding) *store.BuilderSession {
+	switch {
+	case b.Builder.Headless():
+		if b.Builder.StreamSessionID == "" {
+			return nil
+		}
+		return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.StreamSessionID}
+	case b.Builder.Remote():
+		return nil
+	default:
+		if b.Builder.SessionID == "" {
+			return nil
+		}
+		return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.SessionID}
+	}
+}
+
 // drainSession is drainStream for a pane builder (#184): the located
 // record past StreamOffset, rendered with transcript.RenderRecord, appended
 // to BuilderLogPath(name, StreamRound). Unchanged binding (and no I/O)

@@ -43,8 +43,21 @@ func LogLine(e store.LogEntry) string {
 	if e.Gate != nil {
 		first += " gate=" + e.Gate.Result
 	}
+	if e.Kind == store.KindReport && e.BuilderSession != nil {
+		first += fmt.Sprintf(" session=%s:%s", e.BuilderSession.Kind, short8(e.BuilderSession.ID))
+	}
 	if e.Usage == nil {
 		return first
 	}
 	return first + "\n" + strings.Repeat(" ", logLineIndent) + "⎿ " + usage.Line(*e.Usage)
+}
+
+// short8 is the first eight characters of id, for the log line's session=
+// suffix: enough to name a session, not so much that it wraps the line.
+func short8(id string) string {
+	r := []rune(id)
+	if len(r) > 8 {
+		return string(r[:8])
+	}
+	return id
 }
