@@ -71,6 +71,21 @@ func AnswerText(name string) string {
 	return fmt.Sprintf("answered %s's builder", name)
 }
 
+// StopText is what `relay stop` says on success: what happened to the round,
+// and for an abandoned pane, the one instruction the human needs.
+func StopText(name string, res StopResult) string {
+	switch res.Action {
+	case "requested":
+		return fmt.Sprintf("stop requested for %s round %d; grace %s -- the round closes on the builder's marker", name, res.Round, res.Grace)
+	case "killed":
+		return fmt.Sprintf("%s round %d stopped: process killed; round closed without a report unless one was on disk", name, res.Round)
+	case "abandoned":
+		return fmt.Sprintf("%s round %d: NEEDS YOU -- the pane is still running; close it yourself", name, res.Round)
+	default:
+		return fmt.Sprintf("%s has no open round; nothing to stop", name)
+	}
+}
+
 // HumanBytes renders n as a binary (1024-based) human-readable size, e.g.
 // "512 B", "1.5 KiB", "3.0 MiB". It is the one implementation the CLI and the
 // dry run share, so `relay db stats` and `relay send --dry-run` never disagree.

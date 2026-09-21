@@ -279,6 +279,26 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 		}
 	}
 
+	// An open round that relay asked to stop (#138): once the grace has
+	// elapsed with no marker, hand it to the human and leave the pane alone.
+	// relay never kills a pane, so this is the end of the stop. Checked
+	// before the nudge logic below, and whatever herdr reports the builder is
+	// doing: the builder was told to stop, so it must not be nudged.
+	if !b.StopRequestedAt.IsZero() && stopDecision(b, now) == stopAbandon {
+		b, err = haltBinding(ctx, rt, b, fmt.Sprintf(
+			"%s: builder did not stop within %s; close its pane yourself, then relay done or send", b.Name, stopGrace(b)))
+		if err != nil {
+			return b, err
+		}
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS: now, Round: b.Round, Direction: store.DirToPlanner,
+			Kind: store.KindStop, Note: "stopped/abandoned", Confirmed: true,
+		}); err != nil {
+			return b, err
+		}
+		return b, nil
+	}
+
 	var next store.Binding
 	switch effectiveStatus(b.Builder, builder) {
 	case herdr.StatusIdle, herdr.StatusDone:
@@ -703,6 +723,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
+	// A round that closes while a stop was requested is the stop succeeding
+	// (#138): the note says so, and a KindStop entry follows the report below.
+	stopped := !b.StopRequestedAt.IsZero()
+	if stopped {
+		note = joinNotes(note, "stopped")
+	}
+
 	body, _ := os.ReadFile(path)
 	var (
 		tail   ReportTail
@@ -816,6 +843,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, err
 	}
 
+	if stopped {
+		// Filed under the round that was stopped: b.Round advances below.
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner,
+			Kind: store.KindStop, Note: "stopped/graceful", Confirmed: true,
+		}); err != nil {
+			return b, err
+		}
+	}
+
 	b.Round++
 	b.State = store.StateActive
 
@@ -854,6 +891,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// A closed round is over: a stall stamped against it says nothing about
 	// the next one (#252).
 	b.StalledSince = time.Time{}
+	// A request to stop belonged to the round that just closed (#138): the
+	// stop bookkeeping never outlives it.
+	b.StopRequestedAt = time.Time{}
+	b.StopGraceMS = 0
 
 	return b, nil
 }

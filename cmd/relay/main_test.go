@@ -94,6 +94,36 @@ func TestPauseRefusesToGuessTheBinding(t *testing.T) {
 	}
 }
 
+func TestStopRefusesToGuessTheBinding(t *testing.T) {
+	err := run([]string{"stop"})
+	if err == nil {
+		t.Fatal("relay stop with no binding must be refused")
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Errorf("error must point at --name, got %q", err)
+	}
+}
+
+// TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
+// bad value, not an omission, so it exits 2. The check runs before any runtime
+// is built, so this touches neither the state directory nor herdr.
+func TestStopGraceMustBePositive(t *testing.T) {
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"stop", "--name", "webshop", "--grace", "0"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("expected nothing on stdout, got %q", string(stdout))
+	}
+	if !strings.Contains(string(stderr), "must be positive") {
+		t.Errorf("expected the error to say --grace must be positive, got %q", string(stderr))
+	}
+}
+
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string

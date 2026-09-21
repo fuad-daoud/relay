@@ -497,6 +497,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
 
+	// A stop requested for a round that then exited without a report (#138):
+	// close it without a report and without a switch, because a stop is not a
+	// failure. Belt-and-braces only -- Stop on a headless round closes
+	// synchronously and never sets the request -- for a process killed
+	// between the request and the close.
+	if !b.StopRequestedAt.IsZero() {
+		return closeStopped(ctx, rt, tx, b, "killed")
+	}
+
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
 	// process tree) takes the supervisor with it before it can write the
 	// relay-exit: trailer, which reads exactly like a real builder death:

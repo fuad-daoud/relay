@@ -293,6 +293,33 @@ func TestStatusPendingLineUnchangedWhenNotHeld(t *testing.T) {
 	}
 }
 
+// TestStatusShowsStopping pins #138: a stop in flight shows
+// "stopping <elapsed> of <grace>" as the builder's status, overriding
+// whatever the builder itself reports, and carries the stop bookkeeping as
+// data for the statusline consumer.
+func TestStatusShowsStopping(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.StopRequestedAt = clock.Now().Add(-time.Minute)
+	b.StopGraceMS = int((5 * time.Minute) / time.Millisecond)
+
+	row, err := statusRow(context.Background(), rt, b, nil, nil, agentGone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.BuilderStatus != "stopping 1m of 5m0s" {
+		t.Errorf("BuilderStatus = %q, want %q", row.BuilderStatus, "stopping 1m of 5m0s")
+	}
+	if row.StopGraceMS != 300000 {
+		t.Errorf("StopGraceMS = %d, want 300000", row.StopGraceMS)
+	}
+	if !row.StopRequestedAt.Equal(b.StopRequestedAt) {
+		t.Errorf("StopRequestedAt = %s, want %s", row.StopRequestedAt, b.StopRequestedAt)
+	}
+}
+
 func TestStatusShowsNudgeClock(t *testing.T) {
 	f := &fakeHerdr{readOut: "half a screen of output"}
 	rt, b := sentBinding(t, f)

@@ -43,6 +43,11 @@ type BindingStatus struct {
 	BuilderPane      string `json:"builder_pane"`
 	BuilderKind      string `json:"builder_kind"`
 	BuilderStatus    string `json:"builder_status"`
+	// StopRequestedAt and StopGraceMS mirror the binding's stop bookkeeping
+	// (#138) while a stop is in flight; both are absent otherwise. They are
+	// the data behind BuilderStatus's "stopping <elapsed> of <grace>".
+	StopRequestedAt time.Time `json:"stop_requested_at,omitempty"`
+	StopGraceMS     int       `json:"stop_grace_ms,omitempty"`
 	// Headless is set for a headless builder (#99): its process state and
 	// log. BuilderPane reads "headless" and BuilderStatus is one of idle,
 	// working, exited N, exited, unknown. Nil for a pane builder.
@@ -331,6 +336,17 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	if b.GateRun != nil {
 		age := rt.Now().Sub(time.Unix(b.GateRun.StartedAt, 0)).Truncate(time.Second)
 		row.BuilderStatus = fmt.Sprintf("gating %s", age)
+	}
+
+	// A stop in flight overrides whatever the builder itself reports (#138),
+	// the way a gate in flight does: the round is closing, not working. The
+	// grace comes from the binding, so it reads the same here as in the
+	// daemon that will abandon the pane when it elapses.
+	if !b.StopRequestedAt.IsZero() && !b.RoundStartedAt.IsZero() {
+		row.BuilderStatus = fmt.Sprintf("stopping %s of %s",
+			AgeText(rt.Now().UTC().Sub(b.StopRequestedAt)), stopGrace(b))
+		row.StopRequestedAt = b.StopRequestedAt
+		row.StopGraceMS = b.StopGraceMS
 	}
 
 	// Only broken is overloaded: it means "builder pane is gone", which covers
