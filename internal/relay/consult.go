@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/transcript"
 )
 
 const (
@@ -80,6 +83,80 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					"spawn did not complete within "+consultSpawnTimeout.String()); err != nil {
 					return b, err
 				}
+			}
+			continue
+		}
+
+		// A headless consult is a process, not a pane: it is observed through
+		// the Runner and its completion is the stream's final message, so the
+		// pane steps below (FindAgent, nudge, dialog) never run for one
+		// (#147, #144).
+		if b.Consults[i].Endpoint.Headless() {
+			c := b.Consults[i]
+
+			if rt.Runner == nil {
+				// Cannot observe the process; leave the record alone.
+				slog.Warn("headless consult but no Runner configured",
+					"binding", b.Name, "consult", c.ID)
+				continue
+			}
+
+			alive, err := rt.Runner.Alive(ctx, handleOf(c.Endpoint))
+			if err != nil {
+				// An OS hiccup is not evidence the process stopped: treat it as
+				// alive this tick, exactly as reconcileHeadless does.
+				slog.Warn("headless consult liveness check failed; treating as alive",
+					"binding", b.Name, "consult", c.ID, "pid", c.Endpoint.PID, "err", err)
+				alive = true
+			}
+
+			if alive {
+				if now.Sub(c.SpawnedAt) >= consultTimeout {
+					if err := rt.Runner.Kill(ctx, handleOf(c.Endpoint)); err != nil {
+						slog.Warn("headless consult not killed",
+							"binding", b.Name, "consult", c.ID, "pid", c.Endpoint.PID, "err", err)
+					}
+					var ferr error
+					if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
+						"timed out after "+consultTimeout.String()+"; process killed"); ferr != nil {
+						return b, ferr
+					}
+				}
+				continue
+			}
+
+			// Exited. The stream carries the process's final message and the
+			// supervisor's exit trailer.
+			stream, _ := os.ReadFile(c.Endpoint.LogPath)
+			text := transcript.FinalText(c.Endpoint.Kind, stream)
+			codeText := "unknown"
+			if code, ok := rt.Runner.ExitCode(ctx, handleOf(c.Endpoint), c.Endpoint.LogPath); ok {
+				codeText = strconv.Itoa(code)
+			}
+
+			if text == "" {
+				var ferr error
+				if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
+					fmt.Sprintf("process exited (code %s) with no final message; see %s",
+						codeText, c.Endpoint.LogPath)); ferr != nil {
+					return b, ferr
+				}
+				continue
+			}
+
+			// The final message is the findings; relay writes the file the
+			// planner is sent to, exactly as a pane consult writes its own.
+			if err := os.WriteFile(c.FindingsPath, []byte(text+"\n"), 0o644); err != nil {
+				var ferr error
+				if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
+					"could not write findings: "+brief(err)); ferr != nil {
+					return b, ferr
+				}
+				continue
+			}
+			var ferr error
+			if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultDone, ""); ferr != nil {
+				return b, ferr
 			}
 			continue
 		}

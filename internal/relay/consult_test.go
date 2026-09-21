@@ -365,6 +365,116 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 }
 
+// seedHeadlessConsult asks for a consult as a process on the webshop binding
+// and returns the runtime and the record relay made.
+func seedHeadlessConsult(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Consult) {
+	t.Helper()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	q := writeQuestion(t, "review it")
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", Headless: true, File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask --headless: %v", err)
+	}
+	return rt, res.Consult
+}
+
+// TestHeadlessConsultFinalMessageBecomesFindings: the process's last
+// assistant message is the findings. Deleting the WriteFile leaves the
+// consult running and this fails.
+func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
+
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
+		"relay-exit:0\n"
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 0)
+
+	b := tickConsults(t, rt, f)
+
+	if b.Consults[0].State != store.ConsultDone {
+		t.Fatalf("state = %q, want done", b.Consults[0].State)
+	}
+	body, err := os.ReadFile(c.FindingsPath)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(body), "FINDINGS BODY") {
+		t.Errorf("findings = %q, want it to contain the final message", body)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("findings were not queued: found=%v err=%v", found, err)
+	}
+	if pending.Kind != store.KindFindings || pending.Path != c.FindingsPath {
+		t.Errorf("entry = %s path=%q, want findings at %q", pending.Kind, pending.Path, c.FindingsPath)
+	}
+}
+
+// TestHeadlessConsultExitWithoutTextIsSilent: a process that died without a
+// final message is reported silent with its exit code and where to look.
+func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
+
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte("relay-exit:1\n"), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 1)
+
+	b := tickConsults(t, rt, f)
+
+	if b.Consults[0].State != store.ConsultSilent {
+		t.Fatalf("state = %q, want silent", b.Consults[0].State)
+	}
+	note := b.Consults[0].Note
+	if !strings.Contains(note, "code 1") {
+		t.Errorf("note = %q, want it to name the exit code", note)
+	}
+	if !strings.Contains(note, c.Endpoint.LogPath) {
+		t.Errorf("note = %q, want it to point at the stream %s", note, c.Endpoint.LogPath)
+	}
+	if _, err := os.Stat(c.FindingsPath); err == nil {
+		t.Error("a silent consult must write no findings file")
+	}
+}
+
+// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// killed and reported silent.
+func TestHeadlessConsultTimesOut(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+
+	clock.Advance(consultTimeout + time.Second)
+	b := tickConsults(t, rt, f)
+
+	if len(fr.kills) != 1 {
+		t.Fatalf("kills = %d, want 1", len(fr.kills))
+	}
+	if b.Consults[0].State != store.ConsultSilent {
+		t.Fatalf("state = %q, want silent", b.Consults[0].State)
+	}
+	if !strings.Contains(b.Consults[0].Note, "timed out") {
+		t.Errorf("note = %q, want it to say timed out", b.Consults[0].Note)
+	}
+	if c.Endpoint.PID == 0 {
+		t.Error("seeded headless consult has no pid")
+	}
+}
+
 func TestReconcileIgnoresAConsultSubAgentsIdle(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _, _ := seedConsult(t, f)

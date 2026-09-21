@@ -39,6 +39,12 @@ Write your findings to: %s
 
 Reply here with only that path. Do not modify any file in this repository.`
 
+// consultHeadlessPrompt is the whole prompt a headless consult runs with. It
+// asks for the findings as the final message rather than a file: a
+// `read`-tier process may not be able to write one, and relay extracts that
+// message from the stream at exit and writes FindingsPath itself.
+const consultHeadlessPrompt = "Read: %s\n\nAnswer as your final message: your findings, complete, in markdown. Do not modify any file in this repository. Do not write a findings file; relay records your final message."
+
 // AskOptions describes one consult request.
 type AskOptions struct {
 	Role        string // consult role to spawn; required
@@ -47,6 +53,11 @@ type AskOptions struct {
 	Name        string // binding name, already resolved by the caller
 	PlannerPane string // $HERDR_PANE_ID; required
 	WorkspaceID string
+	// Headless runs the consult as a one-shot process through the Runner
+	// instead of a pane, its final message becoming the findings (#147, #144).
+	// It needs rt.Runner; a candidate whose harness cannot honour the tier is
+	// refused exactly as a pane consult's is.
+	Headless bool
 }
 
 // AskResult is what an ask produced, so the CLI can tell the planner where the
@@ -108,6 +119,11 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	}
 	if role.Shape != harness.ShapeConsult {
 		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)
+	}
+	if opts.Headless && rt.Runner == nil {
+		// Phase 0, next to the role check: a headless consult runs a process,
+		// so a runtime with no Runner refuses before anything is reserved.
+		return AskResult{}, ErrRunnerUnavailable
 	}
 	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, opts.Role)
 	if err != nil {
@@ -192,32 +208,66 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
 	var spawnErr error
-	pane, err := openTab(ctx, rt, opts.WorkspaceID, cwd, consult.Endpoint.AgentName)
-	if err != nil {
-		consult.State = store.ConsultSilent
-		consult.Note = "spawn failed: " + brief(err)
-		spawnErr = err
-	} else {
-		consult.Endpoint.PaneID = pane
-		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
-		if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.PaneArgs(rt.Store.Dir(opts.Name))); err != nil {
-			recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
+	if opts.Headless {
+		// The consult is a process, not a pane: no tab, no StartAgent, no
+		// prompt to type. The stream carries its final message and the
+		// supervisor's exit trailer, and Endpoint.LogPath names it so
+		// consultSource's headless branch reads the stream (#147, #144).
+		streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
+		argv, err := headlessLaunch(c, role, tier, consultTimeout,
+			fmt.Sprintf(consultHeadlessPrompt, consult.AskPath), cwd, rt.Store.Dir(opts.Name))
+		if err != nil {
 			consult.State = store.ConsultSilent
-			consult.Note = "start failed: " + brief(err)
+			consult.Note = "spawn failed: " + brief(err)
+			spawnErr = err
+		} else if h, err := rt.Runner.Start(ctx, ProcSpec{
+			Dir:        cwd,
+			Argv:       argv,
+			LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
+			StreamPath: streamPath,
+		}); err != nil {
+			consult.State = store.ConsultSilent
+			consult.Note = "spawn failed: " + brief(err)
 			spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
 		} else {
-			text := fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
-
-			if err := promptWithRetry(ctx, rt, pane, text, consult.FindingsPath); err != nil {
-				if errors.Is(err, ErrPromptLate) {
-					consult.State = store.ConsultRunning
-				} else {
-					consult.State = store.ConsultSilent
-					consult.Note = "prompt failed: " + brief(err)
-					spawnErr = fmt.Errorf("prompt consult: %w", err)
-				}
+			consult.Endpoint = store.Endpoint{
+				AgentName: consult.Endpoint.AgentName,
+				Kind:      l.Kind,
+				Mode:      store.ModeHeadless,
+				PID:       h.PID,
+				StartedAt: h.StartedAt.Unix(),
+				LogPath:   streamPath,
+			}
+			consult.State = store.ConsultRunning
+		}
+	} else {
+		pane, err := openTab(ctx, rt, opts.WorkspaceID, cwd, consult.Endpoint.AgentName)
+		if err != nil {
+			consult.State = store.ConsultSilent
+			consult.Note = "spawn failed: " + brief(err)
+			spawnErr = err
+		} else {
+			consult.Endpoint.PaneID = pane
+			// IRREVERSIBLE: a pane may now exist. Never closed by relay.
+			if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.PaneArgs(rt.Store.Dir(opts.Name))); err != nil {
+				recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
+				consult.State = store.ConsultSilent
+				consult.Note = "start failed: " + brief(err)
+				spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
 			} else {
-				consult.State = store.ConsultRunning
+				text := fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
+
+				if err := promptWithRetry(ctx, rt, pane, text, consult.FindingsPath); err != nil {
+					if errors.Is(err, ErrPromptLate) {
+						consult.State = store.ConsultRunning
+					} else {
+						consult.State = store.ConsultSilent
+						consult.Note = "prompt failed: " + brief(err)
+						spawnErr = fmt.Errorf("prompt consult: %w", err)
+					}
+				} else {
+					consult.State = store.ConsultRunning
+				}
 			}
 		}
 	}
