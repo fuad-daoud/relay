@@ -55,9 +55,8 @@ release:
 	@test "$$(git branch --show-current)" = "main" || { echo "not on main branch" >&2; exit 1; }
 	sed 's/^version = ".*"/version = "$(VERSION)"/' herdr-plugin.toml > herdr-plugin.toml.tmp && mv herdr-plugin.toml.tmp herdr-plugin.toml
 	sed 's/^version = ".*"/version = "$(VERSION)"/' from-source/herdr-plugin.toml > from-source/herdr-plugin.toml.tmp && mv from-source/herdr-plugin.toml.tmp from-source/herdr-plugin.toml
-	sed 's|<span data-version>v[^<]*</span>|<span data-version>v$(VERSION)</span>|' web/index.html > web/index.html.tmp && mv web/index.html.tmp web/index.html
 	$(MAKE) check
-	git commit -m "chore(release): v$(VERSION)" herdr-plugin.toml from-source/herdr-plugin.toml web/index.html
+	git commit -m "chore(release): v$(VERSION)" herdr-plugin.toml from-source/herdr-plugin.toml
 	git tag -a v$(VERSION) -m "v$(VERSION)"
 	@echo "git push && git push origin v$(VERSION)"
 
