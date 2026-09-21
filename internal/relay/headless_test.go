@@ -1117,7 +1117,7 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, f, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
-	fr.script(b.Builder.PID, false)                      // exited; no exit() set: code unknown
+	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
 
 	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
 	if err != nil {
