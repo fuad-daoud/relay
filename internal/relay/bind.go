@@ -235,6 +235,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	}
 
 	rebinding := opts.Rebind || opts.Candidate != "" || opts.BuilderPane != ""
+	// A paused binding has no builder identity left -- pause cleared it -- so
+	// a resume from PAUSED always rebinds; --rebind is implied (#137).
+	if b.State == store.StatePaused {
+		res.WasPaused = true
+		rebinding = true
+	}
 
 	var (
 		builder store.Endpoint
@@ -319,6 +325,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		res2.RestoredWorktree = res.RestoredWorktree
 		res2.RestoredBranch = res.RestoredBranch
 		res2.OrphanedPane = res.OrphanedPane
+		res2.WasPaused = res.WasPaused
 		res = res2
 		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
 	}
@@ -349,6 +356,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if opts.Feature != "" {
 			b.Feature = opts.Feature
 		}
+		wasPaused := b.State == store.StatePaused
 		b.State = store.StateActive
 		if rebinding {
 			b.Builder = builder
@@ -370,6 +378,20 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 
 		if rebinding && res.How != "" {
 			if err := tx.AppendLog(opts.Name, pickEntry(rt.Now(), b.Round, "builder", res)); err != nil {
+				return err
+			}
+		}
+
+		// The resume entry is appended after the pick so it is the log's
+		// last word on the binding: it is the event, the pick is a detail.
+		if wasPaused {
+			if err := tx.AppendLog(opts.Name, store.LogEntry{
+				Round:     b.Round,
+				Direction: store.DirToPlanner,
+				Kind:      store.KindResume,
+				Confirmed: true,
+				Note:      "resumed",
+			}); err != nil {
 				return err
 			}
 		}

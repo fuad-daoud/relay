@@ -458,14 +458,18 @@ func isPayloadKind(k store.Kind) bool {
 	}
 }
 
-// displayState collapses six stored states into the three the human cares
-// about. broken and orphaned both mean "a human must act".
+// displayState collapses the stored states into the words the human cares
+// about. broken and orphaned both mean "a human must act"; paused means the
+// worktree and pane were released deliberately and bind --resume brings it
+// back.
 func displayState(s store.State) string {
 	switch s {
 	case store.StateHeld:
 		return "HELD"
 	case store.StateNeedsYou, store.StateBroken, store.StateOrphaned:
 		return "NEEDS YOU"
+	case store.StatePaused:
+		return "PAUSED"
 	case store.StateDone:
 		return "DONE"
 	default:

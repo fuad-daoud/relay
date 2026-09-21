@@ -41,6 +41,8 @@ func tokenState(s store.State) string {
 		return "held"
 	case store.StateNeedsYou, store.StateBroken, store.StateOrphaned:
 		return "needs-you"
+	case store.StatePaused:
+		return "paused"
 	case store.StateDone:
 		return "done"
 	default:

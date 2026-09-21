@@ -546,6 +546,37 @@ func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
 	}
 }
 
+// TestSendRefusesPaused: a paused binding has no builder to address and its
+// worktree is gone; the human resumes it first. No plan is staged.
+func TestSendRefusesPaused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo", Worktree: "/wt/webshop", Branch: "relay/webshop",
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{Kind: "agy"}, // pause cleared the pane id
+		Round:   2, State: store.StatePaused,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save paused: %v", err)
+	}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send on a paused binding must be refused")
+	}
+	if !strings.Contains(err.Error(), "paused") {
+		t.Errorf("err = %q, want it to mention paused", err)
+	}
+	if entries, _ := rt.Store.ReadLog("webshop"); len(entries) != 0 {
+		t.Errorf("no plan may be staged: log = %+v", entries)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("no prompt may be sent: %+v", f.prompts)
+	}
+}
+
 func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := seedBound(t, f)

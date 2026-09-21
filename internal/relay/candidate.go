@@ -79,6 +79,10 @@ type Resolution struct {
 	// binding's worktree was restored (planner-only resume included: that
 	// pane cannot work in the recreated directory); "" otherwise.
 	OrphanedPane string
+	// WasPaused is true when this resume took a PAUSED binding back to
+	// ACTIVE (#137): the worktree was released by `relay pause`, so the
+	// restore path ran and --rebind is implied.
+	WasPaused bool
 }
 
 // Token is the canonical ref of the resolved candidate, or "" when there

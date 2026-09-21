@@ -43,6 +43,29 @@ func RestoreText(res Resolution) string {
 	return strings.Join(lines, "\n")
 }
 
+// PauseText is what `relay pause` says on success: the binding and what it
+// kept, then what it did with the builder pane, then how to bring it back.
+func PauseText(name string, r PauseResult) string {
+	lines := []string{
+		fmt.Sprintf("%s paused after round %d; worktree %s released, branch %s kept", name, r.Round, r.Worktree, r.Branch),
+	}
+	if r.Committed != "" {
+		sha12 := r.Committed
+		if len(sha12) > 12 {
+			sha12 = sha12[:12]
+		}
+		lines = append(lines, fmt.Sprintf("  committed %s ([relay] %s: paused after round %d)", sha12, name, r.Round))
+	}
+	switch {
+	case r.PaneCloseErr != "":
+		lines = append(lines, fmt.Sprintf("  builder pane %s not closed: %s; close it yourself: herdr pane close %s", r.PaneClosed, r.PaneCloseErr, r.PaneClosed))
+	case r.PaneClosed != "":
+		lines = append(lines, fmt.Sprintf("  closed builder pane %s", r.PaneClosed))
+	}
+	lines = append(lines, fmt.Sprintf("  resume: relay bind --resume --name %s", name))
+	return strings.Join(lines, "\n")
+}
+
 // AnswerText is what `relay answer` says on success.
 func AnswerText(name string) string {
 	return fmt.Sprintf("answered %s's builder", name)

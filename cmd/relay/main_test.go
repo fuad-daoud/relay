@@ -84,6 +84,16 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 	}
 }
 
+func TestPauseRefusesToGuessTheBinding(t *testing.T) {
+	err := run([]string{"pause"})
+	if err == nil {
+		t.Fatal("relay pause with no binding must be refused")
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Errorf("error must point at --name, got %q", err)
+	}
+}
+
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string

@@ -1678,6 +1678,60 @@ func TestRepoFactsNotARepo(t *testing.T) {
 	}
 }
 
+// TestCommitAllCommitsEverything pins CommitAll's contract: it stages and
+// commits the whole working tree (a new untracked file and a tracked
+// modification alike), reports the new HEAD, and answers a tree with nothing
+// left to commit with ("", nil) rather than an error.
+func TestCommitAllCommitsEverything(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "tracked.txt")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	sha, err := client.CommitAll(ctx, dir, "msg")
+	if err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+	if sha == "" {
+		t.Fatal("CommitAll returned an empty sha")
+	}
+
+	if got := strings.TrimSpace(runGit(t, dir, "status", "--porcelain")); got != "" {
+		t.Errorf("status after CommitAll = %q, want clean", got)
+	}
+	if got := strings.TrimSpace(runGit(t, dir, "log", "-1", "--format=%s")); got != "msg" {
+		t.Errorf("last commit subject = %q, want msg", got)
+	}
+	if head := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD")); head != sha {
+		t.Errorf("HEAD = %q, want returned sha %q", head, sha)
+	}
+
+	// Nothing left to commit: ("", nil), not an error.
+	sha2, err := client.CommitAll(ctx, dir, "again")
+	if err != nil {
+		t.Fatalf("second CommitAll: %v", err)
+	}
+	if sha2 != "" {
+		t.Errorf("second CommitAll sha = %q, want empty", sha2)
+	}
+}
+
 func TestNormalizeOriginURL(t *testing.T) {
 	cases := []struct {
 		name string

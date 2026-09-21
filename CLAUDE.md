@@ -15,10 +15,11 @@ follows is what is specific to this machine and this repo.
 - Candidates are in `~/.config/relay/candidates.json` (`relay candidates`
   lists them); the builder order is `order.builder` in
   `~/.config/relay/policy.json`. `relay policy` shows the current pick.
-- relay closes a pane in exactly two places: `relay reap` (a terminal
-  consult pane it spawned) and a mid-round builder switch (the replaced
-  builder's pane, when it is still open). It stops a *process* in exactly
-  three: `relay done` and `relay unbind` on a headless binding whose
+- relay closes a pane in exactly three places: `relay reap` (a terminal
+  consult pane it spawned), a mid-round builder switch (the replaced
+  builder's pane, when it is still open), and `relay pause` (the paused
+  binding's builder pane, because the human asked). It stops a *process* in
+  exactly three: `relay done` and `relay unbind` on a headless binding whose
   round is running, and a mid-round switch of a headless builder whose
   provider you gated with `relay unavailable`. After an `unbind`, a
   mis-bind, or any `--assume-dead` rebind of a pane builder, close the

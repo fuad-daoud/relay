@@ -131,10 +131,15 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 		{Name: "n", Display: "NEEDS YOU", BuilderKind: "agy"},
 		{Name: "a1", Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "a2", Display: "ACTIVE", BuilderKind: "agy"},
+		// #137: PAUSED groups between ACTIVE and DONE.
+		{Name: "p", Display: "PAUSED", BuilderKind: "agy",
+			Last: &relay.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
+		{Name: "d", Display: "DONE", BuilderKind: "agy"},
 	}
 	lines := railLines(rows, 1, true, railNow, true, railDefault, false)
-	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap
-	if len(lines) != 1+3+1+1+3+3+1 {
+	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap,
+	// header, card p (3), gap, header, card d (3), gap
+	if len(lines) != 1+3+1+1+3+3+1+1+3+1+1+3+1 {
 		t.Fatalf("%d lines", len(lines))
 	}
 	if lines[0].binding != -1 || plain(lines[0].text) != "NEEDS YOU 1" {
@@ -143,9 +148,20 @@ func TestRailLinesGroupsAndTags(t *testing.T) {
 	if lines[5].binding != -1 || plain(lines[5].text) != "ACTIVE 2" {
 		t.Errorf("second header = %+v", lines[5])
 	}
+	if lines[13].binding != -1 || plain(lines[13].text) != "PAUSED 1" {
+		t.Errorf("PAUSED header = %+v", lines[13])
+	}
+	if lines[18].binding != -1 || plain(lines[18].text) != "DONE 1" {
+		t.Errorf("DONE header = %+v", lines[18])
+	}
 	first, last := railSpan(lines, 1)
 	if first != 6 || last != 8 {
 		t.Errorf("span of a1 = [%d,%d]", first, last)
+	}
+	// The PAUSED card sits between the ACTIVE and DONE groups, and its age
+	// comes from the pause entry's TS.
+	if pf, pl := railSpan(lines, 3); pf != 14 || pl != 16 {
+		t.Errorf("span of p = [%d,%d]", pf, pl)
 	}
 	// Name order: no headers, no gaps, every line tagged.
 	for _, l := range railLines(rows, 0, false, railNow, true, railDefault, false) {

@@ -156,7 +156,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		if b.Builder.Remote() {
 			return errors.New("consults are local-only")
 		}
-		if b.State == store.StateBroken || b.State == store.StateDone {
+		if b.State == store.StateBroken || b.State == store.StateDone || b.State == store.StatePaused {
 			return fmt.Errorf("binding %q is %s; a consult needs a live binding to attach to", b.Name, b.State)
 		}
 		if runningConsults(b) >= consultCap(b) {

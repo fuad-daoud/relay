@@ -68,6 +68,7 @@ Commands:
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
+  pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
@@ -270,6 +271,8 @@ func run(args []string) error {
 		return cmdUI(args[1:])
 	case "done":
 		return cmdDone(args[1:])
+	case "pause":
+		return cmdPause(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	case "doctor":
@@ -748,6 +751,9 @@ func cmdBind(args []string) error {
 	}
 	if t := relay.RestoreText(res); t != "" {
 		fmt.Println(t)
+	}
+	if res.WasPaused {
+		fmt.Printf("resumed %s after pause\n", b.Name)
 	}
 
 	if *resume && (*builderAlias != "" || *rebind) {
@@ -1806,6 +1812,36 @@ func cmdDone(args []string) error {
 		return err
 	}
 	warnWaitingOnYou(rt, target)
+	return nil
+}
+
+// cmdPause releases a binding's worktree and pane between rounds. It takes
+// the binding from --name or a positional and never from the current
+// directory: pause is not undoable without a resume, so it must not guess.
+func cmdPause(args []string) error {
+	fs := flag.NewFlagSet("pause", flag.ContinueOnError)
+	name := fs.String("name", "", "binding to pause")
+	commit := fs.Bool("commit", false, "commit the worktree's changes on the binding branch before releasing it")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay pause <name> | --name <name>\n" +
+			"pause releases a binding's worktree and pane between rounds; it is not undoable without a resume, so it must not guess")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	res, err := relay.Pause(context.Background(), rt, target, relay.PauseOptions{Commit: *commit})
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(relay.PauseText(target, res))
 	return nil
 }
 

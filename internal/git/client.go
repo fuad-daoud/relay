@@ -658,6 +658,46 @@ func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message stri
 	return strings.TrimSpace(string(out)), nil
 }
 
+// CommitAll stages the whole working tree and commits it: `git add -A`
+// followed by `git commit -q -m message`.
+//
+// The commit uses the same fixed relay identity CommitTree does
+// (GIT_AUTHOR_* and GIT_COMMITTER_* = relay/relay@localhost), passed through
+// run's env parameter, and passes -c commit.gpgsign=false so a global
+// commit.gpgsign cannot make it reach for gpg.
+//
+// Preconditions:  dir is inside a git repository.
+// Postconditions: every tracked and untracked (non-ignored) change is in one
+// new commit on the current branch; the returned sha is the new HEAD. When
+// there is nothing to commit the repository is left untouched and
+// ("", nil) is returned.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure.
+func (c *Client) CommitAll(ctx context.Context, dir, message string) (string, error) {
+	if _, err := c.run(ctx, dir, nil, "add", "-A"); err != nil {
+		return "", err
+	}
+
+	env := []string{
+		"GIT_AUTHOR_NAME=relay",
+		"GIT_AUTHOR_EMAIL=relay@localhost",
+		"GIT_COMMITTER_NAME=relay",
+		"GIT_COMMITTER_EMAIL=relay@localhost",
+	}
+	if _, err := c.run(ctx, dir, env, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message); err != nil {
+		if strings.Contains(err.Error(), "nothing to commit") {
+			return "", nil
+		}
+		return "", err
+	}
+
+	out, err := c.run(ctx, dir, nil, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // BundleCreate creates a git bundle file at path containing refs relative to since.
 //
 // Preconditions:  every ref in refs resolves in dir's repository (else ErrRefMissing);

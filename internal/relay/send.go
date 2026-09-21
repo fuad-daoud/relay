@@ -147,6 +147,9 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, err
 	}
+	if b.State == store.StatePaused {
+		return preflight{}, fmt.Errorf("binding %q is paused; relay bind --resume --name %s first", name, name)
+	}
 	if tier == "" {
 		tier = effectiveTier(b)
 	}
@@ -297,6 +300,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		}
 		if b.State == store.StateBroken {
 			return fmt.Errorf("binding %q is broken; rebind before sending", name)
+		}
+		if b.State == store.StatePaused {
+			return fmt.Errorf("binding %q is paused; relay bind --resume --name %s first", name, name)
 		}
 		if b.Round > b.RoundCap {
 			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
