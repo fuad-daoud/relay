@@ -252,10 +252,11 @@ inside every pane it manages, so it has to be run from inside one.
   124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
   winner's name first. A pane planner that does not want the report typed afterwards
   runs `relay wait N && relay pull N`.
-- `relay ui [--interval D]` — interactive reader: at 110 columns or more, a rail
+- `relay ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
-  flow.
+  flow. `--dashboard` opens on the dashboard screen (`d` reaches it from the
+  fleet).
 - `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
@@ -358,6 +359,49 @@ the daemon renders the harness's session record
 moment the round was sent, so the tab scrolls, follows the tail and is
 styled exactly as a headless builder's. opencode and agy pane builders
 keep the live screen capture (#184).
+
+### `relay ui`'s dashboard: every round, filtered and regrouped
+
+`d` opens a second screen: every round relay's database has recorded, live or
+archived, as a grid. It is the same data `relay history` reads, with the query
+language as a filter line and the sums of `--by` above the rows. `d` or `esc`
+returns to the fleet with the query intact; `relay ui --dashboard` opens here
+directly.
+
+The first line is the applied query and the regroup axis; under it a tiles
+line — `rounds 57   cost $14.20 (3 unknown)   tokens 41.2M   halted 4 · exited
+2   median 23m   bindings 12 · builders 3` — then the grid:
+
+```
+started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration
+2026-09-20 22:01  persist       r5   claude/anthropic/sonnet               reported       +1       clean   pass   1.2M     $0.42    27m
+```
+
+`/` opens the query line, prefilled with the current query; `enter` applies it,
+`esc` cancels, and a parse error is shown under the input with the previous
+query kept. The grammar is exactly `relay history -q`'s:
+
+```
+/ harness:agy outcome:halted since:30d
+/ auth cost>1            (then b to regroup by builder)
+/ by:day since:14d
+```
+
+`b` regroups by the next axis (binding, repo, feature, builder, harness,
+provider, model, day, outcome); groups carry rounds, reported, halted, commits,
+tokens, cost and the last round's date, and `enter` on a group expands its
+rounds beneath it. `s` cycles the sort column for the level under the cursor
+(rounds: started, cost, tokens, duration, commits; groups: cost, rounds,
+halted, last) and `S` flips the direction; `r` re-queries now, and the fleet's
+tick re-queries at most every 10 seconds while the screen is up. `enter` on a
+round row opens the fleet pointed at that binding and round -- scope `all` is
+turned on first when the binding is not live. The query text and the sort
+column are remembered in `ui.json`.
+
+Below 140 columns the grid drops `gate`, below 120 `tree` and `commits`, below
+100 `tokens`; `cost` always stays. A round's cost reads `unknown` as `?`, a
+round with no usage at all as `-`; archived rounds are dim; the same filter
+grammar is documented in full under `relay history`.
 
 ### `relay ui`'s `all` scope: every binding, not just today's
 

@@ -18,6 +18,7 @@ type screen int
 const (
 	screenList screen = iota
 	screenDetail
+	screenDash
 )
 
 type tab int

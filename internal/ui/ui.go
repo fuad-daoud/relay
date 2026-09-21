@@ -35,6 +35,12 @@ type Options struct {
 	// not a terminal -- not a suffix. "" keeps the planner's own text,
 	// which names `relay status` and `relay watch`.
 	PipeHint string
+
+	// Dashboard starts the reader on the dashboard screen instead of the
+	// fleet (`relay ui --dashboard`), once the first statusMsg has given
+	// the rail rows to jump to
+	// (docs/specs/2026-09-21-dashboard-design.md §6).
+	Dashboard bool
 }
 
 const minInterval = 500 * time.Millisecond

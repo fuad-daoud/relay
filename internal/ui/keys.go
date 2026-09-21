@@ -33,6 +33,10 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusInFlight = true
 		cmds = append(cmds, fetchStatus(m.ctx, m.src, m.scope, m.opts.Here))
 		return m, tea.Batch(cmds...)
+	case "d":
+		// The dashboard screen (§4): enter, and leave again the same key
+		// while it is up (updateDashKeys routes that).
+		return m.enterDash()
 	case "<", ">":
 		if m.compact {
 			return m, nil

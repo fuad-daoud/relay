@@ -1542,6 +1542,7 @@ func cmdWait(args []string) error {
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	interval := fs.Duration("interval", 0, "refresh interval")
+	dashboard := fs.Bool("dashboard", false, "start on the dashboard screen")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1577,6 +1578,7 @@ func cmdUI(args []string) error {
 		PrefsPath: filepath.Join(root, "ui.json"),
 		Here:      here,
 		Notice:    notice,
+		Dashboard: *dashboard,
 	})
 }
 

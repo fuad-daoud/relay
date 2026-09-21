@@ -77,6 +77,34 @@ func TestPrefsScopeEmptyIsLive(t *testing.T) {
 	}
 }
 
+func TestPrefsDashboardRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ui.json")
+	want := prefs{
+		Sort:          "attention",
+		RailCols:      railDefault,
+		Dashboard:     "harness:agy since:30d",
+		DashboardSort: "cost",
+	}
+	if msg := savePrefs(path, want)(); msg != (prefsSavedMsg{}) {
+		t.Errorf("save returned %v", msg)
+	}
+	if got := loadPrefs(path); got != want {
+		t.Errorf("round trip: %+v, want %+v", got, want)
+	}
+
+	m := Model{}
+	m = m.applyPrefs(want)
+	if m.dashQuery != "harness:agy since:30d" {
+		t.Errorf("applyPrefs: dashQuery = %q", m.dashQuery)
+	}
+	if m.dashSort != "cost" {
+		t.Errorf("applyPrefs: dashSort = %q", m.dashSort)
+	}
+	if p := m.prefs(); p.Dashboard != want.Dashboard || p.DashboardSort != want.DashboardSort {
+		t.Errorf("prefs() = %+v, want the dashboard fields kept", p)
+	}
+}
+
 func TestChangesSaveWhenAPathIsSet(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")

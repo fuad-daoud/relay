@@ -18,6 +18,11 @@ type prefs struct {
 	// Scope is the rail's breadth (#172): "all" or "" -- "" reads as
 	// live, so a prefs file written before this round keeps opening live.
 	Scope string `json:"scope,omitempty"`
+	// Dashboard is the dashboard screen's applied query text and its sort
+	// column (docs/specs/2026-09-21-dashboard-design.md §6). Empty means
+	// the defaults: every round, newest first.
+	Dashboard     string `json:"dashboard,omitempty"`
+	DashboardSort string `json:"dashboard_sort,omitempty"`
 }
 
 type prefsSavedMsg struct{}
@@ -79,7 +84,8 @@ func (m Model) prefs() prefs {
 	if m.scope == scopeAll {
 		scope = "all"
 	}
-	return prefs{Sort: sort, Compact: m.compact, RailCols: m.railWidthStored(), Scope: scope}
+	return prefs{Sort: sort, Compact: m.compact, RailCols: m.railWidthStored(), Scope: scope,
+		Dashboard: m.dashQuery, DashboardSort: m.dashSort}
 }
 
 // applyPrefs sets the model from p; zero values mean the defaults.
@@ -94,6 +100,8 @@ func (m Model) applyPrefs(p prefs) Model {
 	if p.Scope == "all" {
 		m.scope = scopeAll
 	}
+	m.dashQuery = p.Dashboard
+	m.dashSort = p.DashboardSort
 	return m
 }
 
