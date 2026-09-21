@@ -488,7 +488,10 @@ What is different from a pane builder:
 - **Exit without a report** is logged as an `exit` entry (exit code and the
   log's last 20 lines) and the daemon switches builders, up to `max_switches`
   (a switch caused by a rate-limit gate is not counted), exactly as a
-  vanished pane does; then `NEEDS YOU`.
+  vanished pane does; then `NEEDS YOU`. The one exception is a builder whose
+  supervisor died with the daemon itself (a systemd restart, `kill -9` of
+  the process tree): relay tells that apart from a real builder death and
+  relaunches the same candidate on the same round instead, uncounted.
 - **`done` and `unbind` stop the process** if a round is running. A stop that
   fails is reported, and the binding is still done or unbound. The round budget
   never kills anything, for headless as for panes: it flags `NEEDS YOU` and
@@ -1125,6 +1128,13 @@ stderr when the candidate is gated and **proceed** -- you named it. With
 the token omitted they skip gated candidates and refuse when nothing
 ungated serves the role.
 
+A candidate whose harness role files are missing on disk is gated the same
+way (`roles missing` in `relay policy`, `relay candidates`, `relay
+doctor`), fixed with `relay agent install --kind <kind>` -- except an
+explicit `--builder` pick of it is **refused**, not allowed to proceed,
+because it cannot succeed. `relay serve` logs each configured harness
+kind's role coverage once at startup.
+
 #### Mid-round switching
 
 A builder relay spawned can be replaced by the daemon while a round is
@@ -1154,7 +1164,9 @@ switched builder (rate-limited: 5h window): picked opencode/openrouter/z-ai/glm-
 serves `builder`, the binding goes `NEEDS YOU` with the reason, and
 recovers on its own once `relay available` clears a provider. A
 failed replacement spawn counts as a switch and the daemon walks to
-the next candidate.
+the next candidate. The halt always states its reason, even on a round
+that has already notified once; a `relay send` re-send resets the
+round's switch budget, since the human asked for another attempt.
 
 Adopted builders (bound by pane id) are never switched; a builder
 gone between rounds is `BROKEN` as before -- `relay bind --resume`.
