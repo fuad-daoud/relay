@@ -360,6 +360,95 @@ func TestQueryHereUnresolvedIsInvalid(t *testing.T) {
 	}
 }
 
+// TestQueryRowCarriesTokensDurationAndMode pins the RoundRow columns the
+// dashboard's sums need: the four token counters, the duration computed in
+// Go from started_at and closed_at, report_outcome, the round's
+// builder_mode, and the binding's server. A round with no closed_at has a
+// nil DurationMS.
+func TestQueryRowCarriesTokensDurationAndMode(t *testing.T) {
+	d := openTestDB(t)
+
+	server := "contabo"
+	bindingID, err := d.UpsertBinding(Binding{
+		Name: "remote-run", CWD: "/home/x/remote", BuilderMode: "headless",
+		Server: &server, CreatedAt: time.Date(2026, 9, 12, 9, 0, 0, 0, time.UTC),
+		IngestSource: IngestLive,
+	})
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+
+	started := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	closed := started.Add(27 * time.Minute)
+	in, cache, write, out := int64(1000), int64(2000), int64(3000), int64(4000)
+	mode, report := "remote", "done"
+	if _, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 1, StartedAt: started, ClosedAt: &closed,
+		Outcome: OutcomeReported, InTokens: &in, CacheTokens: &cache,
+		WriteTokens: &write, OutTokens: &out, BuilderMode: &mode, ReportOutcome: &report,
+	}); err != nil {
+		t.Fatalf("UpsertRound 1: %v", err)
+	}
+	if _, err := d.UpsertRound(Round{
+		BindingID: bindingID, Number: 2, StartedAt: started.Add(24 * time.Hour),
+		Outcome: OutcomeOpen,
+	}); err != nil {
+		t.Fatalf("UpsertRound 2: %v", err)
+	}
+
+	rows, err := d.Query(Filter{Newest: false})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+
+	got := rows[0]
+	if got.Number != 1 {
+		t.Fatalf("rows[0].Number = %d, want 1 (oldest first)", got.Number)
+	}
+	for _, c := range []struct {
+		name string
+		got  *int64
+		want int64
+	}{
+		{"InTokens", got.InTokens, 1000},
+		{"CacheTokens", got.CacheTokens, 2000},
+		{"WriteTokens", got.WriteTokens, 3000},
+		{"OutTokens", got.OutTokens, 4000},
+		{"DurationMS", got.DurationMS, 27 * 60 * 1000},
+	} {
+		switch {
+		case c.got == nil:
+			t.Errorf("%s = nil, want %d", c.name, c.want)
+		case *c.got != c.want:
+			t.Errorf("%s = %d, want %d", c.name, *c.got, c.want)
+		}
+	}
+	if got.ReportOutcome == nil || *got.ReportOutcome != "done" {
+		t.Errorf("ReportOutcome = %v, want done", got.ReportOutcome)
+	}
+	if got.BuilderMode == nil || *got.BuilderMode != "remote" {
+		t.Errorf("BuilderMode = %v, want remote", got.BuilderMode)
+	}
+	if got.Server == nil || *got.Server != "contabo" {
+		t.Errorf("Server = %v, want contabo", got.Server)
+	}
+
+	open := rows[1]
+	if open.Number != 2 {
+		t.Fatalf("rows[1].Number = %d, want 2", open.Number)
+	}
+	if open.ClosedAt != nil || open.DurationMS != nil {
+		t.Errorf("open round: ClosedAt = %v, DurationMS = %v; want both nil", open.ClosedAt, open.DurationMS)
+	}
+	if open.InTokens != nil || open.ReportOutcome != nil || open.BuilderMode != nil {
+		t.Errorf("open round: InTokens = %v, ReportOutcome = %v, BuilderMode = %v; want all nil",
+			open.InTokens, open.ReportOutcome, open.BuilderMode)
+	}
+}
+
 func TestBindingsNewestActivityFirst(t *testing.T) {
 	s := seedDB(t)
 	got, err := s.d.Bindings(Filter{})

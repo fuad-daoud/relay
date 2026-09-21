@@ -91,6 +91,8 @@ func queryRounds(ctx context.Context, q queryer, f Filter) ([]RoundRow, error) {
 			round.number, round.started_at, round.closed_at, round.outcome,
 			round.builder_candidate, round.builder_harness, round.builder_provider, round.builder_model,
 			round.commits, round.tree, round.gate_result, round.cost_usd, round.cost_basis,
+			round.in_tokens, round.cache_tokens, round.write_tokens, round.out_tokens,
+			round.report_outcome, round.builder_mode, binding.server,
 			binding.archived_at
 		FROM round
 		JOIN binding ON binding.id = round.binding_id
@@ -138,12 +140,17 @@ func scanRoundRow(rows *sql.Rows) (RoundRow, error) {
 	var tree, gateResult sql.NullString
 	var costUSD sql.NullFloat64
 	var costBasis sql.NullString
+	var inTokens, cacheTokens, writeTokens, outTokens sql.NullInt64
+	var reportOutcome, builderMode, server sql.NullString
 	var archivedAt sql.NullString
 
 	if err := rows.Scan(&row.BindingID, &row.BindingName, &origin, &commonDir, &feature,
 		&row.Number, &startedAt, &closedAt, &row.Outcome,
 		&candidate, &harness, &provider, &model,
-		&commits, &tree, &gateResult, &costUSD, &costBasis, &archivedAt); err != nil {
+		&commits, &tree, &gateResult, &costUSD, &costBasis,
+		&inTokens, &cacheTokens, &writeTokens, &outTokens,
+		&reportOutcome, &builderMode, &server,
+		&archivedAt); err != nil {
 		return RoundRow{}, fmt.Errorf("scan: %w", err)
 	}
 
@@ -171,6 +178,10 @@ func scanRoundRow(rows *sql.Rows) (RoundRow, error) {
 			return RoundRow{}, fmt.Errorf("parse closed_at: %w", err)
 		}
 		row.ClosedAt = &ct
+	}
+	if row.ClosedAt != nil {
+		ms := row.ClosedAt.Sub(row.StartedAt).Milliseconds()
+		row.DurationMS = &ms
 	}
 	if candidate.Valid {
 		v := candidate.String
@@ -207,6 +218,34 @@ func scanRoundRow(rows *sql.Rows) (RoundRow, error) {
 	if costBasis.Valid {
 		v := costBasis.String
 		row.CostBasis = &v
+	}
+	if inTokens.Valid {
+		v := inTokens.Int64
+		row.InTokens = &v
+	}
+	if cacheTokens.Valid {
+		v := cacheTokens.Int64
+		row.CacheTokens = &v
+	}
+	if writeTokens.Valid {
+		v := writeTokens.Int64
+		row.WriteTokens = &v
+	}
+	if outTokens.Valid {
+		v := outTokens.Int64
+		row.OutTokens = &v
+	}
+	if reportOutcome.Valid {
+		v := reportOutcome.String
+		row.ReportOutcome = &v
+	}
+	if builderMode.Valid {
+		v := builderMode.String
+		row.BuilderMode = &v
+	}
+	if server.Valid {
+		v := server.String
+		row.Server = &v
 	}
 	if archivedAt.Valid {
 		row.Archived = true

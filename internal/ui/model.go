@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/ui/dash"
 )
 
 type Model struct {
@@ -33,6 +34,16 @@ type Model struct {
 
 	list   listModel
 	detail detailModel
+
+	// dash is the dashboard screen (§6 of the dashboard spec), a model of
+	// its own that the fleet hosts. dashSet is false until it is built,
+	// which needs the database the `d` key and --dashboard check for.
+	dash    dash.Model
+	dashSet bool
+	// dashQuery and dashSort are the screen's persisted prefs, saved when
+	// the screen changes them (the same path Scope takes).
+	dashQuery string
+	dashSort  string
 
 	// statusLoaded is false until the first successful statusMsg. It separates
 	// "no bindings" -- a fact relay.Status returned -- from "not yet asked" and
@@ -354,6 +365,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		m.notice = ""
+		if m.screen == screenDash {
+			return m.updateDashKeys(msg)
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -372,6 +386,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.vp.Height = m.viewportHeight()
 		m.fillViewport()
 		m.list.top = m.railTop()
+		m.dash.SetSize(msg.Width, msg.Height)
 		if m.layout() == layoutSplit {
 			if rows := m.railRows(); len(rows) > 0 {
 				return m.pointAtRow(rows[m.list.cursor])
@@ -390,6 +405,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.tabInFlight {
 			if c := m.visibleTabFetch(); c != nil {
 				m.tabInFlight = true
+				cmds = append(cmds, c)
+			}
+		}
+
+		// The dashboard re-queries on the same tick, at most every 10s
+		// and only while it is the visible screen (§6).
+		if m.screen == screenDash && m.dash.ShouldRefresh(time.Time(msg)) {
+			if c := m.dash.Refresh(); c != nil {
 				cmds = append(cmds, c)
 			}
 		}
@@ -434,7 +457,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m, cmd = m.maybeInvalidate()
 		cmds = append(cmds, cmd)
+
+		// --dashboard starts here once the rail has rows to jump to (§4).
+		if m.opts.Dashboard && !m.dashSet {
+			var dashCmd tea.Cmd
+			m, dashCmd = m.enterDash()
+			cmds = append(cmds, dashCmd)
+		}
 		return m, tea.Batch(cmds...)
+
+	case dash.RowsMsg, dash.ErrMsg:
+		if !m.dashSet {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.dash, cmd = m.dash.Update(msg)
+		return m, cmd
+
+	case dash.JumpMsg:
+		return m.jumpFromDash(msg)
 
 	case tabMsg:
 		m.tabInFlight = false
@@ -467,12 +508,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Anything else while the dashboard is up -- the editor's cursor blink,
+	// a paste -- belongs to the screen (§4).
+	if m.screen == screenDash {
+		var cmd tea.Cmd
+		m.dash, cmd = m.dash.Update(msg)
+		return m, cmd
+	}
+
 	return m, nil
 }
 
 func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
+	}
+	if m.screen == screenDash {
+		// The dashboard owns the whole screen, including its own header
+		// line; the host's sticky notice rides along on its tiles line.
+		m.dash.Notice = m.notice
+		return m.dash.View()
 	}
 	if m.layout() == layoutSplit {
 		return m.splitView()
@@ -483,6 +538,150 @@ func (m Model) View() string {
 	default:
 		return m.listView()
 	}
+}
+
+// enterDash opens the dashboard screen (§4). Without a database it is
+// refused with the same notice `a` shows and the fleet screen stays; a
+// database builds the screen once and starts its first fetch, and a later
+// re-entry keeps what the screen already has.
+func (m Model) enterDash() (Model, tea.Cmd) {
+	if m.src.Base().DB == nil {
+		m.notice = fmt.Sprintf("no database: %v", relay.ErrNoDatabase)
+		return m, nil
+	}
+	m.screen = screenDash
+	first := !m.dashSet
+	if first {
+		m.dash = dash.New(m.src.Base().DB, time.Local, m.now, m.dashQuery, m.dashSort)
+		m.dash.SetStyles(dashStyles())
+		m.dashSet = true
+	}
+	m.dash.SetSize(m.width, m.height)
+	if !first {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m, cmd = m.saveDash()
+	return m, tea.Batch(m.dash.Init(), cmd)
+}
+
+// updateDashKeys routes a key while the dashboard is up (§4): d and esc
+// leave the screen when the / editor is closed, and every other key is the
+// dashboard's own. ctrl+c still quits.
+func (m Model) updateDashKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.dash.Editing() {
+		switch msg.String() {
+		case "d", "esc":
+			m.screen = screenList
+			saved, cmd := m.saveDash()
+			return saved, cmd
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+	}
+	var cmd tea.Cmd
+	m.dash, cmd = m.dash.Update(msg)
+	saved, save := m.saveDash()
+	return saved, tea.Batch(cmd, save)
+}
+
+// saveDash persists the dashboard's query and sort when they changed, on
+// the same save path Scope uses.
+func (m Model) saveDash() (Model, tea.Cmd) {
+	q, s := m.dash.QueryText(), m.dash.SortKey()
+	if q == m.dashQuery && s == m.dashSort {
+		return m, nil
+	}
+	m.dashQuery, m.dashSort = q, s
+	return m, m.save()
+}
+
+// dashStyles is the dashboard's slice of the ui's palette, so the screen
+// never duplicates a colour (§5).
+func dashStyles() dash.Styles {
+	return dash.Styles{
+		Fg:        fgStyle,
+		Dim:       dimStyle,
+		Faint:     faintStyle,
+		Error:     errorStyle,
+		Empty:     emptyStyle,
+		Selected:  selectedBg,
+		Archived:  archivedStyle,
+		Attention: stateNeedsYouStyle,
+		Live:      stateActiveStyle,
+	}
+}
+
+// jumpFromDash is JumpMsg's handler (§4): enter on a dashboard round row
+// comes back to the fleet pointed at that binding and round. A binding
+// that is not live turns scope all on first, the same path `a` takes; a
+// name in neither the fleet nor the database is a notice, no screen change.
+func (m Model) jumpFromDash(msg dash.JumpMsg) (tea.Model, tea.Cmd) {
+	live := row(m.report, msg.BindingName)
+	var hist *relay.HistoryBinding
+	for i := range m.dbRows {
+		if m.dbRows[i].Name == msg.BindingName {
+			hist = &m.dbRows[i]
+			break
+		}
+	}
+	if live == nil && hist == nil {
+		m.notice = fmt.Sprintf("%s is not in the fleet or the database", msg.BindingName)
+		return m, nil
+	}
+
+	var cmds []tea.Cmd
+	if live == nil && m.scope != scopeAll {
+		// The database's rows are in hand only in scope all: turn it on
+		// and refresh, exactly as `a` does.
+		m.scope = scopeAll
+		cmds = append(cmds, m.save())
+		if !m.statusInFlight {
+			m.statusInFlight = true
+			cmds = append(cmds, fetchStatus(m.ctx, m.src, m.scope, m.opts.Here))
+		}
+	}
+
+	rows := m.railRows()
+	idx := -1
+	for i, r := range rows {
+		if r.name() == msg.BindingName {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		m.notice = fmt.Sprintf("%s is not in the fleet or the database", msg.BindingName)
+		return m, nil
+	}
+	m.list.cursor = idx
+	m.list.sticky = msg.BindingName
+	m.list.top = m.railTop()
+
+	var cmd tea.Cmd
+	m, cmd = m.pointAtRow(rows[idx])
+	cmds = append(cmds, cmd)
+
+	// The pick wins over the row's own newest round: re-point, drop every
+	// cached tab and fetch the active one for it. A reply for the round
+	// pointAtRow fetched is discarded by tabMsg's round check.
+	m.detail.round = msg.Round
+	for t := tab(0); t < tabCount; t++ {
+		m.detail.cache[t] = tabContent{}
+		m.detail.scroll[t] = 0
+	}
+	m.fillViewport()
+	if c := m.visibleTabFetch(); c != nil {
+		m.tabInFlight = true
+		cmds = append(cmds, c)
+	}
+
+	if m.layout() == layoutSplit {
+		m.screen = screenList
+	} else {
+		m.screen = screenDetail
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // splitView is the one screen: header, error block, rail │ pane, footer.

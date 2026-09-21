@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/histq"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -48,6 +49,37 @@ func TestParseSince(t *testing.T) {
 		if _, err := ParseSince(bad, tabNow); !errors.Is(err, ErrBadSince) {
 			t.Errorf("%q: err = %v, want ErrBadSince", bad, err)
 		}
+	}
+}
+
+// TestParseSinceMovedKeepsRelayWrapper pins that relay.ParseSince still
+// exists after its body moved to internal/histq, that the two agree, and
+// that ErrBadSince is the same sentinel histq returns, so a caller's
+// errors.Is(err, relay.ErrBadSince) keeps working.
+func TestParseSinceMovedKeepsRelayWrapper(t *testing.T) {
+	for _, s := range []string{"", "24h", "7d", "2026-09-01"} {
+		got, err := ParseSince(s, tabNow)
+		if err != nil {
+			t.Fatalf("relay.ParseSince(%q): %v", s, err)
+		}
+		want, err := histq.ParseSince(s, tabNow)
+		if err != nil {
+			t.Fatalf("histq.ParseSince(%q): %v", s, err)
+		}
+		if !got.Equal(want) {
+			t.Errorf("relay.ParseSince(%q) = %v, want %v (histq.ParseSince)", s, got, want)
+		}
+	}
+
+	_, err := ParseSince("yesterday", tabNow)
+	if !errors.Is(err, ErrBadSince) {
+		t.Errorf("relay.ParseSince error = %v, want ErrBadSince", err)
+	}
+	if !errors.Is(err, histq.ErrBadSince) {
+		t.Errorf("relay.ParseSince error = %v, want histq.ErrBadSince", err)
+	}
+	if ErrBadSince != histq.ErrBadSince {
+		t.Error("relay.ErrBadSince is not histq.ErrBadSince; errors.Is across the move would break")
 	}
 }
 

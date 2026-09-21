@@ -12,9 +12,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relay/internal/ui/dash"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
@@ -129,6 +131,63 @@ func gatedGates() []ledger.Gate {
 	return []ledger.Gate{
 		{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)},
 	}
+}
+
+// dashRows is the dashboard golden's fixed grid: three rounds across two
+// bindings and two builders, with the columns the grid and the tiles read.
+func dashRows() []db.RoundRow {
+	s := func(v string) *string { return &v }
+	i := func(v int) *int { return &v }
+	i64 := func(v int64) *int64 { return &v }
+	f := func(v float64) *float64 { return &v }
+	return []db.RoundRow{
+		{
+			BindingID: "b1", BindingName: "persist",
+			Number: 5, StartedAt: railNow.Add(-2 * time.Hour), Outcome: db.OutcomeReported,
+			BuilderCandidate: s("claude/anthropic/sonnet"), Commits: i(1), Tree: s("clean"),
+			GateResult: s("pass"), InTokens: i64(1_000_000), OutTokens: i64(200_000),
+			CostUSD: f(0.42), CostBasis: s("measured"), DurationMS: i64(27 * 60_000),
+		},
+		{
+			BindingID: "b1", BindingName: "persist",
+			Number: 4, StartedAt: railNow.Add(-26 * time.Hour), Outcome: db.OutcomeHalted,
+			BuilderCandidate: s("claude/anthropic/sonnet"), Commits: i(0), Tree: s("dirty"),
+			GateResult: s("fail"), InTokens: i64(400_000), CacheTokens: i64(100_000),
+			CostUSD: f(1.10), CostBasis: s("measured"), DurationMS: i64(12 * 60_000),
+		},
+		{
+			BindingID: "b2", BindingName: "api",
+			Number: 2, StartedAt: railNow.Add(-50 * time.Hour), Outcome: db.OutcomeReported,
+			BuilderCandidate: s("agy/antigravity/claude-sonnet-4-6"), Commits: i(3), Tree: s("clean"),
+			GateResult: s("pass"), InTokens: i64(2_000_000),
+			CostUSD: f(9.10), CostBasis: s("unknown"),
+		},
+	}
+}
+
+// goldenDashModel is goldenModel with a database behind the source, pressing
+// d to reach the dashboard and injecting its rowsMsg, as the host's loop
+// would after EnterDashboard's fetch.
+func goldenDashModel(t *testing.T, width, height int, rep relay.Report) Model {
+	t.Helper()
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh, DB: d}}, Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, _ = m.Update(statusMsg{report: rep})
+	m = res.(Model)
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = res.(Model)
+	res, _ = m.Update(dash.RowsMsg{Rows: dashRows(), At: railNow})
+	return res.(Model)
 }
 
 // feedTerminal switches the pane to the terminal tab and delivers a
@@ -246,6 +305,13 @@ func TestGoldenViews(t *testing.T) {
 			build: func(t *testing.T) Model {
 				rows := allStatesRows()[:2]
 				return goldenAllScopeModel(t, 80, 30, relay.Report{Bindings: rows}, histRows())
+			},
+		},
+		{
+			// The dashboard through the host: fleet model, d, rowsMsg.
+			name: "split-dash", width: 160, height: 40,
+			build: func(t *testing.T) Model {
+				return goldenDashModel(t, 160, 40, relay.Report{Bindings: allStatesRows()})
 			},
 		},
 		{
