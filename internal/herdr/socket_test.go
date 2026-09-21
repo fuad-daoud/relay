@@ -6,18 +6,36 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// startFakeHerdrServer listens on a temp-dir unix socket and runs handle
+// shortTempDir returns a fresh temp directory whose path is much shorter
+// than t.TempDir()'s (which nests under the test name and can push a unix
+// socket path past the 104-byte sun_path limit on macOS). It honours
+// $TMPDIR like t.TempDir() does, and is cleaned up the same way.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "hs")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// startFakeHerdrServer listens on a short-path unix socket and runs handle
 // against the first connection it accepts, on its own goroutine. It returns
 // the socket path.
 func startFakeHerdrServer(t *testing.T, handle func(conn net.Conn)) string {
 	t.Helper()
-	sockPath := filepath.Join(t.TempDir(), "herdr.sock")
+	sockPath := filepath.Join(shortTempDir(t), "s.sock")
+	if len(sockPath) >= 100 {
+		t.Fatalf("socket path %q is %d bytes, want < 100 (macOS sun_path is 104 bytes)", sockPath, len(sockPath))
+	}
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
