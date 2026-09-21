@@ -135,6 +135,24 @@ func TestStopRefusesToGuessTheBinding(t *testing.T) {
 	}
 }
 
+// TestLandRefusesToGuessTheBinding pins #136: land pushes, so a bare `relay
+// land` must refuse rather than act on whichever binding owns the cwd. The
+// check runs before any runtime is built, so this test touches neither the
+// state directory nor herdr, and a CI runner with no herdr still fails on the
+// missing name, not on the environment.
+func TestLandRefusesToGuessTheBinding(t *testing.T) {
+	err := run([]string{"land"})
+	if err == nil {
+		t.Fatal("a bare relay land must be refused")
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("error must point at --name, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "usage: relay land") {
+		t.Fatalf("expected the usage line, got %v", err)
+	}
+}
+
 // TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
 // bad value, not an omission, so it exits 2. The check runs before any runtime
 // is built, so this touches neither the state directory nor herdr.

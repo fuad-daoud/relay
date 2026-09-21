@@ -383,6 +383,21 @@ type Binding struct {
 	Branch string `json:"branch,omitempty"`
 	Base   string `json:"base,omitempty"`
 
+	// BaseRef is the branch name add/fork cut the worktree's branch from --
+	// the branch the source repository had checked out at cut time (e.g.
+	// "main") -- and is what `relay land` rebases onto when --onto is not
+	// given (#136). "" for every binding written before the field existed,
+	// for a --cwd binding, for a --branch adoption, and for a detached HEAD
+	// in the source repo; land then requires an explicit --onto.
+	BaseRef string `json:"base_ref,omitempty"`
+
+	// LandedAt is when `relay land` last pushed this binding's branch, and
+	// LandedPR is the PR URL when it created one with --pr (#136). Status
+	// reads "landed" until the next Send clears both: a new round moves the
+	// branch again, so the old land says nothing about it.
+	LandedAt time.Time `json:"landed_at,omitempty"`
+	LandedPR string    `json:"landed_pr,omitempty"`
+
 	// ExistingBranch is true when add --branch adopted a branch relay did not
 	// create. Informational: every teardown path already leaves branches
 	// alone; this records that the branch predates the binding.

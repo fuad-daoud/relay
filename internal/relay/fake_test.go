@@ -87,6 +87,29 @@ type deleteBranchCall struct {
 	Dir, Branch string
 }
 
+type currentBranchCall struct{ Dir string }
+
+type fetchCall struct {
+	Dir, Remote, Ref string
+}
+
+type rebaseCall struct {
+	Dir, Onto string
+}
+
+type mergeCall struct {
+	Dir, Ref string
+}
+
+type pushCall struct {
+	Dir, Remote, Branch string
+	ForceWithLease      bool
+}
+
+type remoteBranchExistsCall struct {
+	Dir, Remote, Branch string
+}
+
 // fakeGit is the in-memory Git used by tests in this package.
 type fakeGit struct {
 	snapshotTreeID  string
@@ -187,6 +210,32 @@ type fakeGit struct {
 	treeFingerprints     []string
 	treeFingerprintErr   error
 	treeFingerprintCalls int
+
+	// The land primitives (#136). rebaseConflicts/mergeConflicts are scripted
+	// as the conflict set: setting either makes the corresponding call return
+	// those paths with git.ErrMergeConflict. remoteBranchExists is what
+	// RemoteBranchExists reports, which decides whether Push gets the lease.
+	currentBranchResult string
+	currentBranchErr    error
+	currentBranchCalls  []currentBranchCall
+
+	fetchCalls []fetchCall
+	fetchErr   error
+
+	rebaseCalls     []rebaseCall
+	rebaseConflicts []string
+	rebaseErr       error
+
+	mergeCalls     []mergeCall
+	mergeConflicts []string
+	mergeErr       error
+
+	pushCalls []pushCall
+	pushErr   error
+
+	remoteBranchExists      bool
+	remoteBranchExistsErr   error
+	remoteBranchExistsCalls []remoteBranchExistsCall
 }
 
 type repoFactsCall struct{ Dir string }
@@ -410,6 +459,57 @@ func (f *fakeGit) TreeFingerprint(ctx context.Context, dir string) (string, erro
 		i = len(f.treeFingerprints) - 1
 	}
 	return f.treeFingerprints[i], nil
+}
+
+func (f *fakeGit) CurrentBranch(ctx context.Context, dir string) (string, error) {
+	f.currentBranchCalls = append(f.currentBranchCalls, currentBranchCall{Dir: dir})
+	if f.currentBranchErr != nil {
+		return "", f.currentBranchErr
+	}
+	return f.currentBranchResult, nil
+}
+
+func (f *fakeGit) Fetch(ctx context.Context, dir, remote, ref string) error {
+	f.fetchCalls = append(f.fetchCalls, fetchCall{Dir: dir, Remote: remote, Ref: ref})
+	return f.fetchErr
+}
+
+func (f *fakeGit) Rebase(ctx context.Context, dir, onto string) ([]string, error) {
+	f.rebaseCalls = append(f.rebaseCalls, rebaseCall{Dir: dir, Onto: onto})
+	if f.rebaseErr != nil {
+		return nil, f.rebaseErr
+	}
+	if len(f.rebaseConflicts) > 0 {
+		return f.rebaseConflicts, git.ErrMergeConflict
+	}
+	return nil, nil
+}
+
+func (f *fakeGit) Merge(ctx context.Context, dir, ref string) ([]string, error) {
+	f.mergeCalls = append(f.mergeCalls, mergeCall{Dir: dir, Ref: ref})
+	if f.mergeErr != nil {
+		return nil, f.mergeErr
+	}
+	if len(f.mergeConflicts) > 0 {
+		return f.mergeConflicts, git.ErrMergeConflict
+	}
+	return nil, nil
+}
+
+func (f *fakeGit) Push(ctx context.Context, dir, remote, branch string, forceWithLease bool) error {
+	f.pushCalls = append(f.pushCalls, pushCall{
+		Dir: dir, Remote: remote, Branch: branch, ForceWithLease: forceWithLease,
+	})
+	return f.pushErr
+}
+
+func (f *fakeGit) RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error) {
+	f.remoteBranchExistsCalls = append(f.remoteBranchExistsCalls,
+		remoteBranchExistsCall{Dir: dir, Remote: remote, Branch: branch})
+	if f.remoteBranchExistsErr != nil {
+		return false, f.remoteBranchExistsErr
+	}
+	return f.remoteBranchExists, nil
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {

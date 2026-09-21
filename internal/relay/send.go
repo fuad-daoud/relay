@@ -454,6 +454,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// the builder is being asked to work again, not to wrap up.
 		b.StopRequestedAt = time.Time{}
 		b.StopGraceMS = 0
+		// A new round moves the branch again, so the last land no longer
+		// describes it (#136): status stops saying "landed" here.
+		b.LandedAt = time.Time{}
+		b.LandedPR = ""
 		b.Progress = nil
 		b.ExploringSince = time.Time{}
 		b.StaleSince = time.Time{}

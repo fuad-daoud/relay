@@ -79,6 +79,25 @@ type Git interface {
 	// (raw, unnormalised) and the main worktree's absolute .git directory --
 	// for the coming history database (#172; captureRepo is the caller).
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
+	// CurrentBranch names the branch dir has checked out, or "" when HEAD
+	// is detached. add/fork record it as a binding's BaseRef, the branch
+	// `relay land` rebases onto (#136).
+	CurrentBranch(ctx context.Context, dir string) (string, error)
+	// Fetch fetches ref from remote, so origin/<ref> resolves afterwards.
+	Fetch(ctx context.Context, dir, remote, ref string) error
+	// Rebase rewrites dir's branch onto onto. On a conflict it returns the
+	// unmerged paths and aborts the rebase, leaving the worktree as it was.
+	Rebase(ctx context.Context, dir, onto string) ([]string, error)
+	// Merge integrates ref into dir's branch without rewriting it (--merge's
+	// escape hatch). On a conflict it returns the unmerged paths and aborts
+	// the merge, leaving the worktree as it was.
+	Merge(ctx context.Context, dir, ref string) ([]string, error)
+	// Push pushes branch to remote, force-with-lease when the rebase rewrote
+	// a branch that already exists there.
+	Push(ctx context.Context, dir, remote, branch string, forceWithLease bool) error
+	// RemoteBranchExists reports whether remote already has branch, which
+	// decides whether a push needs the lease.
+	RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error)
 }
 
 // Runtime carries relay's dependencies explicitly, so every command and the

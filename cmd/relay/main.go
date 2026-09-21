@@ -70,6 +70,7 @@ Commands:
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
   stop      ask a builder to wrap up and close its round on its marker; kill only after the grace [--grace] [--now]
+  land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
@@ -276,6 +277,8 @@ func run(args []string) error {
 		return cmdPause(args[1:])
 	case "stop":
 		return cmdStop(args[1:])
+	case "land":
+		return cmdLand(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	case "doctor":
@@ -1934,6 +1937,71 @@ func cmdStop(args []string) error {
 
 	fmt.Println(relay.StopText(target, res))
 	return nil
+}
+
+// cmdLand integrates a binding's branch with its base and publishes it: it
+// rebases onto origin/<base> (or merges it in with --merge), runs the gate on
+// the rebased tree, pushes, and opens or prints the PR (#136). It never
+// merges a PR, never deletes a branch or a worktree, and is never triggered
+// by a marker -- a human types it.
+//
+// It takes the binding from --name or a positional and never from the current
+// directory: land pushes, so it must not guess.
+func cmdLand(args []string) error {
+	fs := flag.NewFlagSet("land", flag.ContinueOnError)
+	name := fs.String("name", "", "binding to land")
+	onto := fs.String("onto", "", "base ref to rebase onto; required when the binding recorded no base branch")
+	pr := fs.Bool("pr", false, "open the PR with gh pr create when gh is on PATH, else print the command")
+	noGate := fs.Bool("no-gate", false, "skip the binding's gate for this land")
+	force := fs.Bool("force", false, "land even though the round is still open")
+	merge := fs.Bool("merge", false, "merge origin/<base> instead of rebasing onto it")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay land <name> | --name <name> [--onto <ref>] [--pr] [--no-gate] [--force] [--merge]\n" +
+			"land rebases the binding's branch onto its base, runs the gate and pushes it; it must not guess which binding")
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	res, err := relay.Land(context.Background(), rt, target, relay.LandOptions{
+		Onto:   *onto,
+		PR:     *pr,
+		NoGate: *noGate,
+		Force:  *force,
+		Merge:  *merge,
+	})
+	if err != nil {
+		return landFailure(target, err)
+	}
+
+	fmt.Println(relay.LandText(res))
+	return nil
+}
+
+// landFailure prints land's error and maps it onto the documented exit codes
+// (#136): a dirty worktree or a failed gate is the human's to fix (2), a
+// conflict is a rebase they must resolve (3), and anything else is an
+// ordinary failure. The message is printed here because main exits silently
+// on an exitCodeErr -- the code is the whole answer only when stderr already
+// carries the reason.
+func landFailure(target string, err error) error {
+	switch {
+	case errors.Is(err, relay.ErrLandConflict):
+		fmt.Fprintf(os.Stderr, "relay: land %s: %v\n", target, err)
+		return exitCodeErr{code: 3}
+	case errors.Is(err, relay.ErrLandDirty), errors.Is(err, relay.ErrLandGate):
+		fmt.Fprintf(os.Stderr, "relay: land %s: %v\n", target, err)
+		return exitCodeErr{code: 2}
+	default:
+		return err
+	}
 }
 
 // explicitBinding takes the binding from --name or a single positional, and

@@ -156,6 +156,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		worktree       string
 		branch         string
 		base           string
+		baseRef        string
 		existingBranch bool
 	)
 
@@ -237,6 +238,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			return AddResult{}, err
 		}
 		worktree = cwd
+		// The branch the cut came from, for `relay land` (#136). A --cwd or
+		// --branch binding records none: nothing was cut, so there is no
+		// branch to rebase onto and land asks for --onto instead.
+		if ref, err := rt.Git.CurrentBranch(ctx, opts.Repo); err == nil {
+			baseRef = ref
+		}
 	}
 
 	rollback := func() {
@@ -291,6 +298,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Worktree:         worktree,
 		Branch:           branch,
 		Base:             base,
+		BaseRef:          baseRef,
 		ExistingBranch:   existingBranch,
 		Repo:             opts.Repo,
 		Tier:             string(tier),

@@ -71,6 +71,24 @@ func AnswerText(name string) string {
 	return fmt.Sprintf("answered %s's builder", name)
 }
 
+// LandText is what `relay land` says on success: what was landed and how far
+// it got, then the PR (or the exact command that would open one).
+func LandText(res LandResult) string {
+	how := "merged"
+	if res.Rebased {
+		how = "rebased"
+	}
+	line := fmt.Sprintf("landed %s -> %s (%s; gate %s; pushed)",
+		res.Branch, res.Base, how, res.GateResult)
+	switch {
+	case res.PRURL != "":
+		line += "\n  pr: " + res.PRURL
+	case res.PRCommand != "":
+		line += "\n  open the PR: " + res.PRCommand
+	}
+	return line
+}
+
 // StopText is what `relay stop` says on success: what happened to the round,
 // and for an abandoned pane, the one instruction the human needs.
 func StopText(name string, res StopResult) string {

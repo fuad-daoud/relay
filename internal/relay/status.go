@@ -115,6 +115,15 @@ type BindingStatus struct {
 	// Branch is the binding's worktree branch; "" for a --cwd binding,
 	// which has no worktree of its own.
 	Branch string `json:"branch,omitempty"`
+	// Landed is #136's land rule: "landed", or "landed pr <url>" when the
+	// last land created a PR. Empty until the binding is first landed, and
+	// cleared by the next Send.
+	Landed string `json:"landed,omitempty"`
+	// LandedAt and LandedPR are the same fact as data, for a statusline
+	// consumer that should not parse the rendered word. LandedAt is the zero
+	// time and LandedPR "" until the first land.
+	LandedAt time.Time `json:"landed_at,omitempty"`
+	LandedPR string    `json:"landed_pr,omitempty"`
 	// LastProgressAt is when one of the binding's progress signals last
 	// changed (#135): the later of the tree's and the output's last change.
 	// The zero time when the open round has not been sampled.
@@ -322,6 +331,17 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		Branch:           b.Branch,
 		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: absent,
 		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: absent,
+	}
+
+	// #136: a binding landed since its last send says so until the branch
+	// moves again.
+	if !b.LandedAt.IsZero() {
+		row.Landed = "landed"
+		if b.LandedPR != "" {
+			row.Landed = "landed pr " + b.LandedPR
+		}
+		row.LandedAt = b.LandedAt
+		row.LandedPR = b.LandedPR
 	}
 
 	// What relay acts on is what it shows (spec §7.4).
@@ -672,6 +692,11 @@ func RenderStatus(r Report) string {
 	for _, b := range r.Bindings {
 		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
 			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
+		// #136's land state sits on the round line, where the human reads
+		// what happened to the branch.
+		if b.Landed != "" {
+			fmt.Fprintf(&sb, "  %s", b.Landed)
+		}
 		// #135's stale age sits right after the state word, where a human
 		// scanning for what has been waiting the longest looks.
 		if b.Stale != "" {

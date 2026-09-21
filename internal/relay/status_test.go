@@ -2039,3 +2039,112 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	assertHasKey("stale", "stale")
 	assertHasKey("stale", "last_progress_at")
 }
+
+// TestStatusShowsLandedPR pins #136's status rule: a binding landed since
+// its last send reads "landed" -- "landed pr <url>" when a PR was created --
+// on the round line, and carries the same fact as landed_at/landed_pr for a
+// statusline consumer.
+func TestStatusShowsLandedPR(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.LandedAt = baseTime
+	b.LandedPR = "https://github.com/o/r/pull/7"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rep.Bindings))
+	}
+	row := rep.Bindings[0]
+	if want := "landed pr https://github.com/o/r/pull/7"; row.Landed != want {
+		t.Errorf("Landed = %q, want %q", row.Landed, want)
+	}
+	if !row.LandedAt.Equal(baseTime) || row.LandedPR != "https://github.com/o/r/pull/7" {
+		t.Errorf("LandedAt/LandedPR = %v/%q, want %v/%q",
+			row.LandedAt, row.LandedPR, baseTime, "https://github.com/o/r/pull/7")
+	}
+
+	// The rendered round line carries it, so the terminal never disagrees
+	// with the JSON.
+	if text := RenderStatus(rep); !strings.Contains(text, "landed pr https://github.com/o/r/pull/7") {
+		t.Errorf("RenderStatus did not print the land state:\n%s", text)
+	}
+
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{`"landed"`, `"landed_at"`, `"landed_pr"`} {
+		if !strings.Contains(string(raw), key) {
+			t.Errorf("status JSON is missing %s: %s", key, raw)
+		}
+	}
+}
+
+// TestStatusUnlandedRowSaysNothing: a binding that was never landed has an
+// empty "landed" word, so the round line is exactly what it always was.
+func TestStatusUnlandedRowSaysNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep.Bindings[0].Landed; got != "" {
+		t.Errorf("Landed = %q, want \"\" on a binding that was never landed", got)
+	}
+	if text := RenderStatus(rep); strings.Contains(text, "landed") {
+		t.Errorf("RenderStatus must not mention landing:\n%s", text)
+	}
+}
+
+// TestSendClearsLanded pins #136's clearing rule: a new round moves the
+// branch again, so the last land stops describing it.
+func TestSendClearsLanded(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.LandedAt = baseTime
+	b.LandedPR = "https://github.com/o/r/pull/7"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# again"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.LandedAt.IsZero() {
+		t.Errorf("LandedAt = %v, want zero after a new round", after.LandedAt)
+	}
+	if after.LandedPR != "" {
+		t.Errorf("LandedPR = %q, want \"\" after a new round", after.LandedPR)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if rep.Bindings[0].Landed != "" {
+		t.Errorf("status still says %q after a new round", rep.Bindings[0].Landed)
+	}
+}
