@@ -249,7 +249,8 @@ inside every pane it manages, so it has to be run from inside one.
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
   the binding is DONE or was unbound. 5: closed, but the builder's report says
   halted or blocked -- read it before sending again; stdout is the report path.
-  124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
+  6: the round has no plan entry -- it was never sent, so nothing is in flight;
+  stdout says so. 124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
   winner's name first. A pane planner that does not want the report typed afterwards
   runs `relay wait N && relay pull N`.
 - `relay ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
@@ -569,6 +570,12 @@ uncommitted changes on the server, they land on a side ref,
 `relay/<name>`; the report names it. If that fast-forward collides with a
 branch you have checked out locally, relay retries quietly next tick --
 check out something else, then `relay pull`.
+
+`relay send` also ships your repository's tags as data beside the bundle, and
+the server sets each one whose commit it already has, so a tagged server
+worktree can `git describe --tags`. Catch-up fetches the builder's own stream
+file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
+round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
 is add-only, never bound to an existing directory); `relay answer` ("remote

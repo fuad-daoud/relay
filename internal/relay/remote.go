@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -451,6 +452,12 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 }
 
 const unreachableGrace = 30 * time.Minute
+
+// checkedOutWarned records the bindings whose "checked out" hint catchUp has
+// already logged at Info in this process, so the hint does not repeat on every
+// SyncRemote (#253). Process-local on purpose: the daemon and `relay wait` are
+// separate processes and each says it once.
+var checkedOutWarned sync.Map // binding name -> struct{}
 
 func writeTempAndRename(dest string, r io.Reader) error {
 	dir := filepath.Dir(dest)
@@ -904,7 +911,11 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		}
 		if _, err := rt.Transport.Absorb(ctx, b.Repo, remote.ContentTypeGitBundle, rcBundle, refs); err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "checked out") {
-				slog.Info("checkout another branch, then relay pull", "binding", name, "branch", b.Branch)
+				if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
+					slog.Info("checkout another branch, then relay pull", "binding", name, "branch", b.Branch)
+				} else {
+					slog.Debug("still checked out", "binding", name, "branch", b.Branch)
+				}
 				return b, nil
 			}
 			b.RemoteAbsorbFailures++
@@ -913,6 +924,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 			}
 			return b, nil
 		}
+		checkedOutWarned.Delete(name)
 	}
 
 	// 3. b.Builder.LastKnown = view.ResultCommit; b.RemoteAbsorbFailures = 0
