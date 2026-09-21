@@ -76,6 +76,10 @@ func (f *fakeHerdr) ClosePane(_ context.Context, _ string) error {
 	return errors.New("ClosePane called")
 }
 
+func (f *fakeHerdr) Subscribe(_ context.Context, _ []string) (<-chan herdr.Event, error) {
+	return nil, herdr.ErrNoSocket
+}
+
 // testBinding is a bound, active binding whose builder herdr knows by name.
 func testBinding(name string) store.Binding {
 	return store.Binding{

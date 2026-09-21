@@ -73,3 +73,7 @@ func (f *fakeHerdr) ClosePane(_ context.Context, _ string) error {
 	f.t.Errorf("read-only violation: ClosePane called")
 	return errors.New("read-only violation: ClosePane called")
 }
+
+func (f *fakeHerdr) Subscribe(_ context.Context, _ []string) (<-chan herdr.Event, error) {
+	return nil, herdr.ErrNoSocket
+}

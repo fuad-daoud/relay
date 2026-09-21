@@ -2044,6 +2044,28 @@ it, so starting a second by hand next to the service is an error rather than
 two reconcilers racing. `relay daemon --check` exits 0 if a daemon is running
 and 1 if not, printing nothing.
 
+### Events vs polling
+
+`relay daemon` still polls herdr's binding-wide state every `--interval`, but
+on startup it also tries to open one subscription on herdr's socket
+(`$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`) covering every pane
+it has bound. A pane status change, exit or close pushed over that
+subscription wakes reconcile for that one binding immediately, instead of
+waiting up to `--interval` for the next poll to notice; the file tick still
+runs on schedule for everything else (drift, stale clocks, stall detection),
+just against the cached snapshot the events keep current rather than a fresh
+`herdr agent list` every time. A pane bound after startup (a fresh `relay
+bind`/`relay add`) is picked up automatically: the next tick notices it is
+missing from the subscription and resubscribes with the full pane list.
+
+When no socket is reachable -- no `HERDR_SOCKET_PATH` and no default socket,
+an older herdr that predates the events protocol, a permission error, or
+`relay serve`'s stub Herdr -- the daemon logs it once at startup and polls
+exactly as it always has; nothing else changes. If the stream drops after a
+successful subscription, the daemon falls back to polling immediately (the
+cache is not trusted once the stream is known to be gone) while it retries
+the subscription in the background with a doubling backoff, capped at 30s.
+
 ## Lifecycle hooks
 
 relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `$XDG_CONFIG_HOME/relay/hooks/<event_type>.d/` (default `~/.config/relay/hooks/<event_type>.d/`).

@@ -36,6 +36,12 @@ type Herdr interface {
 	Notify(ctx context.Context, title, body string, sound herdr.Sound) error
 	ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error
 	ClosePane(ctx context.Context, paneID string) error
+	// Subscribe opens herdr's socket event stream for paneIDs plus the three
+	// session-wide kinds (#146). It returns herdr.ErrNoSocket when no socket
+	// is reachable -- no HERDR_SOCKET_PATH and no default socket, an older
+	// herdr, a permission error, or a stub Herdr with no socket at all -- so
+	// the daemon can fall back to polling with a single errors.Is check.
+	Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error)
 }
 
 // Git is the slice of the git CLI relay needs. *git.Client satisfies it.

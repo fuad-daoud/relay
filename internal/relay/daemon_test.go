@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -637,4 +638,343 @@ func TestTickWithoutDBIsUnchanged(t *testing.T) {
 	if _, err := os.Stat(rt.Store.DBPath()); !os.IsNotExist(err) {
 		t.Errorf("relay.db stat = %v, want os.ErrNotExist (DB == nil must write nothing)", err)
 	}
+}
+
+// waitListCall drains one signal from a channel fed by fakeHerdr.onList,
+// which is the race-safe way these event-loop tests observe a ListAgents
+// call: fakeHerdr has no lock of its own, so reading its listCalls counter
+// directly from the test goroutine while Run's goroutine (or a reconnect
+// goroutine it spawned) may still be writing it would be a data race. The
+// channel receive is the synchronisation point instead, and it also gives a
+// happens-before edge for anything that goroutine did earlier in the same
+// call (e.g. appending to subscribeCalls before making the ListAgents call
+// that follows it in d.subscribe).
+func waitListCall(t *testing.T, ch <-chan struct{}, msg string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal(msg)
+	}
+}
+
+// waitForState busy-polls the store (itself lock-synchronised, unlike
+// fakeHerdr) until name reaches want or the deadline passes.
+func waitForState(t *testing.T, rt Runtime, name string, want store.State) store.Binding {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		b, err := rt.Store.Load(name)
+		if err != nil {
+			t.Fatalf("Load %s: %v", name, err)
+		}
+		if b.State == want {
+			return b
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("%s never reached state %s, last seen %s", name, want, b.State)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestDaemonEventWakesOneBinding guards the whole point of #146: a socket
+// status event reconciles exactly the binding whose pane it names, at once,
+// without the daemon spawning another ListAgents call or touching any other
+// binding.
+func TestDaemonEventWakesOneBinding(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f) // "webshop": planner w2:p3, builder w2:p4
+
+	second := store.Binding{
+		Name:    "kobe",
+		CWD:     "/repo2",
+		Planner: store.Endpoint{PaneID: "w9:p1", SessionID: "planner2-sess"},
+		Builder: store.Endpoint{PaneID: "w9:p2"},
+		Round:   1,
+		State:   store.StateActive,
+	}
+	if err := rt.Store.Save(second); err != nil {
+		t.Fatalf("save second binding: %v", err)
+	}
+
+	events := make(chan herdr.Event)
+	f.subscribeCh = events
+	f.agents = []herdr.Agent{
+		plannerWith(herdr.StatusWorking, false),
+		builderAgent(herdr.StatusWorking),
+		{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w9:p1", Session: herdr.Session{Value: "planner2-sess"}},
+		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w9:p2"},
+	}
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := NewDaemon(rt, time.Hour) // long enough that the ticker never fires
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	waitListCall(t, listCalls, "bootstrap ListAgents never happened") // listCalls == 1
+
+	events <- herdr.Event{Kind: "pane_agent_status_changed", PaneID: "w2:p4", AgentStatus: herdr.StatusBlocked}
+
+	waitForState(t, rt, "webshop", store.StateNeedsYou)
+
+	kobe, err := rt.Store.Load("kobe")
+	if err != nil {
+		t.Fatalf("Load kobe: %v", err)
+	}
+	if kobe.Round != 1 || kobe.State != store.StateActive {
+		t.Errorf("kobe must be untouched by webshop's event, got round=%d state=%s", kobe.Round, kobe.State)
+	}
+
+	// A known-pane status change never needs a refresh (agentCache.Apply
+	// returns refresh=false for it), so no second ListAgents call should
+	// ever arrive. Mutation check: an Apply that always reports
+	// refresh=true would make this fail.
+	select {
+	case <-listCalls:
+		t.Error("a known-pane status event must not trigger another ListAgents call")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	<-done
+}
+
+// TestDaemonPaneClosedMarksBuilderMissing guards the gone path: a
+// pane_closed event removes the builder from the cache, and the next
+// reconcile -- driven by that same event, not a separate poll -- finds it
+// missing and stamps BuilderMissingSince exactly like today's ListAgents
+// path does.
+func TestDaemonPaneClosedMarksBuilderMissing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+
+	events := make(chan herdr.Event)
+	f.subscribeCh = events
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := NewDaemon(rt, time.Hour)
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	waitListCall(t, listCalls, "bootstrap ListAgents never happened")
+
+	events <- herdr.Event{Kind: "pane_closed", PaneID: "w2:p4"}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		b, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !b.BuilderMissingSince.IsZero() {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("BuilderMissingSince was never set after a pane_closed event")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	<-done
+}
+
+// TestDaemonDetectedRefreshesSnapshot guards agentCache.Apply's
+// pane_agent_detected case wired into Run: a new pane means the snapshot is
+// stale everywhere, so the daemon must take a fresh ListAgents call rather
+// than trust the cache.
+func TestDaemonDetectedRefreshesSnapshot(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+
+	events := make(chan herdr.Event)
+	f.subscribeCh = events
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := NewDaemon(rt, time.Hour)
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	waitListCall(t, listCalls, "bootstrap ListAgents never happened") // listCalls == 1
+
+	events <- herdr.Event{Kind: "pane_agent_detected"}
+
+	waitListCall(t, listCalls, "pane_agent_detected must trigger a refresh ListAgents call") // listCalls == 2
+
+	cancel()
+	<-done
+}
+
+// TestDaemonFallsBackToPollingWithoutSocket guards the default mode every
+// other daemon test runs in: fakeHerdr.Subscribe returns herdr.ErrNoSocket
+// with nothing scripted, so Run must fall back to calling ListAgents on
+// every tick exactly as it did before #146.
+func TestDaemonFallsBackToPollingWithoutSocket(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d := NewDaemon(rt, 20*time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	// subscribe's own Subscribe call fails immediately (ErrNoSocket), so
+	// bootstrap makes no ListAgents call of its own; every one of these
+	// three signals must come from a tick's poll fallback.
+	for i := 1; i <= 3; i++ {
+		waitListCall(t, listCalls, fmt.Sprintf("tick %d: ListAgents never called while polling", i))
+	}
+
+	cancel()
+	<-done
+}
+
+// TestDaemonReconnectsAfterStreamClose guards the reconnect loop: a stream
+// close drops eventsLive at once (so the very next tick polls instead of
+// trusting a cache the daemon no longer believes), and reconnect retries
+// with backoff, re-subscribes, and re-snapshots via ListAgents.
+func TestDaemonReconnectsAfterStreamClose(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	firstEvents := make(chan herdr.Event)
+	secondEvents := make(chan herdr.Event)
+	// subscribeSignal fires once per Subscribe call, independently of
+	// ListAgents: waiting on it (rather than inferring a Subscribe call
+	// happened from a ListAgents signal) is what makes "reconnect
+	// resubscribed" observable without racing the poll-fallback ticks that
+	// fire in the same window.
+	subscribeSignal := make(chan struct{}, 64)
+	attempt := 0
+	f.onSubscribe = func() (<-chan herdr.Event, error) {
+		attempt++
+		subscribeSignal <- struct{}{}
+		if attempt == 1 {
+			return firstEvents, nil
+		}
+		return secondEvents, nil
+	}
+	// Buffered generously: while eventsLive is false and reconnect has not
+	// yet succeeded, every tick in the backoff window polls, and a blocked
+	// send here would stall Run's own goroutine (Tick runs on it) and hang
+	// the test's cancel/done at the end.
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// NewDaemon floors any interval below minInterval (500ms), so the
+	// regular ticker fires roughly every 500ms regardless of what is passed
+	// here. The backoff must be comfortably longer than that floor, or
+	// reconnect could succeed before a single regular tick has had a chance
+	// to poll -- which is exactly what a too-short backoff in an earlier
+	// draft of this test did.
+	d := NewDaemon(rt, minInterval).WithBackoff(func(int) time.Duration { return 900 * time.Millisecond })
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	select {
+	case <-subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bootstrap Subscribe never happened")
+	}
+	waitListCall(t, listCalls, "bootstrap ListAgents never happened") // subscribeCalls == 1
+
+	close(firstEvents)
+
+	// The stream closing drops eventsLive at once, so a tick in the backoff
+	// window polls instead of trusting a cache the daemon no longer
+	// believes.
+	waitListCall(t, listCalls, "a tick after the stream closed must poll")
+
+	select {
+	case <-subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconnect never resubscribed")
+	}
+	waitListCall(t, listCalls, "reconnect never re-snapshotted") // subscribeCalls == 2
+
+	// Safe to read here: the subscribeSignal receive above happened-after
+	// the Subscribe call that appended this entry, in the same goroutine.
+	if len(f.subscribeCalls) != 2 {
+		t.Errorf("subscribeCalls = %d, want 2 (bootstrap + reconnect)", len(f.subscribeCalls))
+	}
+
+	cancel()
+	<-done
+}
+
+// TestDaemonResubscribesWhenAPaneIsBound guards Tick's post-loop check: a
+// binding created after Run's bootstrap subscription is not in
+// d.subscribedPanes, and the next tick must notice and resubscribe with the
+// full, current pane list rather than wait forever for an event on a pane
+// the daemon never asked herdr to watch.
+func TestDaemonResubscribesWhenAPaneIsBound(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := sentBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
+
+	events := make(chan herdr.Event)
+	f.subscribeCh = events
+	listCalls := make(chan struct{}, 64)
+	f.onList = func() { listCalls <- struct{}{} }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := NewDaemon(rt, 20*time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	waitListCall(t, listCalls, "bootstrap ListAgents never happened") // subscribeCalls == 1
+
+	// Bind a second binding directly into the store, the way `relay bind`
+	// would while the daemon is already running.
+	second := store.Binding{
+		Name:    "kobe",
+		CWD:     "/repo2",
+		Planner: store.Endpoint{PaneID: "w9:p1", SessionID: "planner2-sess"},
+		Builder: store.Endpoint{PaneID: "w9:p2"},
+		Round:   1,
+		State:   store.StateActive,
+	}
+	if err := rt.Store.Save(second); err != nil {
+		t.Fatalf("save second binding: %v", err)
+	}
+
+	waitListCall(t, listCalls, "resubscribe never re-snapshotted") // subscribeCalls == 2
+
+	if len(f.subscribeCalls) < 2 {
+		t.Fatalf("subscribeCalls = %d, want at least 2 (bootstrap + resubscribe)", len(f.subscribeCalls))
+	}
+	last := f.subscribeCalls[len(f.subscribeCalls)-1]
+	found := false
+	for _, p := range last {
+		if p == "w9:p1" || p == "w9:p2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("last subscribeCalls = %v, want it to include kobe's new panes", last)
+	}
+
+	cancel()
+	<-done
 }
