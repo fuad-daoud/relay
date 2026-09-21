@@ -623,6 +623,11 @@ What is different from a pane builder:
   exists only on `stop`.
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
+- **opencode 2.x** runs a shared service: one `opencode serve --service` per
+  user hosts every `opencode run` on that machine, so keep concurrent
+  opencode headless builders on one machine to two or three. After a switch
+  away from an opencode 2.x builder, check the worktree for a second writer
+  before re-sending (`git status`, file mtimes) (#256).
 
 ### Progress labels
 
