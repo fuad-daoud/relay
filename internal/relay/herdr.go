@@ -131,6 +131,12 @@ type Runtime struct {
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.
 	NewID func() string
+
+	// StartedAt is when this daemon process started; zero means unknown
+	// (CLI one-shots, tests), which disables the daemon-restart-relaunch
+	// check (#244): a builder can never be "lost to a daemon restart" if
+	// the daemon does not know when it itself started.
+	StartedAt time.Time
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

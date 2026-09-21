@@ -278,6 +278,7 @@ func cmdServeRun(args []string) error {
 		MaxBundleBytes: sf.maxBundleBytes,
 		Usage:          reader,
 		Prices:         prices,
+		StartedAt:      time.Now(),
 	}
 
 	srv, err := serve.New(cfg)

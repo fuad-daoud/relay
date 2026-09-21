@@ -1719,6 +1719,9 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
+	// builder it merely happens to observe as "exited, code unknown" (#244).
+	rt.StartedAt = time.Now()
 	rt.HeldGrace = *heldGrace
 
 	// The database is opened only here (and by `relay db *`): the daemon
