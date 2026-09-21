@@ -358,6 +358,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if escapeCheck(ctx, rt, b, true) == EscapeNote {
 		markerNote = escapeNote
 	}
+	// queueReport's reset block clears RoundVerify: read the round's verify
+	// flag before the close consumes it (#144), as the pane path does.
+	wantVerify := b.RoundVerify
 	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, err
@@ -372,6 +375,20 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		next.Builder = clearProcess(next.Builder)
 		next.StalledSince = time.Time{}
+		// The gate result -> report queued -> verify consult started ->
+		// delivery (#144), exactly as the pane path orders it: the reviewer
+		// sees the gate's output, so it starts after the gate and before the
+		// planner is told.
+		if wantVerify {
+			gateLogPath := ""
+			if rec != nil {
+				gateLogPath = rec.LogPath
+			}
+			next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
+			if err != nil {
+				return next, err
+			}
+		}
 		next, err = deliverAndSettle(ctx, rt, tx, next, agents)
 		if err != nil {
 			return next, err
