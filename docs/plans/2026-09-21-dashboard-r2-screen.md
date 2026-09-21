@@ -107,7 +107,7 @@ while editing:
     else       input.Update
 fetch(ctx, db, query):
     rows := db.Query(query.Filter); rows = query.Apply(rows); rowsMsg
-on rowsMsg: rows, groups = Group(rows, By, loc), tiles = Tiles(rows), fetching false, lastFetch
+on rowsMsg: rows, groups = Group(rows, By, loc), tiles = histq.Totals(rows), fetching false, lastFetch
 on errMsg:  fetchErr = err.Error(), fetching false (rows kept)
 ```
 

@@ -7,6 +7,14 @@ This plan stands alone: everything you need is in this file and in the
 tree. If a step is impossible as written or contradicts the code, **halt and
 report** -- do not improvise around it.
 
+
+**Resent after a halt.** The worktree already holds Tasks 1 and 2 as
+uncommitted work from the halted first attempt (`RoundRow` columns,
+`internal/histq/histq.go` + tests, `ParseSince` moved). Verify them (`go
+test ./internal/db/ ./internal/histq/`), do not redo them, and continue
+from Task 3. The one halt was `func Tiles` colliding with `type Tiles`; the
+function is now `Totals`.
+
 ## 1. System overview
 
 `relay.db` holds every round; `db.Query(db.Filter)` returns `[]db.RoundRow`
@@ -119,7 +127,7 @@ func Group(rows []db.RoundRow, by Axis) []GroupRow
     sums: Rounds; one counter per outcome value; Commits (nil = 0); Tokens; CostUSD over rows whose *CostBasis != "unknown" and CostUSD != nil;
     Unknown = rows with nil CostUSD or basis unknown; Last = max StartedAt; Rows newest first
     order: CostUSD desc, then Rounds desc, then Key asc; AxisDay: Key desc
-func Tiles(rows []db.RoundRow) Tiles
+func Totals(rows []db.RoundRow) Tiles          // NOT named Tiles: the type is Tiles and Go forbids a type and a func of one name
     Bindings = distinct BindingID; Builders = distinct *BuilderCandidate (non-nil); Median over rows with DurationMS != nil (0 when none; even count -> mean of the two middles)
 
 // internal/relay
@@ -189,7 +197,7 @@ new field; a round with `closed_at` null has `DurationMS == nil`.
 
 **Verify:** `go test ./internal/histq/ ./internal/relay/ -run 'Parse'`; `go list -deps ./internal/histq | grep relay/internal/` shows no `internal/relay`.
 
-### Task 3 -- Apply, Group, Tiles
+### Task 3 -- Apply, Group, Totals
 
 **Files:** `internal/histq/apply.go`, `group.go`, tests.
 
@@ -202,7 +210,7 @@ checkable by hand in the test.
 **Tests**
 - `TestApplyWordMatchesAnyOfThree` (mutation: drop the `Repo` branch -> fails), `TestApplyNumericConds` (each key, nil handling), `TestApplyEnumConds`.
 - `TestGroupByBuilderSums` (every counter and sum asserted), `TestGroupCostSkipsUnknown` (mutation: sum unknown rows too -> fails), `TestGroupByDayNewestFirst`, `TestGroupOrderCostThenRoundsThenKey`, `TestGroupNoneIsNil`, one small test per remaining axis asserting the key set.
-- `TestTilesCounts`, `TestTilesMedianOddEven`.
+- `TestTotalsCounts`, `TestTotalsMedianOddEven` (over `Totals`).
 
 **Verify:** `go test ./internal/histq/`.
 

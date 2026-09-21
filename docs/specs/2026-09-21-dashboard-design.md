@@ -87,7 +87,7 @@ func Parse(s string) (Query, error)
 func (q Query) String() string                        // canonical text (round-trips through Parse)
 func (q Query) Apply(rows []db.RoundRow) []db.RoundRow // the in-Go half, order preserved
 func Group(rows []db.RoundRow, by Axis) []GroupRow     // by none -> nil
-func Tiles(rows []db.RoundRow) Tiles
+func Totals(rows []db.RoundRow) Tiles                  // named Totals: the type is Tiles
 
 type GroupRow struct {
     Key        string        // the axis value ("-" when null)
@@ -173,7 +173,7 @@ op, `word`, `by`, quoting, and eight bad inputs; `String()` round-trip;
 `Apply` over literal rows (mutation: drop the `word` branch -> its test
 fails); `Group` per axis with the sums checked by hand (mutation: sum
 `CostUSD` over unknown-basis rows too -> `TestGroupCostSkipsUnknown`
-fails); `Tiles` including median over odd/even counts. `db`: the new
+fails); `Totals` including median over odd/even counts. `db`: the new
 columns round-trip through `Query`. `cmd/relay`: `-q` merge rule and the
 group formatter. `dash`: goldens for flat, grouped, expanded, narrow width,
 parse error, empty result; `enter` on a round row yields the fleet screen
