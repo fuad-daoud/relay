@@ -73,6 +73,10 @@ const (
 	// is declared, fires, is skipped for a missing artifact, or its fire
 	// fails.
 	KindEdge Kind = "edge"
+
+	// KindQueue is relay -> log only: a served round was queued, admitted or
+	// re-queued (#285).
+	KindQueue Kind = "queue"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also

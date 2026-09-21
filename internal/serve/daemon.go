@@ -39,6 +39,13 @@ func (s *Server) Tick(ctx context.Context) error {
 			slog.Error("tick owner failed", "owner", id, "err", err)
 		}
 	}
+
+	// Every owner has been reconciled (pids of exited builders cleared,
+	// closed rounds released), so admit can start queued rounds into the
+	// slots that freed up this tick (#285). Still under s.mu.
+	if err := s.admit(ctx); err != nil {
+		slog.Warn("admit failed", "err", err)
+	}
 	return nil
 }
 

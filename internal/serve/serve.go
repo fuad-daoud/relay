@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -35,6 +36,11 @@ type Config struct {
 	// Roles checks candidate harness role-file coverage (#238); nil means
 	// no check.
 	Roles harness.RoleChecker
+	// MaxBuilders caps headless builders running at once across all owners
+	// (#285); 0 means cfg.Policy.MaxBuildersOrDefault().
+	MaxBuilders int
+	// Hooks dispatches lifecycle events (#285); nil means none, as today.
+	Hooks hooks.Dispatcher
 }
 
 type Server struct {
@@ -123,5 +129,6 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		Now:              s.cfg.Now,
 		StartedAt:        s.cfg.StartedAt,
 		Roles:            s.cfg.Roles,
+		Hooks:            s.cfg.Hooks,
 	}
 }

@@ -23,6 +23,9 @@ const (
 	RoundRunning  RoundState = "running"
 	RoundClosed   RoundState = "closed"
 	RoundNeedsYou RoundState = "needs_you"
+	// RoundQueued is a round accepted by the server with no builder process
+	// yet: staged, waiting for a slot under serve.max_builders (#285).
+	RoundQueued RoundState = "queued"
 )
 
 // WhoAmI represents the response to an authentication identity check.
@@ -39,6 +42,10 @@ type WhoAmI struct {
 	BuilderTier string   `json:"builder_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
 	// launches at when the client sends none
 	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
+
+	// Builders is the server's builder census (#285); nil from a pre-queue
+	// server.
+	Builders *BuildersView `json:"builders,omitempty"`
 }
 
 // CreateBindingRequest holds the parameters for creating a new binding on the server.
@@ -96,6 +103,28 @@ type BindingView struct {
 	// round (#252), copied onto the client binding for a running round. Zero
 	// from a pre-stall server, and zero when the round is not stalled.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
+
+	// Queue is this round's place in the server's builder queue (#285);
+	// non-nil iff RoundState == RoundQueued.
+	Queue *QueueView `json:"queue,omitempty"`
+}
+
+// QueueView is a queued round's place in the server's queue (#285).
+type QueueView struct {
+	Position int       `json:"position"` // 1-based
+	Ahead    int       `json:"ahead"`    // Position-1
+	Running  int       `json:"running"`
+	Cap      int       `json:"cap"`
+	Since    time.Time `json:"since"`
+}
+
+// BuildersView is the server's builder census (#285).
+type BuildersView struct {
+	Running int    `json:"running"`
+	Queued  int    `json:"queued"`
+	Cap     int    `json:"cap"`
+	Scopes  bool   `json:"scopes"`          // part 3 sets it; false here
+	Slice   string `json:"slice,omitempty"` // part 3 sets it; "" here
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.
@@ -155,6 +184,10 @@ const (
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier
 // wire fields advertises (#141 remote half).
 const FeatureTier = "tier"
+
+// FeatureQueue is the WhoAmI.Features token a server with the builder
+// cap/queue advertises (#285).
+const FeatureQueue = "queue"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

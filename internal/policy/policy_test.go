@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -863,5 +864,109 @@ func TestNotifyPolicy(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
 			}
 		})
+	}
+}
+
+func TestMaxBuildersOrDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		want    int
+		wantErr bool
+	}{
+		{name: "absent defaults to max(1, NumCPU-1)", body: `{}`, want: maxInt(1, runtime.NumCPU()-1)},
+		{name: "one is ok", body: `{"serve":{"max_builders":1}}`, want: 1},
+		{name: "zero is an error", body: `{"serve":{"max_builders":0}}`, wantErr: true},
+		{name: "negative is an error", body: `{"serve":{"max_builders":-1}}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := load(t, tt.body)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load: got nil error, want one wrapping ErrBadPolicy")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+				}
+				if !strings.Contains(err.Error(), "serve.max_builders") {
+					t.Fatalf("Load error %q does not mention serve.max_builders", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := p.MaxBuildersOrDefault(); got != tt.want {
+				t.Fatalf("MaxBuildersOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+
+	if got := (Policy{}).MaxBuildersOrDefault(); got != maxInt(1, runtime.NumCPU()-1) {
+		t.Fatalf("Policy{}.MaxBuildersOrDefault() = %d, want %d", got, maxInt(1, runtime.NumCPU()-1))
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func TestServeScopeValidation(t *testing.T) {
+	goodCases := []struct {
+		name string
+		body string
+	}{
+		{"slice ends in .slice", `{"serve":{"scope":{"slice":"relay.slice"}}}`},
+		{"cpu_weight in range", `{"serve":{"scope":{"cpu_weight":500}}}`},
+		{"memory_max matches", `{"serve":{"scope":{"memory_max":"512M"}}}`},
+		{"tasks_max positive", `{"serve":{"scope":{"tasks_max":10}}}`},
+	}
+	for _, gc := range goodCases {
+		t.Run(gc.name, func(t *testing.T) {
+			if _, err := load(t, gc.body); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+		})
+	}
+
+	badCases := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{"slice missing suffix", `{"serve":{"scope":{"slice":"relay"}}}`, "serve.scope.slice: must end in \".slice\""},
+		{"cpu_weight above range", `{"serve":{"scope":{"cpu_weight":10001}}}`, "serve.scope.cpu_weight: must be 1..10000"},
+		{"cpu_weight negative", `{"serve":{"scope":{"cpu_weight":-1}}}`, "serve.scope.cpu_weight: must be 1..10000"},
+		{"memory_max does not match", `{"serve":{"scope":{"memory_max":"512x"}}}`, "serve.scope.memory_max: must match"},
+		{"tasks_max negative", `{"serve":{"scope":{"tasks_max":-1}}}`, "serve.scope.tasks_max: must be at least 1"},
+	}
+	for _, bc := range badCases {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
+			}
+		})
+	}
+}
+
+func TestServeUnknownKeyRejected(t *testing.T) {
+	_, err := load(t, `{"serve":{"frobnicate":true}}`)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("error %v does not wrap ErrBadPolicy", err)
 	}
 }

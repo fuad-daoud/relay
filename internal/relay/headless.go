@@ -347,6 +347,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return deliverAndSettle(ctx, rt, tx, b, agents)
 	}
 
+	// A queued round (#285) has no process and no clocks: nothing to
+	// reconcile until relay.Admit starts it. This must precede the PID == 0
+	// "spawn failed earlier" branch below, or a queued round would be
+	// mistaken for a failed spawn.
+	if !b.QueuedAt.IsZero() {
+		return b, nil
+	}
+
 	// The marker is the contract (completion-marker spec §4.4): the process
 	// is done with whatever it exits as, and it exits on its own. Never Kill
 	// here. A report without a marker is a process still working.
@@ -541,6 +549,24 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
 
 	if lost && switchable {
+		if b.Owner != "" {
+			// On a server, a box reboot must not relaunch every builder past
+			// the cap: re-queue at the head of the queue instead of
+			// relaunching (#285, #244). The local daemon keeps the relaunch
+			// below.
+			b.QueuedAt = b.RoundStartedAt
+			b.RoundStartedAt = time.Time{}
+			b.Builder = clearProcess(b.Builder)
+			if err := tx.AppendLog(b.Name, store.LogEntry{
+				TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
+				Note: "re-queued (builder lost to a restart)",
+			}); err != nil {
+				return b, err
+			}
+			slog.Info("headless builder re-queued after daemon restart", "binding", b.Name, "round", b.Round)
+			return b, nil
+		}
+
 		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 		relaunched, err := startRound(ctx, rt, b, text)
 		if err != nil {

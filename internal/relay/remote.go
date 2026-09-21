@@ -646,6 +646,14 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	switch view.RoundState {
+	case remote.RoundQueued:
+		// A queued round (#285) has no process and no clocks: it behaves
+		// like RoundRunning minus the stall copy -- no halt, no catch-up,
+		// and any stall stamp from an earlier running round no longer
+		// applies (the process is gone).
+		b.StalledSince = time.Time{}
+		return b, false, nil
+
 	case remote.RoundRunning:
 		// The server is the only place that can see the builder's stream; a
 		// running round carries its stall stamp across so the client shows

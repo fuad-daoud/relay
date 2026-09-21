@@ -44,6 +44,7 @@ type serveFlags struct {
 	interval       time.Duration
 	insecureHTTP   bool
 	maxBundleBytes int64
+	maxBuilders    int
 }
 
 func serveFlagSet() (*flag.FlagSet, *serveFlags) {
@@ -54,6 +55,7 @@ func serveFlagSet() (*flag.FlagSet, *serveFlags) {
 	fs.DurationVar(&sf.interval, "interval", 2*time.Second, "poll interval")
 	fs.BoolVar(&sf.insecureHTTP, "insecure-http", false, "serve plain HTTP without TLS")
 	fs.Int64Var(&sf.maxBundleBytes, "max-bundle-bytes", 512<<20, "maximum bundle size in bytes")
+	fs.IntVar(&sf.maxBuilders, "max-builders", 0, "headless builders running at once across all owners (0 = policy.json serve.max_builders, else max(1, NumCPU-1))")
 	return fs, &sf
 }
 
@@ -116,7 +118,7 @@ func adminRoot(fs *flag.FlagSet) (string, error) {
 }
 
 func cmdServe(args []string) error {
-	const usage = `usage: relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]
+	const usage = `usage: relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]
        relay serve init [--host <name>]... [--state <dir>]
        relay serve enroll --label <label> --key "<ed25519 line>" [--state <dir>]
        relay serve clients [--state <dir>]
@@ -285,6 +287,12 @@ func cmdServeRun(args []string) error {
 
 	reader, prices := newUsageReader(configDir)
 
+	hooksCfg, err := resolveHooksConfig()
+	if err != nil {
+		return err
+	}
+	dispatcher := newHooksDispatcher(hooksCfg, pol)
+
 	cfg := serve.Config{
 		Root:           root,
 		Candidates:     candidates,
@@ -298,12 +306,21 @@ func cmdServeRun(args []string) error {
 		Prices:         prices,
 		StartedAt:      time.Now(),
 		Roles:          roles,
+		MaxBuilders:    sf.maxBuilders,
+		Hooks:          dispatcher,
 	}
 
 	srv, err := serve.New(cfg)
 	if err != nil {
 		return err
 	}
+
+	maxBuilders := cfg.MaxBuilders
+	if maxBuilders <= 0 {
+		maxBuilders = pol.MaxBuildersOrDefault()
+	}
+	slog.Info(fmt.Sprintf("builders cap=%d", maxBuilders))
+
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return err

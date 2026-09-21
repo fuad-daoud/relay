@@ -20,6 +20,11 @@ const (
 	// episode; clearing the stamp emits nothing. Like builder_stalled it is
 	// an observation, never an action.
 	EventBindingStale EventType = "binding_stale"
+	// EventRoundQueued reports that a served round was accepted at the
+	// builder cap and is waiting for a slot (#285).
+	EventRoundQueued EventType = "round_queued"
+	// EventRoundAdmitted reports that a queued round's builder started (#285).
+	EventRoundAdmitted EventType = "round_admitted"
 )
 
 // Event encapsulates the context of a state transition or action.
