@@ -485,6 +485,37 @@ func TestAddValidation(t *testing.T) {
 	}
 }
 
+// TestAddBranchWithCwdIsRefusedBeforeRuntime pins the flag-pair refusal: it
+// happens in validation, before newRuntime, so it reaches no herdr.
+func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
+	err := run([]string{"add", "--branch", "x", "--cwd", "/tmp"})
+	if err == nil || !strings.Contains(err.Error(), "exclusive") {
+		t.Fatalf("expected an 'exclusive' refusal, got %v", err)
+	}
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", err)
+	}
+}
+
+// TestAddBranchDerivesName pins that a branch alone is enough for the name to
+// be derived: with no planner pane the run stops before any herdr call, so the
+// derived name is never printed and no builder is reached.
+func TestAddBranchDerivesName(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+
+	err := run([]string{"add", "--branch", "feature/api-auth"})
+	if err == nil {
+		t.Fatal("add without a planner pane must refuse")
+	}
+	if !strings.Contains(err.Error(), "HERDR_PANE_ID") {
+		t.Fatalf("expected the no-planner-pane error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "api-auth") {
+		t.Errorf("the derived name must not appear in the refusal: %v", err)
+	}
+}
+
 func TestParseFlagsAcceptsFlagsAfterPositionals(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

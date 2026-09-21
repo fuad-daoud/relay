@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -302,4 +304,302 @@ func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
 	if got.Binding.BuilderCandidate != testAgyRef || got.Binding.Round != 1 {
 		t.Errorf("candidate/round = %q/%d", got.Binding.BuilderCandidate, got.Binding.Round)
 	}
+}
+
+// TestAddBranchLocalChecksOutWithoutCutting pins the local half of
+// `add --branch`: a branch that already exists locally is checked out into
+// relay's own worktree, with no worktree cut and no branch created.
+func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		branchExists: true,
+		refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err != nil {
+		t.Fatalf("Add --branch: %v", err)
+	}
+
+	wantWT := rt.Store.WorktreePath("api-auth")
+	want := []checkoutWorktreeCall{{Dir: repo, Path: wantWT, Branch: "feature/api-auth"}}
+	if !reflect.DeepEqual(fg.checkoutWorktreeCalls, want) {
+		t.Errorf("checkoutWorktreeCalls = %+v, want %+v", fg.checkoutWorktreeCalls, want)
+	}
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("--branch must not cut a new worktree: %+v", fg.addWorktreeCalls)
+	}
+	if len(fg.createBranchCalls) != 0 {
+		t.Errorf("--branch must not create a branch: %+v", fg.createBranchCalls)
+	}
+	if len(fg.createTrackingBranchCalls) != 0 {
+		t.Errorf("a local branch needs no tracking branch: %+v", fg.createTrackingBranchCalls)
+	}
+	if got.Binding.Branch != "feature/api-auth" {
+		t.Errorf("Branch = %q, want feature/api-auth", got.Binding.Branch)
+	}
+	if got.Base != "tip123" || got.Binding.Base != "tip123" {
+		t.Errorf("Base = %q (binding %q), want the branch tip tip123", got.Base, got.Binding.Base)
+	}
+	if !got.Binding.ExistingBranch {
+		t.Error("ExistingBranch must record that relay did not create the branch")
+	}
+	if got.Worktree != wantWT || got.Binding.CWD != wantWT {
+		t.Errorf("worktree = %q, cwd = %q, want both %q", got.Worktree, got.Binding.CWD, wantWT)
+	}
+}
+
+// TestAddBranchOriginOnlyTracksFirst pins the origin half: when only
+// origin/<branch> exists, relay first makes a local tracking branch.
+func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		branchExists: false,
+		refSHA: map[string]string{
+			"refs/remotes/origin/feature/x": "o1",
+			"refs/heads/feature/x":          "o1",
+		},
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err != nil {
+		t.Fatalf("Add --branch: %v", err)
+	}
+
+	want := []createTrackingBranchCall{{Dir: repo, Branch: "feature/x", Upstream: "origin/feature/x"}}
+	if !reflect.DeepEqual(fg.createTrackingBranchCalls, want) {
+		t.Errorf("createTrackingBranchCalls = %+v, want %+v", fg.createTrackingBranchCalls, want)
+	}
+	if len(fg.checkoutWorktreeCalls) != 1 || fg.checkoutWorktreeCalls[0].Branch != "feature/x" {
+		t.Errorf("checkoutWorktreeCalls = %+v, want one checkout of feature/x", fg.checkoutWorktreeCalls)
+	}
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("--branch must not cut a new worktree: %+v", fg.addWorktreeCalls)
+	}
+	if got.Base != "o1" {
+		t.Errorf("Base = %q, want the branch tip o1", got.Base)
+	}
+	if !got.Binding.ExistingBranch {
+		t.Error("ExistingBranch must be recorded")
+	}
+}
+
+// TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
+// origin is a refusal before any git write.
+func TestAddBranchMissingRefuses(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{branchExists: false, refSHA: map[string]string{}}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if err == nil || !strings.Contains(err.Error(), "not found locally or on origin") {
+		t.Fatalf("got %v, want a 'not found locally or on origin' refusal", err)
+	}
+
+	if len(fg.addWorktreeCalls)+len(fg.checkoutWorktreeCalls)+len(fg.createTrackingBranchCalls)+
+		len(fg.createBranchCalls)+len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("a missing branch must reach no git write: add=%+v checkout=%+v tracking=%+v create=%+v delete=%+v",
+			fg.addWorktreeCalls, fg.checkoutWorktreeCalls, fg.createTrackingBranchCalls,
+			fg.createBranchCalls, fg.deleteBranchCalls)
+	}
+}
+
+// TestAddBranchCheckedOutRefuses pins the refusal when the existing branch is
+// checked out in another worktree, before any builder is resolved or started.
+func TestAddBranchCheckedOutRefuses(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		branchExists:        true,
+		refSHA:              map[string]string{"refs/heads/feature/x": "tip"},
+		checkoutWorktreeErr: git.ErrBranchCheckedOut,
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if err == nil || !strings.Contains(err.Error(), "checked out in another worktree") {
+		t.Fatalf("got %v, want a 'checked out in another worktree' refusal", err)
+	}
+	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
+		t.Errorf("a refused checkout must reach no builder spawn: tabs=%d starts=%d", len(fh.tabs), len(fh.starts))
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("a refused checkout must delete no branch: %+v", fg.deleteBranchCalls)
+	}
+}
+
+// TestAddBranchDrivenByLiveBindingRefuses pins the guard: a branch a live
+// binding already drives cannot be adopted, while a DONE binding does not block.
+func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{
+		branchExists: true,
+		refSHA:       map[string]string{"refs/heads/feature/x": "tip"},
+	}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	if err := rt.Store.Save(store.Binding{
+		Name: "incumbent", CWD: repo, Branch: "feature/x", Round: 3, State: store.StateActive,
+	}); err != nil {
+		t.Fatalf("seed incumbent: %v", err)
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err == nil || !strings.Contains(err.Error(), "incumbent") {
+		t.Fatalf("a branch driven by a live binding must refuse, got %v", err)
+	}
+	if len(fg.checkoutWorktreeCalls) != 0 {
+		t.Errorf("the guard must run before any checkout: %+v", fg.checkoutWorktreeCalls)
+	}
+
+	// The same branch on a DONE binding does not block.
+	if err := rt.Store.Save(store.Binding{
+		Name: "incumbent", CWD: repo, Branch: "feature/x", Round: 3, State: store.StateDone,
+	}); err != nil {
+		t.Fatalf("mark incumbent done: %v", err)
+	}
+	got, err := Add(context.Background(), rt, AddOptions{
+		Name: "other", Branch: "feature/x", Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: repo,
+	})
+	if err != nil {
+		t.Fatalf("a DONE binding must not block: %v", err)
+	}
+	if got.Binding.Branch != "feature/x" {
+		t.Errorf("Branch = %q, want feature/x", got.Binding.Branch)
+	}
+}
+
+// TestAddBranchWithCwdRefused pins that Add itself refuses the flag pair, not
+// only the CLI.
+func TestAddBranchWithCwdRefused(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "x", Branch: "feature/x", CWD: addRepo(t), Candidate: testAgyRef,
+		PlannerPane: "w2:p3", Repo: addRepo(t),
+	})
+	if err == nil || !strings.Contains(err.Error(), "exclusive") {
+		t.Fatalf("got %v, want an 'exclusive' refusal", err)
+	}
+	if len(fg.addWorktreeCalls)+len(fg.checkoutWorktreeCalls)+len(fg.createTrackingBranchCalls) != 0 {
+		t.Errorf("the flag refusal must reach no git write")
+	}
+}
+
+// TestDefaultBindingName pins the derivation store.ValidName accepts, and that
+// an underivable branch returns ValidName's own error.
+func TestDefaultBindingName(t *testing.T) {
+	cases := []struct {
+		branch  string
+		want    string
+		wantErr bool
+	}{
+		{"feature/api-auth", "api-auth", false},
+		{"v2", "v2", false},
+		{"Fix/Login_Form", "login_form", false},
+		{"//", "", true},
+	}
+	for _, c := range cases {
+		got, err := DefaultBindingName(c.branch)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("DefaultBindingName(%q) = %q, want an error", c.branch, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("DefaultBindingName(%q): %v", c.branch, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("DefaultBindingName(%q) = %q, want %q", c.branch, got, c.want)
+		}
+		if err := store.ValidName(got); err != nil {
+			t.Errorf("store.ValidName(%q) = %v, want nil", got, err)
+		}
+	}
+}
+
+// TestUnbindExistingBranchNeverDeletes pins the invariant README states: relay
+// deletes a branch in zero places, so neither unbind nor done+gc may remove an
+// ExistingBranch binding's adopted branch.
+func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
+	ctx := context.Background()
+
+	setup := func(t *testing.T, fg *fakeGit) (Runtime, string) {
+		t.Helper()
+		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+		rt := newForkRuntime(t, fh, fg, nil)
+		repo := addRepo(t)
+		if _, err := Add(ctx, rt, AddOptions{
+			Name: "api-auth", Branch: "feature/api-auth", Candidate: testAgyRef,
+			PlannerPane: "w2:p3", Repo: repo,
+		}); err != nil {
+			t.Fatalf("Add --branch: %v", err)
+		}
+		// The recorded worktree must exist for teardown to reach the removal
+		// path; a missing directory reads as "gone" and removes nothing.
+		if err := os.MkdirAll(rt.Store.WorktreePath("api-auth"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return rt, repo
+	}
+
+	t.Run("unbind removes the worktree and never the branch", func(t *testing.T) {
+		fg := &fakeGit{
+			branchExists: true,
+			refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
+		}
+		rt, _ := setup(t, fg)
+
+		if _, err := Unbind(ctx, rt, "api-auth", false); err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if len(fg.removeWorktreeCalls) != 1 {
+			t.Errorf("removeWorktreeCalls = %+v, want 1", fg.removeWorktreeCalls)
+		}
+		if len(fg.deleteBranchCalls) != 0 {
+			t.Errorf("unbind deleted the adopted branch: %+v", fg.deleteBranchCalls)
+		}
+	})
+
+	t.Run("done then gc never deletes the branch", func(t *testing.T) {
+		fg := &fakeGit{
+			branchExists: true,
+			refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
+		}
+		rt, _ := setup(t, fg)
+
+		if _, err := Done(ctx, rt, "api-auth"); err != nil {
+			t.Fatalf("Done: %v", err)
+		}
+		if _, err := GC(ctx, rt, GCOptions{}); err != nil {
+			t.Fatalf("GC: %v", err)
+		}
+		if len(fg.deleteBranchCalls) != 0 {
+			t.Errorf("done+gc deleted the adopted branch: %+v", fg.deleteBranchCalls)
+		}
+	})
 }

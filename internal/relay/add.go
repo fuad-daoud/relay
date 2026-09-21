@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -23,6 +24,12 @@ type AddOptions struct {
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
 	CWD string
+
+	// Branch is an existing branch to check out into relay's own worktree
+	// (local name, e.g. "feature/api-auth"); "" = cut relay/<name> as today.
+	// Mutually exclusive with CWD. Name may be "" only when Branch is set
+	// (see DefaultBindingName).
+	Branch string
 
 	// Headless makes the peer's builder a process relay runs per round
 	// instead of a pane (#99). Passed through to resolveBuilder.
@@ -140,11 +147,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	var (
-		cwd      string
-		worktree string
-		branch   string
-		base     string
+		cwd            string
+		worktree       string
+		branch         string
+		base           string
+		existingBranch bool
 	)
+
+	if opts.Branch != "" && opts.CWD != "" {
+		return AddResult{}, errors.New("--branch and --cwd are exclusive")
+	}
 
 	if opts.CWD != "" {
 		info, err := os.Stat(opts.CWD)
@@ -155,6 +167,50 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			return AddResult{}, fmt.Errorf("%s is not a directory", opts.CWD)
 		}
 		cwd = opts.CWD
+	} else if opts.Branch != "" {
+		if rt.Git == nil {
+			return AddResult{}, ErrGitRequired
+		}
+		if err := branchDrivenByLiveBinding(rt, opts.Branch); err != nil {
+			return AddResult{}, err
+		}
+		exists, err := rt.Git.BranchExists(ctx, opts.Repo, opts.Branch)
+		if err != nil {
+			return AddResult{}, err
+		}
+		createdTracking := false
+		if !exists {
+			originRef := "origin/" + opts.Branch
+			_, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/remotes/"+originRef)
+			if err != nil {
+				return AddResult{}, err
+			}
+			if !ok {
+				return AddResult{}, fmt.Errorf("branch %q not found locally or on origin", opts.Branch)
+			}
+			if err := rt.Git.CreateTrackingBranch(ctx, opts.Repo, opts.Branch, originRef); err != nil {
+				return AddResult{}, err
+			}
+			createdTracking = true
+		}
+		tip, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/heads/"+opts.Branch)
+		if err != nil {
+			return AddResult{}, err
+		}
+		if !ok {
+			return AddResult{}, fmt.Errorf("branch %q vanished", opts.Branch)
+		}
+		cwd = rt.Store.WorktreePath(opts.Name)
+		if err := rt.Git.CheckoutWorktree(ctx, opts.Repo, cwd, opts.Branch); err != nil {
+			if errors.Is(err, git.ErrBranchCheckedOut) {
+				return AddResult{}, fmt.Errorf("branch %s is checked out in another worktree (git worktree list); free it first", opts.Branch)
+			}
+			if createdTracking {
+				return AddResult{}, fmt.Errorf("%w; local branch %s now tracks origin/%s", err, opts.Branch, opts.Branch)
+			}
+			return AddResult{}, err
+		}
+		worktree, branch, base, existingBranch = cwd, opts.Branch, tip, true
 	} else {
 		if rt.Git == nil {
 			return AddResult{}, ErrGitRequired
@@ -230,6 +286,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Worktree:         worktree,
 		Branch:           branch,
 		Base:             base,
+		ExistingBranch:   existingBranch,
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
@@ -263,4 +320,52 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	return AddResult{Binding: b, Worktree: worktree, Branch: branch, Base: base, Resolution: res}, nil
+}
+
+// DefaultBindingName derives a binding name from an existing branch: the last
+// path segment, lowercased, with every run of characters store.ValidName does
+// not accept replaced by one "-", then trimmed of "-". store.ValidName's own
+// error is returned unchanged, so the CLI can say "pass --name".
+func DefaultBindingName(branch string) (string, error) {
+	seg := branch
+	if i := strings.LastIndex(branch, "/"); i >= 0 {
+		seg = branch[i+1:]
+	}
+	seg = strings.ToLower(seg)
+
+	var sb strings.Builder
+	replacing := false
+	for _, r := range seg {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			sb.WriteRune(r)
+			replacing = false
+			continue
+		}
+		if !replacing {
+			sb.WriteByte('-')
+			replacing = true
+		}
+	}
+
+	name := strings.Trim(sb.String(), "-")
+	if err := store.ValidName(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// branchDrivenByLiveBinding reports the error naming the live binding that
+// already drives branch, or nil when no binding in a non-DONE state holds it.
+// A DONE binding does not block: relay is finished with it.
+func branchDrivenByLiveBinding(rt Runtime, branch string) error {
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return err
+	}
+	for _, b := range bindings {
+		if b.Branch == branch && b.State != store.StateDone {
+			return fmt.Errorf("branch %s is driven by binding %q (round %d); relay done or unbind it first", branch, b.Name, b.Round)
+		}
+	}
+	return nil
 }

@@ -76,25 +76,67 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		return AddResult{}, err
 	}
 
-	// 2. base := opts.Base if given else rt.Git.HeadCommit(opts.Repo)
-	// resolve to a full sha with RefSHA(opts.Repo, base) when it is not 40-hex; missing -> error
+	// 1.5. --branch adopts an existing branch: the same driven-by-live-binding
+	// guard and local/origin resolution as Add, and its tip overrides --base.
+	// No worktree is made on the client for a remote binding, so there is no
+	// CheckoutWorktree here.
+	branch := "relay/" + opts.Name
+	existingBranch := false
 	base := opts.Base
-	if base == "" {
-		var err error
-		base, err = rt.Git.HeadCommit(ctx, opts.Repo)
-		if err != nil {
-			return AddResult{}, fmt.Errorf("head commit: %w", err)
+	if opts.Branch != "" {
+		if opts.Base != "" {
+			return AddResult{}, errors.New("--base and --branch are exclusive")
 		}
-	}
-	if !is40Hex(base) {
-		sha, ok, err := rt.Git.RefSHA(ctx, opts.Repo, base)
+		if err := branchDrivenByLiveBinding(rt, opts.Branch); err != nil {
+			return AddResult{}, err
+		}
+		exists, err := rt.Git.BranchExists(ctx, opts.Repo, opts.Branch)
 		if err != nil {
-			return AddResult{}, fmt.Errorf("resolve base %s: %w", base, err)
+			return AddResult{}, err
+		}
+		if !exists {
+			originRef := "origin/" + opts.Branch
+			_, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/remotes/"+originRef)
+			if err != nil {
+				return AddResult{}, err
+			}
+			if !ok {
+				return AddResult{}, fmt.Errorf("branch %q not found locally or on origin", opts.Branch)
+			}
+			if err := rt.Git.CreateTrackingBranch(ctx, opts.Repo, opts.Branch, originRef); err != nil {
+				return AddResult{}, err
+			}
+		}
+		tip, ok, err := rt.Git.RefSHA(ctx, opts.Repo, "refs/heads/"+opts.Branch)
+		if err != nil {
+			return AddResult{}, err
 		}
 		if !ok {
-			return AddResult{}, fmt.Errorf("base %q not found", base)
+			return AddResult{}, fmt.Errorf("branch %q vanished", opts.Branch)
 		}
-		base = sha
+		branch = opts.Branch
+		existingBranch = true
+		base = tip
+	} else {
+		// 2. base := opts.Base if given else rt.Git.HeadCommit(opts.Repo)
+		// resolve to a full sha with RefSHA(opts.Repo, base) when it is not 40-hex; missing -> error
+		if base == "" {
+			var err error
+			base, err = rt.Git.HeadCommit(ctx, opts.Repo)
+			if err != nil {
+				return AddResult{}, fmt.Errorf("head commit: %w", err)
+			}
+		}
+		if !is40Hex(base) {
+			sha, ok, err := rt.Git.RefSHA(ctx, opts.Repo, base)
+			if err != nil {
+				return AddResult{}, fmt.Errorf("resolve base %s: %w", base, err)
+			}
+			if !ok {
+				return AddResult{}, fmt.Errorf("base %q not found", base)
+			}
+			base = sha
+		}
 	}
 
 	// 3. root := rt.Git.RootCommit(opts.Repo); repoID := remote.RepoID(root)
@@ -181,7 +223,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	// CreateBranch itself has succeeded, the same failure also removes the
 	// local branch relay just cut -- server first, since that binding is the
 	// one another client could see (#100 round 4).
-	branch := "relay/" + opts.Name
 	created := true
 	branchCreated := false
 	defer func() {
@@ -202,13 +243,18 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 
 	// 6. rt.Git.CreateBranch(opts.Repo, "relay/"+name, base) -- after the server agreed, so a refused create leaves no branch
 	// ErrBranchExists -> error "branch relay/api exists; delete it or pick another name"
-	if err := rt.Git.CreateBranch(ctx, opts.Repo, branch, base); err != nil {
-		if errors.Is(err, git.ErrBranchExists) {
-			return AddResult{}, fmt.Errorf("branch relay/%s exists; delete it or pick another name", opts.Name)
+	// In --branch mode the branch already exists and relay did not create it:
+	// there is nothing to create, and branchCreated stays false so the
+	// deferred cleanup above never deletes a branch relay did not make.
+	if !existingBranch {
+		if err := rt.Git.CreateBranch(ctx, opts.Repo, branch, base); err != nil {
+			if errors.Is(err, git.ErrBranchExists) {
+				return AddResult{}, fmt.Errorf("branch relay/%s exists; delete it or pick another name", opts.Name)
+			}
+			return AddResult{}, err
 		}
-		return AddResult{}, err
+		branchCreated = true
 	}
-	branchCreated = true
 
 	// 7. b := Binding{Name, CWD: opts.Repo, Repo: opts.Repo, Branch, Base: base, Planner: <as Add fills it>,
 	//                 Builder: Endpoint{Mode: ModeRemote, Server: server, Kind: <kind from view.Candidate's harness, "" if unknown>,
@@ -234,12 +280,15 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	}
 
 	b := store.Binding{
-		Name:    opts.Name,
-		CWD:     opts.Repo,
-		Repo:    opts.Repo,
-		Branch:  branch,
-		Base:    base,
-		Planner: planner,
+		Name:   opts.Name,
+		CWD:    opts.Repo,
+		Repo:   opts.Repo,
+		Branch: branch,
+		Base:   base,
+		// ExistingBranch records that relay adopted a branch it did not
+		// create, so nothing here will ever delete it.
+		ExistingBranch: existingBranch,
+		Planner:        planner,
 		Builder: store.Endpoint{
 			Mode:      store.ModeRemote,
 			Server:    opts.Server,

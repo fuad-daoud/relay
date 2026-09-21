@@ -711,6 +711,82 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 	}
 }
 
+// TestAddRemoteExistingBranch pins `add --server --branch`: the client adopts
+// a branch it did not create, sends the branch tip as BaseCommit, creates no
+// branch, and a failure after the server agreed never deletes the branch.
+func TestAddRemoteExistingBranch(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("adopts the branch and sends its tip as base", func(t *testing.T) {
+		st := store.New(t.TempDir())
+		fg := &fakeGit{
+			branchExists:  true,
+			refSHA:        map[string]string{"refs/heads/feature/x": "tip"},
+			rootCommitSHA: "2222222222222222222222222222222222222222",
+		}
+		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+
+		got, err := Add(ctx, rt, AddOptions{
+			Name: "x", Branch: "feature/x", Server: "zen", Repo: "/fake/repo",
+		})
+		if err != nil {
+			t.Fatalf("Add --server --branch: %v", err)
+		}
+		if fr.createBindingReq.BaseCommit != "tip" {
+			t.Errorf("BaseCommit = %q, want the branch tip tip", fr.createBindingReq.BaseCommit)
+		}
+		if len(fg.createBranchCalls) != 0 {
+			t.Errorf("an adopted branch must not be created: %+v", fg.createBranchCalls)
+		}
+		if len(fg.createTrackingBranchCalls) != 0 {
+			t.Errorf("a local branch needs no tracking branch: %+v", fg.createTrackingBranchCalls)
+		}
+		if !got.Binding.ExistingBranch {
+			t.Error("ExistingBranch must record that relay did not create the branch")
+		}
+		if got.Binding.Branch != "feature/x" {
+			t.Errorf("Branch = %q, want feature/x", got.Binding.Branch)
+		}
+	})
+
+	t.Run("a failure after CreateBinding unbinds the server and deletes no branch", func(t *testing.T) {
+		root := t.TempDir()
+		st := store.New(root)
+		fg := &fakeGit{
+			branchExists:  true,
+			refSHA:        map[string]string{"refs/heads/feature/x": "tip"},
+			rootCommitSHA: "2222222222222222222222222222222222222222",
+		}
+		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+
+		// Same provocation as TestAddRemoteCleansUpLocalBranchOnSaveFailure:
+		// the lock file exists, then the state root goes read-only, so the
+		// save after CreateBinding fails.
+		if err := st.WithLock(func(tx *store.Tx) error { return nil }); err != nil {
+			t.Fatalf("seed lock file: %v", err)
+		}
+		if err := os.Chmod(root, 0o500); err != nil {
+			t.Fatalf("chmod root: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+		_, err := Add(ctx, rt, AddOptions{
+			Name: "x", Branch: "feature/x", Server: "zen", Repo: "/fake/repo",
+		})
+		if err == nil {
+			t.Fatal("Add expected error, got nil")
+		}
+		if !slices.Contains(fr.calls, "Unbind:zen:x") {
+			t.Fatalf("Unbind was not called on server, calls = %v", fr.calls)
+		}
+		if len(fg.deleteBranchCalls) != 0 {
+			t.Errorf("relay must not delete a branch it did not create: %+v", fg.deleteBranchCalls)
+		}
+	})
+}
+
 // TestAddRemoteCleansUpLocalBranchOnSaveFailure pins #100 round 4: a failure
 // that happens after CreateBranch has already succeeded also removes the
 // local branch relay just cut, not only the server binding -- otherwise the

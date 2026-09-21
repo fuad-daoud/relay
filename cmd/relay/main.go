@@ -52,7 +52,7 @@ Usage:
 
 Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
-  add       attach an additional builder to this planner, on its own worktree [--tier]
+  add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
   fork      branch a new binding from an earlier round with its own worktree [--tier]
   send      stage a plan file as the current round and prompt the builder [--tier]
   ask       spawn a one-shot consult and record it on the binding
@@ -824,6 +824,7 @@ func cmdAdd(args []string) error {
 	name := fs.String("name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relay/<name>")
 	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
 	server := fs.String("server", "", "run the builder on this configured remote server instead of a local pane or process (relay servers)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
@@ -836,8 +837,21 @@ func cmdAdd(args []string) error {
 		return err
 	}
 
+	// Before newRuntime, in this order: the flag pair, then a name that is
+	// either given or derivable from the branch.
+	if *branch != "" && *cwd != "" {
+		fmt.Fprintf(os.Stderr, "relay: relay add --branch and --cwd are exclusive\n")
+		return fmt.Errorf("relay add --branch and --cwd are exclusive: %w", exitCodeErr{code: 2})
+	}
 	if *name == "" {
-		return fmt.Errorf("relay add requires --name NAME")
+		if *branch == "" {
+			return fmt.Errorf("relay add requires --name NAME")
+		}
+		derived, err := relay.DefaultBindingName(*branch)
+		if err != nil {
+			return fmt.Errorf("relay add --branch %s: cannot derive a binding name (%v); pass --name", *branch, err)
+		}
+		*name = derived
 	}
 	if *feature != "" {
 		if err := store.ValidFeature(*feature); err != nil {
@@ -863,6 +877,7 @@ func cmdAdd(args []string) error {
 		Repo:        repo,
 		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
+		Branch:      *branch,
 		Headless:    *headless,
 		Server:      *server,
 		Base:        *base,
@@ -895,8 +910,12 @@ func cmdAdd(args []string) error {
 	}
 	notePick("builder", res.Resolution)
 	switch {
+	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
+		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
 	case res.Binding.Builder.Remote():
 		fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
+	case res.Worktree != "" && res.Binding.ExistingBranch:
+		fmt.Printf("  worktree %s on existing branch %s (tip %s)\n", res.Worktree, res.Branch, res.Base)
 	case res.Worktree != "":
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
 	default:

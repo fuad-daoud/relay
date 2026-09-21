@@ -71,6 +71,10 @@ type createBranchCall struct {
 	Dir, Branch, Commit string
 }
 
+type createTrackingBranchCall struct {
+	Dir, Branch, Upstream string
+}
+
 type deleteBranchCall struct {
 	Dir, Branch string
 }
@@ -102,6 +106,9 @@ type fakeGit struct {
 
 	createBranchErr   error
 	createBranchCalls []createBranchCall
+
+	createTrackingBranchErr   error
+	createTrackingBranchCalls []createTrackingBranchCall
 
 	deleteBranchErr   error
 	deleteBranchCalls []deleteBranchCall
@@ -208,6 +215,13 @@ func (f *fakeGit) CreateBranch(ctx context.Context, dir, branch, commit string) 
 		return f.createBranchErr
 	}
 	return nil
+}
+
+func (f *fakeGit) CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error {
+	f.createTrackingBranchCalls = append(f.createTrackingBranchCalls, createTrackingBranchCall{
+		Dir: dir, Branch: branch, Upstream: upstream,
+	})
+	return f.createTrackingBranchErr
 }
 
 func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {

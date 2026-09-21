@@ -291,6 +291,11 @@ type Binding struct {
 	Branch string `json:"branch,omitempty"`
 	Base   string `json:"base,omitempty"`
 
+	// ExistingBranch is true when add --branch adopted a branch relay did not
+	// create. Informational: every teardown path already leaves branches
+	// alone; this records that the branch predates the binding.
+	ExistingBranch bool `json:"existing_branch,omitempty"`
+
 	// Repo is the source checkout the worktree was cut from -- the caller's
 	// cwd at add/fork time. Empty for a --cwd binding, an adopted bind, and
 	// every bind.json written before the field existed; empty disables

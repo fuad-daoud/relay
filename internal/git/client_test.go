@@ -1474,6 +1474,50 @@ func TestDeleteBranch(t *testing.T) {
 	}
 }
 
+// TestCreateTrackingBranch creates a local branch for a ref that exists only
+// on origin, and refuses a second time with ErrBranchExists.
+func TestCreateTrackingBranch(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// Repo A has one commit; B is a bare clone of A that A then fetches from,
+	// so refs/remotes/origin/feat can exist while refs/heads/feat does not.
+	repoA := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repoA, "file.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoA, "add", "file.txt")
+	runGit(t, repoA, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "commit", "-m", "first")
+	sha := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
+
+	repoB := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, filepath.Dir(repoB), "clone", "--bare", repoA, repoB)
+	runGit(t, repoA, "remote", "add", "origin", repoB)
+	runGit(t, repoA, "fetch", "origin")
+
+	// feat exists only as refs/remotes/origin/feat: create it in B, fetch in A.
+	runGit(t, repoB, "branch", "feat", sha)
+	runGit(t, repoA, "fetch", "origin")
+
+	if exists, err := client.BranchExists(ctx, repoA, "feat"); err != nil || exists {
+		t.Fatalf("feat must not exist locally before tracking: exists=%v err=%v", exists, err)
+	}
+
+	if err := client.CreateTrackingBranch(ctx, repoA, "feat", "origin/feat"); err != nil {
+		t.Fatalf("CreateTrackingBranch: %v", err)
+	}
+	up := strings.TrimSpace(runGit(t, repoA, "rev-parse", "--abbrev-ref", "feat@{u}"))
+	if up != "origin/feat" {
+		t.Fatalf("feat upstream = %q, want origin/feat", up)
+	}
+
+	// Calling it again is refused: the branch now exists.
+	if err := client.CreateTrackingBranch(ctx, repoA, "feat", "origin/feat"); !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("second CreateTrackingBranch = %v, want ErrBranchExists", err)
+	}
+}
+
 // requireGit skips the test when git is not on PATH: RepoFacts's tests spin
 // up throwaway repositories, which is pointless on a machine without git.
 func requireGit(t *testing.T) {
