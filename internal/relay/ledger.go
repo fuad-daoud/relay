@@ -193,7 +193,50 @@ func Gates(rt Runtime) []ledger.Gate {
 		return nil
 	}
 
-	return ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
+	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
+	return append(gates, rolesMissingGates(rt)...)
+}
+
+// rolesMissingGates synthesises an in-memory ledger.RolesMissing gate for
+// every candidate whose harness kind is missing role files, per rt.Roles
+// (#238), the same way ledger.ExitedNoReport is synthesised from
+// Binding.RoundExcluded rather than read from the ledger file. nil when
+// rt.Roles is nil: no checker configured (every test that does not set one,
+// and every caller before cmd/relay wires harness.OSRoleChecker()).
+func rolesMissingGates(rt Runtime) []ledger.Gate {
+	if rt.Roles == nil || rt.Candidates == nil {
+		return nil
+	}
+
+	// Missing is called once per distinct harness kind, not once per
+	// candidate: several candidates commonly share a kind.
+	missingByKind := map[string][]string{}
+	checked := map[string]bool{}
+
+	var out []ledger.Gate
+	for _, ref := range rt.Candidates.Refs() {
+		r, err := candidate.ParseRef(ref)
+		if err != nil {
+			continue
+		}
+		kind := r.Harness
+		if !checked[kind] {
+			missingByKind[kind] = rt.Roles.Missing(kind)
+			checked[kind] = true
+		}
+		paths := missingByKind[kind]
+		if len(paths) == 0 {
+			continue
+		}
+		out = append(out, ledger.Gate{
+			Token:  ref,
+			Kind:   ledger.RolesMissing,
+			Since:  rt.Now(),
+			Note:   "roles missing: " + strings.Join(paths, ", ") + "; run relay agent install --kind " + kind,
+			Source: "relay",
+		})
+	}
+	return out
 }
 
 // GateKindText is the human wording for a gate kind in status, candidates
@@ -206,6 +249,8 @@ func GateKindText(k ledger.Kind) string {
 		return "rate-limited"
 	case ledger.ExitedNoReport:
 		return "exited without a report"
+	case ledger.RolesMissing:
+		return "roles missing"
 	default:
 		return string(k)
 	}

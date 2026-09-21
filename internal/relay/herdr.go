@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ingest"
@@ -137,6 +138,12 @@ type Runtime struct {
 	// check (#244): a builder can never be "lost to a daemon restart" if
 	// the daemon does not know when it itself started.
 	StartedAt time.Time
+
+	// Roles checks whether a harness kind's shipped role files are present
+	// on disk, so a candidate whose harness has none installed is gated
+	// before it is picked (#238). Nil means no check, so tests that do not
+	// set it behave as before; cmd/relay wires harness.OSRoleChecker().
+	Roles harness.RoleChecker
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

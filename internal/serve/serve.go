@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -31,6 +32,9 @@ type Config struct {
 	// StartedAt is when this relay serve process started; zero means
 	// unknown, which disables the daemon-restart-relaunch check (#244).
 	StartedAt time.Time
+	// Roles checks candidate harness role-file coverage (#238); nil means
+	// no check.
+	Roles harness.RoleChecker
 }
 
 type Server struct {
@@ -118,5 +122,6 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		Prices:           s.cfg.Prices,
 		Now:              s.cfg.Now,
 		StartedAt:        s.cfg.StartedAt,
+		Roles:            s.cfg.Roles,
 	}
 }

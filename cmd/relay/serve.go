@@ -265,6 +265,24 @@ func cmdServeRun(args []string) error {
 		slog.Info("builder tier", "tier", builderTier)
 	}
 
+	// Log each candidate harness's role-file coverage once at startup
+	// (#238): a candidate whose kind is missing role files is gated on
+	// every pick, silently until now.
+	roles := harness.OSRoleChecker()
+	seenKinds := map[string]bool{}
+	for _, ref := range candidates.Refs() {
+		r, err := candidate.ParseRef(ref)
+		if err != nil || seenKinds[r.Harness] {
+			continue
+		}
+		seenKinds[r.Harness] = true
+		if missing := roles.Missing(r.Harness); len(missing) > 0 {
+			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relay agent install --kind "+r.Harness)
+		} else {
+			slog.Info("roles present", "harness", r.Harness)
+		}
+	}
+
 	reader, prices := newUsageReader(configDir)
 
 	cfg := serve.Config{
@@ -279,6 +297,7 @@ func cmdServeRun(args []string) error {
 		Usage:          reader,
 		Prices:         prices,
 		StartedAt:      time.Now(),
+		Roles:          roles,
 	}
 
 	srv, err := serve.New(cfg)

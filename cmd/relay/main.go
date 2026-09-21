@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -357,6 +358,7 @@ func newRuntime() (relay.Runtime, error) {
 		Hooks:            dispatcher,
 		Remote:           remoteClient,
 		Transport:        transport,
+		Roles:            harness.OSRoleChecker(),
 	}, nil
 }
 
