@@ -1199,3 +1199,33 @@ func TestClassifyCheck(t *testing.T) {
 		}
 	})
 }
+
+// TestOpencodeAllowlistRow checks the wiring (#236): the opencode branch grows
+// the external_directory row when a state root is supplied, and no other kind
+// does. Dropping the kind check in Run makes the second half fail.
+func TestOpencodeAllowlistRow(t *testing.T) {
+	const stateRoot = "/fake/home/.local/state/relay"
+
+	env := newFakeEnvForKind(t, "opencode")
+	env.existingFiles = map[string]bool{}
+	env.fileContents = map[string]string{}
+
+	rep := Run(context.Background(), env, []string{"opencode"}, WithStateRoot(stateRoot))
+	c := findCheck(rep, "opencode", "external_directory")
+	if c == nil {
+		t.Fatalf("no external_directory row for opencode: %+v", rep.Checks)
+	}
+	if c.Severity != SevWarn {
+		t.Errorf("severity = %v, want warn (no opencode config file)", c.Severity)
+	}
+
+	other := newFakeEnvForKind(t, "claude")
+	other.existingFiles = map[string]bool{}
+	other.fileContents = map[string]string{}
+	rep = Run(context.Background(), other, []string{"claude"}, WithStateRoot(stateRoot))
+	for _, c := range rep.Checks {
+		if c.Name == "external_directory" {
+			t.Errorf("claude must not carry the opencode allowlist row: %+v", c)
+		}
+	}
+}

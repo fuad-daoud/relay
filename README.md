@@ -1618,6 +1618,8 @@ Substitute your real home directory: opencode does not expand `~` or `$HOME`
 in these patterns. Claude builders (`claude/anthropic/sonnet`) have their own permission model
 and are not covered by that entry.
 
+relay doctor warns when this entry is missing (row external_directory under opencode).
+
 ## Recovering a broken binding
 
 If relay cannot find the builder — a detection flicker, a restarted agent — the
