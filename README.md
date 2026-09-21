@@ -108,62 +108,97 @@ To run the reconciler as a background service, see
 
 ## First run on a clean machine
 
-On a clean machine, set up prerequisites and preflight with `relay doctor`:
+On a clean machine, set up prerequisites and preflight with `relay init` and
+`relay doctor`:
 
 1. Install relay (see [Install](#install)).
-2. Run `relay doctor` to check your environment:
+2. Run `relay init` to write a starter configuration from the harnesses on
+   `PATH`:
+   ```
+   relay init
+   ```
+   It finds the harness binaries on `PATH`, writes one builder candidate per
+   harness to `~/.config/relay/candidates.json`, writes
+   `~/.config/relay/policy.json` ordering them, and installs the role
+   definitions into each of those harnesses. It refuses to overwrite either
+   config file without `--force`, and `--no-roles` skips the definitions. It
+   says what it wrote and the command to run next, e.g.:
+   ```
+   wrote ~/.config/relay/candidates.json (2 candidates: claude, opencode)
+   wrote ~/.config/relay/policy.json (order.builder: claude/anthropic/sonnet, opencode/openrouter/z-ai/glm-5.3-flash)
+   wrote  ~/.claude/agents/plan-executor.md
+   wrote  ~/.config/opencode/agents/plan-executor.md
+   next: edit the model names in ~/.config/relay/candidates.json, then run: relay doctor
+   ```
+
+   **Edit the model names it wrote** to the models your accounts may run (see
+   [Candidates](#candidates)); `relay candidates` prints what you configured.
+   When more than one candidate serves `builder`, `relay policy` shows the
+   order relay would pick them in and says `would refuse` until the file's
+   order suits you (see [Policy](#policy)).
+3. Run `relay doctor` to check your environment:
    ```
    relay doctor
    ```
    Doctor inspects herdr, the background daemon, each harness binary on `PATH`, herdr integrations, and the builder role files.
-3. Run the literal fix commands `relay doctor` prints for any missing items, such as installing a harness integration:
+4. Run the literal fix commands `relay doctor` prints for any missing items, such as installing a harness integration:
    ```
    herdr integration install claude
    ```
-4. Install the role definitions into each harness on `PATH` (the plugin
-   does this for you at install and update):
-   ```
-   relay agent install
-   ```
-   One line per file says `wrote`, `kept (identical)` or `kept (differs;
-   --force to overwrite)`. Pass `--kind` to name a harness that is not on
-   `PATH` yet, `--role` for one definition, `--dry-run` to look first.
-   This writes `plan-executor`, `researcher`, `reviewer` and `architect`
-   for every kind; `relay agent print --kind <k> --role <r>` still emits
-   one to stdout.
-
-   `researcher` is the read-only role the builder's own sub-agents run as. It
-   exists because exactly one agent may write to a working tree: research can fan
-   out safely, implementation cannot. The claude and opencode definitions pin a
-   `model:` in their front matter as a worked example, chosen so neither needs a
-   provider the rest of relay does not already assume; that line is the first
-   thing to change for your own setup, and a plain `relay agent install`
-   keeps your edit. The agy definitions pin `model: inherit`
-   and that is not an example: on agy the key is a tier (`inherit`, `flash`,
-   `pro`) that would override the `--model` relay passes at launch. `relay
-   doctor` reports the pin each installed definition carries, warns when an
-   agy copy pins a tier or differs from what relay ships, and names the
-   `relay agent install ... --force` that restores it.
-
-   codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
-   with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
-   every codex builder's research sub-agents and `relay doctor` warns when
-   that pin drifts. Pane builders also need `herdr integration install
-   codex`.
-5. Write `~/.config/relay/candidates.json` (see [Candidates](#candidates)) and check it with `relay candidates`.
-6. If more than one candidate serves `builder`, write `~/.config/relay/policy.json`
-   with the order to try them in (see [Policy](#policy)); `relay policy` shows
-   what relay would pick and says `would refuse` until you do. `relay doctor`
-   warns about this too and prints a starter file built from your candidates.
-7. Re-run `relay doctor` to confirm `0 failures`.
-8. Start the daemon (e.g. `relay daemon &` or `make service`).
-9. Bind your first agent from inside a herdr planner pane:
+5. Re-run `relay doctor` to confirm `0 failures`.
+6. Start the daemon (e.g. `relay daemon &` or `make service`).
+7. Bind your first agent from inside a herdr planner pane:
    ```
    relay bind --builder claude/anthropic/sonnet
    ```
    (or, with one candidate, `relay bind`).
 
+To write these files by hand instead, install the role definitions into each
+harness on `PATH` (the plugin does this for you at install and update):
+```
+relay agent install
+```
+One line per file says `wrote`, `kept (identical)` or `kept (differs;
+--force to overwrite)`. Pass `--kind` to name a harness that is not on
+`PATH` yet, `--role` for one definition, `--dry-run` to look first.
+This writes `plan-executor`, `researcher`, `reviewer` and `architect`
+for every kind; `relay agent print --kind <k> --role <r>` still emits
+one to stdout.
+
+`researcher` is the read-only role the builder's own sub-agents run as. It
+exists because exactly one agent may write to a working tree: research can fan
+out safely, implementation cannot. The claude and opencode definitions pin a
+`model:` in their front matter as a worked example, chosen so neither needs a
+provider the rest of relay does not already assume; that line is the first
+thing to change for your own setup, and a plain `relay agent install`
+keeps your edit. The agy definitions pin `model: inherit`
+and that is not an example: on agy the key is a tier (`inherit`, `flash`,
+`pro`) that would override the `--model` relay passes at launch. `relay
+doctor` reports the pin each installed definition carries, warns when an
+agy copy pins a tier or differs from what relay ships, and names the
+`relay agent install ... --force` that restores it.
+
+codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
+with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
+every codex builder's research sub-agents and `relay doctor` warns when
+that pin drifts. Pane builders also need `herdr integration install
+codex`.
+
+Then write `~/.config/relay/candidates.json` (see [Candidates](#candidates))
+and check it with `relay candidates`. If more than one candidate serves
+`builder`, write `~/.config/relay/policy.json` with the order to try them in
+(see [Policy](#policy)); `relay policy` shows what relay would pick and says
+`would refuse` until you do. `relay doctor` warns about this too and prints a
+starter file built from your candidates.
+
 ## Quick start
+
+On a clean machine, seed your configuration first (see
+[First run on a clean machine](#first-run-on-a-clean-machine)):
+
+```
+relay init                        # write candidates.json and policy.json, install the role definitions
+```
 
 From inside the planner's herdr pane, in the repository you want worked on:
 
