@@ -254,6 +254,47 @@ func TestLimitGateDefault(t *testing.T) {
 	}
 }
 
+// TestStallAfterDefaultAndOverride pins #252's policy key: nil is the 15m
+// default, a present value is that many milliseconds, and 0 is a load error
+// naming the key.
+func TestStallAfterDefaultAndOverride(t *testing.T) {
+	p, err := load(t, `{}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.StallAfter(); got != DefaultStallAfter {
+		t.Fatalf("StallAfter() with no key = %v, want %v", got, DefaultStallAfter)
+	}
+	if DefaultStallAfter != 15*time.Minute {
+		t.Fatalf("DefaultStallAfter = %v, want 15m", DefaultStallAfter)
+	}
+
+	p, err = load(t, `{"stall_after_ms":60000}`)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := p.StallAfter(); got != time.Minute {
+		t.Fatalf("StallAfter() with 60000 = %v, want 1m", got)
+	}
+
+	_, err = load(t, `{"stall_after_ms":0}`)
+	if err == nil {
+		t.Fatalf("Load with stall_after_ms 0: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"stall_after_ms", "must be > 0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	if got := (Policy{}).StallAfter(); got != DefaultStallAfter {
+		t.Fatalf("Policy{}.StallAfter() = %v, want %v", got, DefaultStallAfter)
+	}
+}
+
 func TestGatePolicy(t *testing.T) {
 	t.Run("nil Gate defaults", func(t *testing.T) {
 		p := Policy{}

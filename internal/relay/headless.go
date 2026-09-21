@@ -261,6 +261,23 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store
 	}
 }
 
+// streamLastActivity is when a live headless builder's stream last moved: the
+// later of the stream file's mtime and the round's start (#252). A missing or
+// unreadable stream is not an error -- a round that has not produced a line
+// yet counts from its start, and a stream that never appears for stall_after_ms
+// on a live process is exactly a stall.
+func streamLastActivity(rt Runtime, b store.Binding) time.Time {
+	st, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round))
+	if err != nil {
+		return b.RoundStartedAt
+	}
+	last := st.ModTime()
+	if b.RoundStartedAt.After(last) {
+		return b.RoundStartedAt
+	}
+	return last
+}
+
 // reconcileHeadless is one tick of a headless binding (spec §5.1). Reconcile
 // hands off here right after the DONE gate; the pane path never runs for a
 // headless endpoint and this never runs for a pane one.
@@ -308,6 +325,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
+			b.StalledSince = time.Time{}
 		}
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
@@ -338,6 +356,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			next = closeServedRound(ctx, rt, next)
 		}
 		next.Builder = clearProcess(next.Builder)
+		next.StalledSince = time.Time{}
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
@@ -371,12 +390,26 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		alive = true
 	}
 	if alive {
+		now := rt.Now().UTC()
 		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
 			return next, err // a halt does not deliver, as in the pane path
 		}
 		if err != nil {
 			return b, err
+		}
+		// The process is alive; the stream file is the one signal that
+		// separates "thinking" from "hung" (#252). A stream quiet for
+		// stall_after_ms is a stall; a stream that moves again clears it.
+		last := streamLastActivity(rt, next)
+		if now.Sub(last) >= rt.Policy.StallAfter() {
+			if next.StalledSince.IsZero() {
+				next.StalledSince = last
+				slog.Warn("headless builder stalled", "binding", next.Name, "round", next.Round, "pid", next.Builder.PID, "quiet", now.Sub(last).Truncate(time.Second))
+			}
+		} else if !next.StalledSince.IsZero() {
+			next.StalledSince = time.Time{}
+			slog.Info("headless builder resumed", "binding", next.Name, "round", next.Round)
 		}
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
@@ -412,6 +445,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, err
 		}
 		next.Builder = clearProcess(next.Builder)
+		next.StalledSince = time.Time{}
 		return deliverAndSettle(ctx, rt, tx, next, agents)
 	}
 
@@ -447,6 +481,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		time.Unix(b.Builder.StartedAt, 0).Before(rt.StartedAt)
 
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
+	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
 
 	if lost && switchable {
 		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
@@ -556,8 +591,11 @@ const statusTailLines = 3
 // status word that sits where a pane's herdr status sits, and the process
 // details. Idle between rounds; otherwise a live Alive check -- the same
 // cost class as the herdr list pane rows pay -- then, for an exited
-// process, the trailer's code. No Runner means relay cannot say.
-func headlessStatus(ctx context.Context, rt Runtime, e store.Endpoint) (string, *HeadlessInfo) {
+// process, the trailer's code. No Runner means relay cannot say. A live
+// process whose stream has gone quiet (binding.StalledSince, #252) reads
+// "stalled <age>" in place of "working".
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *HeadlessInfo) {
+	e := b.Builder
 	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
@@ -578,6 +616,9 @@ func headlessStatus(ctx context.Context, rt Runtime, e store.Endpoint) (string, 
 		return "unknown", info
 	}
 	if alive {
+		if !b.StalledSince.IsZero() {
+			return "stalled " + AgeText(rt.Now().Sub(b.StalledSince)), info
+		}
 		return "working", info
 	}
 	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), e.LogPath); ok {

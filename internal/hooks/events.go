@@ -10,6 +10,11 @@ const (
 	// EventForkCreated reports that a new binding was branched from an earlier round
 	// of an existing binding. OldState holds the source binding's name for provenance.
 	EventForkCreated EventType = "fork_created"
+	// EventBuilderStalled reports that a live headless builder's stream went
+	// quiet for policy.json's stall_after_ms (#252). It fires once per
+	// stall episode; clearing the stall emits nothing. It is an observation,
+	// never an action: relay never kills or switches on it.
+	EventBuilderStalled EventType = "builder_stalled"
 )
 
 // Event encapsulates the context of a state transition or action.

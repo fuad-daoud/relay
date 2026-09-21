@@ -53,6 +53,28 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.BuilderScreen != "" || !got.BuilderScreenAt.IsZero() {
 		t.Errorf("builder screen fields must default to zero: %+v", got)
 	}
+	if !got.StalledSince.IsZero() {
+		t.Errorf("StalledSince must default to zero: %+v", got)
+	}
+}
+
+// TestStalledSinceRoundTrip pins #252's store field: the daemon's stall stamp
+// survives Save and Load unchanged.
+func TestStalledSinceRoundTrip(t *testing.T) {
+	s := New(t.TempDir())
+	want := newBinding("webshop", "/home/dev/projects/webshop")
+	want.StalledSince = time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	if err := s.Save(want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.StalledSince.Equal(want.StalledSince) {
+		t.Errorf("StalledSince round trip: got %s, want %s", got.StalledSince, want.StalledSince)
+	}
 }
 
 func TestBuilderScreenRoundTrip(t *testing.T) {

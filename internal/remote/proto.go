@@ -91,6 +91,11 @@ type BindingView struct {
 	// struct store.LogEntry.Usage holds). nil from a pre-usage server, or
 	// when the closed round has no report entry.
 	Usage *usage.Usage `json:"usage,omitempty"`
+
+	// StalledSince is the server's stall stamp for a live-but-quiet headless
+	// round (#252), copied onto the client binding for a running round. Zero
+	// from a pre-stall server, and zero when the round is not stalled.
+	StalledSince time.Time `json:"stalled_since,omitempty"`
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.

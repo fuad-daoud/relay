@@ -1009,6 +1009,171 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 	}
 }
 
+// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core: a live
+// process whose stream file has not moved for stall_after_ms is stamped
+// StalledSince = the stream's last activity, and nothing else happens. The
+// second case is the mutation target: with the stream only 5m quiet the
+// comparison must not fire, so inverting it (or comparing `<` for `>=`) makes
+// both cases fail.
+func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
+	cases := []struct {
+		name     string
+		quietFor time.Duration
+		stalled  bool
+	}{
+		{"quiet past stall_after_ms", 20 * time.Minute, true},
+		{"quiet under stall_after_ms", 5 * time.Minute, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeHerdr{}
+			fr := newFakeRunner()
+			rt, b := sentHeadless(t, f, fr)
+
+			now := baseTime.Add(10 * time.Minute)
+			rt = at(rt, 10*time.Minute)
+			b.RoundStartedAt = now.Add(-30 * time.Minute)
+
+			stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+			if err := os.WriteFile(stream, []byte("{\"a\":1}\n{\"b\":2}\n"), 0o644); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			quietAt := now.Add(-tc.quietFor)
+			if err := os.Chtimes(stream, quietAt, quietAt); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+
+			got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+			if err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
+				t.Errorf("a stalled binding stays active and keeps its process: state=%s pid=%d", got.State, got.Builder.PID)
+			}
+			if len(fr.kills) != 0 || len(fr.specs) != 1 || len(f.notices) != 0 {
+				t.Errorf("a stall is never an action: kills=%d specs=%d notices=%v", len(fr.kills), len(fr.specs), f.notices)
+			}
+			if tc.stalled {
+				if !got.StalledSince.Equal(quietAt) {
+					t.Errorf("StalledSince = %s, want the stream's mtime %s", got.StalledSince, quietAt)
+				}
+				// A second stalled tick keeps the same stamp.
+				next, err := reconcile(t, at(rt, 11*time.Minute), got, []herdr.Agent{plannerAgent()})
+				if err != nil {
+					t.Fatalf("Reconcile (second tick): %v", err)
+				}
+				if !next.StalledSince.Equal(quietAt) {
+					t.Errorf("StalledSince after a second tick = %s, want it unchanged at %s", next.StalledSince, quietAt)
+				}
+			} else if !got.StalledSince.IsZero() {
+				t.Errorf("StalledSince = %s, want zero: the stream is quiet but under stall_after_ms", got.StalledSince)
+			}
+		})
+	}
+}
+
+// TestReconcileHeadlessStallClearsWhenStreamMoves pins the clear side of
+// #252: a stream that moves again clears the stamp, and a process that exits
+// with a report clears it as the round closes.
+func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+
+	now := baseTime.Add(10 * time.Minute)
+	rt = at(rt, 10*time.Minute)
+	b.RoundStartedAt = now.Add(-30 * time.Minute)
+	stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	if err := os.WriteFile(stream, []byte("line\n"), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	quietAt := now.Add(-20 * time.Minute)
+	if err := os.Chtimes(stream, quietAt, quietAt); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.StalledSince.IsZero() {
+		t.Fatalf("StalledSince is zero; want the stall stamped before the clear case")
+	}
+
+	// The stream moves again: the next tick clears the stamp.
+	moved := now
+	if err := os.Chtimes(stream, moved, moved); err != nil {
+		t.Fatalf("chtimes back: %v", err)
+	}
+	cleared, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (moved): %v", err)
+	}
+	if !cleared.StalledSince.IsZero() {
+		t.Errorf("StalledSince = %s, want zero once the stream moves again", cleared.StalledSince)
+	}
+
+	// A process that exits with a report closes the round, and the closed
+	// binding carries no stall.
+	f2 := &fakeHerdr{}
+	fr2 := newFakeRunner()
+	rt2, b2 := sentHeadless(t, f2, fr2)
+	rt2 = at(rt2, 10*time.Minute)
+	b2.RoundStartedAt = rt2.Now().Add(-30 * time.Minute)
+	b2.StalledSince = rt2.Now().Add(-20 * time.Minute)
+	fr2.script(b2.Builder.PID, false)
+	if err := os.WriteFile(rt2.Store.ReportPath(b2.Name, b2.Round), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	closed, err := reconcile(t, rt2, b2, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (exited with report): %v", err)
+	}
+	if closed.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the report closed the round", closed.Round)
+	}
+	if !closed.StalledSince.IsZero() {
+		t.Errorf("StalledSince = %s, want zero on the closed round", closed.StalledSince)
+	}
+}
+
+// TestStatusHeadlessStalledLabel pins #252's label: a live, stalled headless
+// builder reads "stalled <age>", and a live, unstalled one reads "working".
+func TestStatusHeadlessStalledLabel(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	b.StalledSince = baseTime.Add(-20 * time.Minute)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	if got := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(got, "stalled ") {
+		t.Fatalf("BuilderStatus = %q, want it to start with %q", got, "stalled ")
+	} else if !strings.Contains(got, AgeText(baseTime.Sub(b.StalledSince))) {
+		t.Errorf("BuilderStatus = %q, want it to contain the age %q", got, AgeText(baseTime.Sub(b.StalledSince)))
+	}
+
+	b.StalledSince = time.Time{}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status (not stalled): %v", err)
+	}
+	if got := rep.Bindings[0].BuilderStatus; got != "working" {
+		t.Errorf("BuilderStatus = %q, want %q when not stalled", got, "working")
+	}
+}
+
 func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
 	f := &fakeHerdr{}
 	fr := newFakeRunner()

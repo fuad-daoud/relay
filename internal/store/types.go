@@ -212,6 +212,13 @@ type Binding struct {
 	// accumulates toward a switch.
 	BuilderMissingSince time.Time `json:"builder_missing_since,omitempty"`
 
+	// StalledSince is the headless stream's last activity time when the
+	// daemon judged the live-but-quiet builder stalled (#252): zero means not
+	// stalled. Set/cleared only by reconcileHeadless (and copied from the
+	// server view for remote bindings); cleared by Send and round close.
+	// relay never acts on it -- killing stays the human's decision.
+	StalledSince time.Time `json:"stalled_since,omitempty"`
+
 	// RoundBaselineTree is the git tree object the CURRENT round started from,
 	// written by Send and consumed (then cleared) when the round's report is
 	// queued. Empty means no baseline was captured for this round -- a non-git
