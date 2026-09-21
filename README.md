@@ -236,8 +236,8 @@ inside every pane it manages, so it has to be run from inside one.
   waiting     set when the binding is stalled on a human: cause, line, since, hint
   ```
 - `relay log NAME` — the binding's append-only round log. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
-- `relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json]` —
-  one line per round across every binding relay has ever recorded, live or archived, newest first. See "The database" below.
+- `relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
+  one line per round across every binding relay has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
 - `relay show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]` —
   one round's plan, report, diff, drift, log or transcript, from a live binding's files or, for anything not live, from the database. See "The database" below.
 - `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
@@ -722,6 +722,10 @@ relay history [--here|--repo <url|dir>]   filter to a repo: --here resolves the 
               [--archived|--live]         archived bindings only, or live bindings only (default: both)
               [--limit N]                 max rows to print; 0 = all (default 200)
               [--json]                    a JSON array of RoundRow, `[]` when empty
+              [-q "<query>"]              filter with the query language below
+              [--by <axis>]               regroup the result: none, binding, repo, feature, builder,
+                                           harness, provider, model, day, outcome
+              [--rows]                    with --json --by, include each group's Rows
 ```
 
 Every flag is one field of the shared `Filter` the ui's coming `all` scope
@@ -738,6 +742,40 @@ started time in the local zone; the binding name, truncated with `…` past
 (`-` when unknown); the worktree's tree state at close; cost (`$0.42`
 measured, `~$0.42` estimated, `unknown`, or `-` when the round recorded no
 usage at all); `(archived)` for a round from a binding `gc` has packed away.
+
+`-q` takes the query language the dashboard's filter line shares
+(`docs/specs/2026-09-21-dashboard-design.md` §3):
+
+```
+query  := token*                              whitespace separated
+token  := key ":" value                       equality; "quoted" for spaces
+        | numkey op number                    op in > < >= <= = 
+        | word                                case-insensitive substring of binding, repo or feature
+key    := binding repo feature planner harness provider model candidate outcome
+          report state gate basis server mode since until archived by
+numkey := cost tokens commits duration round
+values : outcome reported|halted|exited|switched|done_no_report|open
+         report  done|halted|blocked|deferred|unstructured
+         gate    pass|fail|timeout|error
+         basis   measured|estimated|unknown
+         mode    pane|headless|remote
+         archived true|false
+         since/until 24h|7d|YYYY-MM-DD
+         by      none|binding|repo|feature|builder|harness|provider|model|day|outcome
+         duration minutes; tokens = in+cache+write+out; cost in USD
+```
+
+`by:` (or `--by`) regroups the result instead of printing one line per
+round: one row per axis value with rounds, reported, halted, commits,
+tokens, cost and the last round's date. A flag overrides the same key in
+`-q` and prints `note: --<flag> overrides <key>:<value> from -q` on stderr.
+An unknown key, a bad enum value or a bad number is a usage error (exit 2).
+
+```
+$ relay history -q "harness:agy outcome:halted since:30d"
+$ relay history -q "auth cost>1" --by builder
+$ relay history --by day --since 14d
+```
 
 ### relay show
 

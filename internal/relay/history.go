@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/histq"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
@@ -108,36 +110,114 @@ type HistoryOptions struct {
 	Archived *bool
 	// Limit: 0 means all rows; the CLI layer defaults it to 200.
 	Limit int
+	// Query is the -q text; Filter parses it before applying the flags.
+	Query string
+	// By is the --by axis; it overrides a by: in Query the same way every
+	// other flag does.
+	By string
+	// parsed is what Filter made of Query, with the flag overrides applied,
+	// so the caller can read the regroup axis off ParsedQuery.
+	parsed histq.Query
 }
 
-// Filter resolves o into a db.Filter. Here, when set, is resolved via
-// rt.Git.RepoFacts into the repo's normalised origin URL when it has a
-// remote, else its common dir -- errors when Here is not a git repository.
-// Since/Until go through ParseSince. Newest is always true: `relay history`
-// prints newest first.
-func (o HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) (db.Filter, error) {
-	f := db.Filter{
-		Repo:      o.Repo,
-		Feature:   o.Feature,
-		Binding:   o.Binding,
-		Planner:   o.Planner,
-		Harness:   o.Harness,
-		Provider:  o.Provider,
-		Model:     o.Model,
-		Candidate: o.Candidate,
-		Outcome:   o.Outcome,
-		Archived:  o.Archived,
-		Limit:     o.Limit,
-		Newest:    true,
+// ParsedQuery returns the histq.Query Filter built from Query, with the
+// flag overrides applied -- the regroup axis lives there. It is the zero
+// Query until Filter has run.
+func (o HistoryOptions) ParsedQuery() histq.Query { return o.parsed }
+
+// Filter resolves o into a db.Filter, merging the -q query with the flags.
+// The query is parsed first; every explicit flag (non-empty, or a non-nil
+// Archived) then sets the field it names, and a flag that disagrees with a
+// value the query set appends `note: --<flag> overrides <key>:<value> from
+// -q` to the returned notes, which the CLI prints to stderr. Here, when set,
+// is resolved via rt.Git.RepoFacts into the repo's normalised origin URL
+// when it has a remote, else its common dir -- errors when Here is not a git
+// repository. Since/Until go through ParseSince. Newest is always true:
+// `relay history` prints newest first.
+func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) (db.Filter, []string, error) {
+	var q histq.Query
+	if strings.TrimSpace(o.Query) != "" {
+		parsed, err := histq.ParseAt(o.Query, now)
+		if err != nil {
+			return db.Filter{}, nil, err
+		}
+		q = parsed
+	}
+	o.parsed = q
+
+	f := q.Filter
+	f.Newest = true
+
+	var notes []string
+	note := func(flag, queryValue string) {
+		notes = append(notes, fmt.Sprintf("note: --%s overrides %s:%s from -q", flag, flag, queryValue))
+	}
+	set := func(flag, queryValue, flagValue string, dst *string) {
+		if flagValue == "" {
+			return
+		}
+		if queryValue != "" && queryValue != flagValue {
+			note(flag, queryValue)
+		}
+		*dst = flagValue
+	}
+
+	set("repo", q.Filter.Repo, o.Repo, &f.Repo)
+	set("feature", q.Filter.Feature, o.Feature, &f.Feature)
+	set("binding", q.Filter.Binding, o.Binding, &f.Binding)
+	set("planner", q.Filter.Planner, o.Planner, &f.Planner)
+	set("harness", q.Filter.Harness, o.Harness, &f.Harness)
+	set("provider", q.Filter.Provider, o.Provider, &f.Provider)
+	set("model", q.Filter.Model, o.Model, &f.Model)
+	set("candidate", q.Filter.Candidate, o.Candidate, &f.Candidate)
+	set("outcome", q.Filter.Outcome, o.Outcome, &f.Outcome)
+
+	if o.By != "" {
+		a, ok := histq.ParseAxis(o.By)
+		if !ok {
+			return db.Filter{}, nil, fmt.Errorf("--by %q: want one of %s", o.By, axisList())
+		}
+		if q.By != histq.AxisNone && string(q.By) != o.By {
+			note("by", string(q.By))
+		}
+		q.By = a
+		o.parsed = q
+	}
+
+	if o.Since != "" {
+		if q.Since != "" && q.Since != o.Since {
+			note("since", q.Since)
+		}
+		ts, err := ParseSince(o.Since, now)
+		if err != nil {
+			return db.Filter{}, nil, err
+		}
+		f.Since = ts
+	}
+	if o.Until != "" {
+		if q.Until != "" && q.Until != o.Until {
+			note("until", q.Until)
+		}
+		ts, err := ParseSince(o.Until, now)
+		if err != nil {
+			return db.Filter{}, nil, err
+		}
+		f.Until = ts
+	}
+	if o.Archived != nil {
+		if q.Filter.Archived != nil && *q.Filter.Archived != *o.Archived {
+			note("archived", strconv.FormatBool(*q.Filter.Archived))
+		}
+		f.Archived = o.Archived
 	}
 
 	if o.Here != "" {
 		if rt.Git == nil {
-			return db.Filter{}, fmt.Errorf("--here: %s: not a git repository", o.Here)
+			return db.Filter{}, nil, fmt.Errorf("--here: %s: not a git repository", o.Here)
 		}
 		originURL, commonDir, err := rt.Git.RepoFacts(ctx, o.Here)
 		if err != nil {
-			return db.Filter{}, fmt.Errorf("--here: %s: not a git repository: %w", o.Here, err)
+			return db.Filter{}, nil, fmt.Errorf("--here: %s: not a git repository: %w", o.Here, err)
 		}
 		normalised := git.NormalizeOriginURL(originURL)
 		if normalised != "" {
@@ -147,18 +227,18 @@ func (o HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) (
 		}
 	}
 
-	since, err := ParseSince(o.Since, now)
-	if err != nil {
-		return db.Filter{}, err
-	}
-	until, err := ParseSince(o.Until, now)
-	if err != nil {
-		return db.Filter{}, err
-	}
-	f.Since = since
-	f.Until = until
+	f.Limit = o.Limit
+	return f, notes, nil
+}
 
-	return f, nil
+// axisList is histq's ten axes as one comma-separated list, for --by errors.
+func axisList() string {
+	axes := histq.Axes()
+	names := make([]string, len(axes))
+	for i, a := range axes {
+		names[i] = string(a)
+	}
+	return strings.Join(names, ", ")
 }
 
 // HistoryLine formats one round exactly as `relay history` prints it:
@@ -208,6 +288,36 @@ func FormatHistory(rows []db.RoundRow, loc *time.Location) string {
 	for _, r := range rows {
 		sb.WriteString(HistoryLine(r, loc))
 		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// FormatGroups renders the `relay history --by` table: one row per group,
+// the axis value first (padded to 40 and truncated with "…"), then rounds,
+// reported, halted, commits, tokens, cost and the last round's date. Cost is
+// nil-basis-safe money and carries a " (N unknown)" suffix when the group
+// holds rows the sum cannot trust. An empty view prints "no rounds", as
+// FormatHistory does (docs/specs/2026-09-21-dashboard-design.md §5).
+func FormatGroups(groups []histq.GroupRow, by histq.Axis, loc *time.Location) string {
+	if len(groups) == 0 {
+		return "no rounds\n"
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s  %6s  %8s  %6s  %7s  %6s  %5s  %-10s\n",
+		padTrunc(string(by), 40), "rounds", "reported", "halted", "commits",
+		"tokens", "cost", "last")
+	for _, g := range groups {
+		cost := usage.Money(usage.Cost{USD: g.CostUSD, Basis: usage.Measured})
+		if g.Unknown > 0 {
+			cost += fmt.Sprintf(" (%d unknown)", g.Unknown)
+		}
+		fmt.Fprintf(&sb, "%s  %6d  %8d  %6d  %7d  %6s  %5s  %-10s\n",
+			padTrunc(g.Key, 40), g.Rounds, g.Reported, g.Halted, g.Commits,
+			usage.ShortTokens(g.Tokens), cost, g.Last.In(loc).Format("2006-01-02"))
 	}
 	return sb.String()
 }

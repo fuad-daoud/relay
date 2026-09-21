@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,13 +11,14 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relay/internal/histq"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
 const historyUsage = `usage: relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S]
                      [--harness K] [--provider P] [--model M] [--candidate T]
                      [--outcome O] [--since D] [--until D] [--archived|--live]
-                     [--limit N] [--json]`
+                     [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]`
 
 // historyOutcomeValues lists the round.Outcome enum in the order
 // docs/specs/2026-09-20-persistence-design.md §3 decision 8 states it, for
@@ -40,6 +42,47 @@ func validateHistoryFlags(archived, live bool, outcome string) error {
 	return nil
 }
 
+// validateHistoryBy checks that --by names one of histq's ten axes. It is a
+// pure function, so a cmd/relay test can pin the rule without executing the
+// subcommand (CI has no herdr to reach).
+func validateHistoryBy(by string) error {
+	if by == "" {
+		return nil
+	}
+	if _, ok := histq.ParseAxis(by); !ok {
+		return fmt.Errorf("--by %q: want one of %s", by, strings.Join(historyAxisNames(), ", "))
+	}
+	return nil
+}
+
+// historyAxisNames is histq's axes in their listed order, for the --by usage
+// error and the flag's help text.
+func historyAxisNames() []string {
+	axes := histq.Axes()
+	names := make([]string, len(axes))
+	for i, a := range axes {
+		names[i] = string(a)
+	}
+	return names
+}
+
+// groupJSON shapes the groups `--json --by` prints: their Rows are blanked
+// unless --rows asked for them. A nil list encodes as [], not null.
+func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
+	if groups == nil {
+		groups = []histq.GroupRow{}
+	}
+	if withRows {
+		return groups
+	}
+	out := make([]histq.GroupRow, len(groups))
+	for i, g := range groups {
+		g.Rows = nil
+		out[i] = g
+	}
+	return out
+}
+
 // cmdHistory prints one line per round across every binding relay has ever
 // recorded, live or archived, newest first
 // (docs/specs/2026-09-20-persistence-design.md §5.7).
@@ -61,6 +104,9 @@ func cmdHistory(args []string) error {
 	live := fs.Bool("live", false, "live bindings only")
 	limit := fs.Int("limit", 200, "max rows to print; 0 = all")
 	asJSON := fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
+	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:builder")
+	by := fs.String("by", "", "regroup the result by one of: "+strings.Join(historyAxisNames(), ", "))
+	withRows := fs.Bool("rows", false, "with --json --by, include each group's rows")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
@@ -73,6 +119,11 @@ func cmdHistory(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 	if err := validateHistoryFlags(*archived, *live, *outcome); err != nil {
+		fmt.Fprintln(os.Stderr, "relay history: "+err.Error())
+		fmt.Fprintln(os.Stderr, historyUsage)
+		return exitCodeErr{code: 2}
+	}
+	if err := validateHistoryBy(*by); err != nil {
 		fmt.Fprintln(os.Stderr, "relay history: "+err.Error())
 		fmt.Fprintln(os.Stderr, historyUsage)
 		return exitCodeErr{code: 2}
@@ -103,6 +154,8 @@ func cmdHistory(args []string) error {
 		Since:     *since,
 		Until:     *until,
 		Limit:     *limit,
+		Query:     *query,
+		By:        *by,
 	}
 	if *here {
 		cwd, cerr := os.Getwd()
@@ -120,14 +173,41 @@ func cmdHistory(args []string) error {
 		opts.Archived = &f
 	}
 
-	f, ferr := opts.Filter(context.Background(), rt, time.Now())
+	f, notes, ferr := opts.Filter(context.Background(), rt, time.Now())
 	if ferr != nil {
 		fmt.Fprintf(os.Stderr, "relay history: %v\n", ferr)
+		var eq histq.ErrQuery
+		if errors.As(ferr, &eq) {
+			return exitCodeErr{code: 2}
+		}
 		return exitCodeErr{code: 1}
+	}
+	for _, n := range notes {
+		fmt.Fprintln(os.Stderr, n)
 	}
 	rows, qerr := rt.DB.Query(f)
 	if qerr != nil {
 		return qerr
+	}
+
+	parsed := opts.ParsedQuery()
+	rows = parsed.Apply(rows)
+
+	axis := parsed.By
+	if *by != "" {
+		a, ok := histq.ParseAxis(*by)
+		if ok {
+			axis = a
+		}
+	}
+
+	if axis != histq.AxisNone {
+		groups := histq.Group(rows, axis, time.Local)
+		if *asJSON {
+			return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, *withRows))
+		}
+		fmt.Print(relay.FormatGroups(groups, axis, time.Local))
+		return nil
 	}
 
 	if *asJSON {

@@ -161,8 +161,14 @@ type RoundRow struct {
 	Tree, GateResult                                                *string
 	CostUSD                                                         *float64
 	CostBasis                                                       *string
-	Archived                                                        bool
-	ArchivedAt                                                      *time.Time
+	InTokens, CacheTokens, WriteTokens, OutTokens                   *int64
+	ReportOutcome                                                   *string
+	BuilderMode, Server                                             *string
+	// DurationMS is *ClosedAt - StartedAt in milliseconds; nil when the
+	// round has no closed_at (still open, or a source that records none).
+	DurationMS *int64
+	Archived   bool
+	ArchivedAt *time.Time
 }
 
 // BindingRow is one binding plus its repo's identity and round summary, for

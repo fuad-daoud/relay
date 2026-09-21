@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/histq"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -34,32 +35,18 @@ type TabReport struct {
 }
 
 var (
-	ErrBadSince = errors.New("--since wants 24h, 7d or YYYY-MM-DD")
+	// ErrBadSince is histq.ErrBadSince. ParseSince's body moved to
+	// internal/histq so the query language can share it; the alias keeps
+	// errors.Is(err, ErrBadSince) true for every caller written before.
+	ErrBadSince = histq.ErrBadSince
 	ErrBadBy    = errors.New("--by wants binding, model or provider")
 )
 
 // ParseSince turns "" (zero: no cut), "24h", "7d" or "2026-09-01" into
-// the instant before which entries are ignored.
-func ParseSince(s string, now time.Time) (time.Time, error) {
-	if s == "" {
-		return time.Time{}, nil
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t, nil
-	}
-	if len(s) >= 2 {
-		n, err := strconv.Atoi(s[:len(s)-1])
-		if err == nil && n > 0 {
-			switch s[len(s)-1] {
-			case 'h':
-				return now.Add(-time.Duration(n) * time.Hour), nil
-			case 'd':
-				return now.Add(-time.Duration(n) * 24 * time.Hour), nil
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("%q: %w", s, ErrBadSince)
-}
+// the instant before which entries are ignored. The body lives in
+// internal/histq now, shared with `relay history -q`; this wrapper is what
+// every existing caller and test in this package keeps using.
+func ParseSince(s string, now time.Time) (time.Time, error) { return histq.ParseSince(s, now) }
 
 func tabKey(e TabEntry, by string) string {
 	u := e.Entry.Usage

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relay/internal/histq"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -102,7 +104,7 @@ func TestHistoryOptionsFilterHere(t *testing.T) {
 	rt := Runtime{Git: g}
 	opts := HistoryOptions{Here: "/work/repo"}
 
-	f, err := opts.Filter(context.Background(), rt, time.Now())
+	f, _, err := opts.Filter(context.Background(), rt, time.Now())
 	if err != nil {
 		t.Fatalf("Filter: %v", err)
 	}
@@ -122,7 +124,7 @@ func TestHistoryOptionsFilterHereNoRemote(t *testing.T) {
 	rt := Runtime{Git: g}
 	opts := HistoryOptions{Here: "/work/repo"}
 
-	f, err := opts.Filter(context.Background(), rt, time.Now())
+	f, _, err := opts.Filter(context.Background(), rt, time.Now())
 	if err != nil {
 		t.Fatalf("Filter: %v", err)
 	}
@@ -255,7 +257,7 @@ func TestHistoryOptionsSinceUntil(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	opts := HistoryOptions{Since: "24h", Until: "2026-09-01"}
 
-	f, err := opts.Filter(context.Background(), Runtime{}, now)
+	f, _, err := opts.Filter(context.Background(), Runtime{}, now)
 	if err != nil {
 		t.Fatalf("Filter: %v", err)
 	}
@@ -266,5 +268,104 @@ func TestHistoryOptionsSinceUntil(t *testing.T) {
 	wantUntil := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	if !f.Until.Equal(wantUntil) {
 		t.Errorf("Until = %v, want %v", f.Until, wantUntil)
+	}
+}
+
+// TestHistoryOptionsQueryMergesWithFlagNote pins the merge rule: -q is
+// parsed first, the explicit flag wins, and one note naming the override
+// comes back for the CLI to print to stderr.
+func TestHistoryOptionsQueryMergesWithFlagNote(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	opts := HistoryOptions{Query: "harness:agy", Harness: "codex"}
+
+	f, notes, err := opts.Filter(context.Background(), Runtime{}, now)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Harness != "codex" {
+		t.Errorf("Harness = %q, want codex (the flag wins)", f.Harness)
+	}
+	if !f.Newest {
+		t.Error("Newest = false, want true")
+	}
+	if len(notes) != 1 {
+		t.Fatalf("notes = %q, want exactly one", notes)
+	}
+	if want := "note: --harness overrides harness:agy from -q"; notes[0] != want {
+		t.Errorf("note = %q, want %q", notes[0], want)
+	}
+}
+
+// TestHistoryOptionsByOverridesQuery pins that --by overrides a by: in -q
+// the same way, both in the note and in the Query the caller reads back.
+func TestHistoryOptionsByOverridesQuery(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	opts := HistoryOptions{Query: "by:day harness:agy", By: "builder"}
+
+	f, notes, err := opts.Filter(context.Background(), Runtime{}, now)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Harness != "agy" {
+		t.Errorf("Harness = %q, want agy (no flag overrode it)", f.Harness)
+	}
+	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("notes = %q, want exactly one", notes)
+	}
+	if want := "note: --by overrides by:day from -q"; notes[0] != want {
+		t.Errorf("note = %q, want %q", notes[0], want)
+	}
+}
+
+// TestHistoryOptionsQueryError pins that a bad -q comes back as histq's own
+// ErrQuery, which the CLI maps to exit 2.
+func TestHistoryOptionsQueryError(t *testing.T) {
+	opts := HistoryOptions{Query: "outcome:nope"}
+	_, _, err := opts.Filter(context.Background(), Runtime{}, time.Now())
+	var eq histq.ErrQuery
+	if !errors.As(err, &eq) {
+		t.Fatalf("Filter error = %v, want histq.ErrQuery", err)
+	}
+	if eq.Token != "outcome:nope" {
+		t.Errorf("ErrQuery.Token = %q, want outcome:nope", eq.Token)
+	}
+}
+
+// TestFormatGroupsColumns pins the exact header and one group row, the axis
+// column padded to 40, tokens and cost in their short forms, and the empty
+// view.
+func TestFormatGroupsColumns(t *testing.T) {
+	groups := []histq.GroupRow{{
+		Key:      "agy/antigravity/claude-sonnet-4-6",
+		Rounds:   31,
+		Reported: 27,
+		Halted:   3,
+		Commits:  58,
+		Tokens:   22_100_000,
+		CostUSD:  9.10,
+		Unknown:  3,
+		Last:     time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC),
+	}}
+
+	got := FormatGroups(groups, histq.AxisBuilder, time.UTC)
+	want := "builder" + strings.Repeat(" ", 35) +
+		"rounds  reported  halted  commits  tokens   cost  last      \n" +
+		"agy/antigravity/claude-sonnet-4-6         " +
+		"    31" + "  " + "      27" + "  " + "     3" + "  " + "     58" +
+		"  " + " 22.1M" + "  " + "$9.10 (3 unknown)" + "  " + "2026-09-20\n"
+	if got != want {
+		t.Errorf("FormatGroups =\n%q\nwant\n%q", got, want)
+	}
+
+	if got := FormatGroups(nil, histq.AxisBuilder, time.UTC); got != "no rounds\n" {
+		t.Errorf("FormatGroups(nil) = %q, want %q", got, "no rounds\n")
+	}
+
+	long := FormatGroups([]histq.GroupRow{{Key: strings.Repeat("x", 45) + "end"}}, histq.AxisDay, time.UTC)
+	if !strings.Contains(long, "…") {
+		t.Errorf("FormatGroups(long key) = %q, want a “…” truncation", long)
 	}
 }
