@@ -578,3 +578,48 @@ func TestTierPolicy(t *testing.T) {
 		}
 	})
 }
+
+// TestGateRegateDefaultAndValidation pins #132 part 2's policy key: nil is 0
+// (no automatic repair), a present value is that many repair rounds, and a
+// negative value is a load error naming gate.regate.
+func TestGateRegateDefaultAndValidation(t *testing.T) {
+	if got := (Policy{}).GateRegate(); got != 0 {
+		t.Fatalf("Policy{}.GateRegate() = %d, want 0", got)
+	}
+
+	p, err := load(t, `{"gate":{"regate":2}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if got := p.GateRegate(); got != 2 {
+		t.Fatalf("GateRegate() = %d, want 2", got)
+	}
+	if got := p.GateDefault(); got != "" {
+		t.Fatalf("GateRegate must not disturb GateDefault: got %q", got)
+	}
+
+	p, err = load(t, `{"gate":{"default":"make check"}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if got := p.GateRegate(); got != 0 {
+		t.Fatalf("GateRegate() with no regate key = %d, want 0", got)
+	}
+
+	_, err = load(t, `{"gate":{"regate":-1}}`)
+	if err == nil {
+		t.Fatalf("Load with gate.regate -1: got nil error, want one wrapping ErrBadPolicy")
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+	}
+	for _, want := range []string{"gate.regate", "must be >= 0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	if got := (Policy{Gate: &GatePolicy{}}).GateRegate(); got != 0 {
+		t.Fatalf("GatePolicy{}.GateRegate() = %d, want 0", got)
+	}
+}

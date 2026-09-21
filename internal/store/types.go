@@ -162,6 +162,21 @@ type Binding struct {
 	// round closes.
 	GateRun *GateRun `json:"gate_run,omitempty"`
 
+	// Regate is the maximum number of automatic repair rounds relay opens
+	// after a failing gate (#132 part 2); 0 means off. Set at bind/add/fork
+	// (the policy.json gate.regate default, or an explicit --regate) or by
+	// send --regate. A human send or a passing gate resets RepairCount, not
+	// this: the budget is a property of the binding.
+	Regate int `json:"regate,omitempty"`
+	// RepairCount counts the repair rounds started since the last human send
+	// or gate pass; compared against Regate. Transient bookkeeping.
+	RepairCount int `json:"repair_count,omitempty"`
+	// LastGateSig is the sha256 hex of the normalised gate output of the last
+	// FAILED gate (#132 part 2): the stall bound compares the next failure
+	// against it, so a builder that changed nothing that mattered ends the
+	// loop instead of buying another round. "" after a pass or a human send.
+	LastGateSig string `json:"last_gate_sig,omitempty"`
+
 	Round          int       `json:"round"`
 	State          State     `json:"state"`
 	RoundCap       int       `json:"round_cap"`

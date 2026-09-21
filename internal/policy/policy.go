@@ -69,6 +69,10 @@ type Policy struct {
 type GatePolicy struct {
 	Default   string `json:"default,omitempty"`    // "" = no gate unless --gate
 	TimeoutMS *int   `json:"timeout_ms,omitempty"` // nil = DefaultGateTimeout; must be > 0
+	// Regate is the default repair-round budget for new bindings (#132 part
+	// 2): how many automatic repair rounds relay opens after a failing gate.
+	// nil = 0 = no repair; must be >= 0 when present.
+	Regate *int `json:"regate,omitempty"`
 }
 
 // Classify configures the optional classifier beside the regex scan (#211).
@@ -197,6 +201,15 @@ func (p Policy) GateTimeout() time.Duration {
 	return time.Duration(*p.Gate.TimeoutMS) * time.Millisecond
 }
 
+// GateRegate is gate.regate with the default applied: 0 (no automatic repair)
+// when the key is absent, and safe on a nil Gate (#132 part 2).
+func (p Policy) GateRegate() int {
+	if p.Gate == nil || p.Gate.Regate == nil {
+		return 0
+	}
+	return *p.Gate.Regate
+}
+
 // Load reads and validates a policy file. A missing file is the zero Policy
 // and no error, so every machine without a policy.json behaves exactly as it
 // did before this file existed. A present file that does not validate is an
@@ -233,6 +246,10 @@ func Load(path string) (Policy, error) {
 
 	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
 		return Policy{}, fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
+	}
+
+	if p.Gate != nil && p.Gate.Regate != nil && *p.Gate.Regate < 0 {
+		return Policy{}, fmt.Errorf("%s: gate.regate: must be >= 0, got %d: %w", path, *p.Gate.Regate, ErrBadPolicy)
 	}
 
 	for i, pat := range p.ScanPatterns {

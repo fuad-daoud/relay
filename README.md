@@ -1110,7 +1110,7 @@ candidates in, per role:
   "stall_after_ms": 900000,
   "scan_patterns": ["(?i)<instruction-tag"],
   "classify": { "provider": "jev", "model": "jev-latest", "injection_threshold": 0.7, "timeout_ms": 4000 },
-  "gate": { "default": "make check", "timeout_ms": 600000 }
+  "gate": { "default": "make check", "timeout_ms": 600000, "regate": 0 }
 }
 ```
 
@@ -1140,7 +1140,10 @@ each pattern must compile. `gate` configures the default acceptance command
 (see [Gate](#gate) below): `default` is the command a binding gets when it
 does not set `--gate` or `--no-gate` itself, absent or `""` meaning no gate;
 `timeout_ms` bounds one gate run, absent defaulting to ten minutes, and must
-be `> 0` when present.
+be `> 0` when present. `regate` is how many automatic repair rounds a new
+binding may open after a failing gate (see [Repair
+rounds](#repair-rounds) below), absent or `0` meaning none, and must be
+`>= 0` when present.
 
 `classify` configures an optional classifier (TypeSafe's Jev model) to run
 beside the regex scan. When absent, relay scans with regexes only. The block
@@ -1352,8 +1355,40 @@ captured. The gate never decides anything -- it annotates. The round still
 closes on the marker, the report is still delivered, and the human still
 judges the diff; the gate only adds a `gate=<result>` note and a `Gate:`
 line to the payload, plus a structured record on the report's log entry.
-There is no repair loop yet: a failing gate is reported, not re-sent or
-auto-fixed (a planned follow-up adds an opt-in repair round).
+
+### Repair rounds
+
+A failing gate does nothing on its own: the round closes, the report goes to
+the planner, and a human judges the diff. A binding can opt into a **repair
+round** instead, with `--regate N` on `relay bind`, `relay add`, `relay fork`
+or `relay send`, or with `"regate": N` under `gate` in `policy.json` (the
+default for new bindings, which `relay fork` inherits from its source). `N` is
+how many repair rounds relay may open after failing gates; `0` -- the default
+-- turns the loop off, and `--regate` on a binding with no gate is accepted and
+inert, since a binding with no gate never fails one.
+
+When a round closes with `gate=fail` and the budget is not yet spent, relay
+stages round N+1 in the same tick, after the report has been queued. Its plan
+file is written for the builder rather than by the planner: it names the failed
+round's acceptance check and the original plan, and carries the last 200
+non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
+check reports and to halt and report if no code change can fix it. The hand-off
+is exactly a send's -- a fresh process for a headless binding, a prompt for a
+pane -- and the new round's plan entry is logged with `repair k/M`.
+
+Two bounds end the loop with `NEEDS YOU` instead of another repair round:
+
+- the budget is spent: `gate failed after M repair round(s) (regate N)`;
+- the new failure's normalised output equals the previous failure's -- the
+  builder changed nothing that mattered -- reported as `gate output unchanged
+  after repair`. Timestamps, durations, large integers, hex digests and `/tmp`
+  paths are stripped before the two are compared.
+
+The failed round stays closed either way: its own report, diff and `gate=fail`
+stand, and relay never writes or removes `NNN-done`. A passing gate or a human
+`relay send` resets the count, so the next failure gets a fresh budget.
+Headless bindings are the intended case -- the server runs the same reconcile,
+so a remote headless binding gets repair rounds too.
 
 While the gate runs, the round is held: nothing else acts on the
 builder -- no nudge, no "exited without a report" handling, no round-timeout

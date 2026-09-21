@@ -61,6 +61,11 @@ type ForkOptions struct {
 	// one (#132). Ignored when Gate is set.
 	NoGate bool
 
+	// Regate is the fork's automatic repair-round budget (#132 part 2). nil
+	// inherits the source binding's budget; an explicit 0 disables repair for
+	// the fork even when the source has one.
+	Regate *int
+
 	// Feature is the human-given label grouping this binding with others
 	// (#172); "" inherits the source binding's Feature. Validated by
 	// store.ValidFeature when set.
@@ -186,6 +191,14 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 	gate := resolveGate(explicitGate, opts.NoGate, rt.Policy)
 
+	// A fork inherits the source's repair budget unless the human named one
+	// (#132 part 2): the source's own value already carries whatever policy
+	// default applied when it was created.
+	regate := src.Regate
+	if opts.Regate != nil {
+		regate = *opts.Regate
+	}
+
 	var (
 		cwd      string
 		worktree string
@@ -299,6 +312,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Feature:          feature,
 		Tier:             string(tier),
 		Gate:             gate,
+		Regate:           regate,
 	}
 	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 

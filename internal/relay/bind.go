@@ -91,6 +91,12 @@ type BindOptions struct {
 	// Gate is empty (#132). Ignored when Gate is set.
 	NoGate bool
 
+	// Regate is the binding's automatic repair-round budget (#132 part 2):
+	// how many repair rounds relay may open after a failing gate. nil falls
+	// back to policy.json's gate.regate; an explicit 0 disables repair even
+	// when the policy sets one.
+	Regate *int
+
 	// Feature is the human-given label grouping this binding with others
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	// On resume, an empty Feature means "leave the binding's existing
@@ -451,6 +457,16 @@ func resolveGate(gate string, noGate bool, pol policy.Policy) string {
 	return pol.GateDefault()
 }
 
+// resolveRegate applies the repair-round rule (#132 part 2): an explicit
+// --regate is used as given (0 disables repair), and an unset flag falls back
+// to policy.json's gate.regate.
+func resolveRegate(regate *int, pol policy.Policy) int {
+	if regate != nil {
+		return *regate
+	}
+	return pol.GateRegate()
+}
+
 func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
 	name := opts.Name
 	if name == "" {
@@ -518,6 +534,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		State:            store.StateActive,
 		Tier:             string(tier),
 		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          captureRepo(ctx, rt, opts.CWD),
 		Feature:          opts.Feature,
 	}

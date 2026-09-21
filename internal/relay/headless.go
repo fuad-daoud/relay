@@ -344,7 +344,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if escapeCheck(ctx, rt, b, true) == EscapeNote {
 		markerNote = escapeNote
 	}
-	next, closed, gating, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, err
 	}
@@ -352,12 +352,26 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return next, nil
 	}
 	if closed {
+		closedRound := b.Round
 		if next.Owner != "" {
 			next = closeServedRound(ctx, rt, next)
 		}
 		next.Builder = clearProcess(next.Builder)
 		next.StalledSince = time.Time{}
-		return deliverAndSettle(ctx, rt, tx, next, agents)
+		next, err = deliverAndSettle(ctx, rt, tx, next, agents)
+		if err != nil {
+			return next, err
+		}
+		// The report is queued; a failing gate may now open round N+1, as a
+		// fresh process, exactly as Send would (#132 part 2). The failed
+		// round's own report, diff and gate=fail stand.
+		if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
+			next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
+			if err != nil {
+				return next, err
+			}
+		}
+		return next, nil
 	}
 
 	if b.Builder.PID == 0 {

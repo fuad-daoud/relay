@@ -91,6 +91,9 @@ type SendResult struct {
 type SendOptions struct {
 	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
 	AllowYolo bool
+	// Regate sets the binding's repair-round budget (#132 part 2); nil leaves
+	// it unchanged.
+	Regate *int
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -435,6 +438,14 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// A fresh send is a fresh process: any stall stamp from the previous
 		// round is gone (#252).
 		b.StalledSince = time.Time{}
+		// A human send is a fresh attempt, so the repair bookkeeping from the
+		// old rounds says nothing about this one (#132 part 2): the budget
+		// starts unspent and no previous failure is held against the builder.
+		b.RepairCount = 0
+		b.LastGateSig = ""
+		if opts.Regate != nil {
+			b.Regate = *opts.Regate
+		}
 
 		return tx.Save(b)
 	})

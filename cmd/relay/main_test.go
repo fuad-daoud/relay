@@ -63,6 +63,27 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
+// TestSendRegateNegativeIsRejected pins #132 part 2's flag validation. The
+// flag's -1 default means "not given", so a negative value the human typed is
+// a bad value, not an omission: it exits 2, and the check runs before any
+// runtime is built, so this touches neither the state directory nor herdr.
+func TestSendRegateNegativeIsRejected(t *testing.T) {
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"send", "--regate", "-1", "--file", "plan.md"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("expected nothing on stdout, got %q", string(stdout))
+	}
+	if !strings.Contains(string(stderr), "--regate") {
+		t.Errorf("expected the error to name --regate, got %q", string(stderr))
+	}
+}
+
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string
