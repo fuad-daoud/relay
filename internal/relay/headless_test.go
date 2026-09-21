@@ -775,6 +775,80 @@ func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Bi
 	return rt, b
 }
 
+// TestVerifyRoundStartsOnHeadlessClose pins #144's headless close path: the
+// same reviewer a pane round's close starts must start when a headless round
+// closes on its marker. The builder's own process is the first entry in
+// fr.specs; the verify consult is the second, in the throwaway worktree.
+//
+// Mutation check (run and report): delete the wantVerify block from
+// reconcileHeadless's close path and this fails on addDetachedWorktreeCalls.
+func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	fg := &fakeGit{headCommitID: "head1"}
+	rt.Git = fg
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
+	rt.NewID = func() string { return verifyConsultID }
+
+	b.RoundVerify = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2: the round closed", got.Round)
+	}
+	if got.RoundVerify {
+		t.Errorf("RoundVerify = true after the close, want cleared")
+	}
+
+	wantWT := rt.Store.VerifyWorktreePath("webshop", 1)
+
+	// specs[0] is the builder's own process; the verify consult is second.
+	if len(fr.specs) != 2 {
+		t.Fatalf("Start calls = %d, want the builder's plus one verify consult", len(fr.specs))
+	}
+	if fr.specs[1].Dir != wantWT {
+		t.Errorf("verify consult Dir = %q, want the throwaway worktree %q", fr.specs[1].Dir, wantWT)
+	}
+
+	if len(fg.addDetachedWorktreeCalls) != 1 {
+		t.Fatalf("AddDetachedWorktree calls = %v, want exactly 1", fg.addDetachedWorktreeCalls)
+	}
+	if call := fg.addDetachedWorktreeCalls[0]; call.Dir != b.CWD || call.Path != wantWT || call.Commit != "head1" {
+		t.Errorf("AddDetachedWorktree = %+v, want {%s %s head1}", call, b.CWD, wantWT)
+	}
+
+	var consult *store.Consult
+	for i := range got.Consults {
+		if got.Consults[i].Role == verifyRole {
+			consult = &got.Consults[i]
+		}
+	}
+	if consult == nil {
+		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	}
+	if consult.Round != 1 {
+		t.Errorf("consult round = %d, want 1", consult.Round)
+	}
+	if consult.State != store.ConsultRunning {
+		t.Errorf("consult state = %q, want running", consult.State)
+	}
+}
+
 // TestSendResetsRoundBudget pins #250 item 2 for the headless shape: a
 // human's re-send is a fresh attempt, so it clears the round's switch
 // bookkeeping along with Halt/HaltAt.

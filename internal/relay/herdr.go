@@ -56,6 +56,9 @@ type Git interface {
 	CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error
 	DeleteBranch(ctx context.Context, dir, branch string) error
 	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
+	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree
+	// at commit with a detached HEAD (#144).
+	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error

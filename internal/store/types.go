@@ -196,6 +196,16 @@ type Binding struct {
 	// round closes.
 	GateRun *GateRun `json:"gate_run,omitempty"`
 
+	// RoundVerify is true when the CURRENT round was sent with --verify (or
+	// policy.json verify.default): its close starts a read-only reviewer in a
+	// throwaway worktree (#144). Set by Send, cleared by queueReport at round
+	// close, after the verify consult has been started.
+	RoundVerify bool `json:"round_verify,omitempty"`
+	// LastVerdict is the newest reviewer verdict (#144). status shows it
+	// while Round-1 == LastVerdict.Round: the round it judged was the one just
+	// closed. Nil on a binding that never ran a verify consult.
+	LastVerdict *Verdict `json:"last_verdict,omitempty"`
+
 	// Regate is the maximum number of automatic repair rounds relay opens
 	// after a failing gate (#132 part 2); 0 means off. Set at bind/add/fork
 	// (the policy.json gate.regate default, or an explicit --regate) or by
@@ -446,6 +456,21 @@ type GateRun struct {
 	StartedAt int64  `json:"started_at"` // Unix seconds, as Endpoint.StartedAt
 	Round     int    `json:"round"`
 	Command   string `json:"command"`
+}
+
+// Verdict is one reviewer's verdict on a closed round (#144): what a verify
+// consult's findings parsed to, recorded on the binding so `relay status` can
+// show the newest one until the round after next.
+type Verdict struct {
+	Round int `json:"round"`
+	// Verdict is the parsed verdict: "accepted", "rejected", or
+	// "unstructured" when the findings carried no readable block.
+	Verdict string `json:"verdict"`
+	// Reasons are the reviewer's reasons, from the block when it parsed.
+	Reasons []string `json:"reasons,omitempty"`
+	// Findings is the path of the findings file the verdict was parsed from;
+	// "" when the consult wrote none.
+	Findings string `json:"findings"`
 }
 
 type ServeFacts struct {

@@ -746,3 +746,26 @@ func TestGateRegateDefaultAndValidation(t *testing.T) {
 		t.Fatalf("GatePolicy{}.GateRegate() = %d, want 0", got)
 	}
 }
+
+// TestVerifyDefault pins #144's policy knob: verify.default is the value
+// Send uses when neither --verify nor --no-verify was given, and a policy
+// with no verify key is false (no reviewer) rather than an error.
+func TestVerifyDefault(t *testing.T) {
+	if got := (Policy{}).VerifyDefault(); got {
+		t.Fatalf("Policy{}.VerifyDefault() = true, want false")
+	}
+	if got := (Policy{Verify: &VerifyPolicy{}}).VerifyDefault(); got {
+		t.Fatalf("VerifyPolicy{}.VerifyDefault() = true, want false")
+	}
+
+	p, err := load(t, `{"verify":{"default":true}}`)
+	if err != nil {
+		t.Fatalf("Load: unexpected error %v", err)
+	}
+	if !p.VerifyDefault() {
+		t.Fatalf("verify.default true did not reach VerifyDefault()")
+	}
+	if got := p.GateDefault(); got != "" {
+		t.Fatalf("VerifyDefault must not disturb GateDefault: got %q", got)
+	}
+}

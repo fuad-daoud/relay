@@ -54,7 +54,7 @@ Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
   add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
   fork      branch a new binding from an earlier round with its own worktree [--tier]
-  send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run]
+  send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
@@ -1202,8 +1202,16 @@ func cmdSend(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
+	verify := fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
+	noVerify := fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: policy.json verify.default)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	// Before newRuntime, like add's flag pair: the refusal must not depend on
+	// argv order and must touch neither the state directory nor herdr.
+	if *verify && *noVerify {
+		fmt.Fprintf(os.Stderr, "relay: relay send --verify and --no-verify are exclusive\n")
+		return fmt.Errorf("relay send --verify and --no-verify are exclusive: %w", exitCodeErr{code: 2})
 	}
 	if *file == "" {
 		return fmt.Errorf("relay send requires --file")
@@ -1211,6 +1219,12 @@ func cmdSend(args []string) error {
 	regateOpt, err := regateFlag(fs, regate)
 	if err != nil {
 		return err
+	}
+
+	var verifyOpt *bool
+	if *verify || *noVerify {
+		v := *verify
+		verifyOpt = &v
 	}
 
 	rt, err := newRuntime()
@@ -1227,6 +1241,7 @@ func cmdSend(args []string) error {
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
 		Regate:    regateOpt,
+		Verify:    verifyOpt,
 	}
 
 	if *dryRun {
