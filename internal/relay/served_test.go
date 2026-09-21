@@ -350,6 +350,43 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 	}
 }
 
+// TestServedViewCarriesRusage pins the closed round's cgroup measurement on
+// the wire, the same way TestServedViewCarriesClosedRoundUsage pins Usage
+// (#244, #216).
+func TestServedViewCarriesRusage(t *testing.T) {
+	closed := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
+	b := store.Binding{
+		Name:             "api",
+		State:            store.StateActive,
+		Round:            3,
+		BuilderCandidate: "claude-sonnet",
+		Serve: &store.ServeFacts{
+			ClosedRound: 2,
+			AckedRound:  1,
+		},
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Outcome: "done"},
+		{Round: 2, Kind: store.KindReport, Outcome: "blocked", Rusage: &closed},
+	}
+	view := ServedView(b, entries)
+	if view.Rusage == nil || *view.Rusage != closed {
+		t.Fatalf("Rusage = %+v, want the closed round's report entry's rusage", view.Rusage)
+	}
+
+	// The closed round's report carries no rusage: nil, not an older one,
+	// and nil when the round was not a scope (a plain spawn).
+	entriesNoRusage := []store.LogEntry{
+		{Round: 1, Kind: store.KindReport, Outcome: "done", Rusage: &closed},
+		{Round: 2, Kind: store.KindReport, Outcome: "blocked"},
+	}
+	viewNoRusage := ServedView(b, entriesNoRusage)
+	if viewNoRusage.Rusage != nil {
+		t.Fatalf("Rusage = %+v, want nil when the closed round's report has none", viewNoRusage.Rusage)
+	}
+}
+
 // TestServedViewCarriesStalledSince pins #252's wire field: a stalled binding
 // ships its stamp to the client, and an unstalled one ships the zero time.
 func TestServedViewCarriesStalledSince(t *testing.T) {

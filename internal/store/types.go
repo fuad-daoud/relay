@@ -58,6 +58,14 @@ type ForkRef struct {
 	Round int    `json:"round"` // the source round copied through
 }
 
+// Rusage is what the supervisor measured for a round's systemd scope
+// (#244, #216): the cgroup's cpu.stat usage_usec and memory.peak, read
+// after the builder exits.
+type Rusage struct {
+	CPUMS        int64 `json:"cpu_ms,omitempty"`
+	PeakMemBytes int64 `json:"peak_mem_bytes,omitempty"`
+}
+
 // ValidFeature reports whether s is a valid --feature label: 1..64 bytes,
 // every byte in [A-Za-z0-9._ -], no leading or trailing space.
 func ValidFeature(s string) error {

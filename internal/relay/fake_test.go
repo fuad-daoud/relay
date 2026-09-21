@@ -774,6 +774,7 @@ type fakeRunner struct {
 	exits     map[int]int
 	nextPID   int
 	exitPaths []string
+	rusages   map[int]ProcRusage
 }
 
 func newFakeRunner() *fakeRunner {
@@ -787,6 +788,14 @@ func (f *fakeRunner) script(pid int, answers ...bool) {
 
 // exit sets the code ExitCode reports for pid.
 func (f *fakeRunner) exit(pid, code int) { f.exits[pid] = code }
+
+// setRusage sets what Rusage reports for pid; an unset pid reports ok=false.
+func (f *fakeRunner) setRusage(pid int, r ProcRusage) {
+	if f.rusages == nil {
+		f.rusages = map[int]ProcRusage{}
+	}
+	f.rusages[pid] = r
+}
 
 func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
 	if f.startErr != nil {
@@ -829,6 +838,11 @@ func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
 	f.kills = append(f.kills, h)
 	f.alive[h.PID] = []bool{false}
 	return nil
+}
+
+func (f *fakeRunner) Rusage(_ context.Context, h ProcHandle, _ string) (ProcRusage, bool) {
+	r, ok := f.rusages[h.PID]
+	return r, ok
 }
 
 // fakeUsage scripts what the usage reader returns and records the Source

@@ -1267,6 +1267,10 @@ func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
 	return nil
 }
 
+func (r *scriptRunner) Rusage(ctx context.Context, h relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
+	return relay.ProcRusage{}, false
+}
+
 // setAlive flips every pid this runner has started to a. Kept for every
 // test that predates per-pid liveness and tracks exactly one binding's
 // process.

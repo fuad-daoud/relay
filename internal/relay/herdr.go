@@ -189,6 +189,12 @@ type Runtime struct {
 	// before it is picked (#238). Nil means no check, so tests that do not
 	// set it behave as before; cmd/relay wires harness.OSRoleChecker().
 	Roles harness.RoleChecker
+
+	// Scope is the template a served headless round's ProcSpec.Scope is
+	// filled from (#244, #216); its Unit is always empty here, since
+	// startRound fills in the per-round unit name. Nil means no scopes
+	// (the local daemon, CI, or a server whose scope probe failed).
+	Scope *ScopeSpec
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

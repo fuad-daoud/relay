@@ -39,3 +39,7 @@ func (r *Runner) ExitCode(context.Context, relay.ProcHandle, string) (int, bool)
 func (r *Runner) Kill(context.Context, relay.ProcHandle) error {
 	return relay.ErrRunnerUnavailable
 }
+
+func (r *Runner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
+	return relay.ProcRusage{}, false
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
@@ -98,6 +99,12 @@ type BindingView struct {
 	// struct store.LogEntry.Usage holds). nil from a pre-usage server, or
 	// when the closed round has no report entry.
 	Usage *usage.Usage `json:"usage,omitempty"`
+
+	// Rusage is the closed round's cgroup measurement as the server
+	// recorded it on its report entry (#244, #216). Nil from a pre-scope
+	// server, a round that was not a scope, or when the closed round has
+	// no report entry.
+	Rusage *store.Rusage `json:"rusage,omitempty"`
 
 	// StalledSince is the server's stall stamp for a live-but-quiet headless
 	// round (#252), copied onto the client binding for a running round. Zero

@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/store"
@@ -46,6 +47,9 @@ func LogLine(e store.LogEntry) string {
 	if e.Kind == store.KindReport && e.BuilderSession != nil {
 		first += fmt.Sprintf(" session=%s:%s", e.BuilderSession.Kind, short8(e.BuilderSession.ID))
 	}
+	if e.Kind == store.KindReport && e.Rusage != nil {
+		first += fmt.Sprintf(" cpu %s peak %s", usage.ShortDuration(e.Rusage.CPUMS), shortBytes(e.Rusage.PeakMemBytes))
+	}
 	if e.Usage == nil {
 		return first
 	}
@@ -60,4 +64,19 @@ func short8(id string) string {
 		return string(r[:8])
 	}
 	return id
+}
+
+// shortBytes: bytes as "640KB", "850MB", "1.2GB" -- KB and MB round to a
+// whole number, GB and above keep one decimal. Rounds half up.
+func shortBytes(n int64) string {
+	switch {
+	case n < 1_000:
+		return fmt.Sprintf("%dB", n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%dKB", int64(math.Round(float64(n)/1_000)))
+	case n < 1_000_000_000:
+		return fmt.Sprintf("%dMB", int64(math.Round(float64(n)/1_000_000)))
+	default:
+		return fmt.Sprintf("%.1fGB", float64(n)/1_000_000_000)
+	}
 }

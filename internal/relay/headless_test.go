@@ -273,6 +273,42 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 	}
 }
 
+// TestStartRoundSetsScope: rt.Scope set fills ProcSpec.Scope with the
+// per-round unit name and the template's slice/weight/limits (#244, #216).
+func TestStartRoundSetsScope(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt.Scope = &ScopeSpec{Slice: "relay.slice", CPUWeight: 150, MemoryMax: "2G", TasksMax: 64}
+
+	if _, err := startRound(context.Background(), rt, b, "the prompt"); err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	if spec.Scope == nil {
+		t.Fatal("spec.Scope = nil, want a scope filled from rt.Scope")
+	}
+	wantUnit := fmt.Sprintf("relay-round-local-webshop-%d", b.Round)
+	if spec.Scope.Unit != wantUnit {
+		t.Errorf("Scope.Unit = %q, want %q", spec.Scope.Unit, wantUnit)
+	}
+	if spec.Scope.Slice != rt.Scope.Slice || spec.Scope.CPUWeight != rt.Scope.CPUWeight ||
+		spec.Scope.MemoryMax != rt.Scope.MemoryMax || spec.Scope.TasksMax != rt.Scope.TasksMax {
+		t.Errorf("Scope = %+v, want the rt.Scope template's fields carried through", spec.Scope)
+	}
+}
+
+func TestScopeUnitNameSafe(t *testing.T) {
+	if got, want := scopeUnitName(store.Binding{Name: "webshop", Round: 3}), "relay-round-local-webshop-3"; got != want {
+		t.Errorf("scopeUnitName(no owner) = %q, want %q", got, want)
+	}
+	if got, want := scopeUnitName(store.Binding{Name: "web/shop no", Round: 1}), "relay-round-local-web-shop-no-1"; got != want {
+		t.Errorf("scopeUnitName(unsafe name) = %q, want %q", got, want)
+	}
+}
+
 // TestSendHeadlessWithoutRunnerStagesNothing pins #149's behaviour fix: the
 // missing runner is a send precondition, checked before anything is staged.
 // Before the fix Send wrote the plan first and only startRound discovered the

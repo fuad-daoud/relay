@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -283,6 +284,42 @@ func TestExitTrailerMatchesUsage(t *testing.T) {
 	if usage.ExitTrailerForTest() != ExitTrailer {
 		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
 			usage.ExitTrailerForTest(), ExitTrailer)
+	}
+}
+
+// TestSupervisorEmitsRusageOnlyInScope pins the guard's negative half:
+// /proc/self/cgroup cannot be faked in a test, so a plain spawn (this
+// test's own process tree, never under a relay-round-*.scope) must print
+// no relay-rusage: line. The positive half is verified on the box (§8 of
+// the plan).
+func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
+	r := New()
+	h, _, stream := start(t, r, "true")
+	waitGone(t, r, h, 5*time.Second)
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if strings.Contains(string(data), RusageTrailer) {
+		t.Errorf("stream = %q; a plain spawn outside a relay-round-*.scope must print no rusage line", data)
+	}
+	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
+		t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
+	}
+}
+
+// TestStartWrapsArgvWithScope exercises buildArgv, the argv builder Start
+// uses, rather than executing systemd-run.
+func TestStartWrapsArgvWithScope(t *testing.T) {
+	spec := relay.ProcSpec{
+		Argv:  []string{"echo", "hi"},
+		Scope: &relay.ScopeSpec{Unit: "relay-round-abc12345-foo-3", Slice: "relay.slice", CPUWeight: 100},
+	}
+	got := buildArgv(spec, "/usr/bin/echo")
+	inner := []string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", "/usr/bin/echo", "hi"}
+	want := ScopeArgv(*spec.Scope, inner)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildArgv = %v, want %v", got, want)
 	}
 }
 

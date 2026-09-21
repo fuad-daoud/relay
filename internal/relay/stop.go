@@ -224,11 +224,11 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if _, err := os.Stat(reportPath); err == nil {
 		next, err = queueReport(ctx, rt, tx, b, entries, reportPath,
 			fmt.Sprintf("Builder was stopped (%s) for round %d. Report: %s", how, stoppedRound, reportPath),
-			"stopped", nil, nil)
+			"stopped", nil, nil, nil)
 	} else {
 		next, err = queueReport(ctx, rt, tx, b, entries, reportPath,
 			fmt.Sprintf("Builder was stopped (%s) for round %d; no report was written.", how, stoppedRound),
-			"noreport stopped", nil, nil)
+			"noreport stopped", nil, nil, nil)
 	}
 	if err != nil {
 		return b, err

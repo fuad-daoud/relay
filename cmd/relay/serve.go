@@ -186,6 +186,32 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string)
 	}
 }
 
+// scopeFromPolicy is the systemd scope template a served round launches
+// under, from pol.Serve.Scope (#244, #216). nil turns scopes off:
+// pol.Serve.Scope.Enabled explicitly false. Otherwise (no policy section,
+// or one present but silent on Enabled) scopes are on by default, with
+// CPUWeight defaulting to 100 and every other field passed through as
+// given (its own zero value means "omit" to ScopeArgv).
+func scopeFromPolicy(pol policy.Policy) *relay.ScopeSpec {
+	var sp *policy.ScopePolicy
+	if pol.Serve != nil {
+		sp = pol.Serve.Scope
+	}
+	if sp != nil && sp.Enabled != nil && !*sp.Enabled {
+		return nil
+	}
+	spec := &relay.ScopeSpec{CPUWeight: 100}
+	if sp != nil {
+		spec.Slice = sp.Slice
+		if sp.CPUWeight != 0 {
+			spec.CPUWeight = sp.CPUWeight
+		}
+		spec.MemoryMax = sp.MemoryMax
+		spec.TasksMax = sp.TasksMax
+	}
+	return spec
+}
+
 func serveAdminConfig(root string) serve.Config {
 	return serve.Config{
 		Root:   root,
@@ -293,6 +319,23 @@ func cmdServeRun(args []string) error {
 	}
 	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
+	// Scopes are enabled by policy (default on) and confirmed by a startup
+	// probe (#244, #216); if systemd-run is missing or the user manager
+	// refuses, scopes are off for the daemon's lifetime with one log line.
+	scopesStatus := "off"
+	scope := scopeFromPolicy(pol)
+	if scope != nil {
+		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {
+			slog.Warn("scopes unavailable; builders will run in the daemon's cgroup", "err", err)
+			scope = nil
+			scopesStatus = "unavailable"
+		} else if scope.Slice != "" {
+			scopesStatus = fmt.Sprintf("on (slice %s)", scope.Slice)
+		} else {
+			scopesStatus = "on"
+		}
+	}
+
 	cfg := serve.Config{
 		Root:           root,
 		Candidates:     candidates,
@@ -308,6 +351,7 @@ func cmdServeRun(args []string) error {
 		Roles:          roles,
 		MaxBuilders:    sf.maxBuilders,
 		Hooks:          dispatcher,
+		Scope:          scope,
 	}
 
 	srv, err := serve.New(cfg)
@@ -319,7 +363,7 @@ func cmdServeRun(args []string) error {
 	if maxBuilders <= 0 {
 		maxBuilders = pol.MaxBuildersOrDefault()
 	}
-	slog.Info(fmt.Sprintf("builders cap=%d", maxBuilders))
+	slog.Info(fmt.Sprintf("builders cap=%d scopes=%s", maxBuilders, scopesStatus))
 
 	root, err = filepath.Abs(root)
 	if err != nil {

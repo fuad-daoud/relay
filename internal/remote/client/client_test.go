@@ -92,6 +92,10 @@ func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
 	return nil
 }
 
+func (r *scriptRunner) Rusage(ctx context.Context, h relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
+	return relay.ProcRusage{}, false
+}
+
 func (r *scriptRunner) setAlive(a bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
