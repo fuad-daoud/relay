@@ -332,6 +332,57 @@ func TestDiffCommand(t *testing.T) {
 	}
 }
 
+// TestDiffAnchorsCommand pins `relay diff --anchors`: it store-only seeds a
+// binding and a round 1 diff the way TestDiffCommand does, so it reaches no
+// herdr, and asserts the printed patch carries the path:line gutter
+// internal/patch's Annotate produces.
+func TestDiffAnchorsCommand(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+
+	patchContent := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
+
+	s := store.New(filepath.Join(tempHome, ".local", "state", "relay"))
+	b := store.Binding{
+		Name:  "webshop",
+		CWD:   "/repo",
+		Round: 2, // Round 1 completed
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.DiffPath("webshop", 1), []byte(patchContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, runErr := captureOutput(t, func() error {
+		return run([]string{"diff", "--name", "webshop", "--anchors"})
+	})
+	if runErr != nil {
+		t.Fatalf("run diff --anchors: %v", runErr)
+	}
+
+	want := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\nfile.txt:1  @@ -1 +1,2 @@\nfile.txt:1  hello\nfile.txt:2 +world\n"
+	if string(stdout) != want {
+		t.Fatalf("got stdout %q, want %q", string(stdout), want)
+	}
+}
+
+// TestReviewRequiresFile pins that `relay review` without --file is refused
+// before a runtime is built, so a CI runner with no herdr still fails on the
+// missing flag rather than on the environment.
+func TestReviewRequiresFile(t *testing.T) {
+	err := run([]string{"review", "--name", "webshop"})
+	if err == nil {
+		t.Fatal("relay review without --file must be rejected")
+	}
+	if !strings.Contains(err.Error(), "--file") {
+		t.Errorf("error must point at --file, got %q", err)
+	}
+}
+
 func TestDiffDriftCommand(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)

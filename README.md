@@ -260,11 +260,17 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.
-- `relay diff [NAME|--name N] [--round R] [--stat] [--drift]` — print a round's
+- `relay diff [NAME|--name N] [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
   with `--stat` and `--round`, and defaults to the currently open round where plain
-  `relay diff` defaults to the newest completed one.
+  `relay diff` defaults to the newest completed one. Pass `--anchors` to prefix
+  each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
+  review comments file (see "Reviewing a round" below).
+- `relay review [NAME|--name N] --file comments.md [--round R] [--out PATH] [--send]` —
+  turn a `path:line: comment` comments file into a follow-up plan, one task per
+  anchored comment quoting its hunk from the round's diff. Not destructive, so
+  it falls back to the CWD's binding like `diff`. See "Reviewing a round" below.
 - `relay answer NAME|--name N (--keys K | --choice N | --text S)` — answer a
   builder that's blocked at a dialog, via `send-keys` rather than a typed
   prompt (herdr refuses `agent prompt` against a blocked agent). The binding
@@ -380,11 +386,49 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay version` — the build's version.
 
 Every binding-scoped command takes its binding either positionally or as
-`--name`; naming it both ways at once is refused. `send`, `pull` and `diff`
-fall back to whichever binding owns the current working directory, and a bare
-`relay status` lists them all. Naming one is **required** for `answer`, `done`
-and `unbind`: those act on a specific loop — `answer` types into a live dialog,
-the other two end one — and they refuse to guess (see below).
+`--name`; naming it both ways at once is refused. `send`, `pull`, `diff` and
+`review` fall back to whichever binding owns the current working directory,
+and a bare `relay status` lists them all. Naming one is **required** for
+`answer`, `done` and `unbind`: those act on a specific loop — `answer` types
+into a live dialog, the other two end one — and they refuse to guess (see
+below).
+
+### Reviewing a round
+
+`relay diff --anchors` prints a round's patch with a `path:line` gutter on
+every hunk header and every `' '`/`'+'` line, so a comment can quote a line
+straight off the printed diff instead of counting by hand:
+
+```
+$ relay diff --name api-auth --anchors
+diff --git a/auth.go b/auth.go
+--- a/auth.go
++++ b/auth.go
+auth.go:41  @@ -38,6 +38,7 @@ func Login(ctx context.Context, u string) error {
+auth.go:41  	if u == "" {
+auth.go:42 +		return errEmptyUser
+auth.go:43  	}
+```
+
+A comments file is one `path:line: text` per line; a line without an anchor
+is a general comment:
+
+```
+auth.go:42: return a typed error, not errEmptyUser directly
+auth.go:43: this brace can go too, see the hunk above
+wire the new error into the CLI's exit code table
+```
+
+`relay review NAME --file comments.md [--round R] [--out PATH] [--send]`
+validates every anchor against that round's diff — an anchor the diff does
+not have is refused before anything is written — and renders a plan with one
+task per anchored comment, quoting the anchored hunk (three lines of context
+either side) and the comment verbatim, plus a "General comments" section for
+the unanchored lines. It writes the plan to `--out`, or by default
+`<binding dir>/NNN-review-plan.md` (`NNN` the reviewed round), and prints the
+path. `--send` hands that plan to the builder as the next round, the same as
+`relay send --file`. The rendered plan opens with "Fix ONLY what these
+comments ask" — delete that line if the round should be broader.
 
 ### The report block
 
