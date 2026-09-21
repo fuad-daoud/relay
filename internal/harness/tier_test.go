@@ -231,7 +231,7 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			model:     "m/x",
 			extra:     nil,
 			wantArgs:  []string{"--agent", "plan-executor", "-m", "prov/m/x"},
-			wantPrint: []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json"},
+			wantPrint: []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--standalone"},
 		},
 	}
 

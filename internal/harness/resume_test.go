@@ -39,7 +39,7 @@ func TestResumePerKind(t *testing.T) {
 		},
 		{
 			name: "opencode", kind: "opencode", id: "ses-1", tier: TierHarness,
-			want: []string{"run", prompt, "--session", "ses-1", "--fork", "--format", "json"},
+			want: []string{"run", prompt, "--session", "ses-1", "--fork", "--format", "json", "--standalone"},
 		},
 		{
 			name: "opencode read", kind: "opencode", id: "ses-1", tier: TierRead,

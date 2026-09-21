@@ -577,6 +577,14 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			usableBuilder = true
 		}
 
+		// #256: opencode 2.x runs a shared background service; note it even
+		// for an adopted pane, since the service is per-user, not per-binding.
+		if kind == "opencode" {
+			if c := opencodeServiceCheck(ctx, env); c.Name != "" {
+				checks = append(checks, c)
+			}
+		}
+
 		if !cfg.adopted {
 			// Role checks: one row per shipped role in scope (see WithDefinitions). Every known kind has rows (#85).
 			switch {

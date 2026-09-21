@@ -1,10 +1,72 @@
 package doctor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
+
+// opencodeServicePath is where opencode 2.x's shared background service
+// records its listening address and password: written once by `opencode
+// serve --service` (also `opencode service start`), read by every `opencode
+// run` on this machine until it stops (#256).
+const opencodeServicePath = ".config/opencode/service.json"
+
+// opencodeDBPath is opencode's own SQLite store, already read (through
+// sqlite3, never database/sql) by the usage checks below for round
+// accounting. Its session table carries the same id/directory/time_updated
+// facts the service's own HTTP API reports, so opencodeServiceCheck's
+// session count needs no network call and no credential -- consistent with
+// #256's standalone fix, which the plan preferred precisely because it
+// needs neither.
+const opencodeDBPath = ".local/share/opencode/opencode.db"
+
+// opencodeServiceCheck reports opencode 2.x's shared-service model (#256):
+// `opencode run` without --standalone is a thin client of the one `opencode
+// serve --service` per user, so a killed or switched-away client leaves its
+// agent session running inside the service, still editing the worktree
+// relay has moved on from -- Runner.Kill (a process-group kill of the
+// client) never reaches it. This row is informational only, so it is always
+// SevOK when it appears, and it appears only when service.json exists: the
+// one local signal that the shared-service model is actually in play here.
+//
+// The session count is a courtesy, not a live count of "still-running"
+// sessions (opencode.db persists a session's row long after its process
+// exits): a sqlite3 query that fails, or finds no opencode.db, still leaves
+// the base note, because whether the count is readable is never itself a
+// fault.
+func opencodeServiceCheck(ctx context.Context, env Env) Check {
+	svcPath, err := env.HomePath(opencodeServicePath)
+	if err != nil || env.Stat(svcPath) != nil {
+		return Check{} // caller skips a zero-value row (Name == "")
+	}
+
+	detail := fmt.Sprintf("2.x shared service (~/%s); a killed or switched-away client leaves its session running inside the service (#256)", opencodeServicePath)
+	if dbPath, derr := env.HomePath(opencodeDBPath); derr == nil && env.Stat(dbPath) == nil {
+		if n, ok := opencodeSessionCount(ctx, env, dbPath); ok {
+			detail = fmt.Sprintf("%s; %d session(s) recorded in opencode.db", detail, n)
+		}
+	}
+	return Check{Group: "opencode", Name: "service", Severity: SevOK, Detail: detail}
+}
+
+// opencodeSessionCount reads the session table's row count from dbPath
+// through sqlite3 -readonly, the same tool the usage checks require on
+// PATH. false means the count could not be read (no sqlite3, no such
+// table, unparseable output) -- never an error the caller must handle.
+func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, bool) {
+	out, err := env.Command(ctx, "sqlite3", "-readonly", dbPath, "select count(*) from session")
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
 
 // opencodeAllowlistCheck reports whether opencode's own config lets a headless
 // builder read the plan relay stages under stateRoot (#236). opencode refuses

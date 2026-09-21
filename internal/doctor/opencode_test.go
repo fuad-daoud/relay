@@ -1,9 +1,74 @@
 package doctor
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// TestOpencodeServiceCheck pins the 2.x shared-service note (#256): the row
+// appears only when service.json exists, is always SevOK (it reports a fact
+// about how opencode 2.x runs, not a misconfiguration), and its session
+// count comes from opencode.db through sqlite3, not the service's HTTP API.
+func TestOpencodeServiceCheck(t *testing.T) {
+	const svcPath = "/fake/home/.config/opencode/service.json"
+	const dbPath = "/fake/home/.local/share/opencode/opencode.db"
+
+	t.Run("no service.json is silent", func(t *testing.T) {
+		env := &fakeEnv{homeDir: "/fake/home"}
+		c := opencodeServiceCheck(context.Background(), env)
+		if c.Name != "" {
+			t.Errorf("check = %+v, want a zero-value row when service.json is absent", c)
+		}
+	})
+
+	t.Run("service.json present notes the shared service", func(t *testing.T) {
+		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{svcPath: true}}
+		c := opencodeServiceCheck(context.Background(), env)
+		if c.Group != "opencode" || c.Name != "service" || c.Severity != SevOK {
+			t.Errorf("row = %+v, want an OK opencode/service row", c)
+		}
+		if !strings.Contains(c.Detail, "2.x shared service") {
+			t.Errorf("Detail = %q, want it to name the shared service", c.Detail)
+		}
+	})
+
+	t.Run("opencode.db present adds the session count", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{svcPath: true, dbPath: true},
+			commandOut:    []byte("3\n"),
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if !strings.Contains(c.Detail, "3 session(s)") {
+			t.Errorf("Detail = %q, want the session count read from opencode.db", c.Detail)
+		}
+	})
+
+	t.Run("no opencode.db leaves only the base note", func(t *testing.T) {
+		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{svcPath: true}}
+		c := opencodeServiceCheck(context.Background(), env)
+		if strings.Contains(c.Detail, "session(s)") {
+			t.Errorf("Detail = %q, want no session count with no opencode.db", c.Detail)
+		}
+	})
+
+	t.Run("a failing sqlite3 query still returns the base note", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{svcPath: true, dbPath: true},
+			commandErr:    errors.New("sqlite3: not found"),
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if c.Severity != SevOK || !strings.Contains(c.Detail, "2.x shared service") {
+			t.Errorf("check = %+v, want the base note even when the count fails", c)
+		}
+		if strings.Contains(c.Detail, "session(s)") {
+			t.Errorf("Detail = %q, want no session count when the query fails", c.Detail)
+		}
+	})
+}
 
 // TestOpencodeAllowlistCheck pins the opencode config check (#236): a headless
 // opencode builder cannot read its plan under relay's state root unless

@@ -434,6 +434,14 @@ func (s *stubDoctorEnv) Probe(dir string) error {
 	return nil
 }
 
+// Command satisfies doctor.Env. None of these tests exercise a kind whose
+// checks shell out (the opencode session-count note is kind-gated and these
+// tests only ever pass "claude"), so this exists only to keep stubDoctorEnv
+// implementing the interface.
+func (s *stubDoctorEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+
 // A probe relay could not complete is not actionable and stays off the hot path.
 // An actionable row in the same report must survive it -- the all-or-nothing
 // filter this replaces dropped both, and its test could not tell the difference

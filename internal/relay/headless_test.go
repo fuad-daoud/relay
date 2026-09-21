@@ -77,7 +77,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		{testAgyRef, []string{"agy", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor",
 			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--add-dir", "/repo", "--dangerously-skip-permissions"}},
 		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}},
-		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json"}},
+		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json", "--standalone"}},
 	}
 	for _, c := range cases {
 		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo", "/state/dir")

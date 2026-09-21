@@ -40,6 +40,8 @@ type fakeEnv struct {
 	versions      map[string]string // binary path -> version output
 	versionErr    error
 	probeErr      error
+	commandOut    []byte
+	commandErr    error
 }
 
 func (f *fakeEnv) HerdrVersion(ctx context.Context) (string, error) {
@@ -107,6 +109,13 @@ func (f *fakeEnv) BinaryVersion(ctx context.Context, path string) (string, error
 
 func (f *fakeEnv) Probe(dir string) error {
 	return f.probeErr
+}
+
+func (f *fakeEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	if f.commandErr != nil {
+		return nil, f.commandErr
+	}
+	return f.commandOut, nil
 }
 
 func findCheck(report Report, group, name string) *Check {
