@@ -781,6 +781,144 @@ func TestAskReviewerOnClaudeTierRead(t *testing.T) {
 	}
 }
 
+// TestAskHeadlessStartsAProcessNotAPane pins the one thing `--headless`
+// changes: the consult runs through proc.Runner in the harness's print form,
+// and no tab, agent start or prompt ever happens. Routing Headless through
+// the pane branch fails on fr.specs.
+func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := seedForAsk(t, f)
+	rt.Runner = fr
+	q := writeQuestion(t, "review it")
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", Headless: true, File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
+	}
+	spec := fr.specs[0]
+	if spec.Dir != b.CWD {
+		t.Errorf("process dir = %q, want the binding's tree %q", spec.Dir, b.CWD)
+	}
+	if len(spec.Argv) == 0 || spec.Argv[0] != "claude" {
+		t.Errorf("argv = %v, want it to start with the harness binary claude", spec.Argv)
+	}
+	var prompt string
+	for _, a := range spec.Argv {
+		if strings.Contains(a, "Answer as your final message") {
+			prompt = a
+		}
+	}
+	if prompt == "" {
+		t.Errorf("argv carries no consult-headless prompt: %v", spec.Argv)
+	} else if !strings.Contains(prompt, res.Consult.AskPath) {
+		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
+	}
+
+	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 {
+		t.Errorf("a headless consult must touch no pane: tabs=%d starts=%d prompts=%d",
+			len(f.tabs), len(f.starts), len(f.prompts))
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Consults) != 1 {
+		t.Fatalf("consults = %+v, want 1", got.Consults)
+	}
+	c := got.Consults[0]
+	if !c.Endpoint.Headless() {
+		t.Errorf("endpoint mode = %q, want headless", c.Endpoint.Mode)
+	}
+	if c.Endpoint.PID != fr.handles[0].PID {
+		t.Errorf("PID = %d, want %d", c.Endpoint.PID, fr.handles[0].PID)
+	}
+	if want := rt.Store.ConsultStreamPath("webshop", c.Round, c.ID); c.Endpoint.LogPath != want {
+		t.Errorf("LogPath = %q, want the stream path %q", c.Endpoint.LogPath, want)
+	}
+	if c.State != store.ConsultRunning {
+		t.Errorf("state = %q, want running", c.State)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindAsk && e.Confirmed {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no confirmed KindAsk entry logged for the headless consult")
+	}
+}
+
+// TestAskHeadlessRefusesUnsupportedTier: a headless consult resolves its tier
+// exactly as a pane one does, so opencode on `read` is refused before any
+// reservation or process.
+func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	rt.Policy.Tier = map[string]string{"reviewer": "read"}
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role:        "reviewer",
+		Candidate:   testOpencodeRef,
+		File:        q,
+		Name:        "webshop",
+		PlannerPane: "w2:p3",
+		Headless:    true,
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want 0: the tier is resolved before any process", len(fr.specs))
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %d, want 0 (no reservation written)", len(b.Consults))
+	}
+}
+
+// TestAskHeadlessWithoutRunnerIsRefused: a runtime with no Runner cannot run
+// a process, so it refuses before anything is reserved.
+func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedForAsk(t, f)
+	q := writeQuestion(t, "x")
+
+	_, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3", Headless: true,
+	})
+	if !errors.Is(err, ErrRunnerUnavailable) {
+		t.Fatalf("err = %v, want ErrRunnerUnavailable", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(b.Consults) != 0 {
+		t.Errorf("consults = %+v, want none", b.Consults)
+	}
+}
+
 func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)

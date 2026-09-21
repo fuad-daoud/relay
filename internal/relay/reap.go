@@ -86,6 +86,11 @@ func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, erro
 					continue
 				}
 				if c.Endpoint.PaneID == "" {
+					// No pane ever existed: a spawning record that never
+					// spawned, or a headless consult, which runs as a process
+					// relay never closes. The record is dropped and no Kill is
+					// issued -- a running headless consult was kept above, and
+					// reap never kills.
 					res.Dropped = append(res.Dropped, c)
 					if opts.DryRun {
 						keep = append(keep, c)

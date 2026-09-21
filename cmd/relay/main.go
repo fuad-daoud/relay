@@ -1258,6 +1258,7 @@ func cmdAsk(args []string) error {
 	file := fs.String("file", "", "file containing the question")
 	nameFlag := fs.String("name", "", "binding name")
 	workspace := fs.String("workspace", "", "workspace for the consult's tab (default: $HERDR_WORKSPACE_ID)")
+	headless := fs.Bool("headless", false, "run the consult as a one-shot process instead of a pane; findings are its final message")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1285,13 +1286,19 @@ func cmdAsk(args []string) error {
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		WorkspaceID: workspaceOrEnv(*workspace),
+		Headless:    *headless,
 	})
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
-		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
+	if res.Consult.Endpoint.Headless() {
+		fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings will appear at: %s\n",
+			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID, res.Consult.FindingsPath)
+	} else {
+		fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
+			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
+	}
 	if n := relay.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}

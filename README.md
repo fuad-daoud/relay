@@ -1535,6 +1535,19 @@ and relay queues them to the planner like any other report, once the file
 exists. That file's existence is the only completion gate: relay makes no
 judgements about what the findings say.
 
+`relay ask --headless` runs the consult as a one-shot process instead of a
+pane: relay starts the harness in its print form and the consult's **final
+message** becomes the findings, which relay writes to the same
+`NNN-<id>-findings.md` and queues to the planner exactly as a pane consult's
+file is. Use it where there is no pane to open — resuming a closed round's
+builder session, or running a verifier at round close. Because there is no
+pane, the process is the only thing relay can observe: it is killed at the
+consult timeout (10m), and a process that exits without a final message is
+reported silent with its exit code and the stream to read. The resolved tier
+still gates the pick, exactly as for a pane consult: at `read`, claude and agy
+can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
+and codex cannot honour `read` and are refused.
+
 While consults are running, `relay status` appends ` +Nc` to the binding's row
 — only when non-zero, so a healthy binding looks no different. A finished
 consult's pane stays open until you run `relay reap [NAME] [--dry-run]`, which

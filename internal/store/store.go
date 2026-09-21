@@ -204,6 +204,23 @@ func (s *Store) FindingsPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "findings", ".md")
 }
 
+// ConsultStreamPath is where a headless consult's raw stdout -- the
+// harness's streamed JSON, one event per line, and the supervisor's
+// relay-exit trailer -- is appended. A headless consult has no pane for
+// herdr to hold its output, so it carries its own stream, exactly as a
+// headless builder round does (#99, #168).
+// Layout: <binding dir>/NNN-<id>-consult.jsonl
+func (s *Store) ConsultStreamPath(name string, round int, id string) string {
+	return s.consultFile(name, round, id, "consult", ".jsonl")
+}
+
+// ConsultLogPath is where a headless consult's stderr is appended: what the
+// harness wrote outside its stream, for a human reading why a process died.
+// Layout: <binding dir>/NNN-<id>-consult.log
+func (s *Store) ConsultLogPath(name string, round int, id string) string {
+	return s.consultFile(name, round, id, "consult", ".log")
+}
+
 // consultFile is roundFile with a consult id folded in. roundFile takes no id,
 // and widening it would touch five call sites that will never have one.
 func (s *Store) consultFile(name string, round int, id, suffix, ext string) string {

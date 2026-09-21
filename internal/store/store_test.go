@@ -585,10 +585,26 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	if got, want := s.FindingsPath("webshop", 12, "7f2a3c1d"), "/state/webshop/012-7f2a3c1d-findings.md"; got != want {
 		t.Errorf("FindingsPath = %q, want %q", got, want)
 	}
+	// A headless consult's stream and stderr sit beside its ask and findings,
+	// under the same round and id.
+	if got, want := s.ConsultStreamPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.jsonl"; got != want {
+		t.Errorf("ConsultStreamPath = %q, want %q", got, want)
+	}
+	if got, want := s.ConsultLogPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.log"; got != want {
+		t.Errorf("ConsultLogPath = %q, want %q", got, want)
+	}
 	// NNN-question.md belongs to the blocked-dialog capture. A consult being
 	// asked something is not a builder being blocked on something.
 	if s.AskPath("webshop", 3, "7f2a3c1d") == s.QuestionPath("webshop", 3) {
 		t.Error("AskPath collides with QuestionPath")
+	}
+	// Fork copies round files by their leading NNN-; both consult files must
+	// parse as round files or a fork would silently drop a consult's stream.
+	if r, ok := roundOfFile(filepath.Base(s.ConsultStreamPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
+		t.Errorf("roundOfFile(consult.jsonl) = %d, %v; want 12, true", r, ok)
+	}
+	if r, ok := roundOfFile(filepath.Base(s.ConsultLogPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
+		t.Errorf("roundOfFile(consult.log) = %d, %v; want 12, true", r, ok)
 	}
 }
 
