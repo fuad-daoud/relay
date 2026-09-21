@@ -368,8 +368,8 @@ func TestListScreenThreeStates(t *testing.T) {
 	res, _ := m.Update(statusMsg{err: errors.New("herdr connection refused")})
 	m = res.(Model)
 	view = m.View()
-	if !strings.Contains(view, "cannot reach herdr — see the error above") {
-		t.Errorf("failing statusMsg before any success must render cannot-reach line, got:\n%s", view)
+	if !strings.Contains(view, "status unavailable — see the error above") {
+		t.Errorf("failing statusMsg before any success must render status-unavailable line, got:\n%s", view)
 	}
 	if strings.Contains(view, "no bindings") {
 		t.Errorf("failing statusMsg before any success must NOT render 'no bindings', got:\n%s", view)
