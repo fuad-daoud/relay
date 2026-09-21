@@ -479,6 +479,110 @@ func TestExhaustionHalts(t *testing.T) {
 	}
 }
 
+// TestExhaustionAfterResendStillSaysWhy pins #250 item 2: the second halt of
+// a re-sent round still records its reason (Halt is always set, not only on
+// the notifying branch), and a human's re-send is a fresh attempt -- it
+// resets the round's switch budget and notification dedup, so the next
+// exhaustion in the same round notifies again.
+//
+// Mutation check: move the `b.Halt =` line in haltBinding back inside the
+// `if b.HaltNotifiedRound != b.Round` guard and this test must fail, because
+// the second halt below would leave Halt empty (HaltNotifiedRound is
+// already back at b.Round from the first halt's dedup).
+func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 2)
+	b.RoundSwitches = rt.Policy.SwitchLimit()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "max_switches") {
+		t.Fatalf("Halt = %q, want it to contain %q", got.Halt, "max_switches")
+	}
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d, want 1 after the first halt", len(f.notices))
+	}
+
+	// The human asks for another attempt: same round, a fresh Send.
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it again"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Halt != "" {
+		t.Errorf("Halt = %q after resend, want empty", got.Halt)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d after resend, want 0", got.HaltNotifiedRound)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d after resend, want 0", got.RoundSwitches)
+	}
+	if got.RoundExcluded != nil {
+		t.Errorf("RoundExcluded = %v after resend, want nil", got.RoundExcluded)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s after resend, want active", got.State)
+	}
+
+	// Drive the same round to exhaustion again with the fresh budget.
+	fr.script(got.Builder.PID, false)
+	fr.exit(got.Builder.PID, 2)
+	got.RoundSwitches = rt.Policy.SwitchLimit()
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "max_switches") {
+		t.Errorf("Halt = %q, want it to contain %q again", got.Halt, "max_switches")
+	}
+	if len(f.notices) != 2 {
+		t.Errorf("notices = %d, want 2 (a fresh notice for the resent round)", len(f.notices))
+	}
+
+	// haltBinding's own invariant, isolated from Send's coupling (Send
+	// happens to reset HaltNotifiedRound every time it clears Halt, which
+	// means the two exhaustion halts above enter the notify guard either
+	// way and cannot, by themselves, distinguish Halt being set inside vs.
+	// outside it). Call haltBinding directly with the round already
+	// notified (dedup active, guard skipped) and confirm it still records
+	// Halt without renotifying.
+	if got.HaltNotifiedRound != got.Round {
+		t.Fatalf("test setup: HaltNotifiedRound = %d, want %d (round already notified)", got.HaltNotifiedRound, got.Round)
+	}
+	got.Halt = ""
+	beforeNotices := len(f.notices)
+	deduped, err := haltBinding(context.Background(), rt, got, "webshop: deduped halt check")
+	if err != nil {
+		t.Fatalf("haltBinding: %v", err)
+	}
+	if deduped.Halt == "" {
+		t.Error("Halt is empty on a deduped halt, want the reason recorded")
+	}
+	if len(f.notices) != beforeNotices {
+		t.Errorf("notices = %d after a deduped halt, want unchanged %d", len(f.notices), beforeNotices)
+	}
+}
+
 func TestAllGatedHalts(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentSwitchable(t, f)

@@ -280,14 +280,14 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 // notify once per poll instead of once. Per round is also the behaviour a human
 // wants: one notification per round that goes wrong.
 func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
+	b.Halt = strings.TrimPrefix(message, b.Name+": ")
+	b.HaltAt = rt.Now().UTC()
+
 	if b.HaltNotifiedRound != b.Round {
 		body := fmt.Sprintf("round %d", b.Round)
 		if err := rt.Herdr.Notify(ctx, message, body, herdr.SoundRequest); err != nil {
 			return b, fmt.Errorf("notify halt: %w", err)
 		}
-
-		b.Halt = strings.TrimPrefix(message, b.Name+": ")
-		b.HaltAt = rt.Now().UTC()
 
 		// Shares the notify's once-per-round dedup.
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)

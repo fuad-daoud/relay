@@ -140,14 +140,19 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 		t.Errorf("HaltAt = %v after a second tick, want unchanged %v", second.HaltAt, haltAt)
 	}
 
-	// Even once the clock has moved on, a still-halted binding's HaltAt must
-	// stay pinned to the halting tick, not drift to a later poll.
+	// Even once the clock has moved on, a still-halted binding's Halt text
+	// is unchanged, but HaltAt now advances with the tick: haltBinding
+	// always stamps Halt/HaltAt (#250 item 2), and only the notification
+	// (asserted above) stays deduped per round.
 	third, err := reconcile(t, at(rt, time.Minute), second, agents)
 	if err != nil {
 		t.Fatalf("third Reconcile: %v", err)
 	}
-	if !third.HaltAt.Equal(haltAt) {
-		t.Errorf("HaltAt = %v after a later tick, want unchanged %v", third.HaltAt, haltAt)
+	if want := "round 1 has run past 30m0s"; third.Halt != want {
+		t.Errorf("Halt = %q after a later tick, want unchanged %q", third.Halt, want)
+	}
+	if wantHaltAt := haltAt.Add(time.Minute); !third.HaltAt.Equal(wantHaltAt) {
+		t.Errorf("HaltAt = %v after a later tick, want %v", third.HaltAt, wantHaltAt)
 	}
 }
 

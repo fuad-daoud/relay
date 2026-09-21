@@ -288,6 +288,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.State = store.StateActive
 		b.Halt = ""
 		b.HaltAt = time.Time{}
+		// A human re-send is a fresh attempt: the next halt in this round
+		// notifies again, and the round gets a full switch budget.
+		b.HaltNotifiedRound = 0
+		b.RoundSwitches = 0
+		b.RoundExcluded = nil
 
 		return tx.Save(b)
 	})

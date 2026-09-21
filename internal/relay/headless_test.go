@@ -726,6 +726,38 @@ func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Bi
 	return rt, b
 }
 
+// TestSendResetsRoundBudget pins #250 item 2 for the headless shape: a
+// human's re-send is a fresh attempt, so it clears the round's switch
+// bookkeeping along with Halt/HaltAt.
+func TestSendResetsRoundBudget(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.script(b.Builder.PID, false) // previous round's process no longer running
+	b.RoundSwitches = 1
+	b.RoundExcluded = []string{"x/y/z"}
+	b.HaltNotifiedRound = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it again"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if got.RoundExcluded != nil {
+		t.Errorf("RoundExcluded = %v, want nil", got.RoundExcluded)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+	}
+}
+
 // switchHeadless runs switchBuilder on b inside the lock, the way Reconcile does.
 func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, closeOld bool) (store.Binding, error) {
 	t.Helper()
@@ -1088,6 +1120,9 @@ func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
 	}
 	if got.State != store.StateNeedsYou {
 		t.Errorf("state = %s, want needs_you at the switch limit", got.State)
+	}
+	if got.Halt == "" {
+		t.Error("Halt is empty, want the max_switches reason recorded")
 	}
 	if len(fr.specs) != 1 {
 		t.Errorf("no replacement may start past the limit: specs = %d", len(fr.specs))
