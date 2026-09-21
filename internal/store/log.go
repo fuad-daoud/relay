@@ -114,6 +114,13 @@ type LogEntry struct {
 	CommandsRun  []string `json:"commands_run,omitempty"`
 	NotDone      []string `json:"not_done,omitempty"`
 
+	// Verdict and Reasons are what a verify consult's findings parsed to
+	// (#144), on findings entries of a verify consult with a readable block.
+	// Verdict is "accepted" or "rejected"; empty on every other entry.
+	// Reasons is empty when none was given or the block did not parse.
+	Verdict string   `json:"verdict,omitempty"`
+	Reasons []string `json:"reasons,omitempty"`
+
 	// Flagged is the count of instruction-shaped lines detected in the report
 	// or question body, on report and question entries (#139). Zero means nothing
 	// was flagged or the entry predates the field.

@@ -444,6 +444,42 @@ func (c *Client) AddWorktree(ctx context.Context, dir, path, branch, commit stri
 	return nil
 }
 
+// AddDetachedWorktree creates a worktree at path with a DETACHED HEAD at
+// commit -- `git worktree add --detach <abs> <commit>`. Unlike AddWorktree it
+// creates no branch: the caller wants a throwaway tree it will remove, not a
+// new ref in the repository (#144).
+//
+// Preconditions:  path does not exist; commit resolves.
+// Postconditions: path is a working tree at commit with a detached HEAD;
+// dir's own working tree, index and HEAD are unchanged.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure. On any error
+// nothing is left behind at path.
+func (c *Client) AddDetachedWorktree(ctx context.Context, dir, path, commit string) (retErr error) {
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(dir, absPath)
+	}
+
+	pathExisted := false
+	if _, err := os.Stat(absPath); err == nil {
+		pathExisted = true
+	}
+	defer func() {
+		if retErr != nil && !pathExisted {
+			_ = os.RemoveAll(absPath)
+			_, _ = c.run(ctx, dir, nil, "worktree", "prune")
+		}
+	}()
+
+	_, err := c.run(ctx, dir, nil, "worktree", "add", "--detach", absPath, commit)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // CheckoutWorktree adds a worktree at path on an existing branch.
 //
 // Preconditions:  path does not exist; branch exists.

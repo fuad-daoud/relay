@@ -272,12 +272,43 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 	}
 
+	// A verify consult is the round-close reviewer (#144): its findings carry
+	// a verdict, which is recorded on the entry and on the binding, and its
+	// throwaway worktree is removed whatever the terminal state is.
+	if c.Role == verifyRole {
+		if state == store.ConsultDone {
+			body, readErr := os.ReadFile(c.FindingsPath)
+			if readErr != nil {
+				body = nil
+			}
+			verdict, reasons := parseVerdict(body)
+			entry.Verdict = verdict
+			entry.Reasons = reasons
+			entry.Payload = fmt.Sprintf("relay: round %d · verdict %s · %d reasons · %s",
+				c.Round, verdict, len(reasons), c.FindingsPath)
+			b.LastVerdict = &store.Verdict{
+				Round:    c.Round,
+				Verdict:  verdict,
+				Reasons:  reasons,
+				Findings: c.FindingsPath,
+			}
+		} else {
+			// No findings file at all: delivered as unstructured, and the
+			// payload keeps saying why (#144).
+			b.LastVerdict = &store.Verdict{Round: c.Round, Verdict: verdictUnstructured}
+		}
+	}
+
 	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
 	}
 
 	b.Consults[i].State = state
 	b.Consults[i].Note = note
+
+	if c.Role == verifyRole {
+		removeVerifyWorktree(ctx, rt, b, c.Round)
+	}
 
 	return b, nil
 }

@@ -94,6 +94,10 @@ type SendOptions struct {
 	// Regate sets the binding's repair-round budget (#132 part 2); nil leaves
 	// it unchanged.
 	Regate *int
+	// Verify marks the round for a read-only reviewer at round close (#144).
+	// nil takes policy.json verify.default, so a plain send honours the
+	// planner's configured default and --verify/--no-verify overrides it.
+	Verify *bool
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -461,6 +465,15 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.LastGateSig = ""
 		if opts.Regate != nil {
 			b.Regate = *opts.Regate
+		}
+
+		// Whether this round gets a reviewer at its close (#144): the flag,
+		// else policy.json verify.default. Persisted with the round, and
+		// cleared by queueReport once the close has acted on it.
+		if opts.Verify != nil {
+			b.RoundVerify = *opts.Verify
+		} else {
+			b.RoundVerify = rt.Policy.VerifyDefault()
 		}
 
 		return tx.Save(b)

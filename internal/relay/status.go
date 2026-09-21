@@ -133,6 +133,11 @@ type BindingStatus struct {
 	// resolves it. Nil otherwise, including for a switchable broken
 	// binding the daemon is about to fix itself.
 	Waiting *Waiting `json:"waiting,omitempty"`
+	// Verdict is the newest reviewer verdict (#144), shown while it belongs
+	// to the round just closed: "verdict: rejected (2 reasons)". Empty when
+	// the binding never had a verify round and when the verdict is stale --
+	// a consumer cannot tell those apart, and does not need to.
+	Verdict string `json:"last_verdict,omitempty"`
 	// Owner is the client this row belongs to on a serve box: the client's
 	// "SHA256:<base64>" fingerprint. Empty on a planner, where every row
 	// belongs to the one runtime the UI is welded to.
@@ -499,6 +504,13 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		row.SubAgents = string(h.SubAgents)
 	}
 
+	// The newest reviewer verdict, while it judged the round just closed
+	// (#144): LastVerdict.Round == b.Round-1 means no later round has closed
+	// since. A verdict for an older round is history, and `relay log` has it.
+	if b.LastVerdict != nil && b.LastVerdict.Round == b.Round-1 {
+		row.Verdict = fmt.Sprintf("verdict: %s (%d reasons)", b.LastVerdict.Verdict, len(b.LastVerdict.Reasons))
+	}
+
 	return row, nil
 }
 
@@ -672,6 +684,11 @@ func RenderStatus(r Report) string {
 		// would be noise, not information.
 		if b.Consults > 0 {
 			fmt.Fprintf(&sb, " +%dc", b.Consults)
+		}
+		// The newest reviewer verdict, while it judged the round just closed
+		// (#144): "verdict: rejected (2 reasons)".
+		if b.Verdict != "" {
+			fmt.Fprintf(&sb, " %s", b.Verdict)
 		}
 		fmt.Fprint(&sb, "\n")
 		focus := ""

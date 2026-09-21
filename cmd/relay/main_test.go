@@ -98,6 +98,23 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 	}
 }
 
+// TestSendVerifyAndNoVerifyAreExclusive pins #144's flag pair: like add's
+// --branch/--cwd, the refusal happens in validation, before newRuntime, so it
+// reaches neither the state directory nor herdr.
+func TestSendVerifyAndNoVerifyAreExclusive(t *testing.T) {
+	_, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"send", "--verify", "--no-verify", "--file", "plan.md"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if !strings.Contains(string(stderr), "--verify") || !strings.Contains(string(stderr), "--no-verify") {
+		t.Errorf("expected the error to name both flags, got %q", string(stderr))
+	}
+}
+
 func TestPauseRefusesToGuessTheBinding(t *testing.T) {
 	err := run([]string{"pause"})
 	if err == nil {
