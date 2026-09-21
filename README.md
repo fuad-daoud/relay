@@ -230,12 +230,18 @@ inside every pane it manages, so it has to be run from inside one.
   round's log.
 - `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
   panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
-  `--json` also carries two fields the prose above does not spell out:
+  `--json` also carries three fields the prose above does not spell out:
   ```
   branch      the binding's worktree branch; absent for a --cwd binding
   waiting     set when the binding is stalled on a human: cause, line, since, hint
+  last_seq    the Seq of the binding's newest log entry; 0 when the log is empty
   ```
-- `relay log NAME` — the binding's append-only round log. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
+- `relay log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
+  A hook or script that has already seen up to a known `seq` asks only for the rest:
+  ```bash
+  last_seq=$(relay status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
+  relay log NAME --after $(last_seq) --json
+  ```
 - `relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
   one line per round across every binding relay has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
 - `relay show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]` —

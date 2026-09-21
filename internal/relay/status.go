@@ -53,6 +53,9 @@ type BindingStatus struct {
 	// recovery orphans a builder that is still running.
 	Detail string     `json:"detail,omitempty"`
 	Last   *LastEvent `json:"last,omitempty"`
+	// LastSeq is the Seq of the newest log entry; 0 when the log is empty.
+	// No omitempty: a consumer reads 0 as "nothing yet".
+	LastSeq int `json:"last_seq"`
 	// LastPayload is the most recent plan/report/question/answer entry --
 	// the four kinds that cross between planner and builder -- as opposed to
 	// Last, which is the most recent entry of any kind including relay's own
@@ -346,6 +349,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 	if n := len(entries); n > 0 {
 		last := entries[n-1]
+		row.LastSeq = last.Seq
 		row.Last = &LastEvent{
 			TS: last.TS, Round: last.Round,
 			Direction: last.Direction, Kind: last.Kind,

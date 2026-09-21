@@ -1488,29 +1488,74 @@ func cmdStatusline(args []string) error {
 }
 
 func cmdLog(args []string) error {
-	// A flag set with no flags, purely so `relay log -h` behaves like every
-	// other subcommand instead of being read as a binding name.
+	const usage = "usage: relay log <name> [--round N] [--after N] [--json] [--follow]"
+
 	fs := flag.NewFlagSet("log", flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprintln(fs.Output(), "usage: relay log <name>") }
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
+	after := fs.Int("after", 0, "show only entries with a Seq greater than this (0 = all)")
+	asJSON := fs.Bool("json", false, "one compact JSON object per line (NDJSON)")
+	follow := fs.Bool("follow", false, "keep printing new entries until the binding is DONE or removed")
+	round := fs.Int("round", 0, "show only this round (default: all rounds)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if *after < 0 {
+		fmt.Fprintln(os.Stderr, "relay: --after must be >= 0")
+		return exitCodeErr{code: 2}
+	}
 	args = fs.Args()
 	if len(args) != 1 {
-		return fmt.Errorf("usage: relay log <name>")
+		return fmt.Errorf("%s", usage)
 	}
+	name := args[0]
 
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	entries, err := rt.Store.ReadLog(args[0])
-	if err != nil {
+	// A binding that does not exist is named at once, the way every other
+	// command reports it; only a binding that disappears mid-follow (below)
+	// ends the loop quietly.
+	if _, err := rt.Store.Load(name); err != nil {
 		return err
 	}
 
-	for _, e := range entries {
+	// emit applies the --round filter, so the initial batch and every
+	// followed entry render identically.
+	emit := func(e store.LogEntry) {
+		if *round != 0 && e.Round != *round {
+			return
+		}
+		if *asJSON {
+			_ = json.NewEncoder(os.Stdout).Encode(e)
+			return
+		}
 		fmt.Println(relay.LogLine(e))
+	}
+
+	entries, err := rt.Store.ReadLogAfter(name, *after)
+	if err != nil {
+		return err
+	}
+	last := *after
+	for _, e := range entries {
+		emit(e)
+		last = e.Seq
+	}
+
+	if !*follow {
+		return nil
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := relay.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
+		if ctx.Err() != nil {
+			// Interrupted: what was already printed is the answer.
+			return nil
+		}
+		return err
 	}
 	return nil
 }

@@ -1824,3 +1824,45 @@ func TestRenderStatusOutcome(t *testing.T) {
 		}
 	})
 }
+
+func TestStatusReportsLastSeq(t *testing.T) {
+	rt := newRuntime(t, &fakeHerdr{})
+	withLog := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
+	without := store.Binding{Name: "empty", CWD: "/repo2", Round: 1, State: store.StateActive}
+	for _, b := range []store.Binding{withLog, without} {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save %s: %v", b.Name, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if err := rt.Store.AppendLog(withLog.Name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		}); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	byName := map[string]BindingStatus{}
+	for _, row := range rep.Bindings {
+		byName[row.Name] = row
+	}
+	if got := byName[withLog.Name].LastSeq; got != 3 {
+		t.Errorf("webshop LastSeq = %d, want 3", got)
+	}
+	if got := byName[without.Name].LastSeq; got != 0 {
+		t.Errorf("empty LastSeq = %d, want 0", got)
+	}
+
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"last_seq":3`) {
+		t.Errorf("status JSON does not carry last_seq 3: %s", data)
+	}
+}
