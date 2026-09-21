@@ -1524,6 +1524,8 @@ func TestRoundStartSetsShippedTags(t *testing.T) {
 	tagsJSON, err := json.Marshal([]remote.TagRef{
 		{Name: "v1.2.3", SHA: env.headSHA},
 		{Name: "unrelated", SHA: missingSHA},
+		{Name: "release/1.0", SHA: env.headSHA},
+		{Name: "..", SHA: env.headSHA},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1553,9 +1555,32 @@ func TestRoundStartSetsShippedTags(t *testing.T) {
 		t.Fatalf("refs/tags/unrelated: ok=%v err=%v, want it absent", ok, err)
 	}
 
-	described := strings.TrimSpace(runGit(t, b.Worktree, "describe", "--tags"))
-	if described != "v1.2.3" {
-		t.Fatalf("worktree describe --tags = %q, want v1.2.3", described)
+	got, ok, err = env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/release/1.0")
+	if err != nil || !ok {
+		t.Fatalf("bare refs/tags/release/1.0: %v, ok=%v", err, ok)
+	}
+	if got != env.headSHA {
+		t.Fatalf("refs/tags/release/1.0 = %q, want the base sha %q", got, env.headSHA)
+	}
+
+	if _, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/tags/.."); err != nil || ok {
+		t.Fatalf("refs/tags/..: ok=%v err=%v, want it absent (skipped, invalid tag)", ok, err)
+	}
+
+	// release/1.0 now shares headSHA with v1.2.3, so "describe --tags" is
+	// free to report either; check the worktree sees both tags instead.
+	pointsAtHead := strings.TrimSpace(runGit(t, b.Worktree, "tag", "--points-at", "HEAD"))
+	for _, want := range []string{"v1.2.3", "release/1.0"} {
+		found := false
+		for _, tag := range strings.Split(pointsAtHead, "\n") {
+			if tag == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("worktree tag --points-at HEAD = %q, want it to include %q", pointsAtHead, want)
+		}
 	}
 }
 

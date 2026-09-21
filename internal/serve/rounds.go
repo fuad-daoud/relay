@@ -172,11 +172,9 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, tag := range tags {
 			if err := validTagRef(tag); err != nil {
-				writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "tags: "+err.Error())
-				return
+				slog.Debug("tag skipped", "tag", tag.Name, "err", err)
+				continue
 			}
-		}
-		for _, tag := range tags {
 			if err := s.cfg.Git.UpdateRef(r.Context(), bare, "refs/tags/"+tag.Name, tag.SHA, ""); err != nil {
 				slog.Debug("tag not set", "tag", tag.Name, "err", err)
 				continue
@@ -320,11 +318,33 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // validTagRef reports whether a shipped tag is well formed enough to set as a
-// ref: a non-empty name with no slash, "..", or whitespace, and a 40-hex
-// commit sha (#242).
+// ref. Git tag names may legally contain "/" (release/1.0, v1/rc2), so this
+// follows git's ref-name rules loosely rather than refusing any slash; a
+// name that still fails is skipped by the caller, never a 400 for the whole
+// round start (#242 follow-up).
 func validTagRef(tag remote.TagRef) error {
-	if tag.Name == "" || strings.Contains(tag.Name, "..") || strings.ContainsAny(tag.Name, "/ \t\n\r") {
-		return fmt.Errorf("invalid tag name %q", tag.Name)
+	name := tag.Name
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, " \t\n\r") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid tag name %q", name)
+		}
+	}
+	if strings.Contains(name, "@{") || strings.ContainsAny(name, `\~^:?*[`) {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	if strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".lock") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf("invalid tag name %q", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || strings.HasPrefix(part, ".") {
+			return fmt.Errorf("invalid tag name %q", name)
+		}
 	}
 	if len(tag.SHA) != 40 || strings.Trim(tag.SHA, "0123456789abcdefABCDEF") != "" {
 		return fmt.Errorf("invalid tag sha %q", tag.SHA)
