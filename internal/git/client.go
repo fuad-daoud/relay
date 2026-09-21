@@ -564,6 +564,43 @@ func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string)
 	return err
 }
 
+// ListTags lists dir's tags by short name, each mapped to the commit it points
+// at: an annotated tag is peeled to its commit, a lightweight tag already is
+// one (#242).
+//
+// Preconditions:  dir is inside a git repository.
+// Postconditions: returns every refs/tags entry; the value is the tag's peeled
+// commit. Empty map, nil error when there are no tags.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped
+// git failure.
+func (c *Client) ListTags(ctx context.Context, dir string) (map[string]string, error) {
+	out, err := c.run(ctx, dir, nil,
+		"for-each-ref",
+		"--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)",
+		"refs/tags")
+	if err != nil {
+		return nil, err
+	}
+
+	tags := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\x00")
+		if len(fields) < 2 || fields[0] == "" || fields[1] == "" {
+			continue
+		}
+		sha := fields[1]
+		if len(fields) > 2 && fields[2] != "" {
+			sha = fields[2]
+		}
+		tags[fields[0]] = sha
+	}
+	return tags, nil
+}
+
 // CommitTree creates a commit object directly from a tree and parent commit.
 //
 // The commit is created with fixed author and committer identity:

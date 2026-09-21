@@ -346,7 +346,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 	defer snap.Body.Close()
 
-	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "")
+	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", nil)
 	if err != nil {
 		t.Fatalf("StartRound: %v", err)
 	}
@@ -482,5 +482,67 @@ func TestAvailableRoundTrip(t *testing.T) {
 	}
 	if gotContentType != "application/json" {
 		t.Errorf("content-type = %q, want application/json", gotContentType)
+	}
+}
+
+// TestStartRoundSendsTagsField pins the wire shape of the tags data (#242): a
+// JSON array in the "tags" form field when tags are given, no field at all
+// when they are nil.
+func TestStartRoundSendsTagsField(t *testing.T) {
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var gotTags string
+	var hadTags bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("server ParseMultipartForm: %v", err)
+		}
+		mu.Lock()
+		gotTags = r.FormValue("tags")
+		_, hadTags = r.MultipartForm.Value["tags"]
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"api","round_state":"running"}`))
+	}))
+	defer ts.Close()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := client.New(client.Servers{
+		"zen": client.ServerEntry{URL: ts.URL, Insecure: true},
+	}, kp, time.Now)
+
+	tags := []remote.TagRef{
+		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", tags); err != nil {
+		t.Fatalf("StartRound with tags: %v", err)
+	}
+	want, err := json.Marshal(tags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got, had := gotTags, hadTags
+	mu.Unlock()
+	if !had {
+		t.Fatal("no tags field on the request when tags were given")
+	}
+	if got != string(want) {
+		t.Fatalf("tags field = %q, want %q", got, string(want))
+	}
+
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", nil); err != nil {
+		t.Fatalf("StartRound without tags: %v", err)
+	}
+	mu.Lock()
+	_, had = gotTags, hadTags
+	mu.Unlock()
+	if had {
+		t.Fatal("tags field sent when tags were nil")
 	}
 }

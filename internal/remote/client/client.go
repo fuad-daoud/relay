@@ -274,8 +274,10 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 	return view, nil
 }
 
-// StartRound begins a round on the server, spooling the multipart form (plan + bundle).
-func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error) {
+// StartRound begins a round on the server, spooling the multipart form (plan,
+// tags + bundle). tags is the client's tag list shipped as data beside the
+// bundle (#242); nil or empty omits the field entirely.
+func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -300,6 +302,15 @@ func (c *Client) StartRound(ctx context.Context, server, name string, round int,
 	if tier != "" {
 		if err := mw.WriteField("tier", tier); err != nil {
 			return remote.BindingView{}, fmt.Errorf("write tier field: %w", err)
+		}
+	}
+	if len(tags) > 0 {
+		encoded, err := json.Marshal(tags)
+		if err != nil {
+			return remote.BindingView{}, fmt.Errorf("marshal tags: %w", err)
+		}
+		if err := mw.WriteField("tags", string(encoded)); err != nil {
+			return remote.BindingView{}, fmt.Errorf("write tags field: %w", err)
 		}
 	}
 	if bundle != nil {

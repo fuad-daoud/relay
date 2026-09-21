@@ -1494,6 +1494,52 @@ func initRepo(t *testing.T) string {
 	return dir
 }
 
+func TestListTagsPeelsAnnotated(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := initRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-m", "first")
+	sha1 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	runGit(t, repoDir, "-c", "tag.gpgsign=false", "tag", "lw")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "b.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "b.txt")
+	runGit(t, repoDir, "commit", "-m", "second")
+	sha2 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	runGit(t, repoDir, "-c", "tag.gpgsign=false", "tag", "-a", "-m", "x", "an")
+
+	tags, err := client.ListTags(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("ListTags: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("ListTags = %v, want 2 tags", tags)
+	}
+	if tags["lw"] != sha1 {
+		t.Errorf("tags[lw] = %q, want %q", tags["lw"], sha1)
+	}
+	if tags["an"] != sha2 {
+		t.Errorf("tags[an] = %q, want %q (the peeled commit, not the tag object)", tags["an"], sha2)
+	}
+
+	untagged := initRepo(t)
+	empty, err := client.ListTags(ctx, untagged)
+	if err != nil {
+		t.Fatalf("ListTags (untagged): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ListTags (untagged) = %v, want an empty map", empty)
+	}
+}
+
 func TestRepoFactsNoRemote(t *testing.T) {
 	requireGit(t)
 	ctx := context.Background()

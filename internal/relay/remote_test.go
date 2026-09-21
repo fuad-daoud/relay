@@ -35,6 +35,7 @@ type fakeRemote struct {
 	startRoundResp    remote.BindingView
 	startRoundErr     error
 	startRoundTier    string
+	startRoundTags    []remote.TagRef
 	roundFileResp     io.ReadCloser
 	roundFileErr      error
 	roundBundleResp   io.ReadCloser
@@ -79,9 +80,10 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
 	f.startRoundTier = tier
+	f.startRoundTags = tags
 	return f.startRoundResp, f.startRoundErr
 }
 
@@ -1110,6 +1112,63 @@ func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 	}
 	if ft.snapshotCalls[0].Since != "" {
 		t.Fatalf("snapshot Since = %q, want empty string for first send", ft.snapshotCalls[0].Since)
+	}
+}
+
+func TestSendRemoteShipsTags(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:   "api",
+		CWD:    "/fake/repo",
+		Repo:   "/fake/repo",
+		Branch: "relay/api",
+		Round:  1,
+		State:  store.StateActive,
+		Builder: store.Endpoint{
+			Mode:        store.ModeRemote,
+			Server:      "zen",
+			LastShipped: "",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+		},
+		tags: map[string]string{
+			"v1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"v0": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	}
+	fr := &fakeRemote{
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(ctx, rt, "api", planFile, SendOptions{}); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	want := []remote.TagRef{
+		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}
+	if !slices.Equal(fr.startRoundTags, want) {
+		t.Fatalf("StartRound tags = %+v, want %+v (sorted by name)", fr.startRoundTags, want)
 	}
 }
 

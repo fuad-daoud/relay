@@ -364,8 +364,21 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		bundleReader = snap.Body
 	}
 
-	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier)
-	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier)
+	// 2b. The client's tags travel as data beside the bundle (#242): a tag on
+	// an ancestor of the shipped branch already has its commit on the server.
+	// A broken repo is a real pre-send failure; no local state is written.
+	tagsMap, err := rt.Git.ListTags(ctx, b.Repo)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("list tags: %w", err)
+	}
+	tags := make([]remote.TagRef, 0, len(tagsMap))
+	for tagName, sha := range tagsMap {
+		tags = append(tags, remote.TagRef{Name: tagName, SHA: sha})
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
+
+	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier, tags)
+	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, tags)
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
