@@ -432,8 +432,10 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	// A stop in flight overrides whatever the builder itself reports (#138),
 	// the way a gate in flight does: the round is closing, not working. The
 	// grace comes from the binding, so it reads the same here as in the
-	// daemon that will abandon the pane when it elapses.
-	if !b.StopRequestedAt.IsZero() && !b.RoundStartedAt.IsZero() {
+	// daemon that will abandon the pane when it elapses. Once the grace has
+	// elapsed the binding is NEEDS YOU and that line already says why, so
+	// "stopping" only shows while stopDecision still says to wait.
+	if !b.StopRequestedAt.IsZero() && !b.RoundStartedAt.IsZero() && stopDecision(b, rt.Now()) == stopWait {
 		row.BuilderStatus = fmt.Sprintf("stopping %s of %s",
 			AgeText(rt.Now().UTC().Sub(b.StopRequestedAt)), stopGrace(b))
 		row.StopRequestedAt = b.StopRequestedAt

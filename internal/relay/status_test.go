@@ -321,6 +321,29 @@ func TestStatusShowsStopping(t *testing.T) {
 	}
 }
 
+// TestStatusHidesStoppingAfterGrace pins the fix for the "stopping" label
+// surviving an abandoned stop: once the grace has elapsed and the binding
+// went NEEDS YOU (stopDecision no longer says stopWait), the NEEDS YOU line
+// already says why, so BuilderStatus must not still read
+// "stopping <elapsed> of <grace>".
+func TestStatusHidesStoppingAfterGrace(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := sentBinding(t, f)
+	clock := &fakeClock{now: baseTime}
+	rt = withClock(rt, clock)
+	b.StopRequestedAt = clock.Now().Add(-7 * time.Minute)
+	b.StopGraceMS = int((5 * time.Minute) / time.Millisecond)
+	b.State = store.StateNeedsYou
+
+	row, err := statusRow(context.Background(), rt, b, nil, nil, agentGone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(row.BuilderStatus, "stopping") {
+		t.Errorf("BuilderStatus = %q, must not start with %q once the grace elapsed and the binding went NEEDS YOU", row.BuilderStatus, "stopping")
+	}
+}
+
 func TestStatusShowsNudgeClock(t *testing.T) {
 	f := &fakeHerdr{readOut: "half a screen of output"}
 	rt, b := sentBinding(t, f)

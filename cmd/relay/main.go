@@ -87,7 +87,7 @@ Commands:
   init      write starter candidates.json and policy.json from the harnesses on PATH, and install role definitions
 
   serve                     run the remote-builder server (listener + daemon)
-  serve init|enroll|clients|revoke|fingerprint|status|gc|unbind
+  serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui|gates|available|unavailable
                             server administration, on the server host
 
   client init|add-server|rm-server

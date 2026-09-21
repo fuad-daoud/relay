@@ -33,6 +33,23 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// TestHelpListsServeVerbs pins that the top-level usage's `serve` line names
+// all the server administration verbs, not just the original eight: `relay
+// serve ui`, `gates`, `available` and `unavailable` exist in
+// cmd/relay/serve.go's sub-usage but were missing here. `relay help` only
+// prints a constant string, so this reaches no herdr and touches no state.
+func TestHelpListsServeVerbs(t *testing.T) {
+	stdout, _, runErr := captureOutput(t, func() error {
+		return run([]string{"help"})
+	})
+	if runErr != nil {
+		t.Fatalf("run: %v", runErr)
+	}
+	if !strings.Contains(string(stdout), "gates") {
+		t.Errorf("expected the top-level usage to mention gates, got %q", string(stdout))
+	}
+}
+
 // TestBindResumeWithoutNameIsRejected covers a flag shape that reads fine and
 // silently does the wrong thing: --resume is a bool and the name comes from
 // --name, so `relay bind --resume webshop` drops the positional and the binding
