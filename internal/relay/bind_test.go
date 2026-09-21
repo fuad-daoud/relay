@@ -2380,3 +2380,146 @@ func TestForkInheritsSourceGate(t *testing.T) {
 		t.Errorf("stored Gate = %q, want inherited from source", stored.Gate)
 	}
 }
+
+// TestBindRegateFlagStored pins #132 part 2: an explicit --regate is stored on
+// the binding as given.
+func TestBindRegateFlagStored(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Regate: ptr(3),
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Regate != 3 {
+		t.Errorf("b.Regate = %d, want 3", b.Regate)
+	}
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Regate != 3 {
+		t.Errorf("stored Regate = %d, want 3", stored.Regate)
+	}
+}
+
+// TestBindRegatePolicyDefaultApplied pins #132 part 2: with no --regate,
+// policy.json's gate.regate becomes the binding's budget.
+func TestBindRegatePolicyDefaultApplied(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Regate != 2 {
+		t.Errorf("b.Regate = %d, want the policy default 2", b.Regate)
+	}
+}
+
+// TestBindRegateFlagOverridesPolicy pins #132 part 2: an explicit --regate 0
+// turns the policy default off for this binding.
+func TestBindRegateFlagOverridesPolicy(t *testing.T) {
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Regate: ptr(0),
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Regate != 0 {
+		t.Errorf("b.Regate = %d, want 0 despite the policy default", b.Regate)
+	}
+}
+
+// TestForkInheritsSourceRegate pins #132 part 2: a fork with no --regate
+// inherits the source binding's budget.
+func TestForkInheritsSourceRegate(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Regate = 2
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source:      "source",
+		Round:       2,
+		NewName:     "alt",
+		PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Fork failed: %v", err)
+	}
+	if res.Binding.Regate != 2 {
+		t.Errorf("Binding.Regate = %d, want inherited from source", res.Binding.Regate)
+	}
+
+	stored, err := rt.Store.Load("alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Regate != 2 {
+		t.Errorf("stored Regate = %d, want inherited from source", stored.Regate)
+	}
+}
+
+// TestForkRegateFlagOverridesSource pins #132 part 2: an explicit --regate on
+// a fork wins over the source's budget.
+func TestForkRegateFlagOverridesSource(t *testing.T) {
+	ctx := context.Background()
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+
+	srcCWD := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedFourRoundBinding(t, rt, "source", srcCWD)
+	src, err := rt.Store.Load("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Regate = 2
+	if err := rt.Store.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Fork(ctx, rt, ForkOptions{
+		Source:      "source",
+		Round:       2,
+		NewName:     "alt",
+		PlannerPane: "w2:p3",
+		Regate:      ptr(0),
+	})
+	if err != nil {
+		t.Fatalf("Fork failed: %v", err)
+	}
+	if res.Binding.Regate != 0 {
+		t.Errorf("Binding.Regate = %d, want the explicit 0", res.Binding.Regate)
+	}
+}

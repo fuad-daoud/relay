@@ -56,6 +56,11 @@ type AddOptions struct {
 	// Gate is empty (#132). Ignored when Gate is set.
 	NoGate bool
 
+	// Regate is the binding's automatic repair-round budget (#132 part 2):
+	// nil falls back to policy.json's gate.regate, an explicit 0 disables
+	// repair even when the policy sets one.
+	Regate *int
+
 	// Feature is the human-given label grouping this binding with others
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
@@ -290,6 +295,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is
 		// what the coming history database wants), while cwd is the fresh

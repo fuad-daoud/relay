@@ -1356,7 +1356,7 @@ func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (st
 		if err != nil {
 			return err
 		}
-		out, closed, gating, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
+		out, closed, gating, _, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
 		return err
 	})
 	if err != nil {
@@ -2653,5 +2653,344 @@ func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
 	}
 	if !strings.Contains(pending.Payload, "Gate: make check -- ERROR: no runner.") {
 		t.Errorf("payload = %q", pending.Payload)
+	}
+}
+
+// gateRecordFor finds a binding's report entry for one round and returns its
+// gate record, failing the test when the round has no report entry. It is how
+// the regate tests inspect a round that closed earlier than the one currently
+// in flight: PendingForPlanner only ever hands back the oldest.
+func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.GateRecord {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog(%s): %v", name, err)
+	}
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			return e.Gate
+		}
+	}
+	t.Fatalf("no report entry for round %d of %s", round, name)
+	return nil
+}
+
+// failRoundWithGate drives b's current round through the real Reconcile call
+// site until its gate exits non-zero: the first tick starts the gate, the
+// second (after the fake runner is told the process exited) closes the round
+// with gate=fail. It returns the binding Reconcile returned and the failing
+// record, and fails the test if the round did not close on the gate.
+func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner, logBody string, agents []herdr.Agent) (store.Binding, *store.GateRecord) {
+	t.Helper()
+	round := b.Round
+	if err := os.WriteFile(rt.Store.ReportPath(b.Name, round), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath(b.Name, round))
+
+	got, err := reconcile(t, rt, b, agents)
+	if err != nil {
+		t.Fatalf("reconcile (start gate, round %d): %v", round, err)
+	}
+	if got.GateRun == nil {
+		t.Fatalf("round %d: GateRun is nil; the gate did not start", round)
+	}
+	pid := got.GateRun.PID
+	if err := os.WriteFile(rt.Store.GateLogPath(b.Name, round), []byte(logBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(pid, false)
+	fr.exit(pid, 2)
+
+	got, err = reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("reconcile (close gate, round %d): %v", round, err)
+	}
+	rec := gateRecordFor(t, rt, b.Name, round)
+	if rec == nil || rec.Result != "fail" {
+		t.Fatalf("round %d: report gate = %+v, want a fail record", round, rec)
+	}
+	return got, rec
+}
+
+// TestRegateFailOpensRepairRound pins #132 part 2: a failing gate with a
+// budget stages round N+1 as a repair plan, hands it to the builder exactly as
+// Send would, and logs `repair k/M` on the new round's plan entry.
+func TestRegateFailOpensRepairRound(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2", got.Round)
+	}
+	planPath := rt.Store.PlanPath("webshop", 2)
+	body, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("round 2 plan must exist: %v", err)
+	}
+	if !strings.Contains(string(body), "Round 1's acceptance check") {
+		t.Errorf("round 2 plan does not name the failed check:\n%s", body)
+	}
+
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts = %d, want exactly one hand-off to the builder", len(f.prompts))
+	}
+	if !strings.Contains(f.prompts[0].Text, "002-plan.md") {
+		t.Errorf("repair prompt does not name 002-plan.md: %q", f.prompts[0].Text)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var repairEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Round == 2 && entries[i].Direction == store.DirToBuilder && entries[i].Kind == store.KindPlan {
+			repairEntry = &entries[i]
+		}
+	}
+	if repairEntry == nil {
+		t.Fatal("no round-2 plan entry in the log: the round does not count as open")
+	}
+	if repairEntry.Note != "repair 1/2" {
+		t.Errorf("plan entry note = %q, want repair 1/2", repairEntry.Note)
+	}
+
+	if got.RepairCount != 1 {
+		t.Errorf("RepairCount = %d, want 1", got.RepairCount)
+	}
+	if got.LastGateSig == "" {
+		t.Error("LastGateSig must carry the failing gate's signature")
+	}
+	if got.RoundStartedAt.IsZero() {
+		t.Error("RoundStartedAt must be stamped: the repair round is open")
+	}
+	if got.State != store.StateActive {
+		t.Errorf("State = %q, want active", got.State)
+	}
+	if rec := gateRecordFor(t, rt, "webshop", 1); rec == nil || rec.Result != "fail" {
+		t.Errorf("round 1 report gate = %+v, want the fail it closed with", rec)
+	}
+}
+
+// TestRegateBoundHaltsNeedsYou pins the count bound (#132 part 2): once the
+// budget is spent, the next failing gate ends the loop with NEEDS YOU instead
+// of another repair round.
+func TestRegateBoundHaltsNeedsYou(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	if got.State != store.StateActive || got.RepairCount != 1 {
+		t.Fatalf("after the first failure: state=%q repairs=%d, want active/1", got.State, got.RepairCount)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts after repair 1 = %d, want 1", len(f.prompts))
+	}
+
+	// Round 2's gate fails with different content, so the stall bound cannot
+	// fire: the count bound must.
+	got, _ = failRoundWithGate(t, rt, got, fr, "FAIL github.com/example/other-pkg\n", agents)
+
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("State = %q, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "after 1 repair") {
+		t.Errorf("Halt = %q, want it to mention \"after 1 repair\"", got.Halt)
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", 3)); err == nil {
+		t.Error("no round-3 plan may be staged once the budget is spent")
+	}
+	if len(f.prompts) != 1 {
+		t.Errorf("prompts = %d, want no further hand-off", len(f.prompts))
+	}
+}
+
+// TestRegateIdenticalSignatureHaltsEarly pins the stall bound (#132 part 2):
+// a second identical failure -- same content modulo the clock -- means the
+// repair changed nothing that mattered, so the loop ends early.
+func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 5
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	got, _ := failRoundWithGate(t, rt, b, fr,
+		"2026-09-21T14:29:00Z FAIL github.com/example/pkg2 0.02s\n", agents)
+	if got.State != store.StateActive {
+		t.Fatalf("after the first failure: state = %q, want active (a repair started)", got.State)
+	}
+
+	got, _ = failRoundWithGate(t, rt, got, fr,
+		"2026-09-21T14:31:07Z FAIL github.com/example/pkg2 9.99s\n", agents)
+
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("State = %q, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "unchanged after repair") {
+		t.Errorf("Halt = %q, want it to mention the unchanged gate output", got.Halt)
+	}
+	if got.RepairCount != 1 {
+		t.Errorf("RepairCount = %d, want 1 (the early halt is not a repair)", got.RepairCount)
+	}
+}
+
+// TestRegatePassResetsCount pins #132 part 2's reset: a passing gate clears
+// the repair bookkeeping, so the next failing gate gets a fresh budget.
+func TestRegatePassResetsCount(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	b.Regate = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	if got.RepairCount != 1 || got.LastGateSig == "" {
+		t.Fatalf("after the first failure: repairs=%d sig=%q, want 1 and non-empty", got.RepairCount, got.LastGateSig)
+	}
+
+	// Round 2's gate passes.
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 2), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 2))
+
+	got, err := reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("reconcile (start gate, round 2): %v", err)
+	}
+	if got.GateRun == nil {
+		t.Fatal("round 2: GateRun is nil; the gate did not start")
+	}
+	pid := got.GateRun.PID
+	if err := os.WriteFile(rt.Store.GateLogPath("webshop", 2), []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(pid, false)
+	fr.exit(pid, 0)
+
+	got, err = reconcile(t, rt, got, agents)
+	if err != nil {
+		t.Fatalf("reconcile (close gate, round 2): %v", err)
+	}
+
+	if rec := gateRecordFor(t, rt, "webshop", 2); rec == nil || rec.Result != "pass" {
+		t.Fatalf("round 2 report gate = %+v, want pass", rec)
+	}
+	if got.RepairCount != 0 {
+		t.Errorf("RepairCount = %d, want 0 after a passing gate", got.RepairCount)
+	}
+	if got.LastGateSig != "" {
+		t.Errorf("LastGateSig = %q, want \"\" after a passing gate", got.LastGateSig)
+	}
+	if got.Round != 3 {
+		t.Errorf("Round = %d, want 3", got.Round)
+	}
+}
+
+// TestNoRegateUnchanged pins the off switch (#132 part 2): Regate 0 is
+// exactly today's behaviour -- the failure is reported, nothing is re-sent.
+func TestNoRegateUnchanged(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentBinding(t, f)
+	rt.Runner = fr
+	b.Gate = "make check"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
+
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2", got.Round)
+	}
+	if got.RepairCount != 0 || got.LastGateSig != "" {
+		t.Errorf("repair bookkeeping moved with regate 0: repairs=%d sig=%q", got.RepairCount, got.LastGateSig)
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err == nil {
+		t.Error("no round-2 plan may be staged when regate is 0")
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("prompts = %d, want none with regate 0", len(f.prompts))
+	}
+
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("report must be queued: found=%v err=%v", found, err)
+	}
+	if pending.Note != "gate=fail" {
+		t.Errorf("note = %q, want gate=fail", pending.Note)
+	}
+	if pending.Gate == nil || pending.Gate.Result != "fail" || pending.Gate.ExitCode != 2 {
+		t.Fatalf("Gate = %+v, want Result=fail ExitCode=2", pending.Gate)
+	}
+}
+
+// TestSendResetsRepairBookkeeping pins #132 part 2: a human send is a fresh
+// start -- it clears the repair bookkeeping and, when --regate is given, sets
+// the binding's budget.
+func TestSendResetsRepairBookkeeping(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	b.RepairCount = 1
+	b.LastGateSig = "x"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RepairCount != 0 || got.LastGateSig != "" {
+		t.Errorf("a human send must clear the repair bookkeeping: repairs=%d sig=%q", got.RepairCount, got.LastGateSig)
+	}
+	if got.Regate != 0 {
+		t.Errorf("Regate = %d, want 0 (unchanged without --regate)", got.Regate)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Regate: ptr(3)}); err != nil {
+		t.Fatalf("Send --regate: %v", err)
+	}
+	got, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Regate != 3 {
+		t.Errorf("Regate = %d, want 3 persisted by send --regate", got.Regate)
 	}
 }

@@ -186,6 +186,37 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	return fs.Parse(positional)
 }
 
+// regateFlag turns --regate into the *int the relay package takes (#132 part
+// 2). The flag's default is -1, meaning "not given", which becomes nil so the
+// policy default or the existing binding value stands; any value the human
+// actually typed must be >= 0, and a bad one exits 2 -- before any runtime is
+// built, so nothing touches the state directory or herdr.
+func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "regate" {
+			given = true
+		}
+	})
+	if !given {
+		return nil, nil
+	}
+	if *regate < 0 {
+		fmt.Fprintf(os.Stderr, "relay: --regate must be >= 0, got %d\n", *regate)
+		return nil, exitCodeErr{code: 2}
+	}
+	return regate, nil
+}
+
+// noteRegateNoGate says when a repair budget landed on a binding that has no
+// gate to fail (#132 part 2): accepted and inert, because a binding with no
+// gate never produces gate=fail, but not worth leaving unexplained.
+func noteRegateNoGate(b store.Binding) {
+	if b.Regate > 0 && b.Gate == "" {
+		fmt.Printf("  regate %d (no gate configured)\n", b.Regate)
+	}
+}
+
 func run(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
@@ -617,6 +648,7 @@ func cmdBind(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -640,6 +672,10 @@ func cmdBind(args []string) error {
 			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
 			return exitCodeErr{code: 2}
 		}
+	}
+	regateOpt, err := regateFlag(fs, regate)
+	if err != nil {
+		return err
 	}
 
 	rt, err := newRuntime()
@@ -666,6 +702,7 @@ func cmdBind(args []string) error {
 		AllowYolo:    *allowYolo,
 		Gate:         *gate,
 		NoGate:       *noGate,
+		Regate:       regateOpt,
 		Feature:      *feature,
 	}
 	if isPaneID(*builderAlias) {
@@ -722,6 +759,7 @@ func cmdBind(args []string) error {
 			"hand it the round with:\n"+
 			"  relay send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+		noteRegateNoGate(b)
 		notePick("builder", res)
 		warnWaitingOnYou(rt, b.Name)
 		return nil
@@ -729,6 +767,7 @@ func cmdBind(args []string) error {
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
 		b.Name, b.Planner.PaneID, builderWhere(b.Builder), b.BuilderCandidate, b.Round)
+	noteRegateNoGate(b)
 	if n := relay.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
@@ -755,6 +794,7 @@ func cmdFork(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
 	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: inherits the source binding's regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (default: inherits the source binding's feature)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -778,6 +818,10 @@ func cmdFork(args []string) error {
 			return exitCodeErr{code: 2}
 		}
 	}
+	regateOpt, err := regateFlag(fs, regate)
+	if err != nil {
+		return err
+	}
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -797,6 +841,7 @@ func cmdFork(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Regate:      regateOpt,
 		Feature:     *feature,
 	}
 
@@ -835,6 +880,7 @@ func cmdAdd(args []string) error {
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -862,6 +908,10 @@ func cmdAdd(args []string) error {
 			return exitCodeErr{code: 2}
 		}
 	}
+	regateOpt, err := regateFlag(fs, regate)
+	if err != nil {
+		return err
+	}
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -888,6 +938,7 @@ func cmdAdd(args []string) error {
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
 		NoGate:      *noGate,
+		Regate:      regateOpt,
 		Feature:     *feature,
 	})
 	if err != nil {
@@ -908,6 +959,7 @@ func cmdAdd(args []string) error {
 		fmt.Printf("added %s: builder %s in pane %s\n",
 			res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
 	}
+	noteRegateNoGate(res.Binding)
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
@@ -1140,11 +1192,16 @@ func cmdSend(args []string) error {
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *file == "" {
 		return fmt.Errorf("relay send requires --file")
+	}
+	regateOpt, err := regateFlag(fs, regate)
+	if err != nil {
+		return err
 	}
 
 	rt, err := newRuntime()
@@ -1160,6 +1217,7 @@ func cmdSend(args []string) error {
 	opts := relay.SendOptions{
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
+		Regate:    regateOpt,
 	}
 
 	if *dryRun {

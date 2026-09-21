@@ -253,7 +253,8 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	// matters only on the fallback path below, when there is no marker.
 	if HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
 		!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
-		next, closed, gating, err := closeOnMarker(ctx, rt, tx, b, entries, "")
+		closedRound := b.Round
+		next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, "")
 		if err != nil {
 			return b, err
 		}
@@ -261,7 +262,20 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			return next, nil
 		}
 		if closed {
-			return deliverAndSettle(ctx, rt, tx, next, agents)
+			next, err = deliverAndSettle(ctx, rt, tx, next, agents)
+			if err != nil {
+				return next, err
+			}
+			// The report is queued; a failing gate may now open round N+1
+			// (#132 part 2). The failed round's own report, diff and
+			// gate=fail stand exactly as they were.
+			if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
+				next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
+				if err != nil {
+					return next, err
+				}
+			}
+			return next, nil
 		}
 	}
 
@@ -463,17 +477,20 @@ func joinNotes(a, b string) string {
 //
 // Errors are gateStep's or queueReport's, wrapped; the round stays open and
 // the next tick retries, since the marker is still on disk.
-func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, bool, error) {
+//
+// The gate record is returned alongside the close (nil when no gate ran) so
+// the caller can act on a failure after the report is queued (#132 part 2).
+func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, extraNote string) (store.Binding, bool, bool, *store.GateRecord, error) {
 	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err != nil {
-		return b, false, false, nil
+		return b, false, false, nil, nil
 	}
 
 	b, done, rec, err := gateStep(ctx, rt, tx, b)
 	if err != nil {
-		return b, false, false, fmt.Errorf("close round on marker: gate: %w", err)
+		return b, false, false, nil, fmt.Errorf("close round on marker: gate: %w", err)
 	}
 	if !done {
-		return b, false, true, nil
+		return b, false, true, nil, nil
 	}
 
 	note := extraNote
@@ -493,17 +510,17 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
 			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)+gateSuffix, joinNotes("", note), rec, nil)
 		if err != nil {
-			return b, false, false, fmt.Errorf("close round on marker: %w", err)
+			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
-		return next, true, false, nil
+		return next, true, false, rec, nil
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
 		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath)+gateSuffix, joinNotes("noreport", note), rec, nil)
 	if err != nil {
-		return b, false, false, fmt.Errorf("close round on marker: %w", err)
+		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
-	return next, true, false, nil
+	return next, true, false, rec, nil
 }
 
 // handleIdleBuilder queues the round's report, or nudges once, or falls back to
@@ -823,6 +840,13 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 	b.GateRun = nil
+	// A passing gate clears the repair bookkeeping (#132 part 2): the next
+	// failing gate gets a fresh budget and a fresh stall comparison, whatever
+	// the previous repair rounds cost.
+	if gate != nil && gate.Result == "pass" {
+		b.RepairCount = 0
+		b.LastGateSig = ""
+	}
 	// A closed round is over: a stall stamped against it says nothing about
 	// the next one (#252).
 	b.StalledSince = time.Time{}

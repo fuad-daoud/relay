@@ -2631,3 +2631,72 @@ func TestGateHeadlessCallSiteHolds(t *testing.T) {
 		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
 	}
 }
+
+// TestRegateHeadlessStartsRepairProcess pins #132 part 2's intended case: a
+// headless binding whose gate fails gets round N+1 started as a fresh process,
+// with the repair plan as its prompt -- the same hand-off Send performs.
+func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, f, fr)
+	b.Gate = "make check"
+	b.Regate = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs after Send = %d, want 1", len(fr.specs))
+	}
+
+	// The round's marker closes it, and its gate fails.
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (start gate): %v", err)
+	}
+	if got.GateRun == nil {
+		t.Fatal("the gate did not start")
+	}
+	pid := got.GateRun.PID
+	if err := os.WriteFile(rt.Store.GateLogPath("webshop", 1), []byte("FAIL github.com/example/pkg2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(pid, false)
+	fr.exit(pid, 2)
+
+	// The gate's own process is a spec too, so the repair round is the last
+	// one: three starts, the third carrying the round-2 plan.
+	before := len(fr.specs)
+	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile (close gate): %v", err)
+	}
+
+	if got.Round != 2 || got.State != store.StateActive {
+		t.Fatalf("round=%d state=%q, want a repair round 2, active", got.Round, got.State)
+	}
+	if len(fr.specs) != before+1 {
+		t.Fatalf("specs = %d, want one more than %d: the repair round is a fresh process", len(fr.specs), before)
+	}
+	last := fr.specs[len(fr.specs)-1]
+	if !strings.Contains(strings.Join(last.Argv, " "), "002-plan.md") {
+		t.Errorf("repair process prompt does not name 002-plan.md: %v", last.Argv)
+	}
+	if got.Builder.PID == 0 {
+		t.Error("the repair round's process must be recorded on the binding")
+	}
+	if got.RepairCount != 1 || got.LastGateSig == "" {
+		t.Errorf("repairs=%d sig=%q, want 1 and a signature", got.RepairCount, got.LastGateSig)
+	}
+}
