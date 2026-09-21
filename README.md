@@ -564,7 +564,10 @@ What is different from a pane builder:
 - **`done` and `unbind` stop the process** if a round is running. A stop that
   fails is reported, and the binding is still done or unbound. The round budget
   never kills anything, for headless as for panes: it flags `NEEDS YOU` and
-  leaves the process alone.
+  leaves the process alone. To end a round without losing it, `relay stop`
+  first (below): it asks the builder to commit and report, and the round
+  closes on its marker. `done` and `unbind` still act immediately; `--grace`
+  exists only on `stop`.
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 
@@ -785,6 +788,44 @@ relay bind --resume --name webshop   # restore the worktree and spawn a fresh bu
   relay did not create, so there is nothing to release.
 - **`gc` leaves PAUSED alone** — it sweeps only `DONE`. `relay unbind` works on
   a paused binding when you want it gone; use `--archive` to keep the log.
+
+### Stopping a round
+
+`relay stop` ends an open round on purpose, so the work in it is not lost.
+Instead of killing the builder, it types a wrap-up prompt into the pane
+through the same delivery path as a plan:
+
+> relay: stop requested by the planner. Finish the step you are in if it is
+> seconds away, otherwise stop where you are. Commit what should be kept on
+> the current branch. Write your report to `<report>` saying exactly which
+> steps completed and where you stopped, then create `<marker>`. Do not start
+> anything new.
+
+The builder's report and marker then close the round exactly as they always
+do, and the report's note gains `stopped`. `relay status` shows
+`stopping 23s of 5m0s` while the request is in flight.
+
+```
+relay stop webshop               # ask for a wrap-up; close on the marker
+relay stop webshop --grace 15m   # allow longer before the pane is abandoned
+relay stop webshop --now         # skip the prompt: abandon the pane at once
+```
+
+- **Grace** defaults to 5m. If it elapses with no marker, relay does not kill
+  the pane: the binding goes `NEEDS YOU` with `builder did not stop within
+  5m0s; close its pane yourself, then relay done or send`, and closing it
+  stays your call. `--now` abandons at once, without prompting.
+- **Headless bindings have no stdin**, so `relay stop` kills the process now
+  and closes the round without a report (`noreport stopped`) instead of
+  taking the exit-without-report path, which would switch builders: a stop is
+  not a failure, so it never charges a switch and never excludes a candidate.
+  A wrap-up *process* for headless builders is deferred.
+- **`stop` then `pause`** is the sequence for parking a binding between
+  rounds: `stop` ends the round without losing it, and `pause` then releases
+  the worktree and the pane.
+- **Send and the round close clear the request**, so a stop never outlives
+  the round it was made for. `stop` refuses a remote binding (`relay done`
+  ends one) and a binding that is already `DONE` or `PAUSED`.
 
 ### Cleaning up finished bindings
 

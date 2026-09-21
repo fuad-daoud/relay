@@ -54,6 +54,11 @@ const (
 	KindPause  Kind = "pause"  // relay -> log only: paused after round N, worktree and pane released (#137)
 	KindResume Kind = "resume" // relay -> log only: resumed from PAUSED (#137)
 
+	// KindStop is relay -> log only: a stop was requested (grace ...), or the
+	// round closed because of one (stopped/graceful, stopped/killed,
+	// stopped/abandoned) (#138).
+	KindStop Kind = "stop"
+
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path
 )

@@ -69,6 +69,7 @@ Commands:
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
+  stop      ask a builder to wrap up and close its round on its marker; kill only after the grace [--grace] [--now]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
@@ -273,6 +274,8 @@ func run(args []string) error {
 		return cmdDone(args[1:])
 	case "pause":
 		return cmdPause(args[1:])
+	case "stop":
+		return cmdStop(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	case "doctor":
@@ -1842,6 +1845,49 @@ func cmdPause(args []string) error {
 	}
 
 	fmt.Println(relay.PauseText(target, res))
+	return nil
+}
+
+// cmdStop asks a binding's open round to stop on purpose (#138): the builder
+// is prompted to wrap up, commit and report, and the round closes on its
+// marker. It takes the binding from --name or a positional and never from the
+// current directory -- a stop ends a round, so it must not guess. --now skips
+// the prompt and abandons the pane at once; a non-positive --grace is a bad
+// value, not an omission, and is refused before any runtime is built.
+func cmdStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+	name := fs.String("name", "", "binding whose open round to stop")
+	grace := fs.Duration("grace", relay.DefaultStopGrace, "how long the builder gets to wrap up before a pane round is abandoned")
+	now := fs.Bool("now", false, "abandon at once, without asking the builder to wrap up")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	target, ok := explicitBinding(*name, fs.Args())
+	if !ok {
+		return fmt.Errorf("usage: relay stop <name> | --name <name> [--grace 5m] [--now]\n" +
+			"stop asks a builder to wrap up and close its round on its marker; it must not guess")
+	}
+	if *grace <= 0 {
+		fmt.Fprintf(os.Stderr, "relay: --grace must be positive, got %s\n", *grace)
+		return exitCodeErr{code: 2}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	res, err := relay.Stop(context.Background(), rt, target, relay.StopOptions{Grace: *grace, Now: *now})
+	if errors.Is(err, relay.ErrNothingToStop) {
+		// Nothing to stop is an answer, not a failure.
+		fmt.Printf("nothing to stop: %s has no open round\n", target)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(relay.StopText(target, res))
 	return nil
 }
 

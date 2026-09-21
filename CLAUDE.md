@@ -19,9 +19,10 @@ follows is what is specific to this machine and this repo.
   consult pane it spawned), a mid-round builder switch (the replaced
   builder's pane, when it is still open), and `relay pause` (the paused
   binding's builder pane, because the human asked). It stops a *process* in
-  exactly three: `relay done` and `relay unbind` on a headless binding whose
-  round is running, and a mid-round switch of a headless builder whose
-  provider you gated with `relay unavailable`. After an `unbind`, a
+  exactly four: `relay done` and `relay unbind` on a headless binding whose
+  round is running, a mid-round switch of a headless builder whose provider
+  you gated with `relay unavailable`, and `relay stop` on a headless round.
+  After an `unbind`, a
   mis-bind, or any `--assume-dead` rebind of a pane builder, close the
   orphaned builder pane yourself with `herdr pane close <id>` or it holds
   memory indefinitely (an idle opencode builder is roughly 800 MB).

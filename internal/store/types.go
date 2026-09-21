@@ -244,6 +244,14 @@ type Binding struct {
 	// relay never acts on it -- killing stays the human's decision.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
+	// StopRequestedAt is when `relay stop` asked this pane round's builder to
+	// wrap up, and StopGraceMS is the grace it was called with (#138). Both
+	// are zero on a binding that was never stopped; a stop is cleared by Send
+	// (a new round) and by the round close (queueReport), so a stale request
+	// never outlives the round it was made for.
+	StopRequestedAt time.Time `json:"stop_requested_at,omitempty"`
+	StopGraceMS     int       `json:"stop_grace_ms,omitempty"`
+
 	// RoundBaselineTree is the git tree object the CURRENT round started from,
 	// written by Send and consumed (then cleared) when the round's report is
 	// queued. Empty means no baseline was captured for this round -- a non-git
