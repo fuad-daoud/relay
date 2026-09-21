@@ -200,11 +200,28 @@ inside every pane it manages, so it has to be run from inside one.
   process per round, instead of a pane it watches (see "Headless builders"
   below). It cannot adopt a pane and cannot be added to an existing binding
   with `--resume`: a binding's shape is fixed when it is created.
-- `relay send [NAME|--name N] --file PATH` — stage the file as the current round's
+- `relay send [NAME|--name N] --file PATH [--dry-run]` — stage the file as the current round's
   plan and hand it to the builder: typed into its pane, or, for a headless
   binding, as the prompt of a fresh process started in the binding's tree.
   A headless binding whose previous round's process is still running refuses
   the send; wait for its report or `relay done` it.
+  `--dry-run` checks every precondition a send would and prints what it would
+  do, writing nothing: no plan staged, no log entry, no prompt, no process
+  started. A precondition that fails is the same error `relay send` gives, exit
+  1, with nothing written. A pane binding names the located pane, a headless
+  one the exact command line it would run, and a remote one the server and
+  branch without contacting it:
+  ```
+  would send round 5 to api-auth
+    builder   headless agy/google/gemini-3.8-flash-high
+    where     /usr/bin/agy -p
+    tier      yolo
+    plan      /home/me/.local/state/relay/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+    report    /home/me/.local/state/relay/api-auth/005-report.md
+    marker    /home/me/.local/state/relay/api-auth/005-done
+    prompt    relay: round 5 · to builder "api-auth" · from the planner (not the human)
+              Your working tree is: /home/me/.worktrees/api-auth
+  ```
 - `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
   mark it delivered, without typing into any pane. This is the safe way for
   the planner to fetch a report mid-turn.

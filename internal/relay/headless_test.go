@@ -267,6 +267,49 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 	}
 }
 
+// TestSendHeadlessWithoutRunnerStagesNothing pins #149's behaviour fix: the
+// missing runner is a send precondition, checked before anything is staged.
+// Before the fix Send wrote the plan first and only startRound discovered the
+// runner was gone, leaving a staged plan and a NEEDS YOU binding behind a
+// process that could never start.
+func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedHeadless(t, f, newFakeRunner())
+	rt.Runner = nil
+
+	before, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	nBefore, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# x"), SendOptions{})
+	if !errors.Is(err, ErrRunnerUnavailable) {
+		t.Fatalf("Send err = %v, want ErrRunnerUnavailable", err)
+	}
+
+	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+		t.Error("no plan may be staged when there is no runner")
+	}
+	nAfter, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(nBefore) != len(nAfter) {
+		t.Errorf("log length changed: %d -> %d", len(nBefore), len(nAfter))
+	}
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if after.State != before.State || after.State == store.StateNeedsYou {
+		t.Errorf("state = %s, want unchanged %s (not needs_you)", after.State, before.State)
+	}
+}
+
 func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	f := &fakeHerdr{}
 	fr := newFakeRunner()

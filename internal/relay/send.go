@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -90,56 +93,192 @@ type SendOptions struct {
 	AllowYolo bool
 }
 
+// preflight is everything Send checks before it takes the state lock and
+// writes: the plan bytes, the effective tier, the located pane builder (or the
+// headless launch argv), the paths and the composed prompt. sendPreflight
+// computes it read-only; Send and SendDryRun both call it, so a dry run can
+// never disagree with a real send about the state of the world (#149). A
+// failed precondition is an error in Send's exact wording.
+type preflight struct {
+	b       store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
+	body    []byte        // the plan file's bytes
+	tier    harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	builder herdr.Agent   // pane builders: the located agent
+	located bool          // pane builders: FindAgent succeeded
+	argv    []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for pane/remote
+	gate    *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+
+	planPath, reportPath, donePath string
+	prompt                         string // composePrompt(...) -- computed, never sent
+
+	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
+}
+
+// sendPreflight runs Send's read-only preconditions in Send's exact order and
+// error wording. It makes no write: Store.Load takes the store lock briefly
+// (it always has) but that is a read. CaptureBaseline is deliberately not here:
+// it adds git objects. The remote path stops after the checks that need no
+// server contact (no WhoAmI, no bundle); Send's remote branch calls sendRemote
+// as it always did.
+func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
+	// Read the caller's file first; it is the one input that does not depend
+	// on binding state.
+	body, err := os.ReadFile(file)
+	if err != nil {
+		return preflight{}, fmt.Errorf("read plan %s: %w", file, err)
+	}
+
+	var tier harness.Tier
+	if opts.Tier != "" {
+		t, err := harness.ParseTier(opts.Tier)
+		if err != nil {
+			return preflight{}, err
+		}
+		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+			return preflight{}, err
+		}
+		tier = t
+	}
+
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return preflight{}, err
+	}
+	if tier == "" {
+		tier = effectiveTier(b)
+	}
+
+	planPath := rt.Store.PlanPath(name, b.Round)
+	reportPath := rt.Store.ReportPath(name, b.Round)
+	donePath := rt.Store.DonePath(name, b.Round)
+	prompt := composePrompt(b, planPath, reportPath, donePath)
+
+	pf := preflight{
+		b: b, body: body, tier: tier,
+		planPath: planPath, reportPath: reportPath, donePath: donePath,
+		prompt: prompt,
+	}
+
+	// A remote binding's read-only prefix: the client and transport must be
+	// configured and the branch must resolve locally. Nothing here contacts
+	// the server, so a dry run of a remote binding is offline and safe.
+	if b.Builder.Remote() {
+		if rt.Remote == nil {
+			return preflight{}, ErrRemoteUnavailable
+		}
+		if rt.Git == nil {
+			return preflight{}, ErrGitRequired
+		}
+		if rt.Transport == nil {
+			return preflight{}, errors.New("no remote transport configured")
+		}
+		branchRef := b.Branch
+		if !strings.HasPrefix(branchRef, "refs/heads/") {
+			branchRef = "refs/heads/" + branchRef
+		}
+		sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+		if err != nil {
+			return preflight{}, fmt.Errorf("resolve branch %s: %w", b.Branch, err)
+		}
+		if !ok {
+			return preflight{}, fmt.Errorf("branch %s not found", b.Branch)
+		}
+		pf.remoteSHA = sha
+		return pf, nil
+	}
+
+	if opts.Tier != "" && !b.Builder.Headless() {
+		return preflight{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
+	}
+	if b.State == store.StateBroken {
+		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
+	}
+	if b.Round > b.RoundCap {
+		return preflight{}, fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
+	}
+
+	if b.Builder.Headless() {
+		// A headless builder (#99) is a process relay starts per round, so
+		// the runner must exist and no previous process may still be alive --
+		// and both are checked here, before Send stages anything.
+		if rt.Runner == nil {
+			return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+		}
+		if b.Builder.PID != 0 {
+			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+			if err != nil {
+				return preflight{}, fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+			}
+			if alive {
+				return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+			}
+		}
+		ref, err := candidate.ParseRef(b.BuilderCandidate)
+		if err != nil {
+			return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+		}
+		c, err := rt.Candidates.Lookup(ref)
+		if err != nil {
+			return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+		}
+		role, _ := harness.RoleByName("builder")
+		argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+		if err != nil {
+			return preflight{}, err
+		}
+		pf.argv = argv
+	} else {
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return preflight{}, fmt.Errorf("list agents: %w", err)
+		}
+		builder, ok := FindAgent(agents, b.Builder)
+		if !ok {
+			return preflight{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
+		}
+		pf.builder = builder
+		pf.located = true
+	}
+
+	// The gate is advisory only: a gated candidate can still be sent to, it
+	// just tells the human the daemon would switch away after the start.
+	for _, g := range Gates(rt) {
+		if g.Token == b.BuilderCandidate && (g.Kind == ledger.RateLimited || g.Kind == ledger.RolesMissing) {
+			gate := g
+			pf.gate = &gate
+			break
+		}
+	}
+
+	return pf, nil
+}
+
 // Send copies the planner's plan into relay state and hands it to the builder:
 // typed into its pane, or -- for a headless binding (#99) -- as the prompt of
 // a fresh process started in the binding's tree. It returns a SendResult
 // describing the round and any between-rounds drift.
+//
+// Every precondition that needs no lock lives in sendPreflight, which
+// `relay send --dry-run` calls too (#149). The in-lock checks stay: they guard
+// against a change between the preflight and the lock.
 func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (SendResult, error) {
-	// Read the caller's file before taking the lock; it is the one input that
-	// does not depend on binding state.
-	body, err := os.ReadFile(file)
+	pf, err := sendPreflight(ctx, rt, name, file, opts)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("read plan %s: %w", file, err)
+		return SendResult{}, err
 	}
 
-	if opts.Tier != "" {
-		t, err := harness.ParseTier(opts.Tier)
-		if err != nil {
-			return SendResult{}, err
-		}
-		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
-			return SendResult{}, err
-		}
+	// A remote binding's preflight stops at the read-only checks; the round
+	// itself is still shipped by sendRemote, which contacts the server.
+	if pf.b.Builder.Remote() {
+		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier)
 	}
 
-	var baseline, baselineHead string
-	var hintRound int
-	var builder herdr.Agent
-	var locatedBuilder bool
-	if hint, err := rt.Store.Load(name); err == nil {
-		if hint.Builder.Remote() {
-			return sendRemote(ctx, rt, hint, body, opts.Tier)
-		}
-		if opts.Tier != "" && !hint.Builder.Headless() {
-			return SendResult{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
-		}
-		baseline, baselineHead = CaptureBaseline(ctx, rt, hint)
-		hintRound = hint.Round
-		// A headless builder (#99) is a process relay starts per round; there
-		// is no herdr agent to find. Its liveness check is under the lock.
-		if !hint.Builder.Headless() {
-			agents, err := rt.Herdr.ListAgents(ctx)
-			if err != nil {
-				return SendResult{}, fmt.Errorf("list agents: %w", err)
-			}
-			var ok bool
-			builder, ok = FindAgent(agents, hint.Builder)
-			if !ok {
-				return SendResult{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
-			}
-			locatedBuilder = true
-		}
-	}
+	// The baseline snapshot adds git objects, so it stays out of the
+	// read-only preflight and is taken here, before the lock.
+	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
+	hintRound := pf.b.Round
+	builder := pf.builder
+	locatedBuilder := pf.located
 
 	var round int
 	var driftLineOut string
@@ -197,7 +336,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		planPath := rt.Store.PlanPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
-		if err := os.WriteFile(planPath, body, 0o644); err != nil {
+		if err := os.WriteFile(planPath, pf.body, 0o644); err != nil {
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
@@ -304,6 +443,127 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	}
 
 	return SendResult{Round: round, Drift: driftLineOut}, nil
+}
+
+// DryRun is what SendDryRun found: the round Send would open, the builder it
+// would go to, the paths and the head of the prompt. It is a description only;
+// nothing was written (#149).
+type DryRun struct {
+	Name       string   `json:"name"`
+	Round      int      `json:"round"`
+	Mode       string   `json:"mode"` // "pane" | "headless" | "remote"
+	Candidate  string   `json:"candidate"`
+	Where      string   `json:"where"`               // pane: "pane w2:p4 (working)"; headless: the harness binary + first arg; remote: "server contabo, branch relay/x @ <sha12>; server not contacted"
+	GateNote   string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
+	PlanPath   string   `json:"plan_path"`
+	PlanFrom   string   `json:"plan_from"`
+	PlanBytes  int64    `json:"plan_bytes"`
+	ReportPath string   `json:"report_path"`
+	DonePath   string   `json:"done_path"`
+	Tier       string   `json:"tier"`
+	PromptHead []string `json:"prompt_head"` // the prompt's first two non-empty lines
+}
+
+// SendDryRun checks every precondition Send checks and describes the round
+// Send would open, without making a single write: no staged plan, no log
+// entry, no Save, no Prompt, no Runner.Start, no baseline snapshot (#149). A
+// failed precondition is the identical error Send would return for the same
+// state, so a script can rely on the dry run as a gate.
+func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (DryRun, error) {
+	pf, err := sendPreflight(ctx, rt, name, file, opts)
+	if err != nil {
+		return DryRun{}, err
+	}
+
+	d := DryRun{
+		Name:       pf.b.Name,
+		Round:      pf.b.Round,
+		Mode:       dryRunMode(pf.b),
+		Candidate:  pf.b.BuilderCandidate,
+		Where:      dryRunWhere(pf),
+		PlanPath:   pf.planPath,
+		PlanFrom:   absoluteOr(file),
+		PlanBytes:  int64(len(pf.body)),
+		ReportPath: pf.reportPath,
+		DonePath:   pf.donePath,
+		Tier:       string(pf.tier),
+		PromptHead: promptHead(pf.prompt),
+	}
+	if pf.gate != nil {
+		d.GateNote = dryRunGateNote(pf.gate)
+	}
+	return d, nil
+}
+
+// dryRunMode names the builder's shape as the dry run prints it.
+func dryRunMode(b store.Binding) string {
+	switch {
+	case b.Builder.Remote():
+		return "remote"
+	case b.Builder.Headless():
+		return "headless"
+	default:
+		return "pane"
+	}
+}
+
+// dryRunWhere is where the round would go: a located pane, the headless argv
+// that proves the launch is well-formed, or the remote server and the branch
+// the plan would be shipped from.
+func dryRunWhere(pf preflight) string {
+	switch {
+	case pf.b.Builder.Remote():
+		sha := pf.remoteSHA
+		if len(sha) > 12 {
+			sha = sha[:12]
+		}
+		return fmt.Sprintf("server %s, branch %s @ %s; server not contacted", pf.b.Builder.Server, pf.b.Branch, sha)
+	case pf.b.Builder.Headless():
+		if len(pf.argv) == 0 {
+			return ""
+		}
+		if len(pf.argv) == 1 {
+			return pf.argv[0]
+		}
+		return pf.argv[0] + " " + pf.argv[1]
+	default:
+		return fmt.Sprintf("pane %s (%s)", pf.builder.PaneID, pf.builder.Status)
+	}
+}
+
+// dryRunGateNote is the advisory sentence for a gated candidate: what the gate
+// is, and that the daemon would switch the builder once the round started.
+func dryRunGateNote(g *ledger.Gate) string {
+	if g.Kind == ledger.RolesMissing {
+		return g.Note + "; the daemon would switch after start"
+	}
+	return GateKindText(g.Kind) + " " + GateUntilText(g.Until) + "; the daemon would switch after start"
+}
+
+// promptHead is the prompt's first two non-empty lines: enough for a human to
+// recognise the handoff without printing the whole template.
+func promptHead(prompt string) []string {
+	var out []string
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+		if len(out) == 2 {
+			break
+		}
+	}
+	return out
+}
+
+// absoluteOr resolves path against the current directory when it can, so a dry
+// run can report where the plan came from even when the caller typed a
+// relative path.
+func absoluteOr(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // promptWithRetry retries once past herdr's five second stall detection, then
