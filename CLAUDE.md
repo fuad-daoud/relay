@@ -68,3 +68,4 @@ without the logic is not pinning anything.
 - CI runners have no `herdr` binary. A test in `cmd/relay` must not execute
   a subcommand that reaches herdr; test the rule as a pure function in
   `internal/relay` instead. Say so in any plan step that adds a CLI test.
+- A cmd/relay test never reads the user's real config or state: the package's TestMain points HOME, XDG_CONFIG_HOME and XDG_STATE_HOME at a temp root. A test that needs its own config writes it under a t.TempDir() it sets as XDG_CONFIG_HOME (#235).

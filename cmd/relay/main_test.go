@@ -16,6 +16,23 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// TestMain points the whole package at a fresh temp root: HOME,
+// XDG_CONFIG_HOME and XDG_STATE_HOME all move here, so no test in cmd/relay
+// reads the user's real config or state (#235). Tests that t.Setenv the same
+// variables keep working: t.Setenv restores to these values.
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "relay-cmd-test-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", root)
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	code := m.Run()
+	os.RemoveAll(root)
+	os.Exit(code)
+}
+
 // TestBindResumeWithoutNameIsRejected covers a flag shape that reads fine and
 // silently does the wrong thing: --resume is a bool and the name comes from
 // --name, so `relay bind --resume webshop` drops the positional and the binding
@@ -363,6 +380,36 @@ func TestCandidatesConfigHome(t *testing.T) {
 	}
 	if _, err := rt.Candidates.Lookup(candidate.Ref{Harness: "claude", Provider: "test", Model: "m"}); err != nil {
 		t.Fatalf("rt.Candidates.Lookup: %v", err)
+	}
+}
+
+// TestDiffHonoursConfigHome pins #235: cmdDiff's newRuntime() reads
+// candidates.json through userConfigRoot(), so XDG_CONFIG_HOME decides which
+// file it reads. A candidates file naming a harness the branch does not know
+// must make `relay diff` fail with that harness, exactly the way the two diff
+// tests used to fail when they picked the file up from the real home.
+func TestDiffHonoursConfigHome(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	relayDir := filepath.Join(configHome, "relay")
+	if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `[{"harness":"nonesuch","provider":"p","model":"m","roles":["builder"]}]`
+	if err := os.WriteFile(filepath.Join(relayDir, "candidates.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := run([]string{"diff", "--name", "anything"})
+	if err == nil {
+		t.Fatal("diff must fail when XDG_CONFIG_HOME names an unknown harness")
+	}
+	if !strings.Contains(err.Error(), `unknown harness "nonesuch"`) {
+		t.Fatalf("diff must read candidates from XDG_CONFIG_HOME; got %v", err)
 	}
 }
 
