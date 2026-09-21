@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -83,6 +85,30 @@ type Policy struct {
 	// verify.default is true, a plain `relay send` marks the round for a
 	// read-only reviewer at round close.
 	Verify *VerifyPolicy `json:"verify,omitempty"`
+
+	// Notify configures webhook sinks that receive lifecycle events over
+	// HTTP, beside the hooks.d script dispatcher (#4).
+	Notify *NotifyPolicy `json:"notify,omitempty"`
+}
+
+// NotifyPolicy configures webhook delivery of lifecycle events (#4).
+type NotifyPolicy struct {
+	Webhooks []Webhook `json:"webhooks,omitempty"`
+}
+
+// Webhook is one HTTP sink that receives a JSON POST for each event it
+// matches (#4).
+type Webhook struct {
+	// URL is where the event is POSTed; required, http:// or https://.
+	URL string `json:"url"`
+	// Events filters which events reach this webhook. Empty means every
+	// event. "state_changed:<state>" matches a state_changed event whose
+	// State equals <state> (e.g. "state_changed:needs_you"); the ":<state>"
+	// suffix is only valid on state_changed.
+	Events []string `json:"events,omitempty"`
+	// Format shapes the POST body: "json" (default) sends the event as
+	// JSON; "slack" sends {"text": ...}; "discord" sends {"content": ...}.
+	Format string `json:"format,omitempty"`
 }
 
 // VerifyPolicy configures the default verify flag for the rounds `relay
@@ -427,6 +453,39 @@ func Load(path string) (Policy, error) {
 				return Policy{}, fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)
 			}
 			seen[tok] = true
+		}
+	}
+
+	if p.Notify != nil {
+		knownEvents := map[string]bool{
+			"state_changed":   true,
+			"round_started":   true,
+			"fork_created":    true,
+			"builder_stalled": true,
+			"binding_stale":   true,
+		}
+
+		for i, hook := range p.Notify.Webhooks {
+			u, err := url.Parse(hook.URL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].url: must be an http or https URL, got %q: %w", path, i, hook.URL, ErrBadPolicy)
+			}
+
+			switch hook.Format {
+			case "", "json", "slack", "discord":
+			default:
+				return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].format: unknown %q (known: json, slack, discord): %w", path, i, hook.Format, ErrBadPolicy)
+			}
+
+			for j, ev := range hook.Events {
+				name, _, hasState := strings.Cut(ev, ":")
+				if !knownEvents[name] {
+					return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: state_changed, round_started, fork_created, builder_stalled, binding_stale): %w", path, i, j, ev, ErrBadPolicy)
+				}
+				if hasState && name != "state_changed" {
+					return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: %q: only state_changed accepts a :<state> suffix: %w", path, i, j, ev, ErrBadPolicy)
+				}
+			}
 		}
 	}
 

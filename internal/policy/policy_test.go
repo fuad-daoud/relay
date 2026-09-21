@@ -769,3 +769,99 @@ func TestVerifyDefault(t *testing.T) {
 		t.Fatalf("VerifyDefault must not disturb GateDefault: got %q", got)
 	}
 }
+
+func TestNotifyPolicy(t *testing.T) {
+	t.Run("nil Notify is fine", func(t *testing.T) {
+		p, err := load(t, `{}`)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if p.Notify != nil {
+			t.Fatalf("Notify = %v, want nil", p.Notify)
+		}
+	})
+
+	t.Run("two webhooks load", func(t *testing.T) {
+		body := `{"notify":{"webhooks":[
+			{"url":"https://hooks.slack.com/services/x","format":"slack","events":["state_changed:needs_you","binding_stale"]},
+			{"url":"https://example.com/hook","format":"json"}
+		]}}`
+		p, err := load(t, body)
+		if err != nil {
+			t.Fatalf("Load: unexpected error %v", err)
+		}
+		if p.Notify == nil {
+			t.Fatalf("Notify = nil, want populated")
+		}
+		if len(p.Notify.Webhooks) != 2 {
+			t.Fatalf("len(Webhooks) = %d, want 2", len(p.Notify.Webhooks))
+		}
+
+		first := p.Notify.Webhooks[0]
+		if first.URL != "https://hooks.slack.com/services/x" {
+			t.Errorf("Webhooks[0].URL = %q", first.URL)
+		}
+		if first.Format != "slack" {
+			t.Errorf("Webhooks[0].Format = %q, want slack", first.Format)
+		}
+		wantEvents := []string{"state_changed:needs_you", "binding_stale"}
+		if !reflect.DeepEqual(first.Events, wantEvents) {
+			t.Errorf("Webhooks[0].Events = %v, want %v", first.Events, wantEvents)
+		}
+
+		second := p.Notify.Webhooks[1]
+		if second.Format != "json" {
+			t.Errorf("Webhooks[1].Format = %q, want json", second.Format)
+		}
+		if len(second.Events) != 0 {
+			t.Errorf("Webhooks[1].Events = %v, want empty (no filter)", second.Events)
+		}
+	})
+
+	badCases := []struct {
+		name     string
+		body     string
+		contains string
+	}{
+		{
+			"bad scheme",
+			`{"notify":{"webhooks":[{"url":"ftp://example.com/hook"}]}}`,
+			"notify.webhooks[0].url",
+		},
+		{
+			"missing url",
+			`{"notify":{"webhooks":[{"url":""}]}}`,
+			"notify.webhooks[0].url",
+		},
+		{
+			"bad format",
+			`{"notify":{"webhooks":[{"url":"https://example.com/hook","format":"teams"}]}}`,
+			"notify.webhooks[0].format: unknown \"teams\"",
+		},
+		{
+			"unknown event",
+			`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["frobnicated"]}]}}`,
+			"notify.webhooks[0].events[0]: unknown event \"frobnicated\"",
+		},
+		{
+			"state suffix on the wrong event",
+			`{"notify":{"webhooks":[{"url":"https://example.com/hook","events":["round_started:x"]}]}}`,
+			"notify.webhooks[0].events[0]",
+		},
+	}
+
+	for _, bc := range badCases {
+		t.Run(bc.name, func(t *testing.T) {
+			_, err := load(t, bc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			if !strings.Contains(err.Error(), bc.contains) {
+				t.Errorf("error %q does not contain %q", err.Error(), bc.contains)
+			}
+		})
+	}
+}

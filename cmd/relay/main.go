@@ -347,6 +347,41 @@ func resolveHooksConfig() (hooks.Config, error) {
 	}, nil
 }
 
+// newHooksDispatcher wires the local hooks.d script dispatcher, and, when
+// policy.json's notify.webhooks is non-empty, a WebhookSink beside it (#4):
+// both receive every event, fanned out by a MultiDispatcher.
+func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatcher {
+	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))}
+
+	if pol.Notify != nil && len(pol.Notify.Webhooks) > 0 {
+		sinks = append(sinks, &hooks.WebhookSink{
+			Hooks: pol.Notify.Webhooks,
+			Log:   openHooksLogAppend(hooksCfg.LogPath),
+		})
+	}
+
+	return hooks.MultiDispatcher(sinks)
+}
+
+// openHooksLogAppend opens hooksCfg.LogPath for append, creating its parent
+// directory if needed, for the WebhookSink to log delivery failures to
+// (alongside hook script failures). A failure to open falls back to
+// io.Discard: a webhook is best-effort, and losing its failure log is not a
+// reason to fail the caller.
+func openHooksLogAppend(path string) io.Writer {
+	if path == "" {
+		return io.Discard
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return io.Discard
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return io.Discard
+	}
+	return f
+}
+
 // newRuntime constructs the production runtime; aliases.json is never read (#80).
 func newRuntime() (relay.Runtime, error) {
 	root, err := store.DefaultRoot()
@@ -378,7 +413,7 @@ func newRuntime() (relay.Runtime, error) {
 	if err != nil {
 		return relay.Runtime{}, err
 	}
-	dispatcher := hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
+	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
@@ -2131,7 +2166,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	rt.Hooks = hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))
+	rt.Hooks = newHooksDispatcher(hooksCfg, rt.Policy)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

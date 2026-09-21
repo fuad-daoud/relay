@@ -54,3 +54,21 @@ func (d *LocalDispatcher) Dispatch(ctx context.Context, event Event) {
 		go d.executor.Execute(context.Background(), scriptPath, event)
 	}
 }
+
+// MultiDispatcher fans one event out to every member, e.g. a LocalDispatcher
+// alongside a WebhookSink. Each member's Dispatch must itself return
+// immediately (per the Dispatcher contract), so fanning out in a simple loop
+// keeps that guarantee; a nil member is skipped.
+type MultiDispatcher []Dispatcher
+
+var _ Dispatcher = (MultiDispatcher)(nil)
+
+// Dispatch calls Dispatch on every non-nil member.
+func (m MultiDispatcher) Dispatch(ctx context.Context, event Event) {
+	for _, d := range m {
+		if d == nil {
+			continue
+		}
+		d.Dispatch(ctx, event)
+	}
+}
