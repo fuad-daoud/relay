@@ -29,6 +29,14 @@ import (
 // requested --tier has nowhere to land.
 var ErrServerPreTier = errors.New("server does not carry a permission tier")
 
+// orText returns s, or fallback when s is empty.
+func orText(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
+}
+
 func is40Hex(s string) bool {
 	if len(s) != 40 {
 		return false
@@ -388,6 +396,8 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 				view.RoundState = remote.RoundRunning
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen {
 				return SendResult{}, fmt.Errorf("round %d is running on %s", b.Round, server)
+			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted {
+				return SendResult{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
 				return SendResult{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 			} else if httpErr.Status == 422 {
@@ -401,6 +411,14 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		} else {
 			return SendResult{}, err
 		}
+	}
+
+	// A server built before this plan may still answer 201 with a
+	// needs_you view for a round that could not start, rather than the 409
+	// round_halted handled above; treat it the same way. Nothing is
+	// written: the human's re-send must not look like it succeeded.
+	if view.RoundState == remote.RoundNeedsYou {
+		return SendResult{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, orText(view.Halt, "no reason given"))
 	}
 
 	// UNDER the lock:
