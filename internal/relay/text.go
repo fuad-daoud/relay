@@ -48,6 +48,56 @@ func AnswerText(name string) string {
 	return fmt.Sprintf("answered %s's builder", name)
 }
 
+// HumanBytes renders n as a binary (1024-based) human-readable size, e.g.
+// "512 B", "1.5 KiB", "3.0 MiB". It is the one implementation the CLI and the
+// dry run share, so `relay db stats` and `relay send --dry-run` never disagree.
+func HumanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// RenderDryRun is what `relay send --dry-run` prints: the round it would open,
+// the builder and where it would go, the paths, and the head of the prompt. It
+// names only what the preflight read; nothing here was sent (#149).
+func RenderDryRun(d DryRun) string {
+	lines := []string{
+		fmt.Sprintf("would send round %d to %s", d.Round, d.Name),
+		fmt.Sprintf("  %-8s  %s", "builder", dryRunBuilderLine(d)),
+		fmt.Sprintf("  %-8s  %s", "where", d.Where),
+		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
+		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, HumanBytes(d.PlanBytes)),
+		fmt.Sprintf("  %-8s  %s", "report", d.ReportPath),
+		fmt.Sprintf("  %-8s  %s", "marker", d.DonePath),
+	}
+	first := ""
+	if len(d.PromptHead) > 0 {
+		first = d.PromptHead[0]
+	}
+	lines = append(lines, fmt.Sprintf("  %-8s  %s", "prompt", first))
+	for _, cont := range d.PromptHead[1:] {
+		lines = append(lines, "            "+cont)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// dryRunBuilderLine is the builder line's value: the mode and candidate, with
+// the advisory gate note in parentheses when one applies.
+func dryRunBuilderLine(d DryRun) string {
+	line := d.Mode + " " + d.Candidate
+	if d.GateNote != "" {
+		line += "  (" + d.GateNote + ")"
+	}
+	return line
+}
+
 // UnbindText is what `relay unbind` says on success: one line for the
 // binding, then at most one for its worktree, then at most one for a headless process.
 func UnbindText(name string, res UnbindResult) string {

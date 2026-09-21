@@ -54,7 +54,7 @@ Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
   add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
   fork      branch a new binding from an earlier round with its own worktree [--tier]
-  send      stage a plan file as the current round and prompt the builder [--tier]
+  send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout
@@ -1136,6 +1136,7 @@ func cmdSend(args []string) error {
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1153,10 +1154,21 @@ func cmdSend(args []string) error {
 		return err
 	}
 
-	res, err := relay.Send(context.Background(), rt, target, *file, relay.SendOptions{
+	opts := relay.SendOptions{
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
-	})
+	}
+
+	if *dryRun {
+		d, err := relay.SendDryRun(context.Background(), rt, target, *file, opts)
+		if err != nil {
+			return err
+		}
+		fmt.Print(relay.RenderDryRun(d))
+		return nil
+	}
+
+	res, err := relay.Send(context.Background(), rt, target, *file, opts)
 	if err != nil {
 		return err
 	}

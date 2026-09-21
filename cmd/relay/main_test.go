@@ -50,6 +50,19 @@ func TestBindResumeWithoutNameIsRejected(t *testing.T) {
 	}
 }
 
+// TestSendDryRunRequiresFile pins that `relay send --dry-run` without a plan
+// file is refused before a runtime is built, so a CI runner with no herdr
+// still fails on the missing flag rather than on the environment.
+func TestSendDryRunRequiresFile(t *testing.T) {
+	err := run([]string{"send", "--dry-run", "--name", "x"})
+	if err == nil {
+		t.Fatal("relay send --dry-run without --file must be rejected")
+	}
+	if !strings.Contains(err.Error(), "--file") {
+		t.Errorf("error must point at --file, got %q", err)
+	}
+}
+
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string

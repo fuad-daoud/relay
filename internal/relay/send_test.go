@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -1060,5 +1061,307 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	}
 	if !b.FinishPending {
 		t.Error("FinishPending = false, want true after Send opens a round")
+	}
+}
+
+// TestSendDryRunPaneMakesNoWrites pins the dry run's contract for a pane
+// binding: it describes the round Send would open and writes nothing -- no
+// staged plan, no log entry, no prompt, no change to the binding (#149).
+func TestSendDryRunPaneMakesNoWrites(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	src := writePlan(t, "# do the thing")
+
+	bBefore, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	nBefore, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+
+	if d.Round != 1 {
+		t.Errorf("Round = %d, want 1", d.Round)
+	}
+	if d.Mode != "pane" {
+		t.Errorf("Mode = %q, want pane", d.Mode)
+	}
+	if !strings.Contains(d.Where, "w2:p4") {
+		t.Errorf("Where = %q, want it to name the located pane w2:p4", d.Where)
+	}
+	if d.PlanPath != rt.Store.PlanPath("webshop", 1) {
+		t.Errorf("PlanPath = %q, want %q", d.PlanPath, rt.Store.PlanPath("webshop", 1))
+	}
+	wantOrigin := OriginLine("webshop", 1, store.DirToBuilder, store.KindPlan)
+	if len(d.PromptHead) == 0 || d.PromptHead[0] != wantOrigin {
+		t.Errorf("PromptHead = %q, want it to start with %q", d.PromptHead, wantOrigin)
+	}
+
+	if len(f.prompts) != 0 {
+		t.Fatalf("a dry run must not prompt: %+v", f.prompts)
+	}
+	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
+		t.Error("no plan file may be staged by a dry run")
+	}
+	nAfter, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(nAfter) != len(nBefore) {
+		t.Errorf("log length changed: %d -> %d", len(nBefore), len(nAfter))
+	}
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !store.SameBinding(bBefore, after) {
+		t.Error("a dry run changed the binding")
+	}
+}
+
+// TestSendDryRunHeadlessShowsArgv pins that a dry run of a headless binding
+// reports the launch it would use -- the harness binary first -- without
+// starting anything.
+func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, f, fr)
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	if d.Mode != "headless" {
+		t.Errorf("Mode = %q, want headless", d.Mode)
+	}
+	h, ok := harness.Lookup("agy")
+	if !ok || h.Binary == "" {
+		t.Fatal("no agy harness to name")
+	}
+	if !strings.HasPrefix(d.Where, h.Binary) {
+		t.Errorf("Where = %q, want it to start with the harness binary %q", d.Where, h.Binary)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("a dry run must start nothing: %+v", fr.specs)
+	}
+}
+
+// TestSendDryRunGateNote pins the advisory gate note: a rate-limited candidate
+// still dry-runs, but the note says the daemon would switch after the start.
+func TestSendDryRunGateNote(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+
+	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# x"), SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	if !strings.Contains(d.GateNote, "rate-limited") {
+		t.Errorf("GateNote = %q, want it to say rate-limited", d.GateNote)
+	}
+	if !strings.Contains(d.GateNote, "would switch") {
+		t.Errorf("GateNote = %q, want it to say the daemon would switch", d.GateNote)
+	}
+}
+
+// TestSendDryRunErrorsMatchSend pins §6: for every precondition, the dry run
+// returns the identical error Send would, exit-1 text included, and writes
+// nothing on the way.
+func TestSendDryRunErrorsMatchSend(t *testing.T) {
+	type dryRunCase struct {
+		name  string
+		opts  SendOptions
+		setup func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string)
+	}
+
+	broken := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+		f := &fakeHerdr{}
+		rt, _ := seedBound(t, f)
+		b, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.State = store.StateBroken
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		return rt, f, nil, "webshop", writePlan(t, "# x")
+	}
+	capped := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+		f := &fakeHerdr{}
+		rt, _ := seedBound(t, f)
+		b, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Round, b.RoundCap = 5, 3
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		return rt, f, nil, "webshop", writePlan(t, "# x")
+	}
+	builderGone := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+		f := &fakeHerdr{}
+		rt, _ := seedBound(t, f)
+		f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
+		return rt, f, nil, "webshop", writePlan(t, "# x")
+	}
+	headlessBusy := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+		f := &fakeHerdr{}
+		fr := newFakeRunner()
+		rt, _ := seedHeadless(t, f, fr)
+		// Prime a live process: unscripted, the fake reports it alive forever.
+		if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+			t.Fatalf("prime Send: %v", err)
+		}
+		return rt, f, fr, "webshop", writePlan(t, "# two")
+	}
+	headlessNoRunner := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+		f := &fakeHerdr{}
+		rt, _ := seedHeadless(t, f, newFakeRunner())
+		rt.Runner = nil
+		return rt, f, nil, "webshop", writePlan(t, "# x")
+	}
+
+	// The missing-plan case's path is fixed once: the error text names the
+	// file, and t.TempDir() mints a new directory on every call.
+	missingPlan := filepath.Join(t.TempDir(), "nope.md")
+	cases := []dryRunCase{
+		{"missing plan file", SendOptions{}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+			f := &fakeHerdr{}
+			rt, _ := seedBound(t, f)
+			return rt, f, nil, "webshop", missingPlan
+		}},
+		{"unknown binding", SendOptions{}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+			f := &fakeHerdr{}
+			rt, _ := seedBound(t, f)
+			return rt, f, nil, "ghost", writePlan(t, "# x")
+		}},
+		{"broken binding", SendOptions{}, broken},
+		{"round cap", SendOptions{}, capped},
+		{"pane builder gone", SendOptions{}, builderGone},
+		{"headless busy", SendOptions{}, headlessBusy},
+		{"headless without runner", SendOptions{}, headlessNoRunner},
+		{"tier on a pane binding", SendOptions{Tier: "edit"}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
+			f := &fakeHerdr{}
+			rt, _ := seedBound(t, f)
+			return rt, f, nil, "webshop", writePlan(t, "# x")
+		}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rtDry, fDry, frDry, nameDry, fileDry := c.setup(t)
+			rtSend, _, _, nameSend, fileSend := c.setup(t)
+
+			nBefore, err := rtDry.Store.ReadLog(nameDry)
+			if err != nil {
+				t.Fatalf("ReadLog: %v", err)
+			}
+			planPath := rtDry.Store.PlanPath(nameDry, 1)
+			_, statBefore := os.Stat(planPath)
+			planExisted := statBefore == nil
+			promptsBefore := len(fDry.prompts)
+			specsBefore := 0
+			if frDry != nil {
+				specsBefore = len(frDry.specs)
+			}
+
+			_, dryErr := SendDryRun(context.Background(), rtDry, nameDry, fileDry, c.opts)
+			if dryErr == nil {
+				t.Fatal("SendDryRun: want the error Send gives, got nil")
+			}
+			_, sendErr := Send(context.Background(), rtSend, nameSend, fileSend, c.opts)
+			if sendErr == nil {
+				t.Fatal("Send: want an error, got nil")
+			}
+			if dryErr.Error() != sendErr.Error() {
+				t.Errorf("dry run error %q != send error %q", dryErr, sendErr)
+			}
+
+			// The dry run wrote nothing.
+			if len(fDry.prompts) != promptsBefore {
+				t.Errorf("dry run prompted: %+v", fDry.prompts[promptsBefore:])
+			}
+			if frDry != nil && len(frDry.specs) != specsBefore {
+				t.Errorf("dry run started a process: %+v", frDry.specs[specsBefore:])
+			}
+			nAfter, err := rtDry.Store.ReadLog(nameDry)
+			if err != nil {
+				t.Fatalf("ReadLog: %v", err)
+			}
+			if len(nAfter) != len(nBefore) {
+				t.Errorf("dry run changed the log: %d -> %d", len(nBefore), len(nAfter))
+			}
+			_, statAfter := os.Stat(planPath)
+			if (statAfter == nil) != planExisted {
+				t.Error("dry run changed whether the plan file exists")
+			}
+		})
+	}
+}
+
+// TestRenderDryRunShape pins the exact rendered shape of a dry run: the seven
+// labelled lines, in order, with the 1024-based size.
+func TestRenderDryRunShape(t *testing.T) {
+	d := DryRun{
+		Name:       "api-auth",
+		Round:      5,
+		Mode:       "headless",
+		Candidate:  "agy/google/gemini-3.8-flash-high",
+		Where:      "/usr/bin/agy -p",
+		PlanPath:   "/home/p/.local/state/relay/api-auth/005-plan.md",
+		PlanFrom:   "./plan.md",
+		PlanBytes:  4198,
+		ReportPath: "/home/p/.local/state/relay/api-auth/005-report.md",
+		DonePath:   "/home/p/.local/state/relay/api-auth/005-done",
+		Tier:       "yolo",
+		PromptHead: []string{
+			`relay: round 5 · to builder "api-auth" · from the planner (not the human)`,
+			"Your working tree is: /home/p/.worktrees/api-auth",
+		},
+	}
+	want := `would send round 5 to api-auth
+  builder   headless agy/google/gemini-3.8-flash-high
+  where     /usr/bin/agy -p
+  tier      yolo
+  plan      /home/p/.local/state/relay/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+  report    /home/p/.local/state/relay/api-auth/005-report.md
+  marker    /home/p/.local/state/relay/api-auth/005-done
+  prompt    relay: round 5 · to builder "api-auth" · from the planner (not the human)
+            Your working tree is: /home/p/.worktrees/api-auth
+`
+	got := RenderDryRun(d)
+	if got != want {
+		t.Errorf("RenderDryRun:\n%s\nwant:\n%s", got, want)
+	}
+
+	// The seven labelled lines appear in this order.
+	at := -1
+	for _, label := range []string{"builder", "where", "tier", "plan", "report", "marker", "prompt"} {
+		i := strings.Index(got, "  "+label+" ")
+		if i < 0 {
+			t.Fatalf("no %q line in:\n%s", label, got)
+		}
+		if i < at {
+			t.Errorf("label %q is out of order", label)
+		}
+		at = i
+	}
+
+	// A gated candidate's note rides on the builder line.
+	d.GateNote = "rate-limited until 00:26; the daemon would switch after start"
+	if !strings.Contains(RenderDryRun(d), "(rate-limited until 00:26; the daemon would switch after start)") {
+		t.Errorf("the gate note must render on the builder line:\n%s", RenderDryRun(d))
 	}
 }

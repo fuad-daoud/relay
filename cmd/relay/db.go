@@ -245,22 +245,7 @@ func formatStats(s db.Stats) string {
 	if s.NewestRound != nil {
 		newest = s.NewestRound.UTC().Format(time.RFC3339)
 	}
-	fmt.Fprintf(&out, "size %s  version %d  newest round %s\n", humanBytes(s.SizeBytes), s.Version, newest)
+	fmt.Fprintf(&out, "size %s  version %d  newest round %s\n", relay.HumanBytes(s.SizeBytes), s.Version, newest)
 
 	return out.String()
-}
-
-// humanBytes renders n as a binary (1024-based) human-readable size, e.g.
-// "512 B", "1.5 KiB", "3.0 MiB".
-func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
