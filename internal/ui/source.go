@@ -28,6 +28,13 @@ type Source interface {
 	// the planner's own runtime. On the server it carries no DB, so scope
 	// all is refused there with the existing "no database" notice.
 	Base() relay.Runtime
+	// MarkViewed stamps key's .viewed sidecar (#143), the moment a human
+	// points the detail pane at it. A planner source writes through its own
+	// store; a server source is a no-op -- ui never mutates bind.json, and
+	// the sidecar lives on whichever machine's disk actually holds the
+	// binding, never the server's. Errors are swallowed: a stamp must never
+	// fail a read-only screen.
+	MarkViewed(key string)
 }
 
 // plannerSource is the single-runtime source `relay ui` always had: no
@@ -48,6 +55,14 @@ func (s plannerSource) Runtime(key string) (relay.Runtime, string, bool) {
 // database, its store and everything else fleet-wide reads need.
 func (s plannerSource) Base() relay.Runtime {
 	return s.rt
+}
+
+// MarkViewed writes through to the planner's own store; key is the row's
+// Key(), which on a planner source is the bare binding name (OwnerLabel is
+// always "" here). Errors are dropped: a stamp is not worth failing a
+// read-only screen over.
+func (s plannerSource) MarkViewed(key string) {
+	_ = s.rt.Store.MarkViewed(key, time.Now())
 }
 
 // serverSource reads every enrolled client's store on a serve box, through
@@ -89,6 +104,11 @@ func (s serverSource) Runtime(key string) (relay.Runtime, string, bool) {
 func (s serverSource) Base() relay.Runtime {
 	return relay.Runtime{Now: time.Now}
 }
+
+// MarkViewed is a no-op on a server source: the .viewed sidecar belongs to
+// whichever client machine actually holds the binding's store, and a
+// server box never writes into a client's state directory.
+func (s serverSource) MarkViewed(key string) {}
 
 // notTTY reports whether stdout is not a character device -- the refusal
 // path's only testable seam is stdoutStat.

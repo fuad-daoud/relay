@@ -295,6 +295,12 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatalf("git apply --check failed: %v\nOutput: %s", err, string(applyOut))
 	}
 
+	// #143: a successful `diff` stamps the binding's .viewed sidecar.
+	// Store-only -- reaches no herdr.
+	if _, ok := s.ViewedAt("webshop"); !ok {
+		t.Fatal("diff must stamp .viewed on a successful print")
+	}
+
 	// Test --stat flag
 	r2, w2, _ := os.Pipe()
 	os.Stdout = w2

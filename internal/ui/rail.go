@@ -80,6 +80,12 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 		if b.Nudge != nil {
 			age = relay.NudgeText(*b.Nudge)
 		}
+		// #143: an ACTIVE row's own quiet clock, distinct from a nudge's --
+		// present whenever the round has been sampled at least once, nudged
+		// or not.
+		if b.QuietFor != "" {
+			what += " · quiet " + b.QuietFor
+		}
 	case "PAUSED":
 		what = "paused"
 		if b.Last != nil && b.Last.Kind == "pause" {
@@ -103,6 +109,16 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 // order, only those that apply. #143's live +N −M goes first here.
 func facts(b relay.BindingStatus) []string {
 	var out []string
+	// #143's live diff against the round's baseline is the reserved first
+	// fact, ahead of dirty: while a round is open it is the thing most
+	// worth a glance, and it uses the same unicode minus the diff tab does.
+	if b.Live != nil {
+		live := fmt.Sprintf("+%d −%d in %d", b.Live.Added, b.Live.Removed, b.Live.Files)
+		if b.Live.Shared {
+			live += " (shared tree)"
+		}
+		out = append(out, dimStyle.Render(live))
+	}
 	if b.Dirty {
 		out = append(out, stateNeedsYouStyle.Render("dirty"))
 	}
@@ -130,6 +146,16 @@ func facts(b relay.BindingStatus) []string {
 	return out
 }
 
+// unreadSlotText is the two-cell unread marker (#143): "● " while the
+// binding's newest report is unread, the same width blank otherwise, so a
+// card's name column never shifts between the two states.
+func unreadSlotText(unread bool) string {
+	if unread {
+		return stateNeedsYouStyle.Render("●") + " "
+	}
+	return "  "
+}
+
 // cardLines renders one binding's card: three or four lines, each exactly
 // railWidth wide. selected paints the gutter and background; showState
 // puts the state word on line 2 (name order has no group headers). focused
@@ -143,7 +169,7 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 	} else if selected {
 		gutter = dimStyle.Render("▎")
 	}
-	const unreadSlot = "  " // reserved for #143's ● -- keep the width
+	unreadSlot := unreadSlotText(b.Unread) // #143: "● " while unread, else the same two-cell blank
 	nameStyle := fgStyle.Bold(true)
 	if selected {
 		nameStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
@@ -211,7 +237,7 @@ func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time,
 			gutter = dimStyle.Render("▎")
 		}
 	}
-	const unreadSlot = "  "
+	unreadSlot := unreadSlotText(b.Unread)
 	roundW := 3
 	nameW := width - 1 - 2 - 1 - roundW - 1
 	nameStyle := fgStyle.Bold(true)

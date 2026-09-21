@@ -259,6 +259,55 @@ func (c *Client) DiffTrees(ctx context.Context, dir, from, to string) (Diff, err
 	}, nil
 }
 
+// DiffWorktreeStat compares a tree object against dir's current working tree
+// and returns just the stat, with no patch body: `git diff --numstat <tree>`
+// (tree vs the working tree, including staged changes). It is the live
+// counterpart to DiffTrees' first half, for a status row that wants a cheap
+// "how far has this round drifted" figure without paying for a patch.
+//
+// Preconditions:  tree is a tree id reachable in dir's object database.
+// Postconditions: dir's working tree, index and HEAD are unchanged.
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
+// wrapped git failure (including an unknown tree id).
+func (c *Client) DiffWorktreeStat(ctx context.Context, dir, tree string) (Stat, error) {
+	if _, err := c.run(ctx, dir, nil, "rev-parse", "--git-dir"); err != nil {
+		return Stat{}, err
+	}
+
+	out, err := c.run(ctx, dir, nil, "diff", "--numstat", tree)
+	if err != nil {
+		return Stat{}, err
+	}
+
+	var stat Stat
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) >= 3 {
+			stat.FilesChanged++
+			if parts[0] != "-" {
+				if ins, err := strconv.Atoi(parts[0]); err == nil {
+					stat.Insertions += ins
+				}
+			}
+			if parts[1] != "-" {
+				if del, err := strconv.Atoi(parts[1]); err == nil {
+					stat.Deletions += del
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Stat{}, fmt.Errorf("scan numstat: %w", err)
+	}
+
+	return stat, nil
+}
+
 // HeadCommit returns dir's current HEAD commit id.
 // Errors: ErrNotRepo, ErrGitUnavailable, or a wrapped git failure -- including
 // an unborn HEAD in a repository with no commits.

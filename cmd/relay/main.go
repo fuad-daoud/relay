@@ -1447,6 +1447,9 @@ func cmdDiff(args []string) error {
 			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
 		}
 		fmt.Println(found.Note)
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		_ = rt.Store.MarkViewed(target, time.Now())
 		return nil
 	}
 
@@ -1474,8 +1477,13 @@ func cmdDiff(args []string) error {
 		}
 	}
 
-	_, err = os.Stdout.Write(patch)
-	return err
+	if _, err := os.Stdout.Write(patch); err != nil {
+		return err
+	}
+	// #143: a successful print is what "viewed" means; the stamp is
+	// best-effort and must never fail a read command.
+	_ = rt.Store.MarkViewed(target, time.Now())
+	return nil
 }
 
 func cmdAnswer(args []string) error {
@@ -1686,6 +1694,9 @@ func cmdLog(args []string) error {
 	}
 
 	if !*follow {
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		_ = rt.Store.MarkViewed(name, time.Now())
 		return nil
 	}
 
@@ -1694,11 +1705,14 @@ func cmdLog(args []string) error {
 
 	if err := relay.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
 		if ctx.Err() != nil {
-			// Interrupted: what was already printed is the answer.
+			// Interrupted: what was already printed is the answer, and the
+			// stamp is #143's the same as any other exit.
+			_ = rt.Store.MarkViewed(name, time.Now())
 			return nil
 		}
 		return err
 	}
+	_ = rt.Store.MarkViewed(name, time.Now())
 	return nil
 }
 

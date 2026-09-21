@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +25,17 @@ const agentGone = "gone"
 // claim absence", the same word headlessStatus and the remote path use for
 // "could not determine".
 const agentUnknown = "unknown"
+
+// LiveDiff is the live "+N/-M in F" a status row shows while a round is
+// open (#143): dir's working tree against the round's baseline tree, no
+// patch body, just the numstat. Shared marks a --cwd binding, whose
+// worktree is the planner's own tree rather than one relay created.
+type LiveDiff struct {
+	Files   int  `json:"files"`
+	Added   int  `json:"added"`
+	Removed int  `json:"removed"`
+	Shared  bool `json:"shared,omitempty"`
+}
 
 // BindingStatus is one row of relay status: stored binding plus live herdr state.
 type BindingStatus struct {
@@ -147,6 +157,18 @@ type BindingStatus struct {
 	// the binding never had a verify round and when the verdict is stale --
 	// a consumer cannot tell those apart, and does not need to.
 	Verdict string `json:"last_verdict,omitempty"`
+	// Live is the round's live diff stat against its baseline tree (#143):
+	// nil when no round is open, the baseline was never recorded, or the
+	// git read failed -- a status row never fails because of it.
+	Live *LiveDiff `json:"live,omitempty"`
+	// QuietFor is how long since LastProgressAt for an ACTIVE row with an
+	// open round (#143), AgeText-formatted; "" before the first progress
+	// sample and for every other display state.
+	QuietFor string `json:"quiet_for,omitempty"`
+	// Unread is true when the binding's newest report entry is newer than
+	// its .viewed stamp -- or there is no stamp at all and a report exists
+	// (#143). No omitempty: a consumer reads false as "seen".
+	Unread bool `json:"unread"`
 	// Owner is the client this row belongs to on a serve box: the client's
 	// "SHA256:<base64>" fingerprint. Empty on a planner, where every row
 	// belongs to the one runtime the UI is welded to.
@@ -306,7 +328,11 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agen
 		rows = append(rows, row)
 	}
 
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	// #143: status now uses the same attention-first order ui already did --
+	// NEEDS YOU, HELD, ACTIVE, PAUSED, DONE, stale first, newest Last.TS
+	// first -- so `status`, `status --json` and the statusline agree with
+	// `ui` instead of the plain name order this used to be.
+	rows = SortRows(rows, true)
 
 	rep := Report{Bindings: rows}
 	if herdrErr != nil {
@@ -480,6 +506,33 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 	row.LiveUsage = peekUsage(ctx, rt, b, now)
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
+
+	// #143's live diff: the round's working tree against its baseline,
+	// while a round is open. liveStat degrades to nil on its own -- no Git
+	// wired, no baseline recorded, or the git read failed -- so this never
+	// fails the row.
+	row.Live = liveStat(ctx, rt, b)
+
+	// #143's quiet age: only for an ACTIVE row with an open round that has
+	// been sampled at least once. Reuses the same now the live usage figure
+	// just used, so the two clocks in one row never disagree.
+	if row.Display == "ACTIVE" && !b.RoundStartedAt.IsZero() && !row.LastProgressAt.IsZero() {
+		row.QuietFor = AgeText(now.Sub(row.LastProgressAt))
+	}
+
+	// #143's unread marker: the newest report entry is newer than the
+	// binding's .viewed stamp, or there is no stamp at all and a report
+	// exists.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind != store.KindReport {
+			continue
+		}
+		viewedAt, ok := rt.Store.ViewedAt(b.Name)
+		if !ok || entries[i].TS.After(viewedAt) {
+			row.Unread = true
+		}
+		break
+	}
 
 	// What relay acts on is what it shows: the clock starts where
 	// builderQuiescent starts it -- at the last fingerprint, falling back to
@@ -714,6 +767,21 @@ func RenderStatus(r Report) string {
 		// (#144): "verdict: rejected (2 reasons)".
 		if b.Verdict != "" {
 			fmt.Fprintf(&sb, " %s", b.Verdict)
+		}
+		// #143: the round's live diff against its baseline, how long an
+		// ACTIVE row has been quiet, and whether its newest report is
+		// unread.
+		if b.Live != nil {
+			fmt.Fprintf(&sb, "  +%d/-%d in %d", b.Live.Added, b.Live.Removed, b.Live.Files)
+			if b.Live.Shared {
+				fmt.Fprint(&sb, " (shared tree)")
+			}
+		}
+		if b.QuietFor != "" {
+			fmt.Fprintf(&sb, "  quiet %s", b.QuietFor)
+		}
+		if b.Unread {
+			fmt.Fprint(&sb, "  ●new")
 		}
 		fmt.Fprint(&sb, "\n")
 		focus := ""

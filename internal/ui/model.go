@@ -195,6 +195,10 @@ func (m Model) pointDetailAt(key string) (Model, tea.Cmd) {
 	if r == nil {
 		return m, nil
 	}
+	// #143: opening a binding's detail pane is what "viewed" means; the
+	// stamp is best-effort (each Source swallows its own errors) and must
+	// never block re-targeting the pane.
+	m.src.MarkViewed(key)
 	vp := viewport.New(m.paneWidth(), m.viewportHeight())
 	m.detail = detailModel{
 		name:     key,

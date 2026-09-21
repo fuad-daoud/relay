@@ -128,22 +128,33 @@ func TestFactsLiveAndSpend(t *testing.T) {
 
 func TestRailLinesGroupsAndTags(t *testing.T) {
 	rows := []relay.BindingStatus{
-		{Name: "n", Display: "NEEDS YOU", BuilderKind: "agy"},
+		// #143: an unread report marks the card's name line with "●".
+		{Name: "n", Display: "NEEDS YOU", BuilderKind: "agy", Unread: true},
 		{Name: "a1", Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "a2", Display: "ACTIVE", BuilderKind: "agy"},
 		// #137: PAUSED groups between ACTIVE and DONE.
 		{Name: "p", Display: "PAUSED", BuilderKind: "agy",
 			Last: &relay.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
-		{Name: "d", Display: "DONE", BuilderKind: "agy"},
+		// #143: a live diff fact adds a fourth line to d's card, tacked on
+		// last so it does not shift any of the indices this test already
+		// asserts on.
+		{Name: "d", Display: "DONE", BuilderKind: "agy",
+			Live: &relay.LiveDiff{Files: 3, Added: 5, Removed: 2}},
 	}
 	lines := railLines(rows, 1, true, railNow, true, railDefault, false)
 	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap,
-	// header, card p (3), gap, header, card d (3), gap
-	if len(lines) != 1+3+1+1+3+3+1+1+3+1+1+3+1 {
+	// header, card p (3), gap, header, card d (4: the live-diff fact line), gap
+	if len(lines) != 1+3+1+1+3+3+1+1+3+1+1+4+1 {
 		t.Fatalf("%d lines", len(lines))
 	}
 	if lines[0].binding != -1 || plain(lines[0].text) != "NEEDS YOU 1" {
 		t.Errorf("first line = %+v", lines[0])
+	}
+	if !strings.Contains(plain(lines[1].text), "●") {
+		t.Errorf("unread card's name line must carry the ● marker: %q", plain(lines[1].text))
+	}
+	if got, want := plain(lines[21].text), "+5 −2 in 3"; got != want {
+		t.Errorf("d's live-diff fact line = %q, want %q", got, want)
 	}
 	if lines[5].binding != -1 || plain(lines[5].text) != "ACTIVE 2" {
 		t.Errorf("second header = %+v", lines[5])
