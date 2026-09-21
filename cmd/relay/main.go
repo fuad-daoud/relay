@@ -73,6 +73,7 @@ Commands:
   pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
   stop      ask a builder to wrap up and close its round on its marker; kill only after the grace [--grace] [--now]
   land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
+  edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relay edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
@@ -283,6 +284,8 @@ func run(args []string) error {
 		return cmdStop(args[1:])
 	case "land":
 		return cmdLand(args[1:])
+	case "edge":
+		return cmdEdge(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	case "doctor":

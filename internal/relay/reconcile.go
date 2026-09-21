@@ -354,6 +354,16 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 					return next, err
 				}
 			}
+			// Edges evaluate right after the verify hook and before delivery
+			// (#37): queue-mode payloads are queued under this same lock,
+			// fire-mode edges are armed (Result "firing") for the Daemon to
+			// run after Save -- Reconcile's signature does not change to
+			// carry them, so the pendings return value is deliberately
+			// discarded here (see edges.go's evaluateEdges doc).
+			next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
+			if err != nil {
+				return next, err
+			}
 			next, err = deliverAndSettle(ctx, rt, tx, next, agents)
 			if err != nil {
 				return next, err

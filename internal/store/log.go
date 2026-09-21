@@ -66,6 +66,13 @@ const (
 	// branch onto its base, ran the gate and pushed (#136). The note names
 	// the branch, the base and the PR URL when one was created.
 	KindLand Kind = "land"
+
+	// KindEdge is a planner-declared handoff between bindings (#37): a
+	// queued entry (DirToPlanner, a real payload) when an edge's Mode is
+	// "queue" and its artifact is ready, or relay -> log only when the edge
+	// is declared, fires, is skipped for a missing artifact, or its fire
+	// fails.
+	KindEdge Kind = "edge"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also
