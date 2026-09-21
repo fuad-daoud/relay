@@ -336,6 +336,9 @@ func serverChecks(probes []relay.ServerProbe) []doctor.Check {
 		case "enrolled":
 			c.Severity = doctor.SevOK
 			c.Detail = fmt.Sprintf("%s: enrolled as %s", p.Name, p.Label)
+			if p.QueueAware && p.Builders != nil {
+				c.Detail += fmt.Sprintf(", %s", buildersText(p))
+			}
 			checks = append(checks, c)
 			if warning := relay.ServerTierWarning(p); warning != "" {
 				checks = append(checks, doctor.Check{
@@ -352,6 +355,14 @@ func serverChecks(probes []relay.ServerProbe) []doctor.Check {
 					Severity:    doctor.SevWarn,
 					Detail:      fmt.Sprintf("%s: builder tier unknown (pre-tier server)", p.Name),
 					ProbeFailed: true,
+				})
+			}
+			if p.QueueAware && p.Builders != nil && !p.Builders.Scopes {
+				checks = append(checks, doctor.Check{
+					Group:    "",
+					Name:     "servers",
+					Severity: doctor.SevWarn,
+					Detail:   fmt.Sprintf("scopes unavailable on %s: a daemon restart kills its builders", p.Name),
 				})
 			}
 			continue
@@ -379,6 +390,21 @@ func serverChecks(probes []relay.ServerProbe) []doctor.Check {
 		checks = append(checks, c)
 	}
 	return checks
+}
+
+// buildersText is a queue-aware, enrolled probe's builder census, the same
+// words RenderServers appends to its row (#285): "builders %d/%d, %d
+// queued, scopes %s".
+func buildersText(p relay.ServerProbe) string {
+	scopes := "off"
+	switch {
+	case p.Builders.Scopes && p.Builders.Slice != "":
+		scopes = fmt.Sprintf("on (%s)", p.Builders.Slice)
+	case p.Builders.Scopes:
+		scopes = "on"
+	}
+	return fmt.Sprintf("builders %d/%d, %d queued, scopes %s",
+		p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 }
 
 // policyChecks turns policy/candidates inconsistencies into doctor rows.

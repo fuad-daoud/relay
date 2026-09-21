@@ -545,12 +545,12 @@ func cmdServeStatus(args []string) error {
 		return err
 	}
 
-	owners, err := serve.AdminStatus(context.Background(), srv)
+	owners, builders, err := serve.AdminStatus(context.Background(), srv)
 	if err != nil {
 		return err
 	}
 
-	fmt.Print(serve.RenderAdminStatus(owners))
+	fmt.Print(serve.RenderAdminStatus(owners, builders))
 	return nil
 }
 

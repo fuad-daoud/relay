@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
@@ -177,6 +178,10 @@ type BindingStatus struct {
 	// ShortOwner(Owner) when that client has no label. Empty on a planner
 	// row. Renderers key new behaviour on OwnerLabel != "" only.
 	OwnerLabel string `json:"owner_label,omitempty"`
+	// Queued is a served row's place in the server's builder queue (#285):
+	// nil unless the round is queued. Set only by internal/serve's
+	// AdminStatus/FlatStatus; always nil from a planner's own Status.
+	Queued *remote.QueueView `json:"queued,omitempty"`
 }
 
 // Key is the UI's row identity. A planner row keys by Name; a server row
@@ -386,6 +391,9 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		if row.BuilderStatus == "" {
 			row.BuilderStatus = "unknown"
 		}
+		if row.BuilderStatus == string(remote.RoundQueued) {
+			row.BuilderStatus = queueText(b.Builder.RemoteQueue, b.Builder.Server, rt.Now())
+		}
 		if !b.StalledSince.IsZero() && row.BuilderStatus == "running" {
 			row.BuilderStatus = "stalled " + AgeText(rt.Now().Sub(b.StalledSince))
 		}
@@ -587,6 +595,18 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 
 	return row, nil
+}
+
+// queueText renders a served, queued round's status word (#285): the bare
+// "queued" when the server has not yet reported facts (part 1's tolerance),
+// else the full picture -- how many builders are busy on that server, how
+// far back in line, and how long it has waited.
+func queueText(q *store.QueueFacts, server string, now time.Time) string {
+	if q == nil {
+		return "queued"
+	}
+	return fmt.Sprintf("queued (%d/%d busy on %s, %d ahead, %s)",
+		q.Running, q.Cap, server, q.Ahead, AgeText(now.Sub(q.Since)))
 }
 
 // isPayloadKind reports whether k is one of the four kinds that cross

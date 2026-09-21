@@ -365,6 +365,46 @@ func TestRenderServersShowsTierAndWarning(t *testing.T) {
 	}
 }
 
+// TestRenderServersBuilders pins #285's queue line: an enrolled,
+// queue-aware server's row gains "builders %d/%d, %d queued, scopes %s",
+// with the scopes word covering off/on/on (<slice>); an enrolled server
+// that is not queue-aware (a pre-queue server) gets no builders text.
+func TestRenderServersBuilders(t *testing.T) {
+	probes := []ServerProbe{
+		{
+			Name: "zen", URL: "https://zen:7777", State: "enrolled", Label: "laptop",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: false},
+		},
+		{
+			Name: "contabo", URL: "https://contabo:7777", State: "enrolled", Label: "vps",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice"},
+		},
+		{
+			Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop",
+		},
+	}
+	out := RenderServers(probes)
+	if !strings.Contains(out, "builders 2/3, 1 queued, scopes off") {
+		t.Fatalf("output missing scopes-off builders line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "builders 2/3, 1 queued, scopes on (relay.slice)") {
+		t.Fatalf("output missing scopes-on(slice) builders line; got:\n%s", out)
+	}
+	oldLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "https://old:7777") {
+			oldLine = line
+			break
+		}
+	}
+	if oldLine == "" {
+		t.Fatalf("output missing the old server's row; got:\n%s", out)
+	}
+	if strings.Contains(oldLine, "builders ") {
+		t.Errorf("non-queue-aware server row must not carry builders text; got:\n%s", oldLine)
+	}
+}
+
 func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -1552,6 +1592,70 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 	}
 	if !got2.StalledSince.IsZero() {
 		t.Fatalf("StalledSince = %s, want zero once the view has none", got2.StalledSince)
+	}
+}
+
+// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
+// view copies the server's queue facts onto Builder.RemoteQueue, sets
+// RemoteStatus to "queued", and neither halts nor catches up.
+func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	since := baseTime.Add(-4 * time.Minute)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundQueued,
+			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since},
+		},
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteStatus != string(remote.RoundQueued) {
+		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundQueued)
+	}
+	if got.Builder.RemoteQueue == nil {
+		t.Fatal("RemoteQueue = nil, want the view's facts")
+	}
+	want := store.QueueFacts{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since}
+	if *got.Builder.RemoteQueue != want {
+		t.Errorf("RemoteQueue = %+v, want %+v", *got.Builder.RemoteQueue, want)
+	}
+	if got.State == store.StateNeedsYou || got.State == store.StateBroken {
+		t.Errorf("state = %s, want no halt while queued", got.State)
+	}
+}
+
+// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
+// was queued and now observes a running view drops its stale RemoteQueue.
+func TestObserveRemoteRunningClearsQueue(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	b.Builder.RemoteStatus = string(remote.RoundQueued)
+	b.Builder.RemoteQueue = &store.QueueFacts{Position: 1, Ahead: 0, Running: 2, Cap: 3, Since: baseTime.Add(-time.Minute)}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileResp:  io.NopCloser(strings.NewReader("")),
+	}
+	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteQueue != nil {
+		t.Errorf("RemoteQueue = %+v, want nil once the round is running", got.Builder.RemoteQueue)
 	}
 }
 

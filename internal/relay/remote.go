@@ -623,6 +623,9 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
+	// RemoteQueue is set only in the RoundQueued case below; every other
+	// state clears it, including a round-closed catchUp (#285).
+	b.Builder.RemoteQueue = nil
 
 	// A server-side switch (#100): the candidate that actually ran differs
 	// from what this binding last recorded. Refresh the token and the
@@ -652,6 +655,15 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// and any stall stamp from an earlier running round no longer
 		// applies (the process is gone).
 		b.StalledSince = time.Time{}
+		if view.Queue != nil {
+			b.Builder.RemoteQueue = &store.QueueFacts{
+				Position: view.Queue.Position,
+				Ahead:    view.Queue.Ahead,
+				Running:  view.Queue.Running,
+				Cap:      view.Queue.Cap,
+				Since:    view.Queue.Since,
+			}
+		}
 		return b, false, nil
 
 	case remote.RoundRunning:
@@ -779,6 +791,11 @@ type ServerProbe struct {
 	TierAware   bool   // WhoAmI.Features contains FeatureTier
 	BuilderTier string // WhoAmI.BuilderTier; "" when !TierAware
 	MaxTier     string // WhoAmI.MaxTier;     "" when !TierAware
+
+	// QueueAware and Builders are filled only in the "enrolled" arm, from
+	// WhoAmI.Features/Builders (#285).
+	QueueAware bool                 // WhoAmI.Features contains FeatureQueue
+	Builders   *remote.BuildersView // nil when !QueueAware
 }
 
 // ProbeServers checks every configured server's reachability and this
@@ -818,6 +835,10 @@ func ProbeServers(ctx context.Context, rt Runtime, servers map[string]client.Ser
 			if p.TierAware {
 				p.BuilderTier = who.BuilderTier
 				p.MaxTier = who.MaxTier
+			}
+			p.QueueAware = slices.Contains(who.Features, remote.FeatureQueue)
+			if p.QueueAware {
+				p.Builders = who.Builders
 			}
 		case errors.Is(err, client.ErrCertChanged):
 			p.State = "cert changed"
@@ -886,6 +907,17 @@ func RenderServers(probes []ServerProbe) string {
 				row += fmt.Sprintf("  builder tier: %s (max %s)", p.BuilderTier, p.MaxTier)
 			} else {
 				row += "  builder tier: unknown (pre-tier server)"
+			}
+			if p.QueueAware && p.Builders != nil {
+				scopes := "off"
+				switch {
+				case p.Builders.Scopes && p.Builders.Slice != "":
+					scopes = fmt.Sprintf("on (%s)", p.Builders.Slice)
+				case p.Builders.Scopes:
+					scopes = "on"
+				}
+				row += fmt.Sprintf("  builders %d/%d, %d queued, scopes %s",
+					p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 			}
 		}
 		sb.WriteString(row)
@@ -1108,6 +1140,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	// 6. Mark idle; the caller (reconcileRemote or SyncRemote) decides
 	// whether to deliver.
 	next.Builder.RemoteStatus = "idle"
+	next.Builder.RemoteQueue = nil
 	return next, nil
 }
 

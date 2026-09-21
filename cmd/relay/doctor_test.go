@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -215,6 +216,69 @@ func TestPolicyChecks(t *testing.T) {
 
 	if got := policyChecks(nil); len(got) != 0 {
 		t.Errorf("policyChecks(nil) = %+v, want empty", got)
+	}
+}
+
+// TestServerChecksScopesWarning pins #285's scopes warning: a queue-aware,
+// enrolled server without systemd scopes gets a SevWarn row naming the
+// daemon-restart risk, in addition to its builders census text on the ok
+// row; Scopes:true gets no such warning row; a server that is not
+// queue-aware (a pre-queue server) carries no builders text at all. Pure
+// over a hand-built []relay.ServerProbe -- no herdr, no network.
+//
+// Mutation check: drop the `!p.Builders.Scopes` guard in serverChecks and
+// the contabo warning row (Scopes:true) reappears, failing this test.
+func TestServerChecksScopesWarning(t *testing.T) {
+	probes := []relay.ServerProbe{
+		{
+			Name: "zen", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: false},
+		},
+		{
+			Name: "contabo", State: "enrolled", Label: "vps", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice"},
+		},
+		{
+			Name: "old", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+		},
+	}
+
+	checks := serverChecks(probes)
+
+	var zenOK, zenWarn, contaboOK, contaboWarn, oldOK *doctor.Check
+	for i := range checks {
+		c := &checks[i]
+		switch {
+		case strings.HasPrefix(c.Detail, "zen: enrolled"):
+			zenOK = c
+		case strings.HasPrefix(c.Detail, "scopes unavailable on zen"):
+			zenWarn = c
+		case strings.HasPrefix(c.Detail, "contabo: enrolled"):
+			contaboOK = c
+		case strings.HasPrefix(c.Detail, "scopes unavailable on contabo"):
+			contaboWarn = c
+		case strings.HasPrefix(c.Detail, "old: enrolled"):
+			oldOK = c
+		}
+	}
+
+	if zenOK == nil || !strings.Contains(zenOK.Detail, "builders 2/3, 1 queued, scopes off") {
+		t.Fatalf("zen ok check = %+v, want it naming the builders census", zenOK)
+	}
+	if zenWarn == nil || zenWarn.Severity != doctor.SevWarn ||
+		zenWarn.Detail != "scopes unavailable on zen: a daemon restart kills its builders" {
+		t.Fatalf("zen scopes warning = %+v, want the exact message", zenWarn)
+	}
+
+	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "builders 2/3, 1 queued, scopes on (relay.slice)") {
+		t.Fatalf("contabo ok check = %+v, want it naming the builders census", contaboOK)
+	}
+	if contaboWarn != nil {
+		t.Fatalf("contabo scopes warning = %+v, want none (Scopes is true)", contaboWarn)
+	}
+
+	if oldOK == nil || strings.Contains(oldOK.Detail, "builders ") {
+		t.Fatalf("old (pre-queue) ok check = %+v, want no builders text", oldOK)
 	}
 }
 
