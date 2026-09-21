@@ -2031,6 +2031,30 @@ Hook stdout, stderr, and execution failures are logged to `~/.local/state/relay/
 
 Scripts must have their executable bit set (`chmod +x`). If `~/.config/relay/hooks/` or an event directory does not exist, event dispatch is a silent no-op.
 
+### Webhooks
+
+Beside hook scripts, `policy.json`'s `notify.webhooks` posts lifecycle events straight to a URL -- a Slack incoming webhook, a Discord webhook, or any endpoint that accepts a JSON POST -- with no script required:
+
+```json
+"notify": { "webhooks": [
+  { "url": "https://hooks.slack.com/services/…", "format": "slack", "events": ["state_changed:needs_you", "binding_stale", "builder_stalled"] }
+] }
+```
+
+- `url` (required) -- where the event is POSTed; must be `http://` or `https://`.
+- `events` -- which events reach this webhook; omit (or leave empty) to receive every event. `state_changed:<state>` matches only a `state_changed` event whose new state is `<state>` -- `state_changed:needs_you` is the one most people want.
+- `format` -- `json` (default: the event and its rendered text as a JSON object), `slack` (`{"text": ...}`), or `discord` (`{"content": ...}`).
+
+One sentence per event name, for a webhook filter:
+
+- `state_changed` -- a binding transitioned between states; filter to one target state with `state_changed:<state>`.
+- `round_started` -- a new round began.
+- `fork_created` -- a new binding was branched from an earlier round of an existing binding.
+- `builder_stalled` -- a live headless builder's stream went quiet for `stall_after_ms`.
+- `binding_stale` -- a NEEDS YOU or HELD binding sat unacted for `stale_after_ms`.
+
+Each matching webhook POSTs in its own goroutine with a 5-second timeout and never blocks a daemon tick. A failure -- a non-2xx response or a transport error -- is logged to `hooks.log` with the URL's host only, never the full URL, since a webhook URL is a secret. There are no retries and no queue: a webhook is best-effort, exactly like a hook script.
+
 ## Setting up your agent harnesses
 
 ### herdr lifecycle integrations
