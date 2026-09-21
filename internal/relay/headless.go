@@ -434,7 +434,40 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
+
+	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
+	// process tree) takes the supervisor with it before it can write the
+	// relay-exit: trailer, which reads exactly like a real builder death:
+	// code unknown. The daemon can tell the two apart because it knows its
+	// own start time: a builder whose recorded start predates the daemon's
+	// own could not have been killed by anything the builder itself did.
+	// Relaunching the same candidate on the same round, uncounted, keeps a
+	// daemon restart from spending the round's switch budget (#244).
+	lost := codeText == "unknown" && !rt.StartedAt.IsZero() && b.Builder.StartedAt != 0 &&
+		time.Unix(b.Builder.StartedAt, 0).Before(rt.StartedAt)
+
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
+
+	if lost && switchable {
+		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+		relaunched, err := startRound(ctx, rt, b, text)
+		if err != nil {
+			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
+		}
+		b = relaunched
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+			Note: fmt.Sprintf("relaunched builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
+				rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
+		}); err != nil {
+			return b, err
+		}
+		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "relaunched "+b.BuilderCandidate+" (lost to a daemon restart)")
+		b.RoundStartedAt = now
+		b.State = store.StateActive
+		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
+		return b, nil
+	}
 
 	// The escape halt comes before gateOnLimit: a limit line in the log of
 	// an escaped round must not turn a halt into a switch (#192).

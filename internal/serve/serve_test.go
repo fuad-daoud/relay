@@ -1201,6 +1201,9 @@ type scriptRunner struct {
 	aliveHandles []relay.ProcHandle
 	alive        bool
 	pidSeq       int
+	// startErr, when set, is returned by Start instead of starting anything
+	// -- a builder spawn failure (#250 items 1 and 3).
+	startErr error
 }
 
 func newScriptRunner() *scriptRunner {
@@ -1210,6 +1213,9 @@ func newScriptRunner() *scriptRunner {
 func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.startErr != nil {
+		return relay.ProcHandle{}, r.startErr
+	}
 	r.specs = append(r.specs, spec)
 	r.pidSeq++
 	r.alive = true
@@ -1787,6 +1793,87 @@ func TestRoundResendSamePlanIs200(t *testing.T) {
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, ct2)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+}
+
+// TestRoundResendThatCannotStartIs409 pins #250 items 1 and 3: when the
+// server's relay.Send fails at startRound (a builder spawn failure) and the
+// binding ends up needs_you, the server must answer 409 round_halted with
+// the halt text instead of 201 -- a 201 tells the client "sent round N" when
+// nothing ran.
+//
+// Mutation check: restore the unconditional 201 branch (writeJSON(w,
+// http.StatusCreated, relay.ServedView(b, entries)) instead of the 409
+// writeErr) and this test must fail.
+func TestRoundResendThatCannotStartIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	outRef := "refs/relay/api/out"
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snap body: %v", err)
+	}
+
+	env.runner.mu.Lock()
+	env.runner.startErr = errors.New("boom: no such binary")
+	env.runner.mu.Unlock()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Round 1 Plan\nDo stuff", bundleBytes)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start round status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
+	}
+	if errBody.Code != remote.CodeRoundHalted {
+		t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeRoundHalted)
+	}
+	if !strings.Contains(errBody.Message, "spawn failed") {
+		t.Errorf("error message = %q, want it to contain %q", errBody.Message, "spawn failed")
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.State != store.StateNeedsYou {
+		t.Errorf("binding state = %s, want needs_you", b.State)
+	}
+	if b.Halt == "" || !strings.Contains(b.Halt, "spawn failed") {
+		t.Errorf("binding Halt = %q, want it to contain %q", b.Halt, "spawn failed")
+	}
+
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Round == 1 && e.Kind == store.KindPlan {
+			t.Errorf("found a round 1 plan log entry, want none: %+v", e)
+		}
 	}
 }
 

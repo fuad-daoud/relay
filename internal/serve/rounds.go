@@ -239,8 +239,8 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 			b = reloaded
 		}
 		if b.State == store.StateNeedsYou || b.Halt != "" {
-			entries, _ = rt.Store.ReadLog(name)
-			writeJSON(w, http.StatusCreated, relay.ServedView(b, entries))
+			slog.Warn("round start failed", "binding", name, "round", b.Round, "err", sendErr, "halt", b.Halt)
+			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, orText(b.Halt, sendErr.Error()))
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "", sendErr.Error())

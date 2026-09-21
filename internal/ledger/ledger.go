@@ -32,6 +32,13 @@ const (
 	// file: it is synthesised in memory, per round, by switchBuilder from
 	// Binding.RoundExcluded (#191), so Load never needs to validate it.
 	ExitedNoReport Kind = "exited_no_report"
+
+	// RolesMissing records that a candidate's harness kind is missing role
+	// files (definitions) relay needs to run it as a builder. Like
+	// ExitedNoReport, it is never written to the ledger file: it is
+	// synthesised in memory by relay.Gates from an injectable
+	// Runtime.Roles checker, so Load never needs to validate it (#238).
+	RolesMissing Kind = "roles_missing"
 )
 
 // ErrBadEntry reports a ledger entry that fails validation.

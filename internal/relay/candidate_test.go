@@ -486,3 +486,65 @@ func TestCandidateKind(t *testing.T) {
 		t.Errorf("CandidateKind(unknown) = %q, want empty", got)
 	}
 }
+
+// fakeRoleChecker is a harness.RoleChecker test double: Missing(kind) looks
+// up kind in the map, returning nil (present) for any kind not listed.
+type fakeRoleChecker map[string][]string
+
+func (f fakeRoleChecker) Missing(kind string) []string { return f[kind] }
+
+// TestRolesMissingSkipsInOrder pins #238's ranked-walk half: a candidate
+// whose harness kind is missing role files is gated like any other and
+// skipped in order, without an error -- resolveCandidate picks the next
+// one and ExplainResolution names why the first was skipped.
+//
+// Mutation check: with rt.Roles == nil (the control case below), no gate is
+// synthesised and the first candidate in order is picked; a change that
+// makes rolesMissingGates run even when rt.Roles is nil would make this
+// control assertion fail.
+func TestRolesMissingSkipsInOrder(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef)
+	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
+
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	if err != nil {
+		t.Fatalf("resolveCandidate: %v", err)
+	}
+	if res.Token() != testClaudeRef {
+		t.Errorf("picked %q, want %q", res.Token(), testClaudeRef)
+	}
+	if explain := ExplainResolution("builder", res); !strings.Contains(explain, "skipped "+testOpencodeRef+" (roles missing") {
+		t.Errorf("ExplainResolution = %q, want it to contain %q", explain, "skipped "+testOpencodeRef+" (roles missing")
+	}
+
+	// Control: rt.Roles == nil means no check is configured, so nothing is
+	// gated and the first candidate in order is picked -- today's
+	// behaviour.
+	rt.Roles = nil
+	res2, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	if err != nil {
+		t.Fatalf("resolveCandidate (rt.Roles == nil): %v", err)
+	}
+	if res2.Token() != testOpencodeRef {
+		t.Errorf("picked %q with rt.Roles == nil, want %q", res2.Token(), testOpencodeRef)
+	}
+}
+
+// TestRolesMissingRefusesExplicit pins #238's explicit-pick half: unlike
+// every other gate (recorded, but the pick proceeds), roles_missing refuses
+// an explicit --builder pick outright, because it cannot succeed.
+func TestRolesMissingRefusesExplicit(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
+
+	_, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), testOpencodeRef, "builder")
+	if err == nil {
+		t.Fatal("resolveCandidate succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relay agent install --kind") {
+		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relay agent install --kind")
+	}
+}

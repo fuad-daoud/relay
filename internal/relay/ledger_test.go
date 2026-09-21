@@ -440,6 +440,14 @@ func TestGateKindTextExitedNoReport(t *testing.T) {
 	}
 }
 
+// TestGateKindTextRolesMissing pins #238's wording in status, candidates and
+// doctor.
+func TestGateKindTextRolesMissing(t *testing.T) {
+	if got := GateKindText(ledger.RolesMissing); got != "roles missing" {
+		t.Errorf("GateKindText(RolesMissing) = %q, want %q", got, "roles missing")
+	}
+}
+
 func TestGateUntilText(t *testing.T) {
 	if got := GateUntilText(time.Time{}); got != "until cleared" {
 		t.Errorf("GateUntilText(zero) = %q, want %q", got, "until cleared")

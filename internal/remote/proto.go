@@ -141,6 +141,10 @@ const (
 	CodeVersion        Code = "version"
 	CodeInvalid        Code = "invalid"
 	CodeTierAboveMax   Code = "tier_above_max"
+	// CodeRoundHalted is a 409: the round could not start because the
+	// binding halted trying to start it (e.g. a builder spawn failure);
+	// Message is the binding's Halt text.
+	CodeRoundHalted Code = "round_halted"
 )
 
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier

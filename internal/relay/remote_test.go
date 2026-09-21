@@ -938,6 +938,113 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 	}
 }
 
+// TestSendRemoteHaltedIsAnError pins #250 items 1 and 3 client-side: a
+// StartRound response that says the round could not start -- whether an old
+// server's 201 with a needs_you view, or a new server's 409 round_halted --
+// is reported as an error, and nothing is written locally: a resend must
+// not look like it succeeded.
+func TestSendRemoteHaltedIsAnError(t *testing.T) {
+	newRT := func(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
+		t.Helper()
+		st := store.New(t.TempDir())
+		b := store.Binding{
+			Name:   "api",
+			CWD:    "/fake/repo",
+			Repo:   "/fake/repo",
+			Branch: "relay/api",
+			Round:  1,
+			State:  store.StateActive,
+			Builder: store.Endpoint{
+				Mode:        store.ModeRemote,
+				Server:      "zen",
+				LastShipped: "0000000000000000000000000000000000000000",
+			},
+		}
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		fg := &fakeGit{
+			refSHA: map[string]string{
+				"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+			},
+		}
+		ft := &fakeTransport{
+			snapshotResp: remote.Snapshot{
+				Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+			},
+		}
+		return Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}, st
+	}
+
+	assertNothingWritten := func(t *testing.T, st *store.Store, err error, wantSubstrs ...string) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("Send succeeded, want an error")
+		}
+		for _, want := range wantSubstrs {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Send error = %q, want it to contain %q", err.Error(), want)
+			}
+		}
+		if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
+			t.Errorf("PlanPath exists after failure: stat err = %v", statErr)
+		}
+		entries, _ := st.ReadLog("api")
+		if len(entries) != 0 {
+			t.Errorf("entries = %d, want 0", len(entries))
+		}
+		reloaded, loadErr := st.Load("api")
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if reloaded.State != store.StateActive {
+			t.Errorf("State = %s, want unchanged active", reloaded.State)
+		}
+		if reloaded.Builder.LastShipped != "0000000000000000000000000000000000000000" {
+			t.Errorf("LastShipped = %q, want unchanged", reloaded.Builder.LastShipped)
+		}
+	}
+
+	t.Run("201 needs_you view (old server)", func(t *testing.T) {
+		fr := &fakeRemote{
+			startRoundResp: remote.BindingView{
+				RoundState: remote.RoundNeedsYou,
+				Halt:       "builder spawn failed: boom",
+			},
+		}
+		rt, st := newRT(t, fr)
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
+		assertNothingWritten(t, st, err, "could not start", "boom")
+	})
+
+	t.Run("409 round_halted (new server)", func(t *testing.T) {
+		fr := &fakeRemote{
+			startRoundErr: &client.HTTPError{
+				Status: 409,
+				Body: remote.ErrorBody{
+					Code:    remote.CodeRoundHalted,
+					Message: "already switched 2 time(s) this round (max_switches 2)",
+				},
+			},
+		}
+		rt, st := newRT(t, fr)
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
+		assertNothingWritten(t, st, err, "could not start", "already switched 2 time(s)")
+	})
+}
+
 // TestSendRemoteTierPassedToStartRound pins that a Send with a Tier option
 // reaches StartRound over the wire, after the pre-tier probe succeeds
 // (#141 remote half).

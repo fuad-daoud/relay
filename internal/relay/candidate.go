@@ -192,6 +192,16 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 		if !c.Serves(role) {
 			return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (its roles: %v): %w", token, role, c.Roles, ErrRoleNotServed)
 		}
+		// Unlike every other gate, roles_missing is refused even for an
+		// explicit pick: a candidate whose harness role files are not
+		// installed cannot succeed, so recording-and-proceeding (what
+		// every other explicit-pick gate does) would only spawn it to die
+		// within seconds (#238).
+		for _, g := range gates {
+			if g.Token == c.Ref().String() && g.Kind == ledger.RolesMissing {
+				return Resolution{}, fmt.Errorf("%s: %s", token, g.Note)
+			}
+		}
 		return Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, c.Ref().String())}, nil
 	}
 

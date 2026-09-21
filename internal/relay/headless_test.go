@@ -726,6 +726,38 @@ func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Bi
 	return rt, b
 }
 
+// TestSendResetsRoundBudget pins #250 item 2 for the headless shape: a
+// human's re-send is a fresh attempt, so it clears the round's switch
+// bookkeeping along with Halt/HaltAt.
+func TestSendResetsRoundBudget(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	fr.script(b.Builder.PID, false) // previous round's process no longer running
+	b.RoundSwitches = 1
+	b.RoundExcluded = []string{"x/y/z"}
+	b.HaltNotifiedRound = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it again"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+	if got.RoundExcluded != nil {
+		t.Errorf("RoundExcluded = %v, want nil", got.RoundExcluded)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+	}
+}
+
 // switchHeadless runs switchBuilder on b inside the lock, the way Reconcile does.
 func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, closeOld bool) (store.Binding, error) {
 	t.Helper()
@@ -1071,6 +1103,157 @@ func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
 	}
 }
 
+// TestReconcileHeadlessLostToDaemonRestartRelaunches pins #244 half 1: a
+// builder whose recorded start predates the daemon's own could not have
+// died on its own -- the daemon itself must have taken it down (a systemd
+// restart, a kill -9 of the process tree) before the supervisor could write
+// the relay-exit: trailer. relay relaunches the same candidate on the same
+// round instead of switching, and charges nothing.
+//
+// Mutation check: drop the `Before(rt.StartedAt)` condition in headless.go's
+// `lost` computation (making it always false) and this test must fail.
+func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
+	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2 (the relaunch)", len(fr.specs))
+	}
+	if !reflect.DeepEqual(fr.specs[1].Argv, fr.specs[0].Argv) {
+		t.Errorf("relaunch Argv = %v, want the same as the first: %v", fr.specs[1].Argv, fr.specs[0].Argv)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
+	}
+	if len(got.RoundExcluded) != 0 {
+		t.Errorf("RoundExcluded = %v, want empty", got.RoundExcluded)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active", got.State)
+	}
+	if len(fr.handles) != 2 || got.Builder.PID != fr.handles[1].PID {
+		t.Errorf("PID = %d, want the new handle's pid", got.Builder.PID)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var kinds []store.Kind
+	var switchNote string
+	for _, e := range entries {
+		switch e.Kind {
+		case store.KindExit, store.KindSwitch:
+			kinds = append(kinds, e.Kind)
+		}
+		if e.Kind == store.KindSwitch {
+			switchNote = e.Note
+		}
+	}
+	if len(kinds) != 2 || kinds[0] != store.KindExit || kinds[1] != store.KindSwitch {
+		t.Fatalf("exit/switch entries = %+v, want [exit switch]", kinds)
+	}
+	if !strings.Contains(switchNote, "lost to a daemon restart") || !strings.Contains(switchNote, "picked "+got.BuilderCandidate+" for builder") {
+		t.Errorf("switch note = %q, want it to contain %q and %q", switchNote, "lost to a daemon restart", "picked "+got.BuilderCandidate+" for builder")
+	}
+
+	// Second tick: the relaunched pid is alive, nothing repeats.
+	fr.script(got.Builder.PID, true)
+	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs after second tick = %d, want still 2", len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches pins the
+// negative cases of #244: a builder that started after the daemon (so its
+// death cannot be blamed on a restart) still switches and counts, exactly
+// as before -- and so does one whose daemon start is unknown (zero
+// rt.StartedAt), the control case for every other test in this file.
+func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T) {
+	t.Run("builder started after the daemon: a real death", func(t *testing.T) {
+		f := &fakeHerdr{}
+		fr := newFakeRunner()
+		rt, b := sentHeadless(t, f, fr)
+		rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+		rt.StartedAt = time.Unix(b.Builder.StartedAt-60, 0) // the daemon started before the builder
+		fr.script(b.Builder.PID, false)
+
+		got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if len(fr.specs) != 2 {
+			t.Fatalf("specs = %d, want 2 (the switch)", len(fr.specs))
+		}
+		if got.RoundSwitches != 1 {
+			t.Errorf("RoundSwitches = %d, want 1 (counted)", got.RoundSwitches)
+		}
+		if len(got.RoundExcluded) != 1 || got.RoundExcluded[0] != testAgyRef {
+			t.Errorf("RoundExcluded = %v, want [%s]", got.RoundExcluded, testAgyRef)
+		}
+	})
+
+	t.Run("daemon start unknown (zero)", func(t *testing.T) {
+		f := &fakeHerdr{}
+		fr := newFakeRunner()
+		rt, b := sentHeadless(t, f, fr)
+		rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+		// rt.StartedAt left zero: unknown, so the check cannot fire.
+		fr.script(b.Builder.PID, false)
+
+		got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+		if err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		if len(fr.specs) != 2 {
+			t.Fatalf("specs = %d, want 2 (the switch)", len(fr.specs))
+		}
+		if got.RoundSwitches != 1 {
+			t.Errorf("RoundSwitches = %d, want 1 (counted)", got.RoundSwitches)
+		}
+		if len(got.RoundExcluded) != 1 || got.RoundExcluded[0] != testAgyRef {
+			t.Errorf("RoundExcluded = %v, want [%s]", got.RoundExcluded, testAgyRef)
+		}
+	})
+}
+
+// TestReconcileHeadlessLostToDaemonRestartRelaunchFails pins the failure
+// path: the daemon recognizes the loss but cannot relaunch (e.g. the
+// binary vanished); the binding halts naming both facts, and nothing is
+// charged.
+func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, f, fr)
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
+	fr.script(b.Builder.PID, false)
+	fr.startErr = errors.New("boom: no such binary")
+
+	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "lost to a daemon restart") || !strings.Contains(got.Halt, "could not be relaunched") {
+		t.Errorf("Halt = %q, want it to contain %q and %q", got.Halt, "lost to a daemon restart", "could not be relaunched")
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
+	}
+}
+
 func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
 	f := &fakeHerdr{}
 	fr := newFakeRunner()
@@ -1088,6 +1271,9 @@ func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
 	}
 	if got.State != store.StateNeedsYou {
 		t.Errorf("state = %s, want needs_you at the switch limit", got.State)
+	}
+	if got.Halt == "" {
+		t.Error("Halt is empty, want the max_switches reason recorded")
 	}
 	if len(fr.specs) != 1 {
 		t.Errorf("no replacement may start past the limit: specs = %d", len(fr.specs))

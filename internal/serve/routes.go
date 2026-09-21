@@ -33,6 +33,14 @@ func writeErr(w http.ResponseWriter, status int, code remote.Code, msg string) {
 	})
 }
 
+// orText returns s, or fallback when s is empty.
+func orText(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
+}
+
 // ownerLabel is the request log's owner field: the caller's enrolled label,
 // falling back to its id prefix (Clients.LabelOf), or "-" when the request
 // never authenticated at all -- caller is the zero ClientID on a signature
