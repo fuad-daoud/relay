@@ -637,6 +637,21 @@ What is different from a pane builder:
   service (and, when readable, its session count from opencode.db) whenever
   `~/.config/opencode/service.json` exists.
 
+**Scopes.** A local headless round runs in its own transient systemd scope
+named `relay-round-local-<binding>-<round>` (an owned remote binding uses its
+owner's id where `local` sits). It is a *sibling* of `relay.service`, not a
+child: `systemctl --user restart relay` -- what `make service` does -- leaves a
+running round alone instead of killing it, so a restart no longer looks to
+relay like a builder that "exited without a report". With no `scope` block
+configured this is the whole change: a local headless builder moves out of
+`relay.service`'s cgroup into its own scope, with no quota and no memory cap --
+only its location, and with it restart survival. `policy.json`'s top-level
+`scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
+`cpu_quota`, `memory_max`, `tasks_max`); `serve.scope` replaces that block
+entirely for served rounds, and `scope: {"enabled": false}` opts out. On a host
+without a usable systemd user manager relay logs one warning and runs builders
+unscoped, in `relay.service`'s cgroup, exactly as before.
+
 ### Progress labels
 
 relay keeps a progress clock on every local binding with an open round and

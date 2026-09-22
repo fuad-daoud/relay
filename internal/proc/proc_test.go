@@ -436,3 +436,109 @@ func TestStartStripsDeniedEnv(t *testing.T) {
 		t.Errorf("stream does not contain r=keep: %q", out)
 	}
 }
+
+// TestStartFallsBackWhenScopeProbeFails pins §3.1's fallback (#295): the
+// first Start carrying a Scope probes systemd-run (a stub here -- the real
+// one does not exist in CI), the probe fails, and the spawn still happens,
+// unwrapped, with the normal exit trailer and a readable exit code. The
+// command really runs: it writes a line only the builder could write.
+func TestStartFallsBackWhenScopeProbeFails(t *testing.T) {
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "#!/bin/sh\necho 'Failed to start transient scope unit: Permission denied' >&2\nexit 1\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "sleep 1; echo ran-unscoped"},
+		LogPath: log, StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	alive, err := r.Alive(context.Background(), h)
+	if err != nil || !alive {
+		t.Fatalf("Alive right after Start = %v, %v; want true, nil", alive, err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "ran-unscoped") {
+		t.Errorf("stream = %q; want the builder's own output, so the fallback really ran it", got)
+	}
+	if !strings.Contains(got, "\n"+ExitTrailer+"0\n") {
+		t.Errorf("stream = %q; want the normal %s0 trailer", got, ExitTrailer)
+	}
+	code, ok := r.ExitCode(context.Background(), h, stream)
+	if !ok || code != 0 {
+		t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
+	}
+	if alive, err := r.Alive(context.Background(), h); err != nil || alive {
+		t.Errorf("Alive after exit = %v, %v; want false, nil", alive, err)
+	}
+}
+
+// TestStartProbesOnlyOnce pins §3.1's sync.Once (#295): a Runner asked for a
+// scope probes exactly once, however many scoped Starts follow. The stub
+// appends a line to a file for every invocation, so the count is the
+// verdict.
+func TestStartProbesOnlyOnce(t *testing.T) {
+	stubDir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	writeStub(t, stubDir, "#!/bin/sh\necho called >> \""+calls+"\"\necho 'Failed to start transient scope unit: Permission denied' >&2\nexit 1\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100}
+	for i := 0; i < 2; i++ {
+		dir := t.TempDir()
+		h, err := r.Start(context.Background(), relay.ProcSpec{
+			Dir: dir, Argv: []string{"sh", "-c", "true"},
+			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+			Scope: scope,
+		})
+		if err != nil {
+			t.Fatalf("Start %d: %v", i, err)
+		}
+		waitGone(t, r, h, 5*time.Second)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatalf("read the stub's call log: %v", err)
+	}
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Errorf("systemd-run stub called %d times; want exactly 1 probe for the Runner's lifetime", got)
+	}
+}
+
+// TestStartWithoutScopeNeverProbes pins §3.1's laziness (#295): a Runner
+// whose specs carry no Scope must never shell out to systemd-run at all.
+func TestStartWithoutScopeNeverProbes(t *testing.T) {
+	stubDir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	writeStub(t, stubDir, "#!/bin/sh\necho called >> \""+calls+"\"\nexit 1\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	for i := 0; i < 2; i++ {
+		dir := t.TempDir()
+		h, err := r.Start(context.Background(), relay.ProcSpec{
+			Dir: dir, Argv: []string{"sh", "-c", "true"},
+			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+		})
+		if err != nil {
+			t.Fatalf("Start %d: %v", i, err)
+		}
+		waitGone(t, r, h, 5*time.Second)
+	}
+	if data, err := os.ReadFile(calls); err == nil && strings.TrimSpace(string(data)) != "" {
+		t.Errorf("systemd-run stub was called (%q); a Runner never asked for a scope must never probe", data)
+	}
+}
