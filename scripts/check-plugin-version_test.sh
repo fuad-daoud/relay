@@ -4,7 +4,11 @@ set -eu
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+# The cleanup must not decide the verdict: in dash (Ubuntu's /bin/sh) a
+# failing EXIT trap's status replaces the script's own, so a teardown hiccup
+# reads exactly like a test failure to `sh "$t" || exit 1` in the Makefile
+# (#304).
+trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 
 # Build a fake repo root with all four manifests at the given versions.
 # $3 (plugin.json) and $4 (marketplace.json) default to $1 so every existing
@@ -32,6 +36,12 @@ stage_repo() {
 		git config user.email test@example.com
 		git config commit.gpgsign false
 		git config tag.gpgsign false
+		# Every `git commit` otherwise spawns `git maintenance run --auto
+		# --quiet --detach`, which outlives this subshell and writes under
+		# .git/objects while the EXIT trap is removing the tree -- `rm` then
+		# fails ENOTEMPTY (#304).
+		git config maintenance.auto false
+		git config gc.auto 0
 		git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false commit --allow-empty -q -m "chore: release v$1"
 		git -c tag.gpgsign=false tag "v$1"
 		i=1
