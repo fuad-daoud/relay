@@ -150,7 +150,7 @@ A verification or gate command -- the plan's check line, `make check`, `go test`
 
 1. Parse the plan: read every step; identify inputs, outputs, and dependencies.
 2. Identify what you need to understand before editing, and read the files
-   yourself, sequentially.
+   yourself, in as few batched steps as possible.
 3. Execute the plan's steps yourself, in order, honouring every stated
    dependency. A step that consumes another's output, edits the same files, or
    assumes prior changes exist must run after it.
