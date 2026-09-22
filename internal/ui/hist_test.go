@@ -76,7 +76,7 @@ func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding)
 		t.Fatalf("archive Ingest: %v", err)
 	}
 
-	rt := relay.Runtime{Store: store.New(t.TempDir()), Herdr: newFakeHerdr(t), DB: d}
+	rt := relay.Runtime{Store: store.New(t.TempDir()), DB: d}
 
 	rows, err := relay.Bindings(context.Background(), rt, "")
 	if err != nil {

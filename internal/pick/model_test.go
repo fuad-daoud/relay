@@ -94,7 +94,7 @@ func TestCtrlCCancelsFromAnyScreen(t *testing.T) {
 }
 
 func TestEnterRunsDoneAndShowsItsText(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh, testBinding("webshop"))
 	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
@@ -123,7 +123,7 @@ func TestEnterRunsDoneAndShowsItsText(t *testing.T) {
 }
 
 func TestEnterRunsUnbindWithArchive(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh, testBinding("webshop"))
 	m := newModel(context.Background(), rt, Options{Verb: VerbUnbind, Archive: true})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
@@ -143,7 +143,7 @@ func TestEnterRunsUnbindWithArchive(t *testing.T) {
 }
 
 func TestVerbErrorShowsAndExitsOne(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh) // no binding named webshop
 	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
@@ -158,7 +158,7 @@ func TestVerbErrorShowsAndExitsOne(t *testing.T) {
 }
 
 func TestKeysAreIgnoredWhileTheVerbRuns(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh, testBinding("webshop"))
 	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
@@ -174,7 +174,7 @@ func TestKeysAreIgnoredWhileTheVerbRuns(t *testing.T) {
 }
 
 func TestEnterOnLiveRowAsksBeforeDone(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh, testBinding("webshop"))
 	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
@@ -217,7 +217,7 @@ func TestConfirmViewNamesTheBindingItsStateAndRound(t *testing.T) {
 }
 
 func TestAnyKeyButYReturnsToTheList(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	rt := testRuntime(t, fh, testBinding("a"), testBinding("b"))
 	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("a", "ACTIVE", "working"), row("b", "ACTIVE", "working")))
@@ -250,7 +250,7 @@ func TestAnyKeyButYReturnsToTheList(t *testing.T) {
 }
 
 func TestUnbindOnDoneRowRunsWithoutConfirm(t *testing.T) {
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	done := testBinding("old")
 	done.State = store.StateDone
 	rt := testRuntime(t, fh, done)

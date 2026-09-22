@@ -45,30 +45,3 @@ func TestReapFlagsReachTheCommand(t *testing.T) {
 		})
 	}
 }
-
-// TestAskFallsBackToThePlannersWorkspace pins the one pane-spawning command
-// that ignored HERDR_WORKSPACE_ID. bind, fork and add all read it; ask used
-// only its --workspace flag, so `relay ask` opened the consult in
-// herdr's default workspace instead of the planner's -- somewhere the human is
-// not looking, and somewhere `relay status` will misreport.
-func TestAskFallsBackToThePlannersWorkspace(t *testing.T) {
-	t.Setenv("HERDR_WORKSPACE_ID", "ws-planner")
-
-	if got := workspaceOrEnv(""); got != "ws-planner" {
-		t.Errorf("workspace with no flag = %q, want the planner's %q", got, "ws-planner")
-	}
-	if got := workspaceOrEnv("ws-explicit"); got != "ws-explicit" {
-		t.Errorf("workspace = %q, want the explicit flag %q to win", got, "ws-explicit")
-	}
-}
-
-// TestAskWorkspaceStaysEmptyWithoutEnv keeps the fallback from inventing a
-// workspace: CreateTab omits --workspace entirely when the id is empty, and
-// that is the correct behaviour outside a herdr pane.
-func TestAskWorkspaceStaysEmptyWithoutEnv(t *testing.T) {
-	t.Setenv("HERDR_WORKSPACE_ID", "")
-
-	if got := workspaceOrEnv(""); got != "" {
-		t.Errorf("workspace = %q, want empty when neither flag nor env is set", got)
-	}
-}

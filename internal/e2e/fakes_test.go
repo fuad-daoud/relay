@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
@@ -45,22 +46,6 @@ func (f *fakePanes) Prompt(ctx context.Context, target, text string) error {
 	return nil
 }
 
-func (f *fakePanes) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.notices = append(f.notices, title)
-	return nil
-}
-
-func (f *fakePanes) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.metadata = append(f.metadata, struct {
-		Pane string
-	}{Pane: paneID, Meta: m})
-	return nil
-}
-
 func (f *fakePanes) SendKeys(ctx context.Context, target, keys string) error {
 	return errors.New("not in e2e")
 }
@@ -83,10 +68,6 @@ func (f *fakePanes) StartAgent(ctx context.Context, name, kind, paneID string, a
 
 func (f *fakePanes) ClosePane(ctx context.Context, paneID string) error {
 	return errors.New("not in e2e")
-}
-
-func (f *fakePanes) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
-	return nil, herdr.ErrNoSocket
 }
 
 type scriptRunner struct {

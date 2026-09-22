@@ -14,8 +14,9 @@ import (
 
 func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	name := "webshop"
@@ -54,8 +55,9 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 
 func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -131,8 +133,9 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 
 func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	name := "webshop"
@@ -170,8 +173,9 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 
 func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -213,8 +217,9 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 
 func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	// width 80 (stack layout): this test predates footerView's width-aware
 	// left/right layout and was built at width 0, which the new footerView

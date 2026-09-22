@@ -18,7 +18,7 @@ type fakePanes struct {
 	readTargets []string
 }
 
-func newFakeHerdr(t *testing.T) *fakePanes {
+func newFakePanes(t *testing.T) *fakePanes {
 	return &fakePanes{t: t}
 }
 
@@ -57,21 +57,7 @@ func (f *fakePanes) StartAgent(_ context.Context, _, _, _ string, _ []string) er
 	return errors.New("read-only violation: StartAgent called")
 }
 
-func (f *fakePanes) Notify(_ context.Context, _, _ string, _ herdr.Sound) error {
-	f.t.Errorf("read-only violation: Notify called")
-	return errors.New("read-only violation: Notify called")
-}
-
-func (f *fakePanes) ReportMetadata(_ context.Context, _ string, _ herdr.PaneMetadata) error {
-	f.t.Errorf("read-only violation: ReportMetadata called")
-	return errors.New("read-only violation: ReportMetadata called")
-}
-
 func (f *fakePanes) ClosePane(_ context.Context, _ string) error {
 	f.t.Errorf("read-only violation: ClosePane called")
 	return errors.New("read-only violation: ClosePane called")
-}
-
-func (f *fakePanes) Subscribe(_ context.Context, _ []string) (<-chan herdr.Event, error) {
-	return nil, herdr.ErrNoSocket
 }

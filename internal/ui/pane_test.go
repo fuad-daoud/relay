@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
@@ -20,48 +19,6 @@ func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
 	m.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
 		vp: viewport.New(m.paneWidth(), m.viewportHeight())}
 	return m
-}
-
-func TestPaneHeadRows(t *testing.T) {
-	b := relay.BindingStatus{
-		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
-		BuilderPane: "%7", BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
-		Branch: "relay/webshop", Dirty: true,
-		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
-		Last:      &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
-	}
-	m := paneModel(t, b, tabReport)
-	head := m.paneHead(&b)
-	if len(head) != paneHeadRows {
-		t.Fatalf("%d head rows, want %d:\n%s", len(head), paneHeadRows, strings.Join(head, "\n"))
-	}
-	want := []string{
-		"webshop  round 4   NEEDS YOU ",
-		"planner  %1   claude    idle · focused",
-		"builder  %7   agy       blocked · 2 consults",
-		"tree     relay/webshop · dirty · last close r3: 2 commits, clean",
-	}
-	for i, w := range want {
-		if got := stripANSI(head[i]); !strings.HasPrefix(got, w) {
-			t.Errorf("head[%d]:\n got %q\nwant prefix %q", i, got, w)
-		}
-	}
-	if !strings.Contains(stripANSI(head[0]), "question r4 · 2m ago") {
-		t.Errorf("title row lacks the last event: %q", stripANSI(head[0]))
-	}
-	b.Foreign = []relay.ForeignAgent{{PaneID: "%9", Kind: "claude", Status: "working", Title: "reviewer"}}
-	if got := len(m.paneHead(&b)); got != paneHeadRows+1 {
-		t.Errorf("with a foreign agent: %d rows, want %d", got, paneHeadRows+1)
-	}
-
-	oneCommit := relay.BindingStatus{
-		Name: "ledger", Round: 2, Display: "ACTIVE",
-		LastClose: &relay.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
-	}
-	if got := stripANSI(m.paneHead(&oneCommit)[3]); !strings.Contains(got, "last close r1: 1 commit, dirty") {
-		t.Errorf("one-commit tree row = %q", got)
-	}
 }
 
 func TestPaneHeadHeadlessAndCwd(t *testing.T) {

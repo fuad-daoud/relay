@@ -202,7 +202,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 
 	// 1. server, client (enrolled), repo.
 	srv, url, fp, enroll, srvStore, runner := newServer(t)
-	rt, hd, kp := newClient(t, url, fp)
+	rt, _, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
@@ -318,18 +318,13 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	// 1 commit on relay/api; the client repo's relay/api is one commit ahead of init with hello.txt;
 	// the server view (via rt.Remote.GetBinding) has acked_round == 1 and round_state == idle;
 	// client Builder.RemoteStatus == "idle"; BuilderCandidate equals the server's candidate token.
-	hd.mu.Lock()
-	prompts := make([]struct{ Target, Text string }, len(hd.prompts))
-	copy(prompts, hd.prompts)
-	hd.mu.Unlock()
-
-	if len(prompts) != 1 {
-		t.Fatalf("step 3: prompts = %d, want 1", len(prompts))
+	// SPIKE(#303): no pane delivery -- the report waits in the planner's
+	// mailbox for the channel (drain.go) or `relay pull`.
+	pending, found, err := rt.Store.PendingForPlanner("api")
+	if err != nil || !found {
+		t.Fatalf("step 3: pending report = %v, %v; want one queued", found, err)
 	}
-	if prompts[0].Target != "p1" {
-		t.Fatalf("step 3: prompt target = %q, want p1", prompts[0].Target)
-	}
-	pText := prompts[0].Text
+	pText := pending.Payload
 	for _, substr := range []string{"Report:", "Diff: 1 file", "1 commit on relay/api"} {
 		if !strings.Contains(pText, substr) {
 			t.Fatalf("step 3: prompt text missing %q; got:\n%s", substr, pText)
@@ -391,7 +386,7 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	ctx := context.Background()
 
 	srv, url, fp, enroll, srvStore, runner := newServer(t)
-	rt, hd, kp := newClient(t, url, fp)
+	rt, _, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
@@ -458,12 +453,9 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 		return false
 	})
 
-	// exactly one prompt to the planner, acked_round == 1
-	hd.mu.Lock()
-	promptCount := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptCount != 1 {
-		t.Fatalf("step 3: prompts = %d, want 1", promptCount)
+	// exactly one report queued for the planner, acked_round == 1
+	if _, found, err := rt.Store.PendingForPlanner("api"); err != nil || !found {
+		t.Fatalf("step 3: pending report = %v, %v; want one queued", found, err)
 	}
 
 	sv, err = rt.Remote.GetBinding(ctx, "zen", "api")
@@ -491,13 +483,6 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	}
 	if reportEntries != 1 {
 		t.Fatalf("step 4: report entries count = %d, want 1", reportEntries)
-	}
-
-	hd.mu.Lock()
-	promptCountAfter := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptCountAfter != 1 {
-		t.Fatalf("step 4: prompts after second batch = %d, want 1", promptCountAfter)
 	}
 }
 
@@ -642,17 +627,13 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 		t.Fatalf("step 3: state is orphaned")
 	}
 
-	// then one daemon Tick delivers it (one prompt)
+	// then one daemon Tick leaves it queued for the planner's channel
 	clientDaemon := relay.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 4: clientDaemon.Tick: %v", err)
 	}
-
-	hd.mu.Lock()
-	promptsAfter := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptsAfter != 1 {
-		t.Fatalf("step 4: prompts count after daemon tick = %d, want 1", promptsAfter)
+	if _, found, err := rt.Store.PendingForPlanner("api"); err != nil || !found {
+		t.Fatalf("step 4: pending report = %v, %v; want one queued", found, err)
 	}
 }
 

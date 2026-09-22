@@ -22,7 +22,7 @@ type stubHerdr struct {
 	err    error
 }
 
-func (s *stubHerdr) ListAgents(ctx context.Context) ([]stubAgent, error)   { return s.agents, s.err }
+func (s *stubHerdr) ListAgents(ctx context.Context) ([]stubAgent, error)     { return s.agents, s.err }
 func (s *stubHerdr) Prompt(ctx context.Context, target, text string) error   { return nil }
 func (s *stubHerdr) SendKeys(ctx context.Context, target, keys string) error { return nil }
 func (s *stubHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
@@ -37,16 +37,7 @@ func (s *stubHerdr) CreateTab(ctx context.Context, workspaceID, cwd, label strin
 func (s *stubHerdr) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {
 	return nil
 }
-func (s *stubHerdr) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
-	return nil
-}
-func (s *stubHerdr) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
-	return nil
-}
 func (s *stubHerdr) ClosePane(ctx context.Context, paneID string) error { return nil }
-func (s *stubHerdr) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
-	return nil, herdr.ErrNoSocket
-}
 
 // stubRunner implements relay.Runner with no-op stubs, for a headless
 // binding whose PID is 0 (Alive is never actually called on that path, but
@@ -233,7 +224,7 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 // Text made it through as the one field set.
 func TestRelayVerbsAnswerForwardsToRelayAnswer(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
 		Planner: store.Endpoint{PaneID: "w2:p3"},
@@ -253,7 +244,7 @@ func TestRelayVerbsAnswerForwardsToRelayAnswer(t *testing.T) {
 // alongside the structured DoneResult.
 func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
 		Planner: store.Endpoint{PaneID: "w2:p3"},
@@ -285,7 +276,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 
 func TestRelayVerbsDoneErrorPropagates(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
 
 	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {

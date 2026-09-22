@@ -18,8 +18,9 @@ import (
 
 func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -72,8 +73,9 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 
 func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -102,8 +104,9 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 
 func TestScrollParkAndRestore(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -171,8 +174,9 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 
 func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -204,8 +208,9 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 
 func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -233,8 +238,9 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 
 func TestPanicOnShrinkingContent(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.ready = true
@@ -272,8 +278,9 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 
 func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.ready = true
@@ -308,8 +315,9 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 
 func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -342,8 +350,9 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 
 func TestInvalidationResetsParkedOffset(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	fh := newFakePanes(t)
+	_ = fh
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -390,10 +399,10 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 
 func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	fh.agents = []stubAgent{{PaneID: "w2:p4"}}
 	fh.readOut = "terminal output"
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -439,10 +448,10 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 
 func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
+	fh := newFakePanes(t)
 	fh.agents = []stubAgent{{PaneID: "w2:p4"}}
 	fh.readOut = "terminal content"
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)

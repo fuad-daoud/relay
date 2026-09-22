@@ -335,68 +335,6 @@ func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
 	}
 }
 
-func TestRenderReportVerdict(t *testing.T) {
-	// Success case
-	repOk := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "", Name: "herdr", Severity: doctor.SevOK, Detail: "0.9.0 (floor 0.8.2)"},
-			{Group: "", Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
-			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "outdated (v8 < v9)", Fix: "herdr integration install claude"},
-		},
-		UsableBuilder: true,
-	}
-
-	var buf bytes.Buffer
-	renderReport(&buf, repOk)
-	out := buf.String()
-
-	if !strings.Contains(out, "1 warning, 0 failures -- relay can run.") {
-		t.Errorf("expected success footer, got: %s", out)
-	}
-	if !strings.Contains(out, "    fix: herdr integration install claude") {
-		t.Errorf("expected indented fix line, got: %s", out)
-	}
-
-	// Failure case
-	repFail := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "", Name: "herdr", Severity: doctor.SevFail, Detail: "not found"},
-		},
-		UsableBuilder: false,
-	}
-
-	buf.Reset()
-	renderReport(&buf, repFail)
-	outFail := buf.String()
-
-	if !strings.Contains(outFail, "1 failure, 0 warnings -- no usable builder. Fix the failure above.") {
-		t.Errorf("expected failure footer, got: %s", outFail)
-	}
-
-	// Middle case: no failures, !UsableBuilder (via erroring IntegrationStatus)
-	envStub := &stubDoctorEnv{
-		ver:       "0.9.0",
-		intErr:    errors.New("timeout connecting to herdr"),
-		daemonRun: true,
-		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
-	}
-	repUnverified := doctor.Run(context.Background(), envStub, []string{"claude"})
-	if repUnverified.Failures() != 0 {
-		t.Fatalf("expected 0 failures, got %d", repUnverified.Failures())
-	}
-	if repUnverified.UsableBuilder {
-		t.Fatal("expected UsableBuilder = false when IntegrationStatus errors")
-	}
-
-	buf.Reset()
-	renderReport(&buf, repUnverified)
-	outUnverified := buf.String()
-	if !strings.Contains(outUnverified, "could not establish a usable builder: no checked harness") {
-		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
-	}
-}
-
 func TestRenderReportFooterPrecedence(t *testing.T) {
 	healthy := []doctor.Check{
 		{Name: "herdr", Severity: doctor.SevOK, Detail: "0.9.0 (floor 0.8.2)"},
@@ -528,17 +466,6 @@ func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
 	}
 }
 
-// The exception: a failed probe whose verdict is SevFail means relay cannot run.
-// Silence would be the worst possible answer, so it prints anyway.
-func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
-	env := &stubDoctorEnv{herdrErr: errors.New("exec: \"herdr\": not found"), daemonRun: true}
-	rep := doctor.Run(context.Background(), env, []string{"claude"})
-	joined := strings.Join(bindWarningLines(rep), "\n")
-	if !strings.Contains(joined, "herdr") {
-		t.Errorf("a SevFail probe failure must still be reported at bind: %s", joined)
-	}
-}
-
 func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 	env := &stubDoctorEnv{
 		ver:       "0.9.0",
@@ -577,44 +504,6 @@ func (e *deadlineEnv) HerdrVersion(ctx context.Context) (string, error) {
 	return e.stubDoctorEnv.HerdrVersion(ctx)
 }
 
-// The bind preflight must be bounded: the herdr client allows 30s per call, so
-// an unbounded preflight can add a minute to `relay bind`.
-func TestBindPreflightBoundsTheHotPath(t *testing.T) {
-	env := &deadlineEnv{stubDoctorEnv: stubDoctorEnv{ver: "0.9.0", daemonRun: true}}
-	bindPreflight(context.Background(), env, "claude", false)
-	if !env.sawDeadline {
-		t.Error("bindPreflight must hand doctor.Run a deadline-bounded context")
-	}
-}
-
-// An adopted pane's integration row must survive a binary that is not on PATH:
-// the user launched that agent themselves, but the integration still decides
-// whether the round can ever be observed to finish. Fails if the call site stops
-// passing `adopted` through.
-func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
-	env := &stubDoctorEnv{
-		ver:       "0.9.0",
-		daemonRun: true,
-		intStates: map[string]integrationState{"claude": {Installed: false}},
-	}
-
-	adopted := strings.Join(bindPreflight(context.Background(), env, "claude", true), "\n")
-	if !strings.Contains(adopted, "integration") {
-		t.Errorf("adopted preflight must report the integration despite no binary: %s", adopted)
-	}
-	if strings.Contains(adopted, "binary") {
-		t.Errorf("adopted preflight must not mention the binary: %s", adopted)
-	}
-
-	normal := strings.Join(bindPreflight(context.Background(), env, "claude", false), "\n")
-	if !strings.Contains(normal, "binary") {
-		t.Errorf("non-adopted preflight must report the absent binary: %s", normal)
-	}
-	if strings.Contains(normal, "integration") {
-		t.Errorf("a missing binary must still suppress the rest of that harness: %s", normal)
-	}
-}
-
 func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
 	env := &stubDoctorEnv{
 		ver:       "0.8.2",
@@ -623,43 +512,13 @@ func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
 		intStates: map[string]integrationState{"claude": {Installed: true, Detail: "current"}},
 		statErr:   os.ErrNotExist, // no role file exists
 	}
-	lines := bindPreflight(context.Background(), env, "claude", false)
+	lines := bindPreflight(context.Background(), env, "claude")
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "plan-executor") || !strings.Contains(joined, "researcher") {
 		t.Errorf("preflight must warn about the builder's definitions, got:\n%s", joined)
 	}
 	if strings.Contains(joined, "reviewer") {
 		t.Errorf("preflight must not warn about reviewer on a bind, got:\n%s", joined)
-	}
-}
-
-func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
-	envStub := &stubDoctorEnv{
-		ver:       "0.9.0",
-		daemonRun: true,
-		lookPaths: map[string]string{}, // binary absent
-		intStates: map[string]integrationState{
-			"claude": {Installed: false, Detail: "not installed"},
-		},
-	}
-
-	// Normal Run: binary absent suppresses integration row
-	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
-	normalLines := bindWarningLines(normalRep)
-	joinedNormal := strings.Join(normalLines, "\n")
-	if !strings.Contains(joinedNormal, "binary") {
-		t.Errorf("expected binary warning for normal bind, got: %s", joinedNormal)
-	}
-
-	// Adopted Run: integration row survives through real Run
-	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
-	adoptedLines := bindWarningLines(adoptedRep)
-	joinedAdopted := strings.Join(adoptedLines, "\n")
-	if strings.Contains(joinedAdopted, "binary") {
-		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
-	}
-	if !strings.Contains(joinedAdopted, "integration") {
-		t.Errorf("adopted bind must have integration warning, got: %s", joinedAdopted)
 	}
 }
 

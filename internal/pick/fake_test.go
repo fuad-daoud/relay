@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -23,7 +24,7 @@ type fakePanes struct {
 	keys []sentKeys
 }
 
-func newFakeHerdr(t *testing.T) *fakePanes { return &fakePanes{t: t} }
+func newFakePanes(t *testing.T) *fakePanes { return &fakePanes{t: t} }
 
 func (f *fakePanes) ListAgents(_ context.Context) ([]stubAgent, error) {
 	return f.agents, f.listErr
@@ -59,23 +60,9 @@ func (f *fakePanes) StartAgent(_ context.Context, _, _, _ string, _ []string) er
 	return errors.New("StartAgent called")
 }
 
-func (f *fakePanes) Notify(_ context.Context, _, _ string, _ herdr.Sound) error {
-	f.t.Errorf("pick never notifies: Notify called")
-	return errors.New("Notify called")
-}
-
-func (f *fakePanes) ReportMetadata(_ context.Context, _ string, _ herdr.PaneMetadata) error {
-	f.t.Errorf("pick never reports metadata: ReportMetadata called")
-	return errors.New("ReportMetadata called")
-}
-
 func (f *fakePanes) ClosePane(_ context.Context, _ string) error {
 	f.t.Errorf("pick never closes panes: ClosePane called")
 	return errors.New("ClosePane called")
-}
-
-func (f *fakePanes) Subscribe(_ context.Context, _ []string) (<-chan herdr.Event, error) {
-	return nil, herdr.ErrNoSocket
 }
 
 // testBinding is a bound, active binding whose builder herdr knows by name.
@@ -107,7 +94,7 @@ func testRuntime(t *testing.T, fh *fakePanes, bindings ...store.Binding) relay.R
 			t.Fatalf("Save %s: %v", b.Name, err)
 		}
 	}
-	return relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
+	return relay.Runtime{Store: st, Now: time.Now}
 }
 
 // rowsMsg builds the statusMsg the list would receive for these rows.
