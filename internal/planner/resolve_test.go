@@ -31,6 +31,10 @@ func TestResolveOrder(t *testing.T) {
 	reg := testRegistry(t)
 	alpha := mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-a", 101))
 	beta := mustCreate(t, reg, record("pl_bbbbbbbbbbbb", "beta", "claude", "sess-b", 102))
+	// §3.5's legacy shape: a record whose id is a ULID lives at
+	// <ULID>.json, and a flag naming that id resolves it by id -- a ULID is
+	// uppercase and so can never be a valid (lowercase) name.
+	legacy := mustCreate(t, reg, record("01M3252956S27X5G5MPVM77PJ7", "legacy", "claude", "sess-c", 103))
 
 	claudeAt := func(pid int, session string) map[string]string {
 		return map[string]string{
@@ -66,6 +70,17 @@ func TestResolveOrder(t *testing.T) {
 				ProcStart: procStartAt(0),
 			},
 			wantID:  alpha.ID,
+			wantRes: ResolutionFlag,
+		},
+		{
+			name: "flag by a legacy ULID id",
+			in: ResolveInput{
+				Flag:      legacy.ID,
+				Env:       envFunc(map[string]string{}),
+				PPID:      999,
+				ProcStart: procStartAt(0),
+			},
+			wantID:  legacy.ID,
 			wantRes: ResolutionFlag,
 		},
 		{

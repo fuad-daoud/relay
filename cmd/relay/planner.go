@@ -172,13 +172,20 @@ func plannerInitHook(nameFlag string) error {
 	// The export line is how every later Bash call in the session learns its
 	// planner (§3.4). Appending, never truncating: Claude Code reads the whole
 	// file, and it may already carry lines from other tools.
+	//
+	// With no $CLAUDE_ENV_FILE there is nowhere to export to, so the answer
+	// says so in additionalContext instead of pretending the export happened
+	// (§3.4): relay then resolves the session through the host process.
+	out := planner.HookOutput(rec)
 	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
 		if err := appendEnvLine(envFile, planner.EnvLine(rec.ID)); err != nil {
 			return plannerInitHookFailure(err)
 		}
+	} else {
+		out = planner.HookOutputNoEnv(rec)
 	}
 
-	_, _ = os.Stdout.Write(planner.HookOutput(rec))
+	_, _ = os.Stdout.Write(out)
 	return nil
 }
 

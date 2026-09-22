@@ -146,6 +146,50 @@ func TestPlannerInitHookWritesEnvFile(t *testing.T) {
 	}
 }
 
+// TestPlannerInitHookWithoutEnvFileSaysSo pins §3.4's rule for an unset
+// $CLAUDE_ENV_FILE: `init --hook` still registers and exits 0, and its
+// additionalContext says RELAY_PLANNER could not be exported and that relay
+// resolves the session through its host process instead.
+func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	t.Setenv("CLAUDE_CODE_AGENT", "architect")
+
+	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"sess-noenv","cwd":"/tmp/planner-cwd"}`
+	stdout, _, err := runWithStdin(t, payload, "planner", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("run = %v, want exit 0", err)
+	}
+
+	var env hookEnvelope
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &env); err != nil {
+		t.Fatalf("stdout is not the hook envelope: %v: %q", err, stdout)
+	}
+	ctx := env.HookSpecificOutput.AdditionalContext
+	if !strings.Contains(ctx, "You are relay planner architect-1 (pl_") {
+		t.Errorf("additionalContext = %q, want it to name the planner", ctx)
+	}
+	if !strings.Contains(ctx, "RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process.") {
+		t.Errorf("additionalContext = %q, want the unset-env-file note", ctx)
+	}
+
+	// Registration still happened: one record is on disk under the state root.
+	entries, err := os.ReadDir(filepath.Join(state, "relay", "planners"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	records := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			records++
+		}
+	}
+	if records != 1 {
+		t.Fatalf("registry holds %d records, want exactly 1", records)
+	}
+}
+
 // TestPlannerVerbsListRenameForget exercises the explicit registration and the
 // three read/manage verbs, including forget's guard: a binding that is not DONE
 // still names the record, so it must be refused.

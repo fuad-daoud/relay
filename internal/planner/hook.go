@@ -65,14 +65,31 @@ type hookEnvelope struct {
 // hookEventName is the event both answers answer.
 const hookEventName = "SessionStart"
 
+// hookContext is the §3.4 sentence naming the planner: the text both hook
+// answers carry.
+func hookContext(r Record) string {
+	return fmt.Sprintf(
+		"You are relay planner %s (%s). RELAY_PLANNER is set in your shell; pass --planner %s only to act as another planner.",
+		r.Name, r.ID, r.Name)
+}
+
+// noEnvNote is §3.4's note for a hook that could not export RELAY_PLANNER.
+const noEnvNote = "RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process."
+
 // HookOutput is what `relay planner init --hook claude` prints on success: the
 // JSON envelope that tells the model which planner it is (§3.4). The context
 // text is written verbatim from the spec, and the trailing newline because
 // this is stdout for a shell to read.
 func HookOutput(r Record) []byte {
-	return encodeHookContext(fmt.Sprintf(
-		"You are relay planner %s (%s). RELAY_PLANNER is set in your shell; pass --planner %s only to act as another planner.",
-		r.Name, r.ID, r.Name))
+	return encodeHookContext(hookContext(r))
+}
+
+// HookOutputNoEnv is HookOutput when $CLAUDE_ENV_FILE is unset (§3.4): the
+// same envelope and the same sentence, followed by one space and the note that
+// RELAY_PLANNER could not be exported -- so the model knows relay falls back
+// to resolving this session through its host process.
+func HookOutputNoEnv(r Record) []byte {
+	return encodeHookContext(hookContext(r) + " " + noEnvNote)
 }
 
 // HookNote is the same envelope carrying a failure note. A hook must never

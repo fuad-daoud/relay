@@ -134,6 +134,45 @@ func TestValidName(t *testing.T) {
 	}
 }
 
+// TestValidIDAcceptsLegacyULID pins both id shapes §3.5 needs: the `pl_` ids
+// NewID mints, and the 26-character Crockford base32 ULID every planner id
+// already in a real relay.db has (internal/db/ulid.go's alphabet). A ULID is
+// uppercase, so it can never collide with a name.
+func TestValidIDAcceptsLegacyULID(t *testing.T) {
+	valid := []string{
+		"pl_aaaaaaaaaaaa",
+		"pl_zzzzzzzzzzzz",
+		"01M3252956S27X5G5MPVM77PJ7",
+		"7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+	}
+	for _, id := range valid {
+		if err := ValidID(id); err != nil {
+			t.Errorf("ValidID(%q) = %v, want nil", id, err)
+		}
+	}
+
+	invalid := []string{
+		"01m3252956s27x5g5mpvm77pj7",  // a lowercase ULID is the wrong spelling of the shape
+		"01M3252956S27X5G5MPVM77PJ",   // 25 characters
+		"01M3252956S27X5G5MPVM77PJ77", // 27 characters
+		"01M3252956I27X5G5MPVM77PJ7",  // I is not in the Crockford alphabet
+		"01M3252956L27X5G5MPVM77PJ7",  // L
+		"01M3252956O27X5G5MPVM77PJ7",  // O
+		"01M3252956U27X5G5MPVM77PJ7",  // U
+		"pl_aaaaaaaaaaa",              // pl_ plus 11 characters
+	}
+	for _, id := range invalid {
+		err := ValidID(id)
+		if err == nil {
+			t.Errorf("ValidID(%q) = nil, want an error", id)
+			continue
+		}
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("ValidID(%q) = %v, want ErrInvalid", id, err)
+		}
+	}
+}
+
 func TestDefaultNamePicksSmallestFree(t *testing.T) {
 	taken := func(names ...string) func(string) bool {
 		set := make(map[string]bool, len(names))
@@ -175,6 +214,25 @@ func TestHookOutputExactJSON(t *testing.T) {
 
 	if got := EnvLine("pl_aaaaaaaaaaaa"); got != "export RELAY_PLANNER=pl_aaaaaaaaaaaa\n" {
 		t.Errorf("EnvLine = %q", got)
+	}
+}
+
+// TestHookOutputNoEnvExactJSON is §3.4's unset-$CLAUDE_ENV_FILE golden: the
+// same envelope and sentence as HookOutput, followed by one space and the note
+// that RELAY_PLANNER could not be exported.
+func TestHookOutputNoEnvExactJSON(t *testing.T) {
+	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
+
+	want := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner. RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process."}}` + "\n"
+	if got := string(HookOutputNoEnv(rec)); got != want {
+		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)
+	}
+
+	// The two answers agree up to the note, so only the export news differs.
+	normal := hookContext(rec)
+	noEnv := hookContext(rec) + " " + noEnvNote
+	if !strings.HasPrefix(noEnv, normal+" ") || noEnv != normal+" "+noEnvNote {
+		t.Errorf("HookOutputNoEnv context = %q, want the normal text plus %q", noEnv, noEnvNote)
 	}
 }
 

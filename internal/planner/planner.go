@@ -89,9 +89,15 @@ const MaxNameLen = 32
 const MaxSessions = 20
 
 var (
-	// idRe is §3.1's id rule: `pl_` plus 12 lowercase RFC 4648 base32
-	// characters.
+	// idRe is §3.1's id rule for ids NewID mints: `pl_` plus 12 lowercase
+	// RFC 4648 base32 characters.
 	idRe = regexp.MustCompile(`^pl_[a-z2-7]{12}$`)
+	// legacyIDRe is the shape of every planner id that already exists in a
+	// real relay.db: a 26-character Crockford base32 ULID minted by
+	// internal/db/ulid.go (alphabet 0123456789ABCDEFGHJKMNPQRSTVWXYZ, so no
+	// I, L, O or U). §3.5 requires reusing those ids, so ValidID accepts
+	// this shape too.
+	legacyIDRe = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 	// nameRe is §3.1's name rule.
 	nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	// namePrefixRe is what a string must look like to become the `<agent>`
@@ -123,11 +129,15 @@ func NewID(rand io.Reader) (string, error) {
 	return "pl_" + base32Lower.EncodeToString(buf[:])[:idChars], nil
 }
 
-// ValidID reports whether id has §3.1's shape: `pl_` plus 12 lowercase
-// base32 characters.
+// ValidID reports whether id names a planner record: §3.1's `pl_` plus 12
+// lowercase base32 characters, or the 26-character Crockford base32 ULID
+// internal/db/ulid.go mints. The second shape is §3.5's upgrade path -- every
+// id already in relay.db is a ULID, and a record reusing one is
+// `<ULID>.json` on disk. Both shapes are path-safe (no separator, no dot), so
+// an id can never become a path.
 func ValidID(id string) error {
-	if !idRe.MatchString(id) {
-		return fmt.Errorf("planner id %q must be pl_ followed by 12 characters of [a-z2-7]: %w", id, ErrInvalid)
+	if !idRe.MatchString(id) && !legacyIDRe.MatchString(id) {
+		return fmt.Errorf("planner id %q must be pl_ followed by 12 characters of [a-z2-7], or a 26-character Crockford base32 ULID: %w", id, ErrInvalid)
 	}
 	return nil
 }

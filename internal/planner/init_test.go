@@ -2,6 +2,7 @@ package planner
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -98,42 +99,65 @@ func TestInitReattachesBySessionInNewProcess(t *testing.T) {
 
 // TestInitReusesPriorDBID pins §3.5's upgrade path: when the database already
 // has a row for (kind, session), the new record takes that row's id rather
-// than minting one, so history stays joined across the upgrade.
+// than minting one, so history stays joined across the upgrade. Every id in a
+// real relay.db is a 26-character ULID, so that is the shape the path must
+// carry; NewID's `pl_` shape keeps working too.
 func TestInitReusesPriorDBID(t *testing.T) {
-	reg := testRegistry(t)
-
-	const priorID = "pl_zzzzzzzzzzzz"
-	in := initAt(100, "sess-1", testNow)
-	in.PriorID = func(kind, session string) (string, bool) {
-		if kind == "claude" && session == "sess-1" {
-			return priorID, true
-		}
-		return "", false
+	cases := []struct {
+		name    string
+		priorID string
+	}{
+		{name: "legacy ULID id", priorID: "01M3252956S27X5G5MPVM77PJ7"},
+		{name: "minted pl_ id", priorID: "pl_zzzzzzzzzzzz"},
 	}
 
-	rec, res, err := Init(reg, in)
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	if res != InitCreated {
-		t.Errorf("result = %q, want %q", res, InitCreated)
-	}
-	if rec.ID != priorID {
-		t.Errorf("id = %q, want the prior db id %q", rec.ID, priorID)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := testRegistry(t)
 
-	// A prior id for another session is not consulted, and a second init for
-	// the same host and session still re-attaches rather than registering.
-	in.SessionID = "sess-2"
-	if _, ok := in.PriorID("claude", "sess-2"); ok {
-		t.Fatal("test fixtures disagree")
-	}
-	second, res, err := Init(reg, in)
-	if err != nil {
-		t.Fatalf("second Init: %v", err)
-	}
-	if res != InitMoved || second.ID != priorID {
-		t.Errorf("second Init = %q/%s, want moved/%s", res, second.ID, priorID)
+			in := initAt(100, "sess-1", testNow)
+			in.PriorID = func(kind, session string) (string, bool) {
+				if kind == "claude" && session == "sess-1" {
+					return tc.priorID, true
+				}
+				return "", false
+			}
+
+			rec, res, err := Init(reg, in)
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			if res != InitCreated {
+				t.Errorf("result = %q, want %q", res, InitCreated)
+			}
+			if rec.ID != tc.priorID {
+				t.Errorf("id = %q, want the prior db id %q", rec.ID, tc.priorID)
+			}
+
+			// The record is named <id>.json, so a ULID-named record resolved
+			// by Get reads the same file layout a `pl_` id does.
+			if _, err := os.Stat(filepath.Join(reg.Root, tc.priorID+".json")); err != nil {
+				t.Errorf("record file for id %q: %v", tc.priorID, err)
+			}
+			if _, err := reg.Get(tc.priorID); err != nil {
+				t.Errorf("Get(%q): %v", tc.priorID, err)
+			}
+
+			// A prior id for another session is not consulted, and a second
+			// init for the same host and session still re-attaches rather
+			// than registering.
+			in.SessionID = "sess-2"
+			if _, ok := in.PriorID("claude", "sess-2"); ok {
+				t.Fatal("test fixtures disagree")
+			}
+			second, res, err := Init(reg, in)
+			if err != nil {
+				t.Fatalf("second Init: %v", err)
+			}
+			if res != InitMoved || second.ID != tc.priorID {
+				t.Errorf("second Init = %q/%s, want moved/%s", res, second.ID, tc.priorID)
+			}
+		})
 	}
 }
 
