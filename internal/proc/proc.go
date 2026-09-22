@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -79,6 +81,15 @@ printf '\nrelay-exit:%s\n' "$rc"`
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
+
+	// probeOnce guards the lazy scope probe (#295): the first Start with a
+	// scoped spec probes systemd-run, and every later Start reuses that
+	// verdict. A Runner that is never asked for a scope never probes.
+	probeOnce sync.Once
+	// scopesOK is the verdict of that one probe: true means scopes work and
+	// scoped specs are launched as scopes, false means every later Start
+	// drops the scope and spawns plainly.
+	scopesOK bool
 }
 
 var _ relay.Runner = (*Runner)(nil)
@@ -145,6 +156,26 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 		return relay.ProcHandle{}, fmt.Errorf("proc: stream: %w", err)
 	}
 	defer streamf.Close()
+
+	// The scope probe is lazy and runs at most once per Runner (#295): a
+	// local CLI verb has no eager startup probe (cmd/relay/serve.go's served
+	// path keeps its own), so the verdict is taken here on the first scoped
+	// Start. A host where systemd-run is missing or refuses gets one warning
+	// and unscoped builders, exactly as before. Start took spec by value, so
+	// clearing Scope here never mutates the caller's struct.
+	if spec.Scope != nil {
+		r.probeOnce.Do(func() {
+			if err := ProbeScopes(ctx, spec.Scope.Slice); err != nil {
+				slog.Warn("scopes unavailable; builders will run in this process's cgroup", "err", err)
+				r.scopesOK = false
+				return
+			}
+			r.scopesOK = true
+		})
+		if !r.scopesOK {
+			spec.Scope = nil // local copy; the caller's spec is not mutated
+		}
+	}
 
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
