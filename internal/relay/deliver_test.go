@@ -262,6 +262,25 @@ func TestDeliverReportsPlannerGone(t *testing.T) {
 	}
 }
 
+// TestDeliverReportsPlannerGoneWithNothingPending pins the case the
+// round-1 reorder broke: a binding whose planner pane is gone must report
+// PlannerGone even when no payload is waiting, because reconcile.go turns
+// that into StateOrphaned. TestDeliverReportsPlannerGone does not cover it
+// -- queuedBinding always seeds a payload.
+func TestDeliverReportsPlannerGoneWithNothingPending(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f) // seedBound queues nothing
+	f.agents = nil
+
+	_, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.PlannerGone {
+		t.Fatalf("want PlannerGone so reconcile marks it ORPHANED, got %+v", got)
+	}
+}
+
 // TestDeliverYieldsToLiveClaim is the daemon-guard test the plan requires:
 // a live claim on the planner's pane must produce an all-false Delivery,
 // with zero prompts, zero notifies, the entry still pending, and the

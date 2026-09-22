@@ -79,26 +79,25 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	if err != nil {
 		return b, Delivery{}, err
 	}
-	if !found {
-		return clearPlannerScreen(b), Delivery{Empty: true, Reason: "nothing pending"}, nil
-	}
 
-	if d, ok := rt.Deliverers[b.Planner.Kind]; ok {
-		text, _ := PushText(pending, os.ReadFile)
-		out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
-		if err != nil {
-			return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)
-		}
-		switch out {
-		case OutcomeDelivered:
-			if err := tx.ConfirmIndex(b.Name, idx); err != nil {
-				return b, Delivery{}, err
+	if found {
+		if d, ok := rt.Deliverers[b.Planner.Kind]; ok {
+			text, _ := PushText(pending, os.ReadFile)
+			out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
+			if err != nil {
+				return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)
 			}
-			return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason, Round: pending.Round}, nil
-		case OutcomeUnavailable:
-			return clearPlannerScreen(b), Delivery{Reason: reason, Round: pending.Round}, nil
+			switch out {
+			case OutcomeDelivered:
+				if err := tx.ConfirmIndex(b.Name, idx); err != nil {
+					return b, Delivery{}, err
+				}
+				return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason, Round: pending.Round}, nil
+			case OutcomeUnavailable:
+				return clearPlannerScreen(b), Delivery{Reason: reason, Round: pending.Round}, nil
+			}
+			// OutcomeNotMine falls through to the pane path.
 		}
-		// OutcomeNotMine falls through to the pane path.
 	}
 
 	planner, ok := FindAgent(agents, b.Planner)
@@ -108,6 +107,10 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 	if planner.Status != herdr.StatusIdle && planner.Status != herdr.StatusDone {
 		return clearPlannerScreen(b), Delivery{Reason: "planner is " + planner.Status}, nil
+	}
+
+	if !found {
+		return clearPlannerScreen(b), Delivery{Empty: true, Reason: "nothing pending"}, nil
 	}
 
 	reason := ""
