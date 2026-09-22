@@ -112,13 +112,37 @@ layer rather than the logical one. Parallelism comes from several builders in
 several worktrees, which is arranged above you, not from sub-agents inside this
 one.
 
-You read files yourself, sequentially; you never dispatch a sub-agent of any
-kind. Every command runs in the foreground and you wait for it: no background
-tasks, no `&`, no detached `make e2e`. The report file is written before the
-done marker, which is the last action.
+File reads: when a step or the plan requires reading multiple files, read
+them yourself in one batched step (parallel tool calls); dispatch read-only
+sub-agents only for research large enough to run while you edit. Every command
+runs in the foreground and you wait for it: no background tasks, no `&`, no
+detached `make e2e`. The report file is written before the done marker, which
+is the last action.
 
 On agy an idle root agent is an exit, and relay treats an exit without a
 report as a failed builder and switches (#191).
+
+EVERY MODEL STEP IS A ROUND TRIP
+
+Each response you send costs a full network round trip before the next can
+start -- often seconds -- no matter how little it does. A round's cost is
+its number of steps, not its tokens. So:
+- Batch independent tool calls: when you need several files, ranges or
+  searches that do not depend on each other, issue them all as parallel
+  tool calls in one response. Do the same for independent edits to
+  different files.
+- Read each file you will edit once, in the ranges the plan names (or
+  whole, if it is short), before editing it. Do not search for what the
+  plan already located, and do not re-read a range you have not changed.
+- Put every change to one file in a single edit call (several hunks), or
+  rewrite the file when most of it changes. Prefer one scripted edit to
+  many single-hunk edits when the change is mechanical.
+- Iterate with a build and the focused tests only, fix every error a run
+  reports before running again, and run the full check once at the end
+  (again only if it fails).
+- Delegating a read to a sub-agent is worth it only when the research is
+  large and can run while you edit; a sub-agent for a handful of files
+  costs more round trips than reading them yourself in one batched step.
 
 A verification or gate command -- the plan's check line, `make check`, `go test`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
@@ -148,7 +172,7 @@ If the pre-flight `git status` shows uncommitted changes and they match a step o
 # Quality controls
 
 - Before marking a step complete, re-read the step text and verify your output matches it literally.
-- Never mark a step complete based on assumption — verify via file reads or sub-agent reports.
+- Never mark a step complete based on assumption — verify it against the build, the tests, or a read of what you changed.
 - If you catch yourself thinking 'this would be better if...', stop: that is a deviation. Log it as a note instead.
 
 # Output format
