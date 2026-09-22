@@ -833,3 +833,29 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		}
 	})
 }
+
+// TestBackfillLeavesDoneBindingsAlone pins the DONE guard in
+// backfillPlannerID: a finished binding is history, and a tick must not
+// rewrite it even when its planner session now has a record.
+func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
+	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	if _, err := reg.Create(planner.Record{
+		ID:          "pl_aaaaaaaacccc",
+		Name:        "architect-1",
+		HarnessKind: "claude",
+		SessionID:   "sess-done",
+		CWD:         "/repo",
+	}); err != nil {
+		t.Fatalf("create planner record: %v", err)
+	}
+	b := store.Binding{Name: "old", State: store.StateDone}
+	b.Planner.Kind, b.Planner.SessionID = "claude", "sess-done"
+
+	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {
+		t.Errorf("DONE binding back-filled with %q; history must not be rewritten", got.PlannerID)
+	}
+	b.State = store.StateActive
+	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "pl_aaaaaaaacccc" {
+		t.Errorf("ACTIVE binding PlannerID = %q, want pl_aaaaaaaacccc", got.PlannerID)
+	}
+}
