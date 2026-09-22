@@ -501,6 +501,37 @@ func TestWhoAmI(t *testing.T) {
 	if who.MaxTier != "edit" {
 		t.Fatalf("MaxTier = %q, want edit", who.MaxTier)
 	}
+	if who.Builders.Quota != "" {
+		t.Fatalf("Builders.Quota = %q, want empty without a scope", who.Builders.Quota)
+	}
+
+	// With a scope configured, WhoAmI carries its slice and CPU quota (#295).
+	scoped, err := New(Config{
+		Root:  t.TempDir(),
+		Now:   time.Now,
+		Scope: &relay.ScopeSpec{Slice: "relay.slice", CPUQuota: "200%"},
+	})
+	if err != nil {
+		t.Fatalf("New scoped server: %v", err)
+	}
+	if _, err := scoped.clients.Add("alice", pubLine, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	scopedRec := httptest.NewRecorder()
+	scoped.Handler().ServeHTTP(scopedRec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if scopedRec.Code != http.StatusOK {
+		t.Fatalf("scoped status = %d, want 200; body: %s", scopedRec.Code, scopedRec.Body.String())
+	}
+	var scopedWho remote.WhoAmI
+	if err := json.NewDecoder(scopedRec.Body).Decode(&scopedWho); err != nil {
+		t.Fatalf("decode scoped body: %v", err)
+	}
+	if scopedWho.Builders == nil || scopedWho.Builders.Quota != "200%" {
+		t.Fatalf("scoped Builders = %+v, want Quota 200%%", scopedWho.Builders)
+	}
+	if scopedWho.Builders.Slice != "relay.slice" {
+		t.Fatalf("scoped Builders.Slice = %q, want relay.slice", scopedWho.Builders.Slice)
+	}
 }
 
 func TestWhoAmIBuilderTierFromPolicy(t *testing.T) {

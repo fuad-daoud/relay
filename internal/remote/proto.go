@@ -132,6 +132,7 @@ type BuildersView struct {
 	Cap     int    `json:"cap"`
 	Scopes  bool   `json:"scopes"`          // part 3 sets it; false here
 	Slice   string `json:"slice,omitempty"` // part 3 sets it; "" here
+	Quota   string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
 }
 
 // UnavailableRequest reports builder unavailability with a diagnostic reason.

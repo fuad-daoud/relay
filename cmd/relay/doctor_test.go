@@ -219,10 +219,10 @@ func TestPolicyChecks(t *testing.T) {
 	}
 }
 
-// TestServerChecksScopesWarning pins #285's scopes warning: a queue-aware,
-// enrolled server without systemd scopes gets a SevWarn row naming the
-// daemon-restart risk, in addition to its builders census text on the ok
-// row; Scopes:true gets no such warning row; a server that is not
+// TestServerChecksScopesWarning pins #285's scopes warning and #295's quota:
+// a queue-aware, enrolled server without systemd scopes gets a SevWarn row
+// naming the daemon-restart risk, in addition to its builders census text on
+// the ok row; Scopes:true gets no such warning row; a server that is not
 // queue-aware (a pre-queue server) carries no builders text at all. Pure
 // over a hand-built []relay.ServerProbe -- no herdr, no network.
 //
@@ -236,7 +236,19 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		},
 		{
 			Name: "contabo", State: "enrolled", Label: "vps", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
-			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice"},
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice", Quota: "200%"},
+		},
+		{
+			Name: "quotaonly", State: "enrolled", Label: "vps", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true, Quota: "150%"},
+		},
+		{
+			Name: "sliceonly", State: "enrolled", Label: "vps", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true, Slice: "relay.slice"},
+		},
+		{
+			Name: "plain", State: "enrolled", Label: "vps", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true},
 		},
 		{
 			Name: "old", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
@@ -245,7 +257,7 @@ func TestServerChecksScopesWarning(t *testing.T) {
 
 	checks := serverChecks(probes)
 
-	var zenOK, zenWarn, contaboOK, contaboWarn, oldOK *doctor.Check
+	var zenOK, zenWarn, contaboOK, contaboWarn, quotaOK, sliceOK, plainOK, oldOK *doctor.Check
 	for i := range checks {
 		c := &checks[i]
 		switch {
@@ -257,6 +269,12 @@ func TestServerChecksScopesWarning(t *testing.T) {
 			contaboOK = c
 		case strings.HasPrefix(c.Detail, "scopes unavailable on contabo"):
 			contaboWarn = c
+		case strings.HasPrefix(c.Detail, "quotaonly: enrolled"):
+			quotaOK = c
+		case strings.HasPrefix(c.Detail, "sliceonly: enrolled"):
+			sliceOK = c
+		case strings.HasPrefix(c.Detail, "plain: enrolled"):
+			plainOK = c
 		case strings.HasPrefix(c.Detail, "old: enrolled"):
 			oldOK = c
 		}
@@ -270,11 +288,21 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		t.Fatalf("zen scopes warning = %+v, want the exact message", zenWarn)
 	}
 
-	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "builders 2/3, 1 queued, scopes on (relay.slice)") {
-		t.Fatalf("contabo ok check = %+v, want it naming the builders census", contaboOK)
+	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "builders 2/3, 1 queued, scopes on (relay.slice, 200%)") {
+		t.Fatalf("contabo ok check = %+v, want it naming the builders census and quota", contaboOK)
 	}
 	if contaboWarn != nil {
 		t.Fatalf("contabo scopes warning = %+v, want none (Scopes is true)", contaboWarn)
+	}
+
+	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "builders 1/3, 0 queued, scopes on (150%)") {
+		t.Fatalf("quotaonly ok check = %+v, want it naming the quota alone", quotaOK)
+	}
+	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "builders 1/3, 0 queued, scopes on (relay.slice)") {
+		t.Fatalf("sliceonly ok check = %+v, want it naming the slice alone", sliceOK)
+	}
+	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "builders 1/3, 0 queued, scopes on") {
+		t.Fatalf("plain ok check = %+v, want it naming scopes on", plainOK)
 	}
 
 	if oldOK == nil || strings.Contains(oldOK.Detail, "builders ") {
