@@ -279,9 +279,10 @@ func peakText(hist history.History, provider string, now time.Time, loc *time.Lo
 
 // formatHistory renders the "history (30d, local hours)" block: one row per
 // (provider, kind) with at least one event in hist, providers sorted and
-// RateLimited before SpawnFailed within a provider (spec §4.2). It returns
-// "" when hist has no events, so a fresh install's `relay policy` prints
-// nothing extra.
+// RateLimited before SpawnFailed before Cleared within a provider (spec
+// §4.2). A provider whose Cleared events carry a Since also gets a row in
+// the "blocked for" summary under the grid (#302). It returns "" when hist
+// has no events, so a fresh install's `relay policy` prints nothing extra.
 func formatHistory(hist history.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""
@@ -312,7 +313,7 @@ func formatHistory(hist history.History, loc *time.Location) string {
 	}
 	sb.WriteString(strings.Repeat(" ", 27) + strings.Join(labels[:], " ") + "\n")
 
-	kinds := []ledger.Kind{ledger.RateLimited, ledger.SpawnFailed}
+	kinds := []ledger.Kind{ledger.RateLimited, ledger.SpawnFailed, history.Cleared}
 	for _, p := range providers {
 		for _, k := range kinds {
 			if !seen[pair{p, k}] {
@@ -331,5 +332,48 @@ func formatHistory(hist history.History, loc *time.Location) string {
 		}
 	}
 
+	var blocked strings.Builder
+	for _, p := range providers {
+		durations := history.BlockedDurations(hist, p)
+		if len(durations) == 0 {
+			continue
+		}
+		sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+
+		// Even n takes the lower middle, so the median is always one of the
+		// durations actually observed -- never an average of two.
+		median := durations[len(durations)/2]
+		if len(durations)%2 == 0 {
+			median = durations[len(durations)/2-1]
+		}
+		longest := durations[len(durations)-1]
+
+		count := fmt.Sprintf("%d clears", len(durations))
+		if len(durations) == 1 {
+			count = "1 clear"
+		}
+		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", p, count, blockedText(median), blockedText(longest)))
+	}
+	if blocked.Len() > 0 {
+		sb.WriteString("blocked for (30d, gates cleared by hand)\n")
+		sb.WriteString(blocked.String())
+	}
+
 	return sb.String()
+}
+
+// blockedText renders a blocked duration compactly, flooring:
+//
+//	d < 1h   -> "<m>m"          45m -> "45m"; 0 -> "0m"
+//	d < 24h  -> "<h>h<mm>m"     5h2m -> "5h02m"
+//	else     -> "<d>d<hh>h"     52h -> "2d04h"; 72h -> "3d00h"
+func blockedText(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh%02dm", d/time.Hour, (d%time.Hour)/time.Minute)
+	default:
+		return fmt.Sprintf("%dd%02dh", d/(24*time.Hour), (d%(24*time.Hour))/time.Hour)
+	}
 }
