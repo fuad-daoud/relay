@@ -125,6 +125,59 @@ func TestRusageReadsSecondToLastLine(t *testing.T) {
 	}
 }
 
+// TestRusageRealSupervisorLayout is the regression that would have caught
+// #216: supervisorScript's printf leaves a blank line before each trailer
+// (rule "\nrelay-rusage:...\n" then "\nrelay-exit:...\n"), so the rusage
+// trailer is not reliably lastLines(path, 2)[0]. Built with the exact
+// printf semantics the script uses.
+func TestRusageRealSupervisorLayout(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+
+	path := filepath.Join(dir, "real.jsonl")
+	body := "builder said hi\n" +
+		"\n" + RusageTrailer + "cpu_usec=19071588 mem_peak=403206144\n" +
+		"\n" + ExitTrailer + "0\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := r.Rusage(context.Background(), relay.ProcHandle{}, path)
+	if !ok {
+		t.Fatal("Rusage: want ok=true")
+	}
+	if want := (relay.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144}); got != want {
+		t.Errorf("Rusage = %+v, want %+v", got, want)
+	}
+	if code, ok := r.ExitCode(context.Background(), relay.ProcHandle{}, path); !ok || code != 0 {
+		t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
+	}
+}
+
+// TestRusageIgnoresLaterOutput checks that a scan still finds the trailer
+// when builder output follows the exit trailer in the stream.
+func TestRusageIgnoresLaterOutput(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+
+	path := filepath.Join(dir, "trailing.jsonl")
+	body := "builder said hi\n" +
+		"\n" + RusageTrailer + "cpu_usec=19071588 mem_peak=403206144\n" +
+		"\n" + ExitTrailer + "0\n" +
+		"stray output after exit\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := r.Rusage(context.Background(), relay.ProcHandle{}, path)
+	if !ok {
+		t.Fatal("Rusage: want ok=true")
+	}
+	if want := (relay.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144}); got != want {
+		t.Errorf("Rusage = %+v, want %+v", got, want)
+	}
+}
+
 // TestProbeScopesStub puts a fake systemd-run on PATH so the test never
 // calls the real one (CI has no systemd). The success stub execs
 // everything after "--", the way systemd-run --scope would; the failure

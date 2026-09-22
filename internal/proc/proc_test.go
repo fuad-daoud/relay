@@ -7,6 +7,8 @@ import (
 
 	"context"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -308,6 +310,41 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 	}
 }
 
+// TestSupervisorEmitsRusageWhenUnitMatches pins the guard's positive half:
+// when supervisorScript is told to want the unit its own cgroup is actually
+// running in, it does emit the rusage trailer (#216). It reads its own
+// cgroup rather than one it fabricates, because /proc/self/cgroup cannot be
+// faked in a test; it skips where cpu.stat is not readable (CI runners and
+// macOS).
+func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Skip("no /proc/self/cgroup on this platform")
+	}
+	line := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]
+	fields := strings.SplitN(line, ":", 3)
+	if len(fields) != 3 {
+		t.Skipf("unexpected /proc/self/cgroup line %q", line)
+	}
+	cg := fields[2]
+	unit := path.Base(cg)
+	if _, err := os.Stat("/sys/fs/cgroup" + cg + "/cpu.stat"); err != nil {
+		t.Skip("cpu.stat not readable for this cgroup (CI runner or macOS)")
+	}
+
+	out, err := exec.Command("/bin/sh", "-c", supervisorScript, "relay-supervisor", unit, "/bin/echo", "hi").Output()
+	if err != nil {
+		t.Fatalf("run supervisorScript: %v", err)
+	}
+	stream := string(out)
+	if !strings.Contains(stream, "\n"+RusageTrailer+"cpu_usec=") {
+		t.Errorf("stream = %q; want a %scpu_usec= line", stream, RusageTrailer)
+	}
+	if !strings.HasSuffix(stream, ExitTrailer+"0\n") {
+		t.Errorf("stream = %q; want it to end with %s0", stream, ExitTrailer)
+	}
+}
+
 // TestStartWrapsArgvWithScope exercises buildArgv, the argv builder Start
 // uses, rather than executing systemd-run.
 func TestStartWrapsArgvWithScope(t *testing.T) {
@@ -316,11 +353,61 @@ func TestStartWrapsArgvWithScope(t *testing.T) {
 		Scope: &relay.ScopeSpec{Unit: "relay-round-abc12345-foo-3", Slice: "relay.slice", CPUWeight: 100},
 	}
 	got := buildArgv(spec, "/usr/bin/echo")
-	inner := []string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", "/usr/bin/echo", "hi"}
+	inner := []string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", ScopeUnitFileName(spec.Scope.Unit), "/usr/bin/echo", "hi"}
 	want := ScopeArgv(*spec.Scope, inner)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildArgv = %v, want %v", got, want)
 	}
+}
+
+// TestBuildArgvPassesTheWantedUnit pins buildArgv's contract with the
+// supervisor (#216): the supervisor's first argument names the scope unit
+// Start expects this process to be running in, or "" for a plain spawn, so
+// supervisorScript can gate the rusage trailer on its own scope rather than
+// on whatever cgroup it happens to have inherited.
+func TestBuildArgvPassesTheWantedUnit(t *testing.T) {
+	t.Run("scoped", func(t *testing.T) {
+		spec := relay.ProcSpec{
+			Argv:  []string{"echo", "hi"},
+			Scope: &relay.ScopeSpec{Unit: "relay-round-abc-x-1", CPUWeight: 100},
+		}
+		got := buildArgv(spec, "/usr/bin/echo")
+		idx := indexOf(got, "relay-supervisor")
+		if idx < 0 || idx+1 >= len(got) {
+			t.Fatalf("buildArgv = %v; want a \"relay-supervisor\" element followed by the wanted unit", got)
+		}
+		if want := "relay-round-abc-x-1.scope"; got[idx+1] != want {
+			t.Errorf("buildArgv[after relay-supervisor] = %q, want %q", got[idx+1], want)
+		}
+		if unitFlag := "--unit=relay-round-abc-x-1.scope"; indexOf(got, unitFlag) < 0 {
+			t.Errorf("buildArgv = %v; want it to contain %q", got, unitFlag)
+		}
+	})
+	t.Run("unscoped", func(t *testing.T) {
+		spec := relay.ProcSpec{Argv: []string{"echo", "hi"}}
+		got := buildArgv(spec, "/usr/bin/echo")
+		idx := indexOf(got, "relay-supervisor")
+		if idx < 0 || idx+1 >= len(got) {
+			t.Fatalf("buildArgv = %v; want a \"relay-supervisor\" element followed by the wanted unit slot", got)
+		}
+		if got[idx+1] != "" {
+			t.Errorf("buildArgv[after relay-supervisor] = %q, want \"\" for an unscoped spec", got[idx+1])
+		}
+		for _, a := range got {
+			if strings.Contains(a, "systemd-run") {
+				t.Errorf("buildArgv = %v; an unscoped spec must have no systemd-run element", got)
+			}
+		}
+	})
+}
+
+func indexOf(argv []string, s string) int {
+	for i, a := range argv {
+		if a == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestStartStripsDeniedEnv(t *testing.T) {

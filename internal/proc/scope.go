@@ -14,12 +14,20 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
+// ScopeUnitFileName returns the systemd unit file name for a scope unit
+// (the value cgroupfs shows as the cgroup path's last element), built in
+// exactly one place so the supervisor's own guard (#216) and systemd-run's
+// --unit= flag never drift apart.
+func ScopeUnitFileName(unit string) string {
+	return unit + ".scope"
+}
+
 // ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as
 // a transient systemd --scope unit instead: systemd-run execs inner in
 // place once the scope is registered, so the pid Start records is inner's
 // own pid (#244).
 func ScopeArgv(s relay.ScopeSpec, inner []string) []string {
-	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + s.Unit + ".scope"}
+	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.Slice != "" {
 		argv = append(argv, "--slice="+s.Slice)
 	}

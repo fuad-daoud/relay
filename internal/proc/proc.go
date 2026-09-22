@@ -52,18 +52,27 @@ const DefaultKillGrace = 5 * time.Second
 // When Start wrapped this script in a systemd scope (#244, #216), the
 // supervisor also reads its own cgroup's cpu.stat and memory.peak after the
 // builder exits and prints a relay-rusage: line before the exit trailer.
-// The case guard is the contract: outside a relay-round-*.scope,
-// /proc/self/cgroup would name the whole service, not this round, so no
-// rusage line is printed at all.
-const supervisorScript = `{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
+// want is buildArgv's first argument after "relay-supervisor": the scope
+// unit file name Start expects this process to be running in, or "" for a
+// plain spawn. The guard is on want, not merely on the inherited cgroup
+// matching a relay-round-*.scope shape (#216): a process spawned inside a
+// round's own scope -- relay's test suite, run on a scoped server, is
+// exactly this case -- inherits that cgroup too, so matching the shape
+// alone would make a plain spawn started from inside a round wrongly emit
+// a rusage line for the round's cgroup, not its own.
+const supervisorScript = `want=$1
+shift
+{ echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
 "$@" </dev/null; rc=$?
-cg=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
-case "$cg" in */relay-round-*.scope)
-  u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
-  m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
-  printf '\nrelay-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
-  ;;
-esac
+if [ -n "$want" ]; then
+  cg=$(cut -d: -f3 /proc/self/cgroup 2>/dev/null | head -1)
+  case "$cg" in */"$want")
+    u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
+    m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
+    printf '\nrelay-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
+    ;;
+  esac
+fi
 printf '\nrelay-exit:%s\n' "$rc"`
 
 // Runner is the local relay.Runner.
@@ -85,9 +94,16 @@ func (r *Runner) grace() time.Duration {
 }
 
 // buildArgv builds the argv Start execs: bin run under supervisorScript,
-// wrapped in a systemd scope when spec.Scope is set (#244, #216).
+// wrapped in a systemd scope when spec.Scope is set (#244, #216). The
+// supervisor's first argument is the scope unit file name Start expects to
+// be running in (or "" for a plain spawn), so it can tell its own round's
+// scope from one it merely inherited (#216).
 func buildArgv(spec relay.ProcSpec, bin string) []string {
-	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", bin}, spec.Argv[1:]...)
+	var want string
+	if spec.Scope != nil {
+		want = ScopeUnitFileName(spec.Scope.Unit)
+	}
+	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", want, bin}, spec.Argv[1:]...)
 	if spec.Scope != nil {
 		return ScopeArgv(*spec.Scope, inner)
 	}
@@ -227,17 +243,24 @@ func (r *Runner) Kill(ctx context.Context, h relay.ProcHandle) error {
 	return nil
 }
 
-// Rusage reads the last two non-empty lines of streamPath. If the
-// second-to-last line is the relay-rusage: trailer, it parses that; ok is
-// false when the stream is too short, or that line is not the trailer
-// (plain spawn, killed supervisor, still running). The handle is unused:
-// the stream is the record, as for ExitCode.
+// Rusage scans the last few lines of streamPath, from last to first, for the
+// relay-rusage: trailer; ok is false when none of those lines match (plain
+// spawn, killed supervisor, still running). The scan -- rather than assuming
+// a fixed offset -- is needed because supervisorScript's printf leaves a
+// blank line between the rusage and exit trailers, so the trailer is not
+// reliably the second-to-last line. The handle is unused: the stream is the
+// record, as for ExitCode.
 func (r *Runner) Rusage(_ context.Context, _ relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
-	lines, ok := lastLines(streamPath, 2)
-	if !ok || len(lines) < 2 {
+	lines, ok := lastLines(streamPath, 6)
+	if !ok {
 		return relay.ProcRusage{}, false
 	}
-	return ParseRusageTrailer(lines[0])
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], RusageTrailer) {
+			return ParseRusageTrailer(lines[i])
+		}
+	}
+	return relay.ProcRusage{}, false
 }
 
 var errNoProcess = errors.New("proc: no such process")
