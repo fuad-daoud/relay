@@ -323,7 +323,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	provider, removed, err := Available(rt, "test")
+	provider, removed, err := Available(rt, "test", ClearedByPlanner)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 		t.Errorf("got %d ledger entries, want 0", len(l.Entries))
 	}
 
-	provider, removed, err = Available(rt, testClaudeRef)
+	provider, removed, err = Available(rt, testClaudeRef, ClearedByPlanner)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	_, removed, err := Available(rt, "test")
+	_, removed, err := Available(rt, "test", ClearedByPlanner)
 	if err != nil {
 		t.Fatalf("Available: %v", err)
 	}
@@ -609,15 +609,26 @@ func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
 	}
 }
 
-func TestAvailableLeavesHistory(t *testing.T) {
+// TestAvailableRecordsClear: a clear that removed something is an
+// observation after all (#302). The history gains a Cleared event whose
+// Since is the At of the entry the clear removed, so At - Since is how long
+// the provider was blocked.
+func TestAvailableRecordsClear(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
-	if _, _, err := Available(rt, "test"); err != nil {
+
+	rt.Now = func() time.Time { return baseTime.Add(5 * time.Hour) }
+
+	provider, removed, err := Available(rt, "test", ClearedByPlanner)
+	if err != nil {
 		t.Fatalf("Available: %v", err)
+	}
+	if provider != "test" || removed != 1 {
+		t.Errorf("Available = %q, %d, want test, 1", provider, removed)
 	}
 
 	l := loadLedger(t, rt)
@@ -626,9 +637,108 @@ func TestAvailableLeavesHistory(t *testing.T) {
 	}
 
 	h := loadHistory(t, rt)
-	if len(h.Events) != 1 {
-		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
+	if len(h.Events) != 2 {
+		t.Fatalf("got %d history events, want 2: %+v", len(h.Events), h.Events)
 	}
+	ev := h.Events[1]
+	if ev.Kind != history.Cleared {
+		t.Errorf("kind = %q, want %q", ev.Kind, history.Cleared)
+	}
+	if ev.Provider != "test" {
+		t.Errorf("provider = %q, want test", ev.Provider)
+	}
+	if ev.Source != ClearedByPlanner {
+		t.Errorf("source = %q, want %q", ev.Source, ClearedByPlanner)
+	}
+	if !ev.Since.Equal(baseTime) {
+		t.Errorf("Since = %v, want %v", ev.Since, baseTime)
+	}
+	if !ev.At.Equal(baseTime.Add(5 * time.Hour)) {
+		t.Errorf("At = %v, want %v", ev.At, baseTime.Add(5*time.Hour))
+	}
+}
+
+// TestAvailableNothingClearedRecordsNothing: zero removed is not an error and
+// is not an observation either, so the history stays empty.
+func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	provider, removed, err := Available(rt, "test", ClearedByPlanner)
+	if err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if provider != "test" || removed != 0 {
+		t.Errorf("Available = %q, %d, want test, 0", provider, removed)
+	}
+
+	h := loadHistory(t, rt)
+	if len(h.Events) != 0 {
+		t.Errorf("got %d history events, want 0: %+v", len(h.Events), h.Events)
+	}
+}
+
+// TestAvailableRefusesUnknownWritesNothing: the refusal has to stop the save,
+// so the ledger is not even rewritten to drop its expired entry. The gate is
+// given an Until that has passed by the time the clear runs precisely so the
+// pruned-and-saved ledger would differ from the file the refusal must leave.
+func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, baseTime.Add(time.Hour), "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	rt.Now = func() time.Time { return baseTime.Add(5 * time.Hour) }
+
+	beforeLedger := readFileBytes(t, rt.LedgerPath)
+	beforeHistory := readFileBytes(t, rt.AvailabilityPath)
+
+	if _, _, err := Available(rt, "tset", ClearedByPlanner); !errors.Is(err, ErrUnknownProvider) {
+		t.Fatalf("Available(tset) err = %v, want ErrUnknownProvider", err)
+	}
+
+	if got := readFileBytes(t, rt.LedgerPath); string(got) != string(beforeLedger) {
+		t.Errorf("ledger.json = %s, want it untouched at %s", got, beforeLedger)
+	}
+	if got := readFileBytes(t, rt.AvailabilityPath); string(got) != string(beforeHistory) {
+		t.Errorf("availability.json = %s, want it untouched at %s", got, beforeHistory)
+	}
+}
+
+// TestAvailableRejectsBadSource: source is one of two constants, and a
+// caller that passes anything else has a bug -- nothing is written.
+func TestAvailableRejectsBadSource(t *testing.T) {
+	f := &fakeHerdr{}
+	rt := newRuntime(t, f)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	beforeLedger := readFileBytes(t, rt.LedgerPath)
+	beforeHistory := readFileBytes(t, rt.AvailabilityPath)
+
+	if _, _, err := Available(rt, "test", "bogus"); err == nil {
+		t.Fatal("Available(source=\"bogus\") err = nil, want an error")
+	}
+
+	if got := readFileBytes(t, rt.LedgerPath); string(got) != string(beforeLedger) {
+		t.Errorf("ledger.json = %s, want it untouched at %s", got, beforeLedger)
+	}
+	if got := readFileBytes(t, rt.AvailabilityPath); string(got) != string(beforeHistory) {
+		t.Errorf("availability.json = %s, want it untouched at %s", got, beforeHistory)
+	}
+}
+
+// readFileBytes reads path for a byte-identity assertion.
+func readFileBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	return data
 }
 
 func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {

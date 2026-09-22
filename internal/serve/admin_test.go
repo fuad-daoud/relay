@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -790,5 +791,54 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 	}
 	if initialisedAfter != initialisedBefore {
 		t.Errorf("Initialised(root) = %v after the admin calls, want %v: the lock store must not fake an init", initialisedAfter, initialisedBefore)
+	}
+}
+
+// TestAdminAvailableRecordsServerClear: the server host's own clear is an
+// observation too (#302), and it is recorded as the server's, not a
+// planner's -- `relay serve available` is not a forwarded client verb.
+func TestAdminAvailableRecordsServerClear(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	candPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	candidates, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+
+	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := AdminUnavailable(s, "claude/t/m", time.Time{}, "quota"); err != nil {
+		t.Fatalf("AdminUnavailable: %v", err)
+	}
+	if _, removed, err := AdminAvailable(s, "t"); err != nil {
+		t.Fatalf("AdminAvailable: %v", err)
+	} else if removed != 1 {
+		t.Errorf("removed = %d, want 1", removed)
+	}
+
+	h, err := history.Load(filepath.Join(root, "availability.json"))
+	if err != nil {
+		t.Fatalf("history.Load: %v", err)
+	}
+	if len(h.Events) == 0 {
+		t.Fatal("availability.json has no events, want a Cleared event")
+	}
+	ev := h.Events[len(h.Events)-1]
+	if ev.Kind != history.Cleared {
+		t.Errorf("kind = %q, want %q", ev.Kind, history.Cleared)
+	}
+	if ev.Source != relay.ClearedByServer {
+		t.Errorf("source = %q, want %q", ev.Source, relay.ClearedByServer)
+	}
+	if ev.Provider != "t" {
+		t.Errorf("provider = %q, want t", ev.Provider)
 	}
 }

@@ -378,3 +378,91 @@ func TestRoleRefusalsEmptySet(t *testing.T) {
 		t.Errorf("RoleRefusals(nil) = %+v, want nil", got)
 	}
 }
+
+// clearedEvent is a Cleared event recording a block of d that ended at at.
+func clearedEvent(provider string, at time.Time, d time.Duration) history.Event {
+	return history.Event{
+		At:       at,
+		Kind:     history.Cleared,
+		Provider: provider,
+		Source:   "planner",
+		Since:    at.Add(-d),
+	}
+}
+
+// TestFormatHistoryBlockedFor: a provider with clears gains both a `cleared`
+// row in the hourly grid and a "blocked for" row summarising them (#302).
+// The even-count case pins the lower middle as the median, so it is always
+// a duration that was observed rather than an average of two.
+func TestFormatHistoryBlockedFor(t *testing.T) {
+	tests := []struct {
+		name    string
+		clears  []history.Event
+		blocked string
+	}{
+		{
+			name: "odd count",
+			clears: []history.Event{
+				clearedEvent("cline-pass", baseTime.Add(time.Hour), time.Hour),
+				clearedEvent("cline-pass", baseTime.Add(7*time.Hour), 5*time.Hour),
+				clearedEvent("cline-pass", baseTime.Add(100*time.Hour), 72*time.Hour),
+			},
+			blocked: "blocked for (30d, gates cleared by hand)\n" +
+				"  cline-pass 3 clears  median 5h00m  longest 3d00h\n",
+		},
+		{
+			name: "even count takes the lower middle",
+			clears: []history.Event{
+				clearedEvent("cline-pass", baseTime.Add(time.Hour), time.Hour),
+				clearedEvent("cline-pass", baseTime.Add(6*time.Hour), 5*time.Hour),
+			},
+			blocked: "blocked for (30d, gates cleared by hand)\n" +
+				"  cline-pass 2 clears  median 1h00m  longest 5h00m\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hist := history.History{}.Append(history.Event{
+				At: baseTime, Kind: ledger.RateLimited, Provider: "cline-pass", Source: "planner",
+			})
+			for _, ev := range tt.clears {
+				hist = hist.Append(ev)
+			}
+			// test is gated but never cleared: it belongs in the grid and
+			// must stay out of the block.
+			hist = hist.Append(history.Event{
+				At: baseTime, Kind: ledger.RateLimited, Provider: "test", Source: "planner",
+			})
+
+			got := formatHistory(hist, time.UTC)
+
+			if !strings.Contains(got, "  cline-pass cleared") {
+				t.Errorf("formatHistory has no cleared grid row for cline-pass:\n%s", got)
+			}
+			if !strings.HasSuffix(got, tt.blocked) {
+				t.Errorf("formatHistory =\n%s\nwant it to end with:\n%s", got, tt.blocked)
+			}
+		})
+	}
+}
+
+// TestBlockedText pins blockedText's flooring at each of the three scales.
+func TestBlockedText(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0m"},
+		{45 * time.Minute, "45m"},
+		{5*time.Hour + 2*time.Minute, "5h02m"},
+		{52 * time.Hour, "2d04h"},
+		{72 * time.Hour, "3d00h"},
+	}
+
+	for _, tt := range tests {
+		if got := blockedText(tt.d); got != tt.want {
+			t.Errorf("blockedText(%s) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}

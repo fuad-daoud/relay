@@ -1,9 +1,12 @@
 package history
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,5 +183,66 @@ func TestHourCounts(t *testing.T) {
 		if c != want {
 			t.Errorf("plus1 counts[%d] = %d, want %d", hour, c, want)
 		}
+	}
+}
+
+// TestBlockedDurations: how long a block lasted is At - Since on the Cleared
+// event. A Cleared event with no Since (an older file, or a clear that
+// removed nothing), a RateLimited event and another provider's clear are all
+// skipped (#302).
+func TestBlockedDurations(t *testing.T) {
+	h := History{}.
+		Append(Event{At: now, Kind: ledger.RateLimited, Provider: "test"}).
+		Append(Event{At: now, Kind: Cleared, Provider: "test"}).
+		Append(Event{At: now, Kind: Cleared, Provider: "other", Since: now.Add(-2 * time.Hour)}).
+		Append(Event{At: now, Kind: Cleared, Provider: "test", Since: now.Add(-5 * time.Hour)})
+
+	got := BlockedDurations(h, "test")
+	want := []time.Duration{5 * time.Hour}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("BlockedDurations(test) = %v, want %v", got, want)
+	}
+
+	if got := BlockedDurations(h, "nobody"); got != nil {
+		t.Errorf("BlockedDurations(nobody) = %v, want nil", got)
+	}
+}
+
+// TestSinceOmittedWhenZero: Since is a Cleared-only field, so every other
+// kind marshals without the key; a Cleared event that has one survives
+// Save/Load unchanged.
+func TestSinceOmittedWhenZero(t *testing.T) {
+	plain, err := json.Marshal(Event{At: now, Kind: ledger.RateLimited, Provider: "test", Source: "planner"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(plain), `"since"`) {
+		t.Errorf("RateLimited event marshalled with a since key: %s", plain)
+	}
+
+	path := filepath.Join(t.TempDir(), "availability.json")
+	h := History{}.Append(Event{
+		At:       now,
+		Kind:     Cleared,
+		Provider: "test",
+		Source:   "planner",
+		Since:    now.Add(-5 * time.Hour),
+	})
+	if err := Save(path, h); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Events) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(got.Events), got.Events)
+	}
+	if !got.Events[0].Since.Equal(h.Events[0].Since) {
+		t.Errorf("Since = %v, want %v", got.Events[0].Since, h.Events[0].Since)
+	}
+	if got.Events[0] != h.Events[0] {
+		t.Errorf("event = %+v, want %+v", got.Events[0], h.Events[0])
 	}
 }

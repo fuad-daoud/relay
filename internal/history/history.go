@@ -20,6 +20,11 @@ import (
 // RetainWindow is how long an event is kept before Prune drops it.
 const RetainWindow = 30 * 24 * time.Hour
 
+// Cleared is the history-only kind a manual clear records (#302). It never
+// enters the ledger (ledger validation would reject it there); it exists
+// so availability.json can say when a block ended, not only when it began.
+const Cleared ledger.Kind = "cleared"
+
 // Event records one ledger observation, mirrored into the 30-day window the
 // ledger itself does not keep (spec §3.1).
 type Event struct {
@@ -30,6 +35,10 @@ type Event struct {
 	Source   string      `json:"source"`
 	Binding  string      `json:"binding,omitempty"`
 	Note     string      `json:"note,omitempty"`
+	// Since is, on a Cleared event, the At of the oldest ledger entry the clear
+	// removed: At - Since is how long the provider was blocked. Zero on every
+	// other kind, and omitted from the JSON when zero.
+	Since time.Time `json:"since,omitzero"`
 }
 
 // History holds an ordered collection of availability events.
@@ -170,4 +179,20 @@ func HourCounts(h History, provider string, kind ledger.Kind, loc *time.Location
 		counts[e.At.In(loc).Hour()]++
 	}
 	return counts
+}
+
+// BlockedDurations returns At - Since for every Cleared event on provider
+// whose Since is non-zero and not after At, in event order. Pure.
+func BlockedDurations(h History, provider string) []time.Duration {
+	var out []time.Duration
+	for _, e := range h.Events {
+		if e.Kind != Cleared || e.Provider != provider {
+			continue
+		}
+		if e.Since.IsZero() || e.Since.After(e.At) {
+			continue
+		}
+		out = append(out, e.At.Sub(e.Since))
+	}
+	return out
 }
