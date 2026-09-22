@@ -362,7 +362,7 @@ func AdminGates(s *Server) []ledger.Gate {
 // AdminAvailable clears every rate-limit gate on subject's provider in the
 // server-wide ledger.
 func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
-	return relay.Available(ledgerRuntime(s), subject)
+	return relay.Available(ledgerRuntime(s), subject, relay.ClearedByServer)
 }
 
 // AdminUnavailable records a rate-limit gate on token's provider in the

@@ -769,7 +769,7 @@ func cmdAvailable(args []string) error {
 		return err
 	}
 
-	provider, removed, err := relay.Available(rt, subject)
+	provider, removed, err := relay.Available(rt, subject, relay.ClearedByPlanner)
 	if err != nil {
 		return err
 	}

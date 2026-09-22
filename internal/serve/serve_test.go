@@ -1212,6 +1212,57 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	}
 }
 
+// TestAvailableRefusesUnknownProvider is #301 over the wire: the pre-check
+// handleAvailable used to carry only ever refused unknown *tokens* and let
+// any bare provider through, so `relay available anthropc` forwarded to a
+// server read as a no-op. relay.Available now refuses a typo itself, and the
+// 422 carries the local verb's words.
+func TestAvailableRefusesUnknownProvider(t *testing.T) {
+	root := t.TempDir()
+	cJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	candPath := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(candPath, []byte(cJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(Config{
+		Root:       root,
+		Candidates: cSet,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler()
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(remote.AvailableRequest{Subject: "anthropc"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kpA, "POST", "/v1/available", body))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown provider status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	// The message is read decoded: on the wire its quotes are JSON-escaped.
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if want := `no configured candidate uses provider "anthropc"`; !strings.Contains(errBody.Message, want) {
+		t.Errorf("message = %q, want it containing %q", errBody.Message, want)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

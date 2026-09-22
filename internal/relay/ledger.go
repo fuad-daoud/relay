@@ -154,22 +154,66 @@ func Unavailable(rt Runtime, token string, until time.Time, reason string) (prov
 }
 
 // Available clears every rate-limit gate on subject's provider. subject may
-// be a candidate token or a bare provider name; a token is resolved to its
-// provider first. Zero removed is not an error -- the caller reports that
-// nothing was gating the provider.
-func Available(rt Runtime, subject string) (provider string, removed int, err error) {
-	provider = subject
-	if ref, perr := candidate.ParseRef(subject); perr == nil {
-		provider = ref.Provider
+// be a candidate token or a bare provider name; ResolveClearSubject decides
+// what it names and refuses one relay knows nothing about (#301). A clear
+// that removed anything is recorded in the availability history as a
+// Cleared event whose Source is source (#302). Zero removed is not an error
+// and records nothing -- the caller reports that nothing was gating.
+//
+// source must be ClearedByPlanner or ClearedByServer; anything else is a
+// programming error and returns an error before any write.
+func Available(rt Runtime, subject, source string) (provider string, removed int, err error) {
+	if source != ClearedByPlanner && source != ClearedByServer {
+		return "", 0, fmt.Errorf("available: unknown clear source %q", source)
 	}
 
-	err = mutateLedger(rt, func(l ledger.Ledger) ledger.Ledger {
+	var oldest time.Time
+
+	err = rt.Store.WithLock(func(*store.Tx) error {
+		l, lerr := ledger.Load(rt.LedgerPath)
+		if lerr != nil {
+			return lerr
+		}
+		l = l.Prune(rt.Now())
+
+		provider, err = ResolveClearSubject(rt.Candidates, l, subject)
+		if err != nil {
+			return err
+		}
+
 		for _, e := range l.Entries {
-			if e.Kind == ledger.RateLimited && e.Subject == provider {
-				removed++
+			if e.Kind != ledger.RateLimited || e.Subject != provider {
+				continue
+			}
+			removed++
+			if oldest.IsZero() || e.At.Before(oldest) {
+				oldest = e.At
 			}
 		}
-		return l.Clear(ledger.RateLimited, provider)
+
+		if serr := ledger.Save(rt.LedgerPath, l.Clear(ledger.RateLimited, provider)); serr != nil {
+			return serr
+		}
+
+		if removed > 0 {
+			ev := history.Event{
+				At:       rt.Now(),
+				Kind:     history.Cleared,
+				Provider: provider,
+				Source:   source,
+				Note:     fmt.Sprintf("cleared %d entries", removed),
+				Since:    oldest,
+			}
+			h, herr := history.Load(rt.AvailabilityPath)
+			if herr == nil {
+				herr = history.Save(rt.AvailabilityPath, h.Prune(rt.Now()).Append(ev))
+			}
+			if herr != nil {
+				fmt.Fprintf(os.Stderr, "relay: could not record history: %v\n", herr)
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return provider, 0, err
