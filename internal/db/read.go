@@ -464,6 +464,45 @@ func getBinding(ctx context.Context, q queryer, name string) (BindingRow, bool, 
 	return br, true, nil
 }
 
+// PlannerBySession returns the planner row for one (harness_kind, session_id),
+// false when there is none. It is what `relay planner init` reads to reuse an
+// existing db row's id instead of minting one (docs/specs/2026-09-22-drop-herdr-design.md
+// §3.5) -- an error here is not a missing planner, so the two outcomes are
+// reported separately.
+func (d *DB) PlannerBySession(kind, session string) (Planner, bool, error) {
+	return plannerBySession(context.Background(), d.sqlDB, kind, session)
+}
+
+func plannerBySession(ctx context.Context, q queryer, kind, session string) (Planner, bool, error) {
+	var (
+		p         Planner
+		locator   sql.NullString
+		firstSeen string
+		lastSeen  string
+	)
+	err := q.QueryRowContext(ctx,
+		`SELECT id, harness_kind, session_id, transcript_locator, first_seen, last_seen
+		   FROM planner WHERE harness_kind = ? AND session_id = ?`,
+		kind, session).Scan(&p.ID, &p.HarnessKind, &p.SessionID, &locator, &firstSeen, &lastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Planner{}, false, nil
+	}
+	if err != nil {
+		return Planner{}, false, fmt.Errorf("db: planner by session: %w", err)
+	}
+
+	if locator.Valid {
+		p.TranscriptLocator = &locator.String
+	}
+	if p.FirstSeen, err = parseTime(firstSeen); err != nil {
+		return Planner{}, false, fmt.Errorf("db: planner by session: parse first_seen: %w", err)
+	}
+	if p.LastSeen, err = parseTime(lastSeen); err != nil {
+		return Planner{}, false, fmt.Errorf("db: planner by session: parse last_seen: %w", err)
+	}
+	return p, true, nil
+}
+
 const roundColumns = `id, binding_id, number, started_at, closed_at, outcome,
 	builder_candidate, builder_harness, builder_provider, builder_model, builder_mode, tier,
 	commits, tree, gate_result, gate_exit, gate_duration_ms,

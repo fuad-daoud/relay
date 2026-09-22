@@ -585,6 +585,11 @@ func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }
 // (docs/specs/2026-09-21-planner-channel-design.md §3.2).
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
+// PlannersDir is where relay's planner records live: one JSON file per record,
+// named <id>.json (docs/specs/2026-09-22-drop-herdr-design.md §3.1). Created
+// mode 0700 by the first write.
+func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
+
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.

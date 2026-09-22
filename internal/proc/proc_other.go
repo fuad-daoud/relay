@@ -43,3 +43,10 @@ func (r *Runner) Kill(context.Context, relay.ProcHandle) error {
 func (r *Runner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
 	return relay.ProcRusage{}, false
 }
+
+// StartTime has no implementation here, where psInfo does not exist either.
+// The non-unix half of the tree reports ErrRunnerUnavailable for every process
+// question, and this one answers the same.
+func StartTime(context.Context, int) (time.Time, error) {
+	return time.Time{}, relay.ErrRunnerUnavailable
+}

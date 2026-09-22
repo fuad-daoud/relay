@@ -6,6 +6,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	// The driver is imported here as well as in db.go so a constraint
+	// violation can be told from a busy database by its result code. Both
+	// imports are inside this package, which db.go's header names as the one
+	// place that knows the driver.
+	"modernc.org/sqlite"
 )
 
 // nullableString turns a nullable Go pointer into a driver value: nil for a
@@ -103,6 +109,12 @@ func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 // UpsertPlanner inserts or updates p by its natural key: (harness_kind,
 // session_id). A hit updates last_seen and fills transcript_locator when it
 // is null in the db and set on p.
+//
+// When p.ID is set the record's own id wins instead (docs/specs/2026-09-22-drop-herdr-design.md
+// §3.5): relay's planner records are keyed by the id `relay planner init`
+// minted, so ingest upserts by id and the natural key stays as the uniqueness
+// guard. A (harness_kind, session_id) another id already holds is refused with
+// ErrInvalid rather than silently merging two identities.
 func (t *Tx) UpsertPlanner(p Planner) (string, error) {
 	if p.HarnessKind == "" || p.SessionID == "" {
 		return "", fmt.Errorf("db: upsert planner: HarnessKind and SessionID are required: %w", ErrInvalid)
@@ -111,6 +123,10 @@ func (t *Tx) UpsertPlanner(p Planner) (string, error) {
 	lastSeen := p.LastSeen
 	if lastSeen.IsZero() {
 		lastSeen = time.Now()
+	}
+
+	if p.ID != "" {
+		return t.upsertPlannerByID(p, lastSeen)
 	}
 
 	var id string
@@ -147,6 +163,87 @@ func (t *Tx) UpsertPlanner(p Planner) (string, error) {
 		return "", fmt.Errorf("db: upsert planner: insert: %w", mapBusy(err))
 	}
 	return id, nil
+}
+
+// upsertPlannerByID inserts or updates one planner by its own id: a hit
+// rewrites harness_kind, session_id and last_seen, and transcript_locator only
+// when p carries one; a miss inserts with that id. The natural-key unique index
+// still applies, so a conflicting (harness_kind, session_id) under another id
+// is refused with an error wrapping ErrInvalid.
+func (t *Tx) upsertPlannerByID(p Planner, lastSeen time.Time) (string, error) {
+	if err := t.assertPlannerKeyFree(p.ID, p.HarnessKind, p.SessionID); err != nil {
+		return "", err
+	}
+
+	var existing string
+	err := t.queryRow(`SELECT id FROM planner WHERE id = ?`, p.ID).Scan(&existing)
+	switch {
+	case err == nil:
+		set := []string{"harness_kind = ?", "session_id = ?", "last_seen = ?"}
+		args := []any{p.HarnessKind, p.SessionID, formatTime(lastSeen)}
+		if p.TranscriptLocator != nil {
+			set = append(set, "transcript_locator = ?")
+			args = append(args, *p.TranscriptLocator)
+		}
+		args = append(args, p.ID)
+		if _, uerr := t.exec(`UPDATE planner SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); uerr != nil {
+			return "", fmt.Errorf("db: upsert planner by id: update: %w", mapPlannerKey(uerr))
+		}
+		return p.ID, nil
+	case errors.Is(err, sql.ErrNoRows):
+		firstSeen := p.FirstSeen
+		if firstSeen.IsZero() {
+			firstSeen = lastSeen
+		}
+		if _, ierr := t.exec(`INSERT INTO planner (id, harness_kind, session_id, transcript_locator, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)`,
+			p.ID, p.HarnessKind, p.SessionID, nullableString(p.TranscriptLocator),
+			formatTime(firstSeen), formatTime(lastSeen)); ierr != nil {
+			return "", fmt.Errorf("db: upsert planner by id: insert: %w", mapPlannerKey(ierr))
+		}
+		return p.ID, nil
+	default:
+		return "", fmt.Errorf("db: upsert planner by id: select: %w", mapBusy(err))
+	}
+}
+
+// assertPlannerKeyFree refuses to hand one (harness_kind, session_id) to a
+// second id. The natural-key index would refuse it too; checking here turns
+// the driver's own text into the ErrInvalid the caller is promised.
+func (t *Tx) assertPlannerKeyFree(id, kind, session string) error {
+	var other string
+	err := t.queryRow(`SELECT id FROM planner WHERE harness_kind = ? AND session_id = ?`, kind, session).Scan(&other)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("db: upsert planner by id: select natural key: %w", mapBusy(err))
+	}
+	if other == id {
+		return nil
+	}
+	return fmt.Errorf("db: upsert planner by id: (harness_kind, session_id) is held by planner %q: %w", other, ErrInvalid)
+}
+
+// sqliteConstraint is SQLITE_CONSTRAINT, sqlite's result code for a failed
+// constraint. A UNIQUE index violation reports it, possibly with an extended
+// code, which is why mapPlannerKey masks the low byte.
+const sqliteConstraint = 19
+
+// mapPlannerKey turns a sqlite constraint violation into ErrInvalid, so a
+// natural-key conflict reaching the write still surfaces as the error §3.5
+// promises the caller.
+func mapPlannerKey(err error) error {
+	if err == nil {
+		return nil
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteConstraint {
+		return fmt.Errorf("planner (harness_kind, session_id) already exists: %w", ErrInvalid)
+	}
+	if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		return fmt.Errorf("planner (harness_kind, session_id) already exists: %w", ErrInvalid)
+	}
+	return mapBusy(err)
 }
 
 // UpsertBinding inserts or updates b by its natural key: (name, created_at).
