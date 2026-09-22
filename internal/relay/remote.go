@@ -911,6 +911,10 @@ func RenderServers(probes []ServerProbe) string {
 			if p.QueueAware && p.Builders != nil {
 				scopes := "off"
 				switch {
+				case p.Builders.Scopes && p.Builders.Slice != "" && p.Builders.Quota != "":
+					scopes = fmt.Sprintf("on (%s, %s)", p.Builders.Slice, p.Builders.Quota)
+				case p.Builders.Scopes && p.Builders.Quota != "":
+					scopes = fmt.Sprintf("on (%s)", p.Builders.Quota)
 				case p.Builders.Scopes && p.Builders.Slice != "":
 					scopes = fmt.Sprintf("on (%s)", p.Builders.Slice)
 				case p.Builders.Scopes:

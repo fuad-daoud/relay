@@ -110,6 +110,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		who.Builders.Scopes = s.cfg.Scope != nil
 		if s.cfg.Scope != nil {
 			who.Builders.Slice = s.cfg.Scope.Slice
+			who.Builders.Quota = s.cfg.Scope.CPUQuota
 		}
 	}
 	writeJSON(w, http.StatusOK, who)

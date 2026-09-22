@@ -2,6 +2,7 @@ package policy
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -961,12 +962,106 @@ func TestServeScopeValidation(t *testing.T) {
 	}
 }
 
-func TestServeUnknownKeyRejected(t *testing.T) {
-	_, err := load(t, `{"serve":{"frobnicate":true}}`)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+// TestScopeQuotaValidation pins #295's cpu_quota rule in both blocks: a good
+// quota is accepted, and a bad one is rejected with a message naming the
+// block it came from (scope vs serve.scope).
+func TestScopeQuotaValidation(t *testing.T) {
+	blocks := []struct {
+		name   string
+		body   string // %q is the quota
+		prefix string // the exact path in the error, block-qualified
+	}{
+		{"scope", `{"scope":{"cpu_quota":%q}}`, ": scope.cpu_quota:"},
+		{"serve.scope", `{"serve":{"scope":{"cpu_quota":%q}}}`, ": serve.scope.cpu_quota:"},
 	}
-	if !errors.Is(err, ErrBadPolicy) {
-		t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+
+	for _, bc := range blocks {
+		for _, quota := range []string{"200%", "1%", "1000%"} {
+			t.Run(bc.name+"/good/"+quota, func(t *testing.T) {
+				if _, err := load(t, fmt.Sprintf(bc.body, quota)); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+			})
+		}
+		for _, quota := range []string{"200", "200 %", "%", "0%"} {
+			t.Run(bc.name+"/bad/"+quota, func(t *testing.T) {
+				_, err := load(t, fmt.Sprintf(bc.body, quota))
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+				}
+				if !strings.Contains(err.Error(), "scope.cpu_quota") {
+					t.Errorf("error %q does not mention scope.cpu_quota", err.Error())
+				}
+				if !strings.Contains(err.Error(), bc.prefix) {
+					t.Errorf("error %q does not name the %s block (%q)", err.Error(), bc.name, bc.prefix)
+				}
+			})
+		}
+	}
+}
+
+// TestScopeForWholeBlockOverride pins #295's resolution rule: serve.scope
+// replaces the top-level block entirely for a served round, with none of the
+// top-level fields leaking in; an absent serve.scope falls back to the
+// top-level block; a plain (unserved) context always uses the top-level one.
+func TestScopeForWholeBlockOverride(t *testing.T) {
+	top := &ScopePolicy{Slice: "top.slice", CPUWeight: 111, MemoryMax: "1G", CPUQuota: "10%", TasksMax: 11}
+	served := &ScopePolicy{Slice: "serve.slice", CPUWeight: 222, MemoryMax: "2G", CPUQuota: "20%", TasksMax: 22}
+
+	t.Run("serve.scope replaces the whole block", func(t *testing.T) {
+		p := Policy{Scope: top, Serve: &ServePolicy{Scope: served}}
+		got := p.ScopeFor(true)
+		if got != served {
+			t.Fatalf("ScopeFor(true) = %+v, want the serve.scope block", got)
+		}
+		if got.Slice != served.Slice || got.CPUWeight != served.CPUWeight ||
+			got.MemoryMax != served.MemoryMax || got.CPUQuota != served.CPUQuota || got.TasksMax != served.TasksMax {
+			t.Errorf("ScopeFor(true) = %+v, want every field from serve.scope", got)
+		}
+		if got.Slice == top.Slice || got.CPUWeight == top.CPUWeight ||
+			got.MemoryMax == top.MemoryMax || got.CPUQuota == top.CPUQuota || got.TasksMax == top.TasksMax {
+			t.Errorf("ScopeFor(true) = %+v, a top-level field leaked in", got)
+		}
+	})
+
+	t.Run("absent serve.scope falls back", func(t *testing.T) {
+		p := Policy{Scope: top, Serve: &ServePolicy{}}
+		if got := p.ScopeFor(true); got != top {
+			t.Fatalf("ScopeFor(true) = %+v, want the top-level block", got)
+		}
+	})
+
+	t.Run("both absent is nil", func(t *testing.T) {
+		if got := (Policy{}).ScopeFor(true); got != nil {
+			t.Fatalf("ScopeFor(true) = %+v, want nil", got)
+		}
+		if got := (Policy{Serve: &ServePolicy{}}).ScopeFor(true); got != nil {
+			t.Fatalf("ScopeFor(true) with an empty serve = %+v, want nil", got)
+		}
+	})
+
+	t.Run("unserved always uses the top-level block", func(t *testing.T) {
+		p := Policy{Scope: top, Serve: &ServePolicy{Scope: served}}
+		if got := p.ScopeFor(false); got != top {
+			t.Fatalf("ScopeFor(false) = %+v, want the top-level block", got)
+		}
+		if got := (Policy{Serve: &ServePolicy{Scope: served}}).ScopeFor(false); got != nil {
+			t.Fatalf("ScopeFor(false) with no top-level block = %+v, want nil", got)
+		}
+	})
+}
+
+func TestServeUnknownKeyRejected(t *testing.T) {
+	for _, body := range []string{`{"serve":{"frobnicate":true}}`, `{"scope":{"frobnicate":true}}`} {
+		_, err := load(t, body)
+		if err == nil {
+			t.Fatalf("Load(%s): expected error, got nil", body)
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("Load(%s): error %v does not wrap ErrBadPolicy", body, err)
+		}
 	}
 }

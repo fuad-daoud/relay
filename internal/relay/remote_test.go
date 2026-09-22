@@ -365,10 +365,11 @@ func TestRenderServersShowsTierAndWarning(t *testing.T) {
 	}
 }
 
-// TestRenderServersBuilders pins #285's queue line: an enrolled,
-// queue-aware server's row gains "builders %d/%d, %d queued, scopes %s",
-// with the scopes word covering off/on/on (<slice>); an enrolled server
-// that is not queue-aware (a pre-queue server) gets no builders text.
+// TestRenderServersBuilders pins #285's queue line and #295's quota:
+// an enrolled, queue-aware server's row gains "builders %d/%d, %d queued,
+// scopes %s", with the scopes word covering off/on/on (<slice>)/on (<quota>)/
+// on (<slice>, <quota>); an enrolled server that is not queue-aware (a
+// pre-queue server) gets no builders text.
 func TestRenderServersBuilders(t *testing.T) {
 	probes := []ServerProbe{
 		{
@@ -377,18 +378,35 @@ func TestRenderServersBuilders(t *testing.T) {
 		},
 		{
 			Name: "contabo", URL: "https://contabo:7777", State: "enrolled", Label: "vps",
-			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice"},
+			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: true, Slice: "relay.slice", Quota: "200%"},
+		},
+		{
+			Name: "quotaonly", URL: "https://quota:7777", State: "enrolled", Label: "vps",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true, Quota: "150%"},
+		},
+		{
+			Name: "sliceonly", URL: "https://slice:7777", State: "enrolled", Label: "vps",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true, Slice: "relay.slice"},
+		},
+		{
+			Name: "plain", URL: "https://plain:7777", State: "enrolled", Label: "vps",
+			QueueAware: true, Builders: &remote.BuildersView{Running: 1, Queued: 0, Cap: 3, Scopes: true},
 		},
 		{
 			Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop",
 		},
 	}
 	out := RenderServers(probes)
-	if !strings.Contains(out, "builders 2/3, 1 queued, scopes off") {
-		t.Fatalf("output missing scopes-off builders line; got:\n%s", out)
-	}
-	if !strings.Contains(out, "builders 2/3, 1 queued, scopes on (relay.slice)") {
-		t.Fatalf("output missing scopes-on(slice) builders line; got:\n%s", out)
+	for _, want := range []string{
+		"builders 2/3, 1 queued, scopes off",
+		"builders 2/3, 1 queued, scopes on (relay.slice, 200%)",
+		"builders 1/3, 0 queued, scopes on (150%)",
+		"builders 1/3, 0 queued, scopes on (relay.slice)",
+		"builders 1/3, 0 queued, scopes on\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q; got:\n%s", want, out)
+		}
 	}
 	oldLine := ""
 	for _, line := range strings.Split(out, "\n") {

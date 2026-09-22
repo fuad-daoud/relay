@@ -187,29 +187,44 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string)
 }
 
 // scopeFromPolicy is the systemd scope template a served round launches
-// under, from pol.Serve.Scope (#244, #216). nil turns scopes off:
-// pol.Serve.Scope.Enabled explicitly false. Otherwise (no policy section,
+// under, from an already-resolved policy scope block (#244, #216, #295).
+// nil turns scopes off: sc.Enabled explicitly false. Otherwise (no block,
 // or one present but silent on Enabled) scopes are on by default, with
 // CPUWeight defaulting to 100 and every other field passed through as
 // given (its own zero value means "omit" to ScopeArgv).
-func scopeFromPolicy(pol policy.Policy) *relay.ScopeSpec {
-	var sp *policy.ScopePolicy
-	if pol.Serve != nil {
-		sp = pol.Serve.Scope
-	}
-	if sp != nil && sp.Enabled != nil && !*sp.Enabled {
+func scopeFromPolicy(sc *policy.ScopePolicy) *relay.ScopeSpec {
+	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil
 	}
 	spec := &relay.ScopeSpec{CPUWeight: 100}
-	if sp != nil {
-		spec.Slice = sp.Slice
-		if sp.CPUWeight != 0 {
-			spec.CPUWeight = sp.CPUWeight
+	if sc != nil {
+		spec.Slice = sc.Slice
+		if sc.CPUWeight != 0 {
+			spec.CPUWeight = sc.CPUWeight
 		}
-		spec.MemoryMax = sp.MemoryMax
-		spec.TasksMax = sp.TasksMax
+		spec.MemoryMax = sc.MemoryMax
+		spec.CPUQuota = sc.CPUQuota
+		spec.TasksMax = sc.TasksMax
 	}
 	return spec
+}
+
+// scopeStatusText is the startup line's scopes word for a resolved spec:
+// "on (slice relay.slice, 200%)", "on (200%)", "on (slice relay.slice)",
+// "on", or "off" for nil (#285, #295).
+func scopeStatusText(sc *relay.ScopeSpec) string {
+	switch {
+	case sc == nil:
+		return "off"
+	case sc.Slice != "" && sc.CPUQuota != "":
+		return fmt.Sprintf("on (slice %s, %s)", sc.Slice, sc.CPUQuota)
+	case sc.CPUQuota != "":
+		return fmt.Sprintf("on (%s)", sc.CPUQuota)
+	case sc.Slice != "":
+		return fmt.Sprintf("on (slice %s)", sc.Slice)
+	default:
+		return "on"
+	}
 }
 
 func serveAdminConfig(root string) serve.Config {
@@ -323,16 +338,14 @@ func cmdServeRun(args []string) error {
 	// probe (#244, #216); if systemd-run is missing or the user manager
 	// refuses, scopes are off for the daemon's lifetime with one log line.
 	scopesStatus := "off"
-	scope := scopeFromPolicy(pol)
+	scope := scopeFromPolicy(pol.ScopeFor(true))
 	if scope != nil {
 		if err := proc.ProbeScopes(context.Background(), scope.Slice); err != nil {
 			slog.Warn("scopes unavailable; builders will run in the daemon's cgroup", "err", err)
 			scope = nil
 			scopesStatus = "unavailable"
-		} else if scope.Slice != "" {
-			scopesStatus = fmt.Sprintf("on (slice %s)", scope.Slice)
 		} else {
-			scopesStatus = "on"
+			scopesStatus = scopeStatusText(scope)
 		}
 	}
 

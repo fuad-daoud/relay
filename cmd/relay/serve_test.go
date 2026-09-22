@@ -110,36 +110,41 @@ func TestServeFlagMaxBuilders(t *testing.T) {
 }
 
 // TestScopeFromPolicy pins scopeFromPolicy's defaults and overrides (#244,
-// #216): scopes are on unless the policy explicitly turns them off, a
-// zero CPUWeight defaults to 100, and every other field passes through.
+// #216, #295): scopes are on unless the resolved block explicitly turns them
+// off, a zero CPUWeight defaults to 100, and every other field -- the CPU
+// quota included -- passes through.
 func TestScopeFromPolicy(t *testing.T) {
 	enabledFalse := false
 	cases := map[string]struct {
-		pol  policy.Policy
+		sc   *policy.ScopePolicy
 		want *relay.ScopeSpec
 	}{
-		"nil policy defaults on": {
-			pol:  policy.Policy{},
+		"nil block defaults on": {
+			sc:   nil,
 			want: &relay.ScopeSpec{CPUWeight: 100},
 		},
 		"enabled false is nil": {
-			pol:  policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{Enabled: &enabledFalse}}},
+			sc:   &policy.ScopePolicy{Enabled: &enabledFalse},
 			want: nil,
 		},
 		"zero weight defaults to 100": {
-			pol:  policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{}}},
+			sc:   &policy.ScopePolicy{},
 			want: &relay.ScopeSpec{CPUWeight: 100},
 		},
-		"slice and memory pass through": {
-			pol: policy.Policy{Serve: &policy.ServePolicy{Scope: &policy.ScopePolicy{
-				Slice: "relay.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 64,
-			}}},
-			want: &relay.ScopeSpec{Slice: "relay.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 64},
+		"quota passes through": {
+			sc:   &policy.ScopePolicy{CPUQuota: "200%"},
+			want: &relay.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
+		},
+		"slice and limits pass through": {
+			sc: &policy.ScopePolicy{
+				Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64,
+			},
+			want: &relay.ScopeSpec{Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
 		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := scopeFromPolicy(c.pol)
+			got := scopeFromPolicy(c.sc)
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("scopeFromPolicy = %+v, want %+v", got, c.want)
 			}

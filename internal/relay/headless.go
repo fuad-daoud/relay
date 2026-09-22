@@ -151,6 +151,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 			Slice:     rt.Scope.Slice,
 			CPUWeight: rt.Scope.CPUWeight,
 			MemoryMax: rt.Scope.MemoryMax,
+			CPUQuota:  rt.Scope.CPUQuota,
 			TasksMax:  rt.Scope.TasksMax,
 		}
 	}

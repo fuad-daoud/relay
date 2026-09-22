@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ var ErrBadPolicy = errors.New("bad policy")
 // optional single-letter unit suffix (K, M, G, T), the systemd MemoryMax=
 // grammar this value is passed straight through to.
 var memoryMaxPattern = regexp.MustCompile(`^[0-9]+[KMGT]?$`)
+
+// cpuQuotaPattern is cpu_quota's shape: digits with a percent sign, the
+// systemd CPUQuota= grammar this value is passed straight through to
+// ("200%" = two cores' worth).
+var cpuQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
 
 // Policy is the planner's candidate preferences, loaded from policy.json.
 type Policy struct {
@@ -98,6 +104,10 @@ type Policy struct {
 
 	// Serve configures relay serve (#285). nil is every default.
 	Serve *ServePolicy `json:"serve,omitempty"`
+
+	// Scope is the systemd scope template for rounds this host runs. Serve.Scope
+	// replaces it entirely for served rounds (#295). nil means defaults, not off.
+	Scope *ScopePolicy `json:"scope,omitempty"`
 }
 
 // ServePolicy configures relay serve (#285).
@@ -116,6 +126,7 @@ type ScopePolicy struct {
 	Slice     string `json:"slice,omitempty"`      // "" = systemd default; else must end in ".slice"
 	CPUWeight int    `json:"cpu_weight,omitempty"` // 0 = 100; else 1..10000
 	MemoryMax string `json:"memory_max,omitempty"` // "" = none; else ^[0-9]+[KMGT]?$
+	CPUQuota  string `json:"cpu_quota,omitempty"`  // "" = none; else ^[0-9]+%$, at least 1%
 	TasksMax  int    `json:"tasks_max,omitempty"`  // 0 = none; else >= 1
 }
 
@@ -358,6 +369,46 @@ func (p Policy) MaxBuildersOrDefault() int {
 	return *p.Serve.MaxBuilders
 }
 
+// ScopeFor returns the scope block that applies to a context: a served
+// round takes Serve.Scope when set, else the top-level Scope. nil means
+// defaults (enabled, no limits) -- never "disabled".
+func (p Policy) ScopeFor(served bool) *ScopePolicy {
+	if served && p.Serve != nil && p.Serve.Scope != nil {
+		return p.Serve.Scope
+	}
+	return p.Scope
+}
+
+// validateScope checks one ScopePolicy block (top-level "scope", or
+// "serve.scope") with prefix naming the block's JSON path in the error text.
+// A nil block is not an error: absent means defaults (#295).
+func validateScope(path, prefix string, sc *ScopePolicy) error {
+	if sc == nil {
+		return nil
+	}
+	if sc.Slice != "" && !strings.HasSuffix(sc.Slice, ".slice") {
+		return fmt.Errorf("%s: %s.slice: must end in \".slice\", got %q: %w", path, prefix, sc.Slice, ErrBadPolicy)
+	}
+	if sc.CPUWeight != 0 && (sc.CPUWeight < 1 || sc.CPUWeight > 10000) {
+		return fmt.Errorf("%s: %s.cpu_weight: must be 1..10000, got %d: %w", path, prefix, sc.CPUWeight, ErrBadPolicy)
+	}
+	if sc.MemoryMax != "" && !memoryMaxPattern.MatchString(sc.MemoryMax) {
+		return fmt.Errorf("%s: %s.memory_max: must match ^[0-9]+[KMGT]?$, got %q: %w", path, prefix, sc.MemoryMax, ErrBadPolicy)
+	}
+	if sc.CPUQuota != "" {
+		if !cpuQuotaPattern.MatchString(sc.CPUQuota) {
+			return fmt.Errorf("%s: %s.cpu_quota: must match ^[0-9]+%%$, got %q: %w", path, prefix, sc.CPUQuota, ErrBadPolicy)
+		}
+		if n, err := strconv.Atoi(strings.TrimSuffix(sc.CPUQuota, "%")); err == nil && n < 1 {
+			return fmt.Errorf("%s: %s.cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.CPUQuota, ErrBadPolicy)
+		}
+	}
+	if sc.TasksMax != 0 && sc.TasksMax < 1 {
+		return fmt.Errorf("%s: %s.tasks_max: must be at least 1, got %d: %w", path, prefix, sc.TasksMax, ErrBadPolicy)
+	}
+	return nil
+}
+
 // Load reads and validates a policy file. A missing file is the zero Policy
 // and no error, so every machine without a policy.json behaves exactly as it
 // did before this file existed. A present file that does not validate is an
@@ -416,19 +467,12 @@ func Load(path string) (Policy, error) {
 		return Policy{}, fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
 	}
 
-	if p.Serve != nil && p.Serve.Scope != nil {
-		sc := p.Serve.Scope
-		if sc.Slice != "" && !strings.HasSuffix(sc.Slice, ".slice") {
-			return Policy{}, fmt.Errorf("%s: serve.scope.slice: must end in \".slice\", got %q: %w", path, sc.Slice, ErrBadPolicy)
-		}
-		if sc.CPUWeight != 0 && (sc.CPUWeight < 1 || sc.CPUWeight > 10000) {
-			return Policy{}, fmt.Errorf("%s: serve.scope.cpu_weight: must be 1..10000, got %d: %w", path, sc.CPUWeight, ErrBadPolicy)
-		}
-		if sc.MemoryMax != "" && !memoryMaxPattern.MatchString(sc.MemoryMax) {
-			return Policy{}, fmt.Errorf("%s: serve.scope.memory_max: must match ^[0-9]+[KMGT]?$, got %q: %w", path, sc.MemoryMax, ErrBadPolicy)
-		}
-		if sc.TasksMax != 0 && sc.TasksMax < 1 {
-			return Policy{}, fmt.Errorf("%s: serve.scope.tasks_max: must be at least 1, got %d: %w", path, sc.TasksMax, ErrBadPolicy)
+	if err := validateScope(path, "scope", p.Scope); err != nil {
+		return Policy{}, err
+	}
+	if p.Serve != nil {
+		if err := validateScope(path, "serve.scope", p.Serve.Scope); err != nil {
+			return Policy{}, err
 		}
 	}
 

@@ -58,6 +58,19 @@ func TestScopeArgv(t *testing.T) {
 				"--", "/bin/sh", "-c", "script", "relay-supervisor", "bin",
 			},
 		},
+		// The quota sits between the weight and the memory pairs (#295).
+		"with quota": {
+			spec: relay.ScopeSpec{Unit: "relay-round-abc12345-foo-1", Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 50},
+			want: []string{
+				"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=relay-round-abc12345-foo-1.scope",
+				"--slice=relay.slice",
+				"-p", "CPUWeight=200",
+				"-p", "CPUQuota=200%",
+				"-p", "MemoryMax=2G",
+				"-p", "TasksMax=50",
+				"--", "/bin/sh", "-c", "script", "relay-supervisor", "bin",
+			},
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
