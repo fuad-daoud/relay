@@ -534,7 +534,7 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
-	return relay.Runtime{
+	rt := relay.Runtime{
 		Herdr:            herdr.NewClient("herdr", 30*time.Second),
 		Git:              gitClient,
 		Runner:           proc.New(),
@@ -555,8 +555,25 @@ func newRuntime() (relay.Runtime, error) {
 		Transport:        transport,
 		Roles:            harness.OSRoleChecker(),
 		Channels:         &relay.FileClaims{Root: st.ChannelsDir()},
+		ProcStart:        procStartUnix,
 		Deliverers:       newDeliverers(),
-	}, nil
+	}
+	// The registry needs the runtime's own store and clock, so it is wired
+	// here rather than in the literal above.
+	rt.Planners = plannerRegistry(rt)
+	return rt, nil
+}
+
+// procStartUnix reads a process's start time in Unix seconds, the pid-reuse
+// defence planner.Resolve's host step and relay mcp's claim need. A read
+// failure is returned, not swallowed: Resolve treats the error as "the host
+// step cannot run" and falls through to the session.
+func procStartUnix(pid int) (int64, error) {
+	started, err := proc.StartTime(context.Background(), pid)
+	if err != nil {
+		return 0, err
+	}
+	return started.Unix(), nil
 }
 
 // newRemoteClient wires Runtime.Remote and Runtime.Transport (§4.7): both nil
@@ -827,6 +844,7 @@ func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
+	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELAY_PLANNER, else this session's host)")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	rebind := fs.Bool("rebind", false,
 		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
@@ -874,6 +892,7 @@ func cmdBind(args []string) error {
 
 	opts := relay.BindOptions{
 		Name:         *name,
+		PlannerID:    *plannerFlag,
 		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
 		CWD:          cwd,
 		Resume:       *resume,
@@ -970,6 +989,7 @@ func cmdFork(args []string) error {
 	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: inherits the source binding's regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (default: inherits the source binding's feature)")
+	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELAY_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1007,6 +1027,7 @@ func cmdFork(args []string) error {
 		Round:       *round,
 		NewName:     *newName,
 		Candidate:   *builderAlias,
+		PlannerID:   *plannerFlag,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		CWD:         *cwd,
 		Headless:    *headless,
@@ -1056,6 +1077,7 @@ func cmdAdd(args []string) error {
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
+	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELAY_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1100,6 +1122,7 @@ func cmdAdd(args []string) error {
 	res, err := relay.Add(context.Background(), rt, relay.AddOptions{
 		Name:        *name,
 		Candidate:   *builderAlias,
+		PlannerID:   *plannerFlag,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		Repo:        repo,
 		CWD:         *cwd,
@@ -1352,6 +1375,7 @@ func cmdAsk(args []string) error {
 	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	nameFlag := fs.String("name", "", "binding name")
 	headless := fs.Bool("headless", false, "accepted and ignored: every consult is a one-shot process since #303")
+	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELAY_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1395,6 +1419,7 @@ func cmdAsk(args []string) error {
 		Question:    *question,
 		Round:       *round,
 		Name:        name,
+		PlannerID:   *plannerFlag,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 	})
 	if err != nil {
@@ -1581,6 +1606,23 @@ func filterReport(rep relay.Report, name string) (relay.Report, error) {
 	return relay.Report{}, fmt.Errorf("no binding named %q", name)
 }
 
+// filterReportPlanner narrows a status report to one planner's bindings. It
+// is a pure function so the rule is testable without a herdr. An empty
+// planner id keeps every row, which is what a runtime with no registry gets.
+func filterReportPlanner(rep relay.Report, plannerID string) relay.Report {
+	if plannerID == "" {
+		return rep
+	}
+	kept := rep.Bindings[:0:0]
+	for _, b := range rep.Bindings {
+		if b.PlannerID == plannerID {
+			kept = append(kept, b)
+		}
+	}
+	rep.Bindings = kept
+	return rep
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relay gc clears them)")
@@ -1607,6 +1649,15 @@ func cmdStatus(args []string) error {
 	rep, err := relay.Status(context.Background(), rt)
 	if err != nil {
 		return err
+	}
+
+	// §3.3: a bare `relay status` shows the calling planner's bindings. A
+	// session with no planner -- no registry, no match -- keeps the old
+	// behaviour and lists everything.
+	if target == "" {
+		if rec, ok := plannerFilter(rt); ok {
+			rep = filterReportPlanner(rep, rec.ID)
+		}
 	}
 
 	rep, err = filterReport(rep, target)
@@ -1643,10 +1694,6 @@ func cmdStatusline(args []string) error {
 	if fi, err := os.Stdin.Stat(); err != nil || relay.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
-	pane := os.Getenv("HERDR_PANE_ID")
-	if pane == "" {
-		return nil
-	}
 	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
 	if err != nil || columns <= 0 {
 		columns = 0
@@ -1657,7 +1704,14 @@ func cmdStatusline(args []string) error {
 		fmt.Fprintf(os.Stderr, "relay statusline: %v\n", err)
 		return nil
 	}
-	rep, err := relay.PlannerStatus(context.Background(), rt, pane)
+	// §3.3: the row set is the calling planner's bindings. A session with no
+	// planner renders nothing, the same as an unset $HERDR_PANE_ID did
+	// before #303.
+	rec, ok := plannerFilter(rt)
+	if !ok {
+		return nil
+	}
+	rep, err := relay.PlannerStatus(context.Background(), rt, rec.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay statusline: %v\n", err)
 		return nil

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/mcp"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
@@ -18,26 +19,26 @@ import (
 // gets, so a misconfigured poll cannot spin the claim file or the store lock.
 const minMCPInterval = 200 * time.Millisecond
 
+// relay mcp starts beside the plugin's SessionStart hook (§5.2), which may
+// still be running when the server comes up, so ErrNoPlanner is retried for
+// up to mcpResolveTimeout before the server falls back to tools-only.
+const (
+	mcpResolveTimeout = 10 * time.Second
+	mcpResolveRetry   = 500 * time.Millisecond
+)
+
 // cmdMCP runs relay mcp: an MCP server over stdio a Claude Code planner
-// spawns from its plugin manifest (docs/specs/2026-09-21-planner-channel-design.md).
-// In channel mode it also claims its pane and drains its mailbox; in tools
-// mode it only serves the four verbs as tools.
+// spawns from its plugin manifest (docs/specs/2026-09-21-planner-channel-design.md,
+// docs/specs/2026-09-22-drop-herdr-design.md §4.5). In channel mode it also
+// claims its planner and drains its mailbox; in tools mode it only serves
+// the verbs as tools.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	paneFlag := fs.String("pane", "", "planner pane id (default: $HERDR_PANE_ID)")
+	plannerFlag := fs.String("planner", "", "planner id or name (default: $RELAY_PLANNER, else this session's host)")
 	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
 	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
-	}
-
-	pane := *paneFlag
-	if pane == "" {
-		pane = os.Getenv("HERDR_PANE_ID")
-	}
-	if pane == "" {
-		fmt.Fprintln(os.Stderr, "relay mcp: no planner pane (set HERDR_PANE_ID or pass --pane)")
-		return exitCodeErr{code: 2}
 	}
 
 	if *interval < minMCPInterval {
@@ -55,11 +56,40 @@ func cmdMCP(args []string) error {
 		return err
 	}
 
+	// §4.5: resolve this planner, retrying while the hook may still be
+	// running. A bad --planner value is not a race: it is reported at once.
+	var (
+		rec     planner.Record
+		haveRec bool
+	)
+	deadline := time.Now().Add(mcpResolveTimeout)
+	for {
+		r, _, rerr := resolveMCPPlanner(rt, *plannerFlag)
+		if rerr == nil {
+			rec, haveRec = r, true
+			break
+		}
+		if !errors.Is(rerr, planner.ErrNoPlanner) {
+			fmt.Fprintf(os.Stderr, "relay mcp: %v\n", rerr)
+			return exitCodeErr{code: 2}
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(mcpResolveRetry)
+	}
+
 	version := buildVersion()
-	fmt.Fprintf(os.Stderr, "relay mcp: pane %s mode %s\n", pane, mcpModeWord(mode))
+	if haveRec {
+		fmt.Fprintf(os.Stderr, "relay mcp: planner %s (%s) mode %s\n", rec.Name, rec.ID, mcpModeWord(mode))
+	} else {
+		// No registration and no host match: the verbs still serve, so a
+		// planner whose hook never ran can still use the tools.
+		fmt.Fprintln(os.Stderr, `relay mcp: no relay planner for this session; tools-only (run "relay planner init")`)
+	}
 
 	srv := &mcp.Server{
-		Verbs:   &mcp.RelayVerbs{RT: rt, Pane: pane},
+		Verbs:   &mcp.RelayVerbs{RT: rt, Planner: rec.ID},
 		Version: version,
 		Log:     os.Stderr,
 	}
@@ -67,22 +97,38 @@ func cmdMCP(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if mode == mcp.ModeChannel {
+	if mode == mcp.ModeChannel && haveRec {
 		srv.OnInitialized = func() {
-			startMCPChannel(ctx, rt, pane, version, srv, *interval)
+			startMCPChannel(ctx, rt, rec, version, srv, *interval)
 		}
 	}
 
 	serveErr := srv.Serve(ctx, os.Stdin, os.Stdout)
 
-	if mode == mcp.ModeChannel && rt.Channels != nil {
-		_ = rt.Channels.Remove(pane, os.Getpid())
+	if mode == mcp.ModeChannel && haveRec && rt.Channels != nil {
+		_ = rt.Channels.Remove(rec.ID, os.Getpid())
 	}
 
 	if serveErr != nil && !errors.Is(serveErr, context.Canceled) {
 		return serveErr
 	}
 	return nil
+}
+
+// resolveMCPPlanner is planner.Resolve as relay mcp calls it: --planner,
+// $RELAY_PLANNER, the parent Claude process, then the session (§4.5).
+func resolveMCPPlanner(rt relay.Runtime, flagVal string) (planner.Record, planner.Resolution, error) {
+	var now time.Time
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	return planner.Resolve(rt.Planners, planner.ResolveInput{
+		Flag:      flagVal,
+		Env:       os.Getenv,
+		PPID:      os.Getppid(),
+		ProcStart: rt.ProcStart,
+		Now:       now,
+	})
 }
 
 // resolveMCPMode turns --mode into an mcp.Mode: "channel" and "tools" are
@@ -113,25 +159,34 @@ func mcpModeWord(m mcp.Mode) string {
 	return "tools"
 }
 
-// startMCPChannel writes this process's initial claim and, on success,
-// starts the poll loop. A refused claim (ErrClaimHeld) exits the process:
-// Claude Code shows the server as failed and the planner keeps pane
-// delivery, exactly as if relay mcp had never started (spec §3.2, §6).
-func startMCPChannel(ctx context.Context, rt relay.Runtime, pane, version string, p relay.Pusher, interval time.Duration) {
+// startMCPChannel reaps the pre-#303 pane-keyed claims, writes this process's
+// initial claim and, on success, starts the poll loop. A refused claim
+// (ErrClaimHeld) exits the process: Claude Code shows the server as failed and
+// the planner keeps pane delivery, exactly as if relay mcp had never started
+// (spec §3.2, §6).
+func startMCPChannel(ctx context.Context, rt relay.Runtime, rec planner.Record, version string, p relay.Pusher, interval time.Duration) {
 	if rt.Channels == nil {
 		fmt.Fprintln(os.Stderr, "relay mcp: no claim store configured; running tools-only")
 		return
 	}
 
+	// §3.3: a claim file left by a pre-#303 relay mcp is reaped here, and
+	// only once its writer is dead. Another planner session may still be
+	// running an older relay mcp during the upgrade.
+	rt.Channels.SweepPaneKeyed()
+
 	now := rt.Now()
 	cwd, _ := os.Getwd()
+	host := os.Getppid()
 	claim := relay.Claim{
-		Pane:      pane,
-		PID:       os.Getpid(),
-		StartedAt: now,
-		SeenAt:    now,
-		CWD:       cwd,
-		Version:   version,
+		Planner:       rec.ID,
+		PID:           os.Getpid(),
+		HostPID:       host,
+		HostStartedAt: plannerHostStart(host),
+		StartedAt:     now,
+		SeenAt:        now,
+		CWD:           cwd,
+		Version:       version,
 	}
 	if err := rt.Channels.Write(claim, now); err != nil {
 		fmt.Fprintf(os.Stderr, "relay mcp: %v\n", err)
@@ -141,15 +196,16 @@ func startMCPChannel(ctx context.Context, rt relay.Runtime, pane, version string
 		return
 	}
 
-	go pollMCPChannel(ctx, rt, pane, claim, p, interval)
+	go pollMCPChannel(ctx, rt, rec.ID, claim, p, interval)
 }
 
-// pollMCPChannel is relay mcp's channel-mode poll loop: refresh the claim,
-// then drain the pane's mailbox (spec §3.4). It never exits on a drain
-// error -- only a stolen claim (ErrClaimHeld on refresh) stops it, leaving
-// the tools still serving.
-func pollMCPChannel(ctx context.Context, rt relay.Runtime, pane string, claim relay.Claim, p relay.Pusher, interval time.Duration) {
-	st := &relay.DrainState{Pane: pane}
+// pollMCPChannel is relay mcp's channel-mode poll loop: re-read the planner
+// record, refresh the claim, then drain that planner's mailbox (spec §3.4,
+// drop-herdr §4.5). It never exits on a drain error -- only a stolen claim
+// (ErrClaimHeld on refresh) or a forgotten record stops it, leaving the
+// tools still serving.
+func pollMCPChannel(ctx context.Context, rt relay.Runtime, plannerID string, claim relay.Claim, p relay.Pusher, interval time.Duration) {
+	st := &relay.DrainState{Planner: plannerID}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -158,6 +214,15 @@ func pollMCPChannel(ctx context.Context, rt relay.Runtime, pane string, claim re
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// §4.5: the record is re-read by id every poll, so a rename or a
+			// session move a later `relay planner init --hook` makes (after
+			// /clear) is picked up without a restart. A record that is gone
+			// ends the channel; the tools keep serving.
+			if _, err := rt.Planners.Get(plannerID); err != nil {
+				fmt.Fprintf(os.Stderr, "relay mcp: planner %s is gone; channel stopped\n", plannerID)
+				return
+			}
+
 			claim.SeenAt = rt.Now()
 			if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
 				fmt.Fprintf(os.Stderr, "relay mcp: refresh claim: %v\n", err)

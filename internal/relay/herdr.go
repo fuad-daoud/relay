@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ingest"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -206,6 +207,18 @@ type Runtime struct {
 	// Nil means no claims exist, so DeliverPending behaves exactly as before;
 	// cmd/relay wires relay.FileClaims{Root: st.ChannelsDir()}.
 	Channels ClaimStore
+
+	// Planners is the planner registry (#303 step 1a). bind, add, fork and
+	// ask resolve their planner through it, and the daemon back-fills a
+	// binding written before PlannerID existed. Nil means no registry is
+	// configured -- tests, and any embedded caller that predates it -- and
+	// the verbs then keep the pre-registry pane-derived endpoint.
+	Planners planner.Registry
+
+	// ProcStart reads a process's start time in Unix seconds, the pid-reuse
+	// defence planner.Resolve's host step needs. Nil means the host step
+	// cannot run, and resolution falls through to the session.
+	ProcStart func(pid int) (int64, error)
 
 	// Deliverers routes a planner-bound payload to that planner kind's own
 	// push path instead of typing it into a pane

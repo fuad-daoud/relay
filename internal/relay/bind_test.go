@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -94,6 +95,90 @@ func TestBindRepoFactsFailureIsNil(t *testing.T) {
 	}
 	if b.RepoRef != nil {
 		t.Errorf("RepoRef = %+v, want nil when RepoFacts errors", b.RepoRef)
+	}
+}
+
+// testPlannerRegistry seeds a registry holding rec and returns it with the
+// record as the registry stamped it (created_at and seen_at filled in).
+func testPlannerRegistry(t *testing.T, rec planner.Record) (*planner.FileRegistry, planner.Record) {
+	t.Helper()
+	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	created, err := reg.Create(rec)
+	if err != nil {
+		t.Fatalf("create planner record: %v", err)
+	}
+	return reg, created
+}
+
+// TestBindRecordsPlannerFromRegistry is the plan's required case (§3.2,
+// §5.3): with a registry configured, Binding.PlannerID, Planner.Kind and
+// Planner.SessionID come from the record -- not from the herdr agent list --
+// while Planner.PaneID comes from the pane env the caller passes.
+func TestBindRecordsPlannerFromRegistry(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w2:p9")
+
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	reg, rec := testPlannerRegistry(t, planner.Record{
+		ID:                "pl_aaaaaaaabbbb",
+		Name:              "architect-1",
+		HarnessKind:       "claude",
+		SessionID:         "sess-from-record",
+		CWD:               "/repo",
+		TranscriptLocator: "/home/x/.claude/projects/slug/S.jsonl",
+	})
+	rt.Planners = reg
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:        "webshop",
+		Candidate:   testOpencodeRef,
+		PlannerID:   rec.ID,
+		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		CWD:         "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	if b.PlannerID != rec.ID {
+		t.Errorf("PlannerID = %q, want the record's %q", b.PlannerID, rec.ID)
+	}
+	if b.Planner.Kind != "claude" {
+		t.Errorf("Planner.Kind = %q, want the record's claude", b.Planner.Kind)
+	}
+	if b.Planner.SessionID != "sess-from-record" {
+		t.Errorf("Planner.SessionID = %q, want the record's sess-from-record", b.Planner.SessionID)
+	}
+	if b.Planner.PaneID != "w2:p9" {
+		t.Errorf("Planner.PaneID = %q, want the pane env's w2:p9", b.Planner.PaneID)
+	}
+	if b.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
+		t.Errorf("Planner.TranscriptLocator = %q, want the record's", b.Planner.TranscriptLocator)
+	}
+}
+
+// TestBindNoPlannerIsHardError is the plan's required case for §4.3: with a
+// registry configured and nothing resolving -- no --planner, no
+// $RELAY_PLANNER, no host and no detectable session -- a verb fails with
+// exactly the CLI's no-planner line. The old "no planner pane" error is gone.
+func TestBindNoPlannerIsHardError(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w2:p3")
+	t.Setenv("RELAY_PLANNER", "")
+	t.Setenv("CLAUDECODE", "")
+
+	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	rt := newRuntime(t, f)
+	rt.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+	})
+	if err == nil {
+		t.Fatal("Bind with no resolvable planner must fail")
+	}
+	const want = `no relay planner for this session. Run "relay planner init" once here, or enable the relay plugin (relay doctor).`
+	if err.Error() != want {
+		t.Errorf("err = %q, want exactly %q", err.Error(), want)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -284,6 +285,8 @@ func cmdDoctor(args []string) error {
 		}
 	}
 
+	rep.Checks = append(rep.Checks, doctor.PlannerChecks(plannerCheckInput(rt, kinds))...)
+
 	renderReport(os.Stdout, rep)
 
 	if rep.Failures() > 0 {
@@ -464,6 +467,78 @@ func policyExample(role string, serving []string) string {
 		"order": {role: serving},
 	})
 	return string(b)
+}
+
+// stalePlannerAge is how old a planner record's seen_at must be before the
+// stale-record note names it (§4.8, row 5).
+const stalePlannerAge = 7 * 24 * time.Hour
+
+// plannerCheckInput gathers §4.8's planner-row facts: which planners exist,
+// whether this process runs inside Claude Code, and whether the resolved
+// planner has a live channel claim. Every read is best-effort -- a fact relay
+// cannot establish reads as absent, and the checks say "not checked" rather
+// than guessing. Home comes from $HOME so the row reads the same directory
+// cmd/relay's TestMain isolated.
+func plannerCheckInput(rt relay.Runtime, kinds []string) doctor.PlannerCheckInput {
+	in := doctor.PlannerCheckInput{Home: os.Getenv("HOME")}
+	if wd, err := os.Getwd(); err == nil {
+		in.Repo = wd
+	}
+	for _, k := range kinds {
+		if k == "claude" {
+			in.Claude = true
+		}
+	}
+
+	records := []planner.Record{}
+	if rt.Planners != nil {
+		if recs, err := rt.Planners.List(); err == nil {
+			records = recs
+		}
+	}
+
+	live := map[string]bool{}
+	if rt.Store != nil {
+		if bindings, err := rt.Store.List(); err == nil {
+			for _, b := range bindings {
+				if b.State != store.StateDone && b.PlannerID != "" {
+					live[b.PlannerID] = true
+				}
+			}
+		}
+	}
+
+	cutoff := rt.Now().Add(-stalePlannerAge)
+	for _, rec := range records {
+		if rec.HarnessKind == "claude" {
+			in.Claude = true
+		}
+		if rec.SeenAt.Before(cutoff) && !live[rec.ID] {
+			in.Stale = append(in.Stale, rec.Name)
+		}
+	}
+
+	if ident, ok := planner.Detect(os.Getenv, os.Getppid()); ok && ident.Kind == "claude" {
+		in.Detected = true
+		if rt.Planners != nil {
+			rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+				Env:       os.Getenv,
+				PPID:      os.Getppid(),
+				ProcStart: rt.ProcStart,
+				Now:       rt.Now(),
+			})
+			if err == nil {
+				in.Resolved = &rec
+				if rt.Channels != nil {
+					if c, cerr := rt.Channels.Live(rec.ID, rt.Now()); cerr == nil && c != nil {
+						in.ClaimLive = true
+					}
+				}
+			}
+		}
+	}
+
+	return in
 }
 
 // insertGlobalCheck puts c after the last global row, so render order stays

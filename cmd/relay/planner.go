@@ -394,6 +394,30 @@ func plannerLookup(reg planner.Registry, ref string) (planner.Record, error) {
 	}
 }
 
+// plannerFilter resolves this session's planner for the commands that filter
+// by it without requiring one: `relay status` with no name (§3.3) and
+// `relay statusline`. A miss is not an error there -- the caller keeps its
+// old behaviour -- and neither is a Runtime with no registry (tests).
+func plannerFilter(rt relay.Runtime) (planner.Record, bool) {
+	if rt.Planners == nil {
+		return planner.Record{}, false
+	}
+	var now time.Time
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+		Env:       os.Getenv,
+		PPID:      os.Getppid(),
+		ProcStart: rt.ProcStart,
+		Now:       now,
+	})
+	if err != nil {
+		return planner.Record{}, false
+	}
+	return rec, true
+}
+
 // plannerInUse is Forget's guard (§4.7): a record any binding that is not DONE
 // still names is in use, and forgetting it would strand that binding's
 // history. It walks the same store listing `relay status --all` reads.

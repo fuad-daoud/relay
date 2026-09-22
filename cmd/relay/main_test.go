@@ -644,17 +644,20 @@ func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
 }
 
 // TestAddBranchDerivesName pins that a branch alone is enough for the name to
-// be derived: with no planner pane the run stops before any herdr call, so the
-// derived name is never printed and no builder is reached.
+// be derived: with no relay planner for this session the run stops on the
+// no-planner error, before any herdr call, so the derived name is never
+// printed and no builder is reached.
 func TestAddBranchDerivesName(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("RELAY_PLANNER", "")
+	t.Setenv("CLAUDECODE", "")
 
 	err := run([]string{"add", "--branch", "feature/api-auth"})
 	if err == nil {
-		t.Fatal("add without a planner pane must refuse")
+		t.Fatal("add without a relay planner must refuse")
 	}
-	if !strings.Contains(err.Error(), "HERDR_PANE_ID") {
-		t.Fatalf("expected the no-planner-pane error, got %v", err)
+	if !strings.Contains(err.Error(), "no relay planner for this session") {
+		t.Fatalf("expected the no-planner error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "api-auth") {
 		t.Errorf("the derived name must not appear in the refusal: %v", err)

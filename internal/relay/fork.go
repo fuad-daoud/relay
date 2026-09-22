@@ -33,7 +33,14 @@ type ForkOptions struct {
 	// to resolveCandidate, so a one-candidate machine still forks without a flag.
 	Candidate string
 
-	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
+	// PlannerID is the caller's --planner value when it has one, and the
+	// resolved record's id afterwards. Empty means "resolve this session's
+	// planner" (§4.3).
+	PlannerID string
+
+	// PlannerPane is $HERDR_PANE_ID when set; optional. It only fills the
+	// pane delivery path's Planner.PaneID.
+	PlannerPane string
 
 	// CWD binds the fork to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
@@ -85,8 +92,9 @@ type ForkResult struct {
 
 // Fork branches a new binding from the source's state as of a given round.
 //
-// Preconditions:  opts.PlannerPane names a live agent pane; opts.Source exists;
+// Preconditions:  a relay planner resolves for the caller (--planner,
 //
+//	$RELAY_PLANNER, the host process, or the session); opts.Source exists;
 //	1 <= opts.Round <= source.Round; opts.NewName is valid and
 //	unused; the source round has a plan in the log.
 //
@@ -100,8 +108,9 @@ type ForkResult struct {
 //	ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists, or a wrapped
 //	herdr failure. Rollback is described in §5.
 func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error) {
-	if opts.PlannerPane == "" {
-		return ForkResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
+	if err != nil {
+		return ForkResult{}, err
 	}
 	if err := store.ValidName(opts.NewName); err != nil {
 		return ForkResult{}, err
@@ -119,13 +128,27 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		return ForkResult{}, err
 	}
 
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return ForkResult{}, fmt.Errorf("list agents: %w", err)
+	plannerEP := store.Endpoint{}
+	if haveRec {
+		opts.PlannerID = rec.ID
+		plannerEP = recordEndpoint(rec, opts.PlannerPane)
+	} else {
+		// A Runtime with no planner registry: the pane is the identity.
+		if opts.PlannerPane == "" {
+			return ForkResult{}, ErrNoPlannerSession
+		}
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return ForkResult{}, fmt.Errorf("list agents: %w", err)
+		}
+		a, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
+		if !ok {
+			return ForkResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
+		}
+		plannerEP = endpointOf(a)
 	}
-	planner, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-	if !ok {
-		return ForkResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
+	if plannerEP.TranscriptLocator == "" {
+		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
 	}
 
 	src, err := rt.Store.Load(opts.Source)
@@ -264,7 +287,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	bindOpts := BindOptions{
 		Name:        opts.NewName,
 		Candidate:   c.Ref().String(),
-		PlannerPane: planner.PaneID,
+		PlannerID:   opts.PlannerID,
+		PlannerPane: plannerEP.PaneID,
 		CWD:         cwd,
 		Headless:    opts.Headless,
 		Tier:        string(tier),
@@ -275,7 +299,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// resolved above -- res, from before the worktree was cut, is what the
 	// pick entry and ForkResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName, plannerEP.PaneID)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
@@ -300,7 +324,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	b := store.Binding{
 		Name:             opts.NewName,
 		CWD:              cwd,
-		Planner:          endpointOf(planner),
+		Planner:          plannerEP,
+		PlannerID:        opts.PlannerID,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		Round:            opts.Round + 1,
@@ -320,7 +345,6 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Gate:             gate,
 		Regate:           regate,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 
 	now := time.Now().UTC()
 	if rt.Now != nil {

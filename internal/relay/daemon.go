@@ -416,7 +416,7 @@ func armedFires(bindings []store.Binding) []firePending {
 // concurrently cannot land a write between the read and the save.
 func (d *Daemon) tickOne(ctx context.Context, name string, agents []herdr.Agent) error {
 	return d.rt.Store.WithLock(func(tx *store.Tx) error {
-		fresh, err := tx.Load(name)
+		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
 			// A `relay unbind` landed between the caller's binding list and
 			// here. That is normal use, not a failure worth logging.
@@ -426,16 +426,41 @@ func (d *Daemon) tickOne(ctx context.Context, name string, agents []herdr.Agent)
 			return err
 		}
 
+		fresh := backfillPlannerID(d.rt, loaded)
+
 		next, err := Reconcile(ctx, d.rt, tx, fresh, agents)
 		if err != nil {
 			return err
 		}
-		if store.SameBinding(next, fresh) {
+		// Compared against what was on disk, not against fresh: a back-fill
+		// is itself a change worth saving.
+		if store.SameBinding(next, loaded) {
 			return nil
 		}
 
 		return tx.Save(next)
 	})
+}
+
+// backfillPlannerID is §5.6's upgrade path (docs/specs/2026-09-22-drop-herdr-
+// design.md §5.6, last paragraph): a binding written before Binding.PlannerID
+// existed has no id, but its Planner.SessionID still names the harness
+// session the planner registered with. When the registry knows that
+// (kind, session), the record's id is set on the binding, under the lock
+// tickOne already holds, so the channel lookup, the forget guard and the
+// status row all key on the planner. A miss, a DONE binding, an empty session
+// and a Runtime with no registry all leave the binding exactly as it was.
+func backfillPlannerID(rt Runtime, b store.Binding) store.Binding {
+	if b.PlannerID != "" || b.State == store.StateDone || b.Planner.SessionID == "" || rt.Planners == nil {
+		return b
+	}
+	rec, err := rt.Planners.BySession(b.Planner.Kind, b.Planner.SessionID)
+	if err != nil {
+		return b
+	}
+	b.PlannerID = rec.ID
+	slog.Debug("planner backfilled", "binding", b.Name, "planner", rec.ID)
+	return b
 }
 
 // ingestLiveBindings runs internal/ingest over every live binding's

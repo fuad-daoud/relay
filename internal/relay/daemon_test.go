@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -83,6 +84,60 @@ func TestTickSkipsDoneBindings(t *testing.T) {
 	}
 	if len(f.prompts) != 0 {
 		t.Error("a done binding must be left entirely alone")
+	}
+}
+
+// TestDaemonBackfillsPlannerID is the plan's required case for §5.6 (last
+// paragraph): a tick back-fills PlannerID from (Planner.Kind,
+// Planner.SessionID) when the registry knows that session, and leaves it
+// empty when it does not.
+func TestDaemonBackfillsPlannerID(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f)
+	if b.PlannerID != "" {
+		t.Fatalf("precondition: the seeded binding already has PlannerID %q", b.PlannerID)
+	}
+	if b.Planner.SessionID == "" {
+		t.Fatal("precondition: the seeded binding has no Planner.SessionID")
+	}
+
+	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	rec, err := reg.Create(planner.Record{
+		ID:          "pl_aaaaaaaabbbb",
+		Name:        "architect-1",
+		HarnessKind: b.Planner.Kind,
+		SessionID:   b.Planner.SessionID,
+		CWD:         "/repo",
+	})
+	if err != nil {
+		t.Fatalf("create planner record: %v", err)
+	}
+	rt.Planners = reg
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.PlannerID != rec.ID {
+		t.Errorf("PlannerID = %q, want the record's %q", got.PlannerID, rec.ID)
+	}
+
+	// A miss does nothing: no record for this session, no PlannerID.
+	f2 := &fakeHerdr{}
+	rt2, b2 := seedBound(t, f2)
+	rt2.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	if err := NewDaemon(rt2, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick (miss): %v", err)
+	}
+	got2, err := rt2.Store.Load(b2.Name)
+	if err != nil {
+		t.Fatalf("Load (miss): %v", err)
+	}
+	if got2.PlannerID != "" {
+		t.Errorf("a miss must leave PlannerID empty, got %q", got2.PlannerID)
 	}
 }
 
