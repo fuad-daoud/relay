@@ -121,8 +121,11 @@ appendEntryLocked(rt, entry) })`. `recordSpawnFailureWith(rt, mutate, …)`
 is replaced by `recordSpawnFailureWith(rt, locked bool, …)`: the entry is
 built as today and committed through `appendEntryLocked`, wrapped in
 `WithLock` when `!locked`. `recordSpawnFailure` / `recordSpawnFailureLocked`
-keep their signatures. `mutateLedger` / `mutateLedgerLocked` stay for
-`Available` (a clear is not an observation).
+keep their signatures. `mutateLedger` / `mutateLedgerLocked` stay for other
+callers. `Available` no longer uses them: since #302 it takes the lock
+itself, refuses an unknown subject (#301), and records a manual clear as a
+`cleared` history event whose `since` is the oldest cleared entry's `at`,
+because how long a block lasted is the observation the history was missing.
 
 ### 4.2 `relay.FormatPolicy` (signature change)
 
