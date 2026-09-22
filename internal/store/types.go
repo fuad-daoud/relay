@@ -197,8 +197,8 @@ type Binding struct {
 	// (docs/specs/2026-09-22-drop-herdr-design.md §3.2, §5.3): the id in
 	// $XDG_STATE_HOME/relay/planners/<id>.json and in the db's planner table.
 	// Empty on every binding written before #303 step 1, and empty on a
-	// remote binding, which has no planner. Step 1b is what sets it at
-	// bind/add/fork; this round only adds the field, so nothing writes it yet.
+	// remote binding, which has no planner. bind/add/fork/ask set it from
+	// planner.Resolve, and the daemon back-fills it by planner session.
 	PlannerID string   `json:"planner_id,omitempty"`
 	Builder   Endpoint `json:"builder"`
 	// BuilderCandidate is the harness/provider/model token the builder was

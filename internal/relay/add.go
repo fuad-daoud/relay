@@ -13,9 +13,15 @@ import (
 
 // AddOptions describes one peer-builder request.
 type AddOptions struct {
-	Name        string // name for the new binding; required, must be free
-	Candidate   string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
-	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
+	Name      string // name for the new binding; required, must be free
+	Candidate string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
+	// PlannerID is the caller's --planner value when it has one, and the
+	// resolved record's id afterwards. Empty means "resolve this session's
+	// planner" (§4.3).
+	PlannerID string
+	// PlannerPane is $HERDR_PANE_ID when set; optional. It only fills the
+	// pane delivery path's Planner.PaneID.
+	PlannerPane string
 	Repo        string // the repository the worktree is cut from; the caller's cwd
 
 	// CWD binds the peer to a directory the human already prepared instead of
@@ -84,8 +90,9 @@ type AddResult struct {
 // round 1 with an empty log and no provenance -- so writing ForkedFrom on it
 // would record a relationship that does not exist.
 //
-// Preconditions:  opts.PlannerPane names a live agent pane; opts.Name is valid
+// Preconditions:  a relay planner resolves for the caller (--planner,
 //
+//	$RELAY_PLANNER, the host process, or the session); opts.Name is valid
 //	and unused; opts.Candidate is resolvable to builder; opts.Repo is a git
 //	repository unless opts.CWD is given.
 //
@@ -102,8 +109,9 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if opts.Server != "" {
 		return addRemote(ctx, rt, opts)
 	}
-	if opts.PlannerPane == "" {
-		return AddResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
+	if err != nil {
+		return AddResult{}, err
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
@@ -132,13 +140,27 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		return AddResult{}, err
 	}
 
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return AddResult{}, fmt.Errorf("list agents: %w", err)
+	plannerEP := store.Endpoint{}
+	if haveRec {
+		opts.PlannerID = rec.ID
+		plannerEP = recordEndpoint(rec, opts.PlannerPane)
+	} else {
+		// A Runtime with no planner registry: the pane is the identity.
+		if opts.PlannerPane == "" {
+			return AddResult{}, ErrNoPlannerSession
+		}
+		agents, err := rt.Herdr.ListAgents(ctx)
+		if err != nil {
+			return AddResult{}, fmt.Errorf("list agents: %w", err)
+		}
+		a, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
+		if !ok {
+			return AddResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
+		}
+		plannerEP = endpointOf(a)
 	}
-	planner, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-	if !ok {
-		return AddResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
+	if plannerEP.TranscriptLocator == "" {
+		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
 	}
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
@@ -264,7 +286,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	bindOpts := BindOptions{
 		Name:        opts.Name,
 		Candidate:   c.Ref().String(),
-		PlannerPane: planner.PaneID,
+		PlannerID:   opts.PlannerID,
+		PlannerPane: plannerEP.PaneID,
 		CWD:         cwd,
 		Headless:    opts.Headless,
 		Tier:        string(tier),
@@ -275,7 +298,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// this function resolved above -- res, from the pre-worktree resolution,
 	// is what the pick entry and AddResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name, plannerEP.PaneID)
 	if err != nil {
 		rollback()
 		return AddResult{}, err
@@ -287,7 +310,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
-		Planner:          endpointOf(planner),
+		Planner:          plannerEP,
+		PlannerID:        opts.PlannerID,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		Round:            1,
@@ -310,7 +334,6 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		if err := tx.Save(b); err != nil {

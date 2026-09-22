@@ -11,22 +11,26 @@ import (
 )
 
 // fakeClaimStore is the map-backed ClaimStore the plan asks for: a claim
-// present for a pane means live, absent means not.
+// present for a planner id means live, absent means not.
 type fakeClaimStore map[string]*Claim
 
-func (f fakeClaimStore) Live(pane string, now time.Time) (*Claim, error) {
-	return f[pane], nil
+func (f fakeClaimStore) Live(planner string, now time.Time) (*Claim, error) {
+	return f[planner], nil
 }
 
 func (f fakeClaimStore) Write(c Claim, now time.Time) error {
-	f[c.Pane] = &c
+	f[c.Planner] = &c
 	return nil
 }
 
-func (f fakeClaimStore) Remove(pane string, pid int) error {
-	delete(f, pane)
+func (f fakeClaimStore) Remove(planner string, pid int) error {
+	delete(f, planner)
 	return nil
 }
+
+// SweepPaneKeyed is a no-op here: the sweep's own rule has its own test in
+// channel_test.go, and this fake is only ever read through Live.
+func (f fakeClaimStore) SweepPaneKeyed() int { return 0 }
 
 func queuedBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
@@ -282,7 +286,7 @@ func TestDeliverReportsPlannerGoneWithNothingPending(t *testing.T) {
 }
 
 // TestDeliverYieldsToLiveClaim is the daemon-guard test the plan requires:
-// a live claim on the planner's pane must produce an all-false Delivery,
+// a live claim on the planner's id must produce an all-false Delivery,
 // with zero prompts, zero notifies, the entry still pending, and the
 // binding's State left untouched. Commenting out the guard in DeliverPending
 // makes this fail on the prompt count (verified by hand per the plan's step
@@ -290,11 +294,12 @@ func TestDeliverReportsPlannerGoneWithNothingPending(t *testing.T) {
 func TestDeliverYieldsToLiveClaim(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := queuedBinding(t, f)
+	b.PlannerID = testClaimPlanner
 	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
 	f.prompts = nil
 	f.notices = nil
 
-	claims := fakeClaimStore{b.Planner.PaneID: &Claim{Pane: b.Planner.PaneID, PID: 1, SeenAt: rt.Now()}}
+	claims := fakeClaimStore{b.PlannerID: &Claim{Planner: b.PlannerID, PID: 1, SeenAt: rt.Now()}}
 	rt.Channels = claims
 	wantState := b.State
 
@@ -316,6 +321,52 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 	}
 	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || !pending {
 		t.Errorf("the entry must stay pending: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestDeliverPendingChannelByPlannerID is the plan's required case for §3.3:
+// the channel route is keyed by planner id. A binding that names a planner
+// with a live claim for it takes the channel route (no prompt, no delivery);
+// the same binding without a PlannerID skips the route entirely and takes the
+// pane path. Reverting DeliverPending to look the claim up by
+// Planner.PaneID makes the first half fail on the prompt count.
+func TestDeliverPendingChannelByPlannerID(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+	f.notices = nil
+
+	withID := b
+	withID.PlannerID = testClaimPlanner
+	rt.Channels = fakeClaimStore{testClaimPlanner: &Claim{Planner: testClaimPlanner, PID: 1, SeenAt: rt.Now()}}
+
+	_, got, err := deliverPending(t, rt, withID, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending with a live claim: %v", err)
+	}
+	if len(f.prompts) != 0 {
+		t.Fatalf("a live claim for the binding's PlannerID must take the channel route, got prompts %+v", f.prompts)
+	}
+	if got.Delivered || got.Held || got.PlannerGone || got.Empty {
+		t.Fatalf("want the all-false channel route, got %+v", got)
+	}
+
+	// The same binding without a PlannerID: the channel route is skipped and
+	// the pane path types the payload.
+	withoutID := b
+	withoutID.PlannerID = ""
+	f.prompts = nil
+
+	_, got2, err := deliverPending(t, rt, withoutID, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending without a PlannerID: %v", err)
+	}
+	if !got2.Delivered {
+		t.Fatalf("a binding with no PlannerID must take the pane route, got %+v", got2)
+	}
+	if len(f.prompts) == 0 {
+		t.Error("the pane route must type the payload")
 	}
 }
 

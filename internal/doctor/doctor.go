@@ -21,6 +21,9 @@ const (
 	SevOK   Severity = iota // nothing to do; also used for "not checked"
 	SevWarn                 // wrong, but relay can still run
 	SevFail                 // relay cannot run
+	// SevInfo is an observation the human may want to act on: neither a
+	// warning nor a failure, and counted as neither (§4.8 row 5).
+	SevInfo
 )
 
 func (s Severity) String() string {
@@ -31,6 +34,8 @@ func (s Severity) String() string {
 		return "warn"
 	case SevFail:
 		return "FAIL"
+	case SevInfo:
+		return "info"
 	default:
 		return "unknown"
 	}

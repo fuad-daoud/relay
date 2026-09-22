@@ -13,6 +13,13 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// mcpTestPlannerA and mcpTestPlannerB are valid planner ids (pl_ plus 12
+// characters of [a-z2-7]); the status filter keys on them.
+const (
+	mcpTestPlannerA = "pl_aaaaaaaabbbb"
+	mcpTestPlannerB = "pl_ccccccccdddd"
+)
+
 // stubHerdr implements relay.Herdr with no-op stubs. relay.Status calls
 // ListAgents unconditionally, so every RelayVerbs test needs a non-nil
 // Herdr even when the binding under test never reaches a live pane; every
@@ -95,11 +102,11 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 	}
 }
 
-// TestRelayVerbsStatusFiltersByPaneThenName is the one status.go RelayVerbs
-// behaviour the plan calls out as needing a real test: bindings are scoped
-// to this pane unless All is set, narrowed further by Name, with the same
+// TestRelayVerbsStatusFiltersByPlannerThenName is the one status.go RelayVerbs
+// behaviour the plan calls out as needing a real test: bindings are scoped to
+// this planner id unless All is set, narrowed further by Name, with the same
 // DONE-hiding the CLI applies by default.
-func TestRelayVerbsStatusFiltersByPaneThenName(t *testing.T) {
+func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relay.Runtime{
 		Herdr: &stubHerdr{},
@@ -107,11 +114,11 @@ func TestRelayVerbsStatusFiltersByPaneThenName(t *testing.T) {
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
 
-	saveVerbBinding(t, s, store.Binding{Name: "mine-a", CWD: "/repo/mine-a", Planner: store.Endpoint{PaneID: "w2:p3"}, Round: 1, State: store.StateActive})
-	saveVerbBinding(t, s, store.Binding{Name: "mine-done", CWD: "/repo/mine-done", Planner: store.Endpoint{PaneID: "w2:p3"}, Round: 1, State: store.StateDone})
-	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", Planner: store.Endpoint{PaneID: "w9:p9"}, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "mine-a", CWD: "/repo/mine-a", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "mine-done", CWD: "/repo/mine-done", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateDone})
+	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", Planner: store.Endpoint{PaneID: "w9:p9"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
 
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 
 	res, err := v.Status(context.Background(), StatusArgs{})
 	if err != nil {
@@ -122,7 +129,7 @@ func TestRelayVerbsStatusFiltersByPaneThenName(t *testing.T) {
 		t.Fatalf("result = %#v, want relay.Report", res)
 	}
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-a" {
-		t.Fatalf("default status = %+v, want only mine-a (this pane, DONE hidden)", rep.Bindings)
+		t.Fatalf("default status = %+v, want only mine-a (this planner, DONE hidden)", rep.Bindings)
 	}
 
 	res, err = v.Status(context.Background(), StatusArgs{All: true})
@@ -144,7 +151,35 @@ func TestRelayVerbsStatusFiltersByPaneThenName(t *testing.T) {
 	}
 
 	if _, err := v.Status(context.Background(), StatusArgs{Name: "other"}); err == nil {
-		t.Fatal("Status naming a binding on a different pane must error")
+		t.Fatal("Status naming a binding on a different planner must error")
+	}
+}
+
+// TestMCPStatusFiltersByPlanner is the plan's required case for §4.5: the
+// status tool filters by planner id. The two bindings here share a pane, so
+// only the id can tell them apart.
+func TestMCPStatusFiltersByPlanner(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := relay.Runtime{
+		Herdr: &stubHerdr{},
+		Store: s,
+		Now:   func() time.Time { return time.Unix(0, 0) },
+	}
+
+	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateActive})
+	saveVerbBinding(t, s, store.Binding{Name: "cousin", CWD: "/repo/cousin", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
+
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	res, err := v.Status(context.Background(), StatusArgs{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	rep := res.(relay.Report)
+	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
+		t.Fatalf("status = %+v, want only mine (the same pane's cousin is another planner)", rep.Bindings)
+	}
+	if rep.Bindings[0].PlannerID != mcpTestPlannerA {
+		t.Errorf("row PlannerID = %q, want %q", rep.Bindings[0].PlannerID, mcpTestPlannerA)
 	}
 }
 
@@ -171,7 +206,7 @@ func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 	plan := writeTempPlan(t, "# do the thing")
 
 	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
@@ -212,7 +247,7 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 	plan := writeTempPlan(t, "# do the thing")
 
 	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan})
@@ -241,7 +276,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 		Round:   1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 	res, err := v.Done(context.Background(), DoneArgs{Name: "webshop"})
 	if err != nil {
 		t.Fatalf("Done: %v", err)
@@ -266,7 +301,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 func TestRelayVerbsDoneErrorPropagates(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
+	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 
 	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {
 		t.Fatal("Done on a binding that does not exist must error")

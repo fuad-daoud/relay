@@ -18,12 +18,12 @@ type Pusher interface {
 	Push(ctx context.Context, content string, meta map[string]string) error
 }
 
-// DrainState is one relay mcp poll loop's memory across polls: which pane it
-// drains, and each of that pane's bindings' last-seen State, so Drain knows
-// when a state event is a transition rather than a repeat.
+// DrainState is one relay mcp poll loop's memory across polls: which planner
+// it drains, and each of that planner's bindings' last-seen State, so Drain
+// knows when a state event is a transition rather than a repeat.
 type DrainState struct {
-	Pane string
-	Last map[string]store.State // binding name -> last-seen state; nil until first poll
+	Planner string
+	Last    map[string]store.State // binding name -> last-seen state; nil until first poll
 }
 
 // DrainResult is what one Drain call did.
@@ -33,14 +33,15 @@ type DrainResult struct {
 	Failed []string // binding names whose push returned an error (left pending)
 }
 
-// Drain runs one poll over one pane's bindings (spec
-// docs/specs/2026-09-21-planner-channel-design.md §3.4-§3.6): for each
-// binding whose planner is st.Pane and which is not remote-owned, it pushes
-// the oldest pending planner payload (confirming only after the push
-// succeeds), then pushes a state event on selected state transitions.
+// Drain runs one poll over one planner's bindings (spec
+// docs/specs/2026-09-21-planner-channel-design.md §3.4-§3.6,
+// docs/specs/2026-09-22-drop-herdr-design.md §4.5): for each binding whose
+// planner is st.Planner and which is not remote-owned, it pushes the oldest
+// pending planner payload (confirming only after the push succeeds), then
+// pushes a state event on selected state transitions.
 func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResult, error) {
-	if st.Pane == "" {
-		return DrainResult{}, fmt.Errorf("drain: empty pane")
+	if st.Planner == "" {
+		return DrainResult{}, fmt.Errorf("drain: empty planner")
 	}
 	if rt.Store == nil {
 		return DrainResult{}, fmt.Errorf("drain: nil store")
@@ -53,7 +54,7 @@ func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResu
 
 	var mine []store.Binding
 	for _, b := range bindings {
-		if b.Planner.PaneID == st.Pane && b.Owner == "" {
+		if b.PlannerID == st.Planner && b.Owner == "" {
 			mine = append(mine, b)
 		}
 	}

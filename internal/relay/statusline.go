@@ -209,10 +209,10 @@ func ShouldDrainStdin(mode os.FileMode) bool {
 	return mode&os.ModeCharDevice == 0
 }
 
-// PlannerStatus filters stored bindings to one planner pane and builds rows
+// PlannerStatus filters stored bindings to one planner id and builds rows
 // through buildReport from the store alone per spec §4.1. It never probes herdr.
-func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error) {
-	if pane == "" {
+func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (Report, error) {
+	if plannerID == "" {
 		return Report{}, nil
 	}
 	bindings, err := rt.Store.List()
@@ -221,7 +221,7 @@ func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error)
 	}
 	var kept []store.Binding
 	for _, b := range bindings {
-		if b.Planner.PaneID == pane && b.State != store.StateDone {
+		if b.PlannerID == plannerID && b.State != store.StateDone {
 			kept = append(kept, b)
 		}
 	}

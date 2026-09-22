@@ -444,6 +444,7 @@ func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
 			Name:             "zeta",
 			CWD:              "/a",
 			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			PlannerID:        testClaimPlanner,
 			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -453,6 +454,7 @@ func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
 			Name:             "alpha",
 			CWD:              "/b",
 			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			PlannerID:        testClaimPlanner,
 			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -462,6 +464,7 @@ func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
 			Name:             "other",
 			CWD:              "/c",
 			Planner:          store.Endpoint{PaneID: "w9:p1"},
+			PlannerID:        otherClaimPlanner,
 			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -471,6 +474,7 @@ func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
 			Name:             "finished",
 			CWD:              "/d",
 			Planner:          store.Endpoint{PaneID: "w2:p3"},
+			PlannerID:        testClaimPlanner,
 			Builder:          store.Endpoint{PaneID: "w2:p4", Kind: "agy"},
 			BuilderCandidate: testAgyRef,
 			Round:            1,
@@ -485,12 +489,12 @@ func setupPlannerStatusStore(t *testing.T, f *fakeHerdr) Runtime {
 	return rt
 }
 
-func TestPlannerStatusFiltersToOnePane(t *testing.T) {
+func TestPlannerStatusFiltersToOnePlanner(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := setupPlannerStatusStore(t, f)
 	ctx := context.Background()
 
-	rep, err := PlannerStatus(ctx, rt, "w2:p3")
+	rep, err := PlannerStatus(ctx, rt, testClaimPlanner)
 	if err != nil {
 		t.Fatalf("PlannerStatus: %v", err)
 	}
@@ -512,16 +516,16 @@ func TestPlannerStatusFiltersToOnePane(t *testing.T) {
 		}
 	}
 
-	repOther, err := PlannerStatus(ctx, rt, "w9:p1")
+	repOther, err := PlannerStatus(ctx, rt, otherClaimPlanner)
 	if err != nil {
-		t.Fatalf("PlannerStatus(w9:p1): %v", err)
+		t.Fatalf("PlannerStatus(other): %v", err)
 	}
 	if len(repOther.Bindings) != 1 || repOther.Bindings[0].Name != "other" {
-		t.Errorf("got %d bindings for w9:p1, want only 'other'", len(repOther.Bindings))
+		t.Errorf("got %d bindings for the other planner, want only 'other'", len(repOther.Bindings))
 	}
 }
 
-func TestPlannerStatusEmptyPaneIsEmpty(t *testing.T) {
+func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
 	f := &fakeHerdr{}
 	rt := setupPlannerStatusStore(t, f)
 	ctx := context.Background()
@@ -584,7 +588,7 @@ func TestPlannerStatusNeverProbesHerdr(t *testing.T) {
 	ctx := context.Background()
 
 	f.onList = func() { t.Fatal("PlannerStatus called ListAgents") }
-	rep, err := PlannerStatus(ctx, rt, "w2:p3")
+	rep, err := PlannerStatus(ctx, rt, testClaimPlanner)
 	if err != nil {
 		t.Fatalf("PlannerStatus: %v", err)
 	}

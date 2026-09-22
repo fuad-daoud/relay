@@ -51,9 +51,13 @@ type BindingStatus struct {
 	PlannerKind      string `json:"planner_kind"`
 	PlannerStatus    string `json:"planner_status"`
 	PlannerFocus     bool   `json:"planner_focused"`
-	BuilderPane      string `json:"builder_pane"`
-	BuilderKind      string `json:"builder_kind"`
-	BuilderStatus    string `json:"builder_status"`
+	// PlannerID and PlannerName name the relay planner record this binding
+	// belongs to (#303 step 1b, §3.2). PlannerPane stays this round.
+	PlannerID     string `json:"planner_id,omitempty"`
+	PlannerName   string `json:"planner_name,omitempty"`
+	BuilderPane   string `json:"builder_pane"`
+	BuilderKind   string `json:"builder_kind"`
+	BuilderStatus string `json:"builder_status"`
 	// Headless is set for a headless builder (#99): its process state and
 	// log. BuilderPane reads "headless" and BuilderStatus is one of idle,
 	// working, exited N, exited, unknown. Nil for a pane builder.
@@ -337,7 +341,17 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
 		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: absent,
+		PlannerID:   b.PlannerID,
 		BuilderKind: b.Builder.Kind, BuilderStatus: absent,
+	}
+
+	// PlannerName is the record's name, so `status --json` and a status row
+	// can say "planner architect-1" without a second lookup by the reader.
+	// A Runtime with no registry (tests) or a forgotten record leaves it "".
+	if b.PlannerID != "" && rt.Planners != nil {
+		if rec, err := rt.Planners.Get(b.PlannerID); err == nil {
+			row.PlannerName = rec.Name
+		}
 	}
 
 	// #136: a binding landed since its last send says so until the branch

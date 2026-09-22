@@ -48,11 +48,17 @@ const roundAskPrompt = "relay: consult · to builder of round %d · about bindin
 
 // AskOptions describes one consult request.
 type AskOptions struct {
-	Role        string // consult role to spawn; required
-	Candidate   string // a harness/provider/model token; empty resolves through the one rule in resolveCandidate
-	File        string // the question file; required
-	Name        string // binding name, already resolved by the caller
-	PlannerPane string // $HERDR_PANE_ID; required
+	Role      string // consult role to spawn; required
+	Candidate string // a harness/provider/model token; empty resolves through the one rule in resolveCandidate
+	File      string // the question file; required
+	Name      string // binding name, already resolved by the caller
+	// PlannerID is the caller's --planner value when it has one, and the
+	// resolved record's id afterwards. Empty means "resolve this session's
+	// planner" (§4.3). A round consult (Round > 0) resumes a recorded
+	// session and never resolves a planner.
+	PlannerID string
+	// PlannerPane is $HERDR_PANE_ID when set; optional.
+	PlannerPane string
 
 	// Round > 0 asks the builder that built this closed round instead of
 	// spawning a role: Role and Candidate are ignored, because the round's
@@ -113,8 +119,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return askRound(ctx, rt, opts)
 	}
 
-	if opts.PlannerPane == "" {
-		return AskResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+	// The consult itself does not record a planner, but the verb is still a
+	// planner verb: it resolves one, and ErrNoPlanner is the hard error.
+	if _, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID); err != nil {
+		return AskResult{}, err
+	} else if !haveRec && opts.PlannerPane == "" {
+		return AskResult{}, ErrNoPlannerSession
 	}
 
 	// Read the caller's file before taking the lock; it is the one input that

@@ -17,14 +17,14 @@ type Verbs interface {
 }
 
 // RelayVerbs adapts internal/relay's functions to Verbs, resolved against
-// one planner pane (spec docs/specs/2026-09-21-planner-channel-design.md §4,
-// §5).
+// one planner (spec docs/specs/2026-09-21-planner-channel-design.md §4, §5;
+// keyed by planner id in docs/specs/2026-09-22-drop-herdr-design.md §4.5).
 type RelayVerbs struct {
-	RT   relay.Runtime
-	Pane string
+	RT      relay.Runtime
+	Planner string
 }
 
-// Status returns relay.Status filtered to this pane's bindings (unless
+// Status returns relay.Status filtered to this planner's bindings (unless
 // a.All), narrowed to a.Name when given, with the same DONE-hiding the CLI
 // applies by default.
 func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
@@ -36,7 +36,7 @@ func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	if !a.All {
 		kept := rep.Bindings[:0:0]
 		for _, b := range rep.Bindings {
-			if b.PlannerPane == v.Pane {
+			if b.PlannerID == v.Planner {
 				kept = append(kept, b)
 			}
 		}
