@@ -63,6 +63,9 @@ func (stubRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath stri
 	return 0, false
 }
 func (stubRunner) Kill(ctx context.Context, h relay.ProcHandle) error { return nil }
+func (stubRunner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
+	return relay.ProcRusage{}, false
+}
 
 func writeCandidates(t *testing.T, body string) *candidate.Set {
 	t.Helper()
