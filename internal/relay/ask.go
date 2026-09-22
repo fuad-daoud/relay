@@ -51,7 +51,7 @@ type AskOptions struct {
 	Candidate string // a harness/provider/model token; empty resolves through the one rule in resolveCandidate
 	File      string // the question file; required
 	Name      string // binding name, already resolved by the caller
-	// SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER.
+	// SPIKE(planner-id): was the multiplexer pane id; now --planner / $RELAY_PLANNER.
 	PlannerPane string // required
 
 	// Round > 0 asks the builder that built this closed round instead of
@@ -112,7 +112,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return askRound(ctx, rt, opts)
 	}
 
-	// SPIKE(planner-id): the planner guard; was "is HERDR_PANE_ID set".
+	// SPIKE(planner-id): the planner guard; was "is <pane env> set".
 	if opts.PlannerPane == "" {
 		return AskResult{}, errors.New("no planner; pass --planner or set RELAY_PLANNER")
 	}

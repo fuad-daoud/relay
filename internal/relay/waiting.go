@@ -155,8 +155,7 @@ func WaitingLine(w Waiting, now time.Time) string {
 }
 
 // WaitingOnYou lists, in Store.List order, one line per binding (other than
-// except) that is waiting on a human, per spec §4.4. Store-backed; never
-// calls herdr.
+// except) that is waiting on a human, per spec §4.4. Store-backed.
 func WaitingOnYou(rt Runtime, except string) ([]string, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {

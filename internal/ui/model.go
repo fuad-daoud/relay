@@ -25,9 +25,7 @@ type Model struct {
 	notice string       // sticky note (e.g. "webshop is gone"), cleared on keypress
 
 	// Two guards, not one. statusInFlight and tabInFlight are separate
-	// because a terminal read is a 30s-timeout herdr call: a single shared
-	// guard would let one slow ReadAgent stall every list refresh behind it,
-	// freezing the fleet view for half a minute. Each is cleared by its own
+	// because a slow tab read must not stall every list refresh behind it. Each is cleared by its own
 	// message.
 	statusInFlight bool
 	tabInFlight    bool

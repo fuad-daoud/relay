@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -80,16 +79,10 @@ type BindingStatus struct {
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
 	// the expected state.
-	Dirty   bool         `json:"dirty"`
-	Pending *PendingInfo `json:"pending,omitempty"`
-	// SubAgents is the builder harness's sub-agent visibility
-	// (harness.Harness.SubAgents): "separate", "foreground", or "hidden".
-	// Empty when the builder kind is not in the harness table. It is the
-	// fact, not the rendered coverage row, so the TUI or a script can branch
-	// on it. Deliberately does not affect Display.
-	SubAgents     string `json:"sub_agents,omitempty"`
-	ForkedFrom    string `json:"forked_from,omitempty"`
-	ForkedAtRound int    `json:"forked_at_round,omitempty"`
+	Dirty         bool         `json:"dirty"`
+	Pending       *PendingInfo `json:"pending,omitempty"`
+	ForkedFrom    string       `json:"forked_from,omitempty"`
+	ForkedAtRound int          `json:"forked_at_round,omitempty"`
 	// Consults is how many consults are reserved or running on this binding.
 	// Terminal ones are omitted: they are a reap chore, not work in flight.
 	Consults int `json:"consults,omitempty"`
@@ -433,10 +426,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		row.Pending = &PendingInfo{Round: pending.Round, Kind: pending.Kind}
 	}
 
-	if h, ok := harness.Lookup(b.Builder.Kind); ok {
-		row.SubAgents = string(h.SubAgents)
-	}
-
 	// The newest reviewer verdict, while it judged the round just closed
 	// (#144): LastVerdict.Round == b.Round-1 means no later round has closed
 	// since. A verdict for an older round is history, and `relay log` has it.
@@ -648,9 +637,6 @@ func RenderStatus(r Report) string {
 			for _, line := range b.Headless.Tail {
 				fmt.Fprintf(&sb, "  log      %s\n", line)
 			}
-		}
-		if note, ok := SubAgentCoverage(b.BuilderKind, harness.SubAgentVisibility(b.SubAgents)); ok {
-			fmt.Fprintf(&sb, "  %-8s %s\n", "coverage", note)
 		}
 		if b.Detail != "" {
 			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)

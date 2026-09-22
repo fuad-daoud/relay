@@ -90,7 +90,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 	// SPIKE(decision): the "all rounds finished" toast (#182) and the pane
-	// sidebar tokens (#129) were herdr notifications and are gone; whether
+	// sidebar tokens (#129) were multiplexer notifications and are gone; whether
 	// the MCP channel should carry an equivalent event is undecided.
 
 	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,

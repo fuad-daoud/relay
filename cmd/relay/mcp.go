@@ -32,7 +32,7 @@ func cmdMCP(args []string) error {
 	}
 
 	// SPIKE(planner-id): the channel claim is keyed by this id; it was
-	// $HERDR_PANE_ID (--pane).
+	// the multiplexer pane id (--pane).
 	pane := plannerID(*paneFlag)
 	if pane == "" {
 		fmt.Fprintln(os.Stderr, "relay mcp: no planner (set RELAY_PLANNER or pass --planner)")

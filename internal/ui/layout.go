@@ -18,7 +18,7 @@ const (
 	paneMin     = 80 // a hunk's width; the rail never eats into it
 	railStep    = 2  // < and > move the divider this much
 
-	railCompact = 18 // the collapsed rail, like herdr's sidebar
+	railCompact = 18 // the collapsed rail
 )
 
 // layout is which of the two screens the terminal width earns.

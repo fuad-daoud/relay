@@ -107,8 +107,8 @@ func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 // and the tick carries on. It returns the binding with StaleNotifiedAt set, so
 // the once-per-episode dedup survives into the saved binding.
 func emitProgressNotices(ctx context.Context, rt Runtime, orig, next store.Binding) store.Binding {
-	// SPIKE(decision): these were herdr sidebar notifications (#129). With
-	// herdr gone they are log lines; the hooks emitted by emitMutations are
+	// SPIKE(decision): these were multiplexer sidebar notifications (#129).
+	// Now they are log lines; the hooks emitted by emitMutations are
 	// the push path.
 	now := rt.Now().UTC()
 
@@ -195,7 +195,7 @@ func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message strin
 	b.Halt = text
 
 	if b.HaltNotifiedRound != b.Round {
-		// SPIKE(decision): this was a herdr notification (#129); now only
+		// SPIKE(decision): this was a multiplexer notification (#129); now only
 		// the log line and the NEEDS YOU state the channel pushes remain.
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 

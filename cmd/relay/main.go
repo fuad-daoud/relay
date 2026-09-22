@@ -479,7 +479,7 @@ func newRemoteClient(configDir string, gitClient *git.Client) (relay.RemoteClien
 
 // plannerID is the planner identity a verb records or filters by.
 //
-// SPIKE(planner-id): was $HERDR_PANE_ID. Now the --planner flag, else
+// SPIKE(planner-id): was the multiplexer pane id. Now the --planner flag, else
 // $RELAY_PLANNER; "" when neither is set. Every verb that needed a pane id
 // goes through here.
 func plannerID(flagValue string) string {
@@ -1487,7 +1487,7 @@ func cmdAnswer(args []string) error {
 // always shown, DONE or not: asking for one by name is already a request for
 // that specific thing. Otherwise DONE rows are hidden unless --all, and the
 // same rule applies to --json so the two formats never disagree about what
-// exists. It is a pure function so the rule can be tested without a herdr.
+// exists. It is a pure function so the rule can be tested without a runtime.
 func scopeReport(rep relay.Report, name string, all bool) relay.Report {
 	if name != "" || all {
 		return rep

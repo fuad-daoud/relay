@@ -33,7 +33,7 @@ type ForkOptions struct {
 	// to resolveCandidate, so a one-candidate machine still forks without a flag.
 	Candidate string
 
-	PlannerPane string // SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER; required
+	PlannerPane string // SPIKE(planner-id): was the multiplexer pane id; now --planner / $RELAY_PLANNER; required
 
 	// CWD binds the fork to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay

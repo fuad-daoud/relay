@@ -15,7 +15,7 @@ import (
 type AddOptions struct {
 	Name        string // name for the new binding; required, must be free
 	Candidate   string // candidate harness/provider/model token; empty means resolve by role through resolveCandidate
-	PlannerPane string // SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER; required
+	PlannerPane string // SPIKE(planner-id): was the multiplexer pane id; now --planner / $RELAY_PLANNER; required
 	Repo        string // the repository the worktree is cut from; the caller's cwd
 
 	// CWD binds the peer to a directory the human already prepared instead of

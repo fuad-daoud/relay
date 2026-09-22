@@ -160,7 +160,7 @@ type LogEntry struct {
 	Classify *ClassifyRecord `json:"classify,omitempty"`
 
 	// BuilderSession names the harness session that built the round, on
-	// report entries (#147). Nil when neither herdr nor the round's stream
+	// report entries (#147). Nil when the round's stream never
 	// named one -- never guessed.
 	BuilderSession *BuilderSession `json:"builder_session,omitempty"`
 }

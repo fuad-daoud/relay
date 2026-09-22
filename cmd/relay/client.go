@@ -170,7 +170,7 @@ func cmdClientAddServer(args []string) error {
 
 // cmdClientRmServer refuses while any binding in the store still names the
 // server (relay.ServerInUse is the pure rule this checks; it is tested in
-// internal/relay so this thin wrapper needs no herdr or network access to
+// internal/relay so this thin wrapper needs no network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
 func cmdClientRmServer(args []string) error {
 	fs := flag.NewFlagSet("relay client rm-server", flag.ContinueOnError)

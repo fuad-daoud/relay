@@ -40,7 +40,7 @@ func cmdEdge(args []string) error {
 }
 
 // cmdEdgeAdd validates its flags before touching a runtime, so a CI runner
-// with no herdr binary still fails on a missing flag rather than on the
+// with no state still fails on a missing flag rather than on the
 // environment (mirrors cmdReview's --file check). --prompt may be relative;
 // it is resolved against the CWD before AddEdge's absolute-path check.
 func cmdEdgeAdd(args []string) error {

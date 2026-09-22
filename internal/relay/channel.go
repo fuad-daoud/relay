@@ -15,7 +15,7 @@ const ClaimTTL = 10 * time.Second
 // Claim is one relay mcp process's hold on a planner pane's mailbox (spec
 // docs/specs/2026-09-21-planner-channel-design.md §3.2).
 type Claim struct {
-	Pane      string    `json:"pane"`       // required; the herdr pane id, e.g. "wG:pQ"
+	Pane      string    `json:"pane"`       // required; the planner id (SPIKE(planner-id): was a pane id)
 	PID       int       `json:"pid"`        // required; > 0
 	StartedAt time.Time `json:"started_at"` // required
 	SeenAt    time.Time `json:"seen_at"`    // required; refreshed each poll

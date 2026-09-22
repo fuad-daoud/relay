@@ -9,14 +9,10 @@ import (
 // BuilderDiagnosis explains a broken binding: what was at stake when the
 // builder went away, and whether relay can trust that it is really gone.
 //
-// store.StateBroken is documented as "builder pane is gone" and covers three
-// situations relay does not otherwise distinguish -- a builder that exited
-// after a clean round, one that exited mid-round, and one whose pane merely
-// moved between workspaces while the agent kept running. The first needs no
-// action; the third is destroyed by the action the second needs.
+// store.StateBroken covers a builder that exited after a clean round and one
+// that exited mid-round. The first needs no action.
 //
-// Both fields are derived from the stored binding alone: no herdr call and no
-// log read, so a diagnosis costs nothing and cannot disagree with the binding
+// Both fields are derived from the stored binding alone: no log read, so a diagnosis costs nothing and cannot disagree with the binding
 // it came from.
 type BuilderDiagnosis struct {
 	// RoundOpen reports that a round was handed to the builder and no report
@@ -35,8 +31,7 @@ type BuilderDiagnosis struct {
 // RoundStartedAt is stamped only by Send at handoff and cleared only by
 // queueReport once the round's report is logged, so a zero value means no
 // round is in flight. SessionID is backfilled by refreshEndpoint the first
-// time the builder is located carrying a session, and never overwritten, so
-// an empty value means herdr has never reported one.
+// time the builder is located carrying a session, and never overwritten.
 func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 	return BuilderDiagnosis{
 		RoundOpen:  !b.RoundStartedAt.IsZero(),

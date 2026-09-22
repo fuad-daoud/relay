@@ -446,8 +446,8 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			}
 		}
 
-		// SPIKE(decision): herdr's integration row decided UsableBuilder; with
-		// no herdr, a binary on PATH is the only evidence a builder can run.
+		// SPIKE(decision): the multiplexer's integration row decided
+		// UsableBuilder; now a binary on PATH is the only evidence a builder can run.
 		usableBuilder = true
 
 		// #256: opencode 2.x runs a shared background service; the service is

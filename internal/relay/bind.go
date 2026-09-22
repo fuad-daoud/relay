@@ -28,7 +28,7 @@ type BindOptions struct {
 	// through resolveCandidate, except in resume, where empty means "not rebinding".
 	Candidate string
 	// PlannerPane identifies the planner.
-	// SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER.
+	// SPIKE(planner-id): was the multiplexer pane id; now --planner / $RELAY_PLANNER.
 	PlannerPane string
 	CWD         string
 	Resume      bool
@@ -73,11 +73,11 @@ type BindOptions struct {
 }
 
 // ErrNoPlanner reports a verb that records a planner run without one.
-// SPIKE(planner-id): was "no planner pane; is HERDR_PANE_ID set".
+// SPIKE(planner-id): was "no planner pane; is <pane env> set".
 var ErrNoPlanner = errors.New("no planner; pass --planner or set RELAY_PLANNER")
 
-// plannerEndpoint is the planner side of a binding. Under herdr it was the
-// live agent in $HERDR_PANE_ID, carrying its kind and harness session.
+// plannerEndpoint is the planner side of a binding. It used to be the
+// live multiplexer agent in the planner's pane, carrying its kind and harness session.
 //
 // SPIKE(planner-id): the planner is now just an opaque id string, with no
 // kind and no session, so Planner.TranscriptLocator (#172) cannot be

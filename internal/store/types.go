@@ -1,5 +1,5 @@
 // Package store owns relay's on-disk state: the bindings and the append-only
-// round log. Everything else relay knows is queried live from herdr.
+// round log.
 package store
 
 import (
@@ -25,9 +25,9 @@ const (
 	StatePaused State = "paused"
 )
 
-// Mode is the shape of a builder: a herdr pane relay watches, or a process
-// relay runs itself (#99). "" reads as pane so every binding written before
-// the field existed is unchanged.
+// Mode is the shape of a builder: a process relay runs itself (#99), or a
+// remote server. "" and ModePane are legacy pane bindings relay no longer
+// drives (relay.ErrPaneBuilder).
 type Mode string
 
 const (
@@ -127,7 +127,7 @@ type Endpoint struct {
 	// StreamSessionID is the session id the round's stream announced, set
 	// once per round by drainStream from the harness's own event (#147).
 	// Headless only; startRound clears it, because a new process begins a new
-	// session. Pane builders keep using SessionID (from herdr).
+	// session.
 	StreamSessionID string `json:"stream_session_id,omitempty"`
 
 	// Remote builder endpoint fields
@@ -355,14 +355,9 @@ type Binding struct {
 	// a non-git tree, an unborn HEAD, git unavailable, or a round sent before
 	// the field existed (#130).
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
-	// BuilderScreen is a fingerprint of the builder's terminal as relay last
-	// observed it, and BuilderScreenAt is when that observation was taken. They
-	// exist to tell a builder that has STOPPED from one that is merely quiet:
-	// herdr's idle status means "not currently emitting", which a builder waiting
-	// on its own subagents satisfies while very much alive.
-	//
-	// Both are transient per-round state, written when relay nudges and refreshed
-	// whenever the screen is seen to move. queueReport clears them with the round.
+	// BuilderScreen and BuilderScreenAt were the pane builder's terminal
+	// fingerprint. SPIKE(decision): kept only so old bind.json files still
+	// decode; nothing writes them (#303 open decision 3, store migration).
 	BuilderScreen   string    `json:"builder_screen,omitempty"`
 	BuilderScreenAt time.Time `json:"builder_screen_at,omitempty"`
 
@@ -556,8 +551,7 @@ const (
 // forcing Status, gc, Fork, doctor and the UI to learn to filter it out.
 //
 // "Read-only" describes how the role is configured, not something relay
-// enforces: `herdr agent list` reports a kind, a status, a cwd and a title, and
-// nothing more, so relay cannot observe writes.
+// enforces: relay cannot observe writes.
 type Consult struct {
 	// ID is 8 lowercase hex characters, unique within one binding. It appears
 	// in the log, in both filenames, and in `relay reap`, so it is short enough

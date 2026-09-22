@@ -49,13 +49,11 @@ const (
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow external
 	// call turns every other caller's wait into a failure. The longest hold is
-	// Reconcile's critical section on the scrape fallback path, which can make
-	// one herdr agent read (30s), two git calls for round diff capture (10s
-	// snapshot + 10s diff), and one herdr agent prompt to deliver (30s). 90s is
-	// that 80s worst case plus 10s headroom; if client timeouts change, this
-	// must change with them. Ask spawns its consult between two short critical
-	// sections on purpose, so its herdr calls do not count here; keep it that
-	// way.
+	// Reconcile's critical section at round close, which makes two git calls
+	// for round diff capture (10s snapshot + 10s diff). SPIKE(decision): 90s
+	// was sized for the pane path's two 30s multiplexer calls; it could now
+	// shrink. Ask spawns its consult between two short critical sections on
+	// purpose; keep it that way.
 	lockAcquireLimit = 90 * time.Second
 )
 
@@ -92,8 +90,8 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "relay"), nil
 }
 
-// ValidName enforces herdr's agent-name rule, since binding names become agent
-// names: lowercase letter first, then up to 31 of [a-z0-9_-].
+// ValidName enforces relay's binding-name rule (inherited from the old
+// multiplexer's agent-name rule): lowercase letter first, then up to 31 of [a-z0-9_-].
 func ValidName(name string) error {
 	if name == "" {
 		return errors.New("binding name is empty")
@@ -246,8 +244,7 @@ func (s *Store) FindingsPath(name string, round int, id string) string {
 
 // ConsultStreamPath is where a headless consult's raw stdout -- the
 // harness's streamed JSON, one event per line, and the supervisor's
-// relay-exit trailer -- is appended. A headless consult has no pane for
-// herdr to hold its output, so it carries its own stream, exactly as a
+// relay-exit trailer -- is appended. A headless consult carries its own stream, exactly as a
 // headless builder round does (#99, #168).
 // Layout: <binding dir>/NNN-<id>-consult.jsonl
 func (s *Store) ConsultStreamPath(name string, round int, id string) string {

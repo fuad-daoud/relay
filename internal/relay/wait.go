@@ -121,7 +121,7 @@ type WaitOptions struct {
 	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
 }
 
-// Wait polls the store (never herdr) until one of opts.Names closes its
+// Wait polls the store until one of opts.Names closes its
 // round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
 //
 // Every name is loaded once up front, so a name that does not exist is an
