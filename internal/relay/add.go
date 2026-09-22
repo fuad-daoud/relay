@@ -18,8 +18,6 @@ type AddOptions struct {
 	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
 	Repo        string // the repository the worktree is cut from; the caller's cwd
 
-	WorkspaceID string
-
 	// CWD binds the peer to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
@@ -260,7 +258,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if found && other.Name != opts.Name && other.State != store.StateDone {
 		rollback()
 		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			cwd, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
+			cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
 	}
 
 	bindOpts := BindOptions{
@@ -268,7 +266,6 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Candidate:   c.Ref().String(),
 		PlannerPane: planner.PaneID,
 		CWD:         cwd,
-		WorkspaceID: opts.WorkspaceID,
 		Headless:    opts.Headless,
 		Tier:        string(tier),
 		AllowYolo:   opts.AllowYolo,

@@ -4,11 +4,13 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -166,10 +168,12 @@ func (s *e2eSession) startShim(t *testing.T, name, kind, cwd string) string {
 	return pane
 }
 
-// screen is exactly what scrapeReport and screenFingerprint read.
+// screen reads a pane's recent-unwrapped scrollback, the source the planner
+// delivery path still uses.
 func (s *e2eSession) screen(t *testing.T, target string) string {
 	t.Helper()
-	text, err := s.herdr.ReadAgentSource(context.Background(), target, "recent-unwrapped", scrapeLines)
+	const screenLines = 200
+	text, err := s.herdr.ReadAgentSource(context.Background(), target, "recent-unwrapped", screenLines)
 	if err != nil {
 		t.Fatalf("agent read %s: %v", target, err)
 	}
@@ -193,12 +197,8 @@ func (s *e2eSession) waitScreen(t *testing.T, target, substr string) {
 }
 
 // The shim echoes every line it is given, one real second apart, and herdr
-// reports it working until the last one. A tick that expects an idle builder
-// must first wait for the echo of the prompt's last line.
-const (
-	promptLastLine = "Reply here with only the report path."
-	nudgeLastLine  = "your last action, and reply with only the report path."
-)
+// reports it working until the last one.
+const promptLastLine = "Reply here with only the report path."
 
 // waitEcho waits until target has echoed lastLine -- the shim has consumed
 // the whole prompt -- AND herdr's agent list no longer reports it working.
@@ -266,19 +266,14 @@ func TestE2E(t *testing.T) {
 		if !strings.HasSuffix(builderPrompt, promptLastLine) {
 			t.Errorf("promptLastLine %q is not the last line of builderPrompt", promptLastLine)
 		}
-		if !strings.HasSuffix(nudgePrompt, nudgeLastLine) {
-			t.Errorf("nudgeLastLine %q is not the last line of nudgePrompt", nudgeLastLine)
-		}
 	})
 
 	clock := &fakeClock{now: baseTime}
 	rt := e2eRuntime(t, clock)
 
 	t.Run("marker_closes_round", func(t *testing.T) {
-		b := s.bindBuilder(t, rt, "marker", planner)
+		b := s.bindHeadlessBuilder(t, rt, "marker", planner)
 		sendAt(t, rt, clock, 0, "marker")
-		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
-		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
 
 		if err := os.WriteFile(rt.Store.ReportPath("marker", 1), []byte("builder's words"), 0o644); err != nil {
 			t.Fatal(err)
@@ -288,7 +283,7 @@ func TestE2E(t *testing.T) {
 
 		b = reconcileAt(t, s, rt, clock, 5*time.Second, b)
 		if b.Round != 2 {
-			t.Fatalf("round = %d, want 2: the marker closes the round on a real pane", b.Round)
+			t.Fatalf("round = %d, want 2: the marker closes the round", b.Round)
 		}
 		if _, pending, _ := rt.Store.PendingForPlanner("marker"); pending {
 			t.Errorf("report still pending: the planner shim is idle and unfocused, so deliverAndSettle must inject on the same tick")
@@ -298,145 +293,71 @@ func TestE2E(t *testing.T) {
 			t.Errorf("note = %q, want empty on a marked close", e.Note)
 		}
 	})
-
-	var nudged store.Binding // shared by the next two subtests (spec §5.2 -> §5.3)
-
-	t.Run("idle_without_marker_nudges_once", func(t *testing.T) {
-		b := s.bindBuilder(t, rt, "nudge", planner)
-		sendAt(t, rt, clock, 0, "nudge")
-		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
-		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
-
-		b = reconcileAt(t, s, rt, clock, 5*time.Second, b) // inside startGrace
-		if b.Round != 1 {
-			t.Fatalf("round = %d, want 1", b.Round)
-		}
-		if strings.Contains(s.screen(t, b.Builder.PaneID), "You went idle") {
-			t.Fatal("nudged inside startGrace")
-		}
-
-		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b)
-		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
-		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
-		screen := s.screen(t, b.Builder.PaneID)
-		for _, want := range []string{rt.Store.ReportPath("nudge", 1), rt.Store.DonePath("nudge", 1)} {
-			if !strings.Contains(screen, want) {
-				t.Errorf("nudge must name %s; screen:\n%s", want, screen)
-			}
-		}
-		entries, err := rt.Store.ReadLog("nudge")
-		if err != nil {
-			t.Fatal(err)
-		}
-		nudges := 0
-		for _, e := range entries {
-			if e.Round == 1 && e.Note == nudgeNote {
-				nudges++
-			}
-		}
-		if nudges != 1 {
-			t.Errorf("nudge entries = %d, want exactly 1", nudges)
-		}
-		if b.BuilderScreen == "" || !b.BuilderScreenAt.Equal(baseTime.Add(startGrace+5*time.Second)) {
-			t.Errorf("fingerprint must be taken at nudge time: screen=%q at=%s", b.BuilderScreen, b.BuilderScreenAt)
-		}
-		nudged = b
-	})
-
-	t.Run("still_screen_closes_unmarked", func(t *testing.T) {
-		if nudged.Name == "" {
-			t.Skip("depends on idle_without_marker_nudges_once")
-		}
-		b := nudged
-		if err := os.WriteFile(rt.Store.ReportPath("nudge", 1), []byte("the builder's own words"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b)
-		if b.Round != 1 {
-			t.Fatalf("round = %d, want 1: one second is inside nudgeGrace", b.Round)
-		}
-
-		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second+nudgeGrace+10*time.Second, b)
-		if b.Round != 2 {
-			t.Fatalf("round = %d, want 2 after a still screen for nudgeGrace", b.Round)
-		}
-		e := reportEntry(t, rt, "nudge", 1)
-		if e.Note != "unmarked" {
-			t.Errorf("note = %q, want unmarked", e.Note)
-		}
-		if !strings.Contains(e.Payload, "never confirmed completion (no 001-done)") {
-			t.Errorf("payload = %q", e.Payload)
-		}
-		body, err := os.ReadFile(rt.Store.ReportPath("nudge", 1))
-		if err != nil || string(body) != "the builder's own words" {
-			t.Errorf("report must be delivered as written, got %q err=%v", body, err)
-		}
-	})
-
-	t.Run("still_screen_scrapes", func(t *testing.T) {
-		b := s.bindBuilder(t, rt, "scrape", planner)
-		sendAt(t, rt, clock, 0, "scrape")
-		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
-		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
-
-		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
-		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
-		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
-		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b) // fingerprint after the echo
-		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second+nudgeGrace+10*time.Second, b)
-		if b.Round != 2 {
-			t.Fatalf("round = %d, want 2 after the scrape", b.Round)
-		}
-		if e := reportEntry(t, rt, "scrape", 1); e.Note != "scraped" {
-			t.Errorf("note = %q, want scraped", e.Note)
-		}
-		body, err := os.ReadFile(rt.Store.ReportPath("scrape", 1))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasPrefix(string(body), "<!-- SCRAPED") {
-			t.Errorf("scraped report must be labelled, got %q", body)
-		}
-		if !strings.Contains(string(body), "I implemented the guard clause") {
-			t.Errorf("scrape must contain the real pane's text, got %q", body)
-		}
-	})
-
-	t.Run("screen_movement_resets_grace", func(t *testing.T) {
-		b := s.bindBuilder(t, rt, "moving", planner)
-		sendAt(t, rt, clock, 0, "moving")
-		s.waitScreen(t, b.Builder.PaneID, "relay: round 1")
-		s.waitEcho(t, b.Builder.PaneID, promptLastLine)
-
-		b = reconcileAt(t, s, rt, clock, startGrace+5*time.Second, b) // nudge
-		s.waitScreen(t, b.Builder.PaneID, "You went idle without finishing")
-		s.waitEcho(t, b.Builder.PaneID, nudgeLastLine)
-		b = reconcileAt(t, s, rt, clock, startGrace+6*time.Second, b) // fingerprint after the echo
-
-		// Something else talks to the builder: the screen moves.
-		if err := s.herdr.Prompt(context.Background(), b.Builder.PaneID, "keep talking"); err != nil {
-			t.Fatalf("prompt: %v", err)
-		}
-		s.waitEcho(t, b.Builder.PaneID, "keep talking")
-
-		moved := startGrace + 6*time.Second + nudgeGrace + 5*time.Second // past nudgeGrace: quiescent, had the screen not moved
-		b = reconcileAt(t, s, rt, clock, moved, b)
-		if b.Round != 1 {
-			t.Fatalf("round = %d, want 1: a screen that moved since the fingerprint is not quiescent", b.Round)
-		}
-		b = reconcileAt(t, s, rt, clock, moved+nudgeGrace+5*time.Second, b)
-		if b.Round != 2 {
-			t.Fatalf("round = %d, want 2: still for nudgeGrace after the move", b.Round)
-		}
-		if e := reportEntry(t, rt, "moving", 1); e.Note != "scraped" {
-			t.Errorf("note = %q, want scraped", e.Note)
-		}
-	})
 }
 
 const e2eCandidateJSON = `[{"harness":"agy","provider":"e2e","model":"shim","roles":["builder"]}]`
 const e2eCandidate = "agy/e2e/shim"
+
+// e2eRunner is a minimal real Runner for this test. It cannot use
+// internal/proc: that package imports internal/relay, and this file is in
+// package relay, so the import would cycle.
+type e2eRunner struct {
+	mu    sync.Mutex
+	procs map[int]*os.Process
+}
+
+func newE2ERunner() *e2eRunner { return &e2eRunner{procs: map[int]*os.Process{}} }
+
+func (r *e2eRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
+	if len(spec.Argv) == 0 {
+		return ProcHandle{}, errors.New("empty argv")
+	}
+	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
+	cmd.Dir = spec.Dir
+	logf, err := os.OpenFile(spec.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return ProcHandle{}, err
+	}
+	cmd.Stdout, cmd.Stderr = logf, logf
+	if err := cmd.Start(); err != nil {
+		logf.Close()
+		return ProcHandle{}, err
+	}
+	h := ProcHandle{PID: cmd.Process.Pid, StartedAt: time.Now()}
+	r.mu.Lock()
+	r.procs[h.PID] = cmd.Process
+	r.mu.Unlock()
+	go func() { _ = cmd.Wait(); logf.Close() }()
+	return h, nil
+}
+
+func (r *e2eRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
+	r.mu.Lock()
+	p, ok := r.procs[h.PID]
+	r.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	return p.Signal(syscall.Signal(0)) == nil, nil
+}
+
+func (r *e2eRunner) ExitCode(_ context.Context, _ ProcHandle, _ string) (int, bool) {
+	return 0, false
+}
+
+func (r *e2eRunner) Kill(_ context.Context, h ProcHandle) error {
+	r.mu.Lock()
+	p, ok := r.procs[h.PID]
+	r.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return p.Kill()
+}
+
+func (r *e2eRunner) Rusage(_ context.Context, _ ProcHandle, _ string) (ProcRusage, bool) {
+	return ProcRusage{}, false
+}
 
 // e2eRuntime is real everywhere but the clock and the state root (spec §3.4).
 func e2eRuntime(t *testing.T, clock *fakeClock) Runtime {
@@ -453,6 +374,7 @@ func e2eRuntime(t *testing.T, clock *fakeClock) Runtime {
 	return Runtime{
 		Herdr:            herdr.NewClient("herdr", 30*time.Second),
 		Git:              git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Runner:           newE2ERunner(),
 		Store:            store.New(filepath.Join(root, "state")),
 		Candidates:       set,
 		LedgerPath:       filepath.Join(root, "ledger.json"),
@@ -477,6 +399,27 @@ func (s *e2eSession) bindBuilder(t *testing.T, rt Runtime, name, plannerPane str
 		t.Fatalf("Bind %s: %v", name, err)
 	}
 	s.waitScreen(t, b.Builder.PaneID, "shim ready")
+	loaded, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("Load %s: %v", name, err)
+	}
+	return loaded
+}
+
+// bindHeadlessBuilder binds a fresh headless builder through the real Bind:
+// no pane, no agent start -- Send starts the shim as a process (#303).
+func (s *e2eSession) bindHeadlessBuilder(t *testing.T, rt Runtime, name, plannerPane string) store.Binding {
+	t.Helper()
+	repo := t.TempDir()
+	init := exec.Command("git", "init", "-q", repo)
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: name, Candidate: e2eCandidate, PlannerPane: plannerPane, CWD: repo, Headless: true,
+	}); err != nil {
+		t.Fatalf("Bind %s: %v", name, err)
+	}
 	loaded, err := rt.Store.Load(name)
 	if err != nil {
 		t.Fatalf("Load %s: %v", name, err)

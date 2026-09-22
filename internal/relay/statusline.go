@@ -114,9 +114,6 @@ func waiting(b BindingStatus) string {
 	if hold := HoldText(b); hold != "" {
 		return "report → planner · " + hold
 	}
-	if b.Nudge != nil {
-		return "nudged · " + NudgeText(*b.Nudge)
-	}
 	if b.LastPayload == nil {
 		return "no plan yet"
 	}

@@ -212,25 +212,24 @@ func edgeSourceBindingHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runt
 	return rt, b
 }
 
-// addClientBinding saves an active "client" binding with a pane builder, and
-// -- when live -- a matching herdr agent for that pane, so Send can reach it.
-// live is false to simulate a target Send cannot reach (gone/broken).
+// addClientBinding saves an active "client" binding with a headless builder,
+// so Send starts it a process on the runtime's Runner. live is false to make
+// the target unsendable (a broken binding), the "target is gone" case.
 func addClientBinding(t *testing.T, rt Runtime, f *fakeHerdr, live bool) store.Binding {
 	t.Helper()
+	_ = f
 	client := store.Binding{
 		Name: "client", CWD: "/repo-client",
-		Builder:          store.Endpoint{PaneID: "w2:p9"},
+		Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		BuilderCandidate: testAgyRef,
 		Round:            1,
 		State:            store.StateActive,
 	}
+	if !live {
+		client.State = store.StateBroken
+	}
 	if err := rt.Store.Save(client); err != nil {
 		t.Fatalf("save client: %v", err)
-	}
-	if live {
-		f.agents = append(f.agents, herdr.Agent{
-			Name: "client-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-client", PaneID: "w2:p9", Title: "client-builder",
-		})
 	}
 	stored, err := rt.Store.Load("client")
 	if err != nil {
@@ -429,8 +428,8 @@ func TestEdgeFireSendsToTarget(t *testing.T) {
 	if string(copied) != string(want) {
 		t.Errorf("client's round 1 plan = %q, want the edge's prompt %q", copied, want)
 	}
-	if len(f.prompts) != 1 || f.prompts[0].Target != "w2:p9" {
-		t.Fatalf("f.prompts = %+v, want one prompt to client's pane w2:p9", f.prompts)
+	if got := len(runnerOf(t, rt).specs); got != 2 {
+		t.Fatalf("builder starts = %d, want 2 (api's round and the client's fired round)", got)
 	}
 
 	stored, err := rt.Store.Load("api")
@@ -626,15 +625,15 @@ func TestArmedEdgeSurvivesRestart(t *testing.T) {
 	if err := rt.Store.Save(api); err != nil {
 		t.Fatalf("Save api: %v", err)
 	}
-	f.prompts = nil
+	specsBefore := len(runnerOf(t, rt).specs)
 
 	d := NewDaemon(rt, time.Second)
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	if len(f.prompts) != 1 || f.prompts[0].Target != "w2:p9" {
-		t.Fatalf("f.prompts = %+v, want one prompt to client's pane w2:p9", f.prompts)
+	if got := len(runnerOf(t, rt).specs); got != specsBefore+1 {
+		t.Fatalf("builder starts = %d, want %d (the client's fired round)", got, specsBefore+1)
 	}
 	stored, err := rt.Store.Load("api")
 	if err != nil {

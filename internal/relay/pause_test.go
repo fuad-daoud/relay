@@ -15,6 +15,7 @@ import (
 func pauseCloseRound(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 	t.Helper()
 	b.RoundStartedAt = time.Time{}
+	b.Builder = clearProcess(b.Builder)
 	b.Round++
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save closed round: %v", err)
@@ -45,9 +46,10 @@ func TestPauseReleasesWorktreeClosesPaneAndParks(t *testing.T) {
 	if fg.removeWorktreeCalls[0] != want {
 		t.Errorf("removeWorktreeCall = %+v, want %+v", fg.removeWorktreeCalls[0], want)
 	}
-	if len(f.closed) != 1 || f.closed[0] != paneID {
-		t.Errorf("closed = %v, want [%s]", f.closed, paneID)
+	if len(f.closed) != 0 {
+		t.Errorf("closed = %v, want none: relay closes no pane since #303", f.closed)
 	}
+	_ = paneID
 	if len(fg.deleteBranchCalls) != 0 {
 		t.Errorf("the branch must survive: deleteBranchCalls = %+v", fg.deleteBranchCalls)
 	}
@@ -269,32 +271,5 @@ func TestPauseRefusesRemoteCwdAndDone(t *testing.T) {
 	}
 	if len(fg.removeWorktreeCalls) != 0 || len(f.closed) != 0 {
 		t.Errorf("nothing may change: remove=%d closed=%v", len(fg.removeWorktreeCalls), f.closed)
-	}
-}
-
-func TestPausePaneCloseFailureIsNotFatal(t *testing.T) {
-	f := &fakeHerdr{closeErr: errors.New("gone")}
-	rt, b := sentBinding(t, f)
-	fg := &fakeGit{}
-	rt.Git = fg
-
-	b.Worktree = "/wt/webshop"
-	b.Branch = "relay/webshop"
-	b = pauseCloseRound(t, rt, b)
-	paneID := b.Builder.PaneID
-
-	res, err := Pause(context.Background(), rt, "webshop", PauseOptions{})
-	if err != nil {
-		t.Fatalf("a refused pane close must not fail pause: %v", err)
-	}
-	if res.PaneCloseErr != "gone" {
-		t.Errorf("res.PaneCloseErr = %q, want gone", res.PaneCloseErr)
-	}
-	if res.PaneClosed != paneID {
-		t.Errorf("res.PaneClosed = %q, want %q", res.PaneClosed, paneID)
-	}
-	got, _ := rt.Store.Load("webshop")
-	if got.State != store.StatePaused {
-		t.Errorf("State = %s, want paused", got.State)
 	}
 }

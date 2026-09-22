@@ -73,7 +73,7 @@ func TestRoundCloseRecordsUsage(t *testing.T) {
 		t.Fatalf("reader called %d times, want 1", len(fu.sources))
 	}
 	src := fu.sources[0]
-	if src.Harness != "agy" || src.Mode != usage.ModePane || src.Provider != "test" || src.Model != "m" {
+	if src.Harness != "agy" || src.Mode != usage.ModeHeadless || src.Provider != "test" || src.Model != "m" {
 		t.Errorf("source = %+v", src)
 	}
 	if !src.Start.Equal(baseTime) || !src.End.Equal(baseTime.Add(90*time.Second)) {

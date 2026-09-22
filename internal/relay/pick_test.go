@@ -57,8 +57,8 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if len(f.starts) != 1 || f.starts[0].Kind != "claude" {
-		t.Fatalf("starts = %+v, want one claude start", f.starts)
+	if !b.Builder.Headless() || b.Builder.Kind != "claude" {
+		t.Fatalf("Builder = %+v, want a headless claude endpoint", b.Builder)
 	}
 	if b.BuilderCandidate != testClaudeRef {
 		t.Errorf("BuilderCandidate = %q, want %q", b.BuilderCandidate, testClaudeRef)
@@ -148,23 +148,6 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 	wantNote := "picked agy/test/m for builder: explicit, policy bypassed; gated: spawn failed " + untilText
 	if got[0].Note != wantNote {
 		t.Errorf("pick note = %q, want %q", got[0].Note, wantNote)
-	}
-}
-
-func TestBindAdoptionWritesNoPick(t *testing.T) {
-	existing := herdr.Agent{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w2:p8", CWD: "/repo"}
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), existing}}
-	rt := newRuntime(t, f)
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	if got := picks(t, rt, "webshop"); len(got) != 0 {
-		t.Errorf("picks = %+v, want none", got)
 	}
 }
 

@@ -7,13 +7,12 @@ import (
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
-// Verbs is what a tools/call dispatches to: the four verbs, each returning
+// Verbs is what a tools/call dispatches to: the three verbs, each returning
 // what the CLI's --json would (or an error, turned into an isError result
 // by the caller).
 type Verbs interface {
 	Status(ctx context.Context, a StatusArgs) (any, error)
 	Send(ctx context.Context, a SendArgs) (any, error)
-	Answer(ctx context.Context, a AnswerArgs) (any, error)
 	Done(ctx context.Context, a DoneArgs) (any, error)
 }
 
@@ -88,16 +87,6 @@ func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 		return nil, err
 	}
 	return res, nil
-}
-
-// Answer calls relay.Answer, then reports relay.AnswerText the way the CLI
-// prints it.
-func (v *RelayVerbs) Answer(ctx context.Context, a AnswerArgs) (any, error) {
-	in := relay.AnswerInput{Keys: a.Keys, Text: a.Text, Choice: a.Choice}
-	if err := relay.Answer(ctx, v.RT, a.Name, in); err != nil {
-		return nil, err
-	}
-	return map[string]any{"ok": true, "text": relay.AnswerText(a.Name)}, nil
 }
 
 // doneResult is relay.DoneResult plus the CLI's rendered text, so a model

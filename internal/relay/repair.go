@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -121,23 +120,11 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	baseline, head := CaptureBaseline(ctx, rt, b)
 	prompt := composePrompt(b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 
-	if b.Builder.Headless() {
-		started, err := startRound(ctx, rt, b, prompt)
-		if err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
-		}
-		b = started
-	} else {
-		if err := promptWithRetry(ctx, rt, b.Builder.PaneID, prompt, planPath); err != nil && !errors.Is(err, ErrPromptLate) {
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
-		}
-		// A pane builder's round log is cut at the session record's current
-		// size, exactly as Send does (#184); a remote endpoint has no local
-		// record to render.
-		if !b.Builder.Remote() {
-			b = armSessionCursor(rt, b)
-		}
+	started, err := startRound(ctx, rt, b, prompt)
+	if err != nil {
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}
+	b = started
 
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        rt.Now().UTC(),

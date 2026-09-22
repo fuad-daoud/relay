@@ -116,15 +116,6 @@ func Pause(ctx context.Context, rt Runtime, name string, opts PauseOptions) (Pau
 			return fmt.Errorf("binding %q: release worktree %s: %w", name, b.Worktree, err)
 		}
 
-		// Close the builder pane. Failure is not fatal: the pane may already
-		// be gone, or herdr may refuse; the result says so and names the
-		// command to close it by hand.
-		if !b.Builder.Headless() && b.Builder.PaneID != "" {
-			out.PaneClosed = b.Builder.PaneID
-			if cerr := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); cerr != nil {
-				out.PaneCloseErr = cerr.Error()
-			}
-		}
 		// Identity cleared: resume spawns a fresh builder. Mode and Kind stay,
 		// so a headless binding resumes headless and the candidate is not lost.
 		b.Builder = store.Endpoint{Kind: b.Builder.Kind, Mode: b.Builder.Mode}

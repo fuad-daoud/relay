@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -203,181 +202,10 @@ func TestFetchReportTakesRound(t *testing.T) {
 	}
 }
 
-func TestFetchTerminalBuilderAbsent(t *testing.T) {
-	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
-	name := "webshop"
-
-	b := newTestBinding(name)
-	b.BuilderCandidate = "agy"
-	b.Builder.PaneID = "w2:p4"
-	b.Builder.AgentName = "webshop-builder"
-	b.Builder.SessionID = "builder-sess"
-	if err := st.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	cmd := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
-	}
-	if tMsg.content.err != nil {
-		t.Fatalf("unexpected error: %v", tMsg.content.err)
-	}
-	wantEmpty := "builder gone (`agy`); pane w2:p4 no longer exists"
-	if tMsg.content.empty != wantEmpty {
-		t.Fatalf("expected empty %q, got %q", wantEmpty, tMsg.content.empty)
-	}
-	if fh.readCalls != 0 {
-		t.Fatalf("expected 0 ReadAgent calls, got %d", fh.readCalls)
-	}
-}
-
-func TestFetchTerminalBuilderPresent(t *testing.T) {
-	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{
-		{PaneID: "w2:p4", Kind: "opencode"},
-	}
-	fh.readOut = "terminal output line 1\nline 2"
-	rt := relay.Runtime{Store: st, Herdr: fh}
-	name := "webshop"
-
-	b := newTestBinding(name)
-	b.Builder.AgentName = ""
-	b.Builder.PaneID = "w2:p4"
-	if err := st.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	cmd := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
-	}
-	if tMsg.content.err != nil {
-		t.Fatalf("unexpected error: %v", tMsg.content.err)
-	}
-	if tMsg.content.body != "terminal output line 1\nline 2" {
-		t.Fatalf("unexpected body %q", tMsg.content.body)
-	}
-	if fh.readCalls != 1 {
-		t.Fatalf("expected 1 ReadAgent call, got %d", fh.readCalls)
-	}
-}
-
-func TestFetchTerminalPaneReadsRoundLog(t *testing.T) {
-	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
-	name := "webshop"
-
-	logPath := st.BuilderLogPath(name, 2)
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(logPath, []byte("a\nb\nc\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b := newTestBinding(name)
-	b.Builder.StreamRound = 2
-	if err := st.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)()
-	tMsg, ok := msg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
-	}
-	if tMsg.content.err != nil || tMsg.content.empty != "" {
-		t.Fatalf("content = %+v, want a body", tMsg.content)
-	}
-	if tMsg.content.body != "a\nb\nc" {
-		t.Errorf("body = %q, want the round log", tMsg.content.body)
-	}
-	if !tMsg.content.transcript {
-		t.Error("transcript = false, want true for a rendered round log")
-	}
-	if tMsg.content.logName != "002-builder.log" {
-		t.Errorf("logName = %q, want 002-builder.log", tMsg.content.logName)
-	}
-	if fh.readCalls != 0 {
-		t.Errorf("the round log satisfies the tab; ReadAgent must not be called: readCalls = %d", fh.readCalls)
-	}
-}
-
-func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
-	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{
-		{PaneID: "w1:p2", Kind: "opencode"},
-	}
-	fh.readOut = "captured screen"
-	rt := relay.Runtime{Store: st, Herdr: fh}
-	name := "webshop"
-
-	// StreamRound is set (as Send would arm it) but the round log was never
-	// written -- e.g. the session record was never located -- so the tab
-	// falls back to today's capture path.
-	b := newTestBinding(name)
-	b.Builder.AgentName = ""
-	b.Builder.StreamRound = 2
-	if err := st.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 2, 24)()
-	tMsg, ok := msg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
-	}
-	if tMsg.content.err != nil {
-		t.Fatalf("unexpected error: %v", tMsg.content.err)
-	}
-	if tMsg.content.body != "captured screen" {
-		t.Errorf("body = %q, want the capture", tMsg.content.body)
-	}
-	if tMsg.content.transcript {
-		t.Error("transcript = true, want false for a capture")
-	}
-	if fh.readCalls != 1 {
-		t.Errorf("expected 1 ReadAgent call (the fallback), got %d", fh.readCalls)
-	}
-}
-
 // TestFetchTerminalNonCurrentPaneRoundIsEmptyProse pins #183: a plain pane
 // builder's terminal only ever shows the binding's live screen, which
 // only ever belongs to its current round; a past round it never captured
 // a log for reads as prose, not as an error, and must never reach herdr.
-func TestFetchTerminalNonCurrentPaneRoundIsEmptyProse(t *testing.T) {
-	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
-	name := "webshop"
-
-	b := newTestBinding(name) // Round: 2, plain pane builder
-	if err := st.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, name, 1, 24)().(tabMsg)
-	if msg.content.err != nil {
-		t.Fatalf("unexpected error: %v", msg.content.err)
-	}
-	want := "terminal is live; round 1 left no log"
-	if msg.content.empty != want {
-		t.Errorf("empty = %q, want %q", msg.content.empty, want)
-	}
-	if fh.readCalls != 0 {
-		t.Errorf("a non-current round must never touch herdr: readCalls = %d", fh.readCalls)
-	}
-}
-
 func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
@@ -542,39 +370,6 @@ func TestFetchForRouting(t *testing.T) {
 // A spawned builder records an AgentName that herdr can forget across a server
 // restart. fetchTerminal has already located the live agent, so it must address
 // that agent, not replay a name that may no longer resolve.
-func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
-	st := store.New(t.TempDir())
-	if err := st.Save(store.Binding{
-		Name: "relay-ui", CWD: t.TempDir(),
-		Planner:          store.Endpoint{PaneID: "wM:p1", Kind: "claude"},
-		Builder:          store.Endpoint{AgentName: "relay-ui-builder", PaneID: "wM:p7", Kind: "agy"},
-		BuilderCandidate: "abuilder", Round: 1, State: store.StateActive,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{{Kind: "agy", PaneID: "wM:p7", Status: "idle"}}
-	fh.readOut = "builder screen"
-	rt := relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
-
-	msg := fetchTerminal(context.Background(), plannerSource{rt}, "relay-ui", 1, 40)()
-	tm, ok := msg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
-	}
-	if tm.content.err != nil {
-		t.Fatalf("unexpected err: %v", tm.content.err)
-	}
-	if len(fh.readTargets) != 1 {
-		t.Fatalf("expected 1 ReadAgent call, got %d", len(fh.readTargets))
-	}
-	if got := fh.readTargets[0]; got != "wM:p7" {
-		t.Fatalf("ReadAgent addressed %q; want the located agent's pane %q "+
-			"(a recorded agent name herdr has forgotten is unusable)", got, "wM:p7")
-	}
-}
-
 func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
@@ -708,5 +503,47 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	}
 	if fh.readCalls != 0 {
 		t.Errorf("readCalls = %d, want 0", fh.readCalls)
+	}
+}
+
+// TestFetchTerminalRemoteBuilder pins the #303 remote branch: a remote
+// builder shows the round's local builder log when relay has one, and
+// otherwise a single line naming the server.
+func TestFetchTerminalRemoteBuilder(t *testing.T) {
+	st := store.New(t.TempDir())
+	fh := newFakeHerdr(t)
+	rt := relay.Runtime{Store: st, Herdr: fh}
+
+	logPath := st.BuilderLogPath("webshop", 2)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("remote work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := newTestBinding("webshop")
+	b.Builder = store.Endpoint{Kind: "claude", Mode: store.ModeRemote, Server: "contabo"}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("content = %+v, want a body", msg.content)
+	}
+	if msg.content.body != "remote work" {
+		t.Errorf("body = %q, want the local builder log", msg.content.body)
+	}
+	if !msg.content.transcript {
+		t.Error("transcript = false, want true for a rendered round log")
+	}
+	if fh.readCalls != 0 {
+		t.Errorf("a remote builder has no local pane: readCalls = %d", fh.readCalls)
+	}
+
+	// No local log for the round: the single line naming the server.
+	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 1, 24)().(tabMsg)
+	if want := "remote builder on contabo: relay log webshop"; msg.content.empty != want {
+		t.Errorf("empty = %q, want %q", msg.content.empty, want)
 	}
 }

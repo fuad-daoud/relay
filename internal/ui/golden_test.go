@@ -40,7 +40,7 @@ func goldenModel(t *testing.T, width, height int, rep relay.Report) Model {
 // allStatesRows covers every display state and the row facts the rail and
 // pane can show today: ACTIVE (a running round's live usage on the card
 // and in the header, #234), NEEDS YOU (blocked, dirty, consults), HELD
-// (hold clock), ACTIVE (pane builder, nudged), ACTIVE (headless, pid),
+// (hold clock), ACTIVE, ACTIVE (headless, pid),
 // DONE (--cwd, no branch).
 func allStatesRows() []relay.BindingStatus {
 	return []relay.BindingStatus{
@@ -75,7 +75,6 @@ func allStatesRows() []relay.BindingStatus {
 			Name: "api", Round: 2, Display: "ACTIVE",
 			PlannerPane: "%3", PlannerKind: "claude", PlannerStatus: "working",
 			BuilderPane: "%9", BuilderKind: "agy", BuilderStatus: "working", Branch: "relay/api",
-			Nudge: &relay.NudgeInfo{At: railNow.Add(-time.Minute), QuietMS: 23000, GraceMS: 60000},
 		},
 		{
 			Name: "worker", Round: 2, Display: "ACTIVE",

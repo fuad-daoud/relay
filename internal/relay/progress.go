@@ -17,15 +17,8 @@ type signals struct {
 	// tree is the working tree's fingerprint; "" when unavailable (no git, or
 	// no cwd to run it in).
 	tree string
-	// output is the pane builder's screen fingerprint; "" for a headless
-	// builder, whose output is the stream file's mtime instead.
-	output string
-	// outputAt is a headless builder's streamLastActivity. A pane's output
-	// time is derived from output changes, so it is left zero here.
+	// outputAt is a headless builder's streamLastActivity.
 	outputAt time.Time
-	// blocked is true when the pane builder's status is blocked: it is waiting
-	// on a human, so it is never stalled.
-	blocked bool
 }
 
 // sampleSignals reads a binding's progress sources for one tick (#135). It is
@@ -39,21 +32,9 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding, agents []he
 		}
 	}
 
-	if b.Builder.Headless() {
-		// A headless builder is a process, not a pane: its liveness signal is
-		// the stream file's mtime, exactly as #252 read it.
-		s.outputAt = streamLastActivity(rt, b)
-		return s
-	}
-
-	if rt.Herdr != nil {
-		if fp, err := screenFingerprint(ctx, rt, b); err == nil {
-			s.output = fp
-		}
-	}
-	if a, ok := FindAgent(agents, b.Builder); ok && a.Status == herdr.StatusBlocked {
-		s.blocked = true
-	}
+	// A headless builder is a process, not a pane: its liveness signal is
+	// the stream file's mtime, exactly as #252 read it.
+	s.outputAt = streamLastActivity(rt, b)
 
 	return s
 }
@@ -93,7 +74,6 @@ func progressStep(rt Runtime, b store.Binding, now time.Time, s signals) store.B
 			SampledAt: now,
 			Tree:      s.tree,
 			TreeAt:    b.RoundStartedAt,
-			Output:    s.output,
 			OutputAt:  b.RoundStartedAt,
 		}
 	} else if now.Sub(b.Progress.SampledAt) < rt.Policy.ProgressInterval() {
@@ -106,12 +86,8 @@ func progressStep(rt Runtime, b store.Binding, now time.Time, s signals) store.B
 	if s.tree != "" && s.tree != p.Tree {
 		p.Tree, p.TreeAt = s.tree, now
 	}
-	if b.Builder.Headless() {
-		if s.outputAt.After(p.OutputAt) {
-			p.OutputAt = s.outputAt
-		}
-	} else if s.output != "" && s.output != p.Output {
-		p.Output, p.OutputAt = s.output, now
+	if s.outputAt.After(p.OutputAt) {
+		p.OutputAt = s.outputAt
 	}
 
 	// No signal has ever been readable: record the sample and set no label,
@@ -125,7 +101,7 @@ func progressStep(rt Runtime, b store.Binding, now time.Time, s signals) store.B
 		last = p.OutputAt
 	}
 
-	if !s.blocked && now.Sub(last) >= rt.Policy.StallAfter() {
+	if now.Sub(last) >= rt.Policy.StallAfter() {
 		if b.StalledSince.IsZero() {
 			b.StalledSince = last
 			slog.Warn("builder stalled", "binding", b.Name, "round", b.Round, "quiet", now.Sub(last).Truncate(time.Second))

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // ToolSpec is one entry of the tools/list document: a JSON Schema object
@@ -31,15 +30,6 @@ type SendArgs struct {
 	Verify *bool  `json:"verify,omitempty"`
 	Regate *int   `json:"regate,omitempty"`
 	DryRun bool   `json:"dry_run,omitempty"`
-}
-
-// AnswerArgs is answer's input: {name, text? | keys? | choice?}. Name is
-// required, and exactly one of Text, Keys, Choice (> 0) must be given.
-type AnswerArgs struct {
-	Name   string `json:"name"`
-	Text   string `json:"text,omitempty"`
-	Keys   string `json:"keys,omitempty"`
-	Choice int    `json:"choice,omitempty"`
 }
 
 // DoneArgs is done's input: {name}. Name is required.
@@ -87,8 +77,7 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 	return s
 }
 
-// Tools is the tools/list document: status, send, answer, done, in that
-// order.
+// Tools is the tools/list document: status, send, done, in that order.
 func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
@@ -109,16 +98,6 @@ func Tools() []ToolSpec {
 				"verify":  map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
 				"regate":  map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
 				"dry_run": map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},
-			}),
-		},
-		{
-			Name:        "answer",
-			Description: "Answer a builder blocked at a dialog. Give exactly one of text, keys, choice. Calls relay.Answer.",
-			InputSchema: schemaObject([]string{"name"}, map[string]any{
-				"name":   map[string]any{"type": "string", "description": "binding name"},
-				"text":   map[string]any{"type": "string", "description": "literal text to type"},
-				"keys":   map[string]any{"type": "string", "description": "a logical key: enter, esc, tab, up, down, space"},
-				"choice": map[string]any{"type": "integer", "description": "a numbered dialog option"},
 			}),
 		},
 		{
@@ -154,26 +133,6 @@ func validateSendArgs(a SendArgs) error {
 	}
 	if a.File == "" {
 		return errors.New("send requires file")
-	}
-	return nil
-}
-
-func validateAnswerArgs(a AnswerArgs) error {
-	if a.Name == "" {
-		return errors.New("answer requires name")
-	}
-	given := 0
-	if a.Text != "" {
-		given++
-	}
-	if a.Keys != "" {
-		given++
-	}
-	if a.Choice > 0 {
-		given++
-	}
-	if given != 1 {
-		return fmt.Errorf("answer needs exactly one of text, keys, choice (got %d)", given)
 	}
 	return nil
 }

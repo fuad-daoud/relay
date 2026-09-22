@@ -301,12 +301,13 @@ func TestForkSuccess(t *testing.T) {
 		t.Errorf("AddWorktree call mismatch: %+v", wtCall)
 	}
 
-	// Builder started
-	if len(fh.starts) != 1 {
-		t.Fatalf("Herdr starts = %d, want 1", len(fh.starts))
+	// Builder endpoint is headless (#303): fork records it, it starts nothing.
+	alt, err := rt.Store.Load("alt")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if fh.starts[0].Name != "alt-builder" || fh.starts[0].Pane != "w2:p5" {
-		t.Errorf("Herdr start mismatch: %+v", fh.starts[0])
+	if !alt.Builder.Headless() || alt.Builder.AgentName != "alt-builder" {
+		t.Errorf("fork builder = %+v, want a headless alt-builder endpoint", alt.Builder)
 	}
 
 	// Source binding is byte-for-byte unchanged
@@ -559,28 +560,6 @@ func TestForkRollback(t *testing.T) {
 		}
 	})
 
-	t.Run("resolveBuilder failure removes worktree", func(t *testing.T) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5", startErr: errors.New("start failed")}
-		fg := &fakeGit{headCommitID: "commit-123"}
-		rt := newForkRuntime(t, fh, fg, nil)
-		srcCWD := filepath.Join(t.TempDir(), "repo")
-		_ = os.MkdirAll(srcCWD, 0o755)
-		seedFourRoundBinding(t, rt, "source", srcCWD)
-
-		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Candidate: testClaudeRef,
-		})
-		if err == nil {
-			t.Fatal("expected error on start failure")
-		}
-		if len(fg.removeWorktreeCalls) != 1 {
-			t.Fatalf("RemoveWorktree calls = %d, want 1 (rollback)", len(fg.removeWorktreeCalls))
-		}
-		if !fg.removeWorktreeCalls[0].Force {
-			t.Error("rollback must pass force: true")
-		}
-	})
-
 	t.Run("unknown candidate cuts no worktree", func(t *testing.T) {
 		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 		fg := &fakeGit{headCommitID: "commit-123"}
@@ -600,40 +579,6 @@ func TestForkRollback(t *testing.T) {
 		}
 	})
 
-	t.Run("ForkState failure removes worktree and leaves pane naming it in error", func(t *testing.T) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-		fg := &fakeGit{headCommitID: "commit-123"}
-		rt := newForkRuntime(t, fh, fg, nil)
-		srcCWD := filepath.Join(t.TempDir(), "repo")
-		_ = os.MkdirAll(srcCWD, 0o755)
-		seedFourRoundBinding(t, rt, "source", srcCWD)
-
-		// Simulate a ForkState failure inside WithLock by pre-creating the destination directory
-		dstDir := rt.Store.Dir("alt")
-		_ = os.MkdirAll(dstDir, 0o755)
-
-		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
-		})
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		// Error must name the pane id
-		if !strings.Contains(err.Error(), "w2:p5") {
-			t.Errorf("error %q must name builder pane w2:p5", err.Error())
-		}
-		// Must have rolled back the worktree
-		if len(fg.removeWorktreeCalls) != 1 {
-			t.Fatalf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
-		}
-		if !fg.removeWorktreeCalls[0].Force {
-			t.Error("rollback must pass force: true")
-		}
-		// The builder pane was started and not killed
-		if len(fh.starts) != 1 {
-			t.Fatalf("Herdr starts = %d, want 1", len(fh.starts))
-		}
-	})
 }
 
 func TestForkWithCustomCWD(t *testing.T) {

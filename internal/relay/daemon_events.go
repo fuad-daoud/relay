@@ -76,10 +76,9 @@ func (c *agentCache) Apply(ev herdr.Event) (touchedPane string, refresh bool) {
 	}
 }
 
-// boundPanes returns the sorted, unique planner and builder pane ids a
-// socket subscription should watch: a DONE or PAUSED binding is settled
-// (nothing left to watch for), a remote endpoint has no local pane, and a
-// headless builder is a process, not a pane herdr reports status for.
+// boundPanes returns the sorted, unique planner pane ids a socket
+// subscription should watch: a DONE or PAUSED binding is settled (nothing
+// left to watch for), and a remote planner has no local pane.
 func boundPanes(bs []store.Binding) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -96,9 +95,6 @@ func boundPanes(bs []store.Binding) []string {
 		}
 		if !b.Planner.Remote() {
 			add(b.Planner.PaneID)
-		}
-		if !b.Builder.Remote() && !b.Builder.Headless() {
-			add(b.Builder.PaneID)
 		}
 	}
 	sort.Strings(out)

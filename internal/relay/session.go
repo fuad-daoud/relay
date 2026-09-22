@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/transcript"
 )
 
 // SessionLocator finds a pane harness's own session record for a builder,
@@ -56,46 +55,15 @@ func mtimeOf(path string) time.Time {
 	return info.ModTime()
 }
 
-// armSessionCursor prepares a pane builder's round log (#184): StreamRound
-// = b.Round, StreamOffset = the located record's current size (0 when
-// rt.Sessions is nil, the id is empty, or the file is not located), and
-// LogPath = rt.Store.BuilderLogPath(b.Name, b.Round). Never fails: a stat
-// error is offset 0. Not for headless or remote builders (they have
-// startRound); the caller guards.
-func armSessionCursor(rt Runtime, b store.Binding) store.Binding {
-	var off int64
-	if rt.Sessions != nil && b.Builder.SessionID != "" {
-		if path, ok := rt.Sessions(b.Builder.Kind, b.Builder.SessionID); ok {
-			if info, err := os.Stat(path); err == nil {
-				off = info.Size()
-			}
-		}
-	}
-	b.Builder.StreamRound = b.Round
-	b.Builder.StreamOffset = off
-	b.Builder.LogPath = rt.Store.BuilderLogPath(b.Name, b.Round)
-	return b
-}
-
 // builderSessionOf names the harness session that built the binding's closed
 // round (#147), for the report entry: a headless builder's stream id when the
-// round's stream announced one, else a pane builder's herdr session. Remote
-// builders and any binding with neither answer nil -- never guessed.
+// round's stream announced one. Remote builders and any binding with no
+// headless session answer nil -- never guessed.
 func builderSessionOf(b store.Binding) *store.BuilderSession {
-	switch {
-	case b.Builder.Headless():
-		if b.Builder.StreamSessionID == "" {
-			return nil
-		}
-		return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.StreamSessionID}
-	case b.Builder.Remote():
+	if !b.Builder.Headless() || b.Builder.StreamSessionID == "" {
 		return nil
-	default:
-		if b.Builder.SessionID == "" {
-			return nil
-		}
-		return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.SessionID}
 	}
+	return &store.BuilderSession{Kind: b.Builder.Kind, ID: b.Builder.StreamSessionID}
 }
 
 // roundSession names the harness session that built a closed round (#147
@@ -111,30 +79,4 @@ func roundSession(entries []store.LogEntry, round int) (*store.BuilderSession, b
 		}
 	}
 	return nil, false
-}
-
-// drainSession is drainStream for a pane builder (#184): the located
-// record past StreamOffset, rendered with transcript.RenderRecord, appended
-// to BuilderLogPath(name, StreamRound). Unchanged binding (and no I/O)
-// when rt.Sessions is nil, the builder is headless or remote, SessionID is
-// "", StreamRound is 0, or the record is not located. Same cursor rules as
-// drainStream: partial trailing line waits; an offset past EOF resets to 0
-// with a warning; the cursor advances only after the append succeeded.
-func drainSession(rt Runtime, b store.Binding) store.Binding {
-	if rt.Sessions == nil || b.Builder.Headless() || b.Builder.Remote() || b.Builder.SessionID == "" || b.Builder.StreamRound == 0 {
-		return b
-	}
-	path, ok := rt.Sessions(b.Builder.Kind, b.Builder.SessionID)
-	if !ok {
-		return b
-	}
-	round := b.Builder.StreamRound
-	b.Builder.StreamOffset = drainFile(
-		rt.Store.BuilderLogPath(b.Name, round),
-		path,
-		b.Builder.StreamOffset,
-		func(line []byte) []string { return transcript.RenderRecord(b.Builder.Kind, line) },
-		"session", "binding", b.Name, "round", round,
-	)
-	return b
 }

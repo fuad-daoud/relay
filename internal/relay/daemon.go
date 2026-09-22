@@ -41,13 +41,6 @@ type Daemon struct {
 	// default) keeps today's behaviour: rt is used as given.
 	refresh func(Runtime) Runtime
 
-	// applied is what the daemon last reported to herdr per binding
-	// (#129): the pane it wrote to, the token fingerprint, and when. In
-	// memory only: a daemon restart re-applies everything on its first
-	// tick, and metadataRefresh bounds how stale a herdr restart can leave
-	// a pane.
-	applied map[string]appliedMeta
-
 	// cache is the daemon's current view of herdr's agent list while a
 	// socket subscription is live (#146). Safe for concurrent access: the
 	// socket reader and reconnect update it from their own goroutines while
@@ -85,7 +78,6 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	return &Daemon{
 		rt:          rt,
 		interval:    interval,
-		applied:     map[string]appliedMeta{},
 		reconnected: make(chan reconnectResult),
 	}
 }
@@ -205,7 +197,7 @@ func (d *Daemon) bindingForPane(paneID string) string {
 		return ""
 	}
 	for _, b := range bindings {
-		if b.Planner.PaneID == paneID || b.Builder.PaneID == paneID {
+		if b.Planner.PaneID == paneID {
 			return b.Name
 		}
 	}
@@ -324,7 +316,6 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		slog.Warn("list bindings for metadata sync", "err", err)
 		return nil
 	}
-	syncPaneMetadata(ctx, d.rt, d.applied, fresh)
 	notifyFinished(ctx, d.rt, fresh, agents)
 
 	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,

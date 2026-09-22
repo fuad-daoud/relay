@@ -48,13 +48,16 @@ func (r Ref) String() string {
 
 // Candidate describes one concrete way to fill a role.
 type Candidate struct {
-	Harness        string   `json:"harness"`
-	Provider       string   `json:"provider"`
-	Model          string   `json:"model"`
-	Roles          []string `json:"roles"`
-	Tree           string   `json:"tree,omitempty"`
-	ExtraArgs      []string `json:"extra_args,omitempty"`
-	LimitPatterns  []string `json:"limit_patterns,omitempty"`
+	Harness       string   `json:"harness"`
+	Provider      string   `json:"provider"`
+	Model         string   `json:"model"`
+	Roles         []string `json:"roles"`
+	Tree          string   `json:"tree,omitempty"`
+	ExtraArgs     []string `json:"extra_args,omitempty"`
+	LimitPatterns []string `json:"limit_patterns,omitempty"`
+	// DialogPatterns is ignored since #303: pane dialogs and `relay answer`
+	// were deleted. The field stays decodable so existing candidates.json
+	// files still load.
 	DialogPatterns []string `json:"dialog_patterns,omitempty"`
 	// Tier is the candidate's default permission tier (#141); "" means "use the
 	// role default from policy, else harness". Validated by ParseTier.

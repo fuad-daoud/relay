@@ -147,11 +147,12 @@ func TestReviewSendHandsThePlanToSend(t *testing.T) {
 		t.Errorf("Sent.Round = %d, want 2", res.Sent.Round)
 	}
 
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
+	fr := runnerOf(t, rt)
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d builder starts, want 1", len(fr.specs))
 	}
-	if !strings.Contains(f.prompts[0].Text, rt.Store.PlanPath("webshop", 2)) {
-		t.Error("prompt must name round 2's plan path (the review plan, copied in by Send)")
+	if argv := strings.Join(fr.specs[0].Argv, " "); !strings.Contains(argv, rt.Store.PlanPath("webshop", 2)) {
+		t.Error("the builder's prompt must name round 2's plan path (the review plan, copied in by Send)")
 	}
 
 	sentBody, err := os.ReadFile(rt.Store.PlanPath("webshop", 2))

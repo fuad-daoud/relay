@@ -134,7 +134,7 @@ func TestBoundPanes(t *testing.T) {
 	}
 
 	got := boundPanes(bs)
-	want := []string{"w1:p1", "w1:p2", "w4:p1", "w5:p1", "w6:p2"}
+	want := []string{"w1:p1", "w4:p1", "w5:p1"}
 	if !equalPanes(got, want) {
 		t.Errorf("boundPanes = %v, want %v", got, want)
 	}

@@ -56,7 +56,6 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)RESOURCE_EXHAUSTED`,
 				`(?i)quota exceeded`,
 			},
-			DialogPatterns: defaultDialogPatterns,
 			DenialPatterns: []string{
 				`(?i)permission (request )?(denied|rejected)`,
 				`(?i)tool (call|use) (was )?rejected`,
@@ -80,7 +79,6 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)rate limit reached`,
 				`(?i)limit .*resets`,
 			},
-			DialogPatterns: defaultDialogPatterns,
 			DenialPatterns: []string{
 				`(?i)requested permissions to use .* but you haven't granted`,
 				`(?i)permission (to use .* was )?denied`,
@@ -104,7 +102,6 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)insufficient (credits|quota)`,
 				`(?i)RESOURCE_EXHAUSTED`,
 			},
-			DialogPatterns: defaultDialogPatterns,
 			DenialPatterns: []string{
 				`(?i)permission.*(denied|rejected)`,
 				`(?i)rejected: external_directory`,
@@ -129,7 +126,6 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)"status": 429`,
 				`(?i)too many requests`,
 			},
-			DialogPatterns: defaultDialogPatterns,
 			DenialPatterns: []string{
 				`(?i)patch rejected: writing outside of the project`,
 				`(?i)rejected by user approval settings`,
@@ -510,19 +506,6 @@ func TestSubAgentsSetOnEveryKind(t *testing.T) {
 	for _, h := range All() {
 		if !valid[h.SubAgents] {
 			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
-		}
-	}
-}
-
-func TestDialogPatternsSetOnEveryKind(t *testing.T) {
-	for _, h := range All() {
-		if len(h.DialogPatterns) < 1 {
-			t.Errorf("harness %q: len(DialogPatterns) = %d, want >= 1", h.Kind, len(h.DialogPatterns))
-		}
-		for _, pat := range h.DialogPatterns {
-			if _, err := regexp.Compile(pat); err != nil {
-				t.Errorf("harness %q: pattern %q failed to compile: %v", h.Kind, pat, err)
-			}
 		}
 	}
 }
