@@ -192,3 +192,48 @@ func TestLogLineSessionSuffix(t *testing.T) {
 		t.Errorf("no session= expected without a BuilderSession: %q", got)
 	}
 }
+
+// TestShortCPU pins #299: a round's CPU time at seconds resolution, from
+// tenths below a minute up through minutes and hours. The 8550 row is the
+// contract's own correction: 8550 ms is 8.55 s, an exact tie, and half-up
+// (ms+50)/100 gives 86 tenths -> "8.6s".
+func TestShortCPU(t *testing.T) {
+	cases := []struct {
+		ms   int64
+		want string
+	}{
+		{0, ""},
+		{-1, ""},
+		{50, "0.1s"},
+		{499, "0.5s"},
+		{8550, "8.6s"},
+		{19723, "19.7s"},
+		{59_949, "59.9s"},
+		{59_999, "1m00s"},
+		{60_000, "1m00s"},
+		{80_000, "1m20s"},
+		{3_599_000, "59m59s"},
+		{3_600_000, "1h00m"},
+		{7_500_000, "2h05m"},
+	}
+	for _, c := range cases {
+		if got := shortCPU(c.ms); got != c.want {
+			t.Errorf("shortCPU(%d) = %q, want %q", c.ms, got, c.want)
+		}
+	}
+}
+
+// TestLogLineRusageUsesSecondsResolution pins #299's rendering: the report
+// line carries the cpu time at seconds resolution rather than
+// usage.ShortDuration's "<1m", and shortBytes still renders peak memory.
+func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
+	e := store.LogEntry{
+		Kind:   store.KindReport,
+		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20},
+	}
+	got := LogLine(e)
+	want := "cpu 8.6s peak 358MB"
+	if !strings.Contains(got, want) {
+		t.Errorf("LogLine(%+v) = %q, want it to contain %q", e, got, want)
+	}
+}

@@ -48,7 +48,7 @@ func LogLine(e store.LogEntry) string {
 		first += fmt.Sprintf(" session=%s:%s", e.BuilderSession.Kind, short8(e.BuilderSession.ID))
 	}
 	if e.Kind == store.KindReport && e.Rusage != nil {
-		first += fmt.Sprintf(" cpu %s peak %s", usage.ShortDuration(e.Rusage.CPUMS), shortBytes(e.Rusage.PeakMemBytes))
+		first += fmt.Sprintf(" cpu %s peak %s", shortCPU(e.Rusage.CPUMS), shortBytes(e.Rusage.PeakMemBytes))
 	}
 	if e.Usage == nil {
 		return first
@@ -64,6 +64,26 @@ func short8(id string) string {
 		return string(r[:8])
 	}
 	return id
+}
+
+// shortCPU renders a round's CPU time at seconds resolution: tenths of a
+// second below a minute, minutes and seconds below an hour, then hours and
+// minutes. usage.ShortDuration answers "<1m" for every one of those, which
+// collapses the 8.5s/19.7s rounds this number is compared for (#299); the
+// wall-clock formatter is left to its other callers.
+func shortCPU(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	tenths := (ms + 50) / 100
+	if tenths < 600 {
+		return fmt.Sprintf("%d.%ds", tenths/10, tenths%10)
+	}
+	s := tenths / 10
+	if s < 3600 {
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	}
+	return fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
 }
 
 // shortBytes: bytes as "640KB", "850MB", "1.2GB" -- KB and MB round to a
