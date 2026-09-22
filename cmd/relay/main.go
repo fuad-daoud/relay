@@ -201,6 +201,25 @@ func manifestVersion(path string) string {
 	return ""
 }
 
+// statusNotice is the line `relay status` prints above the rows when the
+// cached check says a newer release exists, and "" whenever it does not.
+// Pure: every input is an argument, so it is table-tested without a
+// store, a daemon or a network (CI has no herdr).
+//
+// It returns "" for every SevOK row of the doctor's release table, so the
+// statusline stays quiet exactly where `relay doctor` says "not checked",
+// "nothing to update to" or "is current" -- and never claims an update
+// relay cannot prove.
+func statusNotice(running, latest string, ok bool, kind release.Kind) string {
+	if !ok || kind == release.KindUnknown || kind == release.KindLocalBuild {
+		return ""
+	}
+	if !release.NewerStrings(running, latest) {
+		return ""
+	}
+	return fmt.Sprintf("relay %s is behind %s -- run relay doctor", running, latest)
+}
+
 // parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
 // the flag package has already printed usage, so the caller just returns.
 //
@@ -1694,6 +1713,17 @@ func cmdStatus(args []string) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
+	}
+
+	// #293: one line above the rows, only when the daemon's cached check has
+	// seen a newer release. Read through the doctor's own Env so `status` and
+	// `doctor` can never disagree about the same file -- only ReleaseState is
+	// called here, which is why the nil herdr client is harmless. JSON output
+	// above stays notice-free.
+	env := doctor.NewEnv(nil, rt.Store, releaseInputs())
+	running, latest, ok, kind := env.ReleaseState()
+	if notice := statusNotice(running, latest, ok, kind); notice != "" {
+		fmt.Println(notice)
 	}
 
 	fmt.Print(relay.RenderStatus(rep))
