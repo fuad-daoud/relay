@@ -1,8 +1,7 @@
 # Drop herdr: relay-owned planner identity, headless-only builders, channel delivery (#303)
 
-Status: design. Tracked as #303; replaces #205's direction. **No round of
-this spec is dispatched before #300 (opencode delivery, binding
-`oc-deliver`) merges** -- §7 says why.
+Status: design. Tracked as #303; replaces #205's direction. The gate this
+spec was held on, #300 (opencode delivery), merged as #316 on 2026-09-22.
 
 Scope in one line: relay's code stops calling, reading, packaging or
 documenting herdr. The human keeps using herdr as a terminal multiplexer;
@@ -13,74 +12,101 @@ relay no longer knows it is there.
 relay moves plans and reports between a planner and a builder. Today three
 of its jobs go through herdr: it **finds the planner** (`$HERDR_PANE_ID`,
 then `herdr agent list` for the planner's harness kind and session id,
-`bind.go:715` `endpointOf`), it **runs pane builders** (typed prompts,
-screen scraping, fingerprints, dialog answering), and it **types reports
-into the planner's pane** (`deliver.go`, `held.go`).
+`bind.go` `endpointOf`), it **runs pane builders** (typed prompts, screen
+scraping, fingerprints, dialog answering), and it **types reports into the
+planner's pane** (`deliver.go`, `held.go`).
 
 After this change:
 
-- **Planner identity is relay's.** relay mints a planner id, keeps a
-  planner record, and maps the planner's harness session onto it. `relay
-  mcp`, which Claude Code starts once per session, registers the planner
-  and claims its channel under the planner id.
+- **Planner identity is relay's, and the plugin creates it.** `relay planner
+  init` is the one command that registers or re-attaches a planner. The relay
+  Claude Code plugin runs it from a `SessionStart` hook, which exports
+  `RELAY_PLANNER=<id>` into every Bash call in the session and tells the
+  model its planner name. `relay mcp` joins the same record through the
+  Claude Code process they share. No verb guesses who its planner is.
 - **Builders are headless or remote only.** Pane mode, `relay answer`, and
   `relay stop`'s typed wrap-up are deleted.
 - **Planner delivery is push-only through a route that isn't a pane**: the
   MCP channel (Claude Code), a #300 deliverer (opencode), or nothing (the
-  report waits for `relay wait` / `relay pull`). `relay doctor` fails when
-  a Claude Code planner has no relay plugin enabled.
+  report waits for `relay wait` / `relay pull`). `relay doctor` fails when a
+  Claude Code planner has no relay plugin, or no hook, enabled.
 
-### 1.1 Evidence this rests on (verified 2026-09-22)
+### 1.1 Evidence this rests on (all verified 2026-09-22, Claude Code 2.1.280, opencode 2.0.12)
 
-- The `relay mcp` process and the planner's Bash tool see the **same**
-  `CLAUDE_CODE_SESSION_ID` at start: `relay mcp` pid 2668801 (parent = the
-  Claude Code process 2668686) and this session's shell both carry
-  `7e5d80d0-416b-4ad8-a9a5-66212d58e7f1`.
-- **But the session id is not a stable join** (step 0, Claude Code
-  2.1.280). `--resume` and `--continue` keep the id: a `-p` run and both
-  follow-ups all read `d473a011-…` in the env and in the JSON `session_id`.
-  **`/clear` changes it**, and `relay mcp` isn't restarted. In an
+**Claude Code session id: an attribute, not a key.**
+- `--resume` and `--continue` keep `CLAUDE_CODE_SESSION_ID`: a `-p` run and
+  both follow-ups all read `d473a011-…`, in the env and in the JSON
+  `session_id`.
+- **`/clear` changes it, and `relay mcp` isn't restarted.** In an
   interactive pane, before `/clear` the shell and `relay mcp` both read
-  `406634b1-…`; after `/clear` the shell read `00a4c025-…` while the same
-  `relay mcp` process still had `406634b1-…`.
-- **The Claude Code process is the stable join.** The Bash tool's
-  `CLAUDE_PID` stays the same across `/clear` (2880816), and it is `relay
-  mcp`'s parent pid (`ps -o ppid=` → 2880816, `comm=claude`). So a CLI call
-  finds its planner through the live channel claim whose host pid equals
-  `$CLAUDE_PID` (§4.3). The session id is an attribute that relay refreshes,
-  not a key.
-- **opencode exposes no session id to tools** (opencode 2.0.12, `opencode
-  run`): the tool subprocess's env matching `opencode|ses_` is only
-  `OPENCODE_TERMINAL=1`, while the run's session was `ses_f35add…`. An
-  opencode planner therefore resolves explicitly only (§4.2).
+  `406634b1-…`. After it, the shell read `00a4c025-…` while the same `relay
+  mcp` process still had `406634b1-…`.
+- **The Claude Code process is stable.** `CLAUDE_PID` in the Bash tool
+  stays the same across `/clear`, and it is `relay mcp`'s parent pid (`ps -o
+  ppid=`, `comm=claude`).
+
+**A `SessionStart` hook can own registration.** The probe was a
+project-settings hook that logs its stdin and env and writes to
+`$CLAUDE_ENV_FILE`:
+- The hook's stdin carries `hook_event_name`, `source`, `session_id`,
+  `transcript_path` and `cwd`.
+- `source` was `startup` on a fresh session, `resume` after `--resume`, and
+  `clear` after `/clear`.
+- The hook's `$PPID` is the Claude Code process: the same pid as `CLAUDE_PID`
+  and as `relay mcp`'s parent.
+- A line `export RELAY_PLANNER=…` written to `$CLAUDE_ENV_FILE` was present
+  in every later Bash call: after startup, after `--resume`, and after
+  `/clear`, where the `clear` hook's value replaced the `startup` one.
+- **The `clear` hook fires lazily**: at the first prompt submitted after
+  `/clear`, not at `/clear` itself. A `!` shell command run between the two
+  still saw the previous session's env. That is harmless here, because the
+  `clear` hook re-attaches the **same** planner id (§5.1).
+
+**opencode.**
+- Tools get no session id: the only matching env var in a tool subprocess is
+  `OPENCODE_TERMINAL=1`, while the run's session was `ses_f35add…`.
+- The plugin API (`@opencode-ai/plugin` types) has a `"shell.env"` hook that
+  receives `{cwd, sessionID?, callID?}` and returns `{env}`. That is the
+  opencode equivalent of `CLAUDE_ENV_FILE`.
+- opencode 2.0 plugins need `export default {id, server, setup}`, the shape
+  herdr's own plugin uses. A plugin without it logs `failed to load plugin`.
+- **Unverified:** every `opencode run --standalone` with a valid probe plugin
+  hung before reaching its shell tool (4 attempts, 300 s each), while runs
+  where the plugin failed to load completed. Whether `shell.env` reaches
+  opencode's shell tool is therefore **not established**. opencode planners
+  register explicitly in this spec (§4.2), and the relay opencode plugin is
+  a follow-up (§7).
+
+**Existing structure.**
 - `relay.db` already has `planner(id PK, harness_kind, session_id,
   transcript_locator, first_seen, last_seen)`, unique on
-  `(harness_kind, session_id)` (`internal/db/migrations/001_initial.sql`).
-  Today `UpsertPlanner` mints `id`; ingest fills it from `bind.json`'s
-  `Planner.SessionID`, which herdr supplied.
-- #300's `OpencodeDeliverer` reads the opencode session id from
-  `b.Planner.SessionID` (spec `2026-09-22-opencode-delivery-design.md`
-  §4, "herdr's opencode integration ... reports"). Planner identity must
-  keep filling that field.
-- Spike, 2026-09-22 (worktree branches `worktree-agent-ab573741dd87c1045`
-  for Go and `worktree-agent-a47b65411336ce6a7` for everything else, base
-  `15e2b74`, not pushed): the full deletion built, vetted and passed
-  `make check`. 158 Go files, +2,303 / −21,700 lines. Tests went from 1,951
-  to 1,553; some of the 398 removed tests cover behaviour that survives and
-  must be ported, not dropped (§6.3). It left 17 planner-identity stubs and
-  10 decision stubs; this spec settles every one of them.
+  `(harness_kind, session_id)`. Today `UpsertPlanner` mints `id` and ingest
+  fills it from `bind.json`'s `Planner.SessionID`, which herdr supplied.
+- #300's `PlannerDeliverer.Deliver(ctx, planner store.Endpoint, …)`
+  (`internal/relay/deliverer.go`) takes the opencode session id from
+  `b.Planner.SessionID`. Planner identity must keep filling that field.
+- On `main`, `DeliverPending` first checks `rt.Channels.Live(b.Planner.PaneID)`,
+  then `PendingForPlanner`, then `rt.Deliverers[b.Planner.Kind]`, and only
+  then `FindAgent` and the pane path (`deliver.go:68–103`).
+
+**Spike** (local branches `worktree-agent-ab573741dd87c1045` for Go and
+`worktree-agent-a47b65411336ce6a7` for everything else, base `15e2b74`, not
+pushed): the full deletion built, vetted and passed `make check`. 158 Go
+files, +2,303 / −21,700 lines. Tests went from 1,951 to 1,553; some of the
+398 removed tests cover behaviour that survives and must be ported (§6.3).
 
 ### 1.2 Decisions settled with the human (2026-09-22)
 
 | # | Decision |
 |---|---|
-| D1 | Planner identity is relay-minted and relay-managed, and it integrates with the MCP server. |
+| D1 | Planner identity is relay-minted and relay-managed, and it integrates with the plugin and the MCP server. |
 | D2 | `relay answer` (verb, MCP tool, `pick` answer flow) is deleted. A builder asks its question by halting in its report; the planner answers with the next round. |
-| D3 | `relay stop` loses the pane wrap-up (`stopPrompt`, `--grace`, `--now`). It already kills a headless round straight away (`stop.go:73`). |
+| D3 | `relay stop` loses the pane wrap-up (`stopPrompt`, `--grace`, `--now`). It already kills a headless round straight away. |
 | D4 | Halt, stall, stale and "all rounds finished" notifications are dropped. The `LogEntry` records stay. |
 | D5 | ORPHANED detection and the `herdr plugin install` path are dropped without a replacement. |
-| D6 | A planner with no push route gets reports through `relay wait` / `relay pull` only. The MCP channel is expected to always be installed, and `relay doctor` enforces it for Claude Code. |
+| D6 | A planner with no push route gets reports through `relay wait` / `relay pull` only. The relay plugin, with its MCP channel and its hook, is expected to always be installed, and `relay doctor` enforces it for Claude Code. |
 | D7 | Pane-mode bindings: history rows stay readable; a pane binding still active at upgrade is closed with a message (§5.6). |
+| D8 | The planner doesn't pass its name by hand on every call. The hook exports it; `--planner` stays as an override only. |
 
 ## 2. File structure
 
@@ -88,11 +114,13 @@ New:
 
 ```
 internal/planner/
-  planner.go        Record, ID, Name rules, errors; no I/O
+  planner.go        Record, SessionRef, ID and Name rules, errors; no I/O
   registry.go       Registry interface + FileRegistry ($STATE/planners/<id>.json)
-  resolve.go        Resolve(): flag > env > harness session > register
-  ident.go          HarnessIdent: which harness am I in, what is my session id
-cmd/relay/planner.go  `relay planner list|register|adopt|rename|forget`
+  resolve.go        Resolve(): flag > env > host > session
+  hook.go           HookInput (Claude SessionStart stdin), HookOutput, EnvLine
+  ident.go          Detect(): which harness process and session is calling
+cmd/relay/planner.go  `relay planner init|list|rename|forget`
+claude-plugin/hooks/hooks.json   SessionStart -> `relay planner init --hook claude`
 internal/e2e/headless_test.go   the CI-run end-to-end round (§6.4)
 ```
 
@@ -111,14 +139,15 @@ scripts/plugin-{build,daemon-check,fetch,install-service,open-pane}.sh (+ tests)
 ```
 
 Changed, by area: `internal/store` (Binding.PlannerID, legacy fields),
-`internal/relay` (bind/add/fork/ask/status/daemon/drain/channel/usage),
+`internal/relay` (bind/add/fork/ask/status/daemon/drain/channel/deliver/usage),
 `internal/mcp` (instructions, tools, status filter), `internal/ingest`,
 `internal/db` (planner id from the record), `internal/harness` (drop
 `PaneArgs`, `Integration`, `SubAgents`, coverage), `internal/ui`,
-`internal/release/provenance.go` (drop the two plugin kinds), `cmd/relay`,
-`Makefile`, `.github/workflows/release.yml`, README, CONTRIBUTING, CLAUDE.md,
-`internal/harness/agents/{architect,reviewer}.*.md`, `.github/ISSUE_TEMPLATE/*`,
-`dist/*` comments.
+`internal/release/provenance.go` (drop the two plugin kinds),
+`claude-plugin/.claude-plugin/plugin.json` (hooks), `cmd/relay`, `Makefile`,
+`.github/workflows/release.yml`, README, CONTRIBUTING, CLAUDE.md,
+`internal/harness/agents/{architect,reviewer}.*.md`,
+`.github/ISSUE_TEMPLATE/*`, `dist/*` comments.
 
 ## 3. Data structures
 
@@ -131,22 +160,28 @@ and the `planner` table is filled from it.
 | field | type | constraint | purpose |
 |---|---|---|---|
 | `id` | string | required; `pl_` + 12 lowercase base32 chars; immutable | the identity every binding, claim and db row keys on |
-| `name` | string | optional; `[a-z][a-z0-9-]{0,31}`; unique among records | human handle for `--planner`, status grouping |
-| `harness_kind` | string | required; a `harness` kind (`claude`, `opencode`, `agy`, ...) | picks the delivery route and the ident rule |
-| `session_id` | string | required; non-empty; format per kind (`^ses_[A-Za-z0-9]+$` for opencode) | the harness session currently attached |
-| `sessions` | []SessionRef | append-only; max 20, oldest dropped | earlier sessions this planner was adopted from, so history still joins |
-| `cwd` | string | required; absolute | where it registered; informational, status grouping |
-| `transcript_locator` | string | optional | #172; kept from today's Endpoint |
+| `name` | string | required; `[a-z][a-z0-9-]{0,31}`; unique among records | the handle the model is told, `--planner` accepts, and status groups by |
+| `harness_kind` | string | required; a `harness` kind (`claude`, `opencode`, `agy`, ...) | picks the delivery route |
+| `session_id` | string | required; non-empty; `^ses_[A-Za-z0-9]+$` for opencode | the harness session currently attached |
+| `sessions` | []SessionRef | append-only; max 20, oldest dropped | earlier sessions of this planner, so history still joins |
+| `host_pid` | int | ≥ 0; 0 = unknown (explicit registration) | the harness process: for Claude, the hook's `$PPID` = `relay mcp`'s ppid |
+| `host_started_at` | int64 | Unix seconds; 0 when `host_pid` is 0 | pid-reuse defence, as `Endpoint.StartedAt` does |
+| `cwd` | string | required; absolute | where it registered; informational |
+| `transcript_locator` | string | optional | #172: the hook's `transcript_path` |
 | `created_at` | time | required | |
-| `seen_at` | time | required; refreshed by `relay mcp` polls and by every resolving CLI call, at most once per minute | "last heard from" in `relay planner list` |
+| `seen_at` | time | required; refreshed by `init`, by `relay mcp` polls, and by resolving CLI calls, at most once per minute | "last heard from" in `relay planner list` |
 
 `SessionRef{ session_id string, from time, to time }`.
 
-Invariant: at most one record holds a given `(harness_kind, session_id)`
-as its current `session_id`. `adopt` moves a session and appends the old one
-to `sessions`. A CLI call that resolves by host pid (§4.3) and carries a
-different session id than the record's current one performs the same move
-automatically. That is how `/clear` is absorbed.
+Invariants:
+- At most one record holds a given `(harness_kind, session_id)` as its
+  current `session_id`.
+- At most one record holds a given live `(host_pid, host_started_at)`.
+- Moving a session (§5.1) appends the old one to `sessions`.
+
+Default name: `<agent>-<n>`, with the smallest free `n`. `<agent>` is
+`$CLAUDE_CODE_AGENT` when the hook's env has it (e.g. `architect-1`), else
+the harness kind (`claude-1`). `--name` overrides the default.
 
 ### 3.2 `store.Binding` changes
 
@@ -154,9 +189,10 @@ automatically. That is how `/clear` is absorbed.
   every binding written after PR 1; empty only on older files.
 - **Keep** `Planner Endpoint`, and fill its `Kind`, `SessionID` and
   `TranscriptLocator` from the record at bind/add/fork, so ingest and #300's
-  deliverer keep working unchanged. `Planner.PaneID` stays as a field only
-  so old `bind.json` files load. It gains `omitempty` and nothing new writes
-  it.
+  deliverer keep working unchanged. When a record's session moves (§5.1),
+  every non-DONE binding naming it gets its `Planner.SessionID` refreshed
+  under the store lock. `Planner.PaneID` stays as a field only so old
+  `bind.json` files load. It gains `omitempty` and nothing new writes it.
 - Pane-only fields `BuilderScreen`, `PlannerScreen`, `HeldGrace` and the
   `Output` fingerprint stay loadable but are never written, with
   `// legacy: pre-#303 bind.json` comments. They are removed after one
@@ -167,40 +203,52 @@ automatically. That is how `/clear` is absorbed.
 ### 3.3 `relay.Claim` (channel claim, `channels/<planner-id>.json`)
 
 `Pane string` becomes `Planner string json:"planner"` (required; a planner
-id). Two fields are added: `HostPID int json:"host_pid"` (required, > 0:
-`relay mcp`'s parent pid, the harness process) and `HostStartedAt int64
-json:"host_started_at"` (the OS start time in Unix seconds, for pid-reuse
-defence, as `Endpoint.StartedAt` does). The other fields are unchanged. `ClaimStore.Live`, `Write` and
-`Remove` take a planner id. `ClaimStore` gains `LiveByHost(hostPID int,
-hostStartedAt int64) (*Claim, error)`: the live claim whose host matches,
-or `(nil, nil)`. It scans `channels/`; at one file per planner session the
-scan is small. Old pane-keyed claim files expire under
+id). The other fields are unchanged. `ClaimStore.Live`, `Write` and
+`Remove` take a planner id. Old pane-keyed claim files expire under
 `ClaimTTL`; the first `relay mcp` after upgrade removes any file in
 `channels/` that doesn't parse as a planner-keyed claim.
 
-### 3.4 db
+### 3.4 `planner.HookInput` / `HookOutput` (Claude Code `SessionStart`)
+
+`HookInput` (stdin, JSON; unknown fields ignored): `hook_event_name`
+(must be `SessionStart`), `source` (`startup` | `resume` | `clear` |
+`compact`; any other value is treated as `startup`), `session_id`
+(required), `transcript_path`, `cwd` (required).
+
+`HookOutput` (stdout, JSON): `{"hookSpecificOutput": {"hookEventName":
+"SessionStart", "additionalContext": "<text>"}}`, where the text is: `You are
+relay planner <name> (<id>). RELAY_PLANNER is set in your shell; pass
+--planner <name> only to act as another planner.` Step 1's done-criteria
+check that this text reaches the model. If only plain stdout does, the
+builder switches to plain stdout and reports it. That is not a halt.
+
+`EnvLine`: `export RELAY_PLANNER=<id>\n`, appended to `$CLAUDE_ENV_FILE`
+when that variable is set. If it isn't set, `init --hook` still registers,
+exits 0, and says so in `additionalContext`: "RELAY_PLANNER could not be
+exported; relay resolves this session through its host process."
+
+### 3.5 db
 
 - `planner.id` is **the record's id**; ingest reads `planners/*.json` and
   upserts by id. `UpsertPlanner` gains an id-first path. The natural-key
   unique index stays.
-- Existing planner rows keep their ids. When `Resolve` registers a new
-  record for a `(kind, session)` that already has a db row, the record
-  **reuses that row's id** instead of minting one. That keeps history
-  joined across the upgrade.
+- Existing planner rows keep their ids. When `init` registers a new record
+  for a `(kind, session)` that already has a db row, the record **reuses
+  that row's id** instead of minting one. That keeps history joined across
+  the upgrade.
 - `binding.builder_mode` keeps `'pane'` as a valid historical value;
-  nothing new writes it. `usage.ModePane` stays as a read-only constant
-  for history. Remote builders and consults that defaulted to it
-  (`usage.go:55,73`) get their real mode.
+  nothing new writes it. `usage.ModePane` stays as a read-only constant for
+  history. Remote builders and consults that defaulted to it get their real
+  mode.
 
-### 3.5 Status JSON (`relay status --json`, statusline, `relay ui`, serve `FlatStatus`)
+### 3.6 Status JSON (`relay status --json`, statusline, `relay ui`, serve `FlatStatus`)
 
 Removed: `planner_pane`, `planner_status`, `planner_focused`, `workspace`,
 `builder_pane`, `foreign`, `sub_agents`, `nudge`, `hold`, `stop_grace*`,
 `herdr_error`. Added: `planner_id`, `planner_name`, `planner_route`
 (`channel` | `deliverer` | `none`), `planner_route_live` (bool). Every
 consumer in the tree is updated in the same PR. The remote wire protocol
-(`internal/remote/proto.go`) carries none of these fields and doesn't change
-(spike and audit agree).
+(`internal/remote/proto.go`) carries none of these fields and doesn't change.
 
 ## 4. Interfaces and contracts
 
@@ -210,77 +258,101 @@ consumer in the tree is updated in the same PR. The remote wire protocol
 Get(id string) (Record, error)                    -> ErrNotFound
 ByName(name string) (Record, error)               -> ErrNotFound
 BySession(kind, sessionID string) (Record, error) -> ErrNotFound
+ByHost(pid int, startedAt int64) (Record, error)  -> ErrNotFound
 List() ([]Record, error)
-Create(r Record) (Record, error)       -> ErrNameTaken, ErrSessionTaken, ErrInvalid
-Adopt(id, kind, sessionID string, now time.Time) (Record, error)
-                                       -> ErrNotFound, ErrSessionTaken (held by a
-                                          different record: caller must forget it first)
+Create(r Record) (Record, error)       -> ErrNameTaken, ErrSessionTaken, ErrHostTaken, ErrInvalid
+MoveSession(id, sessionID, transcript string, now time.Time) (Record, error)
+                                       -> ErrNotFound, ErrSessionTaken
+SetHost(id string, pid int, startedAt int64) (Record, error) -> ErrNotFound, ErrHostTaken
 Rename(id, name string) (Record, error) -> ErrNameTaken, ErrInvalid
 Touch(id string, now time.Time) error  -- best effort; never fails a caller's verb
 Forget(id string) error                -> ErrInUse when a non-DONE binding names it
 ```
 
 Writes are atomic (temp file + rename) under the store lock the verbs
-already take. `FileRegistry{Root}` is the only implementation; tests use it
-on a `t.TempDir()`.
+already take. So `init --hook` and `relay mcp`, which start concurrently
+(§5.2), serialise, and whichever runs second finds the first's record.
+`FileRegistry{Root}` is the only implementation; tests use it on a
+`t.TempDir()`.
 
-### 4.2 `planner.HarnessIdent`: which harness session is calling
+### 4.2 `planner.Detect`: which harness process is calling
 
 ```
-Detect(env func(string) string) (Ident, bool)
-Ident{ Kind string; SessionID string; HostPID int }   // HostPID 0 = unknown
+Detect(env func(string) string, ppid int) (Ident, bool)
+Ident{ Kind string; SessionID string; HostPID int }
 ```
-
-This is a table of rules, first match wins:
 
 | kind | rule | status |
 |---|---|---|
-| `claude` | `CLAUDECODE=1`; `SessionID` = `CLAUDE_CODE_SESSION_ID`, `HostPID` = `CLAUDE_PID` (Bash tool) or `os.Getppid()` (in `relay mcp`, which has no `CLAUDE_PID`) | verified §1.1, including across `/clear`, `--resume` and `--continue` |
-| `opencode` | none: tools see only `OPENCODE_TERMINAL=1`; explicit `relay planner register --kind opencode --session ses_…` or `--planner` | verified §1.1 (explicit-only) |
-| `agy` | none; explicit `relay planner register` only | by design until #300's agy spec |
+| `claude` | `CLAUDECODE=1`. `SessionID` = `CLAUDE_CODE_SESSION_ID`. `HostPID` = `CLAUDE_PID` when set (Bash tool), else `ppid` (inside `relay mcp` and the hook, whose parent is the Claude process) | verified §1.1 |
+| `opencode` | not detected: tools see only `OPENCODE_TERMINAL=1`. Explicit `relay planner init --kind opencode --session ses_…` | verified §1.1 |
+| `agy` | not detected; explicit `init` only | by design until an agy deliverer exists |
 
-A kind with no rule can only resolve through `--planner` / `$RELAY_PLANNER`.
-`Detect` never shells out and never reads a file.
+`Detect` never shells out and never reads a file. Host start time comes
+from a `ProcStart func(pid int) (int64, error)` passed by the caller: the
+same OS read `Endpoint.StartedAt` already uses.
 
-### 4.3 `planner.Resolve`: the only way a verb gets its planner
+### 4.3 `planner.Resolve`: how every verb except `init` gets its planner
 
 ```
 Resolve(reg Registry, in ResolveInput) (Record, Resolution, error)
-
-ResolveInput{ Flag string; Env func(string) string; CWD string;
-              Register bool; Now time.Time; Ident HarnessIdent }
-Resolution = "flag" | "env" | "host" | "session" | "registered"
+ResolveInput{ Flag string; Env func(string) string; PPID int;
+              ProcStart func(int) (int64, error); Now time.Time }
+Resolution = "flag" | "env" | "host" | "session"
 ```
 
-`host` is the primary route for a Claude Code planner: find the live
-channel claim (§3.3) whose `HostPID` and `HostStartedAt` match the caller's
-harness process, and take its planner. It survives `/clear`; `session`
-alone would not (§1.1). `ResolveInput` gains `Claims ClaimStore` and
-`ProcStart func(pid int) (int64, error)` for the start-time check.
+Order, first hit wins:
+1. `--planner` (id or name)
+2. `$RELAY_PLANNER` (set by the hook)
+3. `ByHost(Detect().HostPID, ProcStart(HostPID))`, which covers `relay mcp`
+   and a session whose hook couldn't export
+4. `BySession(kind, sessionID)`
 
-Errors: `ErrNoPlanner` (nothing resolved and `Register` is false),
-`ErrUnknownPlanner{Ref}` (a flag or env value that matches no id or name),
-`ErrNoSession` (`Register` is true but `Detect` found no session: "run this
-from a planner session or pass --planner").
+Errors:
+- `ErrUnknownPlanner{Ref}`: a flag or env value that matches no record.
+- `ErrNoPlanner`: nothing resolved. The message is the fix: "no relay
+  planner for this session: is the relay plugin enabled (`relay doctor`)?
+  Or run `relay planner init`."
 
-Who passes `Register: true`: `bind`, `add`, `fork`, `ask`, and `relay mcp`.
-Everyone else passes false: `send`, `wait`, `pull`, `status`, `done`,
-`stop`, `log`, `show`, `diff` and `statusline`. A verb that is given a
-binding by name doesn't need a planner and never resolves one.
+**`Resolve` never registers.** Only `relay planner init` creates records.
+`bind`, `add`, `fork` and `ask` fail with `ErrNoPlanner` rather than
+creating a planner implicitly. A missing hook is then loud, not a silently
+unnamed planner.
 
-### 4.4 `relay mcp` contract changes
+A verb that is given a binding by name doesn't need a planner and never
+resolves one: `send`, `wait`, `pull`, `done`, `stop`, `log`, `show` and
+`diff` with a name. `status` with no name resolves and filters by planner;
+with no planner it lists everything.
 
-- On start: `Resolve(Register: true)`, then `Registry.Touch`, then claim
-  `channels/<planner-id>.json`. `--pane` is removed; `--planner <id|name>`
-  overrides. When no planner can be resolved, it runs tools-only and says so
-  on stderr, the same as today's "no claim store" path.
-- The `status` tool filters by planner id, not pane.
-- The `answer` tool is deleted (D2). The instructions text
-  (`internal/mcp/instructions.go`) loses `broken` and `orphaned`, keeps
-  `report` and `needs_you`, and says that a report's body is the report
-  (with #297; see §7).
+### 4.4 `relay planner init`: the one registration command
 
-### 4.5 Planner delivery (`DeliverPending`, after PR 3)
+```
+relay planner init [--name N] [--kind K --session S] [--hook claude]
+```
+
+- `--hook claude`: reads `HookInput` from stdin, writes `EnvLine` and
+  `HookOutput`, and always exits 0. A hook failure must never block a
+  Claude Code session: errors go into `additionalContext` and to stderr.
+- `--kind/--session`: explicit registration (opencode, agy, or by hand).
+  Prints the record and the export line for the human.
+- No flags: `Detect()` from the calling Bash tool.
+
+Postconditions: exactly one record matches the caller's host (when known)
+and session; its `session_id` is the caller's; its `seen_at` is now.
+
+### 4.5 `relay mcp` contract changes
+
+- On start: `Resolve()`. If that returns `ErrNoPlanner` (it started before
+  the hook finished), retry every 500 ms for up to 10 s, then run
+  tools-only with a stderr note. Then claim `channels/<planner-id>.json`.
+  `--pane` is removed; `--planner <id|name>` overrides.
+- Each poll re-reads the record, so a `/clear` rename or session move is
+  picked up without a restart.
+- The `status` tool filters by planner id. The `answer` tool is deleted
+  (D2). The instructions text loses `broken` and `orphaned` and keeps
+  `report` and `needs_you`.
+
+### 4.6 Planner delivery (`DeliverPending`, after PR 3)
 
 ```
 DeliverPending(ctx, rt, b) (Binding, Delivery, error)
@@ -291,58 +363,73 @@ Postcondition: a pending entry is either handed to exactly one route and
 marked delivered, or left pending with `Delivery.Reason` set. It is never
 typed anywhere.
 
-### 4.6 `relay planner` verbs (CLI; tests exercise the rules in `internal/planner`, no herdr, per CLAUDE.md)
+### 4.7 `relay planner` verbs (CLI; tests exercise the rules in `internal/planner`, no herdr, per CLAUDE.md)
 
 ```
-relay planner list [--json]                      id, name, kind, session, cwd, seen, route
-relay planner register [--kind K --session S] [--name N]   default: Detect()
-relay planner adopt <id|name>                    attach the calling session to an existing planner
+relay planner init   (§4.4)
+relay planner list [--json]            id, name, kind, session, host, cwd, seen, route
 relay planner rename <id|name> <new-name>
-relay planner forget <id|name>                   refuses while a live binding names it
+relay planner forget <id|name>         refuses while a live binding names it
 ```
 
-`adopt` is how a restarted or resumed planner session keeps its bindings.
-It replaces today's `--assume-dead` rebind.
+`init` against an existing record (same host, or `--name` of an existing
+record plus `--kind/--session`) re-attaches that record. That is how an
+opencode planner restarted by hand keeps its bindings, and it replaces
+today's `--assume-dead` rebind. There is no separate `adopt` verb.
 
-### 4.7 `relay doctor` checks (replace every herdr check)
+### 4.8 `relay doctor` checks (replace every herdr check)
 
 | check | when | severity |
 |---|---|---|
 | relay plugin enabled in Claude Code (`enabledPlugins["relay@relay"] == true` in user or project settings) | a `claude` candidate or planner exists | **FAIL** (D6) |
-| the calling session has a live channel claim | run from a Claude Code session (`Detect` = claude) | FAIL |
+| the installed plugin's version ships the `SessionStart` hook | same | FAIL |
+| run from a Claude Code session: `Resolve()` succeeds, and a live channel claim exists for that planner | `Detect` = claude | FAIL |
 | opencode server reachable (`$XDG_STATE_HOME/opencode/service.json`, loopback) | an opencode planner record exists | WARN |
-| planner records whose `seen_at` is older than 7 days and that no live binding names | always | INFO: suggest `relay planner forget` |
+| planner records with `seen_at` older than 7 days and no live binding | always | INFO: suggest `relay planner forget` |
 
 `herdr.MinVersion` and every `HERDR_*` read are removed. `UsableBuilder`
 means "binary on PATH and the candidate parses".
 
 ## 5. Pseudocode
 
-### 5.1 Resolve
+### 5.1 `relay planner init --hook claude`
 
 ```
-Resolve(reg, in):
-  if in.Flag != "":   return lookup(reg, in.Flag), "flag"     # id or name, else ErrUnknownPlanner
-  if v := in.Env("RELAY_PLANNER"); v != "": return lookup(reg, v), "env"
-  id, ok := in.Ident.Detect(in.Env); kind, sess := id.Kind, id.SessionID
-  if ok and id.HostPID > 0:
-    if c := in.Claims.LiveByHost(id.HostPID, in.ProcStart(id.HostPID)); c != nil:
-      r := reg.Get(c.Planner)
-      if sess != "" and sess != r.session_id: r = reg.Adopt(r.id, kind, sess, now)  # /clear
-      reg.Touch(r.id); return r, "host"
-  if ok:
-    if r, err := reg.BySession(kind, sess); err == nil: reg.Touch(r.id); return r, "session"
-    if !in.Register: return ErrNoPlanner
-    id := dbPlannerID(kind, sess) or mint()                  # §3.4: reuse history's id
-    return reg.Create({id, kind, sess, cwd: in.CWD, now}), "registered"
-  if in.Register: return ErrNoSession
-  return ErrNoPlanner
+in := parse stdin as HookInput           # malformed -> context note, exit 0
+host := ppid; hostStart := ProcStart(host)
+under store lock:
+  r, err := reg.ByHost(host, hostStart)                       # same Claude process
+  if err: r, err = reg.BySession("claude", in.session_id)     # --resume in a new process
+  if found:
+    if r.session_id != in.session_id:                         # /clear, or a new process
+      r = reg.MoveSession(r.id, in.session_id, in.transcript_path, now)
+      refresh Planner.SessionID on r's non-DONE bindings
+    if r.host_pid != host: r = reg.SetHost(r.id, host, hostStart)
+  else:
+    id := dbPlannerID("claude", in.session_id) or mint()      # §3.5
+    r = reg.Create({id, name: flagOrDefault(), "claude", in.session_id,
+                    host, hostStart, in.cwd, in.transcript_path, now})
+append EnvLine(r.id) to $CLAUDE_ENV_FILE
+print HookOutput(r)
+exit 0
 ```
 
-### 5.2 bind / add / fork / ask
+`source` is logged and never branches the logic. `ByHost` then `BySession`
+covers `startup`, `resume` (same or new process), `clear` and `compact` alike.
+
+### 5.2 Session start ordering (Claude Code)
 
 ```
-r := Resolve(Register: true)
+claude starts ─┬─ SessionStart hook: planner init --hook   (creates or re-attaches)
+               └─ relay mcp: Resolve() by host, retrying ≤10 s   (joins, then claims)
+model's Bash:  RELAY_PLANNER from CLAUDE_ENV_FILE -> Resolve() "env"
+after /clear:  the hook runs again at the next prompt -> same id; MoveSession
+```
+
+### 5.3 bind / add / fork / ask
+
+```
+r := Resolve()                       # ErrNoPlanner is a hard error (§4.3)
 b.PlannerID = r.id
 b.Planner = Endpoint{Kind: r.harness_kind, SessionID: r.session_id,
                      TranscriptLocator: r.transcript_locator}
@@ -350,40 +437,29 @@ builder: headless or remote only; --headless is accepted and ignored with a
   one-line stderr note ("headless is the only local mode") for one minor release
 ```
 
-### 5.3 Daemon tick (after PR 3; `ListAgents` is gone)
+### 5.4 DeliverPending (after PR 3)
+
+```
+e := PendingForPlanner(b); if none: return
+if c := rt.Channels.Live(b.PlannerID, now); c != nil:
+    enqueue(mailbox, e); mark delivered, route=channel; return
+if d := rt.Deliverers[b.Planner.Kind]; d != nil:              # #300, unchanged
+    out, reason := d.Deliver(ctx, b.Planner, PushText(e), e.Path, e.TS)
+    if out confirmed: mark delivered, route=deliverer:<kind>; return
+    leave pending, reason; return
+leave pending, reason="no push route for planner <name> (<kind>): relay wait/pull"
+```
+
+A pending entry stays pending until a route takes it or `relay pull` reads
+it. `relay pull` marks it delivered with `route=pull`.
+
+### 5.5 Daemon tick (after PR 3; `ListAgents` is gone)
 
 ```
 for each binding b not DONE:
   if legacyPane(b): retire(b); continue                      # §5.6
   reconcile builder: headless (process, stream, markers) | remote (poll) -- unchanged
   if b has a pending planner entry: DeliverPending(b)
-```
-
-### 5.4 DeliverPending
-
-```
-e := PendingForPlanner(b); if none: return
-if c := rt.Channels.Live(b.PlannerID, now); c != nil:
-    enqueue(mailbox, e); mark delivered, route=channel; return
-if d := rt.Deliverers[b.Planner.Kind]; d != nil:              # #300
-    res := d.Deliver(ctx, b, e)
-    if res.Confirmed: mark delivered, route=deliverer:<kind>; return
-    leave pending, reason=res.Reason; return
-leave pending, reason="no push route for planner <id> (<kind>): relay wait/pull"
-```
-
-A pending entry stays pending until a route takes it or `relay pull` reads
-it. `relay pull` marks it delivered with `route=pull`.
-
-### 5.5 relay mcp start
-
-```
-r, how, err := Resolve(Register: true, Flag: --planner)
-if err: tools-only, stderr note, return
-rt.Channels.Write(Claim{Planner: r.id, PID, StartedAt, SeenAt, CWD, Version,
-                        HostPID: os.Getppid(), HostStartedAt: start time of that pid})
-  ErrClaimHeld -> exit, as today
-poll: Touch(r.id) at most once a minute; drain mailbox for bindings where PlannerID == r.id
 ```
 
 ### 5.6 Legacy pane binding retire (D7)
@@ -397,8 +473,9 @@ retire(b):
   save
 ```
 
-`relay status` shows retired bindings as DONE with the note. History rows
-are untouched.
+A binding with no `PlannerID` (written before PR 1) that is not retired
+keeps working through `Planner.SessionID`. The first resolving call from
+its planner's session (`BySession`) back-fills `PlannerID`.
 
 ## 6. Error handling and verification
 
@@ -406,16 +483,19 @@ are untouched.
 
 | error | recoverable | surfaced as |
 |---|---|---|
-| `ErrNoPlanner`, `ErrNoSession`, `ErrUnknownPlanner` | yes: pass `--planner` or run from a planner session | CLI exit 1 with the fix in the message |
-| `ErrNameTaken`, `ErrSessionTaken`, `ErrInUse` | yes | CLI exit 1 |
+| `ErrNoPlanner`, `ErrUnknownPlanner` | yes: enable the plugin, run `relay planner init`, or pass `--planner` | CLI exit 1 with the fix in the message |
+| `ErrNameTaken`, `ErrSessionTaken`, `ErrHostTaken`, `ErrInUse` | yes | CLI exit 1 |
+| any error inside `init --hook` | yes | never an exit ≠ 0; `additionalContext` note + stderr; `doctor` FAIL on the next run |
 | registry file corrupt | no for that record | `doctor` FAIL naming the file; verbs that don't resolve are unaffected |
 | no push route | yes | a status `planner_route=none` row; the report waits for `pull` |
 | deliverer refusal (#300's taxonomy) | per #300 | unchanged |
 
 ### 6.2 Observability
 
-Every resolution logs `planner=<id> via=<resolution>` at debug. Every
-delivery `LogEntry` gains `route`. `relay planner list` is the view.
+Every resolution logs `planner=<id> via=<resolution>` at debug. `init`
+logs `source`, `session`, `host` and whether it created, re-attached or
+moved a session. Every delivery `LogEntry` gains `route`. `relay planner
+list` is the view.
 
 ### 6.3 Tests that are deleted vs ported
 
@@ -430,39 +510,39 @@ that list fails review.
 ### 6.4 `make e2e` becomes CI
 
 `internal/e2e/headless_test.go`, no build tag. A fake harness binary on
-`PATH` writes the report and done marker. The scenario: register a planner
-via env (`CLAUDECODE=1`, `CLAUDE_CODE_SESSION_ID=<fixed>`), start an
-in-process `relay mcp` stdio client, bind, send, receive the report on the
-channel, pull, done. The herdr-session e2e (`internal/relay/e2e_test.go`)
-and the fake herdr in `internal/e2e/fakes_test.go` are deleted. CLAUDE.md's
-"run `make e2e` after reconcile/reporttail changes" rule becomes "CI runs
-it".
+`PATH` writes the report and done marker. The scenario:
+1. run `relay planner init --hook claude` on a canned `HookInput`, with a
+   temp `CLAUDE_ENV_FILE`;
+2. start an in-process `relay mcp` stdio client with `CLAUDECODE=1`;
+3. bind, send, receive the report on the channel, pull, done;
+4. run the hook again with `source: clear` and a new `session_id`, and
+   assert the same planner id and a moved session.
+
+The herdr-session e2e (`internal/relay/e2e_test.go`) and the fake herdr in
+`internal/e2e/fakes_test.go` are deleted. CLAUDE.md's "run `make e2e` after
+reconcile/reporttail changes" rule becomes "CI runs it".
 
 ## 7. Ordered delivery
 
-**Gate on everything below: #300 merged.** #300 adds its deliverer inside
-`DeliverPending` and reorders `PendingForPlanner` above the `FindAgent` gate.
-PR 1 rewrites the claim guard in the same function, and PRs 2–3 delete the
-gate. Cutting any of them before #300 merges means a rebase through the one
-function that both sides change.
-
-Also hold **#293 part 2** (`relay update` self-update). #310 detects
-`plugin-release` and `plugin-source` installs, and this spec deletes both.
+**The gate is met:** #300 merged as #316. **#293 part 2 is held** by the
+human until step 4, because #310 detects `plugin-release` and
+`plugin-source` installs and this spec deletes both.
 
 | step | owner | deliverable | depends on | done when |
 |---|---|---|---|---|
-| 0 | planner, not a builder | **done 2026-09-22** (§1.1): opencode is explicit-only; Claude keeps its session id across `--resume`/`--continue` but not `/clear`, so the join is the host pid | -- | §4.2 rows verified |
-| 1 | builder | **Planner identity**, with herdr still in the tree: `internal/planner`, `relay planner` verbs, `Binding.PlannerID`, bind/add/fork/ask use `Resolve` (herdr is still a source of `PaneID` for the pane path), `relay mcp` registers and claims by planner id, MCP `status` filters by planner, ingest uses record ids | #300 merged, step 0 | `make check`; a binding made from a Claude session shows `planner_id`; a second `relay mcp` in the same session is refused by planner id |
+| 0 | planner | **done 2026-09-22** (§1.1): Claude session and hook behaviour verified; opencode `shell.env` unverified | -- | -- |
+| 1 | builder | **Planner identity**, with herdr still in the tree: `internal/planner`, `relay planner init/list/rename/forget`, the plugin's `SessionStart` hook, `Binding.PlannerID`, bind/add/fork/ask use `Resolve` (herdr is still the pane path's source of `PaneID`), `relay mcp` joins by host and claims by planner id, MCP `status` filters by planner, ingest uses record ids, doctor's plugin + hook checks | #300 ✓ | `make check`. **Live check by the planner, not the builder:** a fresh Claude session in a pane gets `RELAY_PLANNER` and the "You are relay planner" context; `/clear` then a prompt keeps the same id; `relay mcp`'s claim names that id |
 | 2 | builder | **Headless-only builders**: delete pane builder mode, `relay answer` + MCP tool + `pick` answer, `stop --grace/--now` and `stopPrompt`, ui pane capture, harness `PaneArgs`/`Integration`/`SubAgents`/coverage, the pane usage reader, the `--builder <pane>`/`--workspace`/`--assume-dead`/`--held-grace` flags; `--headless` becomes a no-op; the §5.6 retire rule | 1 | `make check`; no builder code path reads a pane; the ported tests listed |
-| 3 | builder | **Planner delivery without herdr**: §5.4 routes, delete pane delivery and `held.go`, the notifications (D4), daemon `ListAgents`, ORPHANED/BROKEN-from-herdr, status JSON §3.5 and every consumer, doctor §4.7, the `internal/herdr` package, every `HERDR_*` read | 2 | `grep -rli herdr --include=*.go . \| grep -v _test` is empty; `make check` |
+| 3 | builder | **Planner delivery without herdr**: §5.4 routes, delete pane delivery and `held.go`, the notifications (D4), daemon `ListAgents`, ORPHANED/BROKEN-from-herdr, status JSON §3.6 and every consumer, the `internal/herdr` package, every `HERDR_*` read | 2 | `grep -rli herdr --include=*.go . \| grep -v _test` is empty; `make check` |
 | 4 | builder | **Everything that isn't Go**: packaging, `scripts/plugin-*`, `check-plugin-version` reduced to the Claude plugin manifests, `make release` and `release.yml`, README/CONTRIBUTING/CLAUDE.md, architect and reviewer definitions (and `TestArchitectHandoffIsSharedAcrossKinds`), `release.Provenance` without the plugin kinds, issue templates, `dist/` comments | 3 | `make check`; `grep -rli herdr . --exclude-dir=.git` lists only `docs/specs`, `docs/plans` and `docs/superpowers` history |
 | 5 | builder | **Headless e2e in CI** (§6.4) | 3 | the CI job runs it; mutation check: break §5.4's channel route, and the test fails |
+| 6 | follow-up issue | **relay opencode plugin**: `shell.env` exports `RELAY_PLANNER`; `chat.message`/`event` supply the `ses_` id to `relay planner init --kind opencode`. It first needs a probe that gets an `opencode run` to finish with a valid plugin loaded (§1.1) | 1 | a probe transcript in the issue |
 
 After step 5: #303 closes. #205 closes as superseded. #292 (rename) can
-start on the smaller tree. #297 is independent and may land at any point;
-it's worth landing before step 3, because the channel becomes the only push
-route.
+start on the smaller tree.
 
 Every plan cut from this spec states: if a step is impossible as written or
-contradicts the code, halt and report. CI runners have no `herdr`; after
-step 3, no test may reference one.
+contradicts the code, halt and report. CI runners have no `herdr`, and
+after step 3 no test may reference one. No `cmd/relay` test may run a
+subcommand that reaches herdr, or read the user's real config or state
+(CLAUDE.md).
