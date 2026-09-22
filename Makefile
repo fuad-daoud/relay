@@ -13,7 +13,7 @@ LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 .PHONY: check build install service uninstall release jev
 
 check:
-	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
+	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { gofmt -l $$(git ls-files '*.go'); exit 1; }
 	go vet ./...
 	go test -race -count=1 ./...
 	@cp go.mod go.mod.check && cp go.sum go.sum.check && \

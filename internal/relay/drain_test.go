@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -100,6 +102,38 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 
 	if _, pending, err := s.PendingForPlanner("judge"); err != nil || pending {
 		t.Errorf("a pushed entry must be confirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestDrainPushesExpandedReportText proves Drain pushes the report's text,
+// not just the pointer payload (#297): a report entry naming a readable
+// path is expanded through PushText before it reaches the Pusher.
+func TestDrainPushesExpandedReportText(t *testing.T) {
+	s := store.New(t.TempDir())
+	rt := Runtime{Store: s}
+	pane := "w2:p3"
+	saveDrainBinding(t, s, "judge", pane, store.StateActive)
+
+	reportPath := filepath.Join(t.TempDir(), "003-report.md")
+	if err := os.WriteFile(reportPath, []byte("the full report body"), 0o644); err != nil {
+		t.Fatalf("write report file: %v", err)
+	}
+	queueDrainEntry(t, s, "judge", 3, store.KindReport, reportPath, "Builder finished round 3. Report: "+reportPath)
+
+	st := &DrainState{Pane: pane}
+	pusher := &fakePusher{}
+
+	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(pusher.pushes) != 1 {
+		t.Fatalf("pushes = %+v, want one", pusher.pushes)
+	}
+
+	got := pusher.pushes[0].content
+	want := "Builder finished round 3. Report: " + reportPath + "\n\nthe full report body"
+	if got != want {
+		t.Errorf("content = %q, want %q", got, want)
 	}
 }
 

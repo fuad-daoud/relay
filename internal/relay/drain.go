@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,7 +93,8 @@ func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResu
 				meta["path"] = entry.Path
 			}
 
-			if err := p.Push(ctx, entry.Payload, meta); err != nil {
+			content, _ := PushText(entry, os.ReadFile)
+			if err := p.Push(ctx, content, meta); err != nil {
 				res.Failed = append(res.Failed, b.Name)
 				slog.Info("channel push failed; entry stays pending", "binding", b.Name, "round", entry.Round, "error", err)
 			} else {

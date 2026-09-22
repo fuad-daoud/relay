@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -457,6 +458,44 @@ func openHooksLogAppend(path string) io.Writer {
 	return f
 }
 
+// opencodeStateFile resolves $XDG_STATE_HOME/opencode/service.json, falling
+// back to ~/.local/state/opencode/service.json, the same way store.DefaultRoot
+// resolves $XDG_STATE_HOME.
+func opencodeStateFile() string {
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		return filepath.Join(xdg, "opencode", "service.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "opencode", "service.json")
+}
+
+// opencodeDBPath resolves $XDG_DATA_HOME/opencode/opencode.db, falling back
+// to ~/.local/share/opencode/opencode.db.
+func opencodeDBPath() string {
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "opencode", "opencode.db")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+}
+
+// newDeliverers builds Runtime.Deliverers: an OpencodeDeliverer keyed by
+// "opencode" when sqlite3 is on PATH, nil otherwise (docs/specs/2026-09-22-opencode-delivery-design.md).
+// No sqlite3 means the deliverer could never confirm a delivery, so relay
+// falls back to today's pane injection for every opencode planner.
+func newDeliverers() map[string]relay.PlannerDeliverer {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		return nil
+	}
+	return map[string]relay.PlannerDeliverer{
+		"opencode": &relay.OpencodeDeliverer{
+			Exec:      binExec{},
+			StateFile: opencodeStateFile(),
+			DBPath:    opencodeDBPath(),
+		},
+	}
+}
+
 // newRuntime constructs the production runtime; aliases.json is never read (#80).
 func newRuntime() (relay.Runtime, error) {
 	root, err := store.DefaultRoot()
@@ -519,6 +558,7 @@ func newRuntime() (relay.Runtime, error) {
 		Transport:        transport,
 		Roles:            harness.OSRoleChecker(),
 		Channels:         &relay.FileClaims{Root: st.ChannelsDir()},
+		Deliverers:       newDeliverers(),
 	}, nil
 }
 

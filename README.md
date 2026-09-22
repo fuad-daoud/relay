@@ -2028,6 +2028,11 @@ pull` bypasses this entirely — it prints the payload to stdout instead of
 injecting it, so it's safe to run from inside the focused planner pane at any
 time.
 
+None of this applies to an opencode planner: relay pushes its payloads
+straight to opencode's own API instead of typing them into its pane, so
+there is nothing to clobber and no HELD state. Every other planner is still
+typed.
+
 ## Running the daemon
 
 `relay daemon` is the reconciler: it polls herdr, queues reports back to the
