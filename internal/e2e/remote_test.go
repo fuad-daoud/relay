@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -148,7 +147,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	return srv, url, fp, enroll, srvStore, runner
 }
 
-func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr, remote.Keypair) {
+func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakePanes, remote.Keypair) {
 	t.Helper()
 	cfgDir := t.TempDir()
 	privPath, pubPath := client.KeyPaths(cfgDir)
@@ -164,9 +163,9 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 		},
 	}
 
-	hd := &fakeHerdr{
-		agents: []herdr.Agent{
-			{PaneID: "p1", Name: "planner", Status: herdr.StatusIdle, Kind: "claude"},
+	hd := &fakePanes{
+		agents: []stubAgent{
+			{PaneID: "p1", Name: "planner", Status: stubIdle, Kind: "claude"},
 		},
 	}
 
@@ -185,7 +184,6 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 	}
 
 	rt := relay.Runtime{
-		Herdr:            hd,
 		Git:              gitClient,
 		Store:            st,
 		Candidates:       cSet,
@@ -544,7 +542,7 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	}
 
 	// Assert: state stays active, Builder.RemoteStatus == "unreachable", RemoteUnreachableSince set,
-	// no notice from fakeHerdr.Notify. Restart a server? Not needed: the assertion is the non-halt.
+	// no notice from fakePanes.Notify. Restart a server? Not needed: the assertion is the non-halt.
 	cb, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("step 3: load client binding: %v", err)

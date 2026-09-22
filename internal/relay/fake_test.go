@@ -3,13 +3,10 @@ package relay
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
-	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
@@ -26,7 +23,6 @@ type tabCall struct {
 // metadataCall is one recorded ReportMetadata call.
 type metadataCall struct {
 	Pane string
-	Meta herdr.PaneMetadata
 }
 
 type startCall struct {
@@ -533,29 +529,15 @@ func TestFakeSatisfiesGit(t *testing.T) {
 	var _ Git = (*git.Client)(nil)
 }
 
-// TestFakeStartAgentRefusesAnInvalidName pins the fake against drift from the
-// real client: it must return herdr's own error for a name herdr would refuse,
-// or tests could pass against a name `herdr agent start` then rejects.
-func TestFakeStartAgentRefusesAnInvalidName(t *testing.T) {
-	f := &fakeHerdr{}
-
-	err := f.StartAgent(context.Background(), strings.Repeat("a", 33), "claude", "w2:p9", nil)
-
-	if !errors.Is(err, herdr.ErrInvalidAgentName) {
-		t.Fatalf("StartAgent err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
-	}
-}
-
-// fakeHerdr is the in-memory Herdr used by every test in this package.
-type fakeHerdr struct {
-	agents    []herdr.Agent
+// fakePanes is the in-memory Herdr used by every test in this package.
+type fakePanes struct {
+	agents    []stubAgent
 	prompts   []promptCall
 	keys      []keyCall
 	starts    []startCall
 	reads     []readCall
-	notices   []string      // titles, so every existing `f.notices[0]` assertion still reads the message text
-	bodies    []string      // parallel to notices
-	sounds    []herdr.Sound // parallel to notices
+	notices   []string // titles, so every existing `f.notices[0]` assertion still reads the message text
+	bodies    []string // parallel to notices
 	metadata  []metadataCall
 	metaErr   error // when set, ReportMetadata returns this error instead of recording the call
 	readOut   string
@@ -593,13 +575,11 @@ type fakeHerdr struct {
 	// onSubscribe, when set, overrides both per call -- the reconnect tests
 	// need a fresh channel on the second Subscribe, which a single scripted
 	// subscribeCh cannot express.
-	subscribeCh    <-chan herdr.Event
 	subscribeErr   error
 	subscribeCalls [][]string
-	onSubscribe    func() (<-chan herdr.Event, error)
 }
 
-func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
+func (f *fakePanes) ListAgents(context.Context) ([]stubAgent, error) {
 	f.listCalls++
 	if f.onList != nil {
 		f.onList()
@@ -613,28 +593,16 @@ func (f *fakeHerdr) ListAgents(context.Context) ([]herdr.Agent, error) {
 	return f.agents, nil
 }
 
-func (f *fakeHerdr) Prompt(_ context.Context, target, text string) error {
-	if f.stalls > 0 {
-		f.stalls--
-		return herdr.ErrPromptStalled
-	}
-	if f.promptErr != nil {
-		return f.promptErr
-	}
-	f.prompts = append(f.prompts, promptCall{Target: target, Text: text})
-	return nil
-}
-
-func (f *fakeHerdr) SendKeys(_ context.Context, target, keys string) error {
+func (f *fakePanes) SendKeys(_ context.Context, target, keys string) error {
 	f.keys = append(f.keys, keyCall{Target: target, Keys: keys})
 	return nil
 }
 
-func (f *fakeHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
+func (f *fakePanes) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
 	return f.ReadAgentSource(ctx, target, "recent-unwrapped", lines)
 }
 
-func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, lines int) (string, error) {
+func (f *fakePanes) ReadAgentSource(_ context.Context, target, source string, lines int) (string, error) {
 	f.reads = append(f.reads, readCall{Target: target, Source: source, Lines: lines})
 	if f.readErr != nil {
 		return "", f.readErr
@@ -642,7 +610,7 @@ func (f *fakeHerdr) ReadAgentSource(_ context.Context, target, source string, li
 	return f.readOut, nil
 }
 
-func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string) (string, error) {
+func (f *fakePanes) CreateTab(_ context.Context, workspaceID, cwd, label string) (string, error) {
 	if f.onSpawn != nil {
 		f.onSpawn()
 	}
@@ -656,36 +624,7 @@ func (f *fakeHerdr) CreateTab(_ context.Context, workspaceID, cwd, label string)
 	return f.newPane, nil
 }
 
-func (f *fakeHerdr) StartAgent(_ context.Context, name, kind, pane string, args []string) error {
-	f.starts = append(f.starts, startCall{Name: name, Kind: kind, Pane: pane, Args: args})
-	// The fixture must refuse what the real client would refuse, or a test
-	// could pass against a name herdr then rejects: #64 was found because
-	// this fake had drifted from the real client.
-	if err := herdr.ValidateAgentName(name); err != nil {
-		return err
-	}
-	if f.startErr != nil {
-		return f.startErr
-	}
-	return nil
-}
-
-func (f *fakeHerdr) Notify(_ context.Context, title, body string, sound herdr.Sound) error {
-	f.notices = append(f.notices, title)
-	f.bodies = append(f.bodies, body)
-	f.sounds = append(f.sounds, sound)
-	return nil
-}
-
-func (f *fakeHerdr) ReportMetadata(_ context.Context, paneID string, m herdr.PaneMetadata) error {
-	if f.metaErr != nil {
-		return f.metaErr
-	}
-	f.metadata = append(f.metadata, metadataCall{Pane: paneID, Meta: m})
-	return nil
-}
-
-func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
+func (f *fakePanes) ClosePane(_ context.Context, paneID string) error {
 	if f.onClose != nil {
 		f.onClose()
 	}
@@ -694,24 +633,6 @@ func (f *fakeHerdr) ClosePane(_ context.Context, paneID string) error {
 	}
 	f.closed = append(f.closed, paneID)
 	return nil
-}
-
-func (f *fakeHerdr) Subscribe(_ context.Context, paneIDs []string) (<-chan herdr.Event, error) {
-	f.subscribeCalls = append(f.subscribeCalls, append([]string(nil), paneIDs...))
-	if f.onSubscribe != nil {
-		return f.onSubscribe()
-	}
-	if f.subscribeErr != nil {
-		return nil, f.subscribeErr
-	}
-	if f.subscribeCh != nil {
-		return f.subscribeCh, nil
-	}
-	return nil, herdr.ErrNoSocket
-}
-
-func TestFakeSatisfiesHerdr(t *testing.T) {
-	var _ Herdr = (*fakeHerdr)(nil)
 }
 
 // fakeClock is a movable Now for the tests that need time to pass. newRuntime's
@@ -728,33 +649,6 @@ func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 func withClock(rt Runtime, c *fakeClock) Runtime {
 	rt.Now = c.Now
 	return rt
-}
-
-func TestFindAgentPrefersSessionOverPane(t *testing.T) {
-	agents := []herdr.Agent{
-		{PaneID: "w2:p3", Session: herdr.Session{Value: "stale"}, Status: herdr.StatusIdle},
-		{PaneID: "w9:pZ", Session: herdr.Session{Value: "sess-1"}, Status: herdr.StatusWorking},
-	}
-	ep := store.Endpoint{PaneID: "w2:p3", SessionID: "sess-1"}
-
-	got, ok := FindAgent(agents, ep)
-	if !ok {
-		t.Fatal("FindAgent found nothing")
-	}
-	if got.PaneID != "w9:pZ" {
-		t.Errorf("matched %q; session id must win, since a moved pane gets a new id", got.PaneID)
-	}
-}
-
-func TestFindAgentFallsBackToPane(t *testing.T) {
-	agents := []herdr.Agent{{PaneID: "w2:p4", Status: herdr.StatusIdle}}
-
-	if _, ok := FindAgent(agents, store.Endpoint{PaneID: "w2:p4"}); !ok {
-		t.Fatal("pane fallback failed")
-	}
-	if _, ok := FindAgent(agents, store.Endpoint{PaneID: "w2:p9"}); ok {
-		t.Fatal("matched a pane that is not present")
-	}
 }
 
 // fakeRunner is the in-memory Runner (#99). It records every Start and

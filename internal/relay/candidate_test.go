@@ -503,7 +503,7 @@ func (f fakeRoleChecker) Missing(kind string) []string { return f[kind] }
 // makes rolesMissingGates run even when rt.Roles is nil would make this
 // control assertion fail.
 func TestRolesMissingSkipsInOrder(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
@@ -536,7 +536,7 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 // every other gate (recorded, but the pick proceeds), roles_missing refuses
 // an explicit --builder pick outright, because it cannot succeed.
 func TestRolesMissingRefusesExplicit(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 

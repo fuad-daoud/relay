@@ -25,7 +25,7 @@ func seedDone(t *testing.T, rt Runtime, name, cwd string) {
 }
 
 func TestGCClearsOnlyDoneBindings(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -68,7 +68,7 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 }
 
 func TestGCDryRunChangesNothing(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -85,7 +85,7 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 }
 
 func TestGCArchivesByDefault(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	seedDone(t, rt, "finished", "/repo-done")
 	if err := rt.Store.AppendLog("finished", store.LogEntry{
@@ -111,7 +111,7 @@ func TestGCArchivesByDefault(t *testing.T) {
 
 func TestGCWorktreeTeardown(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
@@ -173,7 +173,7 @@ func TestGCWorktreeTeardown(t *testing.T) {
 
 func TestGCAfterDoneReportsGone(t *testing.T) {
 	fg := &fakeGit{dirtyResult: false}
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
@@ -223,7 +223,7 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 
 func TestGCWorktreeDryRun(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
@@ -277,7 +277,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 
 func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
@@ -326,7 +326,7 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 }
 
 func TestGCDeleteRemovesTheDirectory(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -356,7 +356,7 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 
 func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	rt.Git = fg
 
@@ -399,7 +399,7 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 // TestGCIgnoresPaused: gc sweeps only DONE, so a paused binding -- worktree
 // released but the binding very much alive -- survives it untouched.
 func TestGCIgnoresPaused(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	b := store.Binding{

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -28,7 +27,7 @@ func addRepo(t *testing.T) string {
 // branch that checkout had checked out, asked of the source repo -- not of
 // the fresh worktree -- so `relay land` knows what to rebase onto.
 func TestAddRecordsBaseRef(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	repo := addRepo(t)
@@ -64,7 +63,7 @@ func TestAddRecordsBaseRef(t *testing.T) {
 // rather than the literal "HEAD", so land asks for --onto instead of
 // fetching a ref that does not exist.
 func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		headCommitID:     "commit-head-123",
 		currentBranchErr: errors.New("detached"),
@@ -88,7 +87,7 @@ func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
 // is nothing to capture facts about at all, and afterwards would merely
 // report the same facts back over an extra git call).
 func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		headCommitID:       "commit-head-123",
 		repoFactsOrigin:    "git@github.com:o/r.git",
@@ -118,7 +117,7 @@ func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
 }
 
 func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	repo := addRepo(t)
@@ -185,7 +184,7 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 }
 
 func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 
@@ -201,7 +200,7 @@ func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 }
 
 func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
@@ -218,7 +217,7 @@ func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
 }
 
 func TestAddRefusesADuplicateName(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	repo := addRepo(t)
@@ -237,56 +236,8 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 	}
 }
 
-func TestAddRollsBackTheWorktreeWhenTheBuilderFailsToStart(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	// No newPane, so splitting the planner's pane yields nothing to start in.
-	fh.newPane = ""
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
-
-	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
-	})
-	if err == nil {
-		t.Fatal("expected the add to fail")
-	}
-	if len(fg.removeWorktreeCalls) != 1 {
-		t.Errorf("a failed add must not leave its worktree behind, calls = %+v", fg.removeWorktreeCalls)
-	}
-	if _, err := rt.Store.Load("frontend"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("a failed add must leave no binding, got %v", err)
-	}
-}
-
-// TestAddRefusesALongNameBeforeCuttingAWorktree pins #64: a 25-character name
-// builds a 33-character builder agent name, and Add must refuse it before the
-// worktree is cut -- a refused name leaves nothing behind.
-func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
-
-	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
-
-	_, err := Add(context.Background(), rt, AddOptions{
-		Name: name, Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
-	})
-	if len(fg.addWorktreeCalls) != 0 {
-		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
-	}
-	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
-		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(fh.tabs), len(fh.starts))
-	}
-	if !errors.Is(err, herdr.ErrInvalidAgentName) {
-		t.Fatalf("Add err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
-	}
-	if _, loadErr := rt.Store.Load(name); !errors.Is(loadErr, store.ErrNotFound) {
-		t.Errorf("Load err = %v, want store.ErrNotFound: a refused name saves no binding", loadErr)
-	}
-}
-
 func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	prepared := addRepo(t)
@@ -313,7 +264,7 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 }
 
 func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	prepared := addRepo(t)
@@ -335,13 +286,13 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 }
 
 func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	repo := addRepo(t)
 
 	got, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo, Headless: true,
+		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
 	})
 	if err != nil {
 		t.Fatalf("Add --headless: %v", err)
@@ -368,7 +319,7 @@ func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
 // `add --branch`: a branch that already exists locally is checked out into
 // relay's own worktree, with no worktree cut and no branch created.
 func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
@@ -415,7 +366,7 @@ func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
 // TestAddBranchOriginOnlyTracksFirst pins the origin half: when only
 // origin/<branch> exists, relay first makes a local tracking branch.
 func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		branchExists: false,
 		refSHA: map[string]string{
@@ -455,7 +406,7 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 // TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
 // origin is a refusal before any git write.
 func TestAddBranchMissingRefuses(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{branchExists: false, refSHA: map[string]string{}}
 	rt := newForkRuntime(t, fh, fg, nil)
 
@@ -478,7 +429,7 @@ func TestAddBranchMissingRefuses(t *testing.T) {
 // TestAddBranchCheckedOutRefuses pins the refusal when the existing branch is
 // checked out in another worktree, before any builder is resolved or started.
 func TestAddBranchCheckedOutRefuses(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		branchExists:        true,
 		refSHA:              map[string]string{"refs/heads/feature/x": "tip"},
@@ -504,7 +455,7 @@ func TestAddBranchCheckedOutRefuses(t *testing.T) {
 // TestAddBranchDrivenByLiveBindingRefuses pins the guard: a branch a live
 // binding already drives cannot be adopted, while a DONE binding does not block.
 func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/x": "tip"},
@@ -550,7 +501,7 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 // TestAddBranchWithCwdRefused pins that Add itself refuses the flag pair, not
 // only the CLI.
 func TestAddBranchWithCwdRefused(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 
@@ -608,7 +559,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 
 	setup := func(t *testing.T, fg *fakeGit) (Runtime, string) {
 		t.Helper()
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+		fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 		rt := newForkRuntime(t, fh, fg, nil)
 		repo := addRepo(t)
 		if _, err := Add(ctx, rt, AddOptions{

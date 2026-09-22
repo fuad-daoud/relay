@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -20,7 +18,7 @@ func closeRound(t *testing.T, rt Runtime, b store.Binding) store.LogEntry {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath(b.Name, b.Round))
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
+	agents := []stubAgent{plannerWith(stubWorking, false), builderAgent(stubIdle)}
 	next, err := reconcile(t, rt, b, agents)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -47,42 +45,8 @@ func closeRound(t *testing.T, rt Runtime, b store.Binding) store.LogEntry {
 	return store.LogEntry{}
 }
 
-func TestRoundCloseRecordsUsage(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	rt.Git = &fakeGit{snapshotTreeID: "t", diffResult: git.Diff{}}
-	fu := &fakeUsage{samples: []usage.Sample{{Provider: "test", Model: "m", Tokens: usage.Tokens{In: 10, Out: 2}, USD: 0.5, HasCost: true}}}
-	rt.Usage = fu
-	// The round was sent at baseTime; close it 90 s later.
-	rt.Now = func() time.Time { return baseTime.Add(90 * time.Second) }
-
-	e := closeRound(t, rt, b)
-	if e.Usage == nil {
-		t.Fatal("report entry has no usage")
-	}
-	if e.Usage.Cost.Basis != usage.Measured || e.Usage.Cost.USD != 0.5 || e.Usage.Tokens != (usage.Tokens{In: 10, Out: 2}) {
-		t.Errorf("usage = %+v", e.Usage)
-	}
-	if e.Usage.DurationMS != 90_000 {
-		t.Errorf("DurationMS = %d, want 90000 (RoundStartedAt to close)", e.Usage.DurationMS)
-	}
-	if e.Usage.Harness != "agy" {
-		t.Errorf("Harness = %q, want the builder's kind", e.Usage.Harness)
-	}
-	if len(fu.sources) != 1 {
-		t.Fatalf("reader called %d times, want 1", len(fu.sources))
-	}
-	src := fu.sources[0]
-	if src.Harness != "agy" || src.Mode != usage.ModePane || src.Provider != "test" || src.Model != "m" {
-		t.Errorf("source = %+v", src)
-	}
-	if !src.Start.Equal(baseTime) || !src.End.Equal(baseTime.Add(90*time.Second)) {
-		t.Errorf("window = %v..%v", src.Start, src.End)
-	}
-}
-
 func TestRoundCloseWithNoReaderIsUnknownAndStillCloses(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	rt.Usage = nil
 	e := closeRound(t, rt, b)
@@ -96,7 +60,7 @@ func TestRoundCloseWithNoReaderIsUnknownAndStillCloses(t *testing.T) {
 }
 
 func TestRoundCloseReaderNoteIsUnknown(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	rt.Usage = &fakeUsage{note: "no stream"}
 	e := closeRound(t, rt, b)
@@ -106,7 +70,7 @@ func TestRoundCloseReaderNoteIsUnknown(t *testing.T) {
 }
 
 func TestRoundCloseReaderTimeoutStillCloses(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	rt.Usage = &fakeUsage{block: true}
 	done := make(chan store.LogEntry, 1)
@@ -122,7 +86,7 @@ func TestRoundCloseReaderTimeoutStillCloses(t *testing.T) {
 }
 
 func TestRoundSourceHeadlessAndPlan(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	b.Builder.Mode = store.ModeHeadless
 	b.Worktree = "/wt"

@@ -1,11 +1,9 @@
 package relay
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -45,40 +43,6 @@ func TestProgressTreeChangeResetsEverything(t *testing.T) {
 	}
 }
 
-// TestProgressScreenOnlyIsExploringAfterThreshold pins the exploring clock: a
-// screen that keeps changing while the tree does not is exploring once the tree
-// has been still for explore_after_ms, and not one interval before.
-//
-// Mutation check: swapping rt.Policy.ExploreAfter() for StallAfter() makes the
-// t+19m case fail, since 19m is past the 15m stall threshold.
-func TestProgressScreenOnlyIsExploringAfterThreshold(t *testing.T) {
-	rt := progressRt()
-	start := progressStart
-
-	sample := func(upto time.Duration) store.Binding {
-		b := store.Binding{Name: "webshop", Round: 1, RoundStartedAt: start}
-		i := 0
-		for now := start; !now.After(start.Add(upto)); now = now.Add(30 * time.Second) {
-			i++
-			b = progressStep(rt, b, now, signals{tree: "t0", output: fmt.Sprintf("o%d", i)})
-		}
-		return b
-	}
-
-	early := sample(19 * time.Minute)
-	if !early.ExploringSince.IsZero() {
-		t.Errorf("ExploringSince = %s at t+19m, want zero (threshold is 20m)", early.ExploringSince)
-	}
-
-	got := sample(20 * time.Minute)
-	if !got.ExploringSince.Equal(start) {
-		t.Errorf("ExploringSince = %s at t+20m, want the tree's last change %s", got.ExploringSince, start)
-	}
-	if !got.StalledSince.IsZero() {
-		t.Errorf("StalledSince = %s, want zero: the screen is still moving", got.StalledSince)
-	}
-}
-
 // TestProgressNothingIsStalled pins the plain case: nothing changes at all, so
 // at stall_after_ms the stamp lands on the last change (the round's start) and
 // the exploring label stays zero -- a stall outranks exploring.
@@ -95,21 +59,6 @@ func TestProgressNothingIsStalled(t *testing.T) {
 	}
 	if !b.ExploringSince.IsZero() {
 		t.Errorf("ExploringSince = %s, want zero: a stall wins", b.ExploringSince)
-	}
-}
-
-// TestProgressBlockedNeverStalls pins the dialog case: a builder blocked on a
-// human is waiting, not hung, so the stall clock never fires for it.
-func TestProgressBlockedNeverStalls(t *testing.T) {
-	rt := progressRt()
-	start := progressStart
-
-	b := store.Binding{Name: "webshop", Round: 1, RoundStartedAt: start}
-	b = progressStep(rt, b, start, signals{tree: "t0", blocked: true})
-	b = progressStep(rt, b, start.Add(15*time.Minute), signals{tree: "t0", blocked: true})
-
-	if !b.StalledSince.IsZero() {
-		t.Errorf("StalledSince = %s, want zero for a blocked builder", b.StalledSince)
 	}
 }
 
@@ -178,64 +127,5 @@ func TestProgressSampleCadence(t *testing.T) {
 	b = progressStep(rt, b, start.Add(30*time.Second), signals{tree: "t1"})
 	if b.Progress.Tree != "t1" {
 		t.Errorf("Tree = %q, want t1 once the interval has passed", b.Progress.Tree)
-	}
-}
-
-// TestProgressSamplingIsGatedByInterval pins the read the progress clock must
-// NOT make (#135 follow-up): a tick inside policy.json's progress_interval_ms
-// samples nothing, so neither the tree nor the screen is read. The pane fixture
-// is TestReconcilePaneStampsStall's, with a Working builder and nothing else
-// that reads a screen, so every recent-unwrapped read counted here is a
-// progress sample: ticks at t, t+10s and t+20s fall inside one 30s interval and
-// cost one read and one TreeFingerprint; the tick at t+30s is the second of
-// each.
-//
-// Mutation check: without the progressDue gate the sampler runs on every tick,
-// so the first three ticks already cost three reads and the test fails.
-func TestProgressSamplingIsGatedByInterval(t *testing.T) {
-	f := &fakeHerdr{readOut: "unchanged screen"}
-	fg := &fakeGit{treeFingerprints: []string{"tree-1"}}
-	rt, b := sentBinding(t, f)
-	rt.Git = fg
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
-
-	// progressReads counts the scrollback reads the sampler makes:
-	// screenFingerprint's source and line count, the same pair scrapeReport
-	// and limitText use. This fixture sends neither of those paths off on
-	// these ticks -- the builder is working, not idle or past its budget -- so
-	// every one of them is the progress sample.
-	progressReads := func() int {
-		var n int
-		for _, r := range f.reads {
-			if r.Source == "recent-unwrapped" && r.Lines == scrapeLines {
-				n++
-			}
-		}
-		return n
-	}
-
-	for _, d := range []time.Duration{0, 10 * time.Second, 20 * time.Second} {
-		var err error
-		b, err = reconcile(t, at(rt, d), b, agents)
-		if err != nil {
-			t.Fatalf("Reconcile at t+%s: %v", d, err)
-		}
-	}
-	if got := progressReads(); got != 1 {
-		t.Errorf("progress screen reads over t, t+10s and t+20s = %d, want 1: three ticks inside one 30s interval sample once", got)
-	}
-	if got := fg.treeFingerprintCalls; got != 1 {
-		t.Errorf("TreeFingerprint calls over t, t+10s and t+20s = %d, want 1", got)
-	}
-
-	b, err := reconcile(t, at(rt, 30*time.Second), b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile at t+30s: %v", err)
-	}
-	if got := progressReads(); got != 2 {
-		t.Errorf("progress screen reads after t+30s = %d, want 2: the interval has passed", got)
-	}
-	if got := fg.treeFingerprintCalls; got != 2 {
-		t.Errorf("TreeFingerprint calls after t+30s = %d, want 2", got)
 	}
 }

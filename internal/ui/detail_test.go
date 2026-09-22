@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/muesli/termenv"
@@ -392,7 +391,7 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.agents = []stubAgent{{PaneID: "w2:p4"}}
 	fh.readOut = "terminal output"
 	rt := relay.Runtime{Store: st, Herdr: fh}
 	name := "webshop"
@@ -441,7 +440,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{{PaneID: "w2:p4"}}
+	fh.agents = []stubAgent{{PaneID: "w2:p4"}}
 	fh.readOut = "terminal content"
 	rt := relay.Runtime{Store: st, Herdr: fh}
 	name := "webshop"

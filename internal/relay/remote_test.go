@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -1509,9 +1508,9 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
 		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1557,9 +1556,9 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
 		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1586,7 +1585,7 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 
 	// A later view with a zero stamp clears it.
 	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
-	got2, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	got2, err := reconcile(t, rt, got, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile (cleared): %v", err)
 	}
@@ -1612,9 +1611,9 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since},
 		},
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1648,9 +1647,9 @@ func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
 		roundFileResp:  io.NopCloser(strings.NewReader("")),
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1677,8 +1676,8 @@ func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
 		roundFileResp:  io.NopCloser(strings.NewReader("")),
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+	agents := []stubAgent{plannerAgent()}
 
 	got, err := reconcile(t, rt, b, agents)
 	if err != nil {
@@ -1735,34 +1734,6 @@ func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 	}
 }
 
-func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"},
-	}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you", got.State)
-	}
-	if got.Halt != "stuck at a dialog" {
-		t.Fatalf("Halt = %q, want the server's halt text", got.Halt)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "stuck at a dialog") {
-		t.Fatalf("notices = %v, want one naming the server's halt", f.notices)
-	}
-}
-
 func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -1777,9 +1748,9 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 	}
 
 	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
+	f := &fakePanes{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+	agents := []stubAgent{plannerAgent()}
 
 	got, err := reconcile(t, rt, b, agents)
 	if err != nil {
@@ -1806,45 +1777,6 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 	}
 }
 
-func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.RoundTimeoutMS = 1000 // 1s budget
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-
-	// Past the 1s budget plus the 30m unreachableGrace: this must halt.
-	// Mutation target: drop "+ unreachableGrace" from the comparison in
-	// reconcileRemote and this halt fires one tick early (or the
-	// not-halt test above starts halting instead).
-	got, err = reconcile(t, at(rt, 31*time.Minute), got, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you past budget+grace", got.State)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "unreachable for") || !strings.Contains(f.notices[0], "may still be running there") {
-		t.Fatalf("notices = %v, want the unreachable-past-budget halt", f.notices)
-	}
-}
-
 func TestReconcileRemote401Halts(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -1853,10 +1785,11 @@ func TestReconcileRemote401Halts(t *testing.T) {
 	}
 
 	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: "revoked", Message: "key revoked"}}}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+	f := &fakePanes{}
+	_ = f
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1876,10 +1809,11 @@ func TestReconcileRemote404Halts(t *testing.T) {
 	}
 
 	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "gone"}}}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
+	f := &fakePanes{}
+	_ = f
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1911,7 +1845,7 @@ func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
 		},
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	synced, err := SyncRemote(context.Background(), rt)
 	if err != nil {
@@ -1973,7 +1907,7 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 	}
 
 	fr := &fakeRemote{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	synced, err := SyncRemote(context.Background(), rt)
 	if err != nil {
@@ -2057,12 +1991,11 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 	}
 	rt := Runtime{
 		Store:     st,
-		Herdr:     &fakeHerdr{},
 		Remote:    fr,
 		Transport: remote.NewBundleTransport(g, t.TempDir()),
 		Now:       func() time.Time { return baseTime },
 	}
-	agents := []herdr.Agent{plannerAgent()}
+	agents := []stubAgent{plannerAgent()}
 
 	// First tick: the server hands back a bundle that carries an extra ref
 	// the client never allowed (view.DirtyCommit == "", so only the branch
@@ -2220,11 +2153,11 @@ func TestCatchUpDirtyNote(t *testing.T) {
 		roundBundleResp: snap.Body,
 	}
 	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: transport,
+		Store: st, Remote: fr, Transport: transport,
 		Now: func() time.Time { return baseTime },
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2286,9 +2219,9 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 		},
 	}
 	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2406,11 +2339,11 @@ func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
 	}
 	trans := &recordingTransport{inner: remote.NewBundleTransport(g, t.TempDir())}
 	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: trans, Git: g,
+		Store: st, Remote: fr, Transport: trans, Git: g,
 		Now: func() time.Time { return baseTime },
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2482,9 +2415,9 @@ func TestCatchUpFetchesStream(t *testing.T) {
 		},
 	}
 	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
 
-	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, b, []stubAgent{plannerAgent()}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
@@ -2523,9 +2456,9 @@ func TestCatchUpStreamMissingIsFine(t *testing.T) {
 		},
 	}
 	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2586,9 +2519,9 @@ func TestCatchUpKeepsServerUsage(t *testing.T) {
 		},
 	}
 	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2653,9 +2586,9 @@ func TestCatchUpRecordsRusage(t *testing.T) {
 		},
 	}
 	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2712,9 +2645,9 @@ func TestCatchUpPreUsageServerNotes(t *testing.T) {
 			}
 		},
 	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: &fakeGit{}, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: &fakeGit{}, Now: func() time.Time { return baseTime }}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2775,12 +2708,12 @@ func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
 		roundBundleResp: bundle,
 	}
 	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
+		Store: st, Remote: fr,
 		Transport: remote.NewBundleTransport(g, t.TempDir()),
 		Now:       func() time.Time { return baseTime },
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2863,7 +2796,7 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
+		Store: st, Remote: fr,
 		Transport: remote.NewBundleTransport(g, t.TempDir()),
 		Now:       func() time.Time { return baseTime },
 	}
@@ -2878,7 +2811,7 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 
 	cur := b
 	for i := 0; i < 3; i++ {
-		next, err := reconcile(t, rt, cur, []herdr.Agent{plannerAgent()})
+		next, err := reconcile(t, rt, cur, []stubAgent{plannerAgent()})
 		if err != nil {
 			t.Fatalf("Reconcile %d: %v", i, err)
 		}
@@ -2893,54 +2826,6 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("Info 'checkout another branch, then relay pull' logged %d times, want exactly 1", count)
-	}
-}
-
-func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
-			return io.NopCloser(strings.NewReader("not a real bundle")), nil
-		},
-	}
-	ft := &fakeTransport{absorbErr: errors.New("disk full")}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Transport: ft, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got := b
-	var err error
-	for i := 1; i <= 10; i++ {
-		got, err = reconcile(t, rt, got, agents)
-		if err != nil {
-			t.Fatalf("Reconcile iteration %d: %v", i, err)
-		}
-		if i < 10 {
-			if got.State == store.StateNeedsYou {
-				t.Fatalf("halted after only %d absorb failures", i)
-			}
-			if got.RemoteAbsorbFailures != i {
-				t.Fatalf("iteration %d: RemoteAbsorbFailures = %d, want %d", i, got.RemoteAbsorbFailures, i)
-			}
-		}
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you at 10 absorb failures", got.State)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "cannot absorb round") {
-		t.Fatalf("notices = %v, want one naming the absorb failure", f.notices)
 	}
 }
 
@@ -3006,8 +2891,9 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
+	f := &fakePanes{agents: []stubAgent{plannerAgent()}}
+	_ = f
+	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
 
 	_, _, err := BindResolved(ctx, rt, BindOptions{
 		Name: "api", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/fake/repo",
@@ -3193,7 +3079,7 @@ func TestAnswerAskForkRefuseRemote(t *testing.T) {
 	})
 
 	t.Run("Ask", func(t *testing.T) {
-		f := &fakeHerdr{}
+		f := &fakePanes{}
 		rt, _ := seedForAsk(t, f)
 		b := remoteBinding("zen")
 		b.Name = "remote-ask"
@@ -3212,7 +3098,7 @@ func TestAnswerAskForkRefuseRemote(t *testing.T) {
 	})
 
 	t.Run("Fork", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+		f := &fakePanes{agents: []stubAgent{plannerAgent()}}
 		rt := newForkRuntime(t, f, nil, nil)
 		b := remoteBinding("zen")
 		b.CWD = "/fake/fork-src"

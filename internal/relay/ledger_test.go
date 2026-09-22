@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -37,172 +35,6 @@ func loadHistory(t *testing.T, rt Runtime) history.History {
 	return h
 }
 
-func TestBindRecordsASpawnFailure(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", startErr: errors.New("agent start: exit 1")}
-	rt := newRuntime(t, f)
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err == nil {
-		t.Fatal("expected Bind to fail when StartAgent fails")
-	}
-	if !strings.Contains(err.Error(), "agent start: exit 1") {
-		t.Errorf("err = %q, want it to contain the start error", err.Error())
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 {
-		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
-	}
-	e := l.Entries[0]
-	if e.Kind != ledger.SpawnFailed {
-		t.Errorf("Kind = %v, want SpawnFailed", e.Kind)
-	}
-	if e.Subject != testAgyRef {
-		t.Errorf("Subject = %q, want %q", e.Subject, testAgyRef)
-	}
-	if e.Binding != "webshop" {
-		t.Errorf("Binding = %q, want webshop", e.Binding)
-	}
-	if e.Source != "relay" {
-		t.Errorf("Source = %q, want relay", e.Source)
-	}
-	if !e.Until.Equal(baseTime.Add(SpawnFailedCooldown)) {
-		t.Errorf("Until = %v, want %v", e.Until, baseTime.Add(SpawnFailedCooldown))
-	}
-	if !strings.Contains(e.Note, "agent start") {
-		t.Errorf("Note = %q, want it to contain %q", e.Note, "agent start")
-	}
-}
-
-func TestAddRecordsASpawnFailure(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9", startErr: errors.New("agent start: exit 1")}
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, f, fg, nil)
-	repo := addRepo(t)
-
-	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: repo,
-	})
-	if err == nil {
-		t.Fatal("expected Add to fail when StartAgent fails")
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 {
-		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
-	}
-	e := l.Entries[0]
-	if e.Kind != ledger.SpawnFailed || e.Subject != testAgyRef {
-		t.Errorf("entry = %+v, want SpawnFailed for %q", e, testAgyRef)
-	}
-	if e.Binding != "frontend" {
-		t.Errorf("Binding = %q, want frontend", e.Binding)
-	}
-}
-
-func TestForkRecordsASpawnFailure(t *testing.T) {
-	ctx := context.Background()
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5", startErr: errors.New("agent start: exit 1")}
-	fg := &fakeGit{headCommitID: "commit-123"}
-	rt := newForkRuntime(t, f, fg, nil)
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-
-	_, err := Fork(ctx, rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Candidate: testClaudeRef,
-	})
-	if err == nil {
-		t.Fatal("expected Fork to fail when StartAgent fails")
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 {
-		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
-	}
-	e := l.Entries[0]
-	if e.Kind != ledger.SpawnFailed || e.Subject != testClaudeRef {
-		t.Errorf("entry = %+v, want SpawnFailed for %q", e, testClaudeRef)
-	}
-	if e.Binding != "alt" {
-		t.Errorf("Binding = %q, want alt", e.Binding)
-	}
-}
-
-func TestAskRecordsASpawnFailure(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
-	f.startErr = errors.New("agent start: exit 1")
-	q := writeQuestion(t, "x")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
-	})
-	if err == nil {
-		t.Fatal("expected Ask to fail when StartAgent fails")
-	}
-	if res.Consult.State != store.ConsultSilent {
-		t.Errorf("consult state = %q, want silent", res.Consult.State)
-	}
-	if !strings.HasPrefix(res.Consult.Note, "start failed:") {
-		t.Errorf("Note = %q, want prefix %q", res.Consult.Note, "start failed:")
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 {
-		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
-	}
-	e := l.Entries[0]
-	if e.Kind != ledger.SpawnFailed || e.Subject != testClaudeRef {
-		t.Errorf("entry = %+v, want SpawnFailed for %q", e, testClaudeRef)
-	}
-	if e.Binding != "webshop" {
-		t.Errorf("Binding = %q, want webshop", e.Binding)
-	}
-}
-
-func TestSplitFailureIsNotASpawnFailure(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: ""}
-	rt := newRuntime(t, f)
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err == nil {
-		t.Fatal("expected Bind to fail when the split fails")
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 0 {
-		t.Fatalf("got %d ledger entries, want 0: %+v", len(l.Entries), l.Entries)
-	}
-}
-
-func TestSpawnFailureDoesNotMaskTheError(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", startErr: errors.New("agent start: exit 1")}
-	rt := newRuntime(t, f)
-
-	blocker := filepath.Join(t.TempDir(), "blocker")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rt.LedgerPath = filepath.Join(blocker, "ledger.json")
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err == nil {
-		t.Fatal("expected Bind to fail")
-	}
-	if !strings.Contains(err.Error(), "agent start: exit 1") {
-		t.Errorf("err = %q, want it to still contain the start error despite the ledger write failing", err.Error())
-	}
-}
-
 // TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock
 // the T2 round-2 report found: switchBuilder runs inside Reconcile's
 // Store.WithLock, and recordSpawnFailureLocked must be able to record a
@@ -211,7 +43,7 @@ func TestSpawnFailureDoesNotMaskTheError(t *testing.T) {
 // timer fires instead of failing fast, which is why the assertion is a
 // select against a timer rather than a bare call.
 func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	done := make(chan error, 1)
@@ -244,7 +76,7 @@ func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
 }
 
 func TestUnavailableRecordsTheProvider(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	provider, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window")
@@ -278,7 +110,7 @@ func TestUnavailableRecordsTheProvider(t *testing.T) {
 }
 
 func TestUnavailableWithUntil(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	until := baseTime.Add(2 * time.Hour)
 
@@ -296,7 +128,7 @@ func TestUnavailableWithUntil(t *testing.T) {
 }
 
 func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, "claude/test/nope", time.Time{}, ""); !errors.Is(err, candidate.ErrUnknownCandidate) {
@@ -313,7 +145,7 @@ func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
 }
 
 func TestAvailableByTokenAndByProvider(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "first"); err != nil {
@@ -348,7 +180,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 }
 
 func TestAvailableLeavesSpawnFailures(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	recordSpawnFailure(rt, testClaudeRef, "webshop", errors.New("boom"))
@@ -374,7 +206,7 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 }
 
 func TestGatesEmptyWhenNoLedger(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if got := Gates(rt); got != nil {
@@ -383,7 +215,7 @@ func TestGatesEmptyWhenNoLedger(t *testing.T) {
 }
 
 func TestGatesProjectsOntoCandidates(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -419,7 +251,7 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 }
 
 func TestGatesToleratesABadLedger(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if err := os.WriteFile(rt.LedgerPath, []byte("not json"), 0o644); err != nil {
@@ -461,7 +293,7 @@ func TestGateUntilText(t *testing.T) {
 }
 
 func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if got := gatedNote(rt, testClaudeRef); got != "" {
@@ -470,7 +302,7 @@ func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
 }
 
 func TestGatedNoteFormatsEveryGate(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
@@ -497,7 +329,7 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 }
 
 func TestMutateLedgerPrunes(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	expired := ledger.Entry{
@@ -525,7 +357,7 @@ func TestMutateLedgerPrunes(t *testing.T) {
 }
 
 func TestUnavailableRecordsHistory(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
@@ -547,35 +379,11 @@ func TestUnavailableRecordsHistory(t *testing.T) {
 	}
 }
 
-func TestSpawnFailureRecordsHistory(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4", startErr: errors.New("agent start: exit 1")}
-	rt := newRuntime(t, f)
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err == nil {
-		t.Fatal("expected Bind to fail when StartAgent fails")
-	}
-
-	h := loadHistory(t, rt)
-	if len(h.Events) != 1 {
-		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
-	}
-	e := h.Events[0]
-	if e.Kind != ledger.SpawnFailed || e.Provider != "test" || e.Token != testAgyRef || e.Binding != "webshop" || e.Source != "relay" {
-		t.Errorf("history event = %+v, want SpawnFailed for provider test, token %q, binding webshop, source relay", e, testAgyRef)
-	}
-	if !strings.Contains(e.Note, "agent start") {
-		t.Errorf("Note = %q, want it to contain %q", e.Note, "agent start")
-	}
-}
-
 // TestSwitchSpawnFailureRecordsHistory mirrors
 // TestRecordSpawnFailureLockedUnderHeldLock's already-held-lock setup, since
 // that is the daemon-switch path recordSpawnFailureLocked serves.
 func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	done := make(chan error, 1)
@@ -610,7 +418,7 @@ func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
 }
 
 func TestAvailableLeavesHistory(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -632,7 +440,7 @@ func TestAvailableLeavesHistory(t *testing.T) {
 }
 
 func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	blocker := filepath.Join(t.TempDir(), "blocker")

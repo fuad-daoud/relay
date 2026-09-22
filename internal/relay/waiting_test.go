@@ -230,7 +230,7 @@ func TestWaitingOn(t *testing.T) {
 }
 
 func TestQuestionFirstLine(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	if err := rt.Store.Save(store.Binding{Name: "api", CWD: "/repo"}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -291,7 +291,7 @@ func TestWaitingLine(t *testing.T) {
 }
 
 func TestWaitingOnYou(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	a := store.Binding{Name: "a", CWD: "/repo/a", Round: 1, State: store.StateNeedsYou}

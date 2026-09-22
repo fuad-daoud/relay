@@ -12,7 +12,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -586,66 +585,6 @@ func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
 	}
 }
 
-func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
-	ctx := context.Background()
-	st := store.New(t.TempDir())
-	b := store.Binding{
-		Name:    "api",
-		Owner:   "client1",
-		State:   store.StateActive,
-		Round:   1,
-		CWD:     t.TempDir(),
-		Planner: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
-	}
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.AppendLog("api", store.LogEntry{
-		Round:     1,
-		Direction: store.DirToPlanner,
-		Kind:      store.KindReport,
-		Payload:   "the report",
-		Confirmed: false,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Now: time.Now}
-	agents := []herdr.Agent{
-		{
-			Session: herdr.Session{Value: "sess1"},
-			PaneID:  "p1",
-			Status:  herdr.StatusIdle,
-			Focused: true,
-		},
-	}
-
-	var got store.Binding
-	err := st.WithLock(func(tx *store.Tx) error {
-		var err error
-		got, err = deliverAndSettle(ctx, rt, tx, b, agents)
-		return err
-	})
-	if err != nil {
-		t.Fatalf("deliverAndSettle: %v", err)
-	}
-
-	if got.State == store.StateHeld {
-		t.Fatalf("state was set to Held for owned binding: %v", got.State)
-	}
-	if got.State != store.StateActive {
-		t.Fatalf("state changed: got %v, want %v", got.State, store.StateActive)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) == 0 || entries[0].Confirmed {
-		t.Fatalf("payload was confirmed: %+v", entries)
-	}
-}
-
 func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -698,14 +637,13 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 		Store:  st,
 		Git:    fGit,
 		Runner: fr,
-		Herdr:  &fakeHerdr{},
 		Now:    time.Now,
 	}
 
 	var reconciled store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
 		var err error
-		reconciled, err = Reconcile(ctx, rt, tx, b, nil)
+		reconciled, err = Reconcile(ctx, rt, tx, b)
 		return err
 	})
 	if err != nil {

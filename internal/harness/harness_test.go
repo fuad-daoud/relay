@@ -46,11 +46,9 @@ func TestLookupUnknown(t *testing.T) {
 func TestTableExactValues(t *testing.T) {
 	expected := map[string]Harness{
 		"agy": {
-			Kind:        "agy",
-			Binary:      "agy",
-			Integration: "antigravity-cli",
-			MinVersion:  "1.1.6",
-			SubAgents:   SubAgentsForeground,
+			Kind:       "agy",
+			Binary:     "agy",
+			MinVersion: "1.1.6",
 			LimitPatterns: []string{
 				`(?i)individual quota reached`,
 				`(?i)RESOURCE_EXHAUSTED`,
@@ -70,10 +68,8 @@ func TestTableExactValues(t *testing.T) {
 			},
 		},
 		"claude": {
-			Kind:        "claude",
-			Binary:      "claude",
-			Integration: "claude",
-			SubAgents:   SubAgentsSeparate,
+			Kind:   "claude",
+			Binary: "claude",
 			LimitPatterns: []string{
 				`(?i)you've hit your .*limit`,
 				`(?i)usage limit reached`,
@@ -94,10 +90,8 @@ func TestTableExactValues(t *testing.T) {
 			},
 		},
 		"opencode": {
-			Kind:        "opencode",
-			Binary:      "opencode",
-			Integration: "opencode",
-			SubAgents:   SubAgentsHidden,
+			Kind:   "opencode",
+			Binary: "opencode",
 			LimitPatterns: []string{
 				`(?i)rate.?limit(ed)? (reached|exceeded)`,
 				`(?i)quota (exceeded|reached)`,
@@ -117,11 +111,9 @@ func TestTableExactValues(t *testing.T) {
 			},
 		},
 		"codex": {
-			Kind:        "codex",
-			Binary:      "codex",
-			Integration: "codex",
-			MinVersion:  "0.155.0",
-			SubAgents:   SubAgentsHidden,
+			Kind:       "codex",
+			Binary:     "codex",
+			MinVersion: "0.155.0",
 			LimitPatterns: []string{
 				`(?i)usage limit`,
 				`(?i)rate limit`,
@@ -496,21 +488,6 @@ func TestLaunch(t *testing.T) {
 	launchUnknown.Args = append(launchUnknown.Args, "--c")
 	if !reflect.DeepEqual(extra, []string{"--a"}) {
 		t.Errorf("extra was modified on unknown harness: got %v, want [--a]", extra)
-	}
-}
-
-// TestSubAgentsSetOnEveryKind pins the rule that "" is not a visibility
-// state: an unknown kind yields "" downstream, and a known kind never may.
-func TestSubAgentsSetOnEveryKind(t *testing.T) {
-	valid := map[SubAgentVisibility]bool{
-		SubAgentsSeparate:   true,
-		SubAgentsForeground: true,
-		SubAgentsHidden:     true,
-	}
-	for _, h := range All() {
-		if !valid[h.SubAgents] {
-			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
-		}
 	}
 }
 

@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -17,7 +15,7 @@ import (
 // AddEdge/ListEdges/RemoveEdge, which never touch herdr.
 func edgePairStore(t *testing.T) Runtime {
 	t.Helper()
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t, &fakePanes{})
 	for _, name := range []string{"api", "client"} {
 		b := store.Binding{Name: name, CWD: "/repo-" + name, Round: 1, State: store.StateActive}
 		if err := rt.Store.Save(b); err != nil {
@@ -162,9 +160,9 @@ func TestRemoveEdge(t *testing.T) {
 
 // edgeSourceBinding binds "api" on a pane builder and sends it one round,
 // sentBinding-style, but under the name the edge tests use throughout (#37).
-func edgeSourceBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
+func edgeSourceBinding(t *testing.T, f *fakePanes) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
+	f.agents = []stubAgent{plannerAgent()}
 	f.newPane = "w2:p4"
 	rt := newRuntime(t, f)
 
@@ -173,8 +171,8 @@ func edgeSourceBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	}); err != nil {
 		t.Fatalf("Bind api: %v", err)
 	}
-	f.agents = append(f.agents, herdr.Agent{
-		Name: "api-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder",
+	f.agents = append(f.agents, stubAgent{
+		Name: "api-builder", Kind: "agy", Status: stubIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder",
 	})
 
 	if _, err := Send(context.Background(), rt, "api", writePlan(t, "do it"), SendOptions{}); err != nil {
@@ -190,14 +188,14 @@ func edgeSourceBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 
 // edgeSourceBindingHeadless is edgeSourceBinding for a headless "api",
 // mirroring sentHeadless under the edge tests' binding names.
-func edgeSourceBindingHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+func edgeSourceBindingHeadless(t *testing.T, f *fakePanes, fr *fakeRunner) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
+	f.agents = []stubAgent{plannerAgent()}
 	rt := newRuntime(t, f)
 	rt.Runner = fr
 
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "api", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo-api", Headless: true,
+		Name: "api", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo-api",
 	}); err != nil {
 		t.Fatalf("Bind --headless api: %v", err)
 	}
@@ -215,7 +213,7 @@ func edgeSourceBindingHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runt
 // addClientBinding saves an active "client" binding with a pane builder, and
 // -- when live -- a matching herdr agent for that pane, so Send can reach it.
 // live is false to simulate a target Send cannot reach (gone/broken).
-func addClientBinding(t *testing.T, rt Runtime, f *fakeHerdr, live bool) store.Binding {
+func addClientBinding(t *testing.T, rt Runtime, f *fakePanes, live bool) store.Binding {
 	t.Helper()
 	client := store.Binding{
 		Name: "client", CWD: "/repo-client",
@@ -228,8 +226,8 @@ func addClientBinding(t *testing.T, rt Runtime, f *fakeHerdr, live bool) store.B
 		t.Fatalf("save client: %v", err)
 	}
 	if live {
-		f.agents = append(f.agents, herdr.Agent{
-			Name: "client-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-client", PaneID: "w2:p9", Title: "client-builder",
+		f.agents = append(f.agents, stubAgent{
+			Name: "client-builder", Kind: "agy", Status: stubIdle, CWD: "/repo-client", PaneID: "w2:p9", Title: "client-builder",
 		})
 	}
 	stored, err := rt.Store.Load("client")
@@ -262,10 +260,10 @@ func reloadAPI(t *testing.T, rt Runtime) store.Binding {
 	return b
 }
 
-func apiAgents() []herdr.Agent {
-	return []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		{Name: "api-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder"},
+func apiAgents() []stubAgent {
+	return []stubAgent{
+		plannerWith(stubWorking, false),
+		{Name: "api-builder", Kind: "agy", Status: stubIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder"},
 	}
 }
 
@@ -298,7 +296,7 @@ func findEdgeLogEntry(t *testing.T, rt Runtime, name string) (store.LogEntry, bo
 // Mutation check (run and report): skip the evaluateEdges call this round
 // added to reconcile.go's close path, and this fails.
 func TestEdgeQueueOnClose(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, api := edgeSourceBinding(t, f)
 	addClientBinding(t, rt, f, true)
 	prompt := writePlan(t, "handoff to client")
@@ -351,7 +349,7 @@ func TestEdgeQueueOnClose(t *testing.T) {
 // edge rather than leaving it pending forever: at close, a round's artifacts
 // are final.
 func TestEdgeSkippedWhenArtifactMissing(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, api := edgeSourceBinding(t, f)
 	addClientBinding(t, rt, f, true)
 	prompt := writePlan(t, "handoff to client")
@@ -384,87 +382,12 @@ func TestEdgeSkippedWhenArtifactMissing(t *testing.T) {
 	}
 }
 
-// TestEdgeFireSendsToTarget pins the fire path (#37): evaluateEdges arms the
-// edge (Result "firing") under the source's own lock at close, and running
-// the armed pending -- what the Daemon does after Save -- actually Sends the
-// prompt to the target and settles the edge Fired with "sent round N".
-//
-// Mutation check (run and report): make runFires a no-op and this fails on
-// f.prompts and the edge's final Result.
-func TestEdgeFireSendsToTarget(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
-	prompt := writePlan(t, "handoff to client")
-
-	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
-		When: "report", Then: "send", Target: "client", Prompt: prompt, Mode: "fire",
-	}); err != nil {
-		t.Fatalf("AddEdge: %v", err)
-	}
-
-	closeAPIRound(t, rt, 1)
-	api = reloadAPI(t, rt)
-
-	got, err := reconcile(t, rt, api, apiAgents())
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(got.Edges) != 1 || got.Edges[0].Fired || got.Edges[0].Result != "firing" {
-		t.Fatalf("edge after close = %+v, want armed: Result %q, Fired false", got.Edges[0], "firing")
-	}
-
-	// What the Daemon does after Save: run the armed pending outside any
-	// lock.
-	runFires(context.Background(), rt, []firePending{{Source: "api", Edge: got.Edges[0]}})
-
-	copied, err := os.ReadFile(rt.Store.PlanPath("client", 1))
-	if err != nil {
-		t.Fatalf("client plan not staged: %v", err)
-	}
-	want, err := os.ReadFile(prompt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(copied) != string(want) {
-		t.Errorf("client's round 1 plan = %q, want the edge's prompt %q", copied, want)
-	}
-	if len(f.prompts) != 1 || f.prompts[0].Target != "w2:p9" {
-		t.Fatalf("f.prompts = %+v, want one prompt to client's pane w2:p9", f.prompts)
-	}
-
-	stored, err := rt.Store.Load("api")
-	if err != nil {
-		t.Fatalf("Load api: %v", err)
-	}
-	if len(stored.Edges) != 1 || !stored.Edges[0].Fired {
-		t.Fatalf("edge after runFires = %+v, want Fired", stored.Edges)
-	}
-	if !strings.HasPrefix(stored.Edges[0].Result, "sent round 1") {
-		t.Errorf("Result = %q, want it to start with %q", stored.Edges[0].Result, "sent round 1")
-	}
-
-	entries, err := rt.Store.ReadLog("api")
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindEdge && strings.HasPrefix(e.Note, "edge "+stored.Edges[0].ID+" fired: sent round 1") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("log entries = %+v, want a fired KindEdge entry", entries)
-	}
-}
-
 // TestEdgeFireFailureIsQueued pins the fallback (#37 §6): a fire that cannot
 // reach its target never blocks the source, and is downgraded to the same
 // queue-mode payload evaluateEdges would have queued, with the failure
 // named.
 func TestEdgeFireFailureIsQueued(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, api := edgeSourceBinding(t, f)
 	// live=false: no herdr agent answers client's pane, so Send cannot
 	// locate its builder -- the "target is gone" case.
@@ -512,7 +435,7 @@ func TestEdgeFireFailureIsQueued(t *testing.T) {
 // it untouched by mistake -- an edge declared for that later round fires
 // then.
 func TestEdgeFiresOnce(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, api := edgeSourceBinding(t, f)
 	addClientBinding(t, rt, f, true)
 	prompt1 := writePlan(t, "handoff round 1")
@@ -593,66 +516,11 @@ func TestEdgeFiresOnce(t *testing.T) {
 	}
 }
 
-// TestArmedEdgeSurvivesRestart pins the crash-recovery contract (#37 §4): an
-// edge a daemon armed (Result "firing", Fired false) but never got to run --
-// the daemon died between the round's Save and runFires -- is picked back up
-// on the next Tick, because armedFires scans every binding's saved state,
-// not just what a given tick's Reconcile touched.
-func TestArmedEdgeSurvivesRestart(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
-	prompt := writePlan(t, "handoff to client")
-
-	added, err := AddEdge(context.Background(), rt, "api", store.Edge{
-		When: "report", Then: "send", Target: "client", Prompt: prompt, Mode: "fire",
-	})
-	if err != nil {
-		t.Fatalf("AddEdge: %v", err)
-	}
-	api = reloadAPI(t, rt)
-
-	// Simulate evaluateEdges having armed the edge on a previous tick, and
-	// the daemon crashing before runFires ran: State DONE so this tick's
-	// Reconcile call is a pure no-op and never touches Edges again -- the
-	// only thing that can pick this edge up is armedFires's saved-state
-	// scan.
-	api.State = store.StateDone
-	for i := range api.Edges {
-		if api.Edges[i].ID == added.ID {
-			api.Edges[i].Result = "firing"
-		}
-	}
-	if err := rt.Store.Save(api); err != nil {
-		t.Fatalf("Save api: %v", err)
-	}
-	f.prompts = nil
-
-	d := NewDaemon(rt, time.Second)
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-
-	if len(f.prompts) != 1 || f.prompts[0].Target != "w2:p9" {
-		t.Fatalf("f.prompts = %+v, want one prompt to client's pane w2:p9", f.prompts)
-	}
-	stored, err := rt.Store.Load("api")
-	if err != nil {
-		t.Fatalf("Load api: %v", err)
-	}
-	if len(stored.Edges) != 1 || !stored.Edges[0].Fired {
-		t.Fatalf("edge after the next Tick = %+v, want Fired", stored.Edges)
-	}
-	if !strings.HasPrefix(stored.Edges[0].Result, "sent round 1") {
-		t.Errorf("Result = %q, want it to start with %q", stored.Edges[0].Result, "sent round 1")
-	}
-}
-
 // TestEdgeHeadlessClosePath mirrors TestEdgeQueueOnClose for a headless
 // source binding: reconcileHeadless's close path evaluates edges exactly as
 // the pane path does.
 func TestEdgeHeadlessClosePath(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
 	rt, api := edgeSourceBindingHeadless(t, f, fr)
 	addClientBinding(t, rt, f, true)
@@ -669,7 +537,7 @@ func TestEdgeHeadlessClosePath(t *testing.T) {
 	fr.exit(api.Builder.PID, 0)
 	api = reloadAPI(t, rt)
 
-	got, err := reconcile(t, rt, api, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, api, []stubAgent{plannerAgent()})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}

@@ -28,7 +28,7 @@ func followedBinding(t *testing.T, rt Runtime) string {
 }
 
 func TestFollowLogEmitsNewEntriesThenStopsOnDone(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t, &fakePanes{})
 	name := followedBinding(t, rt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -98,7 +98,7 @@ func TestFollowLogEmitsNewEntriesThenStopsOnDone(t *testing.T) {
 }
 
 func TestFollowLogStopsWhenBindingRemoved(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t, &fakePanes{})
 	name := followedBinding(t, rt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -127,7 +127,7 @@ func TestFollowLogStopsWhenBindingRemoved(t *testing.T) {
 }
 
 func TestFollowLogHonoursCancel(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t, &fakePanes{})
 	name := followedBinding(t, rt)
 
 	ctx, cancel := context.WithCancel(context.Background())

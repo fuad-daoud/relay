@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -79,7 +77,6 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 	fh := newFakeHerdr(t)
 	rt := relay.Runtime{
 		Store: st,
-		Herdr: fh,
 	}
 
 	cmd := fetchStatus(context.Background(), plannerSource{rt}, scopeLive, "")
@@ -239,7 +236,7 @@ func TestFetchTerminalBuilderAbsent(t *testing.T) {
 func TestFetchTerminalBuilderPresent(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{
+	fh.agents = []stubAgent{
 		{PaneID: "w2:p4", Kind: "opencode"},
 	}
 	fh.readOut = "terminal output line 1\nline 2"
@@ -314,7 +311,7 @@ func TestFetchTerminalPaneReadsRoundLog(t *testing.T) {
 func TestFetchTerminalPaneFallsBackToCapture(t *testing.T) {
 	st := store.New(t.TempDir())
 	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{
+	fh.agents = []stubAgent{
 		{PaneID: "w1:p2", Kind: "opencode"},
 	}
 	fh.readOut = "captured screen"
@@ -554,7 +551,7 @@ func TestFetchTerminalAddressesLocatedAgent(t *testing.T) {
 	}
 
 	fh := newFakeHerdr(t)
-	fh.agents = []herdr.Agent{{Kind: "agy", PaneID: "wM:p7", Status: "idle"}}
+	fh.agents = []stubAgent{{Kind: "agy", PaneID: "wM:p7", Status: "idle"}}
 	fh.readOut = "builder screen"
 	rt := relay.Runtime{Store: st, Herdr: fh, Now: time.Now}
 

@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -449,7 +448,7 @@ type stubDoctorEnv struct {
 	ver       string
 	herdrErr  error
 	intErr    error
-	intStates map[string]herdr.IntegrationState
+	intStates map[string]integrationState
 	daemonRun bool
 	lookPaths map[string]string
 	statErr   error // nil means every role file exists
@@ -458,7 +457,7 @@ type stubDoctorEnv struct {
 func (s *stubDoctorEnv) HerdrVersion(ctx context.Context) (string, error) {
 	return s.ver, s.herdrErr
 }
-func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
+func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]integrationState, error) {
 	if s.intStates != nil {
 		return s.intStates, s.intErr
 	}
@@ -545,7 +544,7 @@ func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 		ver:       "0.9.0",
 		daemonRun: true,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current (v9)"}},
+		intStates: map[string]integrationState{"claude": {Installed: true, Detail: "current (v9)"}},
 	}
 	rep := doctor.Run(context.Background(), env, []string{"claude"})
 	if lines := bindWarningLines(rep); len(lines) != 0 {
@@ -596,7 +595,7 @@ func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
 	env := &stubDoctorEnv{
 		ver:       "0.9.0",
 		daemonRun: true,
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: false}},
+		intStates: map[string]integrationState{"claude": {Installed: false}},
 	}
 
 	adopted := strings.Join(bindPreflight(context.Background(), env, "claude", true), "\n")
@@ -618,10 +617,10 @@ func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
 
 func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
 	env := &stubDoctorEnv{
-		ver:       herdr.MinVersion,
+		ver:       "0.8.2",
 		daemonRun: true,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current"}},
+		intStates: map[string]integrationState{"claude": {Installed: true, Detail: "current"}},
 		statErr:   os.ErrNotExist, // no role file exists
 	}
 	lines := bindPreflight(context.Background(), env, "claude", false)
@@ -639,7 +638,7 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 		ver:       "0.9.0",
 		daemonRun: true,
 		lookPaths: map[string]string{}, // binary absent
-		intStates: map[string]herdr.IntegrationState{
+		intStates: map[string]integrationState{
 			"claude": {Installed: false, Detail: "not installed"},
 		},
 	}

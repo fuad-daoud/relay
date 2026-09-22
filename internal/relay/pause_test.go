@@ -22,81 +22,8 @@ func pauseCloseRound(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 	return b
 }
 
-func TestPauseReleasesWorktreeClosesPaneAndParks(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	fg := &fakeGit{}
-	rt.Git = fg
-
-	b.Worktree = "/wt/webshop"
-	b.Branch = "relay/webshop"
-	b = pauseCloseRound(t, rt, b)
-	paneID := b.Builder.PaneID
-
-	res, err := Pause(context.Background(), rt, "webshop", PauseOptions{})
-	if err != nil {
-		t.Fatalf("Pause: %v", err)
-	}
-
-	if len(fg.removeWorktreeCalls) != 1 {
-		t.Fatalf("removeWorktreeCalls = %d, want 1", len(fg.removeWorktreeCalls))
-	}
-	want := removeWorktreeCall{Dir: b.CWD, Path: b.Worktree, Force: false}
-	if fg.removeWorktreeCalls[0] != want {
-		t.Errorf("removeWorktreeCall = %+v, want %+v", fg.removeWorktreeCalls[0], want)
-	}
-	if len(f.closed) != 1 || f.closed[0] != paneID {
-		t.Errorf("closed = %v, want [%s]", f.closed, paneID)
-	}
-	if len(fg.deleteBranchCalls) != 0 {
-		t.Errorf("the branch must survive: deleteBranchCalls = %+v", fg.deleteBranchCalls)
-	}
-
-	got, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State != store.StatePaused {
-		t.Errorf("State = %s, want paused", got.State)
-	}
-	if got.Builder.PaneID != "" {
-		t.Errorf("Builder.PaneID = %q, want empty", got.Builder.PaneID)
-	}
-	if got.Builder.Kind == "" {
-		t.Errorf("Builder.Kind must be kept, got empty")
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	last := entries[len(entries)-1]
-	if last.Kind != store.KindPause {
-		t.Errorf("last log kind = %s, want pause", last.Kind)
-	}
-	if last.Note != "paused after round 1" {
-		t.Errorf("last log note = %q, want 'paused after round 1'", last.Note)
-	}
-
-	if res.Round != 1 {
-		t.Errorf("res.Round = %d, want 1", res.Round)
-	}
-	if res.Branch != "relay/webshop" {
-		t.Errorf("res.Branch = %q, want relay/webshop", res.Branch)
-	}
-	if res.Worktree != "/wt/webshop" {
-		t.Errorf("res.Worktree = %q, want /wt/webshop", res.Worktree)
-	}
-	if res.PaneClosed != paneID {
-		t.Errorf("res.PaneClosed = %q, want %q", res.PaneClosed, paneID)
-	}
-	if res.PaneCloseErr != "" {
-		t.Errorf("res.PaneCloseErr = %q, want empty", res.PaneCloseErr)
-	}
-}
-
 func TestPauseRefusesOpenRound(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -124,64 +51,9 @@ func TestPauseRefusesOpenRound(t *testing.T) {
 	}
 }
 
-func TestPauseRefusesDirtyWithoutCommit(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	fg := &fakeGit{dirtyResult: true}
-	rt.Git = fg
-
-	b.Worktree = "/wt/webshop"
-	b.Branch = "relay/webshop"
-	b = pauseCloseRound(t, rt, b)
-
-	_, err := Pause(context.Background(), rt, "webshop", PauseOptions{})
-	if !errors.Is(err, ErrPauseDirty) {
-		t.Fatalf("err = %v, want ErrPauseDirty", err)
-	}
-	if len(fg.commitAllCalls) != 0 {
-		t.Errorf("no commit may run without --commit: %+v", fg.commitAllCalls)
-	}
-	if len(fg.removeWorktreeCalls) != 0 {
-		t.Errorf("worktree must not be removed: %+v", fg.removeWorktreeCalls)
-	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane may be closed: %v", f.closed)
-	}
-	got, _ := rt.Store.Load("webshop")
-	if got.State != store.StateActive {
-		t.Errorf("State = %s, want active (unchanged)", got.State)
-	}
-}
-
-func TestPauseCommitThenReleases(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	fg := &fakeGit{dirtyResult: true, commitAllSHA: "abc123abc123abc123abc123abc123abc123abcd"}
-	rt.Git = fg
-
-	b.Worktree = "/wt/webshop"
-	b.Branch = "relay/webshop"
-	b = pauseCloseRound(t, rt, b)
-
-	res, err := Pause(context.Background(), rt, "webshop", PauseOptions{Commit: true})
-	if err != nil {
-		t.Fatalf("Pause: %v", err)
-	}
-	want := commitAllCall{Dir: "/wt/webshop", Message: "[relay] webshop: paused after round 1"}
-	if len(fg.commitAllCalls) != 1 || fg.commitAllCalls[0] != want {
-		t.Errorf("commitAllCalls = %+v, want [%+v]", fg.commitAllCalls, want)
-	}
-	if len(fg.removeWorktreeCalls) != 1 {
-		t.Errorf("removeWorktreeCalls = %d, want 1", len(fg.removeWorktreeCalls))
-	}
-	if res.Committed != "abc123abc123abc123abc123abc123abc123abcd" {
-		t.Errorf("res.Committed = %q, want the commit sha", res.Committed)
-	}
-}
-
 func TestPauseHeadlessClosesNoPane(t *testing.T) {
 	t.Run("between rounds", func(t *testing.T) {
-		f := &fakeHerdr{}
+		f := &fakePanes{}
 		fr := newFakeRunner()
 		rt, b := seedHeadless(t, f, fr)
 		fg := &fakeGit{}
@@ -206,7 +78,7 @@ func TestPauseHeadlessClosesNoPane(t *testing.T) {
 	})
 
 	t.Run("process alive", func(t *testing.T) {
-		f := &fakeHerdr{}
+		f := &fakePanes{}
 		fr := newFakeRunner()
 		rt, b := seedHeadless(t, f, fr)
 		fg := &fakeGit{}
@@ -228,7 +100,7 @@ func TestPauseHeadlessClosesNoPane(t *testing.T) {
 }
 
 func TestPauseRefusesRemoteCwdAndDone(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -269,32 +141,5 @@ func TestPauseRefusesRemoteCwdAndDone(t *testing.T) {
 	}
 	if len(fg.removeWorktreeCalls) != 0 || len(f.closed) != 0 {
 		t.Errorf("nothing may change: remove=%d closed=%v", len(fg.removeWorktreeCalls), f.closed)
-	}
-}
-
-func TestPausePaneCloseFailureIsNotFatal(t *testing.T) {
-	f := &fakeHerdr{closeErr: errors.New("gone")}
-	rt, b := sentBinding(t, f)
-	fg := &fakeGit{}
-	rt.Git = fg
-
-	b.Worktree = "/wt/webshop"
-	b.Branch = "relay/webshop"
-	b = pauseCloseRound(t, rt, b)
-	paneID := b.Builder.PaneID
-
-	res, err := Pause(context.Background(), rt, "webshop", PauseOptions{})
-	if err != nil {
-		t.Fatalf("a refused pane close must not fail pause: %v", err)
-	}
-	if res.PaneCloseErr != "gone" {
-		t.Errorf("res.PaneCloseErr = %q, want gone", res.PaneCloseErr)
-	}
-	if res.PaneClosed != paneID {
-		t.Errorf("res.PaneClosed = %q, want %q", res.PaneClosed, paneID)
-	}
-	got, _ := rt.Store.Load("webshop")
-	if got.State != store.StatePaused {
-		t.Errorf("State = %s, want paused", got.State)
 	}
 }

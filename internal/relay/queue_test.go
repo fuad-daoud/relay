@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -20,7 +19,7 @@ import (
 // Mutation check: drop the `!deferred` guard around startRound in send.go
 // and this fails on fr.specs no longer being empty.
 func TestSendDeferQueues(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, f, fr)
 
@@ -74,7 +73,7 @@ func TestSendDeferQueues(t *testing.T) {
 // Mutation check: drop the `age` formatting (hardcode "0s") in queue.go and
 // this fails on the note not containing "1m30s".
 func TestAdmitStartsQueuedRound(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, f, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
@@ -118,7 +117,7 @@ func TestAdmitStartsQueuedRound(t *testing.T) {
 // TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
 // (QueuedAt zero) is refused, and nothing spawns.
 func TestAdmitNotQueued(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, f, fr)
 
@@ -135,7 +134,7 @@ func TestAdmitNotQueued(t *testing.T) {
 // spawn-failure handling, and QueuedAt is zeroed so the round is never
 // re-admitted.
 func TestAdmitSpawnFailure(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, f, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
@@ -171,15 +170,15 @@ func TestAdmitSpawnFailure(t *testing.T) {
 // Mutation check: drop the `gatedBuilder` branch in queue.go (always call
 // startRound) and this fails on BuilderCandidate staying "agy/other/m".
 func TestAdmitGatedSwitches(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	fr := newFakeRunner()
-	f.agents = []herdr.Agent{plannerAgent()}
+	f.agents = []stubAgent{plannerAgent()}
 	rt := newRuntime(t, f)
 	rt.Runner = fr
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo",
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}

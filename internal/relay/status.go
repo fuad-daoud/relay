@@ -768,9 +768,6 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		case b.Builder.Headless() && stopErr != nil:
 			out.WorktreeKept = b.Worktree
 			out.KeptReason = "builder process still running"
-		case !b.Builder.Headless() && !b.RoundStartedAt.IsZero():
-			out.WorktreeKept = b.Worktree
-			out.KeptReason = fmt.Sprintf("round %d open; the builder may still write", b.Round)
 		default:
 			outcome := worktreeTeardown(ctx, rt, b, false)
 			out.WorktreeRemoved = outcome.Removed

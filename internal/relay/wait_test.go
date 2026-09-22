@@ -232,7 +232,7 @@ func TestWaitOutcome(t *testing.T) {
 
 // manualSent seeds a binding one round into an open, active send, using only
 // the store -- no herdr, no Bind/Send -- so a Wait test can build several
-// independent bindings without wiring a shared fakeHerdr agent list.
+// independent bindings without wiring a shared fakePanes agent list.
 func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 	t.Helper()
 	b := store.Binding{
@@ -254,7 +254,7 @@ func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 }
 
 func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, _ := sentBinding(t, f)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
@@ -279,7 +279,7 @@ func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
 }
 
 func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 	manualSent(t, rt, "first", "/repo/first")
 	manualSent(t, rt, "second", "/repo/second")
@@ -305,7 +305,7 @@ func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
 }
 
 func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, _ := sentBinding(t, f)
 
 	calls := 0
@@ -330,7 +330,7 @@ func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
 }
 
 func TestWaitTimesOut(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, _ := sentBinding(t, f)
 
 	tick := 0
@@ -353,7 +353,7 @@ func TestWaitTimesOut(t *testing.T) {
 }
 
 func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, _ := sentBinding(t, f)
 
 	// A binding that was never sent: no log entries at all.
@@ -390,7 +390,7 @@ func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -425,7 +425,7 @@ func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt := newRuntime(t, f)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -438,7 +438,7 @@ func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
 }
 
 func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := sentBinding(t, f)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{

@@ -2,8 +2,6 @@ package pick
 
 import (
 	"testing"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -15,9 +13,9 @@ func TestRowsForFiltersPerVerb(t *testing.T) {
 	// fixture sets both -- round 1 set only Display and the test could not
 	// pass against the real HideDone.
 	rep := relay.Report{Bindings: []relay.BindingStatus{
-		{Name: "active", State: string(store.StateActive), Display: "ACTIVE", BuilderStatus: herdr.StatusWorking},
-		{Name: "blocked", State: string(store.StateNeedsYou), Display: "NEEDS YOU", BuilderStatus: herdr.StatusBlocked},
-		{Name: "finished", State: string(store.StateDone), Display: "DONE", BuilderStatus: herdr.StatusIdle},
+		{Name: "active", State: string(store.StateActive), Display: "ACTIVE", BuilderStatus: stubWorking},
+		{Name: "blocked", State: string(store.StateNeedsYou), Display: "NEEDS YOU", BuilderStatus: stubBlocked},
+		{Name: "finished", State: string(store.StateDone), Display: "DONE", BuilderStatus: stubIdle},
 	}}
 	names := func(rows []relay.BindingStatus) []string {
 		var out []string

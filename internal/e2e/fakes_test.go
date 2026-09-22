@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 )
 
@@ -22,74 +20,72 @@ type promptCall struct {
 	Text   string
 }
 
-type fakeHerdr struct {
+type fakePanes struct {
 	mu       sync.Mutex
-	agents   []herdr.Agent
+	agents   []stubAgent
 	prompts  []struct{ Target, Text string }
 	notices  []string
 	metadata []struct {
 		Pane string
-		Meta herdr.PaneMetadata
 	}
 }
 
-func (f *fakeHerdr) ListAgents(ctx context.Context) ([]herdr.Agent, error) {
+func (f *fakePanes) ListAgents(ctx context.Context) ([]stubAgent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	res := make([]herdr.Agent, len(f.agents))
+	res := make([]stubAgent, len(f.agents))
 	copy(res, f.agents)
 	return res, nil
 }
 
-func (f *fakeHerdr) Prompt(ctx context.Context, target, text string) error {
+func (f *fakePanes) Prompt(ctx context.Context, target, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prompts = append(f.prompts, struct{ Target, Text string }{Target: target, Text: text})
 	return nil
 }
 
-func (f *fakeHerdr) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
+func (f *fakePanes) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.notices = append(f.notices, title)
 	return nil
 }
 
-func (f *fakeHerdr) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
+func (f *fakePanes) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.metadata = append(f.metadata, struct {
 		Pane string
-		Meta herdr.PaneMetadata
 	}{Pane: paneID, Meta: m})
 	return nil
 }
 
-func (f *fakeHerdr) SendKeys(ctx context.Context, target, keys string) error {
+func (f *fakePanes) SendKeys(ctx context.Context, target, keys string) error {
 	return errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
+func (f *fakePanes) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
 	return "", errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error) {
+func (f *fakePanes) ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error) {
 	return "", errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
+func (f *fakePanes) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
 	return "", errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {
+func (f *fakePanes) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {
 	return errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) ClosePane(ctx context.Context, paneID string) error {
+func (f *fakePanes) ClosePane(ctx context.Context, paneID string) error {
 	return errors.New("not in e2e")
 }
 
-func (f *fakeHerdr) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
+func (f *fakePanes) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
 	return nil, herdr.ErrNoSocket
 }
 

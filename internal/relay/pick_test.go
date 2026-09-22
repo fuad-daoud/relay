@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -43,43 +42,8 @@ func kinds(t *testing.T, rt Runtime, name string) []store.Kind {
 	return out
 }
 
-func TestBindPicksFirstUngatedInOrder(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
-	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
-
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
-	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if len(f.starts) != 1 || f.starts[0].Kind != "claude" {
-		t.Fatalf("starts = %+v, want one claude start", f.starts)
-	}
-	if b.BuilderCandidate != testClaudeRef {
-		t.Errorf("BuilderCandidate = %q, want %q", b.BuilderCandidate, testClaudeRef)
-	}
-
-	got := picks(t, rt, "webshop")
-	if len(got) != 1 {
-		t.Fatalf("picks = %+v, want 1", got)
-	}
-	p := got[0]
-	if !p.Confirmed || p.Direction != store.DirToPlanner || p.Round != 1 {
-		t.Errorf("pick entry = %+v", p)
-	}
-	wantNote := "picked claude/test/m for builder: order #2; skipped agy/test/m (spawn failed " + untilText + ")"
-	if p.Note != wantNote {
-		t.Errorf("pick note = %q, want %q", p.Note, wantNote)
-	}
-}
-
 func TestBindResolvedReturnsTheResolution(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	f := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -103,7 +67,7 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 }
 
 func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	f := &fakePanes{agents: []stubAgent{plannerAgent()}}
 	rt := newRuntime(t, f)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -128,7 +92,7 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 }
 
 func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
+	f := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p4"}
 	rt := newRuntime(t, f)
 
 	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
@@ -151,35 +115,18 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 	}
 }
 
-func TestBindAdoptionWritesNoPick(t *testing.T) {
-	existing := herdr.Agent{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w2:p8", CWD: "/repo"}
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent(), existing}}
-	rt := newRuntime(t, f)
-
-	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", BuilderPane: "w2:p8", PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	if got := picks(t, rt, "webshop"); len(got) != 0 {
-		t.Errorf("picks = %+v, want none", got)
-	}
-}
-
 // TestResumeRebindLogsPickAtCurrentRound mirrors
 // TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone. seedBound's own
 // initial Bind (Candidate: testAgyRef, explicit) already writes a leading
 // pick entry, so this checks the entry the resume itself adds, not the
 // total count.
 func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, _ := seedBound(t, f)
 	before := picks(t, rt, "webshop")
 
 	// Pane w2:p4 no longer holds anything.
-	f.agents = []herdr.Agent{plannerAgent()}
+	f.agents = []stubAgent{plannerAgent()}
 	f.newPane = "w2:p7"
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -203,7 +150,7 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 }
 
 func TestAddLogsPick(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	rt.Policy = orderOf("builder", testAgyRef)
@@ -228,7 +175,7 @@ func TestAddLogsPick(t *testing.T) {
 }
 
 func TestForkInheritedLogsSource(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	fh := &fakePanes{agents: []stubAgent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newForkRuntime(t, fh, fg, nil)
 	srcCWD := filepath.Join(t.TempDir(), "repo")
@@ -274,7 +221,7 @@ func TestForkInheritedLogsSource(t *testing.T) {
 }
 
 func TestAskLogsPickBeforeAsk(t *testing.T) {
-	f := &fakeHerdr{}
+	f := &fakePanes{}
 	rt, b := seedForAsk(t, f)
 
 	qPath := writeQuestion(t, "what do you think?")
@@ -302,32 +249,5 @@ func TestAskLogsPickBeforeAsk(t *testing.T) {
 	wantNote := "picked claude/test/m for reviewer: sole candidate"
 	if pick.Note != wantNote {
 		t.Errorf("pick note = %q, want %q", pick.Note, wantNote)
-	}
-}
-
-// TestStrandedAskLogsNoPick checks the delta a stranded ask adds, not the
-// total: seedForAsk's own seedBound already writes a leading pick entry for
-// the builder bind.
-func TestStrandedAskLogsNoPick(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedForAsk(t, f)
-	before := picks(t, rt, "webshop")
-	f.startErr = errors.New("agent start: exit 1")
-
-	qPath := writeQuestion(t, "what do you think?")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: qPath, Name: b.Name, PlannerPane: "w2:p3",
-	})
-	if err == nil {
-		t.Fatal("expected an error from a stranded ask")
-	}
-	if res.Resolution.How != HowSole {
-		t.Errorf("Resolution.How = %q, want HowSole", res.Resolution.How)
-	}
-
-	after := picks(t, rt, "webshop")
-	if len(after) != len(before) {
-		t.Errorf("a stranded ask must log no pick, before=%+v after=%+v", before, after)
 	}
 }

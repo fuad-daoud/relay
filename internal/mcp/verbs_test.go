@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -19,11 +18,11 @@ import (
 // Herdr even when the binding under test never reaches a live pane; every
 // other method here is unused by the paths these tests exercise.
 type stubHerdr struct {
-	agents []herdr.Agent
+	agents []stubAgent
 	err    error
 }
 
-func (s *stubHerdr) ListAgents(ctx context.Context) ([]herdr.Agent, error)   { return s.agents, s.err }
+func (s *stubHerdr) ListAgents(ctx context.Context) ([]stubAgent, error)   { return s.agents, s.err }
 func (s *stubHerdr) Prompt(ctx context.Context, target, text string) error   { return nil }
 func (s *stubHerdr) SendKeys(ctx context.Context, target, keys string) error { return nil }
 func (s *stubHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
@@ -103,7 +102,6 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 func TestRelayVerbsStatusFiltersByPaneThenName(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relay.Runtime{
-		Herdr: &stubHerdr{},
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
@@ -157,7 +155,6 @@ func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relay.Runtime{
-		Herdr:      &stubHerdr{},
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
@@ -198,7 +195,6 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relay.Runtime{
-		Herdr:      &stubHerdr{},
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
