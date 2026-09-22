@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -148,7 +147,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	return srv, url, fp, enroll, srvStore, runner
 }
 
-func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr, remote.Keypair) {
+func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Keypair) {
 	t.Helper()
 	cfgDir := t.TempDir()
 	privPath, pubPath := client.KeyPaths(cfgDir)
@@ -161,12 +160,6 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 		"zen": client.ServerEntry{
 			URL:         url,
 			Fingerprint: fingerprint,
-		},
-	}
-
-	hd := &fakeHerdr{
-		agents: []herdr.Agent{
-			{PaneID: "p1", Name: "planner", Status: herdr.StatusIdle, Kind: "claude"},
 		},
 	}
 
@@ -185,7 +178,6 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 	}
 
 	rt := relay.Runtime{
-		Herdr:            hd,
 		Git:              gitClient,
 		Store:            st,
 		Candidates:       cSet,
@@ -196,7 +188,7 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, *fakeHerdr
 		Transport:        remote.NewBundleTransport(gitClient, t.TempDir()),
 	}
 
-	return rt, hd, kp
+	return rt, kp
 }
 
 func TestRemoteRoundEndToEnd(t *testing.T) {
@@ -204,16 +196,15 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 
 	// 1. server, client (enrolled), repo.
 	srv, url, fp, enroll, srvStore, runner := newServer(t)
-	rt, hd, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	})
 	if err != nil {
 		t.Fatalf("step 1: relay.Add: %v", err)
@@ -316,25 +307,19 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 		return false
 	})
 
-	// Assert: hd.prompts has exactly one entry for p1 whose text contains Report: and Diff: 1 file and
-	// 1 commit on relay/api; the client repo's relay/api is one commit ahead of init with hello.txt;
-	// the server view (via rt.Remote.GetBinding) has acked_round == 1 and round_state == idle;
-	// client Builder.RemoteStatus == "idle"; BuilderCandidate equals the server's candidate token.
-	hd.mu.Lock()
-	prompts := make([]struct{ Target, Text string }, len(hd.prompts))
-	copy(prompts, hd.prompts)
-	hd.mu.Unlock()
-
-	if len(prompts) != 1 {
-		t.Fatalf("step 3: prompts = %d, want 1", len(prompts))
+	// Assert: the round's report waits as exactly one pending planner entry
+	// whose payload contains Report: and Diff: 1 file and 1 commit on
+	// relay/api; the client repo's relay/api is one commit ahead of init with
+	// hello.txt; the server view (via rt.Remote.GetBinding) has acked_round
+	// == 1 and round_state == idle; client Builder.RemoteStatus == "idle";
+	// BuilderCandidate equals the server's candidate token.
+	pending, pText := pendingReports(t, rt, "api")
+	if pending != 1 {
+		t.Fatalf("step 3: pending reports = %d, want 1", pending)
 	}
-	if prompts[0].Target != "p1" {
-		t.Fatalf("step 3: prompt target = %q, want p1", prompts[0].Target)
-	}
-	pText := prompts[0].Text
 	for _, substr := range []string{"Report:", "Diff: 1 file", "1 commit on relay/api"} {
 		if !strings.Contains(pText, substr) {
-			t.Fatalf("step 3: prompt text missing %q; got:\n%s", substr, pText)
+			t.Fatalf("step 3: pending report payload missing %q; got:\n%s", substr, pText)
 		}
 	}
 
@@ -393,16 +378,15 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	ctx := context.Background()
 
 	srv, url, fp, enroll, srvStore, runner := newServer(t)
-	rt, hd, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	})
 	if err != nil {
 		t.Fatalf("step 1: relay.Add: %v", err)
@@ -460,12 +444,9 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 		return false
 	})
 
-	// exactly one prompt to the planner, acked_round == 1
-	hd.mu.Lock()
-	promptCount := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptCount != 1 {
-		t.Fatalf("step 3: prompts = %d, want 1", promptCount)
+	// exactly one pending report for the planner, acked_round == 1
+	if pending, _ := pendingReports(t, rt, "api"); pending != 1 {
+		t.Fatalf("step 3: pending reports = %d, want 1", pending)
 	}
 
 	sv, err = rt.Remote.GetBinding(ctx, "zen", "api")
@@ -476,7 +457,8 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 		t.Fatalf("step 3: server AckedRound = %d, want 1", sv.AckedRound)
 	}
 
-	// and a second batch of client ticks adds no second report entry and no second prompt (idempotence)
+	// and a second batch of client ticks adds no second report entry and no
+	// second pending delivery (idempotence)
 	for i := 0; i < 3; i++ {
 		_ = clientDaemon.Tick(ctx)
 	}
@@ -495,11 +477,8 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 		t.Fatalf("step 4: report entries count = %d, want 1", reportEntries)
 	}
 
-	hd.mu.Lock()
-	promptCountAfter := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptCountAfter != 1 {
-		t.Fatalf("step 4: prompts after second batch = %d, want 1", promptCountAfter)
+	if pending, _ := pendingReports(t, rt, "api"); pending != 1 {
+		t.Fatalf("step 4: pending reports after second batch = %d, want 1", pending)
 	}
 }
 
@@ -508,16 +487,15 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 	srv, url, fp, enroll, _, _ := newServerWithContext(t, srvCtx, srvCancel, policy.Policy{})
-	rt, hd, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	_ = enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	})
 	if err != nil {
 		t.Fatalf("step 1: relay.Add: %v", err)
@@ -543,8 +521,9 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 		t.Fatalf("step 3: clientDaemon.Tick: %v", err)
 	}
 
-	// Assert: state stays active, Builder.RemoteStatus == "unreachable", RemoteUnreachableSince set,
-	// no notice from fakeHerdr.Notify. Restart a server? Not needed: the assertion is the non-halt.
+	// Assert: state stays active, Builder.RemoteStatus == "unreachable",
+	// RemoteUnreachableSince set. Restart a server? Not needed: the assertion
+	// is the non-halt.
 	cb, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("step 3: load client binding: %v", err)
@@ -559,28 +538,21 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 		t.Fatalf("step 3: RemoteUnreachableSince is zero, want non-zero")
 	}
 
-	hd.mu.Lock()
-	noticeCount := len(hd.notices)
-	hd.mu.Unlock()
-	if noticeCount != 0 {
-		t.Fatalf("step 3: notices count = %d, want 0", noticeCount)
-	}
 }
 
 func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	ctx := context.Background()
 
 	srv, url, fp, enroll, srvStore, runner := newServer(t)
-	rt, hd, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	})
 	if err != nil {
 		t.Fatalf("step 1: relay.Add: %v", err)
@@ -612,7 +584,7 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 		t.Fatalf("step 3: SyncRemote: %v", err)
 	}
 
-	// Assert: report entry exists and is pending (not delivered: hd.prompts empty), state is not orphaned;
+	// Assert: report entry exists and is pending (nothing has delivered it), state is not orphaned;
 	entries, err := rt.Store.ReadLog("api")
 	if err != nil {
 		t.Fatalf("step 3: ReadLog: %v", err)
@@ -629,32 +601,23 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 		t.Fatalf("step 3: pending report entry not found in log: %+v", entries)
 	}
 
-	hd.mu.Lock()
-	promptCount := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptCount != 0 {
-		t.Fatalf("step 3: prompts count = %d, want 0", promptCount)
-	}
-
 	cb, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("step 3: load client binding: %v", err)
 	}
-	if cb.State == store.StateOrphaned {
-		t.Fatalf("step 3: state is orphaned")
+	if cb.State != store.StateActive {
+		t.Fatalf("step 3: state = %q; a read-only sync must not change it", cb.State)
 	}
 
-	// then one daemon Tick delivers it (one prompt)
+	// then one daemon Tick leaves it pending: this planner has no channel
+	// and no deliverer, so the entry waits for `relay pull` (route=pull).
 	clientDaemon := relay.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 4: clientDaemon.Tick: %v", err)
 	}
 
-	hd.mu.Lock()
-	promptsAfter := len(hd.prompts)
-	hd.mu.Unlock()
-	if promptsAfter != 1 {
-		t.Fatalf("step 4: prompts count after daemon tick = %d, want 1", promptsAfter)
+	if pending, _ := pendingReports(t, rt, "api"); pending != 1 {
+		t.Fatalf("step 4: pending reports after daemon tick = %d, want 1", pending)
 	}
 }
 
@@ -679,16 +642,15 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 
 	// steps 1-2: server, client (enrolled), repo, Add, Send
 	srv, url, fp, enroll, srvStore, _ := newServer(t)
-	rt, _, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	})
 	if err != nil {
 		t.Fatalf("relay.Add: %v", err)
@@ -731,4 +693,26 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 	if sb.RoundBaselineTree == "" {
 		t.Errorf("server binding RoundBaselineTree is empty, want non-empty")
 	}
+}
+
+// pendingReports counts a binding's unconfirmed planner-bound report entries
+// -- the mailbox no route has taken yet (#303 §5.4) -- and returns the newest
+// one's payload. The pane prompt these tests used to assert on is gone: a
+// report now waits as a pending entry for the channel, a deliverer or
+// `relay pull`.
+func pendingReports(t *testing.T, rt relay.Runtime, name string) (int, string) {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog %s: %v", name, err)
+	}
+	n := 0
+	payload := ""
+	for _, e := range entries {
+		if e.Direction == store.DirToPlanner && e.Kind == store.KindReport && !e.Confirmed {
+			n++
+			payload = e.Payload
+		}
+	}
+	return n, payload
 }

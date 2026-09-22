@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +18,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/relay"
@@ -25,13 +26,8 @@ import (
 )
 
 // bindPreflightTimeout bounds the bind-time preflight. The hot path must not be
-// slowed by a hung herdr: the herdr client's own per-call timeout is 30s, and
-// two calls would add a minute to `relay bind`.
+// slowed by a hung probe: it reads the filesystem and PATH only.
 const bindPreflightTimeout = 2 * time.Second
-
-// Compile-time proof that the concrete herdr client satisfies the interface
-// doctor needs, so the assertion in newDoctorEnv can never panic at runtime.
-var _ doctor.HerdrClient = (*herdr.Client)(nil)
 
 // assembleKinds is the scope: every kind named by a configured candidate,
 // plus every existing binding's builder kind. storeErr is returned rather than
@@ -179,7 +175,7 @@ func renderReport(w io.Writer, rep doctor.Report) {
 			// Say why. Every row can be `ok` and still leave no usable builder --
 			// a machine whose only alias names a kind relay was not taught reads
 			// as entirely healthy, so a bare verdict would point at nothing.
-			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has both its binary on PATH and its integration installed.\n", warnPart, failPart)
+			fmt.Fprintf(w, "%s, %s -- could not establish a usable builder: no checked harness has its binary on PATH.\n", warnPart, failPart)
 		} else if rep.BuilderRefusal != "" {
 			fmt.Fprintf(w, "%s, %s -- relay cannot pick a builder: %s.\n", warnPart, failPart, rep.BuilderRefusal)
 		} else {
@@ -206,11 +202,7 @@ func cmdDoctor(args []string) error {
 	}
 
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
-	hc, ok := rt.Herdr.(doctor.HerdrClient)
-	if !ok {
-		return fmt.Errorf("herdr client does not support the probes doctor needs")
-	}
-	env := doctor.NewEnv(hc, rt.Store, releaseInputs())
+	env := doctor.NewEnv(rt.Store, releaseInputs())
 
 	opencodeConfigured := false
 	for _, k := range kinds {
@@ -520,6 +512,7 @@ func plannerCheckInput(rt relay.Runtime, kinds []string) doctor.PlannerCheckInpu
 
 	if ident, ok := planner.Detect(os.Getenv, os.Getppid()); ok && ident.Kind == "claude" {
 		in.Detected = true
+		in.MCPChild = HasMCPChild(hostChildProcesses(ident.HostPID))
 		if rt.Planners != nil {
 			rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
 				Env:       os.Getenv,
@@ -539,6 +532,93 @@ func plannerCheckInput(rt relay.Runtime, kinds []string) doctor.PlannerCheckInpu
 	}
 
 	return in
+}
+
+// HasMCPChild is doctor.HasMCPChild, re-exported so the pure rule is visible
+// at this call site without importing internal/doctor into a test's mind.
+func HasMCPChild(children []doctor.ChildProcess) bool { return doctor.HasMCPChild(children) }
+
+// hostChildProcesses reads the child processes of pid: /proc/<pid>/task/*/children
+// names them, and each child's /proc/<pid>/cmdline its argv. On a host with no
+// /proc (macOS) it falls back to `ps -o pid=,args= --ppid`. A pid that has gone
+// or a read that fails yields nil, which reads as "no relay mcp child" -- the
+// FAIL #4.8 asks for when a Claude session has no push route.
+func hostChildProcesses(pid int) []doctor.ChildProcess {
+	if pid <= 0 {
+		return nil
+	}
+	paths, err := filepath.Glob(fmt.Sprintf("/proc/%d/task/*/children", pid))
+	if err != nil || len(paths) == 0 {
+		return psChildren(pid)
+	}
+	seen := make(map[int]bool)
+	var out []doctor.ChildProcess
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, f := range strings.Fields(string(raw)) {
+			cpid, err := strconv.Atoi(f)
+			if err != nil || seen[cpid] {
+				continue
+			}
+			seen[cpid] = true
+			if args := processArgs(cpid); len(args) > 0 {
+				out = append(out, doctor.ChildProcess{PID: cpid, Args: args})
+			}
+		}
+	}
+	if len(out) == 0 {
+		return psChildren(pid)
+	}
+	return out
+}
+
+// processArgs reads one process's argv from /proc/<pid>/cmdline, which is
+// NUL-separated. A process that has gone yields nil.
+func processArgs(pid int) []string {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	parts := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+	return parts
+}
+
+// psChildren is hostChildProcesses' portable fallback: `ps -o pid=,args=
+// --ppid <pid>`, which the tree's other process probes already use. An
+// unsupported flag or a missing ps reads as no children.
+func psChildren(pid int) []doctor.ChildProcess {
+	out, err := exec.Command("ps", "-o", "pid=,args=", "--ppid", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return nil
+	}
+	return ParsePSChildren(out)
+}
+
+// ParsePSChildren parses `ps -o pid=,args=` output: one line per process, the
+// pid first, the argv as the rest of the line. Pure, so the parsing is
+// testable without a process tree.
+func ParsePSChildren(out []byte) []doctor.ChildProcess {
+	var procs []doctor.ChildProcess
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, " ", 2)
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		var args []string
+		if len(fields) > 1 {
+			args = strings.Fields(fields[1])
+		}
+		procs = append(procs, doctor.ChildProcess{PID: pid, Args: args})
+	}
+	return procs
 }
 
 // insertGlobalCheck puts c after the last global row, so render order stays

@@ -90,7 +90,7 @@ const maxErrorLines = 8
 
 // renderError wraps err across the terminal width, preserving the newlines the
 // message already has, capped at maxErrorLines with a trailing "…" when it
-// overflows. Errors from herdr name the command that fixes them, so truncating
+// overflows. Errors name the command that fixes them, so truncating
 // mid-message defeats the point of showing one.
 func renderError(err error, width int) string {
 	if err == nil {

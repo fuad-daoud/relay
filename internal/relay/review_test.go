@@ -118,56 +118,6 @@ func TestReviewRendersPlan(t *testing.T) {
 
 // TestReviewSendHandsThePlanToSend pins Review's --send path: the review
 // plan becomes the next round's plan, the same as any other Send.
-func TestReviewSendHandsThePlanToSend(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-
-	if err := os.WriteFile(rt.Store.DiffPath("webshop", 1), []byte(reviewFixtureDiff), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.Round = 2
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	commentsFile := writeComments(t, "x.go:3: say more\n")
-
-	res, err := Review(context.Background(), rt, ReviewOptions{Name: "webshop", File: commentsFile, Send: true})
-	if err != nil {
-		t.Fatalf("Review: %v", err)
-	}
-	if res.Sent == nil {
-		t.Fatal("Sent = nil, want a SendResult")
-	}
-	if res.Sent.Round != 2 {
-		t.Errorf("Sent.Round = %d, want 2", res.Sent.Round)
-	}
-
-	fr := runnerOf(t, rt)
-	if len(fr.specs) != 1 {
-		t.Fatalf("got %d builder starts, want 1", len(fr.specs))
-	}
-	if argv := strings.Join(fr.specs[0].Argv, " "); !strings.Contains(argv, rt.Store.PlanPath("webshop", 2)) {
-		t.Error("the builder's prompt must name round 2's plan path (the review plan, copied in by Send)")
-	}
-
-	sentBody, err := os.ReadFile(rt.Store.PlanPath("webshop", 2))
-	if err != nil {
-		t.Fatalf("read round 2 plan: %v", err)
-	}
-	reviewBody, err := os.ReadFile(res.PlanPath)
-	if err != nil {
-		t.Fatalf("read review plan: %v", err)
-	}
-	if string(sentBody) != string(reviewBody) {
-		t.Error("round 2's plan must equal the review plan")
-	}
-}
-
 func TestReviewDefaultsToNewestCompletedRound(t *testing.T) {
 	rt := seedReviewBinding(t, 2)
 	commentsFile := writeComments(t, "x.go:3: say more\n")

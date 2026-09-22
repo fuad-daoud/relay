@@ -4,12 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -18,14 +15,46 @@ import (
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
-// agentGone is the status shown for a binding endpoint herdr no longer knows.
-const agentGone = "gone"
-
-// agentUnknown is the status for a pane endpoint relay could not look up
-// because herdr did not answer. It means "relay did not ask and must not
-// claim absence", the same word headlessStatus and the remote path use for
-// "could not determine".
+// agentUnknown is the status word for a builder relay could not determine: a
+// remote server that has not reported yet, or a headless process whose state
+// could not be read. It means "relay did not ask and must not claim absence",
+// the same word headlessStatus and the remote path use for "could not
+// determine".
 const agentUnknown = "unknown"
+
+// plannerRoute decides how a pending report reaches a binding planner
+// (#303 §3.6, §4.6): the live channel claim first, then the configured
+// deliverer for the planner kind, else "pull".
+//
+// live reports whether that route can push right now. A pull route is never
+// live: the daemon cannot see whether the background wait's `relay pull` is
+// running, which is exactly why pull is a route and not a fault (D6).
+func plannerRoute(rt Runtime, b store.Binding) (route string, live bool) {
+	if rt.Channels != nil && b.PlannerID != "" {
+		now := time.Now()
+		if rt.Now != nil {
+			now = rt.Now()
+		}
+		if c, err := rt.Channels.Live(b.PlannerID, now); err == nil && c != nil {
+			return "channel", true
+		}
+	}
+	if b.Planner.Kind != "" {
+		if _, ok := rt.Deliverers[b.Planner.Kind]; ok {
+			return "deliverer", true
+		}
+	}
+	return "pull", false
+}
+
+// plannerNameOrID is the planner a status row names: the record name when it
+// has one, else the id, else "".
+func plannerNameOrID(b BindingStatus) string {
+	if b.PlannerName != "" {
+		return b.PlannerName
+	}
+	return b.PlannerID
+}
 
 // LiveDiff is the live "+N/-M in F" a status row shows while a round is
 // open (#143): dir's working tree against the round's baseline tree, no
@@ -38,29 +67,34 @@ type LiveDiff struct {
 	Shared  bool `json:"shared,omitempty"`
 }
 
-// BindingStatus is one row of relay status: stored binding plus live herdr state.
+// BindingStatus is one row of relay status: stored binding plus what relay can
+// determine about its builder and its delivery route.
 type BindingStatus struct {
 	Name             string `json:"name"`
 	CWD              string `json:"cwd"`
-	Workspace        string `json:"workspace"`
 	Round            int    `json:"round"`
 	State            string `json:"state"`
 	Display          string `json:"display"`
 	BuilderCandidate string `json:"builder_candidate"`
-	PlannerPane      string `json:"planner_pane"`
-	PlannerKind      string `json:"planner_kind"`
-	PlannerStatus    string `json:"planner_status"`
-	PlannerFocus     bool   `json:"planner_focused"`
 	// PlannerID and PlannerName name the relay planner record this binding
-	// belongs to (#303 step 1b, §3.2). PlannerPane stays this round.
-	PlannerID     string `json:"planner_id,omitempty"`
-	PlannerName   string `json:"planner_name,omitempty"`
-	BuilderPane   string `json:"builder_pane"`
-	BuilderKind   string `json:"builder_kind"`
-	BuilderStatus string `json:"builder_status"`
+	// belongs to (#303 §3.2).
+	PlannerID   string `json:"planner_id,omitempty"`
+	PlannerName string `json:"planner_name,omitempty"`
+	PlannerKind string `json:"planner_kind"`
+	// PlannerRoute is how a pending report reaches this binding planner
+	// (#303 §3.6): "channel", "deliverer" or "pull". "pull" is a route, not
+	// a fault: it is the background wait's `relay pull`, which is how a
+	// Claude Code planner in tools mode gets its report (D6).
+	PlannerRoute string `json:"planner_route"`
+	// PlannerRouteLive reports whether that route can push right now: a live
+	// channel claim, or a configured deliverer. A pull route is never live,
+	// because the daemon cannot see whether a background wait is running.
+	PlannerRouteLive bool   `json:"planner_route_live"`
+	BuilderKind      string `json:"builder_kind"`
+	BuilderStatus    string `json:"builder_status"`
 	// Headless is set for a headless builder (#99): its process state and
-	// log. BuilderPane reads "headless" and BuilderStatus is one of idle,
-	// working, exited N, exited, unknown. Nil for a pane builder.
+	// log. BuilderStatus is one of idle, working, exited N, exited, unknown.
+	// Nil for a remote builder.
 	Headless *HeadlessInfo `json:"headless,omitempty"`
 	// Detail explains an overloaded state where the display word cannot.
 	// Populated only for store.StateBroken, which covers three situations
@@ -96,22 +130,10 @@ type BindingStatus struct {
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
 	// the expected state.
-	Dirty   bool         `json:"dirty"`
-	Pending *PendingInfo `json:"pending,omitempty"`
-	// Foreign lists live agents occupying this binding's working tree that no
-	// binding accounts for. It is an observation, never a judgement: relay
-	// cannot see writes, so a sanctioned read-only researcher and a rogue
-	// implementer both land here and the human reads the title to tell them
-	// apart. Deliberately does not affect Display.
-	Foreign []ForeignAgent `json:"foreign,omitempty"`
-	// SubAgents is the builder harness's sub-agent visibility
-	// (harness.Harness.SubAgents): "separate", "foreground", or "hidden".
-	// Empty when the builder kind is not in the harness table. It is the
-	// fact, not the rendered coverage row, so the TUI or a script can branch
-	// on it. Deliberately does not affect Display.
-	SubAgents     string `json:"sub_agents,omitempty"`
-	ForkedFrom    string `json:"forked_from,omitempty"`
-	ForkedAtRound int    `json:"forked_at_round,omitempty"`
+	Dirty         bool         `json:"dirty"`
+	Pending       *PendingInfo `json:"pending,omitempty"`
+	ForkedFrom    string       `json:"forked_from,omitempty"`
+	ForkedAtRound int          `json:"forked_at_round,omitempty"`
 	// Consults is how many consults are reserved or running on this binding.
 	// Terminal ones are omitted: they are a reap chore, not work in flight.
 	Consults int `json:"consults,omitempty"`
@@ -229,24 +251,6 @@ type CloseInfo struct {
 type PendingInfo struct {
 	Round int        `json:"round"`
 	Kind  store.Kind `json:"kind"`
-	// Hold is the daemon's quiet clock for a HELD binding: how long the
-	// planner's screen has been unchanged, against the grace it will be
-	// injected at. Nil when the binding is not held, and nil when it is held
-	// but the clock has not started -- a failed screen read, or a hold
-	// recorded before the daemon read the screen. The human should know the
-	// clock is not running.
-	Hold *HoldInfo `json:"hold,omitempty"`
-}
-
-// HoldInfo is the quiet clock carried as data, like LastEvent: a statusline
-// consumer reads the two numbers, and RenderStatus formats them. Milliseconds
-// as ints, the way RoundTimeoutMS is, not time.Duration's nanoseconds.
-type HoldInfo struct {
-	QuietMS int `json:"quiet_ms"`
-	// GraceMS is zero when the binding was held by a daemon that did not
-	// record its grace (state written before HeldGrace existed). status then
-	// shows the quiet time alone rather than guess a fraction.
-	GraceMS int `json:"grace_ms,omitempty"`
 }
 
 // Report is the whole status surface.
@@ -262,51 +266,24 @@ type Report struct {
 	// when nothing is gated, so a consumer that never learned the field
 	// sees the document it always did.
 	Gated []ledger.Gate `json:"gated,omitempty"`
-	// HerdrError is the error text herdr returned when Status asked for its
-	// agents. Empty exactly when the lookup succeeded -- including an
-	// answered empty agent list. When set, the report's rows were built
-	// from the store alone and every pane endpoint relay could not look up
-	// reads unknown, not gone (relay did not ask, so it must not claim
-	// absence). Absent from JSON when empty so a consumer that never
-	// learned the field sees the document it always did.
-	HerdrError string `json:"herdr_error,omitempty"`
 }
 
-// Status derives every row live from herdr, so it cannot disagree with
-// reality. A herdr that fails to answer is reported, not fatal: the report
-// is still built from the store alone, the error rides along as
-// Report.HerdrError, and every pane endpoint it could not look up reads
-// unknown. Only store failures fail the call.
+// Status builds every row from the store and what relay can determine
+// locally: the planner record, a live channel claim and the configured
+// deliverers. Only store failures fail the call.
 func Status(ctx context.Context, rt Runtime) (Report, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return Report{}, err
 	}
 
-	agents, herdrErr := rt.Herdr.ListAgents(ctx)
-	if herdrErr != nil {
-		agents = nil
-	}
-
-	return buildReport(ctx, rt, bindings, agents, herdrErr)
+	return buildReport(ctx, rt, bindings)
 }
 
-func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agents []herdr.Agent, herdrErr error) (Report, error) {
-	// The absent word for a pane endpoint relay cannot look up: gone when
-	// herdr answered (it knows the endpoint is not there), unknown when it
-	// did not (relay did not ask, so it must not claim absence).
-	absent := agentGone
-	if herdrErr != nil {
-		absent = agentUnknown
-	}
-
-	// Computed once, not per binding: it spans every binding, so it does not
-	// vary across rows.
-	known := knownEndpoints(bindings)
-
+func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (Report, error) {
 	rows := make([]BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(ctx, rt, b, agents, known, absent)
+		row, err := statusRow(ctx, rt, b)
 		if err != nil {
 			return Report{}, err
 		}
@@ -320,9 +297,6 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agen
 	rows = SortRows(rows, true)
 
 	rep := Report{Bindings: rows}
-	if herdrErr != nil {
-		rep.HerdrError = herdrErr.Error()
-	}
 	rep.Gated = Gates(rt)
 	return rep, nil
 }
@@ -330,7 +304,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding, agen
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
-func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.Agent, known []store.Endpoint, absent string) (BindingStatus, error) {
+func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus, error) {
 	row := BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
@@ -340,10 +314,11 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		Consults:         runningConsults(b),
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
-		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: absent,
-		PlannerID:   b.PlannerID,
-		BuilderKind: b.Builder.Kind, BuilderStatus: absent,
+		PlannerKind:      b.Planner.Kind,
+		PlannerID:        b.PlannerID,
+		BuilderKind:      b.Builder.Kind, BuilderStatus: agentUnknown,
 	}
+	row.PlannerRoute, row.PlannerRouteLive = plannerRoute(rt, b)
 
 	// PlannerName is the record's name, so `status --json` and a status row
 	// can say "planner architect-1" without a second lookup by the reader.
@@ -365,18 +340,9 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		row.LandedPR = b.LandedPR
 	}
 
-	// What relay acts on is what it shows (spec §7.4).
-	if a, ok := FindAgent(agents, b.Planner); ok {
-		row.PlannerStatus = effectiveStatus(b.Planner, a)
-		row.PlannerFocus = a.Focused
-		row.PlannerPane = a.PaneID
-		row.Workspace = a.WorkspaceID
-	}
 	if b.Builder.Headless() {
-		row.BuilderPane = "headless"
 		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b)
 	} else if b.Builder.Remote() {
-		row.BuilderPane = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
 		if row.BuilderStatus == "" {
 			row.BuilderStatus = "unknown"
@@ -390,10 +356,9 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 
 	// #135's progress labels. The stale label is the row's own; the working
-	// label replaces "working" for a pane builder (a headless row already
-	// carries it out of headlessStatus, and a remote row's status comes from
-	// the server). This runs before the gate override so a gated row still
-	// reads "gating ...".
+	// label is a headless row's, already carried out of headlessStatus (a
+	// remote row's status comes from the server). This runs before the gate
+	// override so a gated row still reads "gating ...".
 	labelsNow := time.Now()
 	if rt.Now != nil {
 		labelsNow = rt.Now()
@@ -421,9 +386,8 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		row.BuilderStatus = fmt.Sprintf("gating %s", age)
 	}
 
-	// Only broken is overloaded: it means "builder pane is gone", which covers
-	// a clean exit, a mid-round exit, and a pane that merely moved workspaces
-	// while the agent kept running. orphaned and needs_you are unambiguous.
+	// broken is overloaded: it means the builder process is gone, which
+	// covers both a clean exit and one mid-round. needs_you is unambiguous.
 	if b.State == store.StateBroken {
 		row.Detail = DiagnoseBuilder(b).Detail(b.Round)
 	}
@@ -521,22 +485,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	}
 	if found {
 		row.Pending = &PendingInfo{Round: pending.Round, Kind: pending.Kind}
-		if b.State == store.StateHeld && b.PlannerScreen != "" {
-			quiet := rt.Now().UTC().Sub(b.PlannerScreenAt)
-			if quiet < 0 {
-				quiet = 0
-			}
-			row.Pending.Hold = &HoldInfo{
-				QuietMS: int(quiet / time.Millisecond),
-				GraceMS: int(b.HeldGrace / time.Millisecond),
-			}
-		}
-	}
-
-	row.Foreign = ForeignAgents(agents, known, b.CWD)
-
-	if h, ok := harness.Lookup(b.Builder.Kind); ok {
-		row.SubAgents = string(h.SubAgents)
 	}
 
 	// The newest reviewer verdict, while it judged the round just closed
@@ -574,14 +522,11 @@ func isPayloadKind(k store.Kind) bool {
 }
 
 // displayState collapses the stored states into the words the human cares
-// about. broken and orphaned both mean "a human must act"; paused means the
-// worktree and pane were released deliberately and bind --resume brings it
-// back.
+// about. needs_you and broken both mean "a human must act"; paused means the
+// worktree was released deliberately and bind --resume brings it back.
 func displayState(s store.State) string {
 	switch s {
-	case store.StateHeld:
-		return "HELD"
-	case store.StateNeedsYou, store.StateBroken, store.StateOrphaned:
+	case store.StateNeedsYou, store.StateBroken:
 		return "NEEDS YOU"
 	case store.StatePaused:
 		return "PAUSED"
@@ -608,26 +553,6 @@ func ShortOwner(id string) string {
 	return id[:len(prefix)+12] + "…"
 }
 
-// HoldText is the human form of a held binding's clock, shared by
-// RenderStatus and the TUI so the two never drift: "quiet 23s of 1m0s",
-// "quiet 23s" when the grace is unknown, or "waiting for the planner's
-// screen" when the clock has not started. Empty for any binding that is
-// not HELD with a pending payload.
-func HoldText(b BindingStatus) string {
-	if b.Display != "HELD" || b.Pending == nil {
-		return ""
-	}
-	h := b.Pending.Hold
-	if h == nil {
-		return "waiting for the planner's screen"
-	}
-	quiet := (time.Duration(h.QuietMS) * time.Millisecond).Truncate(time.Second)
-	if h.GraceMS == 0 {
-		return fmt.Sprintf("quiet %s", quiet)
-	}
-	return fmt.Sprintf("quiet %s of %s", quiet, time.Duration(h.GraceMS)*time.Millisecond)
-}
-
 // HideDone returns a copy of r excluding every binding whose state is DONE.
 // The order of the remaining bindings is preserved. DoneHidden is set to
 // the count of removed bindings. The input report is not modified.
@@ -638,11 +563,7 @@ func HideDone(r Report) Report {
 		// Gated is machine-wide, not per binding: hiding DONE rows must not
 		// hide a rate limit (#61). Found by rendering a hand-written ledger
 		// through the real binary; the renderer tests could not see it.
-		// HerdrError is likewise report-wide, not per binding, so it must
-		// survive the same rebuild.
 		Gated: r.Gated,
-
-		HerdrError: r.HerdrError,
 	}
 	for _, b := range r.Bindings {
 		if b.State == string(store.StateDone) {
@@ -690,10 +611,6 @@ func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank boo
 func RenderStatus(r Report) string {
 	var sb strings.Builder
 
-	if r.HerdrError != "" {
-		fmt.Fprintf(&sb, "herdr unreachable: %s; pane statuses unknown\n\n", r.HerdrError)
-	}
-
 	switch {
 	case len(r.Bindings) == 0 && r.DoneHidden > 0:
 		// The footer says "clear" and not "free": gc frees disk only for
@@ -705,8 +622,6 @@ func RenderStatus(r Report) string {
 		return sb.String()
 
 	case len(r.Bindings) == 0 && len(r.Gated) == 0:
-		// Written to sb rather than returned as a literal so a herdr
-		// header, when present, precedes it.
 		sb.WriteString("no bindings\n")
 		return sb.String()
 
@@ -717,8 +632,8 @@ func RenderStatus(r Report) string {
 	}
 
 	for _, b := range r.Bindings {
-		fmt.Fprintf(&sb, "%-8s %-40s %-4s round %-3d %s",
-			b.Name, b.CWD, b.Workspace, b.Round, b.Display)
+		fmt.Fprintf(&sb, "%-8s %-40s round %-3d %s",
+			b.Name, b.CWD, b.Round, b.Display)
 		// #136's land state sits on the round line, where the human reads
 		// what happened to the branch.
 		if b.Landed != "" {
@@ -758,12 +673,8 @@ func RenderStatus(r Report) string {
 			fmt.Fprint(&sb, "  ●new")
 		}
 		fmt.Fprint(&sb, "\n")
-		focus := ""
-		if b.PlannerFocus {
-			focus = "  (focused)"
-		}
-		fmt.Fprintf(&sb, "  planner  %-14s %-8s %s%s\n",
-			b.PlannerPane, b.PlannerKind, b.PlannerStatus, focus)
+		fmt.Fprintf(&sb, "  planner  %-14s %-8s route %s\n",
+			plannerNameOrID(b), b.PlannerKind, b.PlannerRoute)
 		if b.Headless != nil {
 			// spec §4.8: builder  headless  <kind>  <status>  [pid P since HH:MM]  `<token>`
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", "headless", b.BuilderKind, b.BuilderStatus)
@@ -775,7 +686,7 @@ func RenderStatus(r Report) string {
 			fmt.Fprintf(&sb, "`%s`", b.BuilderCandidate)
 		} else {
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
-				b.BuilderPane, b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+				"remote", b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
 		}
 		if b.Switches > 0 {
 			fmt.Fprintf(&sb, "   switched %dx", b.Switches)
@@ -785,24 +696,6 @@ func RenderStatus(r Report) string {
 			for _, line := range b.Headless.Tail {
 				fmt.Fprintf(&sb, "  log      %s\n", line)
 			}
-		}
-		for _, fa := range b.Foreign {
-			loc := ""
-			if fa.CWD != b.CWD {
-				loc = fa.CWD
-				if rel, err := filepath.Rel(b.CWD, fa.CWD); err == nil {
-					loc = rel
-				}
-			}
-			fmt.Fprintf(&sb, "  foreign  %-14s %-8s %-9s %s",
-				fa.PaneID, fa.Kind, fa.Status, fa.Title)
-			if loc != "" {
-				fmt.Fprintf(&sb, "  %s", loc)
-			}
-			fmt.Fprint(&sb, "\n")
-		}
-		if note, ok := SubAgentCoverage(b.BuilderKind, harness.SubAgentVisibility(b.SubAgents)); ok {
-			fmt.Fprintf(&sb, "  %-8s %s\n", "coverage", note)
 		}
 		if b.Detail != "" {
 			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)
@@ -827,11 +720,7 @@ func RenderStatus(r Report) string {
 			fmt.Fprintf(&sb, "  spend    %s\n", usage.SpendLine(*b.Spend))
 		}
 		if b.Pending != nil {
-			fmt.Fprintf(&sb, "  pending  %s round %d -> planner", b.Pending.Kind, b.Pending.Round)
-			if hold := HoldText(b); hold != "" {
-				fmt.Fprintf(&sb, ", held: %s", hold)
-			}
-			fmt.Fprint(&sb, "\n\n")
+			fmt.Fprintf(&sb, "  pending  %s round %d -> planner\n\n", b.Pending.Kind, b.Pending.Round)
 		} else {
 			fmt.Fprint(&sb, "  pending  --\n\n")
 		}

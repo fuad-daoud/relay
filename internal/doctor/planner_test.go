@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/planner"
@@ -84,12 +85,12 @@ func TestDoctorPluginRow(t *testing.T) {
 
 // TestDoctorPlannerRow is the plan's required case for §4.8's third row: it
 // exists only inside a Claude Code session, and fails on a resolve miss or a
-// resolved planner with no live channel claim.
+// session with no relay mcp child process.
 func TestDoctorPlannerRow(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
 	t.Run("resolved with a live claim", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, ClaimLive: true})
+		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: true})
 		c := findCheck(Report{Checks: checks}, "", "planner")
 		if c == nil || c.Severity != SevOK {
 			t.Fatalf("planner row = %+v, want ok", c)
@@ -105,10 +106,10 @@ func TestDoctorPlannerRow(t *testing.T) {
 	})
 
 	t.Run("no live claim", func(t *testing.T) {
-		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec})
+		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true})
 		c := findCheck(Report{Checks: checks}, "", "planner")
-		if c == nil || c.Severity != SevFail {
-			t.Fatalf("planner row = %+v, want FAIL without a live claim", c)
+		if c == nil || c.Severity != SevInfo {
+			t.Fatalf("planner row = %+v, want INFO without a live claim (tools mode is not a fault)", c)
 		}
 	})
 
@@ -176,4 +177,65 @@ func TestDoctorPluginHookRow(t *testing.T) {
 			t.Fatalf("plugin hook row = %+v, want FAIL", c)
 		}
 	})
+}
+
+// TestDoctorPlannerRowNoClaimIsInfo pins D6's revision: a Claude Code planner
+// with no live channel claim is INFO, never FAIL -- tools mode gets reports by
+// background wait -- and the row carries the spec's push-upgrade text.
+func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
+	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true})
+
+	c := findCheck(Report{Checks: checks}, "", "planner")
+	if c == nil {
+		t.Fatal("the planner row is missing")
+	}
+	if c.Severity != SevInfo {
+		t.Fatalf("planner row = %v (%s), want INFO", c.Severity, c.Detail)
+	}
+	for _, want := range []string{"background wait", "dangerously-load-development-channels plugin:relay@relay", "allowedChannelPlugins"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("planner row detail %q must name %q", c.Detail, want)
+		}
+	}
+}
+
+// TestDoctorPlannerRowNoMCPChildFails pins §4.8: from a Claude Code session,
+// no relay mcp process among the planner host's children is a FAIL, because
+// nothing would ever reach the planner.
+func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
+	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, ClaimLive: true})
+
+	c := findCheck(Report{Checks: checks}, "", "planner")
+	if c == nil {
+		t.Fatal("the planner row is missing")
+	}
+	if c.Severity != SevFail {
+		t.Fatalf("planner row = %v (%s), want FAIL with no relay mcp child", c.Severity, c.Detail)
+	}
+	if c.Fix == "" {
+		t.Error("the failing planner row must carry the fix")
+	}
+}
+
+// TestHasMCPChild is the pure rule's own test: the process table is injected,
+// so no live process tree is needed.
+func TestHasMCPChild(t *testing.T) {
+	cases := []struct {
+		name     string
+		children []ChildProcess
+		want     bool
+	}{
+		{"relay mcp child", []ChildProcess{{PID: 2, Args: []string{"/usr/local/bin/relay", "mcp"}}}, true},
+		{"relay mcp with flags", []ChildProcess{{PID: 2, Args: []string{"relay", "--planner", "x", "mcp"}}}, true},
+		{"another binary", []ChildProcess{{PID: 2, Args: []string{"relay-wrapper", "mcp"}}}, false},
+		{"relay another verb", []ChildProcess{{PID: 2, Args: []string{"relay", "status"}}}, false},
+		{"no children", nil, false},
+	}
+	for _, tc := range cases {
+		if got := HasMCPChild(tc.children); got != tc.want {
+			t.Errorf("%s: HasMCPChild = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }

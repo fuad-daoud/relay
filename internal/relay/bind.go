@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote/client"
@@ -23,9 +22,8 @@ import (
 var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abandon it")
 
 // ErrNoPlannerSession is planner.ErrNoPlanner as bind, add, fork and ask
-// surface it (docs/specs/2026-09-22-drop-herdr-design.md §4.3): a hard error,
-// printed by the CLI with relay's own prefix and exit 1, whose text is the
-// fix. The pane is no longer required and is never the fallback.
+// surface it (#303 §4.3): a hard error, printed by the CLI with relay's own
+// prefix and exit 1, whose text is the fix.
 var ErrNoPlannerSession = errors.New(`no relay planner for this session. Run "relay planner init" once here, or enable the relay plugin (relay doctor).`)
 
 // resolveVerbPlanner is how bind, add, fork and ask get their planner (§4.3):
@@ -33,13 +31,11 @@ var ErrNoPlannerSession = errors.New(`no relay planner for this session. Run "re
 // ref is the caller's --planner value; "" resolves from the environment, the
 // caller's parent process and its harness session, in that order.
 //
-// planner.ErrNoPlanner becomes ErrNoPlannerSession. A Runtime with no
-// registry configured (tests, and any embedded caller that predates the
-// registry) reports no record and no error, so the verb keeps the pre-#303
-// pane-derived endpoint it used before.
+// planner.ErrNoPlanner becomes ErrNoPlannerSession, and so does a Runtime with
+// no registry configured: nothing derives a planner from a pane any more.
 func resolveVerbPlanner(rt Runtime, ref string) (planner.Record, bool, error) {
 	if rt.Planners == nil {
-		return planner.Record{}, false, nil
+		return planner.Record{}, false, ErrNoPlannerSession
 	}
 	var now time.Time
 	if rt.Now != nil {
@@ -63,11 +59,10 @@ func resolveVerbPlanner(rt Runtime, ref string) (planner.Record, bool, error) {
 }
 
 // recordEndpoint is the planner endpoint a resolved record supplies (§3.2):
-// its kind, session and transcript locator, over the pane the caller named.
-// The record's values win over anything the herdr agent list would say.
-func recordEndpoint(rec planner.Record, pane string) store.Endpoint {
+// its kind, session and transcript locator. Planner.PaneID is written by
+// nothing since #303; it stays a field only so an older bind.json loads.
+func recordEndpoint(rec planner.Record) store.Endpoint {
 	return store.Endpoint{
-		PaneID:            pane,
 		Kind:              rec.HarnessKind,
 		SessionID:         rec.SessionID,
 		TranscriptLocator: rec.TranscriptLocator,
@@ -84,12 +79,8 @@ type BindOptions struct {
 	// resolved record's id afterwards: bind sets Binding.PlannerID from it.
 	// Empty means "resolve this session's planner" (§4.3).
 	PlannerID string
-	// PlannerPane is $HERDR_PANE_ID when set. It is optional: it only fills
-	// the pane delivery path's Planner.PaneID, and the planner identity no
-	// longer comes from it.
-	PlannerPane string
-	CWD         string
-	Resume      bool
+	CWD       string
+	Resume    bool
 
 	// Rebind, with Resume, replaces a builder that is gone by resolving a
 	// candidate through policy.json order and the ledger, exactly as a
@@ -146,26 +137,11 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 		return store.Binding{}, Resolution{}, errors.New("no working directory")
 	}
 
-	plannerEP := store.Endpoint{}
-	if haveRec {
-		opts.PlannerID = rec.ID
-		plannerEP = recordEndpoint(rec, opts.PlannerPane)
-	} else {
-		// A Runtime with no planner registry: the caller's pane is still the
-		// planner identity, exactly as before #303.
-		if opts.PlannerPane == "" {
-			return store.Binding{}, Resolution{}, ErrNoPlannerSession
-		}
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-		}
-		a, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-		if !ok {
-			return store.Binding{}, Resolution{}, fmt.Errorf("no agent in planner pane %s", opts.PlannerPane)
-		}
-		plannerEP = endpointOf(a)
+	if !haveRec {
+		return store.Binding{}, Resolution{}, ErrNoPlannerSession
 	}
+	opts.PlannerID = rec.ID
+	plannerEP := recordEndpoint(rec)
 	if plannerEP.TranscriptLocator == "" {
 		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
 	}
@@ -210,7 +186,7 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //	remote, and a local one is headless.
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
-// herdr failure.
+// git or remote error.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint) (store.Binding, Resolution, error) {
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
@@ -282,8 +258,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
 		// A binding's mode is fixed at creation (#119). A local builder is a
-		// process, so herdr's agent list says nothing about it: ask the
-		// Runner. A PID has no "moved pane" ambiguity.
+		// process, so ask the Runner whether its PID is still alive: a PID
+		// has no "moved pane" ambiguity.
 		if rt.Runner == nil {
 			return store.Binding{}, Resolution{}, ErrRunnerUnavailable
 		}
@@ -312,7 +288,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 			opts.Tier = b.Tier
 		}
 		var res2 Resolution
-		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, plannerEP.PaneID)
+		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name)
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
@@ -543,7 +519,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	}
 	opts.Tier = string(tier)
 
-	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name, plannerEP.PaneID)
+	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -591,14 +567,14 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	return stored, res, nil
 }
 
-// builderAgentName composes and validates the herdr agent name for a
-// binding's builder. It runs before any pane or worktree exists, so a name
-// herdr would refuse fails as a validation error with nothing to clean up.
+// builderAgentName composes and validates the agent name for a binding's
+// builder. It runs before any worktree exists, so a name relay would refuse
+// fails as a validation error with nothing to clean up.
 func builderAgentName(name string) (string, error) {
 	agentName := name + "-builder"
-	if err := herdr.ValidateAgentName(agentName); err != nil {
+	if err := store.ValidName(agentName); err != nil {
 		return "", fmt.Errorf("builder agent name %q: %w -- use a binding name of at most %d characters",
-			agentName, err, herdr.MaxAgentNameLen-len("-builder"))
+			agentName, err, store.MaxAgentNameLen-len("-builder"))
 	}
 	return agentName, nil
 }
@@ -616,7 +592,7 @@ func builderAgentName(name string) (string, error) {
 // perform.
 //
 // The second return is the resolution, for the pick line.
-func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name, plannerPane string) (store.Endpoint, Resolution, error) {
+func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
 	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
@@ -637,16 +613,6 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 	}
 
 	return store.Endpoint{AgentName: agentName, Kind: c.Harness, Mode: store.ModeHeadless}, res, nil
-}
-
-// endpointOf projects a live herdr agent onto the store's durable endpoint
-// shape, used for both a binding's planner and an adopted builder.
-func endpointOf(a herdr.Agent) store.Endpoint {
-	return store.Endpoint{
-		PaneID:    a.PaneID,
-		SessionID: a.Session.Value,
-		Kind:      a.Kind,
-	}
 }
 
 // worktreeOutcome is what a teardown attempt decided about one binding's
@@ -721,7 +687,8 @@ type UnbindResult struct {
 	ProcessErr     string
 }
 
-// Unbind clears away one binding's state, leaving its herdr panes untouched.
+// Unbind clears away one binding's state, leaving its builder process and
+// worktree release to the paths below.
 //
 // When archive is set the binding's directory is moved aside rather than
 // deleted, which frees the name for a fresh bind while keeping log.jsonl and
@@ -786,7 +753,7 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	return res, nil
 }
 
-// SanitizeName coerces a directory name into herdr's agent-name rule.
+// SanitizeName coerces a directory name into relay's binding-name rule.
 func SanitizeName(s string) string {
 	var sb strings.Builder
 	for _, r := range strings.ToLower(s) {
@@ -805,8 +772,8 @@ func SanitizeName(s string) string {
 	if out[0] < 'a' || out[0] > 'z' {
 		out = "b" + out
 	}
-	if len(out) > 32 {
-		out = out[:32]
+	if len(out) > store.MaxAgentNameLen {
+		out = out[:store.MaxAgentNameLen]
 	}
 
 	return out

@@ -16,7 +16,7 @@ import (
 type Waiting struct {
 	Name  string    `json:"name"`            // binding
 	Round int       `json:"round"`           // b.Round as stored
-	Cause string    `json:"cause"`           // "blocked" | "halted" | "broken" | "orphaned" | "needs you"
+	Cause string    `json:"cause"`           // "blocked" | "halted" | "broken" | "needs you"
 	Line  string    `json:"line"`            // what it is waiting on, one line, <= 120 runes, never empty
 	Since time.Time `json:"since,omitempty"` // when it started waiting; zero when relay does not know
 	Hint  string    `json:"hint"`            // the relay verb that resolves it, e.g. `relay answer --name api`
@@ -63,8 +63,8 @@ func questionEntry(entries []store.LogEntry, round int) (store.LogEntry, bool) {
 // spec §4.1. Pure apart from questionOf, which the caller supplies
 // (production: questionFirstLine; tests: a map).
 //
-// ok is false for every state except needs_you, broken and orphaned, and for
-// a switchable broken binding (decision 5): that one is transient, and the
+// ok is false for every state except needs_you and broken, and for a
+// switchable broken binding (decision 5): that one is transient, and the
 // daemon is about to act on it itself.
 func WaitingOn(b store.Binding, entries []store.LogEntry, questionOf func(name string, round int) string) (Waiting, bool) {
 	switch b.State {
@@ -98,21 +98,10 @@ func WaitingOn(b store.Binding, entries []store.LogEntry, questionOf func(name s
 			return Waiting{}, false
 		}
 		d := DiagnoseBuilder(b)
-		hint := "relay status --name " + b.Name
-		if d.Identified {
-			hint = "relay bind --resume --name " + b.Name + " --rebind"
-		}
 		return Waiting{
 			Name: b.Name, Round: b.Round, Cause: "broken",
 			Line: capLine(d.Detail(b.Round), 120), Since: b.BuilderMissingSince,
-			Hint: hint,
-		}, true
-
-	case store.StateOrphaned:
-		return Waiting{
-			Name: b.Name, Round: b.Round, Cause: "orphaned",
-			Line: capLine("planner pane is gone", 120),
-			Hint: "relay bind --resume --name " + b.Name,
+			Hint: "relay bind --resume --name " + b.Name + " --rebind",
 		}, true
 
 	default:
@@ -155,8 +144,7 @@ func WaitingLine(w Waiting, now time.Time) string {
 }
 
 // WaitingOnYou lists, in Store.List order, one line per binding (other than
-// except) that is waiting on a human, per spec §4.4. Store-backed; never
-// calls herdr.
+// except) that is waiting on a human, per spec §4.4. Store-backed.
 func WaitingOnYou(rt Runtime, except string) ([]string, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {

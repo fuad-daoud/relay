@@ -16,7 +16,7 @@ const ClaimTTL = 10 * time.Second
 
 // Claim is one relay mcp process's hold on a planner's mailbox (spec
 // docs/specs/2026-09-21-planner-channel-design.md §3.2, re-keyed by planner id
-// in docs/specs/2026-09-22-drop-herdr-design.md §3.3).
+// in #303 §3.3).
 type Claim struct {
 	Planner       string    `json:"planner"`         // required; the relay planner id, e.g. "pl_abc…"
 	PID           int       `json:"pid"`             // required; > 0

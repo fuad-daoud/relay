@@ -6,10 +6,11 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// Pull returns the oldest pending payload and marks it delivered, WITHOUT
-// injecting anything. This is the path the planner uses mid-turn: the CLI
-// prints the result to stdout and the planner reads it as tool output, so it
-// can neither collide with the human's typing nor be rejected by herdr.
+// Pull returns the oldest pending payload and marks it delivered with
+// route=pull (#303 §5.4), WITHOUT pushing anything. This is the path a
+// planner uses mid-turn and the one the background wait runs after every
+// `relay wait`: the CLI prints the result to stdout and the planner reads it
+// as tool output.
 func Pull(_ context.Context, rt Runtime, name string) (string, bool, error) {
 	var (
 		payload string
@@ -26,7 +27,7 @@ func Pull(_ context.Context, rt Runtime, name string) (string, bool, error) {
 		if !ok {
 			return nil
 		}
-		if err := tx.ConfirmIndex(name, idx); err != nil {
+		if err := tx.ConfirmIndex(name, idx, "pull"); err != nil {
 			return err
 		}
 

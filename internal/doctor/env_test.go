@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func TestRealEnvHomePathAndStat(t *testing.T) {
-	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
+	env := NewEnv(store.New(t.TempDir()))
 
 	tmp := t.TempDir()
 	file := filepath.Join(tmp, "test.txt")
@@ -39,7 +38,7 @@ func TestRealEnvHomePathAndStat(t *testing.T) {
 }
 
 func TestRealEnvLookPath(t *testing.T) {
-	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
+	env := NewEnv(store.New(t.TempDir()))
 
 	// sh is standard across unix systems
 	path, err := env.LookPath("sh")
@@ -52,7 +51,7 @@ func TestRealEnvLookPath(t *testing.T) {
 }
 
 func TestRealEnvDaemonRunningWithoutDaemon(t *testing.T) {
-	env := NewEnv(herdr.NewClient("", 0), store.New(t.TempDir()))
+	env := NewEnv(store.New(t.TempDir()))
 
 	running, err := env.DaemonRunning(context.Background())
 	if err != nil {

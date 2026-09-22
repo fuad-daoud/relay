@@ -17,7 +17,7 @@ const lockFileName = ".lock"
 
 // lockAcquireLimit bounds how long a caller waits for the registry lock, the
 // way store's lockAcquireLimit bounds the state lock. A holder here does only
-// file I/O -- no subprocess, no network, no herdr -- so the wait is short and
+// file I/O -- no subprocess, no network -- so the wait is short and
 // a long one means a wedged process, not slow work.
 const lockAcquireLimit = 90 * time.Second
 

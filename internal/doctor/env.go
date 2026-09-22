@@ -8,23 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// HerdrClient represents the methods on herdr needed for doctor preflight checks.
-type HerdrClient interface {
-	Version(ctx context.Context) (string, error)
-	IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error)
-}
-
 // Env abstracts external system facts for testability.
 type Env interface {
-	// HerdrVersion returns the parsed semver of the herdr CLI.
-	HerdrVersion(ctx context.Context) (string, error)
-	// IntegrationStatus returns every target herdr knows, keyed by target name.
-	IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error)
 	// DaemonRunning reports whether a relay daemon holds the lock.
 	DaemonRunning(ctx context.Context) (bool, error)
 	// LookPath resolves an executable on PATH.
@@ -37,8 +26,8 @@ type Env interface {
 	// is never itself a check failure.
 	ReadFile(path string) ([]byte, error)
 	// BinaryVersion runs `<path> --version` and returns the first field of
-	// its trimmed stdout, so a harness with a version floor can be held to
-	// it the way herdr is (spec §4.4). path came from LookPath.
+	// its trimmed stdout, so a harness with a version floor can be held to it
+	// (spec §4.4). path came from LookPath.
 	BinaryVersion(ctx context.Context, path string) (string, error)
 	// Probe tests whether dir is writable by creating and removing a temporary file.
 	Probe(dir string) error
@@ -56,7 +45,6 @@ type Env interface {
 }
 
 type realEnv struct {
-	herdr HerdrClient
 	store *store.Store
 
 	// self is relay's own build fact. Only package main can see
@@ -66,31 +54,17 @@ type realEnv struct {
 	self release.Inputs
 }
 
-// NewEnv returns a real Env backed by the given herdr client and store.
+// NewEnv returns a real Env backed by the given store.
 //
 // self is release.Detect's Inputs for the running relay, optional because a
 // caller that never reads ReleaseState (the bind preflight) need not gather
 // it: the check then reads as "not checked" rather than guessing.
-func NewEnv(client HerdrClient, st *store.Store, self ...release.Inputs) Env {
-	env := &realEnv{herdr: client, store: st}
+func NewEnv(st *store.Store, self ...release.Inputs) Env {
+	env := &realEnv{store: st}
 	if len(self) > 0 {
 		env.self = self[0]
 	}
 	return env
-}
-
-func (e *realEnv) HerdrVersion(ctx context.Context) (string, error) {
-	if e.herdr == nil {
-		return "", os.ErrNotExist
-	}
-	return e.herdr.Version(ctx)
-}
-
-func (e *realEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
-	if e.herdr == nil {
-		return nil, os.ErrNotExist
-	}
-	return e.herdr.IntegrationStatus(ctx)
 }
 
 func (e *realEnv) DaemonRunning(ctx context.Context) (bool, error) {

@@ -24,7 +24,7 @@ import (
 const plannerPriorIDTimeout = 2 * time.Second
 
 // cmdPlanner dispatches `relay planner init|list|rename|forget`
-// (docs/specs/2026-09-22-drop-herdr-design.md §4.7). It never touches herdr:
+// (#303 §4.7). It touches no harness:
 // a planner record is relay's own identity, not a pane.
 func cmdPlanner(args []string) error {
 	const usage = `usage: relay planner init [--name N] [--kind K --session S] [--hook claude]

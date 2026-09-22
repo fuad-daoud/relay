@@ -466,7 +466,7 @@ func getBinding(ctx context.Context, q queryer, name string) (BindingRow, bool, 
 
 // PlannerBySession returns the planner row for one (harness_kind, session_id),
 // false when there is none. It is what `relay planner init` reads to reuse an
-// existing db row's id instead of minting one (docs/specs/2026-09-22-drop-herdr-design.md
+// existing db row's id instead of minting one (#303
 // §3.5) -- an error here is not a missing planner, so the two outcomes are
 // reported separately.
 func (d *DB) PlannerBySession(kind, session string) (Planner, bool, error) {

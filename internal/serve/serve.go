@@ -120,7 +120,6 @@ func (s *Server) runtime(id remote.ClientID) (relay.Runtime, error) {
 func (s *Server) runtimeAt(root string) relay.Runtime {
 	st := store.New(root)
 	return relay.Runtime{
-		Herdr:            stubHerdr{},
 		Git:              s.cfg.Git,
 		Runner:           s.cfg.Runner,
 		Store:            st,

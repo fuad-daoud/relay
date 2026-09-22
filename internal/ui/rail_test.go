@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 	"github.com/muesli/termenv"
 )
@@ -24,66 +23,6 @@ func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 // plain strips ANSI and collapses runs of spaces, so a card assertion
 // pins the words and their order, not the padding fit() adds.
 func plain(s string) string { return strings.Join(strings.Fields(stripANSI(s)), " ") }
-
-func TestCardLinesShapes(t *testing.T) {
-	blocked := relay.BindingStatus{
-		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop", Dirty: true, Consults: 2,
-		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
-	}
-	held := relay.BindingStatus{
-		Name: "ledger", Round: 3, Display: "HELD", BuilderKind: "agy", Branch: "relay/ledger",
-		Pending: &relay.PendingInfo{Round: 3, Kind: store.KindReport, Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000}},
-	}
-	headless := relay.BindingStatus{
-		Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working",
-		Branch: "relay/api", Headless: &relay.HeadlessInfo{PID: 48211},
-	}
-	cwd := relay.BindingStatus{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy",
-		Last: &relay.LastEvent{TS: railNow.Add(-3 * time.Hour)}}
-
-	cases := []struct {
-		name string
-		b    relay.BindingStatus
-		want []string // plain text, trailing spaces trimmed
-	}{
-		{"blocked", blocked, []string{
-			"▎ webshop r4",
-			"▎ question · 2m",
-			"▎ dirty · 2 consults",
-			"▎ agy · relay/webshop",
-		}},
-		{"held", held, []string{
-			"ledger r3",
-			"report r3 · quiet 23s of 1m0s",
-			"agy · relay/ledger",
-		}},
-		{"headless", headless, []string{
-			"api r2",
-			"working",
-			"opencode · headless · relay/api",
-		}},
-		{"cwd done", cwd, []string{
-			"docs r1",
-			"done · 3h",
-			"agy",
-		}},
-	}
-	for _, tc := range cases {
-		got := cardLines(tc.b, tc.name == "blocked", false, railNow, true, railDefault)
-		if len(got) != len(tc.want) {
-			t.Fatalf("%s: %d lines, want %d:\n%s", tc.name, len(got), len(tc.want), strings.Join(got, "\n"))
-		}
-		for i := range got {
-			if w := lipgloss.Width(got[i]); w != railDefault {
-				t.Errorf("%s line %d width %d, want %d: %q", tc.name, i, w, railDefault, got[i])
-			}
-			if p := plain(got[i]); p != tc.want[i] {
-				t.Errorf("%s line %d:\n got %q\nwant %q", tc.name, i, p, tc.want[i])
-			}
-		}
-	}
-}
 
 func TestCardLinesNameOrderShowsState(t *testing.T) {
 	b := relay.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}

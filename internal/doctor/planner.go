@@ -23,6 +23,34 @@ const (
 	pluginHookEvent       = "SessionStart"
 )
 
+// ChildProcess is one entry of a host process's child table: the pid and its
+// argv, as /proc/<pid>/task/*/children plus /proc/<pid>/cmdline (or `ps
+// --ppid`) report them.
+type ChildProcess struct {
+	PID  int
+	Args []string
+}
+
+// HasMCPChild reports whether any of a host process's children is a `relay
+// mcp` process (§4.8's second planner FAIL). Pure: the caller reads the OS
+// and passes the table, so the rule is testable without a live process tree.
+func HasMCPChild(children []ChildProcess) bool {
+	for _, c := range children {
+		if len(c.Args) == 0 {
+			continue
+		}
+		if base := filepath.Base(c.Args[0]); base != "relay" && base != "relay.exe" {
+			continue
+		}
+		for _, a := range c.Args[1:] {
+			if a == "mcp" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PlannerCheckInput is everything §4.8's planner rows need that doctor.Run
 // cannot read itself: it has no planner registry, no environment and no
 // working directory. cmd/relay gathers it; the rules live here.
@@ -44,6 +72,10 @@ type PlannerCheckInput struct {
 	Resolved *planner.Record
 	// ClaimLive is true when a live channel claim exists for Resolved.
 	ClaimLive bool
+	// MCPChild is true when a `relay mcp` process is a child of the
+	// planner's host process, which is how this session reaches the channel
+	// at all (§4.8). False reads as FAIL: without it, push never arrives.
+	MCPChild bool
 	// Stale names the planner records seen more than seven days ago that no
 	// live binding names.
 	Stale []string
@@ -70,12 +102,18 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 				Detail:   "no relay planner resolved for this Claude Code session",
 				Fix:      "relay planner init (or enable the relay plugin so its SessionStart hook runs)",
 			})
-		case !in.ClaimLive:
+		case !in.MCPChild:
 			checks = append(checks, Check{
 				Name:     "planner",
 				Severity: SevFail,
-				Detail:   fmt.Sprintf("planner %s (%s) has no live channel claim; relay mcp is not draining it", in.Resolved.Name, in.Resolved.ID),
-				Fix:      "restart the Claude Code session so relay mcp claims the channel",
+				Detail:   fmt.Sprintf("planner %s (%s): no relay mcp process is a child of its host process; reports never arrive", in.Resolved.Name, in.Resolved.ID),
+				Fix:      "enable the relay plugin so relay mcp starts with the session (relay doctor)",
+			})
+		case !in.ClaimLive:
+			checks = append(checks, Check{
+				Name:     "planner",
+				Severity: SevInfo,
+				Detail:   fmt.Sprintf("planner %s (%s): tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relay@relay`, or have an org admin add relay to `allowedChannelPlugins`", in.Resolved.Name, in.Resolved.ID),
 			})
 		default:
 			checks = append(checks, Check{

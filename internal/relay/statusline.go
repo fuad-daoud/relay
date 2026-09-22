@@ -111,9 +111,6 @@ func waiting(b BindingStatus) string {
 	if b.Detail != "" {
 		return b.Detail
 	}
-	if hold := HoldText(b); hold != "" {
-		return "report → planner · " + hold
-	}
 	if b.LastPayload == nil {
 		return "no plan yet"
 	}
@@ -210,7 +207,7 @@ func ShouldDrainStdin(mode os.FileMode) bool {
 }
 
 // PlannerStatus filters stored bindings to one planner id and builds rows
-// through buildReport from the store alone per spec §4.1. It never probes herdr.
+// through buildReport from the store alone per spec §4.1.
 func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (Report, error) {
 	if plannerID == "" {
 		return Report{}, nil
@@ -225,5 +222,5 @@ func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (Report, e
 			kept = append(kept, b)
 		}
 	}
-	return buildReport(ctx, rt, kept, nil, nil)
+	return buildReport(ctx, rt, kept)
 }

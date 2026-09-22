@@ -77,15 +77,35 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 	return s
 }
 
+// WaitCommand is the tools-mode background wait (#303 §4.5), rendered
+// exactly as the model must run it: with run_in_background, ending its turn,
+// while the round runs. budget is the binding's round budget in a form
+// `relay wait --timeout` accepts.
+func WaitCommand(name, budget string) string {
+	return "background wait (run with run_in_background, then end your turn):\n" +
+		"  relay wait --name " + name + " --timeout " + budget + "; relay pull --name " + name
+}
+
+// appendWaitCommand appends the background-wait block to a tool result's
+// text, so the result ends with the command. A result with no text, or no
+// budget to wait for, is returned unchanged.
+func appendWaitCommand(r ToolResult, name, budget string) ToolResult {
+	if budget == "" || len(r.Content) == 0 {
+		return r
+	}
+	r.Content[0].Text += "\n\n" + WaitCommand(name, budget)
+	return r
+}
+
 // Tools is the tools/list document: status, send, done, in that order.
 func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
 			Name:        "status",
-			Description: "One binding, or every binding on this pane, or (all: true) every binding relay knows about. Calls relay.Status.",
+			Description: "One binding, or every binding on this planner, or (all: true) every binding relay knows about. Calls relay.Status.",
 			InputSchema: schemaObject(nil, map[string]any{
 				"name": map[string]any{"type": "string", "description": "show only this binding"},
-				"all":  map[string]any{"type": "boolean", "description": "include every binding relay knows about, not just this pane's"},
+				"all":  map[string]any{"type": "boolean", "description": "include every binding relay knows about, not just this planner's"},
 			}),
 		},
 		{

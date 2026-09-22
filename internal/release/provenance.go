@@ -23,7 +23,8 @@ type Inputs struct {
 	// read it -- it records where ManifestVersion was read from, so a caller
 	// can see at a glance which directory the classification is about.
 	ExeDir string
-	// ManifestVersion is the version in ExeDir/herdr-plugin.toml, "" when
+	// ManifestVersion is the version in the plugin manifest beside the
+	// executable, "" when
 	// that file is absent -- the marker of a plugin install, since both
 	// plugin variants leave ./relay beside the manifest.
 	ManifestVersion string

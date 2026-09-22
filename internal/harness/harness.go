@@ -32,26 +32,6 @@ type RoleSpec struct {
 	Definitions []string
 }
 
-// SubAgentVisibility records what `herdr agent list` shows while a builder
-// of this kind is running a sub-agent. It is a property of the harness and
-// herdr's integration for it, observed live; the observation behind each
-// value is recorded on the knownHarnesses entry that carries it. relay
-// reports what herdr reports, and this says how much that covers.
-type SubAgentVisibility string
-
-const (
-	// SubAgentsSeparate: a sub-agent is a separate herdr agent in its own
-	// pane. ForeignAgents reports it as a foreign row.
-	SubAgentsSeparate SubAgentVisibility = "separate"
-	// SubAgentsForeground: a sub-agent takes over the builder pane's session
-	// slot. herdr lists no extra agent; relay's name match keeps the builder
-	// known (#66) but has nothing to report for the sub-agent.
-	SubAgentsForeground SubAgentVisibility = "foreground"
-	// SubAgentsHidden: a sub-agent runs inside the builder's process and
-	// herdr lists only the pane. Nothing observable.
-	SubAgentsHidden SubAgentVisibility = "hidden"
-)
-
 // roleTable defines relay's built-in roles: a role is relay's name for a job
 // (builder, reviewer), with a shape relay's loop depends on and the harness
 // agent definition that implements it. The candidate that runs it is a separate
@@ -109,13 +89,13 @@ type Role struct {
 	ExpectModel string
 }
 
-// Harness describes how one herdr agent kind appears on the local machine.
+// Harness describes how one harness kind is started and checked on the local
+// machine.
 // Harness is not comparable: Roles is a slice, so use reflect.DeepEqual rather
 // than == on two Harness values.
 type Harness struct {
-	Kind        string // herdr agent kind, as passed to `herdr agent start --kind`
-	Binary      string // executable name looked up on PATH
-	Integration string // herdr integration target; "" when the harness has none
+	Kind   string // harness kind, as passed to the harness's own agent selector
+	Binary string // executable name looked up on PATH
 	// Roles are the definitions relay ships for this kind, ordered with
 	// plan-executor first so doctor reports the role relay's loop depends on
 	// before the rest. Never empty for a known kind: every kind relay runs
@@ -128,10 +108,6 @@ type Harness struct {
 	// unchecked. agy's floor is the release that added Markdown agent
 	// definitions, without which --agent has nothing to select.
 	MinVersion string
-	// SubAgents is what herdr shows for this kind's sub-agents. Never "" on
-	// a known kind; TestSubAgentsSetOnEveryKind enforces it. The status layer
-	// prints a coverage row for anything but SubAgentsSeparate.
-	SubAgents SubAgentVisibility
 	// LimitPatterns are default regexes for the text this harness prints when
 	// its provider closes the session on quota. Every default must compile;
 	// TestLimitPatternsSetOnEveryKind enforces it. Case-insensitivity is
@@ -148,15 +124,9 @@ type Harness struct {
 
 var knownHarnesses = map[string]Harness{
 	"agy": {
-		Kind:        "agy",
-		Binary:      "agy",
-		Integration: "antigravity-cli",
-		MinVersion:  "1.1.6",
-		// Observed 2026-09-11, herdr 0.9.0, antigravity-cli integration (#66):
-		// while a builder waits on a sub-agent, `herdr agent list` returns the
-		// sub-agent's session id on the builder's pane and no extra agent.
-		// The integration reports whichever agy session is in the foreground.
-		SubAgents: SubAgentsForeground,
+		Kind:       "agy",
+		Binary:     "agy",
+		MinVersion: "1.1.6",
 		// Observed 2026-09-12 in history.json ("Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.");
 		// the others from Google API error strings, unverified against a pane; replace with the observed line when one is seen.
 		LimitPatterns: []string{
@@ -178,13 +148,8 @@ var knownHarnesses = map[string]Harness{
 		},
 	},
 	"claude": {
-		Kind:        "claude",
-		Binary:      "claude",
-		Integration: "claude",
-		// Observed 2026-09-10, herdr 0.9.0, claude integration: a researcher
-		// dispatched by a plan-executor surfaced as its own herdr pane and was
-		// reported as a foreign row (foreign-agent spec §7.2).
-		SubAgents: SubAgentsSeparate,
+		Kind:   "claude",
+		Binary: "claude",
 		// Claude Code's own limit banner and API error text; unverified against a pane; replace with the observed line when one is seen.
 		LimitPatterns: []string{
 			`(?i)you've hit your .*limit`,
@@ -206,17 +171,8 @@ var knownHarnesses = map[string]Harness{
 		},
 	},
 	"opencode": {
-		Kind:        "opencode",
-		Binary:      "opencode",
-		Integration: "opencode",
-		// Observed 2026-09-10, herdr 0.9.0, opencode integration v11: a
-		// researcher dispatched by a plan-executor rendered as a card inside
-		// the builder's TUI; `herdr agent list` showed no extra agent. Stable
-		// by design: the integration (herdr-agent-state.js) tracks child
-		// sessions by parentID and folds them into the pane's root session so
-		// they "cannot replace the pane's root session"; only a child's
-		// permission/question prompt bubbles up, as the root's blocked state.
-		SubAgents: SubAgentsHidden,
+		Kind:   "opencode",
+		Binary: "opencode",
 		// OpenRouter 429/402 bodies and the Google strings opencode relays; unverified against a pane; replace with the observed line when one is seen.
 		LimitPatterns: []string{
 			`(?i)rate.?limit(ed)? (reached|exceeded)`,
@@ -237,14 +193,9 @@ var knownHarnesses = map[string]Harness{
 		},
 	},
 	"codex": {
-		Kind:        "codex",
-		Binary:      "codex",
-		Integration: "codex",
-		MinVersion:  "0.155.0",
-		// Observed 2026-09-19, codex-cli 0.155.1: a spawned [agents.*] role is
-		// a thread inside the same `codex exec` process, reported on the
-		// parent's stream as collab_tool_call items; herdr sees one pane.
-		SubAgents: SubAgentsHidden,
+		Kind:       "codex",
+		Binary:     "codex",
+		MinVersion: "0.155.0",
 		// Codex CLI limit text and OpenAI 429 bodies; unverified against a pane; replace with the observed line when one is seen.
 		LimitPatterns: []string{
 			`(?i)usage limit`,
