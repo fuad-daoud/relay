@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestPrefsRoundTrip(t *testing.T) {
@@ -100,5 +102,20 @@ func TestPrefsDashboardRoundTrip(t *testing.T) {
 	}
 	if p := m.prefs(); p.Dashboard != want.Dashboard || p.DashboardSort != want.DashboardSort {
 		t.Errorf("prefs() = %+v, want the dashboard fields kept", p)
+	}
+}
+
+func TestChangesSaveWhenAPathIsSet(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
+	for _, r := range []rune{'s', 'c', '>'} {
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if cmd == nil {
+			t.Errorf("%q must return a save command", r)
+		}
+	}
+	m.opts.PrefsPath = ""
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Error("no path: no save command")
 	}
 }

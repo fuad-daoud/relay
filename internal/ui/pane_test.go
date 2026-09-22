@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
@@ -19,6 +20,66 @@ func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
 	m.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
 		vp: viewport.New(m.paneWidth(), m.viewportHeight())}
 	return m
+}
+
+func TestPaneHeadRows(t *testing.T) {
+	b := relay.BindingStatus{
+		Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
+		Branch: "relay/webshop", Dirty: true,
+		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
+		Last:      &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
+	}
+	m := paneModel(t, b, tabReport)
+	head := m.paneHead(&b)
+	if len(head) != paneHeadRows {
+		t.Fatalf("%d head rows, want %d:\n%s", len(head), paneHeadRows, strings.Join(head, "\n"))
+	}
+	want := []string{
+		"webshop  round 4   NEEDS YOU ",
+		"planner  architect-1",
+		"builder  agy",
+		"tree     relay/webshop · dirty · last close r3: 2 commits, clean",
+	}
+	for i, w := range want {
+		if got := stripANSI(head[i]); !strings.HasPrefix(got, w) {
+			t.Errorf("head[%d]:\n got %q\nwant prefix %q", i, got, w)
+		}
+	}
+	if got := stripANSI(head[1]); !strings.Contains(got, "route channel") {
+		t.Errorf("planner row must name the name and the route: %q", got)
+	}
+	if got := stripANSI(head[2]); !strings.Contains(got, "blocked · 2 consults") {
+		t.Errorf("builder row = %q", got)
+	}
+	if !strings.Contains(stripANSI(head[0]), "question r4 · 2m ago") {
+		t.Errorf("title row lacks the last event: %q", stripANSI(head[0]))
+	}
+
+	oneCommit := relay.BindingStatus{
+		Name: "ledger", Round: 2, Display: "ACTIVE",
+		LastClose: &relay.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
+	}
+	if got := stripANSI(m.paneHead(&oneCommit)[3]); !strings.Contains(got, "last close r1: 1 commit, dirty") {
+		t.Errorf("one-commit tree row = %q", got)
+	}
+}
+
+func TestPaneHeadHeadlessAndCwd(t *testing.T) {
+	b := relay.BindingStatus{
+		Name: "api", Round: 2, Display: "ACTIVE", CWD: "/home/x/api",
+		BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
+		Headless: &relay.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
+	}
+	m := paneModel(t, b, tabReport)
+	head := m.paneHead(&b)
+	if got := stripANSI(head[2]); !strings.Contains(got, "pid 48211 since") || !strings.Contains(got, "`opencode-1`") {
+		t.Errorf("builder row = %q", got)
+	}
+	if got := stripANSI(head[3]); !strings.HasPrefix(got, "tree     /home/x/api") {
+		t.Errorf("--cwd tree row = %q", got)
+	}
 }
 
 func TestTabBarWordsAndUnderline(t *testing.T) {
@@ -80,6 +141,56 @@ func TestDiffStatAndColour(t *testing.T) {
 	}
 }
 
+func TestSourceLinePerTab(t *testing.T) {
+	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	m := paneModel(t, b, tabReport)
+	m.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
+	if got := stripANSI(m.sourceLine()); got != "report r2 · 13:02" {
+		t.Errorf("report source = %q", got)
+	}
+	m.detail.active = tabTerminal
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second)}
+	if got := stripANSI(m.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
+		t.Errorf("terminal source = %q", got)
+	}
+	b.Headless = &relay.HeadlessInfo{LogPath: "/x/002-builder.log"}
+	m.report = relay.Report{Bindings: []relay.BindingStatus{b}}
+	m.detail.headless = true
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+		transcript: true, logName: "002-builder.log"}
+	m.detail.follow = true
+	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · following" {
+		t.Errorf("headless following source = %q", got)
+	}
+	m.detail.follow = false
+	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · scrolled" {
+		t.Errorf("headless scrolled source = %q", got)
+	}
+	m.detail.headless = false
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+		transcript: true, logName: "002-builder.log"}
+	m.detail.follow = true
+	if got := stripANSI(m.sourceLine()); got != "pane · 002-builder.log · 3 lines · following" {
+		t.Errorf("pane transcript source = %q", got)
+	}
+	m.detail.follow = false
+	m.detail.active = tabDiff
+	m.detail.cache[tabDiff] = tabContent{loaded: true, body: "diff --git a/x b/x\n+a\n-b\n"}
+	if got := stripANSI(m.sourceLine()); got != "round 2 · 1 file · +1 −1" {
+		t.Errorf("diff source = %q", got)
+	}
+	m.detail.active = tabLog
+	m.detail.cache[tabLog] = tabContent{loaded: true, body: "e1\ne2"}
+	if got := stripANSI(m.sourceLine()); got != "2 entries" {
+		t.Errorf("log source = %q", got)
+	}
+	m.detail.active = tabReport
+	m.detail.cache[tabReport] = tabContent{}
+	if got := stripANSI(m.sourceLine()); got != "loading…" {
+		t.Errorf("unloaded source = %q", got)
+	}
+}
+
 func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
@@ -100,6 +211,27 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 	b.Waiting = nil
 	if _, ok := m.hintLine(&b); ok {
 		t.Error("hint must not show without Waiting")
+	}
+}
+
+func TestPaneViewRowsAndWidth(t *testing.T) {
+	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
+	m := paneModel(t, b, tabTerminal)
+	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
+	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal], false))
+	view := m.paneView(m.paneWidth())
+	lines := strings.Split(view, "\n")
+	if len(lines) != m.bodyRows() {
+		t.Fatalf("%d pane rows, want bodyRows %d", len(lines), m.bodyRows())
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > m.paneWidth() {
+			t.Errorf("row %d is %d wide, pane is %d: %q", i, w, m.paneWidth(), stripANSI(l))
+		}
+	}
+	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relay: relay answer") {
+		t.Errorf("last pane row must be the hint, got %q", got)
 	}
 }
 
