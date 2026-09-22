@@ -64,6 +64,16 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 // unserialised both could deliver the same payload, and Reconcile needs this
 // step inside the same lock as the rest of one binding's advance.
 func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, Delivery, error) {
+	if rt.Channels != nil {
+		c, err := rt.Channels.Live(b.Planner.PaneID, rt.Now())
+		if err != nil {
+			return b, Delivery{}, fmt.Errorf("channel claim: %w", err)
+		}
+		if c != nil {
+			return clearPlannerScreen(b), Delivery{Reason: "planner has a channel"}, nil
+		}
+	}
+
 	planner, ok := FindAgent(agents, b.Planner)
 	if !ok {
 		return clearPlannerScreen(b), Delivery{PlannerGone: true, Reason: "planner session is gone"}, nil

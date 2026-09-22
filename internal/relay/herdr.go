@@ -195,6 +195,12 @@ type Runtime struct {
 	// startRound fills in the per-round unit name. Nil means no scopes
 	// (the local daemon, CI, or a server whose scope probe failed).
 	Scope *ScopeSpec
+
+	// Channels arbitrates a planner pane's mailbox between the daemon and a
+	// live `relay mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
+	// Nil means no claims exist, so DeliverPending behaves exactly as before;
+	// cmd/relay wires relay.FileClaims{Root: st.ChannelsDir()}.
+	Channels ClaimStore
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

@@ -10,6 +10,24 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// fakeClaimStore is the map-backed ClaimStore the plan asks for: a claim
+// present for a pane means live, absent means not.
+type fakeClaimStore map[string]*Claim
+
+func (f fakeClaimStore) Live(pane string, now time.Time) (*Claim, error) {
+	return f[pane], nil
+}
+
+func (f fakeClaimStore) Write(c Claim, now time.Time) error {
+	f[c.Pane] = &c
+	return nil
+}
+
+func (f fakeClaimStore) Remove(pane string, pid int) error {
+	delete(f, pane)
+	return nil
+}
+
 func queuedBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := seedBound(t, f)
@@ -241,6 +259,67 @@ func TestDeliverReportsPlannerGone(t *testing.T) {
 	}
 	if !got.PlannerGone {
 		t.Fatalf("want PlannerGone, got %+v", got)
+	}
+}
+
+// TestDeliverYieldsToLiveClaim is the daemon-guard test the plan requires:
+// a live claim on the planner's pane must produce an all-false Delivery,
+// with zero prompts, zero notifies, the entry still pending, and the
+// binding's State left untouched. Commenting out the guard in DeliverPending
+// makes this fail on the prompt count (verified by hand per the plan's step
+// 2 instructions).
+func TestDeliverYieldsToLiveClaim(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+	f.notices = nil
+
+	claims := fakeClaimStore{b.Planner.PaneID: &Claim{Pane: b.Planner.PaneID, PID: 1, SeenAt: rt.Now()}}
+	rt.Channels = claims
+	wantState := b.State
+
+	next, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if got.Delivered || got.Held || got.PlannerGone || got.Empty {
+		t.Fatalf("want an all-false Delivery, got %+v", got)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("a live claim must not prompt, got %+v", f.prompts)
+	}
+	if len(f.notices) != 0 {
+		t.Errorf("a live claim must not notify, got %+v", f.notices)
+	}
+	if next.State != wantState {
+		t.Errorf("State = %q, want unchanged %q", next.State, wantState)
+	}
+	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || !pending {
+		t.Errorf("the entry must stay pending: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestDeliverIgnoresStaleClaim proves the guard is inert when the claim
+// store answers "not live" (or knows nothing about the pane): delivery
+// proceeds exactly as it did before the channel existed.
+func TestDeliverIgnoresStaleClaim(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+
+	rt.Channels = fakeClaimStore{} // no entry for this pane: Live returns nil, nil
+
+	_, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.Delivered {
+		t.Fatalf("want delivered as before, got %+v", got)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts = %+v, want one", f.prompts)
 	}
 }
 

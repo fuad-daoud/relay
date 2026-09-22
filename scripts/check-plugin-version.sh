@@ -1,6 +1,8 @@
 #!/bin/sh
 # Verifies plugin manifest versions and drift:
-# 1. herdr-plugin.toml and from-source/herdr-plugin.toml must exist and agree.
+# 1. herdr-plugin.toml, from-source/herdr-plugin.toml, the Claude Code plugin
+#    manifest (claude-plugin/.claude-plugin/plugin.json), and the marketplace
+#    manifest (.claude-plugin/marketplace.json) must exist and agree.
 # 2. When passed a tag argument, the tag version must match the manifests.
 # 3. First-parent feat commits since the manifest tag must not exceed max_feat_drift.
 # The release commit itself passes because the tag does not exist yet when make release runs make check.
@@ -12,38 +14,63 @@ max_feat_drift=10
 
 m1="herdr-plugin.toml"
 m2="from-source/herdr-plugin.toml"
+m3="claude-plugin/.claude-plugin/plugin.json"
+m4=".claude-plugin/marketplace.json"
 
 if [ $# -gt 1 ]; then
 	echo "usage: check-plugin-version.sh [tag]" >&2
 	exit 1
 fi
 
-if [ ! -f "$m1" ]; then
-	echo "check-plugin-version: missing manifest $m1" >&2
-	exit 1
-fi
+# extract_version prints one manifest's version string: herdr-plugin.toml's
+# `version = "x"` line, or a JSON manifest's "version": "x" field --
+# plugin.json carries it at the top level, marketplace.json inside its one
+# plugins[] entry, so the first match in the file is always the one meant.
+extract_version() {
+	v=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$1")
+	if [ -z "$v" ]; then
+		v=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$1" | head -n1 | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+	fi
+	printf '%s' "$v"
+}
 
-if [ ! -f "$m2" ]; then
-	echo "check-plugin-version: missing manifest $m2" >&2
-	exit 1
-fi
+for m in "$m1" "$m2" "$m3" "$m4"; do
+	if [ ! -f "$m" ]; then
+		echo "check-plugin-version: missing manifest $m" >&2
+		exit 1
+	fi
+done
 
-v1=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$m1")
+v1=$(extract_version "$m1")
 if [ -z "$v1" ]; then
 	echo "check-plugin-version: missing or unparseable version in $m1" >&2
 	exit 1
 fi
 
-v2=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$m2")
+v2=$(extract_version "$m2")
 if [ -z "$v2" ]; then
 	echo "check-plugin-version: missing or unparseable version in $m2" >&2
 	exit 1
 fi
 
-if [ "$v1" != "$v2" ]; then
+v3=$(extract_version "$m3")
+if [ -z "$v3" ]; then
+	echo "check-plugin-version: missing or unparseable version in $m3" >&2
+	exit 1
+fi
+
+v4=$(extract_version "$m4")
+if [ -z "$v4" ]; then
+	echo "check-plugin-version: missing or unparseable version in $m4" >&2
+	exit 1
+fi
+
+if [ "$v1" != "$v2" ] || [ "$v1" != "$v3" ] || [ "$v1" != "$v4" ]; then
 	echo "check-plugin-version: manifest versions disagree:" >&2
 	echo "  $m1: $v1" >&2
 	echo "  $m2: $v2" >&2
+	echo "  $m3: $v3" >&2
+	echo "  $m4: $v4" >&2
 	exit 1
 fi
 
@@ -55,6 +82,8 @@ if [ $# -eq 1 ]; then
 		echo "  tag '$tag' (version '$tag_version')" >&2
 		echo "  $m1: $v1" >&2
 		echo "  $m2: $v2" >&2
+		echo "  $m3: $v3" >&2
+		echo "  $m4: $v4" >&2
 		exit 1
 	fi
 fi
@@ -70,4 +99,3 @@ if [ "$n" -gt "$max_feat_drift" ]; then
 	echo "check-plugin-version: $n feat commits since $tag (limit $max_feat_drift); cut a release: make release VERSION=<next>" >&2
 	exit 1
 fi
-

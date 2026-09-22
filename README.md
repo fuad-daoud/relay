@@ -2235,6 +2235,43 @@ cannot work without. The tree still cross-compiles for `windows/amd64` (CI
 checks it), and relay will refuse at runtime with a clear error rather than
 running without a state lock.
 
+## Claude Code plugin
+
+A Claude Code planner can attach relay as an MCP server instead of running
+`relay wait` in a loop:
+
+    /plugin marketplace add fuad-daoud/relay
+    /plugin install relay@relay
+
+That installs `relay mcp` as an MCP server (`relay` from `PATH`, like the
+daemon service). Launch with the channel research preview enabled so the
+`status`, `send`, `answer`, `done` tools are joined by pushed events instead
+of typed pane injection:
+
+    claude --agent architect --model opus --dangerously-load-development-channels plugin:relay@relay
+
+Two modes, detected automatically from how Claude Code was launched
+(`relay mcp --mode channel|tools` overrides the detection):
+
+- **channel mode** (`--channels` or `--dangerously-load-development-channels`
+  on the command line): `relay mcp` claims this pane's mailbox, so the
+  daemon yields to it, and drains the mailbox once a second -- every report,
+  consult answer, ask result and edge artifact arrives as a
+  `<channel source="relay">` event the moment the daemon has it, and
+  `needs_you`, `broken`, `orphaned` arrive once each per episode. HELD never
+  happens for a planner in this mode.
+- **tools mode** (neither flag; a plain `claude` launch): the four tools
+  work, but nothing is pushed -- reports still arrive by being typed into
+  the pane, exactly as without the plugin. `relay mcp` writes no claim in
+  this mode, so pane delivery is never blocked by a channel that cannot
+  receive anything.
+
+A dead or absent `relay mcp` degrades to pane delivery within one daemon
+tick either way: the mailbox stays pending until confirmed, so nothing is
+lost.
+
+See `docs/specs/2026-09-21-planner-channel-design.md` for the full mechanism.
+
 ## Design
 
 [`docs/design.md`](docs/design.md) is the architecture document written before

@@ -6,12 +6,18 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Build a fake repo root with two manifests at the given versions.
+# Build a fake repo root with all four manifests at the given versions.
+# $3 (plugin.json) and $4 (marketplace.json) default to $1 so every existing
+# two-argument caller keeps agreeing across all four manifests.
 stage() {
+	v3=${3:-$1}
+	v4=${4:-$1}
 	rm -rf "$work/repo"
-	mkdir -p "$work/repo/from-source"
+	mkdir -p "$work/repo/from-source" "$work/repo/claude-plugin/.claude-plugin" "$work/repo/.claude-plugin"
 	printf 'id = "x"\nversion = "%s"\n' "$1" > "$work/repo/herdr-plugin.toml"
 	printf 'id = "x"\nversion = "%s"\n' "$2" > "$work/repo/from-source/herdr-plugin.toml"
+	printf '{"name": "relay", "version": "%s"}\n' "$v3" > "$work/repo/claude-plugin/.claude-plugin/plugin.json"
+	printf '{"name": "relay", "plugins": [{"name": "relay", "version": "%s"}]}\n' "$v4" > "$work/repo/.claude-plugin/marketplace.json"
 	cp "$here/check-plugin-version.sh" "$work/repo/"
 }
 
@@ -53,6 +59,12 @@ check "agreeing manifests, mismatched tag" 1 v9.9.9
 stage 1.2.3 4.5.6
 check "disagreeing manifests, no tag" 1
 check "disagreeing manifests, matching tag" 1 v1.2.3
+
+stage 1.2.3 1.2.3 9.9.9 1.2.3
+check "plugin.json version disagrees" 1
+
+stage 1.2.3 1.2.3 1.2.3 9.9.9
+check "marketplace.json version disagrees" 1
 
 stage_repo 1.2.3 10
 check "drift at the limit" 0
