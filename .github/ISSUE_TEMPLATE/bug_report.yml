@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing: relay only drives herdr. If the pane, the agent, or
-        `herdr agent list` itself is wrong, it is probably a herdr issue.
+        Before filing: relay only runs the builder harness. If the agent
+        itself misbehaves inside its own run, it is probably a harness issue.
 
   - type: textarea
     id: what-happened
@@ -35,12 +35,10 @@ body:
       required: true
 
   - type: input
-    id: herdr-version
+    id: harness-version
     attributes:
-      label: herdr version
-      description: Output of `herdr --version`.
-    validations:
-      required: true
+      label: Harness and version
+      description: The builder harness involved and its version (e.g. `claude --version`).
 
   - type: input
     id: platform

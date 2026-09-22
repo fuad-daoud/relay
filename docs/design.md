@@ -6,6 +6,15 @@ built, kept because it explains *why* the pieces are shaped the way they are.
 It is not maintained against the code — where the two disagree, the code and
 the README are right.
 
+**Superseded on its central premise (#303).** This design is built on herdr:
+builders in panes, delivery by typing into the planner's pane, the anti-clobber
+rule, screen scraping, dialog answering by send-keys. relay no longer has any
+herdr integration. Builders are headless processes (local, or remote under
+`relay serve`), and reports reach the planner over the MCP channel
+(`relay mcp`) or `relay wait` / `relay pull`. What survives from this document
+is the file protocol (`NNN-plan.md`, `NNN-report.md`, `NNN-done`), the round
+log, "relay makes no judgements", and one writer per working tree.
+
 ## Problem
 
 Work is split across two agents in two panes. A **planner** (architect role: `planner`,
