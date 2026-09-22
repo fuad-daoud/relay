@@ -1568,3 +1568,235 @@ func TestStatusRemoteRowUnknownStatus(t *testing.T) {
 //
 // Mutation check: drop queueText's format string (or the RemoteQueue
 // branch in statusRow) and this test fails.
+func TestStatusJSONForkProvenance(t *testing.T) {
+	rt, b := sentBinding(t)
+
+	// 1. Ordinary binding: forked_from and forked_at_round must be omitted from JSON
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	humanBefore := RenderStatus(rep)
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	row := decoded["bindings"].([]any)[0].(map[string]any)
+	if _, ok := row["forked_from"]; ok {
+		t.Errorf("ordinary binding must omit forked_from: %+v", row)
+	}
+	if _, ok := row["forked_at_round"]; ok {
+		t.Errorf("ordinary binding must omit forked_at_round: %+v", row)
+	}
+
+	// 2. Forked binding: forked_from and forked_at_round must be present in JSON
+	b.ForkedFrom = "source"
+	b.ForkedAtRound = 2
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	repFork, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status fork: %v", err)
+	}
+	humanAfter := RenderStatus(repFork)
+
+	// RenderStatus human output must be byte-identical
+	if humanBefore != humanAfter {
+		t.Errorf("RenderStatus human output changed for fork:\nbefore:\n%s\nafter:\n%s", humanBefore, humanAfter)
+	}
+
+	rawFork, err := json.Marshal(repFork)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decodedFork map[string]any
+	if err := json.Unmarshal(rawFork, &decodedFork); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	rowFork := decodedFork["bindings"].([]any)[0].(map[string]any)
+	if got, ok := rowFork["forked_from"].(string); !ok || got != "source" {
+		t.Errorf("forked_from = %v, want 'source'", rowFork["forked_from"])
+	}
+	if got, ok := rowFork["forked_at_round"].(float64); !ok || got != 2 {
+		t.Errorf("forked_at_round = %v, want 2", rowFork["forked_at_round"])
+	}
+}
+
+func TestStatusLastCloseAndDirty(t *testing.T) {
+	t.Run("dirty close, next round not sent", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "dirty", 0)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Round != 1 || got.LastClose.Tree != "dirty" || got.LastClose.Commits != 0 {
+			t.Fatalf("LastClose = %+v, want round 1, dirty, 0 commits", got.LastClose)
+		}
+		if !got.Dirty {
+			t.Error("Dirty = false, want true")
+		}
+	})
+
+	t.Run("clean close", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "clean", 3)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "clean" || got.LastClose.Commits != 3 {
+			t.Fatalf("LastClose = %+v, want clean, 3 commits", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true, want false")
+		}
+	})
+
+	t.Run("dirty close but the next round is sent", func(t *testing.T) {
+		rt, b := seedClosedRound(t, "dirty", 0)
+		b.RoundStartedAt = time.Now().UTC()
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "dirty" {
+			t.Fatalf("LastClose = %+v, want dirty", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true while a round is running, want false")
+		}
+	})
+
+	t.Run("pre-field diff entry", func(t *testing.T) {
+		rt, _ := seedClosedRound(t, "", 0)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		got := rep.Bindings[0]
+		if got.LastClose == nil || got.LastClose.Tree != "" {
+			t.Fatalf("LastClose = %+v, want present with unknown tree", got.LastClose)
+		}
+		if got.Dirty {
+			t.Error("Dirty = true for an unknown tree, want false")
+		}
+	})
+
+	t.Run("no diff entry", func(t *testing.T) {
+		rt, _ := sentBinding(t)
+		rep, err := Status(context.Background(), rt)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if got := rep.Bindings[0]; got.LastClose != nil || got.Dirty {
+			t.Errorf("LastClose = %+v, Dirty = %v; want nil, false", got.LastClose, got.Dirty)
+		}
+	})
+}
+
+func TestStatusReportsLastSeq(t *testing.T) {
+	rt := newRuntime(t)
+	withLog := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
+	without := store.Binding{Name: "empty", CWD: "/repo2", Round: 1, State: store.StateActive}
+	for _, b := range []store.Binding{withLog, without} {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save %s: %v", b.Name, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if err := rt.Store.AppendLog(withLog.Name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+		}); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	byName := map[string]BindingStatus{}
+	for _, row := range rep.Bindings {
+		byName[row.Name] = row
+	}
+	if got := byName[withLog.Name].LastSeq; got != 3 {
+		t.Errorf("webshop LastSeq = %d, want 3", got)
+	}
+	if got := byName[without.Name].LastSeq; got != 0 {
+		t.Errorf("empty LastSeq = %d, want 0", got)
+	}
+
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"last_seq":3`) {
+		t.Errorf("status JSON does not carry last_seq 3: %s", data)
+	}
+}
+
+// TestDisplayStatePaused: a paused binding shows as PAUSED, after ACTIVE and
+// before DONE.
+
+func TestStatusRowQueuedText(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	b.Builder.RemoteStatus = "queued"
+	b.Builder.RemoteQueue = &store.QueueFacts{
+		Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: baseTime.Add(-4 * time.Minute),
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := "queued (3/3 busy on contabo, 2 ahead, 4m)"
+	if got := rep.Bindings[0].BuilderStatus; got != want {
+		t.Fatalf("BuilderStatus = %q, want %q", got, want)
+	}
+
+	// Nil facts (accepted but not yet reported) fall back to the bare word.
+	st2 := store.New(t.TempDir())
+	b2 := remoteBinding("contabo")
+	b2.Builder.RemoteStatus = "queued"
+	if err := st2.Save(b2); err != nil {
+		t.Fatal(err)
+	}
+	rt2 := Runtime{Store: st2, Now: func() time.Time { return baseTime }}
+	rep2, err := Status(context.Background(), rt2)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := rep2.Bindings[0].BuilderStatus; got != "queued" {
+		t.Fatalf("BuilderStatus with no facts = %q, want %q", got, "queued")
+	}
+}
+
+// TestStatusDegradesWhenHerdrUnreachable pins the degrade contract (#, spec
+// §7.4): a failed ListAgents must not fail the report. The report carries
+// every row, carries the herdr error as data, and marks every pane endpoint
+// it could not look up as unknown -- not gone, because relay did not ask
+// and must not claim absence.
+// TestStatusHerdrErrorEmptyOnSuccess pins that an *answered* lookup -- even
+// an answered empty agent list -- leaves HerdrError empty and the absent
+// word gone, not unknown.
+// TestRenderStatusHerdrHeader pins the `relay status` header: a report that
+// carried a herdr error opens with the unreachable line, then the ordinary
+// body; a report that did not renders byte-identical to today.
