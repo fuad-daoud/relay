@@ -77,7 +77,6 @@ Commands:
   edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relay edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
-  reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
   mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
@@ -317,8 +316,6 @@ func run(args []string) error {
 		return cmdUnbind(args[1:])
 	case "gc":
 		return cmdGC(args[1:])
-	case "reap":
-		return cmdReap(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
@@ -634,6 +631,20 @@ func headlessNoOpLines(headless bool) []string {
 		return nil
 	}
 	return []string{headlessFlagNote}
+}
+
+// askHeadlessFlagNote is what `relay ask --headless` prints: every consult is
+// headless since #303, so the flag is accepted and ignored.
+const askHeadlessFlagNote = "relay: --headless is the default and only consult mode; the flag is ignored"
+
+// askHeadlessNoOpLines is what ask prints to stderr when --headless is
+// passed. Pure, so the rule is testable without running a subcommand that
+// reaches herdr.
+func askHeadlessNoOpLines(headless bool) []string {
+	if !headless {
+		return nil
+	}
+	return []string{askHeadlessFlagNote}
 }
 
 // printHeadlessNoOp prints headlessNoOpLines to stderr.
@@ -1259,95 +1270,6 @@ func cmdGC(args []string) error {
 	return nil
 }
 
-// workspaceOrEnv resolves the workspace a new consult tab opens in: the
-// explicit --workspace flag wins, otherwise the planner's own workspace, the
-// same environment variable bind, fork and add already read. Empty is a valid
-// answer -- CreateTab omits --workspace entirely for it.
-func workspaceOrEnv(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	return os.Getenv("HERDR_WORKSPACE_ID")
-}
-
-// reapFlags is the parsed command line of `relay reap`.
-type reapFlags struct {
-	all    bool
-	name   string
-	dryRun bool
-}
-
-// parseReapFlags exists so the wiring between what the user typed and what
-// Reap is asked to do is testable on its own: the previous shape read fine and
-// silently dropped two flags, and no test could reach it.
-func parseReapFlags(args []string) (reapFlags, []string, error) {
-	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
-	all := fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
-	nameFlag := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	dryRun := fs.Bool("dry-run", false, "list what would be closed, change nothing")
-	if err := parseFlags(fs, args); err != nil {
-		return reapFlags{}, nil, err
-	}
-	// Dereference only AFTER parseFlags: flag writes through these pointers,
-	// so reading them any earlier captures the defaults and silently discards
-	// what the user typed.
-	return reapFlags{all: *all, name: *nameFlag, dryRun: *dryRun}, fs.Args(), nil
-}
-
-func cmdReap(args []string) error {
-	opts, positional, err := parseReapFlags(args)
-	if err != nil {
-		return err
-	}
-	all, dryRun := opts.all, opts.dryRun
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	// --all needs no name, and resolving one from the cwd would only fail in
-	// an unbound directory, where the sweep is most wanted.
-	var name string
-	if !all {
-		name, err = resolveBinding(rt, opts.name, positional)
-		if err != nil {
-			return err
-		}
-	}
-
-	results, err := relay.Reap(context.Background(), rt, relay.ReapOptions{
-		Name:   name,
-		All:    all,
-		DryRun: dryRun,
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, r := range results {
-		for _, c := range r.Closed {
-			verb := "closed"
-			if dryRun {
-				verb = "would close"
-			}
-			fmt.Printf("%s %s consult %s (pane %s) on %s\n", verb, c.Role, c.ID, c.Endpoint.PaneID, r.Binding)
-		}
-		for _, c := range r.Dropped {
-			verb := "dropped"
-			if dryRun {
-				verb = "would drop"
-			}
-			fmt.Printf("%s %s consult %s on %s (no pane was spawned)\n", verb, c.Role, c.ID, r.Binding)
-		}
-		for _, c := range r.Failed {
-			fmt.Printf("could not close pane %s for consult %s on %s; record kept\n", c.Endpoint.PaneID, c.ID, r.Binding)
-		}
-	}
-
-	return nil
-}
-
 func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	file := fs.String("file", "", "path to the plan file to hand the builder")
@@ -1429,10 +1351,14 @@ func cmdAsk(args []string) error {
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
 	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	nameFlag := fs.String("name", "", "binding name")
-	workspace := fs.String("workspace", "", "workspace for the consult's tab (default: $HERDR_WORKSPACE_ID)")
-	headless := fs.Bool("headless", false, "run the consult as a one-shot process instead of a pane; findings are its final message")
+	headless := fs.Bool("headless", false, "accepted and ignored: every consult is a one-shot process since #303")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	// --headless is the default and only consult mode; the flag is accepted
+	// for compatibility and says so once.
+	for _, line := range askHeadlessNoOpLines(*headless) {
+		fmt.Fprintln(os.Stderr, line)
 	}
 	if *round > 0 {
 		// The round's recorded session fixes the role and the candidate, so
@@ -1470,8 +1396,6 @@ func cmdAsk(args []string) error {
 		Round:       *round,
 		Name:        name,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		WorkspaceID: workspaceOrEnv(*workspace),
-		Headless:    *headless,
 	})
 	if err != nil {
 		return err
@@ -1484,13 +1408,8 @@ func cmdAsk(args []string) error {
 		return nil
 	}
 
-	if res.Consult.Endpoint.Headless() {
-		fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings will appear at: %s\n",
-			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID, res.Consult.FindingsPath)
-	} else {
-		fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
-			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
-	}
+	fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings will appear at: %s\n",
+		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID, res.Consult.FindingsPath)
 	if n := relay.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}

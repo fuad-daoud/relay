@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -34,38 +33,6 @@ func loadHistory(t *testing.T, rt Runtime) history.History {
 		t.Fatalf("Load history: %v", err)
 	}
 	return h
-}
-
-func TestAskRecordsASpawnFailure(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
-	f.startErr = errors.New("agent start: exit 1")
-	q := writeQuestion(t, "x")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
-	})
-	if err == nil {
-		t.Fatal("expected Ask to fail when StartAgent fails")
-	}
-	if res.Consult.State != store.ConsultSilent {
-		t.Errorf("consult state = %q, want silent", res.Consult.State)
-	}
-	if !strings.HasPrefix(res.Consult.Note, "start failed:") {
-		t.Errorf("Note = %q, want prefix %q", res.Consult.Note, "start failed:")
-	}
-
-	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 {
-		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
-	}
-	e := l.Entries[0]
-	if e.Kind != ledger.SpawnFailed || e.Subject != testClaudeRef {
-		t.Errorf("entry = %+v, want SpawnFailed for %q", e, testClaudeRef)
-	}
-	if e.Binding != "webshop" {
-		t.Errorf("Binding = %q, want webshop", e.Binding)
-	}
 }
 
 // TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock

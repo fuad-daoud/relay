@@ -770,6 +770,12 @@ type fakeRunner struct {
 	aliveErr error
 	killErr  error
 
+	// onStart runs at the top of Start, before the spec is recorded. Ask
+	// calls Runner.Start as its first action after releasing the lock, which
+	// is where a test proves the lock is free and where it can rewrite the
+	// reservation to simulate a slow spawn.
+	onStart func()
+
 	alive     map[int][]bool
 	exits     map[int]int
 	nextPID   int
@@ -798,6 +804,9 @@ func (f *fakeRunner) setRusage(pid int, r ProcRusage) {
 }
 
 func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
+	if f.onStart != nil {
+		f.onStart()
+	}
 	if f.startErr != nil {
 		return ProcHandle{}, f.startErr
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +15,9 @@ import (
 type Mode string
 
 const (
+	// ModePane is history only since #303: the db's history rows carry
+	// builder_mode='pane' and readers must still parse it, but nothing runs a
+	// pane any more.
 	ModePane     Mode = "pane"
 	ModeHeadless Mode = "headless"
 )
@@ -64,21 +66,16 @@ func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
 		return r.readStream(ctx, src, true)
-	case ModePane:
-		return r.readPane(ctx, src)
 	}
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
 // Peek is Read without the wait for the exit trailer (#234): a headless
-// stream is read as it stands (it may still be open), a pane read is
-// already bounded by its window.
+// stream is read as it stands (it may still be open).
 func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	switch src.Mode {
 	case ModeHeadless:
 		return r.readStream(ctx, src, false)
-	case ModePane:
-		return r.readPane(ctx, src)
 	}
 	return nil, "no reader for mode " + string(src.Mode)
 }
@@ -237,34 +234,4 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	e.offset = info.Size()
 	e.size, e.mtime = info.Size(), info.ModTime()
 	return e.carry.samples(), ""
-}
-
-func (r reader) readPane(ctx context.Context, src Source) ([]Sample, string) {
-	switch src.Harness {
-	case "agy":
-		return nil, "agy keeps no usage record"
-	case "codex":
-		return nil, "codex pane usage not read"
-	case "claude", "opencode":
-	default:
-		return nil, "no reader for " + src.Harness
-	}
-	if src.Worktree == "" {
-		return nil, "shared cwd"
-	}
-	switch src.Harness {
-	case "claude":
-		dir := filepath.Join(r.home, ".claude", "projects", ProjectSlug(src.Worktree))
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			return nil, "no claude project dir"
-		}
-		samples := claudeProject(os.DirFS(dir), src.Worktree, src.Start, src.End, src.Provider)
-		if len(samples) == 0 {
-			return nil, "no usage events"
-		}
-		return samples, ""
-	default: // opencode
-		db := filepath.Join(r.home, ".local", "share", "opencode", "opencode.db")
-		return opencodeDB(ctx, r.exec, db, src.Worktree, src.Start, src.End)
-	}
 }

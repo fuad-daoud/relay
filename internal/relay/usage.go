@@ -65,21 +65,19 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 	return src
 }
 
-// consultSource is roundSource for one consult: its own pane, the
-// binding's worktree, its spawn as the window's start.
+// consultSource is roundSource for one consult: its own process stream, the
+// binding's worktree, its spawn as the window's start. A consult is always a
+// process since #303, so the mode is headless and the stream path is the
+// process's log.
 func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) usage.Source {
-	src := usage.Source{
-		Harness:  c.Endpoint.Kind,
-		Mode:     usage.ModePane,
-		Worktree: b.Worktree,
-		Start:    c.SpawnedAt,
-		End:      end,
+	return usage.Source{
+		Harness:    c.Endpoint.Kind,
+		Mode:       usage.ModeHeadless,
+		Worktree:   b.Worktree,
+		StreamPath: c.Endpoint.LogPath, // consults have no stream file today; the reader notes "no stream"
+		Start:      c.SpawnedAt,
+		End:        end,
 	}
-	if c.Endpoint.Headless() {
-		src.Mode = usage.ModeHeadless
-		src.StreamPath = c.Endpoint.LogPath // consults have no stream file today; the reader notes "no stream"
-	}
-	return src
 }
 
 func fillCandidate(src *usage.Source, rt Runtime, token string) {

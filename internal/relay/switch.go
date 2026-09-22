@@ -73,10 +73,9 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 //
 // closeOld must close the replaced pane before the replacement is spawned:
 // herdr agent names are unique, the replacement is again named
-// "<name>-builder", and StartAgent refuses that name while the old agent
-// under it is still alive. The gone trigger has no pane left to close and
-// passes closeOld=false; the gated trigger's pane is still open and passes
-// true.
+// "<name>-builder", and herdr refuses that name while the old agent under it
+// is still alive. The gone trigger has no pane left to close and passes
+// closeOld=false; the gated trigger's pane is still open and passes true.
 //
 // resolveBuilder's own Resolution is always HowExplicit -- it is handed the
 // already-chosen token -- and is discarded. The Resolution switchBuilder

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -92,7 +91,9 @@ func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
 
 func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	q := writeQuestion(t, "Review 003-diff.patch against the plan.")
 
 	listsBefore := f.listCalls
@@ -119,29 +120,28 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 		t.Errorf("staged question = %q", body)
 	}
 
-	if len(f.starts) != 1 {
-		t.Fatalf("got %d starts, want 1", len(f.starts))
+	// The consult is a process, not a pane.
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
 	}
-	if f.starts[0].Name != "webshop-reviewer-7f2a3c1d" || f.starts[0].Kind != "claude" {
-		t.Errorf("start = %+v", f.starts[0])
+	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 {
+		t.Errorf("a consult must touch no pane: tabs=%d starts=%d prompts=%d",
+			len(f.tabs), len(f.starts), len(f.prompts))
 	}
-
-	// The prompt names both paths and asks for only the findings path back.
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
-	}
-	// Assert the TARGET, not just the text. Typing the consult's prompt into
-	// the planner's pane would satisfy every content check below while
-	// corrupting the human's conversation -- the exact failure the anti-clobber
-	// rule exists to prevent.
-	if f.prompts[0].Target != "w2:p9" {
-		t.Errorf("prompt went to %q, want the consult's pane w2:p9", f.prompts[0].Target)
-	}
-	text := f.prompts[0].Text
-	for _, want := range []string{res.Consult.AskPath, res.Consult.FindingsPath, "only that path"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("prompt missing %q:\n%s", want, text)
+	// The prompt names the staged question and asks for the findings as the
+	// process's final message.
+	argv := fr.specs[0].Argv
+	var prompt string
+	for _, a := range argv {
+		if strings.Contains(a, "Answer as your final message") {
+			prompt = a
 		}
+	}
+	if prompt == "" {
+		t.Fatalf("argv carries no consult prompt: %v", argv)
+	}
+	if !strings.Contains(prompt, res.Consult.AskPath) {
+		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
 	}
 
 	// The record is durable, so the daemon finds it after a restart.
@@ -174,31 +174,6 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	// Backfill is gone: ListAgents was not called during Ask.
 	if f.listCalls != listsBefore {
 		t.Errorf("listCalls increased %d -> %d during Ask; ListAgents backfill was deleted", listsBefore, f.listCalls)
-	}
-}
-
-func TestAskOpensTheConsultInTheBindingsTree(t *testing.T) {
-	// Tree: "binding" is the role's contract, and nothing else in the suite can
-	// observe it: passing the planner's cwd -- or an empty one -- to the tab
-	// would go unnoticed without this pin.
-	f := &fakeHerdr{}
-	rt, b := seedForAsk(t, f)
-	q := writeQuestion(t, "review it")
-
-	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3", WorkspaceID: "w2",
-	}); err != nil {
-		t.Fatalf("Ask: %v", err)
-	}
-
-	if len(f.tabs) != 1 {
-		t.Fatalf("got %d tabs, want 1", len(f.tabs))
-	}
-	if got := f.tabs[0].CWD; got != b.CWD {
-		t.Errorf("consult tab opened in %q, want the binding's tree %q", got, b.CWD)
-	}
-	if got := f.tabs[0].WorkspaceID; got != "w2" {
-		t.Errorf("consult tab in workspace %q, want the planner's w2", got)
 	}
 }
 
@@ -317,7 +292,9 @@ func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
 
 func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	q := writeQuestion(t, "review this")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
@@ -326,26 +303,28 @@ func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
-	if len(f.starts) != 1 {
-		t.Fatalf("got %d starts, want 1", len(f.starts))
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
 	}
-	if f.starts[0].Kind != "claude" {
-		t.Errorf("starts[0].Kind = %q, want claude", f.starts[0].Kind)
+	argv := fr.specs[0].Argv
+	if argv[0] != "claude" {
+		t.Errorf("argv[0] = %q, want the harness binary claude", argv[0])
 	}
-	wantArgs := []string{"--model", "m", "--agent", "reviewer"}
-	if !reflect.DeepEqual(f.starts[0].Args, wantArgs) {
-		t.Errorf("starts[0].Args = %v, want %v", f.starts[0].Args, wantArgs)
+	if !containsAdjacentPair(argv, "--agent", "reviewer") {
+		t.Errorf("argv = %v, want the adjacent pair --agent reviewer", argv)
 	}
 	if res.Consult.Role != "reviewer" {
 		t.Errorf("res.Consult.Role = %q, want reviewer", res.Consult.Role)
 	}
 }
 
-// An agy consult is launched with --agent (#85); its first prompt is the
-// consult prompt and nothing else.
+// An agy consult is launched with --agent (#85); its prompt is the consult
+// prompt and carries no interactive preamble.
 func TestAskSendsTheConsultPromptAlone(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"t","model":"m","roles":["reviewer"]}]`)
 	q := writeQuestion(t, "review this")
 
@@ -355,18 +334,24 @@ func TestAskSendsTheConsultPromptAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
 	}
-	if strings.Contains(f.prompts[0].Text, "Activate your") {
-		t.Errorf("consult prompt must not carry a preamble:\n%s", f.prompts[0].Text)
+	argv := fr.specs[0].Argv
+	var prompt string
+	for _, a := range argv {
+		if strings.Contains(a, "Answer as your final message") {
+			prompt = a
+		}
 	}
-
-	if len(f.starts) != 1 {
-		t.Fatalf("got %d starts, want 1", len(f.starts))
+	if prompt == "" {
+		t.Fatalf("argv carries no consult prompt: %v", argv)
 	}
-	if !containsAdjacentPair(f.starts[0].Args, "--agent", "reviewer") {
-		t.Errorf("starts[0].Args = %v, want it to contain the adjacent pair --agent reviewer", f.starts[0].Args)
+	if strings.Contains(prompt, "Activate your") {
+		t.Errorf("consult prompt must not carry a preamble:\n%s", prompt)
+	}
+	if !containsAdjacentPair(argv, "--agent", "reviewer") {
+		t.Errorf("argv = %v, want it to contain the adjacent pair --agent reviewer", argv)
 	}
 }
 
@@ -453,38 +438,6 @@ func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
 	}
 }
 
-func TestAskRecordsAReapableConsultWhenTheSpawnFails(t *testing.T) {
-	// The pane exists by the time Prompt fails. Returning the error and walking
-	// away would strand it, which is what resolveBuilder does today and what
-	// CLAUDE.md warns costs ~800 MB indefinitely.
-	f := &fakeHerdr{promptErr: errors.New("herdr exploded")}
-	rt, _ := seedForAsk(t, f)
-	q := writeQuestion(t, "x")
-
-	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
-	}); err == nil {
-		t.Fatal("Ask returned nil after a prompt failure")
-	}
-
-	got, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(got.Consults) != 1 {
-		t.Fatalf("got %d consults, want 1 reapable record", len(got.Consults))
-	}
-	if got.Consults[0].State != store.ConsultSilent {
-		t.Errorf("state = %q, want silent so the pane is reapable", got.Consults[0].State)
-	}
-	if got.Consults[0].Endpoint.PaneID != "w2:p9" {
-		t.Errorf("pane = %q; the record must name the pane so reap can close it", got.Consults[0].Endpoint.PaneID)
-	}
-	if !strings.HasPrefix(got.Consults[0].Note, "prompt failed") {
-		t.Errorf("note = %q, want prefix 'prompt failed'", got.Consults[0].Note)
-	}
-}
-
 func TestAskLogsTheQuestionOutbound(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)
@@ -515,14 +468,16 @@ func TestAskLogsTheQuestionOutbound(t *testing.T) {
 
 func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	q := writeQuestion(t, "x")
 
 	lockFree := make(chan struct{})
-	f.onSpawn = func() {
+	fr.onStart = func() {
 		go func() {
 			// Mutexes are not reentrant (spec §7.1): if Ask holds the store
-			// lock across CreateTab, WithLock blocks and never returns. A
+			// lock across Runner.Start, WithLock blocks and never returns. A
 			// timeout is therefore proof the lock was held.
 			_ = rt.Store.WithLock(func(*store.Tx) error {
 				return nil
@@ -532,7 +487,7 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 		select {
 		case <-lockFree:
 		case <-time.After(2 * time.Second):
-			t.Fatal("state lock is held during CreateTab")
+			t.Fatal("state lock is held during the consult spawn")
 		}
 	}
 
@@ -545,12 +500,14 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 
 func TestAskReservesBeforeSpawning(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
 
 	done := make(chan struct{})
-	f.onSpawn = func() {
+	fr.onStart = func() {
 		go func() {
 			defer close(done)
 			b, err := rt.Store.Load("webshop")
@@ -569,14 +526,14 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 			if c.State != store.ConsultSpawning {
 				t.Errorf("state = %q, want spawning", c.State)
 			}
-			if c.Endpoint.PaneID != "" {
-				t.Errorf("pane = %q, want empty before split", c.Endpoint.PaneID)
+			if c.Endpoint.PID != 0 {
+				t.Errorf("pid = %d, want none before the process starts", c.Endpoint.PID)
 			}
 		}()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for Load inside onSpawn")
+			t.Fatal("timed out waiting for Load inside onStart")
 		}
 	}
 
@@ -587,17 +544,19 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 	}
 }
 
-func TestAskRecordsSilentWithNoPaneWhenTheSplitFails(t *testing.T) {
+func TestAskRecordsSilentWhenTheProcessFailsToStart(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
-	f.newPane = ""
+	rt.Runner = fr
+	fr.startErr = errors.New("cannot start")
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
 	if err == nil {
-		t.Fatal("Ask succeeded when split returned empty pane")
+		t.Fatal("Ask succeeded when the process failed to start")
 	}
 
 	b, err := rt.Store.Load("webshop")
@@ -611,54 +570,24 @@ func TestAskRecordsSilentWithNoPaneWhenTheSplitFails(t *testing.T) {
 	if c.State != store.ConsultSilent {
 		t.Errorf("state = %q, want silent", c.State)
 	}
-	if c.Endpoint.PaneID != "" {
-		t.Errorf("pane = %q, want empty", c.Endpoint.PaneID)
+	if c.Endpoint.PID != 0 {
+		t.Errorf("pid = %d, want none", c.Endpoint.PID)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("starts = %d, want 0", len(f.starts))
-	}
-}
-
-func TestAskRecordsAReapableConsultWhenTheStartFails(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
-	f.startErr = errors.New("cannot start")
-	q := writeQuestion(t, "x")
-
-	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
-	})
-	if err == nil {
-		t.Fatal("Ask succeeded when StartAgent failed")
-	}
-
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(b.Consults) != 1 {
-		t.Fatalf("got %d consults, want 1", len(b.Consults))
-	}
-	c := b.Consults[0]
-	if c.State != store.ConsultSilent {
-		t.Errorf("state = %q, want silent", c.State)
-	}
-	if c.Endpoint.PaneID != "w2:p9" {
-		t.Errorf("pane = %q, want w2:p9", c.Endpoint.PaneID)
-	}
-	if !strings.HasPrefix(c.Note, "start failed") {
-		t.Errorf("note = %q, want prefix 'start failed'", c.Note)
+	if !strings.HasPrefix(c.Note, "spawn failed") {
+		t.Errorf("note = %q, want prefix 'spawn failed'", c.Note)
 	}
 }
 
 func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
 
 	modified := make(chan struct{})
-	f.onSpawn = func() {
+	fr.onStart = func() {
 		go func() {
 			defer close(modified)
 			b, err := rt.Store.Load("webshop")
@@ -679,7 +608,7 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 		select {
 		case <-modified:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for rewrite inside onSpawn")
+			t.Fatal("timed out waiting for rewrite inside onStart")
 		}
 	}
 
@@ -700,19 +629,21 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 	if c.State != store.ConsultRunning {
 		t.Errorf("state = %q, want running", c.State)
 	}
-	if c.Endpoint.PaneID != "w2:p9" {
-		t.Errorf("pane = %q, want w2:p9", c.Endpoint.PaneID)
+	if !c.Endpoint.Headless() || c.Endpoint.PID == 0 {
+		t.Errorf("endpoint = %+v, want a running headless process", c.Endpoint)
 	}
 }
 
 func TestAskReappendsAReapedReservation(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
 
 	reaped := make(chan struct{})
-	f.onSpawn = func() {
+	fr.onStart = func() {
 		go func() {
 			defer close(reaped)
 			b, err := rt.Store.Load("webshop")
@@ -728,7 +659,7 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 		select {
 		case <-reaped:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for reap simulation in onSpawn")
+			t.Fatal("timed out waiting for reap simulation in onStart")
 		}
 	}
 
@@ -752,7 +683,9 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 
 func TestAskReviewerOnClaudeTierRead(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
 	rt.Policy.Tier = map[string]string{"reviewer": "read"}
 	q := writeQuestion(t, "x")
 
@@ -766,18 +699,11 @@ func TestAskReviewerOnClaudeTierRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
-	if len(f.starts) != 1 {
-		t.Fatalf("got %d starts, want 1", len(f.starts))
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
 	}
-	hasPlan := false
-	for i, arg := range f.starts[0].Args {
-		if arg == "--permission-mode" && i+1 < len(f.starts[0].Args) && f.starts[0].Args[i+1] == "plan" {
-			hasPlan = true
-			break
-		}
-	}
-	if !hasPlan {
-		t.Errorf("expected --permission-mode plan in starts[0].Args, got %v", f.starts[0].Args)
+	if !containsAdjacentPair(fr.specs[0].Argv, "--permission-mode", "plan") {
+		t.Errorf("expected --permission-mode plan in argv, got %v", fr.specs[0].Argv)
 	}
 }
 
@@ -793,7 +719,7 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 	q := writeQuestion(t, "review it")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", Headless: true, File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -862,6 +788,37 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 	}
 }
 
+// TestAskIsAlwaysHeadless pins #303: a consult never opens a pane. No
+// CreateTab or StartAgent reaches herdr, the endpoint Mode is headless, and the
+// process runs through the Runner.
+//
+// Mutation check: restoring the pane branch behind `if false`, then flipping it
+// to `if true`, fails this test on f.tabs/f.starts.
+func TestAskIsAlwaysHeadless(t *testing.T) {
+	f := &fakeHerdr{}
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t, f)
+	rt.Runner = fr
+	q := writeQuestion(t, "review it")
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(f.tabs) != 0 || len(f.starts) != 0 {
+		t.Fatalf("a consult opened a pane: tabs=%d starts=%d", len(f.tabs), len(f.starts))
+	}
+	if !res.Consult.Endpoint.Headless() {
+		t.Errorf("endpoint mode = %q, want headless", res.Consult.Endpoint.Mode)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d processes, want 1", len(fr.specs))
+	}
+}
+
 // TestAskHeadlessRefusesUnsupportedTier: a headless consult resolves its tier
 // exactly as a pane one does, so opencode on `read` is refused before any
 // reservation or process.
@@ -880,7 +837,6 @@ func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
 		File:        q,
 		Name:        "webshop",
 		PlannerPane: "w2:p3",
-		Headless:    true,
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
@@ -906,7 +862,7 @@ func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3", Headless: true,
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
 	if !errors.Is(err, ErrRunnerUnavailable) {
 		t.Fatalf("err = %v, want ErrRunnerUnavailable", err)
@@ -1234,7 +1190,7 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 	fr.script(c.Endpoint.PID, false)
 	fr.exit(c.Endpoint.PID, 0)
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	if b.Consults[0].State != store.ConsultDone {
 		t.Fatalf("state = %q, want done", b.Consults[0].State)

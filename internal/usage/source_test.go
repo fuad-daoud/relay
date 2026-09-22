@@ -59,50 +59,6 @@ func TestReadHeadlessNotes(t *testing.T) {
 	}
 }
 
-func TestReadPaneClaudeUsesProjectSlug(t *testing.T) {
-	home := t.TempDir()
-	slug := filepath.Join(home, ".claude", "projects", ProjectSlug("/wt"))
-	copyFixture(t, "testdata/claude-project/sess-a.jsonl", filepath.Join(slug, "sess-a.jsonl"))
-	copyFixture(t, "testdata/claude-project/sess-a/subagents/agent-x.jsonl", filepath.Join(slug, "sess-a", "subagents", "agent-x.jsonl"))
-	start := time.Date(2026, 9, 18, 7, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC)
-	got, note := New(nil, home).Read(context.Background(), Source{Harness: "claude", Mode: ModePane, Provider: "anthropic", Worktree: "/wt", Start: start, End: end})
-	if note != "" || len(got) != 3 {
-		t.Errorf("%d samples, note %q; want 3", len(got), note)
-	}
-	if _, note := New(nil, home).Read(context.Background(), Source{Harness: "claude", Mode: ModePane, Worktree: "/never-seen", Start: start, End: end}); note != "no claude project dir" {
-		t.Errorf("missing slug dir: note = %q", note)
-	}
-}
-
-func TestReadPaneNotes(t *testing.T) {
-	r := New(nil, t.TempDir())
-	if _, note := r.Read(context.Background(), Source{Harness: "agy", Mode: ModePane, Worktree: "/wt"}); note != "agy keeps no usage record" {
-		t.Errorf("agy pane: note = %q", note)
-	}
-	if _, note := r.Read(context.Background(), Source{Harness: "claude", Mode: ModePane, Worktree: ""}); note != "shared cwd" {
-		t.Errorf("--cwd binding: note = %q", note)
-	}
-	if _, note := r.Read(context.Background(), Source{Harness: "opencode", Mode: ModePane, Worktree: "/wt"}); note != "sqlite3 not on PATH" {
-		t.Errorf("opencode pane, nil exec: note = %q", note)
-	}
-}
-
-func TestReadPaneOpencodeUsesHomeStore(t *testing.T) {
-	home := t.TempDir()
-	db := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
-	copyFixture(t, "testdata/opencode-db.json", db) // any existing file; the fake never opens it
-	raw, _ := os.ReadFile("testdata/opencode-db.json")
-	fe := &fakeExec{out: raw}
-	got, note := New(fe, home).Read(context.Background(), Source{Harness: "opencode", Mode: ModePane, Worktree: "/wt", Start: time.UnixMilli(0), End: time.UnixMilli(1)})
-	if note != "" || len(got) != 2 {
-		t.Errorf("%d samples, note %q", len(got), note)
-	}
-	if len(fe.args) < 3 || fe.args[2] != db {
-		t.Errorf("args = %v, want the store under home", fe.args)
-	}
-}
-
 func TestStreamClosed(t *testing.T) {
 	_, open := mustTemp(t, "{\"type\":\"assistant\"}\n")
 	if streamClosed(open) {
@@ -203,12 +159,5 @@ func TestPeekMissingStream(t *testing.T) {
 	got, note := New(nil, t.TempDir()).Peek(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: "/nonexistent"})
 	if got != nil || note != "no stream" {
 		t.Errorf("Peek on a missing stream = %d samples, note %q", len(got), note)
-	}
-}
-
-func TestPeekPaneDelegates(t *testing.T) {
-	got, note := New(nil, t.TempDir()).Peek(context.Background(), Source{Harness: "agy", Mode: ModePane, Worktree: "/wt"})
-	if got != nil || note != "agy keeps no usage record" {
-		t.Errorf("Peek pane agy = %d samples, note %q", len(got), note)
 	}
 }
