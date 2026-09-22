@@ -25,9 +25,9 @@ func providerOf(tok string) string {
 }
 
 // SpawnFailedCooldown is how long a spawn failure gates its candidate. A
-// constant, not config: a failed StartAgent is nearly always a pane race
-// or a binary mid-upgrade, and ten minutes outlasts both. #61 step 2 may
-// move it to policy.json with the other cooldowns.
+// constant, not config: a failed start is nearly always a binary mid-upgrade,
+// and ten minutes outlasts that. #61 step 2 may move it to policy.json with
+// the other cooldowns.
 const SpawnFailedCooldown = 10 * time.Minute
 
 // mutateLedgerLocked loads, prunes, applies fn and saves the ledger for a

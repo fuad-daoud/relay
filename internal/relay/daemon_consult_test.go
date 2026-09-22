@@ -2,10 +2,10 @@ package relay
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -16,9 +16,16 @@ import (
 // skips the save -- and the next tick queues the findings entry again.
 func TestTickPersistsFinishedConsultOnce(t *testing.T) {
 	f := &fakeHerdr{}
-	rt, _, c := seedConsult(t, f)
-	writeFindings(t, c)
-	f.agents[len(f.agents)-1] = consultAgent(herdr.StatusIdle)
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
+
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
+		"relay-exit:0\n"
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 0)
 
 	d := NewDaemon(rt, time.Second)
 	for i := 0; i < 3; i++ {

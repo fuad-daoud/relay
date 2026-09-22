@@ -376,125 +376,6 @@ func TestCanServeRequiresEveryDefinition(t *testing.T) {
 	}
 }
 
-func TestLaunch(t *testing.T) {
-	builder, ok := RoleByName("builder")
-	if !ok {
-		t.Fatal("RoleByName(\"builder\") not found")
-	}
-	reviewer, ok := RoleByName("reviewer")
-	if !ok {
-		t.Fatal("RoleByName(\"reviewer\") not found")
-	}
-	researcher, ok := RoleByName("researcher")
-	if !ok {
-		t.Fatal("RoleByName(\"researcher\") not found")
-	}
-
-	tests := []struct {
-		name     string
-		kind     string
-		provider string
-		model    string
-		extra    []string
-		role     RoleSpec
-		wantArgs []string
-	}{
-		{
-			name:     "claude builder",
-			kind:     "claude",
-			provider: "prov",
-			model:    "m/x",
-			extra:    nil,
-			role:     builder,
-			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor"},
-		},
-		{
-			name:     "opencode builder",
-			kind:     "opencode",
-			provider: "prov",
-			model:    "m/x",
-			extra:    nil,
-			role:     builder,
-			wantArgs: []string{"--agent", "plan-executor", "-m", "prov/m/x"},
-		},
-		{
-			name: "agy builder", kind: "agy", provider: "prov", model: "m/x", extra: nil, role: builder,
-			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor"},
-		},
-		{
-			name: "agy builder with extra", kind: "agy", provider: "prov", model: "m/x",
-			extra: []string{"--dangerously-skip-permissions"}, role: builder,
-			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor", "--dangerously-skip-permissions"},
-		},
-		{
-			name: "agy researcher", kind: "agy", provider: "prov", model: "m/x", extra: nil, role: researcher,
-			wantArgs: []string{"--model", "m/x", "--agent", "researcher"},
-		},
-		{
-			name:     "claude builder with extra",
-			kind:     "claude",
-			provider: "prov",
-			model:    "m/x",
-			extra:    []string{"--auto"},
-			role:     builder,
-			wantArgs: []string{"--model", "m/x", "--agent", "plan-executor", "--auto"},
-		},
-		{
-			name:     "opencode reviewer",
-			kind:     "opencode",
-			provider: "prov",
-			model:    "m/x",
-			extra:    nil,
-			role:     reviewer,
-			wantArgs: []string{"--agent", "reviewer", "-m", "prov/m/x"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h, ok := Lookup(tt.kind)
-			if !ok {
-				t.Fatalf("Lookup(%q) not found", tt.kind)
-			}
-			got, err := h.Launch(tt.provider, tt.model, tt.extra, tt.role, TierHarness)
-			if err != nil {
-				t.Fatalf("Launch() error = %v", err)
-			}
-			if got.Kind != tt.kind {
-				t.Errorf("Launch().Kind = %q, want %q", got.Kind, tt.kind)
-			}
-			if !reflect.DeepEqual(got.Args, tt.wantArgs) {
-				t.Errorf("Launch().Args = %v, want %v", got.Args, tt.wantArgs)
-			}
-		})
-	}
-
-	// Final assertion: appending to returned Args must not mutate extra.
-	extra := []string{"--a"}
-	h, ok := Lookup("agy")
-	if !ok {
-		t.Fatal("Lookup(\"agy\") not found")
-	}
-	launch, err := h.Launch("prov", "m/x", extra, builder, TierHarness)
-	if err != nil {
-		t.Fatalf("Launch() error = %v", err)
-	}
-	launch.Args = append(launch.Args, "--b")
-	if !reflect.DeepEqual(extra, []string{"--a"}) {
-		t.Errorf("extra was modified: got %v, want [--a]", extra)
-	}
-
-	unknownHarness := Harness{Kind: "unknown"}
-	launchUnknown, err := unknownHarness.Launch("prov", "m/x", extra, builder, TierHarness)
-	if err != nil {
-		t.Fatalf("Launch() error = %v", err)
-	}
-	launchUnknown.Args = append(launchUnknown.Args, "--c")
-	if !reflect.DeepEqual(extra, []string{"--a"}) {
-		t.Errorf("extra was modified on unknown harness: got %v, want [--a]", extra)
-	}
-}
-
 // TestSubAgentsSetOnEveryKind pins the rule that "" is not a visibility
 // state: an unknown kind yields "" downstream, and a known kind never may.
 func TestSubAgentsSetOnEveryKind(t *testing.T) {
@@ -658,28 +539,20 @@ func TestLaunchCodex(t *testing.T) {
 		t.Fatal("Lookup(\"codex\") not found")
 	}
 
-	wantArgs := []string{"-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high"}
 	wantPrint := []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", DirPlaceholder}
 
 	got, err := h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierHarness)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	if !reflect.DeepEqual(got.Args, wantArgs) {
-		t.Errorf("Args = %v, want %v", got.Args, wantArgs)
-	}
 	if !reflect.DeepEqual(got.Print, wantPrint) {
 		t.Errorf("Print = %v, want %v", got.Print, wantPrint)
 	}
 
-	wantArgsEdit := append(append([]string(nil), wantArgs...), "-s", "workspace-write", "-c", StatePlaceholder)
 	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write", "-c", StatePlaceholder)
 	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() TierEdit error = %v", err)
-	}
-	if !reflect.DeepEqual(got.Args, wantArgsEdit) {
-		t.Errorf("TierEdit Args = %v, want %v", got.Args, wantArgsEdit)
 	}
 	if !reflect.DeepEqual(got.Print, wantPrintEdit) {
 		t.Errorf("TierEdit Print = %v, want %v", got.Print, wantPrintEdit)
@@ -693,9 +566,6 @@ func TestLaunchCodex(t *testing.T) {
 	got, err = h.Launch("openai", "gpt-5.6-terra:high", []string{"--foo"}, builder, TierHarness)
 	if err != nil {
 		t.Fatalf("Launch() extra error = %v", err)
-	}
-	if len(got.Args) == 0 || got.Args[len(got.Args)-1] != "--foo" {
-		t.Errorf("Args with extra must end in --foo: %v", got.Args)
 	}
 	if len(got.Print) == 0 || got.Print[len(got.Print)-1] != "--foo" {
 		t.Errorf("Print with extra must end in --foo: %v", got.Print)
@@ -824,61 +694,6 @@ func TestPrintArgsFillsState(t *testing.T) {
 		"--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"}
 	if !reflect.DeepEqual(clGot, wantClaude) {
 		t.Errorf("claude PrintArgs = %v, want %v", clGot, wantClaude)
-	}
-}
-
-func TestPaneArgsFillsState(t *testing.T) {
-	builder, _ := RoleByName("builder")
-	codex, ok := Lookup("codex")
-	if !ok {
-		t.Fatal("Lookup(\"codex\") not found")
-	}
-	l, err := codex.Launch("openai", "gpt-5.6-terra", nil, builder, TierEdit)
-	if err != nil {
-		t.Fatalf("codex Launch() TierEdit error: %v", err)
-	}
-
-	stateDir := "/home/u/.local/state/relay/x"
-	got := l.PaneArgs(stateDir)
-	for _, a := range got {
-		if a == StatePlaceholder {
-			t.Errorf("StatePlaceholder survived PaneArgs: %v", got)
-		}
-	}
-	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relay/x"]`
-	found := false
-	for i, a := range got {
-		if a == "-s" && i+1 < len(got) && got[i+1] == "workspace-write" {
-			for j := i + 2; j < len(got)-1; j++ {
-				if got[j] == "-c" && got[j+1] == wantRoot {
-					found = true
-					break
-				}
-			}
-		}
-	}
-	if !found {
-		t.Errorf("element after -c following workspace-write not found or != %s; got %v", wantRoot, got)
-	}
-
-	// for claude/agy/opencode PaneArgs(state) equals Args
-	for _, kind := range []string{"claude", "agy", "opencode"} {
-		h, ok := Lookup(kind)
-		if !ok {
-			t.Fatalf("Lookup(%q) not found", kind)
-		}
-		tier := TierEdit
-		if kind == "opencode" {
-			tier = TierHarness
-		}
-		hl, err := h.Launch("prov", "m/x", nil, builder, tier)
-		if err != nil {
-			t.Fatalf("%s Launch() error: %v", kind, err)
-		}
-		paneArgs := hl.PaneArgs(stateDir)
-		if !reflect.DeepEqual(paneArgs, hl.Args) {
-			t.Errorf("%s PaneArgs = %v, want %v", kind, paneArgs, hl.Args)
-		}
 	}
 }
 

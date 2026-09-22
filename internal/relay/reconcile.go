@@ -222,15 +222,14 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	// early when the binding is done, when the builder is gone (below), and on
 	// the round-cap halt, and none of those should stop a consult finishing.
 	//
-	// The DONE case is the one that bites: Reap skips running consults, so a
-	// consult never advanced past ConsultRunning can never be closed, and gc
-	// then removes the binding and the reap worklist with it -- leaving a live
-	// pane with nothing in relay pointing at it.
+	// The DONE case is the one that bites: a consult never advanced past
+	// ConsultRunning would otherwise never be observed by a tick again, and gc
+	// then removes the binding and its consults with it.
 	//
 	// On those early-return paths deliverAndSettle is skipped, so queued
 	// findings wait on disk and `relay pull` retrieves them -- the same
 	// behaviour the halt comment below describes for a halted binding.
-	b, err = reconcileConsults(ctx, rt, tx, b, agents)
+	b, err = reconcileConsults(ctx, rt, tx, b)
 	if err != nil {
 		return b, err
 	}

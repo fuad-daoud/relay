@@ -41,14 +41,6 @@ func (stubHerdr) ReadAgentSource(ctx context.Context, target, source string, lin
 	return "", errNoHerdr
 }
 
-func (stubHerdr) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
-	return "", errNoHerdr
-}
-
-func (stubHerdr) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {
-	return errNoHerdr
-}
-
 func (stubHerdr) ClosePane(ctx context.Context, paneID string) error {
 	return errNoHerdr
 }

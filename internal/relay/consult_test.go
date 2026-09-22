@@ -77,39 +77,8 @@ func leaveVerifyStream(t *testing.T, rt Runtime, fr *fakeRunner, text string) {
 	fr.exit(pid, 0)
 }
 
-// consultAgent is the live pane a seeded consult occupies.
-func consultAgent(status string) herdr.Agent {
-	return herdr.Agent{
-		Name:   "webshop-reviewer-7f2a3c1d",
-		Kind:   "claude",
-		Status: status,
-		CWD:    "/repo",
-		PaneID: "w2:p9",
-		Title:  "webshop-reviewer-7f2a3c1d",
-	}
-}
-
-// seedConsult puts one running consult on a bound binding and returns the
-// runtime, a movable clock, and the consult record.
-func seedConsult(t *testing.T, f *fakeHerdr) (Runtime, *fakeClock, store.Consult) {
-	t.Helper()
-	rt, _ := seedForAsk(t, f)
-	q := writeQuestion(t, "review it")
-
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
-	})
-	if err != nil {
-		t.Fatalf("Ask: %v", err)
-	}
-
-	f.agents = append(f.agents, consultAgent(herdr.StatusWorking))
-	clock := &fakeClock{now: baseTime}
-	return withClock(rt, clock), clock, res.Consult
-}
-
 // tickConsults runs one reconcile pass over the consults only.
-func tickConsults(t *testing.T, rt Runtime, f *fakeHerdr) store.Binding {
+func tickConsults(t *testing.T, rt Runtime) store.Binding {
 	t.Helper()
 	var out store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -117,7 +86,7 @@ func tickConsults(t *testing.T, rt Runtime, f *fakeHerdr) store.Binding {
 		if err != nil {
 			return err
 		}
-		out, err = reconcileConsults(context.Background(), rt, tx, b, f.agents)
+		out, err = reconcileConsults(context.Background(), rt, tx, b)
 		if err != nil {
 			return err
 		}
@@ -129,175 +98,23 @@ func tickConsults(t *testing.T, rt Runtime, f *fakeHerdr) store.Binding {
 	return out
 }
 
-func writeFindings(t *testing.T, c store.Consult) {
-	t.Helper()
-	if err := os.WriteFile(c.FindingsPath, []byte("looks fine"), 0o644); err != nil {
-		t.Fatalf("write findings: %v", err)
-	}
-}
-
-func setConsultAgentStatus(f *fakeHerdr, status string) {
-	for i := range f.agents {
-		if f.agents[i].PaneID == "w2:p9" {
-			f.agents[i].Status = status
-		}
-	}
-}
-
-func TestConsultWithFindingsAndIdleIsDelivered(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _, c := seedConsult(t, f)
-	writeFindings(t, c)
-	setConsultAgentStatus(f, herdr.StatusIdle)
-
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultDone {
-		t.Fatalf("state = %q, want done", b.Consults[0].State)
-	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found {
-		t.Fatalf("nothing queued for the planner: found=%v err=%v", found, err)
-	}
-	if pending.Kind != store.KindFindings || pending.Direction != store.DirToPlanner {
-		t.Errorf("entry = %s/%s, want to_planner/findings", pending.Direction, pending.Kind)
-	}
-	if !strings.Contains(pending.Payload, c.FindingsPath) {
-		t.Errorf("payload does not name the findings path: %q", pending.Payload)
-	}
-	if pending.Path != c.FindingsPath {
-		t.Errorf("Path = %q, want the findings path", pending.Path)
-	}
-}
-
-func TestConsultIdleWithoutFindingsIsNudgedOnce(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, clock, _ := seedConsult(t, f)
-	setConsultAgentStatus(f, herdr.StatusIdle)
-	before := len(f.prompts)
-
-	b := tickConsults(t, rt, f)
-	if b.Consults[0].NudgedAt.IsZero() {
-		t.Fatal("NudgedAt not stamped")
-	}
-	if len(f.prompts) != before+1 {
-		t.Fatalf("got %d prompts, want 1 nudge", len(f.prompts)-before)
-	}
-	// Assert the TARGET. Counting prompts cannot tell a nudge sent to the
-	// consult from one typed into the planner's pane, which would land in the
-	// human's conversation instead -- the anti-clobber failure again.
-	if got := f.prompts[len(f.prompts)-1].Target; got != "w2:p9" {
-		t.Errorf("nudge went to %q, want the consult's pane w2:p9", got)
-	}
-
-	// A second tick inside the grace window must not nudge again.
-	clock.Advance(consultGrace / 2)
-	tickConsults(t, rt, f)
-	if len(f.prompts) != before+1 {
-		t.Errorf("nudged %d times; a consult gets exactly one", len(f.prompts)-before)
-	}
-}
-
-func TestConsultGoesSilentAfterTheGraceWindow(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, clock, _ := seedConsult(t, f)
-	setConsultAgentStatus(f, herdr.StatusIdle)
-
-	tickConsults(t, rt, f) // nudge
-	clock.Advance(consultGrace + 1)
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent", b.Consults[0].State)
-	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found {
-		t.Fatalf("silence was not reported: found=%v err=%v", found, err)
-	}
-	if !strings.Contains(pending.Payload, "wrote no findings") {
-		t.Errorf("payload = %q", pending.Payload)
-	}
-	if pending.Path != "" {
-		t.Errorf("Path = %q; a silent consult wrote no file to point at", pending.Path)
-	}
-}
-
-func TestBlockedConsultIsReportedNotNegotiatedWith(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _, _ := seedConsult(t, f)
-	setConsultAgentStatus(f, herdr.StatusBlocked)
-	before := len(f.prompts)
-
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent", b.Consults[0].State)
-	}
-	if len(f.prompts) != before {
-		t.Error("relay prompted a blocked consult; a consult is one-shot and is not answered")
-	}
-	pending, _, _ := rt.Store.PendingForPlanner("webshop")
-	if !strings.Contains(pending.Payload, "open until the next `relay reap`") {
-		t.Errorf("payload must tell the human the pane is open, and for how long: %q", pending.Payload)
-	}
-}
-
-func TestConsultPaneGoneWithFindingsStillDelivers(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _, c := seedConsult(t, f)
-	writeFindings(t, c)
-	// The pane wrote its findings and then died.
-	f.agents = f.agents[:len(f.agents)-1]
-
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultDone {
-		t.Fatalf("state = %q, want done: the findings file is the record, not the pane", b.Consults[0].State)
-	}
-}
-
-func TestConsultPaneGoneWithoutFindingsIsSilent(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _, _ := seedConsult(t, f)
-	f.agents = f.agents[:len(f.agents)-1]
-
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent", b.Consults[0].State)
-	}
-	if !strings.Contains(b.Consults[0].Note, "gone") {
-		t.Errorf("note = %q", b.Consults[0].Note)
-	}
-}
-
-func TestWorkingConsultTimesOut(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, clock, _ := seedConsult(t, f)
-	// Status stays `working`, so the nudge path never runs.
-
-	if b := tickConsults(t, rt, f); b.Consults[0].State != store.ConsultRunning {
-		t.Fatalf("gave up early: %q", b.Consults[0].State)
-	}
-
-	clock.Advance(consultTimeout + 1)
-	b := tickConsults(t, rt, f)
-
-	if b.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent after the timeout", b.Consults[0].State)
-	}
-}
-
 // This is the mutation-test target named in the spec: delete the
 // `State != ConsultRunning` guard at the top of reconcileConsults and this
 // fails. Without the guard every tick re-queues findings already delivered.
 func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
 	f := &fakeHerdr{}
-	rt, _, c := seedConsult(t, f)
-	writeFindings(t, c)
-	setConsultAgentStatus(f, herdr.StatusIdle)
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
 
-	tickConsults(t, rt, f) // -> done, one findings entry
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
+		"relay-exit:0\n"
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 0)
+
+	tickConsults(t, rt) // -> done, one findings entry
 
 	countFindings := func() int {
 		entries, err := rt.Store.ReadLog("webshop")
@@ -316,31 +133,38 @@ func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
 		t.Fatalf("got %d findings entries after one tick, want 1", countFindings())
 	}
 
-	promptsBefore := len(f.prompts)
+	specsBefore := len(fr.specs)
 	for i := 0; i < 5; i++ {
-		tickConsults(t, rt, f)
+		tickConsults(t, rt)
 	}
 
 	if got := countFindings(); got != 1 {
 		t.Errorf("got %d findings entries after 6 ticks, want 1: a terminal consult must never be re-queued", got)
 	}
-	if len(f.prompts) != promptsBefore {
-		t.Errorf("a terminal consult was prompted %d times", len(f.prompts)-promptsBefore)
+	if len(fr.specs) != specsBefore {
+		t.Errorf("a terminal consult was started %d more times", len(fr.specs)-specsBefore)
 	}
 }
 
 func TestReconcileConsultsMakesNoHerdrCallsForTerminalRecords(t *testing.T) {
 	f := &fakeHerdr{}
-	rt, _, c := seedConsult(t, f)
-	writeFindings(t, c)
-	setConsultAgentStatus(f, herdr.StatusIdle)
-	tickConsults(t, rt, f)
+	fr := newFakeRunner()
+	rt, c := seedHeadlessConsult(t, f, fr)
+
+	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
+		"relay-exit:0\n"
+	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	fr.script(c.Endpoint.PID, false)
+	fr.exit(c.Endpoint.PID, 0)
+	tickConsults(t, rt)
 
 	listsBefore := f.listCalls
-	tickConsults(t, rt, f)
+	tickConsults(t, rt)
 
 	if f.listCalls != listsBefore {
-		t.Errorf("reconcileConsults made %d ListAgents calls; it reads the snapshot it is given", f.listCalls-listsBefore)
+		t.Errorf("reconcileConsults made %d ListAgents calls; it never reads herdr", f.listCalls-listsBefore)
 	}
 }
 
@@ -374,7 +198,7 @@ func TestReconcileSkipsAFreshReservation(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedSpawning(t, f)
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 	if b.Consults[0].State != store.ConsultSpawning {
 		t.Fatalf("state = %q, want spawning", b.Consults[0].State)
 	}
@@ -398,7 +222,7 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	rt, clock := seedSpawning(t, f)
 	clock.Advance(consultSpawnTimeout + time.Second)
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 	if b.Consults[0].State != store.ConsultSilent {
 		t.Fatalf("state = %q, want silent", b.Consults[0].State)
 	}
@@ -431,6 +255,48 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 }
 
+// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
+// endpoint written before this round has Mode "" (a pane consult). relay can
+// no longer drive a pane, so the next reconcile closes it silent with the
+// reason and reports it to the planner, instead of reconciling it as a pane.
+func TestReconcileAbandonsLegacyPaneConsult(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, _ := seedBound(t, f)
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Consults = []store.Consult{{
+		ID:           "7f2a3c1d",
+		Role:         "reviewer",
+		Round:        1,
+		AskPath:      "/repo/.relay/consults/7f2a3c1d-ask.md",
+		FindingsPath: "/repo/.relay/consults/7f2a3c1d-findings.md",
+		Endpoint:     store.Endpoint{AgentName: "webshop-reviewer-7f2a3c1d", Kind: "claude", PaneID: "w2:p9"},
+		State:        store.ConsultRunning,
+		SpawnedAt:    baseTime,
+	}}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got := tickConsults(t, rt)
+
+	if got.Consults[0].State != store.ConsultSilent {
+		t.Fatalf("state = %q, want silent", got.Consults[0].State)
+	}
+	if got.Consults[0].Note != "pane consults were removed (#303)" {
+		t.Errorf("note = %q, want the #303 reason", got.Consults[0].Note)
+	}
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("legacy consult was not reported: found=%v err=%v", found, err)
+	}
+	if pending.Kind != store.KindFindings {
+		t.Errorf("entry kind = %q, want findings", pending.Kind)
+	}
+}
+
 // seedHeadlessConsult asks for a consult as a process on the webshop binding
 // and returns the runtime and the record relay made.
 func seedHeadlessConsult(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Consult) {
@@ -440,10 +306,10 @@ func seedHeadlessConsult(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, s
 	q := writeQuestion(t, "review it")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", Headless: true, File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
 	})
 	if err != nil {
-		t.Fatalf("Ask --headless: %v", err)
+		t.Fatalf("Ask: %v", err)
 	}
 	return rt, res.Consult
 }
@@ -464,7 +330,7 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 	fr.script(c.Endpoint.PID, false)
 	fr.exit(c.Endpoint.PID, 0)
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	if b.Consults[0].State != store.ConsultDone {
 		t.Fatalf("state = %q, want done", b.Consults[0].State)
@@ -498,7 +364,7 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 	fr.script(c.Endpoint.PID, false)
 	fr.exit(c.Endpoint.PID, 1)
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	if b.Consults[0].State != store.ConsultSilent {
 		t.Fatalf("state = %q, want silent", b.Consults[0].State)
@@ -525,7 +391,7 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	rt = withClock(rt, clock)
 
 	clock.Advance(consultTimeout + time.Second)
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	if len(fr.kills) != 1 {
 		t.Fatalf("kills = %d, want 1", len(fr.kills))
@@ -541,45 +407,6 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	}
 }
 
-func TestReconcileIgnoresAConsultSubAgentsIdle(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _, _ := seedConsult(t, f)
-
-	for i := range f.agents {
-		if f.agents[i].Name == "webshop-reviewer-7f2a3c1d" {
-			f.agents[i].Session = herdr.Session{Value: "consult-parent"}
-		}
-	}
-
-	// Tick once to record the session.
-	tickConsults(t, rt, f)
-
-	// Swap in Session.Value: "child" + StatusIdle, no findings.
-	for i := range f.agents {
-		if f.agents[i].Name == "webshop-reviewer-7f2a3c1d" {
-			f.agents[i].Session = herdr.Session{Value: "child"}
-			f.agents[i].Status = herdr.StatusIdle
-		}
-	}
-	f.prompts = nil
-
-	b := tickConsults(t, rt, f)
-
-	if len(f.prompts) != 0 {
-		t.Errorf("expected no nudge prompt under sub-agent idle, got %+v", f.prompts)
-	}
-	if len(b.Consults) != 1 {
-		t.Fatalf("expected 1 consult, got %d", len(b.Consults))
-	}
-	c := b.Consults[0]
-	if c.State != store.ConsultRunning {
-		t.Errorf("consult state = %v, want %v", c.State, store.ConsultRunning)
-	}
-	if !c.NudgedAt.IsZero() {
-		t.Errorf("NudgedAt = %v, want zero", c.NudgedAt)
-	}
-}
-
 // TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
 // verify consult whose findings end with `verdict: rejected` records the
 // verdict and its two reasons on the findings entry and on the binding, names
@@ -590,7 +417,7 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 	rt, fr, fg, _ := startVerifyRound(t, f)
 	leaveVerifyStream(t, rt, fr, "checked it\n\n```relay\nverdict: rejected\nreasons: [\"a\",\"b\"]\n```\n")
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {
@@ -683,7 +510,7 @@ func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
 	rt, fr, _, _ := startVerifyRound(t, f)
 	leaveVerifyStream(t, rt, fr, "I read it; it looks fine to me, no block here.\n")
 
-	b := tickConsults(t, rt, f)
+	b := tickConsults(t, rt)
 
 	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {

@@ -570,19 +570,6 @@ func endpointOf(a herdr.Agent) store.Endpoint {
 	}
 }
 
-// openTab makes somewhere for a spawned agent to live: its own herdr tab in
-// the planner's workspace, rooted at cwd and labelled so the tab strip says
-// which builder or consult lives there. Focus stays with the planner.
-// Every spawn site (bind, add, fork, ask) comes through here; placement is
-// not a per-command decision (#79).
-func openTab(ctx context.Context, rt Runtime, workspaceID, cwd, label string) (string, error) {
-	paneID, err := rt.Herdr.CreateTab(ctx, workspaceID, cwd, label)
-	if err != nil {
-		return "", fmt.Errorf("create tab %q: %w", label, err)
-	}
-	return paneID, nil
-}
-
 // worktreeOutcome is what a teardown attempt decided about one binding's
 // relay-created worktree. Exactly one of Removed, Kept, Gone is set, or none
 // when the binding never had a worktree.

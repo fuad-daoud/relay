@@ -2,14 +2,12 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/transcript"
 )
@@ -17,7 +15,7 @@ import (
 const (
 	// consultSpawnTimeout is how long a consult reservation may stay in the
 	// spawning state before the daemon expires it. It must exceed Ask's
-	// worst-case spawn phase (five herdr calls at the client's 30 s timeout) so
+	// worst-case spawn phase (a Runner.Start at the client's 30 s timeout) so
 	// a slow live spawn is never expired from under its owner, and it is how
 	// long a crashed Ask holds a cap slot. It follows the client timeout, as
 	// lockAcquireLimit does.
@@ -25,39 +23,21 @@ const (
 
 	// consultTimeout is how long a consult may stay `working` before relay
 	// gives up on it. A consult reads and writes one file; the alternative to a
-	// deadline is a record that never becomes terminal and so is never reaped.
+	// deadline is a record that never becomes terminal and holds a cap slot.
 	consultTimeout = 10 * time.Minute
-
-	// consultGrace is how long after its single nudge a consult has to write
-	// findings before relay reports that it wrote none.
-	//
-	// A consult does NOT inherit the builder's screen-fingerprint quiescence or
-	// scrape fallback. Those exist because a builder runs for hours and a quiet
-	// builder is usually a live one waiting on its own sub-agents. A consult
-	// runs for a minute or two, so idle plus a nudge plus a minute is enough
-	// evidence.
-	consultGrace = 60 * time.Second
 )
-
-const consultNudgeFingerprint = "You went idle without writing your findings."
-
-const consultNudgePrompt = consultNudgeFingerprint + `
-
-Write them to: %s
-
-Reply here with only that path.`
 
 // reconcileConsults advances every running consult on one binding by one tick.
 //
-// It reads the agent snapshot it is given rather than fetching one, so a tick
-// costs zero additional herdr calls no matter how many consults are attached.
+// A consult is a process since #303, observed through the Runner: its
+// completion is the stream's final message, never a pane's screen.
 //
 // Preconditions:  the caller holds the state lock and passes its tx.
-// Postconditions: each running consult is unchanged, nudged, or moved to done
+// Postconditions: each running consult is unchanged, or moved to done or silent
 //
-//	or silent with exactly one findings entry queued for the
-//	transition. Terminal records are never revisited.
-func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+//	with exactly one findings entry queued for the transition. Terminal
+//	records are never revisited.
+func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	now := rt.Now().UTC()
 
 	// Own the slice: the caller compares its copy of the binding against the
@@ -66,9 +46,9 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	b.Consults = append([]store.Consult(nil), b.Consults...)
 
 	for i := range b.Consults {
-		// Terminal records stay until `relay reap` closes their pane. Without
-		// this guard every tick re-queues findings that were already
-		// delivered, which is one notification per poll, forever.
+		// Terminal records are never revisited. Without this guard every tick
+		// re-queues findings that were already delivered, which is one
+		// notification per poll, forever.
 		if b.Consults[i].State == store.ConsultDone || b.Consults[i].State == store.ConsultSilent {
 			continue
 		}
@@ -87,9 +67,20 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			continue
 		}
 
+		// A consult endpoint with Mode "" predates #303. Pane consults were
+		// removed, so relay can no longer drive it: close it silent with the
+		// reason instead of reconciling a pane.
+		if !b.Consults[i].Endpoint.Headless() {
+			var err error
+			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
+				"pane consults were removed (#303)"); err != nil {
+				return b, err
+			}
+			continue
+		}
+
 		// A headless consult is a process, not a pane: it is observed through
-		// the Runner and its completion is the stream's final message, so the
-		// pane steps below (FindAgent, nudge, dialog) never run for one
+		// the Runner and its completion is the stream's final message
 		// (#147, #144).
 		if b.Consults[i].Endpoint.Headless() {
 			c := b.Consults[i]
@@ -161,80 +152,6 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			continue
 		}
 
-		agent, live := FindAgent(agents, b.Consults[i].Endpoint)
-		if !live {
-			// The findings file is the record, not the pane: a consult that
-			// wrote and then died has still done its job.
-			state, note := store.ConsultSilent, "consult pane is gone"
-			if fileExists(b.Consults[i].FindingsPath) {
-				state, note = store.ConsultDone, ""
-			}
-			var err error
-			if b, err = finishConsult(ctx, rt, tx, b, i, state, note); err != nil {
-				return b, err
-			}
-			continue
-		}
-
-		b.Consults[i].Endpoint = refreshEndpoint(b.Consults[i].Endpoint, agent)
-
-		status := effectiveStatus(b.Consults[i].Endpoint, agent)
-		idle := status == herdr.StatusIdle || status == herdr.StatusDone
-
-		if idle && fileExists(b.Consults[i].FindingsPath) {
-			var err error
-			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultDone, ""); err != nil {
-				return b, err
-			}
-			continue
-		}
-
-		// A blocked consult is reported and abandoned, not negotiated with.
-		// `relay answer` stays builder-only: a one-shot agent that needs a
-		// conversation has already failed its contract. The pane is left open
-		// so a human can answer the dialog and the planner can re-ask -- but
-		// only until the next `relay reap`, which closes the pane of every
-		// non-running consult, this one included. The message says so rather
-		// than promising a pane that a routine sweep will take away.
-		if status == herdr.StatusBlocked {
-			var err error
-			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
-				"blocked on a prompt in pane "+agent.PaneID); err != nil {
-				return b, err
-			}
-			continue
-		}
-
-		if idle && b.Consults[i].NudgedAt.IsZero() {
-			text := fmt.Sprintf(consultNudgePrompt, b.Consults[i].FindingsPath)
-			if err := promptWithRetry(ctx, rt, agent.PaneID, text, consultNudgeFingerprint); err == nil || errors.Is(err, ErrPromptLate) {
-				b.Consults[i].NudgedAt = now
-				continue
-			}
-			// A failed prompt is not evidence the consult stopped, so it is not
-			// recorded as a nudge -- but it must not exempt the consult from its
-			// deadline either. Fall through to the consultTimeout check below:
-			// a nudge that can never be delivered would otherwise leave the
-			// record at ConsultRunning forever, unreapable and holding a slot
-			// against ConsultCap.
-		} else if idle {
-			if now.Sub(b.Consults[i].NudgedAt) >= consultGrace {
-				var err error
-				if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
-					"went idle without writing findings"); err != nil {
-					return b, err
-				}
-			}
-			continue
-		}
-
-		if now.Sub(b.Consults[i].SpawnedAt) >= consultTimeout {
-			var err error
-			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
-				"no findings after "+consultTimeout.String()); err != nil {
-				return b, err
-			}
-		}
 	}
 
 	return b, nil
@@ -262,14 +179,10 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, c.FindingsPath)
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
-		// does not exist would send the planner to read nothing.
-		if c.Endpoint.PaneID == "" {
-			entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. No pane was spawned.",
-				c.ID, c.Role, note)
-		} else {
-			entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. Pane %s is open until the next `relay reap`.",
-				c.ID, c.Role, note, c.Endpoint.PaneID)
-		}
+		// does not exist would send the planner to read nothing. A consult
+		// never has a pane since #303, so there is never one to name.
+		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. No pane was spawned.",
+			c.ID, c.Role, note)
 	}
 
 	// A verify consult is the round-close reviewer (#144): its findings carry
@@ -311,11 +224,4 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	return b, nil
-}
-
-// fileExists is the entire completion gate for a consult. It is a fact, not an
-// assessment: relay never reads findings to judge them.
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

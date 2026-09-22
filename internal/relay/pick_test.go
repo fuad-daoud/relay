@@ -293,9 +293,11 @@ func TestAskLogsPickBeforeAsk(t *testing.T) {
 // the builder bind.
 func TestStrandedAskLogsNoPick(t *testing.T) {
 	f := &fakeHerdr{}
+	fr := newFakeRunner()
 	rt, b := seedForAsk(t, f)
+	rt.Runner = fr
 	before := picks(t, rt, "webshop")
-	f.startErr = errors.New("agent start: exit 1")
+	fr.startErr = errors.New("process start: exit 1")
 
 	qPath := writeQuestion(t, "what do you think?")
 

@@ -313,55 +313,50 @@ const (
 	BudgetPlaceholder = "<budget>"
 	DirPlaceholder    = "<dir>"
 	// StatePlaceholder stands, as its own element, for the codex writable-roots
-	// override: PrintArgs and PaneArgs replace the element with
+	// override: PrintArgs replaces the element with
 	// `sandbox_workspace_write.writable_roots=["<state dir>"]` (#230). It is
 	// only ever the element after a "-c".
 	StatePlaceholder = "<state>"
 )
 
 // Launch describes how to start an agent process for a specific role and
-// model, in both of its forms.
+// model.
 //
-// Args is the interactive form herdr starts in a pane. Print is the
-// non-interactive form a headless builder runs (#99): one prompt in, the
+// Print is the non-interactive form a process runs (#99): one prompt in, the
 // process exits when it is done. Print holds PromptPlaceholder and, for kinds
 // with a timeout flag, BudgetPlaceholder, as well as DirPlaceholder and
-// StatePlaceholder as their own elements; PrintArgs fills them. Args may also
-// carry StatePlaceholder (only for codex at tier edit) and must be passed
-// through PaneArgs. PromptAt is the index of PromptPlaceholder in Print, -1
-// when the kind is unknown and Print is empty.
+// StatePlaceholder as their own elements; PrintArgs fills them. PromptAt is the
+// index of PromptPlaceholder in Print, -1 when the kind is unknown and Print is
+// empty.
 type Launch struct {
 	Kind     string
-	Args     []string
 	Print    []string
 	PromptAt int
 }
 
 // Launch renders argv for role at tier. tier's PermissionArgs are appended
-// after the base form and before extra, in both Args and Print. Errors:
+// after the base form and before extra. Errors:
 // ErrTierUnsupported (refusal cell); ErrExtraArgsPermission when tier !=
 // TierHarness and extra carries a permission flag for this kind
 // (`candidate extra_args carries %s; remove it or use --tier harness`).
 // At TierHarness the result is byte-identical to the pre-#141 Launch.
 func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, tier Tier) (Launch, error) {
-	var base, print []string
+	var print []string
 	promptAt := -1
 
 	switch h.Kind {
 	case "claude":
-		base = []string{"--model", model, "--agent", role.Definition}
 		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
 			"--output-format", "stream-json", "--verbose"}
 		promptAt = 1
 	case "opencode":
-		base = []string{"--agent", role.Definition, "-m", provider + "/" + model}
 		// --standalone (opencode 2.x, #256): without it, `run` is a thin
 		// client of the one `opencode serve --service` per user, and a
 		// process-group kill of the client (proc.Runner.Kill) leaves the
 		// agent session running inside the service, still editing the
 		// worktree relay has switched away from. --standalone starts a
 		// private server instead, so a headless round's kill is a real kill
-		// again. Print-only: an interactive pane still shares the service.
+		// again.
 		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--standalone"}
 		promptAt = 1
 	// 2026-09-18 probe: agy's stream `init` event reports `cwd` = the
@@ -371,7 +366,6 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	// `--new-project` were not used because they name agy-side project
 	// records, not a directory.
 	case "agy":
-		base = []string{"--model", model, "--agent", role.Definition}
 		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
 			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
 			"--add-dir", DirPlaceholder}
@@ -385,7 +379,6 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		if effort != "" {
 			cfg = append(cfg, "-c", "model_reasoning_effort="+effort)
 		}
-		base = cfg
 		print = append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder)
 		promptAt = 1
 	}
@@ -400,13 +393,11 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		}
 	}
 
-	args := append(append(append([]string(nil), base...), perm...), extra...)
 	if print != nil {
 		print = append(append(append([]string(nil), print...), perm...), extra...)
 	}
 	return Launch{
 		Kind:     h.Kind,
-		Args:     args,
 		Print:    print,
 		PromptAt: promptAt,
 	}, nil
@@ -442,22 +433,6 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string
 			out = append(out, budget.String())
 		case DirPlaceholder:
 			out = append(out, dir)
-		case StatePlaceholder:
-			out = append(out, writableRootsArg(state))
-		default:
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-// PaneArgs is Args with StatePlaceholder filled; a fresh slice. Every
-// pane start goes through it, even for kinds with no placeholder, so the
-// rule has one home.
-func (l Launch) PaneArgs(state string) []string {
-	out := make([]string, 0, len(l.Args))
-	for _, a := range l.Args {
-		switch a {
 		case StatePlaceholder:
 			out = append(out, writableRootsArg(state))
 		default:

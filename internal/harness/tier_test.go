@@ -158,16 +158,13 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Fatal("RoleByName(\"reviewer\") not found")
 	}
 
-	// claude builder at edit -> Args and Print both contain --permission-mode acceptEdits after --agent plan-executor and before extra
+	// claude builder at edit -> Print contains --permission-mode acceptEdits
+	// after --agent plan-executor and before extra
 	c, _ := Lookup("claude")
 	extra := []string{"--some-flag"}
 	cl, err := c.Launch("prov", "m/x", extra, builder, TierEdit)
 	if err != nil {
 		t.Fatalf("claude Launch edit error: %v", err)
-	}
-	wantClaudeArgs := []string{"--model", "m/x", "--agent", "plan-executor", "--permission-mode", "acceptEdits", "--some-flag"}
-	if !reflect.DeepEqual(cl.Args, wantClaudeArgs) {
-		t.Errorf("claude Args = %v, want %v", cl.Args, wantClaudeArgs)
 	}
 	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--some-flag"}
@@ -175,26 +172,24 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
 	}
 
-	// agy reviewer at read -> --mode plan
+	// agy reviewer at read -> --mode plan in the print form
 	a, _ := Lookup("agy")
 	al, err := a.Launch("prov", "m/x", nil, reviewer, TierRead)
 	if err != nil {
 		t.Fatalf("agy Launch read error: %v", err)
 	}
-	wantAgyArgs := []string{"--model", "m/x", "--agent", "reviewer", "--mode", "plan"}
-	if !reflect.DeepEqual(al.Args, wantAgyArgs) {
-		t.Errorf("agy Args = %v, want %v", al.Args, wantAgyArgs)
+	if !containsAdjacent(al.Print, "--mode", "plan") {
+		t.Errorf("agy Print = %v, want the adjacent pair --mode plan", al.Print)
 	}
 
-	// opencode at yolo -> --auto
+	// opencode at yolo -> --auto in the print form
 	o, _ := Lookup("opencode")
 	ol, err := o.Launch("prov", "m/x", nil, builder, TierYolo)
 	if err != nil {
 		t.Fatalf("opencode Launch yolo error: %v", err)
 	}
-	wantOpencodeArgs := []string{"--agent", "plan-executor", "-m", "prov/m/x", "--auto"}
-	if !reflect.DeepEqual(ol.Args, wantOpencodeArgs) {
-		t.Errorf("opencode Args = %v, want %v", ol.Args, wantOpencodeArgs)
+	if !contains(ol.Print, "--auto") {
+		t.Errorf("opencode Print = %v, want --auto", ol.Print)
 	}
 }
 
@@ -206,7 +201,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 		provider  string
 		model     string
 		extra     []string
-		wantArgs  []string
 		wantPrint []string
 	}{
 		{
@@ -214,7 +208,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantArgs:  []string{"--model", "m/x", "--agent", "plan-executor"},
 			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder},
 		},
 		{
@@ -222,7 +215,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantArgs:  []string{"--model", "m/x", "--agent", "plan-executor"},
 			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
 		},
 		{
@@ -230,7 +222,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantArgs:  []string{"--agent", "plan-executor", "-m", "prov/m/x"},
 			wantPrint: []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--standalone"},
 		},
 	}
@@ -243,9 +234,6 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 		got, err := h.Launch(tt.provider, tt.model, tt.extra, builder, TierHarness)
 		if err != nil {
 			t.Fatalf("Launch(%s, TierHarness) error: %v", tt.kind, err)
-		}
-		if !reflect.DeepEqual(got.Args, tt.wantArgs) {
-			t.Errorf("%s Args = %v, want %v", tt.kind, got.Args, tt.wantArgs)
 		}
 		if !reflect.DeepEqual(got.Print, tt.wantPrint) {
 			t.Errorf("%s Print = %v, want %v", tt.kind, got.Print, tt.wantPrint)
@@ -272,7 +260,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Fatalf("agy Launch harness with extra perm flag unexpected error: %v", err)
 	}
 	count := 0
-	for _, a := range l.Args {
+	for _, a := range l.Print {
 		if a == "--dangerously-skip-permissions" {
 			count++
 		}
@@ -306,8 +294,8 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codex Launch harness with extra perm flag unexpected error: %v", err)
 	}
-	if len(cl.Args) < 2 || cl.Args[len(cl.Args)-2] != "-s" || cl.Args[len(cl.Args)-1] != "read-only" {
-		t.Errorf("codex Args should end with -s read-only: %v", cl.Args)
+	if len(cl.Print) < 2 || cl.Print[len(cl.Print)-2] != "-s" || cl.Print[len(cl.Print)-1] != "read-only" {
+		t.Errorf("codex Print should end with -s read-only: %v", cl.Print)
 	}
 }
 

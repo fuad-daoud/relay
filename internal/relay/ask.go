@@ -29,16 +29,6 @@ var ErrTreelessUnsupported = errors.New("treeless consult roles are not implemen
 // cap. An idle harness pane holds roughly 800 MB.
 var ErrConsultCap = errors.New("binding is at its consult cap")
 
-// consultPrompt is what relay types into a freshly spawned consult.
-//
-// The last line is an instruction to the model, not a constraint relay
-// enforces: relay cannot observe writes.
-const consultPrompt = `Read: %s
-
-Write your findings to: %s
-
-Reply here with only that path. Do not modify any file in this repository.`
-
 // consultHeadlessPrompt is the whole prompt a headless consult runs with. It
 // asks for the findings as the final message rather than a file: a
 // `read`-tier process may not be able to write one, and relay extracts that
@@ -63,16 +53,10 @@ type AskOptions struct {
 	File        string // the question file; required
 	Name        string // binding name, already resolved by the caller
 	PlannerPane string // $HERDR_PANE_ID; required
-	WorkspaceID string
-	// Headless runs the consult as a one-shot process through the Runner
-	// instead of a pane, its final message becoming the findings (#147, #144).
-	// It needs rt.Runner; a candidate whose harness cannot honour the tier is
-	// refused exactly as a pane consult's is.
-	Headless bool
 
 	// Round > 0 asks the builder that built this closed round instead of
-	// spawning a role: it implies Headless, and Role and Candidate are
-	// ignored, because the round's recorded session fixes both (#147 part 2).
+	// spawning a role: Role and Candidate are ignored, because the round's
+	// recorded session fixes both (#147 part 2).
 	Round int
 	// Question is an inline question. With Round > 0 exactly one of File and
 	// Question must be set; without Round it is unused.
@@ -96,36 +80,34 @@ type AskResult struct {
 // Ask spawns one read-only, one-shot consult beside a binding's builder and
 // returns immediately. The daemon watches for its findings.
 //
+// Every consult is headless since #303: a one-shot process through the Runner,
+// its final message becoming the findings (#147, #144). No consult opens a pane.
+//
 // With opts.Round > 0 the ask is a round consult (#147 part 2): it resumes the
 // harness session that built closed round opts.Round and asks it the question,
 // headless and read-only, instead of resolving a role and a candidate. It then
 // requires exactly one of opts.File and opts.Question, and no opts.PlannerPane:
 // a resumed process opens no pane.
 //
-// Preconditions:  opts.PlannerPane names a live agent pane; opts.File is
+// Preconditions:  opts.File is readable; opts.Role resolves to a consult spec
 //
-//	readable; opts.Role resolves to a consult spec whose Tree is
-//	not "none"; the binding exists and is neither broken nor done;
-//	running consults are below the binding's cap.
+//	whose Tree is not "none"; the binding exists and is neither broken
+//	nor done; running consults are below the binding's cap.
 //
 // Postconditions: on a validation failure nothing on disk changed and nothing
 //
 //	was spawned. On a reservation failure no record is written and no
-//	pane exists; ErrConsultCap is raised here and only here. On success
-//	exactly one record for the id exists, State is running,
-//	Endpoint.PaneID is set, and the ask is logged with Confirmed: true.
-//	On a spawn failure after a pane exists, exactly one record for the
-//	id exists, State is silent, Endpoint.PaneID is set, and Note names
-//	the failure, so `relay reap` can close it. On a spawn failure before
-//	a pane exists (CreateTab itself failed), exactly one record
-//	for the id exists, State is silent, Endpoint.PaneID is empty, and
-//	Note names the failure, so `relay reap` drops it without a close.
+//	process exists; ErrConsultCap is raised here and only here. On success
+//	exactly one record for the id exists, State is running, Endpoint is
+//	headless, and the ask is logged with Confirmed: true. On a spawn
+//	failure exactly one record for the id exists, State is silent, and
+//	Note names the failure.
 //
 // Errors: ErrUnknownRole, ErrNotAConsultRole, ErrNoCandidates, ErrRoleNotServed,
 //
 //	ErrAmbiguousCandidate, candidate.ErrUnknownCandidate,
-//	ErrTreelessUnsupported, ErrConsultCap, store.ErrNotFound, a wrapped
-//	herdr failure, or a wrapped store error from either phase.
+//	ErrTreelessUnsupported, ErrConsultCap, ErrRunnerUnavailable,
+//	store.ErrNotFound, or a wrapped store error from either phase.
 func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if opts.Round > 0 {
 		return askRound(ctx, rt, opts)
@@ -149,9 +131,9 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if role.Shape != harness.ShapeConsult {
 		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)
 	}
-	if opts.Headless && rt.Runner == nil {
-		// Phase 0, next to the role check: a headless consult runs a process,
-		// so a runtime with no Runner refuses before anything is reserved.
+	if rt.Runner == nil {
+		// Phase 0, next to the role check: a consult runs a process, so a
+		// runtime with no Runner refuses before anything is reserved.
 		return AskResult{}, ErrRunnerUnavailable
 	}
 	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, opts.Role)
@@ -197,68 +179,36 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
 	var spawnErr error
-	if opts.Headless {
-		// The consult is a process, not a pane: no tab, no StartAgent, no
-		// prompt to type. The stream carries its final message and the
-		// supervisor's exit trailer, and Endpoint.LogPath names it so
-		// consultSource's headless branch reads the stream (#147, #144).
-		streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
-		argv, err := headlessLaunch(c, role, tier, consultTimeout,
-			fmt.Sprintf(consultHeadlessPrompt, consult.AskPath), cwd, rt.Store.Dir(opts.Name))
-		if err != nil {
-			consult.State = store.ConsultSilent
-			consult.Note = "spawn failed: " + brief(err)
-			spawnErr = err
-		} else if h, err := rt.Runner.Start(ctx, ProcSpec{
-			Dir:        cwd,
-			Argv:       argv,
-			LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
-			StreamPath: streamPath,
-		}); err != nil {
-			consult.State = store.ConsultSilent
-			consult.Note = "spawn failed: " + brief(err)
-			spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
-		} else {
-			consult.Endpoint = store.Endpoint{
-				AgentName: consult.Endpoint.AgentName,
-				Kind:      l.Kind,
-				Mode:      store.ModeHeadless,
-				PID:       h.PID,
-				StartedAt: h.StartedAt.Unix(),
-				LogPath:   streamPath,
-			}
-			consult.State = store.ConsultRunning
-		}
+	// The consult is a process, not a pane: no tab, no agent start, no prompt
+	// to type. The stream carries its final message and the supervisor's exit
+	// trailer, and Endpoint.LogPath names it so consultSource's headless
+	// branch reads the stream (#147, #144).
+	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
+	argv, err := headlessLaunch(c, role, tier, consultTimeout,
+		fmt.Sprintf(consultHeadlessPrompt, consult.AskPath), cwd, rt.Store.Dir(opts.Name))
+	if err != nil {
+		consult.State = store.ConsultSilent
+		consult.Note = "spawn failed: " + brief(err)
+		spawnErr = err
+	} else if h, err := rt.Runner.Start(ctx, ProcSpec{
+		Dir:        cwd,
+		Argv:       argv,
+		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
+		StreamPath: streamPath,
+	}); err != nil {
+		consult.State = store.ConsultSilent
+		consult.Note = "spawn failed: " + brief(err)
+		spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
 	} else {
-		pane, err := openTab(ctx, rt, opts.WorkspaceID, cwd, consult.Endpoint.AgentName)
-		if err != nil {
-			consult.State = store.ConsultSilent
-			consult.Note = "spawn failed: " + brief(err)
-			spawnErr = err
-		} else {
-			consult.Endpoint.PaneID = pane
-			// IRREVERSIBLE: a pane may now exist. Never closed by relay.
-			if err := rt.Herdr.StartAgent(ctx, consult.Endpoint.AgentName, l.Kind, pane, l.PaneArgs(rt.Store.Dir(opts.Name))); err != nil {
-				recordSpawnFailure(rt, c.Ref().String(), opts.Name, err)
-				consult.State = store.ConsultSilent
-				consult.Note = "start failed: " + brief(err)
-				spawnErr = fmt.Errorf("start consult %q: %w", consult.Endpoint.AgentName, err)
-			} else {
-				text := fmt.Sprintf(consultPrompt, consult.AskPath, consult.FindingsPath)
-
-				if err := promptWithRetry(ctx, rt, pane, text, consult.FindingsPath); err != nil {
-					if errors.Is(err, ErrPromptLate) {
-						consult.State = store.ConsultRunning
-					} else {
-						consult.State = store.ConsultSilent
-						consult.Note = "prompt failed: " + brief(err)
-						spawnErr = fmt.Errorf("prompt consult: %w", err)
-					}
-				} else {
-					consult.State = store.ConsultRunning
-				}
-			}
+		consult.Endpoint = store.Endpoint{
+			AgentName: consult.Endpoint.AgentName,
+			Kind:      l.Kind,
+			Mode:      store.ModeHeadless,
+			PID:       h.PID,
+			StartedAt: h.StartedAt.Unix(),
+			LogPath:   streamPath,
 		}
+		consult.State = store.ConsultRunning
 	}
 
 	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
@@ -272,7 +222,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		if spawnErr != nil {
 			return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, strandError(spawnErr, saveErr)
 		}
-		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, fmt.Errorf("consult %s is running in pane %s but could not be recorded: %w", consult.ID, consult.Endpoint.PaneID, saveErr)
+		return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, fmt.Errorf("consult %s is running as pid %d but could not be recorded: %w", consult.ID, consult.Endpoint.PID, saveErr)
 	}
 
 	return AskResult{Consult: consult, Binding: opts.Name, Candidate: c.Ref().String(), Resolution: res}, spawnErr
@@ -303,7 +253,7 @@ func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint s
 			return fmt.Errorf("binding %q is %s; a consult needs a live binding to attach to", b.Name, b.State)
 		}
 		if runningConsults(b) >= consultCap(b) {
-			return fmt.Errorf("binding %q has %d running consults (cap %d), `relay reap` to free a slot: %w",
+			return fmt.Errorf("binding %q has %d running consults (cap %d), wait for one to finish: %w",
 				b.Name, runningConsults(b), consultCap(b), ErrConsultCap)
 		}
 
