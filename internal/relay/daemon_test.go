@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -977,4 +978,163 @@ func TestDaemonResubscribesWhenAPaneIsBound(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// fakeFetcher counts calls so a test can prove the tick asked the endpoint --
+// or, on a fresh cache, never asked at all.
+type fakeFetcher struct {
+	calls int
+	tag   string
+	err   error
+}
+
+func (f *fakeFetcher) Latest(ctx context.Context) (string, error) {
+	f.calls++
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.tag, nil
+}
+
+// releaseStateRoot points store.DefaultRoot() at a temp root, so no test in
+// this package ever reads or writes the user's real state. The release check
+// is the one daemon path that composes its own path from that root (#293).
+func releaseStateRoot(t *testing.T) string {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	return root
+}
+
+// TestTickRefreshesOncePastTTL counts fetches: none while the cached answer is
+// fresh, one once it is stale. Drop the Stale guard and the fresh case fails.
+func TestTickRefreshesOncePastTTL(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		seed      bool
+		checkedAt time.Time
+		wantCalls int
+	}{
+		{
+			name:      "fresh cache is left alone",
+			seed:      true,
+			checkedAt: now.Add(-(release.TTL - time.Second)),
+			wantCalls: 0,
+		},
+		{
+			name:      "stale cache refetches",
+			seed:      true,
+			checkedAt: now.Add(-(release.TTL + time.Second)),
+			wantCalls: 1,
+		},
+		{
+			name:      "no cache at all fetches",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := releaseStateRoot(t)
+			if tc.seed {
+				if err := release.Save(root, release.Cache{
+					Latest:    "v0.7.0",
+					CheckedAt: tc.checkedAt,
+					Source:    "test",
+				}); err != nil {
+					t.Fatalf("seed cache: %v", err)
+				}
+			}
+
+			ff := &fakeFetcher{tag: "v0.8.0"}
+			f := &fakeHerdr{}
+			rt, _ := sentBinding(t, f)
+			rt.Fetcher = ff
+			rt.Now = func() time.Time { return now }
+			f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+			if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+
+			if ff.calls != tc.wantCalls {
+				t.Errorf("fetch calls = %d, want %d", ff.calls, tc.wantCalls)
+			}
+
+			c, ok, err := release.Load(root)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := "v0.8.0"
+			if tc.wantCalls == 0 {
+				want = "v0.7.0" // the fresh answer stays exactly as it was
+			}
+			if !ok || c.Latest != want {
+				t.Errorf("cache = (%+v, ok %v), want latest %s", c, ok, want)
+			}
+			if tc.wantCalls == 0 && !c.CheckedAt.Equal(tc.checkedAt) {
+				t.Errorf("fresh cache checked_at = %s, want it untouched at %s", c.CheckedAt, tc.checkedAt)
+			}
+		})
+	}
+}
+
+// TestTickSurvivesFetchError pins §4.4's failure rule: a fetch error is
+// swallowed, Tick still returns nil, and the cache is not written -- so an
+// offline machine retries next tick instead of recording a wrong answer.
+func TestTickSurvivesFetchError(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	t.Run("no cache yet", func(t *testing.T) {
+		root := releaseStateRoot(t)
+
+		ff := &fakeFetcher{err: errors.New("dial tcp: network is unreachable")}
+		f := &fakeHerdr{}
+		rt, _ := sentBinding(t, f)
+		rt.Fetcher = ff
+		rt.Now = func() time.Time { return now }
+		f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+		if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+			t.Errorf("Tick = %v, want nil: a failed release check must not stop the daemon", err)
+		}
+		if ff.calls != 1 {
+			t.Errorf("fetch calls = %d, want 1 (the stale check tried)", ff.calls)
+		}
+		if _, err := os.Stat(filepath.Join(root, "release-check.json")); !os.IsNotExist(err) {
+			t.Errorf("cache stat = %v, want os.ErrNotExist: a failed fetch saves nothing", err)
+		}
+	})
+
+	t.Run("stale cache is left alone", func(t *testing.T) {
+		root := releaseStateRoot(t)
+		stale := release.Cache{Latest: "v0.7.0", CheckedAt: now.Add(-2 * release.TTL), Source: "test"}
+		if err := release.Save(root, stale); err != nil {
+			t.Fatalf("seed cache: %v", err)
+		}
+
+		ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
+		f := &fakeHerdr{}
+		rt, _ := sentBinding(t, f)
+		rt.Fetcher = ff
+		rt.Now = func() time.Time { return now }
+		f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
+
+		if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+			t.Errorf("Tick = %v, want nil", err)
+		}
+
+		c, ok, err := release.Load(root)
+		if err != nil || !ok {
+			t.Fatalf("Load = (%+v, ok %v, %v), want the seeded cache", c, ok, err)
+		}
+		if c.Latest != stale.Latest || !c.CheckedAt.Equal(stale.CheckedAt) {
+			t.Errorf("cache = %+v, want the stale answer untouched at %+v", c, stale)
+		}
+	})
 }

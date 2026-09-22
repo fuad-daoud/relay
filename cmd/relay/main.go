@@ -32,6 +32,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/serve"
@@ -444,6 +445,7 @@ func newRuntime() (relay.Runtime, error) {
 		Usage:            reader,
 		Sessions:         relay.HomeSessionLocator(home),
 		Prices:           prices,
+		Fetcher:          release.NewHTTPFetcher(release.Source(), 5*time.Second),
 		Now:              time.Now,
 		Hooks:            dispatcher,
 		Remote:           remoteClient,
