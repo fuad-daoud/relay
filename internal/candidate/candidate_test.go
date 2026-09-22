@@ -390,3 +390,34 @@ func TestLoadAcceptsTierAndDenialPatterns(t *testing.T) {
 		t.Errorf("DenialPatterns = %v, want %v", c.DenialPatterns, wantPatterns)
 	}
 }
+
+// TestSetProviders: two candidates on one provider name it once, the result
+// is sorted whatever order the file listed them in, and a nil set -- a server
+// with no candidates.json -- answers nil instead of panicking.
+func TestSetProviders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[
+	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
+	  {"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]},
+	  {"harness":"agy","provider":"zeta","model":"g","roles":["builder"]},
+	  {"harness":"claude","provider":"test","model":"sonnet","roles":["reviewer"]}
+	]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got := set.Providers()
+	want := []string{"anthropic", "test", "zeta"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Providers() = %v, want %v", got, want)
+	}
+
+	var nilSet *Set
+	if got := nilSet.Providers(); got != nil {
+		t.Errorf("(*Set)(nil).Providers() = %v, want nil", got)
+	}
+}

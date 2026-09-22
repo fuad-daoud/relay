@@ -138,6 +138,27 @@ func (s *Set) Len() int {
 	return len(s.byRef)
 }
 
+// Providers returns every distinct provider the configured candidates use,
+// sorted. A nil *Set returns nil: callers hold a possibly-nil set (a server
+// with no candidates.json), and this must not panic on one.
+func (s *Set) Providers() []string {
+	if s == nil {
+		return nil
+	}
+
+	seen := make(map[string]bool, len(s.byRef))
+	var out []string
+	for _, c := range s.byRef {
+		if seen[c.Provider] {
+			continue
+		}
+		seen[c.Provider] = true
+		out = append(out, c.Provider)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Load reads and validates candidate definitions from a JSON file. A missing
 // file is zero candidates and not an error, because relay ships none (spec §1
 // point 3); a present file that does not validate is an error at startup for
