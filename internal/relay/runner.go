@@ -24,6 +24,7 @@ type ScopeSpec struct {
 	Slice     string // "" = omit --slice
 	CPUWeight int    // >= 1; always emitted
 	MemoryMax string // "" = omit
+	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
 	TasksMax  int    // 0 = omit
 }
 

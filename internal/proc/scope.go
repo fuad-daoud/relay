@@ -32,6 +32,9 @@ func ScopeArgv(s relay.ScopeSpec, inner []string) []string {
 		argv = append(argv, "--slice="+s.Slice)
 	}
 	argv = append(argv, "-p", "CPUWeight="+strconv.Itoa(s.CPUWeight))
+	if s.CPUQuota != "" {
+		argv = append(argv, "-p", "CPUQuota="+s.CPUQuota)
+	}
 	if s.MemoryMax != "" {
 		argv = append(argv, "-p", "MemoryMax="+s.MemoryMax)
 	}

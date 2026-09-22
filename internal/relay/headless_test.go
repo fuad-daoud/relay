@@ -278,7 +278,7 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 func TestStartRoundSetsScope(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
-	rt.Scope = &ScopeSpec{Slice: "relay.slice", CPUWeight: 150, MemoryMax: "2G", TasksMax: 64}
+	rt.Scope = &ScopeSpec{Slice: "relay.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
 
 	if _, err := startRound(context.Background(), rt, b, "the prompt"); err != nil {
 		t.Fatalf("startRound: %v", err)
@@ -295,7 +295,8 @@ func TestStartRoundSetsScope(t *testing.T) {
 		t.Errorf("Scope.Unit = %q, want %q", spec.Scope.Unit, wantUnit)
 	}
 	if spec.Scope.Slice != rt.Scope.Slice || spec.Scope.CPUWeight != rt.Scope.CPUWeight ||
-		spec.Scope.MemoryMax != rt.Scope.MemoryMax || spec.Scope.TasksMax != rt.Scope.TasksMax {
+		spec.Scope.MemoryMax != rt.Scope.MemoryMax || spec.Scope.CPUQuota != rt.Scope.CPUQuota ||
+		spec.Scope.TasksMax != rt.Scope.TasksMax {
 		t.Errorf("Scope = %+v, want the rt.Scope template's fields carried through", spec.Scope)
 	}
 }
