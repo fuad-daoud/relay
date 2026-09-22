@@ -33,10 +33,26 @@ After this change:
 ### 1.1 Evidence this rests on (verified 2026-09-22)
 
 - The `relay mcp` process and the planner's Bash tool see the **same**
-  `CLAUDE_CODE_SESSION_ID`: `relay mcp` pid 2668801 (parent = the Claude
-  Code process 2668686) and this session's shell both carry
-  `7e5d80d0-416b-4ad8-a9a5-66212d58e7f1`. That is the join between a CLI
-  call and its channel.
+  `CLAUDE_CODE_SESSION_ID` at start: `relay mcp` pid 2668801 (parent = the
+  Claude Code process 2668686) and this session's shell both carry
+  `7e5d80d0-416b-4ad8-a9a5-66212d58e7f1`.
+- **But the session id is not a stable join** (step 0, Claude Code
+  2.1.280). `--resume` and `--continue` keep the id: a `-p` run and both
+  follow-ups all read `d473a011-…` in the env and in the JSON `session_id`.
+  **`/clear` changes it**, and `relay mcp` isn't restarted. In an
+  interactive pane, before `/clear` the shell and `relay mcp` both read
+  `406634b1-…`; after `/clear` the shell read `00a4c025-…` while the same
+  `relay mcp` process still had `406634b1-…`.
+- **The Claude Code process is the stable join.** The Bash tool's
+  `CLAUDE_PID` stays the same across `/clear` (2880816), and it is `relay
+  mcp`'s parent pid (`ps -o ppid=` → 2880816, `comm=claude`). So a CLI call
+  finds its planner through the live channel claim whose host pid equals
+  `$CLAUDE_PID` (§4.3). The session id is an attribute that relay refreshes,
+  not a key.
+- **opencode exposes no session id to tools** (opencode 2.0.12, `opencode
+  run`): the tool subprocess's env matching `opencode|ses_` is only
+  `OPENCODE_TERMINAL=1`, while the run's session was `ses_f35add…`. An
+  opencode planner therefore resolves explicitly only (§4.2).
 - `relay.db` already has `planner(id PK, harness_kind, session_id,
   transcript_locator, first_seen, last_seen)`, unique on
   `(harness_kind, session_id)` (`internal/db/migrations/001_initial.sql`).
@@ -128,7 +144,9 @@ and the `planner` table is filled from it.
 
 Invariant: at most one record holds a given `(harness_kind, session_id)`
 as its current `session_id`. `adopt` moves a session and appends the old one
-to `sessions`.
+to `sessions`. A CLI call that resolves by host pid (§4.3) and carries a
+different session id than the record's current one performs the same move
+automatically. That is how `/clear` is absorbed.
 
 ### 3.2 `store.Binding` changes
 
@@ -149,8 +167,14 @@ to `sessions`.
 ### 3.3 `relay.Claim` (channel claim, `channels/<planner-id>.json`)
 
 `Pane string` becomes `Planner string json:"planner"` (required; a planner
-id). The other fields are unchanged. `ClaimStore.Live`, `Write` and
-`Remove` take a planner id. Old pane-keyed claim files expire under
+id). Two fields are added: `HostPID int json:"host_pid"` (required, > 0:
+`relay mcp`'s parent pid, the harness process) and `HostStartedAt int64
+json:"host_started_at"` (the OS start time in Unix seconds, for pid-reuse
+defence, as `Endpoint.StartedAt` does). The other fields are unchanged. `ClaimStore.Live`, `Write` and
+`Remove` take a planner id. `ClaimStore` gains `LiveByHost(hostPID int,
+hostStartedAt int64) (*Claim, error)`: the live claim whose host matches,
+or `(nil, nil)`. It scans `channels/`; at one file per planner session the
+scan is small. Old pane-keyed claim files expire under
 `ClaimTTL`; the first `relay mcp` after upgrade removes any file in
 `channels/` that doesn't parse as a planner-keyed claim.
 
@@ -203,15 +227,16 @@ on a `t.TempDir()`.
 ### 4.2 `planner.HarnessIdent`: which harness session is calling
 
 ```
-Detect(env func(string) string) (kind, sessionID string, ok bool)
+Detect(env func(string) string) (Ident, bool)
+Ident{ Kind string; SessionID string; HostPID int }   // HostPID 0 = unknown
 ```
 
 This is a table of rules, first match wins:
 
 | kind | rule | status |
 |---|---|---|
-| `claude` | `CLAUDECODE=1` and `CLAUDE_CODE_SESSION_ID` non-empty | verified §1.1 |
-| `opencode` | to be established in Step 0 (§7) | **unverified** |
+| `claude` | `CLAUDECODE=1`; `SessionID` = `CLAUDE_CODE_SESSION_ID`, `HostPID` = `CLAUDE_PID` (Bash tool) or `os.Getppid()` (in `relay mcp`, which has no `CLAUDE_PID`) | verified §1.1, including across `/clear`, `--resume` and `--continue` |
+| `opencode` | none: tools see only `OPENCODE_TERMINAL=1`; explicit `relay planner register --kind opencode --session ses_…` or `--planner` | verified §1.1 (explicit-only) |
 | `agy` | none; explicit `relay planner register` only | by design until #300's agy spec |
 
 A kind with no rule can only resolve through `--planner` / `$RELAY_PLANNER`.
@@ -224,8 +249,14 @@ Resolve(reg Registry, in ResolveInput) (Record, Resolution, error)
 
 ResolveInput{ Flag string; Env func(string) string; CWD string;
               Register bool; Now time.Time; Ident HarnessIdent }
-Resolution = "flag" | "env" | "session" | "registered"
+Resolution = "flag" | "env" | "host" | "session" | "registered"
 ```
+
+`host` is the primary route for a Claude Code planner: find the live
+channel claim (§3.3) whose `HostPID` and `HostStartedAt` match the caller's
+harness process, and take its planner. It survives `/clear`; `session`
+alone would not (§1.1). `ResolveInput` gains `Claims ClaimStore` and
+`ProcStart func(pid int) (int64, error)` for the start-time check.
 
 Errors: `ErrNoPlanner` (nothing resolved and `Register` is false),
 `ErrUnknownPlanner{Ref}` (a flag or env value that matches no id or name),
@@ -293,7 +324,12 @@ means "binary on PATH and the candidate parses".
 Resolve(reg, in):
   if in.Flag != "":   return lookup(reg, in.Flag), "flag"     # id or name, else ErrUnknownPlanner
   if v := in.Env("RELAY_PLANNER"); v != "": return lookup(reg, v), "env"
-  kind, sess, ok := in.Ident.Detect(in.Env)
+  id, ok := in.Ident.Detect(in.Env); kind, sess := id.Kind, id.SessionID
+  if ok and id.HostPID > 0:
+    if c := in.Claims.LiveByHost(id.HostPID, in.ProcStart(id.HostPID)); c != nil:
+      r := reg.Get(c.Planner)
+      if sess != "" and sess != r.session_id: r = reg.Adopt(r.id, kind, sess, now)  # /clear
+      reg.Touch(r.id); return r, "host"
   if ok:
     if r, err := reg.BySession(kind, sess); err == nil: reg.Touch(r.id); return r, "session"
     if !in.Register: return ErrNoPlanner
@@ -344,7 +380,8 @@ it. `relay pull` marks it delivered with `route=pull`.
 ```
 r, how, err := Resolve(Register: true, Flag: --planner)
 if err: tools-only, stderr note, return
-rt.Channels.Write(Claim{Planner: r.id, PID, StartedAt, SeenAt, CWD, Version})
+rt.Channels.Write(Claim{Planner: r.id, PID, StartedAt, SeenAt, CWD, Version,
+                        HostPID: os.Getppid(), HostStartedAt: start time of that pid})
   ErrClaimHeld -> exit, as today
 poll: Touch(r.id) at most once a minute; drain mailbox for bindings where PlannerID == r.id
 ```
@@ -414,7 +451,7 @@ Also hold **#293 part 2** (`relay update` self-update). #310 detects
 
 | step | owner | deliverable | depends on | done when |
 |---|---|---|---|---|
-| 0 | planner, not a builder | establish `HarnessIdent`'s opencode rule: the env an opencode planner's tool subprocess sees, and whether it names the `ses_` id; also whether a Claude Code `--resume` keeps `CLAUDE_CODE_SESSION_ID` | -- | a row in §4.2 marked verified, or "explicit-only" recorded |
+| 0 | planner, not a builder | **done 2026-09-22** (§1.1): opencode is explicit-only; Claude keeps its session id across `--resume`/`--continue` but not `/clear`, so the join is the host pid | -- | §4.2 rows verified |
 | 1 | builder | **Planner identity**, with herdr still in the tree: `internal/planner`, `relay planner` verbs, `Binding.PlannerID`, bind/add/fork/ask use `Resolve` (herdr is still a source of `PaneID` for the pane path), `relay mcp` registers and claims by planner id, MCP `status` filters by planner, ingest uses record ids | #300 merged, step 0 | `make check`; a binding made from a Claude session shows `planner_id`; a second `relay mcp` in the same session is refused by planner id |
 | 2 | builder | **Headless-only builders**: delete pane builder mode, `relay answer` + MCP tool + `pick` answer, `stop --grace/--now` and `stopPrompt`, ui pane capture, harness `PaneArgs`/`Integration`/`SubAgents`/coverage, the pane usage reader, the `--builder <pane>`/`--workspace`/`--assume-dead`/`--held-grace` flags; `--headless` becomes a no-op; the §5.6 retire rule | 1 | `make check`; no builder code path reads a pane; the ported tests listed |
 | 3 | builder | **Planner delivery without herdr**: §5.4 routes, delete pane delivery and `held.go`, the notifications (D4), daemon `ListAgents`, ORPHANED/BROKEN-from-herdr, status JSON §3.5 and every consumer, doctor §4.7, the `internal/herdr` package, every `HERDR_*` read | 2 | `grep -rli herdr --include=*.go . \| grep -v _test` is empty; `make check` |
