@@ -440,6 +440,7 @@ func newRuntime() (relay.Runtime, error) {
 		LedgerPath:       st.LedgerPath(),
 		AvailabilityPath: st.AvailabilityPath(),
 		Policy:           pol,
+		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
 		Usage:            reader,
 		Sessions:         relay.HomeSessionLocator(home),
@@ -2127,6 +2128,11 @@ func cmdDaemon(args []string) error {
 	// builder it merely happens to observe as "exited, code unknown" (#244).
 	rt.StartedAt = time.Now()
 	rt.HeldGrace = *heldGrace
+	// The scope template newRuntime filled is logged once here, in the same
+	// shape `relay serve` uses (#295). "off" is scope.enabled: false; the
+	// local daemon does not probe at startup, so there is no "unavailable"
+	// here -- a later probe failure is the runner's one-line warning (§3.1).
+	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(rt.Scope)))
 
 	// The database is opened only here (and by `relay db *`): the daemon
 	// is the process that writes it every tick; `relay serve`'s state root
