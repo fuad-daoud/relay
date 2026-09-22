@@ -193,7 +193,14 @@ type Binding struct {
 	Name    string   `json:"name"`
 	CWD     string   `json:"cwd"`
 	Planner Endpoint `json:"planner"`
-	Builder Endpoint `json:"builder"`
+	// PlannerID names the relay planner record this binding belongs to
+	// (docs/specs/2026-09-22-drop-herdr-design.md §3.2, §5.3): the id in
+	// $XDG_STATE_HOME/relay/planners/<id>.json and in the db's planner table.
+	// Empty on every binding written before #303 step 1, and empty on a
+	// remote binding, which has no planner. Step 1b is what sets it at
+	// bind/add/fork; this round only adds the field, so nothing writes it yet.
+	PlannerID string   `json:"planner_id,omitempty"`
+	Builder   Endpoint `json:"builder"`
 	// BuilderCandidate is the harness/provider/model token the builder was
 	// started from (#80); empty for an adopted builder and for any binding
 	// written before the field existed.

@@ -296,6 +296,20 @@ func (r *Runner) Rusage(_ context.Context, _ relay.ProcHandle, streamPath string
 
 var errNoProcess = errors.New("proc: no such process")
 
+// StartTime reports when a process started, in the OS's own resolution, via the
+// same `ps -o lstart=` read psInfo uses (and Endpoint.StartedAt records). It is
+// exported for `relay planner init`, which needs the harness process's start
+// time to defend a planner record against pid reuse exactly as a binding's
+// endpoint does (#303 §3.1). A missing pid is an error, not the zero time: the
+// caller decides what a host it cannot measure means.
+func StartTime(ctx context.Context, pid int) (time.Time, error) {
+	started, _, err := psInfo(ctx, pid)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return started, nil
+}
+
 // psLayout is what `ps -o lstart=` prints on Linux (procps) and macOS:
 // "Sat Sep 12 16:35:34 2026". The day may be space-padded; _2 accepts both.
 const psLayout = "Mon Jan _2 15:04:05 2006"
