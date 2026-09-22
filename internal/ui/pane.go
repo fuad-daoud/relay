@@ -25,10 +25,7 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 		title = spread(title, right, m.paneWidth())
 	}
 
-	planner := label("planner") + fmt.Sprintf("%-4s %-9s %s", b.PlannerPane, b.PlannerKind, b.PlannerStatus)
-	if b.PlannerFocus {
-		planner += sep + dimStyle.Render("focused")
-	}
+	planner := label("planner") + fmt.Sprintf("%-4s %s", b.PlannerPane, b.PlannerKind)
 	// On a serve box the pane belongs to a client, not to this planner: the
 	// client line replaces the planner line (empty OwnerLabel is a planner
 	// row, which renders today's line above).
@@ -55,9 +52,6 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	builder := label("builder") + fmt.Sprintf("%-4s %-9s ", b.BuilderPane, b.BuilderKind) + strings.Join(bparts, sep)
 
 	rows := []string{title, planner, builder}
-	for _, fa := range b.Foreign {
-		rows = append(rows, label("foreign")+fmt.Sprintf("%-4s %-9s %s"+sep+"%s", fa.PaneID, fa.Kind, fa.Status, fa.Title))
-	}
 
 	var tparts []string
 	if b.Branch != "" {

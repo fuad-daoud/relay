@@ -24,19 +24,18 @@ const minMCPInterval = 200 * time.Millisecond
 // mode it only serves the four verbs as tools.
 func cmdMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	paneFlag := fs.String("pane", "", "planner pane id (default: $HERDR_PANE_ID)")
+	paneFlag := fs.String("planner", "", plannerFlagUsage)
 	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
 	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	pane := *paneFlag
+	// SPIKE(planner-id): the channel claim is keyed by this id; it was
+	// $HERDR_PANE_ID (--pane).
+	pane := plannerID(*paneFlag)
 	if pane == "" {
-		pane = os.Getenv("HERDR_PANE_ID")
-	}
-	if pane == "" {
-		fmt.Fprintln(os.Stderr, "relay mcp: no planner pane (set HERDR_PANE_ID or pass --pane)")
+		fmt.Fprintln(os.Stderr, "relay mcp: no planner (set RELAY_PLANNER or pass --planner)")
 		return exitCodeErr{code: 2}
 	}
 
@@ -56,7 +55,7 @@ func cmdMCP(args []string) error {
 	}
 
 	version := buildVersion()
-	fmt.Fprintf(os.Stderr, "relay mcp: pane %s mode %s\n", pane, mcpModeWord(mode))
+	fmt.Fprintf(os.Stderr, "relay mcp: planner %s mode %s\n", pane, mcpModeWord(mode))
 
 	srv := &mcp.Server{
 		Verbs:   &mcp.RelayVerbs{RT: rt, Pane: pane},

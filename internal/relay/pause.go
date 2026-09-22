@@ -26,26 +26,24 @@ type PauseOptions struct {
 
 // PauseResult is what Pause actually did.
 type PauseResult struct {
-	Round        int // the last completed round (b.Round - 1)
-	Branch       string
-	Worktree     string // the path that was released
-	Committed    string // sha of the --commit commit, "" when nothing was committed
-	PaneClosed   string // pane id closed, "" for headless / no pane
-	PaneCloseErr string // non-fatal: the pane was already gone or herdr refused
+	Round     int // the last completed round (b.Round - 1)
+	Branch    string
+	Worktree  string // the path that was released
+	Committed string // sha of the --commit commit, "" when nothing was committed
 }
 
-// Pause releases a binding's worktree and its builder pane between rounds,
+// Pause releases a binding's worktree between rounds,
 // and parks the binding in PAUSED: the branch and the round log stay, and
 // `relay bind --resume --name <n>` restores the worktree and rebinds.
 //
 // It runs entirely under the state lock (the Done pattern): the daemon
 // rewrites this binding on every tick, so state is reached only through tx.
 //
-// Refusals, in order: a remote binding (no local worktree or pane), DONE,
+// Refusals, in order: a remote binding (no local worktree), DONE,
 // already PAUSED, a binding relay did not create a tree for (--cwd/adopted),
 // an open round, and missing git. A dirty tree is refused unless --commit.
 //
-// Order of work is refusals -> dirty/commit -> remove worktree -> close pane
+// Order of work is refusals -> dirty/commit -> remove worktree
 // -> state+log+save -> hook. A failure before the worktree is removed changes
 // nothing; a failure at the removal changes nothing either, and names the
 // --commit commit that is now on the branch (it is not undone).
@@ -59,7 +57,7 @@ func Pause(ctx context.Context, rt Runtime, name string, opts PauseOptions) (Pau
 
 		// Refusals first: nothing has changed yet.
 		if b.Builder.Remote() {
-			return fmt.Errorf("binding %q is remote; it has no local worktree or pane to release -- relay done ends it", name)
+			return fmt.Errorf("binding %q is remote; it has no local worktree to release -- relay done ends it", name)
 		}
 		if b.State == store.StateDone {
 			return fmt.Errorf("binding %q is done; nothing to pause", name)
@@ -71,8 +69,8 @@ func Pause(ctx context.Context, rt Runtime, name string, opts PauseOptions) (Pau
 			return fmt.Errorf("binding %q drives %s, a tree relay did not create; nothing to release", name, b.CWD)
 		}
 
-		// A round is open when a pane round has its start stamp, or when a
-		// headless builder's process is recorded and still alive.
+		// A round is open when it has its start stamp, or when a headless
+		// builder's process is recorded and still alive.
 		roundOpen := !b.RoundStartedAt.IsZero()
 		if !roundOpen && b.Builder.Headless() && b.Builder.PID != 0 && rt.Runner != nil {
 			alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
@@ -116,15 +114,6 @@ func Pause(ctx context.Context, rt Runtime, name string, opts PauseOptions) (Pau
 			return fmt.Errorf("binding %q: release worktree %s: %w", name, b.Worktree, err)
 		}
 
-		// Close the builder pane. Failure is not fatal: the pane may already
-		// be gone, or herdr may refuse; the result says so and names the
-		// command to close it by hand.
-		if !b.Builder.Headless() && b.Builder.PaneID != "" {
-			out.PaneClosed = b.Builder.PaneID
-			if cerr := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); cerr != nil {
-				out.PaneCloseErr = cerr.Error()
-			}
-		}
 		// Identity cleared: resume spawns a fresh builder. Mode and Kind stay,
 		// so a headless binding resumes headless and the candidate is not lost.
 		b.Builder = store.Endpoint{Kind: b.Builder.Kind, Mode: b.Builder.Mode}

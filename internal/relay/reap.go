@@ -21,22 +21,12 @@ type ReapOptions struct {
 // ReapResult is what one binding's reap did.
 type ReapResult struct {
 	Binding string
-	Closed  []store.Consult // pane closed, record dropped
-	Failed  []store.Consult // close failed, record kept for a retry
-	Dropped []store.Consult // record dropped; no pane ever existed to close
+	Dropped []store.Consult // terminal record dropped
 }
 
-// Reap closes the panes of terminal consults and drops their records.
-//
-// This is the only place relay closes a pane, it closes only panes relay
-// spawned itself, and it runs because a human or a planner asked -- never
-// because relay judged an outcome. docs/design.md's "Relay never kills a pane"
-// is amended to name this one command.
-//
-// Running consults are never touched. A failed close keeps the record so a
-// retry is possible and never fails the sweep: one unreachable pane must not
-// strand the rest.
-func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, error) {
+// Reap drops the records of terminal consults. Running consults are never
+// touched, and reap never kills a process.
+func Reap(_ context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, error) {
 	var names []string
 
 	if opts.All {
@@ -85,29 +75,10 @@ func Reap(ctx context.Context, rt Runtime, opts ReapOptions) ([]ReapResult, erro
 					keep = append(keep, c)
 					continue
 				}
-				if c.Endpoint.PaneID == "" {
-					// No pane ever existed: a spawning record that never
-					// spawned, or a headless consult, which runs as a process
-					// relay never closes. The record is dropped and no Kill is
-					// issued -- a running headless consult was kept above, and
-					// reap never kills.
-					res.Dropped = append(res.Dropped, c)
-					if opts.DryRun {
-						keep = append(keep, c)
-					}
-					continue
-				}
+				res.Dropped = append(res.Dropped, c)
 				if opts.DryRun {
-					res.Closed = append(res.Closed, c)
 					keep = append(keep, c)
-					continue
 				}
-				if err := rt.Herdr.ClosePane(ctx, c.Endpoint.PaneID); err != nil {
-					res.Failed = append(res.Failed, c)
-					keep = append(keep, c)
-					continue
-				}
-				res.Closed = append(res.Closed, c)
 			}
 
 			if opts.DryRun {

@@ -33,18 +33,12 @@ type ForkOptions struct {
 	// to resolveCandidate, so a one-candidate machine still forks without a flag.
 	Candidate string
 
-	PlannerPane string // the calling pane, from $HERDR_PANE_ID; required
-	WorkspaceID string
+	PlannerPane string // SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER; required
 
 	// CWD binds the fork to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
 	CWD string
-
-	// Headless makes the fork's builder a process relay runs per round
-	// instead of a pane (#99). Not inherited from the source: the mode is a
-	// property of this binding, chosen at its creation.
-	Headless bool
 
 	// Tier overrides the candidate/policy permission tier (#141).
 	Tier string
@@ -86,7 +80,7 @@ type ForkResult struct {
 
 // Fork branches a new binding from the source's state as of a given round.
 //
-// Preconditions:  opts.PlannerPane names a live agent pane; opts.Source exists;
+// Preconditions:  opts.PlannerPane is set; opts.Source exists;
 //
 //	1 <= opts.Round <= source.Round; opts.NewName is valid and
 //	unused; the source round has a plan in the log.
@@ -98,11 +92,11 @@ type ForkResult struct {
 //
 // Errors: store.ErrNotFound, ErrRoundOutOfRange, ErrNoBuilderCandidate,
 //
-//	ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists, or a wrapped
-//	herdr failure. Rollback is described in §5.
+//	ErrGitRequired, store.ErrCWDTaken, or git.ErrBranchExists. Rollback is
+//	described in §5.
 func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error) {
 	if opts.PlannerPane == "" {
-		return ForkResult{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+		return ForkResult{}, ErrNoPlanner
 	}
 	if err := store.ValidName(opts.NewName); err != nil {
 		return ForkResult{}, err
@@ -112,22 +106,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 			return ForkResult{}, err
 		}
 	}
-	// Refuse here, not just inside resolveBuilder: Fork cuts its worktree
-	// before that runs, and a name herdr would refuse must not leave a
-	// worktree behind. The composed name is discarded -- resolveBuilder
-	// recomputes it.
-	if _, err := builderAgentName(opts.NewName); err != nil {
-		return ForkResult{}, err
-	}
 
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return ForkResult{}, fmt.Errorf("list agents: %w", err)
-	}
-	planner, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-	if !ok {
-		return ForkResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
-	}
+	planner := plannerEndpoint(opts.PlannerPane)
 
 	src, err := rt.Store.Load(opts.Source)
 	if err != nil {
@@ -258,17 +238,15 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 	if found && other.Name != opts.NewName && other.State != store.StateDone {
 		rollback()
-		return ForkResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			cwd, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
+		return ForkResult{}, fmt.Errorf("%s is driven by binding %q (round %d): %w",
+			cwd, other.Name, other.Round, store.ErrCWDTaken)
 	}
 
 	bindOpts := BindOptions{
 		Name:        opts.NewName,
 		Candidate:   c.Ref().String(),
-		PlannerPane: planner.PaneID,
+		PlannerPane: opts.PlannerPane,
 		CWD:         cwd,
-		WorkspaceID: opts.WorkspaceID,
-		Headless:    opts.Headless,
 		Tier:        string(tier),
 		AllowYolo:   opts.AllowYolo,
 	}
@@ -277,7 +255,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// resolved above -- res, from before the worktree was cut, is what the
 	// pick entry and ForkResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName, planner.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
@@ -302,7 +280,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	b := store.Binding{
 		Name:             opts.NewName,
 		CWD:              cwd,
-		Planner:          endpointOf(planner),
+		Planner:          planner,
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		Round:            opts.Round + 1,
@@ -322,7 +300,6 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Gate:             gate,
 		Regate:           regate,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 
 	now := time.Now().UTC()
 	if rt.Now != nil {
@@ -334,8 +311,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	})
 	if err != nil {
 		rollback()
-		return ForkResult{}, fmt.Errorf("fork failed after starting builder in pane %s (close it yourself): %w",
-			builder.PaneID, err)
+		return ForkResult{}, fmt.Errorf("fork: %w", err)
 	}
 
 	if stored, err := rt.Store.Load(b.Name); err == nil {

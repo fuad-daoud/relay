@@ -5,32 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// minInterval keeps a misconfigured interval from spinning the herdr socket.
+// minInterval keeps a misconfigured interval from spinning the daemon.
 const minInterval = 500 * time.Millisecond
 
-// reconnectResult is how the reconnect goroutine -- the one exception to
-// "Run is single-goroutine" (see Run's doc comment) -- hands a freshly
-// (re)subscribed stream back to Run's own goroutine. reconnect must not set
-// d.subscribedPanes or d.streamCancel directly: both are read and written on
-// Run's goroutine without a lock, so only Run itself may assign them, after
-// receiving one of these off the channel.
-type reconnectResult struct {
-	events <-chan herdr.Event
-	panes  []string
-	cancel context.CancelFunc
-}
-
-// Daemon polls herdr and advances every binding. It is the only reason relay
-// needs a background process: the inbound leg happens after the planner's turn
-// has ended, when no model is running to notice.
+// Daemon polls the store and advances every binding. It is the only reason
+// relay needs a background process: the inbound leg happens after the
+// planner's turn has ended, when no model is running to notice.
 type Daemon struct {
 	rt       Runtime
 	interval time.Duration
@@ -39,41 +25,6 @@ type Daemon struct {
 	// changed and returns the Runtime the tick should use. Nil (the
 	// default) keeps today's behaviour: rt is used as given.
 	refresh func(Runtime) Runtime
-
-	// applied is what the daemon last reported to herdr per binding
-	// (#129): the pane it wrote to, the token fingerprint, and when. In
-	// memory only: a daemon restart re-applies everything on its first
-	// tick, and metadataRefresh bounds how stale a herdr restart can leave
-	// a pane.
-	applied map[string]appliedMeta
-
-	// cache is the daemon's current view of herdr's agent list while a
-	// socket subscription is live (#146). Safe for concurrent access: the
-	// socket reader and reconnect update it from their own goroutines while
-	// Run and Tick read a Snapshot from theirs.
-	cache agentCache
-	// eventsLive is true while the daemon trusts d.cache over a fresh
-	// ListAgents call. Atomic because reconnect sets it from its own
-	// goroutine while Run and Tick read it from theirs.
-	eventsLive atomic.Bool
-	// subscribedPanes is the pane list the current subscription covers,
-	// compared against a fresh boundPanes each tick to notice a pane bound
-	// after Run started. Touched only on Run's own goroutine.
-	subscribedPanes []string
-	// streamCancel cancels the current subscription's child context, which
-	// closes its socket read loop. Touched only on Run's own goroutine.
-	streamCancel context.CancelFunc
-	// pendingEvents is how Tick's resubscribe (called on Run's own
-	// goroutine, from inside Tick) hands a freshly opened stream back to
-	// Run's select loop: Run reads and clears it right after Tick returns,
-	// no channel round-trip needed since both run on the same goroutine.
-	pendingEvents <-chan herdr.Event
-	// reconnected is how the reconnect goroutine hands a freshly
-	// (re)subscribed stream back to Run after a stream drop.
-	reconnected chan reconnectResult
-	// backoff overrides backoffAfter for tests; nil uses the package
-	// function.
-	backoff func(attempt int) time.Duration
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -81,12 +32,7 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {
 		interval = minInterval
 	}
-	return &Daemon{
-		rt:          rt,
-		interval:    interval,
-		applied:     map[string]appliedMeta{},
-		reconnected: make(chan reconnectResult),
-	}
+	return &Daemon{rt: rt, interval: interval}
 }
 
 // WithRefresh installs a per-tick refresh on the daemon. nil (the default)
@@ -97,143 +43,11 @@ func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 	return d
 }
 
-// WithBackoff overrides the reconnect backoff schedule for tests. nil (the
-// default) uses backoffAfter. Returns d for chaining.
-func (d *Daemon) WithBackoff(f func(attempt int) time.Duration) *Daemon {
-	d.backoff = f
-	return d
-}
-
-// subscribe opens one socket subscription covering every currently bound
-// pane (#146) and bootstraps d.cache from a fresh snapshot, in that order --
-// documented by herdr: subscribing first and snapshotting second means no
-// event can land in the gap between listing agents and opening the stream.
-//
-// It only touches d.cache (its own mutex) and d.eventsLive (atomic), so it
-// is safe to call from any goroutine. The caller is responsible for
-// recording the returned pane list and cancel func on d.subscribedPanes and
-// d.streamCancel, which must happen on Run's own goroutine (see Run's doc
-// comment).
-func (d *Daemon) subscribe(ctx context.Context) (events <-chan herdr.Event, panes []string, cancel context.CancelFunc, err error) {
-	bindings, err := d.rt.Store.List()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	panes = boundPanes(bindings)
-
-	subCtx, cancel := context.WithCancel(ctx)
-	events, err = d.rt.Herdr.Subscribe(subCtx, panes)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, err
-	}
-
-	agents, err := d.rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, err
-	}
-	d.cache.Replace(agents)
-	d.eventsLive.Store(true)
-	return events, panes, cancel, nil
-}
-
-// reconnect retries subscribe with backoff until it succeeds or ctx ends,
-// then hands the new stream to Run over d.reconnected. It is the one
-// exception to "Run is single-goroutine besides the socket reader": while it
-// runs, it must touch only d.cache (via subscribe, under cache's own mutex)
-// and d.eventsLive (atomic, via subscribe) -- never d.subscribedPanes or
-// d.streamCancel, which Run's goroutine owns.
-func (d *Daemon) reconnect(ctx context.Context) {
-	backoff := d.backoff
-	if backoff == nil {
-		backoff = backoffAfter
-	}
-	for attempt := 1; ; attempt++ {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff(attempt)):
-		}
-
-		events, panes, cancel, err := d.subscribe(ctx)
-		if err != nil {
-			slog.Debug("events: reconnect failed", "attempt", attempt, "err", err)
-			continue
-		}
-
-		slog.Info("events resumed")
-		select {
-		case d.reconnected <- reconnectResult{events: events, panes: panes, cancel: cancel}:
-		case <-ctx.Done():
-			cancel()
-		}
-		return
-	}
-}
-
-// resubscribe closes the daemon's current stream and opens a fresh one
-// covering the currently bound panes, re-snapshotting the cache. Tick calls
-// it -- on Run's own goroutine -- when a pane bound after Run started is
-// missing from d.subscribedPanes.
-func (d *Daemon) resubscribe(ctx context.Context) {
-	events, panes, cancel, err := d.subscribe(ctx)
-	if err != nil {
-		d.eventsLive.Store(false)
-		slog.Warn("events: resubscribe failed; polling", "err", err)
-		return
-	}
-	if d.streamCancel != nil {
-		d.streamCancel()
-	}
-	d.subscribedPanes = panes
-	d.streamCancel = cancel
-	d.pendingEvents = events
-}
-
-// bindingForPane returns the name of the binding whose planner or builder
-// pane is paneID, or "" when no binding claims it -- a stale pane, or an
-// event for a pane that was never bound.
-func (d *Daemon) bindingForPane(paneID string) string {
-	if paneID == "" {
-		return ""
-	}
-	bindings, err := d.rt.Store.List()
-	if err != nil {
-		slog.Warn("events: list bindings for pane lookup failed", "err", err)
-		return ""
-	}
-	for _, b := range bindings {
-		if b.Planner.PaneID == paneID || b.Builder.PaneID == paneID {
-			return b.Name
-		}
-	}
-	return ""
-}
-
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on
-// the next interval rather than killing the daemon, because a transient
-// herdr hiccup must not drop every binding on the floor.
-//
-// Besides this loop, exactly two other goroutines ever touch Daemon state:
-// the socket reader inside herdr.Client.Subscribe (writes to the events
-// channel Run reads) and reconnect (see its own doc comment for what it may
-// touch). Every other field -- subscribedPanes, streamCancel, pendingEvents
-// -- is read and written only here, in Run's loop and in the functions Run
-// calls synchronously from it (Tick, tickOne, resubscribe).
+// the next interval rather than killing the daemon.
 func (d *Daemon) Run(ctx context.Context) error {
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
-
-	events, panes, cancel, err := d.subscribe(ctx)
-	if err != nil {
-		slog.Info(fmt.Sprintf("events: unavailable (%s); polling every %s", err, d.interval))
-		events = nil
-	} else {
-		d.subscribedPanes = panes
-		d.streamCancel = cancel
-		slog.Info(fmt.Sprintf("events: socket %s", herdr.SocketPath()))
-	}
 
 	for {
 		select {
@@ -246,44 +60,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if err := d.Tick(ctx); err != nil {
 				slog.Error("relay tick failed", "err", err)
 			}
-			if d.pendingEvents != nil {
-				events = d.pendingEvents
-				d.pendingEvents = nil
-			}
-		case res := <-d.reconnected:
-			events = res.events
-			d.subscribedPanes = res.panes
-			d.streamCancel = res.cancel
-		case ev, ok := <-events:
-			if !ok {
-				d.eventsLive.Store(false)
-				if d.streamCancel != nil {
-					d.streamCancel()
-				}
-				events = nil
-				go d.reconnect(ctx)
-				continue
-			}
-			pane, refresh := d.cache.Apply(ev)
-			if refresh {
-				if agents, err := d.rt.Herdr.ListAgents(ctx); err == nil {
-					d.cache.Replace(agents)
-				} else {
-					slog.Warn("events: refresh snapshot failed", "err", err)
-				}
-			}
-			if name := d.bindingForPane(pane); name != "" {
-				if err := d.tickOne(ctx, name, d.cache.Snapshot()); err != nil {
-					slog.Error("reconcile failed", "binding", name, "err", err)
-				}
-			}
 		}
 	}
 }
 
-// Tick reconciles every binding against a single agent list snapshot: the
-// cache while a socket subscription is live, or a fresh ListAgents call
-// otherwise -- the same fallback behaviour as before #146.
+// Tick reconciles every binding once.
 func (d *Daemon) Tick(ctx context.Context) error {
 	if d.refresh != nil {
 		d.rt = d.refresh(d.rt)
@@ -297,34 +78,20 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	var agents []herdr.Agent
-	if d.eventsLive.Load() {
-		agents = d.cache.Snapshot()
-	} else {
-		agents, err = d.rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return fmt.Errorf("list agents: %w", err)
-		}
-	}
-	// Own the snapshot. DeliverPending records a planner it has just prompted
-	// by marking it working in this slice, and that record is true only for the
-	// remainder of this pass -- it must not reach the Herdr implementation's own
-	// storage, nor survive into the next tick, which fetches fresh state anyway.
-	agents = append([]herdr.Agent(nil), agents...)
-
 	for _, b := range bindings {
-		if err := d.tickOne(ctx, b.Name, agents); err != nil {
+		if err := d.tickOne(ctx, b.Name); err != nil {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
 		}
 	}
 
 	fresh, err := d.rt.Store.List()
 	if err != nil {
-		slog.Warn("list bindings for metadata sync", "err", err)
+		slog.Warn("list bindings after tick", "err", err)
 		return nil
 	}
-	syncPaneMetadata(ctx, d.rt, d.applied, fresh)
-	notifyFinished(ctx, d.rt, fresh, agents)
+	// SPIKE(decision): the "all rounds finished" toast (#182) and the pane
+	// sidebar tokens (#129) were herdr notifications and are gone; whether
+	// the MCP channel should carry an equivalent event is undecided.
 
 	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,
 	// after every binding this tick reconciled has been saved (#37): a
@@ -335,13 +102,6 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// happens here, outside every WithLock the per-binding loop took, so
 	// Send's own lock on the target never nests inside the source's.
 	runFires(ctx, d.rt, armedFires(fresh))
-	// A pane bound after Run started (a fresh `relay bind`/`relay add`) is
-	// not in the subscription Run opened at bootstrap: pick it up on the
-	// next tick rather than waiting for an event that will never arrive for
-	// a pane the daemon never subscribed to.
-	if d.eventsLive.Load() && !equalPanes(boundPanes(fresh), d.subscribedPanes) {
-		d.resubscribe(ctx)
-	}
 
 	ingestLiveBindings(ctx, d.rt, fresh)
 
@@ -364,13 +124,13 @@ func armedFires(bindings []store.Binding) []firePending {
 	return pendings
 }
 
-// tickOne is the per-binding body Tick's whole-store pass and Run's
-// per-event wake both use: one critical section that reads the binding
-// fresh under the lock, reconciles it against agents, and writes it back
+// tickOne is the per-binding body of Tick's whole-store pass: one critical
+// section that reads the binding fresh under the lock, reconciles it, and
+// writes it back
 // without releasing the lock. Reconcile and everything it calls take the
 // *store.Tx rather than locking themselves, so a CLI command running
 // concurrently cannot land a write between the read and the save.
-func (d *Daemon) tickOne(ctx context.Context, name string, agents []herdr.Agent) error {
+func (d *Daemon) tickOne(ctx context.Context, name string) error {
 	return d.rt.Store.WithLock(func(tx *store.Tx) error {
 		fresh, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
@@ -382,7 +142,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string, agents []herdr.Agent)
 			return err
 		}
 
-		next, err := Reconcile(ctx, d.rt, tx, fresh, agents)
+		next, err := Reconcile(ctx, d.rt, tx, fresh)
 		if err != nil {
 			return err
 		}

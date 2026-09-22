@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,33 +11,13 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// ErrPromptLate is returned by promptWithRetry in place of nil when the first
-// stall was contradicted by the screen. Every caller treats it as success and
-// records/logs late.
-var ErrPromptLate = errors.New("prompt landed late")
-
-// lateScanLines is how many lines are read from the visible source when
-// confirming a fingerprint.
-const lateScanLines = 40
-
-// ErrBuilderBlocked reports that the builder is sitting at a dialog, so a plan
-// cannot be submitted until the planner answers it with `relay answer`.
-var ErrBuilderBlocked = errors.New("builder is blocked at a dialog; answer it with relay answer")
-
 // ErrBuilderGone reports that a binding's builder could not be located among
 // the live agents, so there is nothing to address.
 var ErrBuilderGone = errors.New("builder is gone; rebind before sending")
-
-// ErrBuilderNotBlocked is returned when `relay answer` is asked to type into a
-// builder that is not at a dialog. herdr's blocked-detection false-positives
-// (#55), and relay prints an instruction to answer whenever it fires, so the
-// guard has to live where the keystrokes are sent rather than in the prose.
-var ErrBuilderNotBlocked = errors.New("builder is not blocked; nothing to answer")
 
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
@@ -73,14 +52,6 @@ not_done: []            # adjacent work you deliberately left
 ` + "```" + `
 Reply here with only the report path.`
 
-// Target is the herdr target for an endpoint: its pane id, which Reconcile
-// keeps current by refreshing every endpoint it locates. AgentName is
-// provenance rather than an address, because herdr can forget it across a
-// server restart while the pane stays addressable (#20).
-func Target(ep store.Endpoint) string {
-	return ep.PaneID
-}
-
 // SendResult is what one successful Send produced.
 type SendResult struct {
 	Round int    // the round the plan was filed under
@@ -100,25 +71,21 @@ type SendOptions struct {
 	Verify *bool
 	// Defer stages the round -- plan written, log entry appended, State ==
 	// active -- but does not spawn a builder; the caller (serve.admit or
-	// relay.Admit) starts it later (#285, server only). A pane binding
-	// ignores Defer: the pane path has no spawn.
+	// relay.Admit) starts it later (#285, server only).
 	Defer bool
 }
 
 // preflight is everything Send checks before it takes the state lock and
-// writes: the plan bytes, the effective tier, the located pane builder (or the
-// headless launch argv), the paths and the composed prompt. sendPreflight
+// writes: the plan bytes, the effective tier, the headless launch argv, the paths and the composed prompt. sendPreflight
 // computes it read-only; Send and SendDryRun both call it, so a dry run can
 // never disagree with a real send about the state of the world (#149). A
 // failed precondition is an error in Send's exact wording.
 type preflight struct {
-	b       store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
-	body    []byte        // the plan file's bytes
-	tier    harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
-	builder herdr.Agent   // pane builders: the located agent
-	located bool          // pane builders: FindAgent succeeded
-	argv    []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for pane/remote
-	gate    *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	b    store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
+	body []byte        // the plan file's bytes
+	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 
 	planPath, reportPath, donePath string
 	prompt                         string // composePrompt(...) -- computed, never sent
@@ -202,8 +169,8 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return pf, nil
 	}
 
-	if opts.Tier != "" && !b.Builder.Headless() {
-		return preflight{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
+	if !b.Builder.Headless() {
+		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrPaneBuilder)
 	}
 	if b.State == store.StateBroken {
 		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
@@ -212,7 +179,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 	}
 
-	if b.Builder.Headless() {
+	{
 		// A headless builder (#99) is a process relay starts per round, so
 		// the runner must exist and no previous process may still be alive --
 		// and both are checked here, before Send stages anything.
@@ -242,17 +209,6 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, err
 		}
 		pf.argv = argv
-	} else {
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return preflight{}, fmt.Errorf("list agents: %w", err)
-		}
-		builder, ok := FindAgent(agents, b.Builder)
-		if !ok {
-			return preflight{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
-		}
-		pf.builder = builder
-		pf.located = true
 	}
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
@@ -268,9 +224,9 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	return pf, nil
 }
 
-// Send copies the planner's plan into relay state and hands it to the builder:
-// typed into its pane, or -- for a headless binding (#99) -- as the prompt of
-// a fresh process started in the binding's tree. It returns a SendResult
+// Send copies the planner's plan into relay state and hands it to the builder
+// as the prompt of a fresh headless process started in the binding's tree
+// (#99), or ships it to a remote server. It returns a SendResult
 // describing the round and any between-rounds drift.
 //
 // Every precondition that needs no lock lives in sendPreflight, which
@@ -292,16 +248,13 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// read-only preflight and is taken here, before the lock.
 	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
 	hintRound := pf.b.Round
-	builder := pf.builder
-	locatedBuilder := pf.located
 
 	var round int
 	var driftLineOut string
 
 	// The whole round advance is one critical section: the daemon rewrites this
 	// same binding on every tick, and a lost update here would re-send a plan
-	// the builder already has. `Prompt` does not wait on the agent, so holding
-	// the lock across it costs milliseconds, not the length of a turn.
+	// the builder already has.
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(name)
 		if err != nil {
@@ -316,10 +269,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		if b.Round > b.RoundCap {
 			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 		}
-		// The pre-lock load and this locked load are two separate acquisitions
-		// of the state lock, so a binding can appear between them. An unlocated
-		// builder must never fall through to an empty target.
-		if b.Builder.Headless() {
+		if !b.Builder.Headless() {
+			return fmt.Errorf("binding %q: %w", name, ErrPaneBuilder)
+		}
+		{
 			// One process per round (headless spec §5.2): a previous round's
 			// process still running means the human is early, not that
 			// relay should start a second builder in the same tree.
@@ -335,19 +288,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 					return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
 				}
 			}
-		} else {
-			if !locatedBuilder {
-				return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
-			}
-			if !SameAgent(builder, b.Builder) {
-				return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
-			}
 		}
 
 		if opts.Tier != "" {
-			if !b.Builder.Headless() {
-				return fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
-			}
 			b.RoundTier = opts.Tier
 		}
 
@@ -361,12 +304,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		text := composePrompt(b, planPath, reportPath, donePath)
 
 		// Defer stages the round without spawning: the caller (serve.admit
-		// or relay.Admit) starts the builder later (#285). A pane binding
-		// has no spawn to defer.
-		deferred := opts.Defer && b.Builder.Headless()
+		// or relay.Admit) starts the builder later (#285).
+		deferred := opts.Defer
 
-		late := false
-		if b.Builder.Headless() {
+		{
 			if !deferred {
 				started, err := startRound(ctx, rt, b, text)
 				if err != nil {
@@ -388,37 +329,12 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				}
 				b = started
 			}
-		} else {
-			if builder.Status == herdr.StatusUnknown {
-				patterns := dialogPatterns(rt, builder.Kind, b.BuilderCandidate)
-				if dialogGuard(ctx, rt, builder.PaneID, patterns) {
-					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
-				}
-			}
-
-			if err := promptWithRetry(ctx, rt, builder.PaneID, text, planPath); err != nil {
-				if errors.Is(err, ErrPromptLate) {
-					late = true
-				} else if errors.Is(err, herdr.ErrAgentBlocked) {
-					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
-				} else {
-					return fmt.Errorf("prompt builder: %w", err)
-				}
-			}
-		}
-
-		// armSessionCursor cuts the pane builder's round log at the record's
-		// current size, the way startRound cuts a headless one's (#184). The
-		// guard restates what the branch above already implies: headless has
-		// startRound, remote has no local record to render.
-		if !b.Builder.Headless() && !b.Builder.Remote() {
-			b = armSessionCursor(rt, b)
 		}
 
 		entry := store.LogEntry{
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPlan,
-			Path: planPath, Confirmed: true, Late: late,
+			Path: planPath, Confirmed: true,
 			Tier: string(effectiveTier(b)),
 		}
 		if err := tx.AppendLog(name, entry); err != nil {
@@ -511,9 +427,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 type DryRun struct {
 	Name       string   `json:"name"`
 	Round      int      `json:"round"`
-	Mode       string   `json:"mode"` // "pane" | "headless" | "remote"
+	Mode       string   `json:"mode"` // "headless" | "remote"
 	Candidate  string   `json:"candidate"`
-	Where      string   `json:"where"`               // pane: "pane w2:p4 (working)"; headless: the harness binary + first arg; remote: "server contabo, branch relay/x @ <sha12>; server not contacted"
+	Where      string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relay/x @ <sha12>; server not contacted"
 	GateNote   string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
 	PlanPath   string   `json:"plan_path"`
 	PlanFrom   string   `json:"plan_from"`
@@ -560,14 +476,12 @@ func dryRunMode(b store.Binding) string {
 	switch {
 	case b.Builder.Remote():
 		return "remote"
-	case b.Builder.Headless():
-		return "headless"
 	default:
-		return "pane"
+		return "headless"
 	}
 }
 
-// dryRunWhere is where the round would go: a located pane, the headless argv
+// dryRunWhere is where the round would go: the headless argv
 // that proves the launch is well-formed, or the remote server and the branch
 // the plan would be shipped from.
 func dryRunWhere(pf preflight) string {
@@ -578,7 +492,7 @@ func dryRunWhere(pf preflight) string {
 			sha = sha[:12]
 		}
 		return fmt.Sprintf("server %s, branch %s @ %s; server not contacted", pf.b.Builder.Server, pf.b.Branch, sha)
-	case pf.b.Builder.Headless():
+	default:
 		if len(pf.argv) == 0 {
 			return ""
 		}
@@ -586,8 +500,6 @@ func dryRunWhere(pf preflight) string {
 			return pf.argv[0]
 		}
 		return pf.argv[0] + " " + pf.argv[1]
-	default:
-		return fmt.Sprintf("pane %s (%s)", pf.builder.PaneID, pf.builder.Status)
 	}
 }
 
@@ -624,38 +536,6 @@ func absoluteOr(path string) string {
 		return abs
 	}
 	return path
-}
-
-// promptWithRetry retries once past herdr's five second stall detection, then
-// gives up. It never fires a third time: a double-submitted plan means two
-// builders' worth of edits, which is worse than a stalled round.
-func promptWithRetry(ctx context.Context, rt Runtime, target, text, fingerprint string) error {
-	err := rt.Herdr.Prompt(ctx, target, text)
-	if !errors.Is(err, herdr.ErrPromptStalled) {
-		return err
-	}
-
-	if fingerprint != "" {
-		screen, rerr := rt.Herdr.ReadAgentSource(ctx, target, "visible", lateScanLines)
-		if rerr != nil {
-			slog.Warn("late check: screen unreadable", "target", target, "err", rerr)
-		} else if strings.Contains(screen, fingerprint) {
-			return ErrPromptLate
-		}
-	}
-
-	if retryErr := rt.Herdr.Prompt(ctx, target, text); retryErr != nil {
-		// Only a second stall is a stall. The retry can fail for an unrelated
-		// reason -- the builder became blocked between the two attempts, say --
-		// and reporting that as a stall sends the human looking at the wrong
-		// thing.
-		if errors.Is(retryErr, herdr.ErrPromptStalled) {
-			return fmt.Errorf("prompt %s stalled twice: %w", target, retryErr)
-		}
-		return fmt.Errorf("prompt %s failed on retry: %w", target, retryErr)
-	}
-
-	return nil
 }
 
 // composePrompt renders the builder prompt for this round. Line 1 is the

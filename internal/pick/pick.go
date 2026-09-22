@@ -16,7 +16,7 @@ var stdoutStat = os.Stdout.Stat
 
 // Run opens the picker for opts.Verb and returns when the human is done.
 //
-// Preconditions:  stdout is a character device; rt.Herdr and rt.Store non-nil.
+// Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored. On ErrCancelled, "cancelled" has
 // been printed to stdout after the alternate screen closed (spec §3).
 // Errors:         nil after a successful verb; ErrCancelled, ErrNothingToPick
@@ -27,8 +27,8 @@ func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return errors.New("--pick needs a terminal; name the binding instead")
 	}
-	if rt.Herdr == nil || rt.Store == nil {
-		return errors.New("runtime requires Herdr and Store")
+	if rt.Store == nil {
+		return errors.New("runtime requires a Store")
 	}
 
 	p := tea.NewProgram(newModel(ctx, rt, opts), tea.WithAltScreen(), tea.WithContext(ctx))

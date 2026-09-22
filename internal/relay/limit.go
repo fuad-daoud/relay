@@ -202,19 +202,12 @@ func limitPatterns(rt Runtime, token string) []*regexp.Regexp {
 }
 
 // limitText is the text a decision point scans for rate-limit patterns: the
-// tail of the log for a headless builder, or a screen read for a pane one. A
-// pane read failure is Warned and treated as no text (spec §6), the same
-// rule builderQuiescent's scrape already follows.
-func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
+// tail of a headless builder's log. Any other builder has no local text.
+func limitText(_ context.Context, _ Runtime, b store.Binding) string {
 	if b.Builder.Headless() {
 		return logTail(b.Builder.LogPath, limitScanLines)
 	}
-	text, err := rt.Herdr.ReadAgent(ctx, Target(b.Builder), scrapeLines)
-	if err != nil {
-		slog.Warn("limit scan: builder screen unreadable", "binding", b.Name, "round", b.Round, "err", err)
-		return ""
-	}
-	return text
+	return ""
 }
 
 // gateOnLimit is the one helper every decision point calls (spec §4.4).

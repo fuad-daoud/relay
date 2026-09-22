@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/policy"
@@ -22,27 +21,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
-
-// Herdr is the slice of the herdr CLI this package needs. It is declared here,
-// by the consumer; *herdr.Client satisfies it.
-type Herdr interface {
-	ListAgents(ctx context.Context) ([]herdr.Agent, error)
-	Prompt(ctx context.Context, target, text string) error
-	SendKeys(ctx context.Context, target, keys string) error
-	ReadAgent(ctx context.Context, target string, lines int) (string, error)
-	ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error)
-	CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error)
-	StartAgent(ctx context.Context, name, kind, paneID string, args []string) error
-	Notify(ctx context.Context, title, body string, sound herdr.Sound) error
-	ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error
-	ClosePane(ctx context.Context, paneID string) error
-	// Subscribe opens herdr's socket event stream for paneIDs plus the three
-	// session-wide kinds (#146). It returns herdr.ErrNoSocket when no socket
-	// is reachable -- no HERDR_SOCKET_PATH and no default socket, an older
-	// herdr, a permission error, or a stub Herdr with no socket at all -- so
-	// the daemon can fall back to polling with a single errors.Is check.
-	Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error)
-}
 
 // Git is the slice of the git CLI relay needs. *git.Client satisfies it.
 type Git interface {
@@ -114,8 +92,7 @@ type Git interface {
 // Runtime carries relay's dependencies explicitly, so every command and the
 // daemon can be driven by a fake in tests.
 type Runtime struct {
-	Herdr Herdr
-	Git   Git
+	Git Git
 	// Runner starts and stops headless builder processes (#99). cmd/relay
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.
@@ -146,12 +123,9 @@ type Runtime struct {
 	// reader, and rounds close exactly as before.
 	Usage usage.Reader
 
-	// Sessions locates a pane builder's own session record so the daemon can
-	// render it into the round log the way it renders a headless stream
-	// (#184). Nil means pane builders keep the screen capture; tests that do
-	// not set it behave exactly as before. plannerLocator (bind.go) also
-	// calls it at bind time to fill Planner.TranscriptLocator (#172), the
-	// same file path, for the coming history database.
+	// Sessions locates a harness's own session record. plannerLocator
+	// (bind.go) calls it at bind time to fill Planner.TranscriptLocator
+	// (#172), for the history database.
 	Sessions SessionLocator
 
 	// Classify judges report and dialog paragraphs for instruction-shaped
@@ -168,11 +142,6 @@ type Runtime struct {
 	Hooks     hooks.Dispatcher
 	Remote    RemoteClient
 	Transport remote.TreeTransport
-
-	// HeldGrace is how long a focused planner's screen must be unchanged before
-	// a held payload is injected anyway. Zero means DefaultHeldGrace. Set by
-	// `relay daemon --held-grace`; daemon-wide like --interval, not per binding.
-	HeldGrace time.Duration
 
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.
@@ -196,10 +165,9 @@ type Runtime struct {
 	// (the local daemon, CI, or a server whose scope probe failed).
 	Scope *ScopeSpec
 
-	// Channels arbitrates a planner pane's mailbox between the daemon and a
-	// live `relay mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
-	// Nil means no claims exist, so DeliverPending behaves exactly as before;
-	// cmd/relay wires relay.FileClaims{Root: st.ChannelsDir()}.
+	// Channels records which planners have a live `relay mcp` channel
+	// (docs/specs/2026-09-21-planner-channel-design.md). cmd/relay wires
+	// relay.FileClaims{Root: st.ChannelsDir()}.
 	Channels ClaimStore
 }
 
@@ -217,65 +185,13 @@ func IngestDeps(rt Runtime) ingest.Deps {
 	}
 }
 
-// SameAgent reports whether a live agent is the one an endpoint records.
+// ErrPaneBuilder reports a binding persisted with a pane builder (Mode "" or
+// "pane") by a relay that still had pane mode. Every verb that would have
+// addressed the pane refuses with it.
 //
-// When ep.AgentName and a.Name are both set, matching by name decides. Relay
-// chooses agent names uniquely and they survive workspace moves and session
-// flips.
-//
-// When an endpoint has a recorded SessionID, identity is exact: a live agent
-// must carry that exact session. If no live agent carries it, the agent is
-// considered gone, and relay does not fall back to matching pane id.
-//
-// When no session is recorded, a pane match is the best available evidence for
-// a harness with no herdr session integration. If Kind is recorded, both pane
-// and kind must match. If neither session nor kind is recorded (e.g. from
-// older bindings), matching falls back to pane id alone.
-//
-// Accepted risk: a session-less endpoint whose pane is recycled to an agent of
-// the same kind is adopted as the original builder, and relay will relay into
-// it. This exposure lasts until a session is recorded. For claude it is brief: the
-// window before the next tick backfills the session, since claude reports one
-// at spawn. For agy and opencode it lasts until the agent has begun a
-// conversation, because both report a session only once one exists -- verified
-// live 2026-09-09 against herdr integration v10. Since `builder` is opencode
-// and `abuilder` is agy, while claude is the planner, every builder harness
-// relay ships is in the late-session population. A nameless endpoint (adopted
-// pane) running sub-agents will still read as gone while a sub-agent is in the
-// foreground, and `--builder <pane>` adopters should know it.
-func SameAgent(a herdr.Agent, ep store.Endpoint) bool {
-	if ep.AgentName != "" && a.Name != "" {
-		return a.Name == ep.AgentName
-	}
-	if ep.SessionID != "" {
-		return a.Session.Value == ep.SessionID
-	}
-	if ep.Kind != "" {
-		return a.PaneID == ep.PaneID && a.Kind == ep.Kind
-	}
-	return a.PaneID == ep.PaneID
-}
-
-// findAgentIndex is FindAgent's positional form. A caller that needs to record
-// something against the agent it just located needs that agent's slot in the
-// snapshot, not a copy of it.
-func findAgentIndex(agents []herdr.Agent, ep store.Endpoint) (int, bool) {
-	for i, a := range agents {
-		if SameAgent(a, ep) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-// FindAgent locates a binding endpoint among the live agents using SameAgent.
-func FindAgent(agents []herdr.Agent, ep store.Endpoint) (herdr.Agent, bool) {
-	i, ok := findAgentIndex(agents, ep)
-	if !ok {
-		return herdr.Agent{}, false
-	}
-	return agents[i], true
-}
+// SPIKE(decision): #303 open decision 3 -- refuse on load, auto-close, or
+// leave it to gc. This spike refuses per verb and halts in the daemon.
+var ErrPaneBuilder = errors.New("pane builders are no longer supported; relay unbind it and bind a headless builder")
 
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
 var ErrRemoteUnavailable = errors.New("no remote client configured; run relay client init and relay client add-server")

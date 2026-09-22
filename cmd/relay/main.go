@@ -1,5 +1,5 @@
-// Command relay automates plan and report handoff between a planner agent pane
-// and a builder agent pane running under herdr.
+// Command relay automates plan and report handoff between a planner agent
+// and a builder agent it runs headless or on a remote server.
 package main
 
 import (
@@ -24,7 +24,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	diffpatch "github.com/fuad-daoud/relay/internal/patch"
@@ -44,15 +43,14 @@ import (
 // the module version the toolchain records in the build info.
 var version = ""
 
-const usage = `relay automates the plan/report handoff between two AI coding agent
-panes running under herdr: a planner hands work to a builder, and relay moves
-the files between them.
+const usage = `relay automates the plan/report handoff between two AI coding agents:
+a planner hands work to a builder, and relay moves the files between them.
 
 Usage:
   relay <command> [flags]
 
 Commands:
-  bind      bind this planner pane to a builder over the current working tree [--tier]
+  bind      bind this planner to a builder over the current working tree [--tier]
   add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
   fork      branch a new binding from an earlier round with its own worktree [--tier]
   send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run] [--verify|--no-verify]
@@ -60,8 +58,8 @@ Commands:
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout [--anchors]
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
-  answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
-  status    one row per binding: round, state, live pane status, what is pending [--all]
+  answer    answer a builder that is blocked at a dialog
+  status    one row per binding: round, state, builder status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
   history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
@@ -70,18 +68,18 @@ Commands:
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
-  pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
-  stop      ask a builder to wrap up and close its round on its marker; kill only after the grace [--grace] [--now]
+  pause     release a binding's worktree between rounds; branch and log stay; bind --resume brings it back [--commit]
+  stop      kill a headless builder's round and close it
   land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
   edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relay edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
-  reap      close the panes of terminal consults and drop their records
+  reap      drop the records of terminal consults
   daemon    run the long-running reconciler
-  mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/answer/done
+  mcp       run an MCP server over stdio for a Claude Code planner: status/send/answer/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
-            NEEDS YOU into the session instead of typing them into its pane
-  doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
+            NEEDS YOU into the session
+  doctor    preflight check: daemon, harness binaries, roles
   candidates   list the configured harness/provider/model candidates
   policy       show, per role, which candidate relay would pick right now and why
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
@@ -104,7 +102,6 @@ Commands:
 
 Run "relay <command> -h" for that command's flags.
 
-relay drives herdr, which must be on PATH: https://github.com/herdrdev/herdr
 State lives in $XDG_STATE_HOME/relay (default ~/.local/state/relay).
 `
 
@@ -199,7 +196,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 // 2). The flag's default is -1, meaning "not given", which becomes nil so the
 // policy default or the existing binding value stands; any value the human
 // actually typed must be >= 0, and a bad one exits 2 -- before any runtime is
-// built, so nothing touches the state directory or herdr.
+// built, so nothing touches the state directory.
 func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 	given := false
 	fs.Visit(func(f *flag.Flag) {
@@ -432,7 +429,6 @@ func newRuntime() (relay.Runtime, error) {
 	}
 
 	return relay.Runtime{
-		Herdr:            herdr.NewClient("herdr", 30*time.Second),
 		Git:              gitClient,
 		Runner:           proc.New(),
 		Store:            st,
@@ -481,31 +477,24 @@ func newRemoteClient(configDir string, gitClient *git.Client) (relay.RemoteClien
 	return client.New(servers, key, time.Now), remote.NewBundleTransport(gitClient, ""), nil
 }
 
-// noteConsultRolesTooLong prints, after a successful bind/add/fork, the one
-// advisory line naming configured consult roles the binding's name is too long
-// for -- so a later `relay ask` failing on the derived name is not a surprise
-// a day later. It is a note, not an error: a binding that can build is still
-// useful, and refusing would let the alias table dictate binding names.
-func noteConsultRolesTooLong(name string) {
-	roles := relay.ConsultRolesTooLong(name)
-	if len(roles) == 0 {
-		return
+// plannerID is the planner identity a verb records or filters by.
+//
+// SPIKE(planner-id): was $HERDR_PANE_ID. Now the --planner flag, else
+// $RELAY_PLANNER; "" when neither is set. Every verb that needed a pane id
+// goes through here.
+func plannerID(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
 	}
-	// The tightest limit is set by the longest role: relay ask needs the
-	// binding name at most herdr.MaxAgentNameLen - 10 - len(role) characters.
-	longest := roles[0]
-	for _, r := range roles[1:] {
-		if len(r) > len(longest) {
-			longest = r
-		}
-	}
-	fmt.Printf("note: %s is too long for the %s consult role(s); relay ask needs a binding name of at most %d characters for %s\n",
-		name, strings.Join(roles, ", "), herdr.MaxAgentNameLen-10-len(longest), longest)
+	return os.Getenv("RELAY_PLANNER")
 }
 
+// plannerFlagUsage is the one help line every --planner flag shares.
+const plannerFlagUsage = "planner identity (default: $RELAY_PLANNER)"
+
 // notePick prints why relay chose the candidate it spawned. Silent for
-// an explicit token (the planner already knows) and for adoption
-// (nothing was chosen); the gated note, if any, is printed separately.
+// an explicit token (the planner already knows); the gated note, if any, is
+// printed separately.
 func notePick(role string, res relay.Resolution) {
 	if res.How == "" || res.How == relay.HowExplicit {
 		return
@@ -513,20 +502,13 @@ func notePick(role string, res relay.Resolution) {
 	fmt.Fprintln(os.Stderr, relay.ExplainResolution(role, res))
 }
 
-// isPaneID tells a herdr pane id apart from a candidate token on the same
-// --builder flag: a pane id has a ':' and never a '/', a candidate token
-// always has a '/'. A model name may contain ':', so ':' alone is not enough.
-func isPaneID(s string) bool {
-	return strings.Contains(s, ":") && !strings.Contains(s, "/")
-}
-
-// builderWhere is how the bound/added lines name the builder's place: its
-// pane id, or "headless" for a process relay runs itself (#99).
+// builderWhere is how the bound/added lines name the builder's place:
+// "headless" for a process relay runs itself (#99), else the server.
 func builderWhere(ep store.Endpoint) string {
 	if ep.Headless() {
 		return "headless"
 	}
-	return ep.PaneID
+	return ep.Server
 }
 
 // parseFor turns --for into an absolute expiry. Empty means "until cleared"
@@ -692,15 +674,12 @@ func cmdAvailable(args []string) error {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn, or a pane id to adopt; omit to take the first ungated candidate in policy.json order[builder]")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
-	assumeDead := fs.Bool("assume-dead", false,
-		"confirm a builder relay cannot verify is gone really is gone")
+	planner := fs.String("planner", "", plannerFlagUsage)
 	rebind := fs.Bool("rebind", false,
 		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
-	headless := fs.Bool("headless", false,
-		"run the builder as a process per round instead of a pane; not with --resume or a pane id in --builder")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
@@ -717,12 +696,6 @@ func cmdBind(args []string) error {
 	}
 	if *rebind && !*resume {
 		return fmt.Errorf("relay bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
-	}
-	if *headless && *resume {
-		return fmt.Errorf("relay bind --headless cannot be combined with --resume: a binding's mode is fixed at creation (unbind and bind again)")
-	}
-	if *headless && isPaneID(*builderAlias) {
-		return fmt.Errorf("relay bind --headless spawns a process; it cannot adopt pane %s (drop --builder or name a candidate)", *builderAlias)
 	}
 	if *feature != "" {
 		if err := store.ValidFeature(*feature); err != nil {
@@ -747,14 +720,12 @@ func cmdBind(args []string) error {
 
 	opts := relay.BindOptions{
 		Name:         *name,
-		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
+		PlannerPane:  plannerID(*planner), // SPIKE(planner-id)
 		CWD:          cwd,
 		Resume:       *resume,
 		Rebind:       *rebind,
-		AssumeDead:   *assumeDead,
-		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
+		Candidate:    *builderAlias,
 		RoundTimeout: *timeout,
-		Headless:     *headless,
 		Tier:         *tier,
 		AllowYolo:    *allowYolo,
 		Gate:         *gate,
@@ -762,28 +733,12 @@ func cmdBind(args []string) error {
 		Regate:       regateOpt,
 		Feature:      *feature,
 	}
-	if isPaneID(*builderAlias) {
-		opts.BuilderPane = *builderAlias
-	} else {
-		opts.Candidate = *builderAlias
-	}
-
-	adopted := *resume || opts.BuilderPane != ""
 	kind := ""
 	switch {
-	case *rebind && opts.BuilderPane == "":
-		kind = relay.CandidateKind(rt, opts.Candidate)
-	case adopted:
-		if *resume && *name != "" {
+	case *resume && !*rebind:
+		if *name != "" {
 			if existing, err := rt.Store.Load(*name); err == nil {
 				kind = existing.Builder.Kind
-			}
-		}
-		if kind == "" && opts.BuilderPane != "" {
-			if agents, err := rt.Herdr.ListAgents(context.Background()); err == nil {
-				if a, ok := relay.FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane}); ok {
-					kind = a.Kind
-				}
 			}
 		}
 	default:
@@ -792,9 +747,9 @@ func cmdBind(args []string) error {
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
 	// failure is dropped rather than printed. See bindPreflight.
-	if hc, ok := rt.Herdr.(doctor.HerdrClient); ok && kind != "" {
-		env := doctor.NewEnv(hc, rt.Store)
-		for _, line := range bindPreflight(context.Background(), env, kind, adopted) {
+	if kind != "" {
+		env := doctor.NewEnv(rt.Store)
+		for _, line := range bindPreflight(context.Background(), env, kind) {
 			fmt.Fprintln(os.Stderr, line)
 		}
 	}
@@ -811,9 +766,9 @@ func cmdBind(args []string) error {
 	}
 
 	if *resume && (*builderAlias != "" || *rebind) {
-		builderDesc := b.Builder.PaneID
+		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderCandidate)
+			builderDesc = fmt.Sprintf("%s (%s)", builderDesc, b.BuilderCandidate)
 		}
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
@@ -832,12 +787,6 @@ func cmdBind(args []string) error {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick("builder", res)
-	// Spawn path only: an adopted pane or resumed binding has no fresh name
-	// relay chose, so the note would warn about a name the human did not pick
-	// here.
-	if !adopted {
-		noteConsultRolesTooLong(b.Name)
-	}
 	warnWaitingOnYou(rt, b.Name)
 	return nil
 }
@@ -849,7 +798,7 @@ func cmdFork(args []string) error {
 	newName := fs.String("new-name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
-	headless := fs.Bool("headless", false, "run the fork's builder as a process per round instead of a pane")
+	planner := fs.String("planner", "", plannerFlagUsage)
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
@@ -893,10 +842,8 @@ func cmdFork(args []string) error {
 		Round:       *round,
 		NewName:     *newName,
 		Candidate:   *builderAlias,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
+		PlannerPane: plannerID(*planner), // SPIKE(planner-id)
 		CWD:         *cwd,
-		Headless:    *headless,
 		Tier:        *tier,
 		AllowYolo:   *allowYolo,
 		Gate:        *gate,
@@ -921,7 +868,6 @@ func cmdFork(args []string) error {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick("builder", res.Resolution)
-	noteConsultRolesTooLong(res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
@@ -933,8 +879,8 @@ func cmdAdd(args []string) error {
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relay/<name>")
-	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
-	server := fs.String("server", "", "run the builder on this configured remote server instead of a local pane or process (relay servers)")
+	planner := fs.String("planner", "", plannerFlagUsage)
+	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relay servers)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
@@ -986,12 +932,10 @@ func cmdAdd(args []string) error {
 	res, err := relay.Add(context.Background(), rt, relay.AddOptions{
 		Name:        *name,
 		Candidate:   *builderAlias,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		PlannerPane: plannerID(*planner), // SPIKE(planner-id)
 		Repo:        repo,
-		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 		Branch:      *branch,
-		Headless:    *headless,
 		Server:      *server,
 		Base:        *base,
 		Tier:        *tier,
@@ -1013,11 +957,8 @@ func cmdAdd(args []string) error {
 		} else {
 			fmt.Printf("  tier server's choice (pre-tier server)\n")
 		}
-	case res.Binding.Builder.Headless():
-		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
 	default:
-		fmt.Printf("added %s: builder %s in pane %s\n",
-			res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
+		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
 	}
 	noteRegateNoGate(res.Binding)
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
@@ -1037,7 +978,6 @@ func cmdAdd(args []string) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
-	noteConsultRolesTooLong(res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
@@ -1156,17 +1096,6 @@ func cmdGC(args []string) error {
 	return nil
 }
 
-// workspaceOrEnv resolves the workspace a new consult tab opens in: the
-// explicit --workspace flag wins, otherwise the planner's own workspace, the
-// same environment variable bind, fork and add already read. Empty is a valid
-// answer -- CreateTab omits --workspace entirely for it.
-func workspaceOrEnv(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	return os.Getenv("HERDR_WORKSPACE_ID")
-}
-
 // reapFlags is the parsed command line of `relay reap`.
 type reapFlags struct {
 	all    bool
@@ -1181,7 +1110,7 @@ func parseReapFlags(args []string) (reapFlags, []string, error) {
 	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
 	all := fs.Bool("all", false, "reap every binding's terminal consults, not just the named one")
 	nameFlag := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	dryRun := fs.Bool("dry-run", false, "list what would be closed, change nothing")
+	dryRun := fs.Bool("dry-run", false, "list what would be dropped, change nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return reapFlags{}, nil, err
 	}
@@ -1223,22 +1152,12 @@ func cmdReap(args []string) error {
 	}
 
 	for _, r := range results {
-		for _, c := range r.Closed {
-			verb := "closed"
-			if dryRun {
-				verb = "would close"
-			}
-			fmt.Printf("%s %s consult %s (pane %s) on %s\n", verb, c.Role, c.ID, c.Endpoint.PaneID, r.Binding)
-		}
 		for _, c := range r.Dropped {
 			verb := "dropped"
 			if dryRun {
 				verb = "would drop"
 			}
-			fmt.Printf("%s %s consult %s on %s (no pane was spawned)\n", verb, c.Role, c.ID, r.Binding)
-		}
-		for _, c := range r.Failed {
-			fmt.Printf("could not close pane %s for consult %s on %s; record kept\n", c.Endpoint.PaneID, c.ID, r.Binding)
+			fmt.Printf("%s %s consult %s on %s\n", verb, c.Role, c.ID, r.Binding)
 		}
 	}
 
@@ -1259,7 +1178,7 @@ func cmdSend(args []string) error {
 		return err
 	}
 	// Before newRuntime, like add's flag pair: the refusal must not depend on
-	// argv order and must touch neither the state directory nor herdr.
+	// argv order and must not touch the state directory.
 	if *verify && *noVerify {
 		fmt.Fprintf(os.Stderr, "relay: relay send --verify and --no-verify are exclusive\n")
 		return fmt.Errorf("relay send --verify and --no-verify are exclusive: %w", exitCodeErr{code: 2})
@@ -1326,8 +1245,7 @@ func cmdAsk(args []string) error {
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
 	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	nameFlag := fs.String("name", "", "binding name")
-	workspace := fs.String("workspace", "", "workspace for the consult's tab (default: $HERDR_WORKSPACE_ID)")
-	headless := fs.Bool("headless", false, "run the consult as a one-shot process instead of a pane; findings are its final message")
+	planner := fs.String("planner", "", plannerFlagUsage)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1366,9 +1284,7 @@ func cmdAsk(args []string) error {
 		Question:    *question,
 		Round:       *round,
 		Name:        name,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		WorkspaceID: workspaceOrEnv(*workspace),
-		Headless:    *headless,
+		PlannerPane: plannerID(*planner), // SPIKE(planner-id)
 	})
 	if err != nil {
 		return err
@@ -1381,13 +1297,8 @@ func cmdAsk(args []string) error {
 		return nil
 	}
 
-	if res.Consult.Endpoint.Headless() {
-		fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings will appear at: %s\n",
-			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID, res.Consult.FindingsPath)
-	} else {
-		fmt.Printf("asked %s consult %s on %s (pane %s)\nfindings will appear at: %s\n",
-			res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PaneID, res.Consult.FindingsPath)
-	}
+	fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings will appear at: %s\n",
+		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID, res.Consult.FindingsPath)
 	if n := relay.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
@@ -1536,19 +1447,8 @@ func cmdAnswer(args []string) error {
 	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
 	text := fs.String("text", "", "literal text to send")
 	choice := fs.Int("choice", 0, "numbered dialog option to pick")
-	pickFlag := fs.Bool("pick", false, "choose the blocked builder from a list and type the answer there (needs a terminal)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
-	}
-
-	if *pickFlag {
-		if err := pickNamesNothing(*name, fs.Args()); err != nil {
-			return err
-		}
-		if *keys != "" || *text != "" || *choice != 0 {
-			return errors.New("--pick takes the answer from the screen; drop --keys, --choice and --text")
-		}
-		return runPick(pick.Options{Verb: pick.VerbAnswer})
 	}
 
 	// answer presses a key into a live dialog, and with peer builders the cwd
@@ -1558,7 +1458,7 @@ func cmdAnswer(args []string) error {
 	// refusing to guess.
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S) | --pick  (or --name <name>)%s\n"+
+		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S)  (or --name <name>)%s\n"+
 			"answer types into a live dialog; it will not guess which one you meant",
 			bindingHint("answer"))
 	}
@@ -1658,7 +1558,7 @@ func cmdStatusline(args []string) error {
 	if fi, err := os.Stdin.Stat(); err != nil || relay.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
-	pane := os.Getenv("HERDR_PANE_ID")
+	pane := plannerID("") // SPIKE(planner-id): statusline takes no flags; $RELAY_PLANNER only
 	if pane == "" {
 		return nil
 	}
@@ -1762,8 +1662,7 @@ func cmdLog(args []string) error {
 
 // cmdWait blocks until a round closes or needs a human, per spec
 // docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
-// relay's own state only: newRuntime's herdr client is constructed but never
-// called.
+// relay's own state only.
 func cmdWait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
@@ -1966,36 +1865,28 @@ func cmdPause(args []string) error {
 	return nil
 }
 
-// cmdStop asks a binding's open round to stop on purpose (#138): the builder
-// is prompted to wrap up, commit and report, and the round closes on its
-// marker. It takes the binding from --name or a positional and never from the
-// current directory -- a stop ends a round, so it must not guess. --now skips
-// the prompt and abandons the pane at once; a non-positive --grace is a bad
-// value, not an omission, and is refused before any runtime is built.
+// cmdStop stops a binding's open round on purpose (#138): the headless
+// builder is killed and the round closed. It takes the binding from --name or
+// a positional and never from the current directory -- a stop ends a round,
+// so it must not guess.
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	name := fs.String("name", "", "binding whose open round to stop")
-	grace := fs.Duration("grace", relay.DefaultStopGrace, "how long the builder gets to wrap up before a pane round is abandoned")
-	now := fs.Bool("now", false, "abandon at once, without asking the builder to wrap up")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay stop <name> | --name <name> [--grace 5m] [--now]\n" +
-			"stop asks a builder to wrap up and close its round on its marker; it must not guess")
-	}
-	if *grace <= 0 {
-		fmt.Fprintf(os.Stderr, "relay: --grace must be positive, got %s\n", *grace)
-		return exitCodeErr{code: 2}
+		return fmt.Errorf("usage: relay stop <name> | --name <name>\n" +
+			"stop kills a builder's open round; it must not guess")
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	res, err := relay.Stop(context.Background(), rt, target, relay.StopOptions{Grace: *grace, Now: *now})
+	res, err := relay.Stop(context.Background(), rt, target, relay.StopOptions{})
 	if errors.Is(err, relay.ErrNothingToStop) {
 		// Nothing to stop is an answer, not a failure.
 		fmt.Printf("nothing to stop: %s has no open round\n", target)
@@ -2112,8 +2003,6 @@ func bindingHint(verb string) string {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
-	heldGrace := fs.Duration("held-grace", relay.DefaultHeldGrace,
-		"how long a focused planner must be quiet before a held payload is injected anyway")
 	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -2126,7 +2015,6 @@ func cmdDaemon(args []string) error {
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown" (#244).
 	rt.StartedAt = time.Now()
-	rt.HeldGrace = *heldGrace
 
 	// The database is opened only here (and by `relay db *`): the daemon
 	// is the process that writes it every tick; `relay serve`'s state root
@@ -2152,8 +2040,7 @@ func cmdDaemon(args []string) error {
 	})
 
 	// --check is the plugin startup hook's probe. It prints nothing on either
-	// path: the exit status is the whole answer, and a hook that printed would
-	// only fill herdr's plugin log with noise on every server start.
+	// path: the exit status is the whole answer.
 	if *check {
 		running, err := rt.Store.DaemonRunning()
 		if err != nil {
@@ -2180,7 +2067,7 @@ func cmdDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("relay daemon starting", "interval", *interval, "held_grace", *heldGrace)
+	slog.Info("relay daemon starting", "interval", *interval)
 	return relay.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).Run(ctx)
 }
 

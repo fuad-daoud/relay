@@ -2,22 +2,14 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
-
-// switchGrace is how long a builder must be unlocatable before the daemon
-// replaces it. Measured from Binding.BuilderMissingSince. It is the same
-// 30s as startGrace and for the same reason: herdr's view lags reality, and
-// a replacement spawned on a flicker orphans a live builder (#20).
-const switchGrace = 30 * time.Second
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
 // candidate, if any. Pure over Gates(rt).
@@ -71,19 +63,11 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 // policy order and the ledger's live gates pick, and hands it the SAME
 // round's plan. The round number does not change -- the new builder
 // inherits the partial diff CaptureRoundDiff already handles -- but
-// RoundStartedAt is restarted, so the replacement gets its own startGrace
-// before a nudge and its own round budget, exactly like a fresh handoff.
+// RoundStartedAt is restarted, so the replacement gets its own round
+// budget, exactly like a fresh handoff.
 //
-// For a headless binding the replacement is a new process started on the
-// same round's prompt; closeOld kills the old process instead of closing
-// a pane.
-//
-// closeOld must close the replaced pane before the replacement is spawned:
-// herdr agent names are unique, the replacement is again named
-// "<name>-builder", and StartAgent refuses that name while the old agent
-// under it is still alive. The gone trigger has no pane left to close and
-// passes closeOld=false; the gated trigger's pane is still open and passes
-// true.
+// The replacement is a new headless process started on the same round's
+// prompt; closeOld kills the old process first.
 //
 // resolveBuilder's own Resolution is always HowExplicit -- it is handed the
 // already-chosen token -- and is discarded. The Resolution switchBuilder
@@ -120,41 +104,30 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	if closeOld {
-		if b.Builder.Headless() {
-			// The one place besides done/unbind where relay stops a process
-			// it started (#99): the planner gated the provider while the
-			// round's process was still running.
-			if b.Builder.PID != 0 && rt.Runner != nil {
-				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
-					return haltBinding(ctx, rt, b, fmt.Sprintf(
-						"%s: builder %s; could not stop its process %d to replace it: %v",
-						b.Name, reason, b.Builder.PID, err))
-				}
+		// The one place besides done/unbind where relay stops a process
+		// it started (#99): the planner gated the provider while the
+		// round's process was still running.
+		if b.Builder.PID != 0 && rt.Runner != nil {
+			if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+				return haltBinding(ctx, rt, b, fmt.Sprintf(
+					"%s: builder %s; could not stop its process %d to replace it: %v",
+					b.Name, reason, b.Builder.PID, err))
 			}
-		} else if err := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: builder %s; could not close its pane %s to replace it: %v",
-				b.Name, reason, b.Builder.PaneID, err))
 		}
 	}
 
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
 
-	// The replacement inherits the mode (spec §5.4): a headless binding gets
-	// a headless endpoint, which startRound below fills in.
+	// The replacement is a headless endpoint, which startRound below fills
+	// in (spec §5.4).
 	ep, _, err := resolveBuilder(ctx, rt, tx, BindOptions{
 		Candidate: res.Token(),
 		CWD:       b.CWD,
-		Headless:  b.Builder.Headless(),
 		Tier:      string(effectiveTier(b)),
-	}, b.Name, b.Planner.PaneID)
+	}, b.Name)
 	if err != nil {
-		// resolveBuilder already recorded spawn_failed for the pick, which
-		// gates it for the next resolution. Count the attempt and leave the
-		// binding for the next tick: with the old pane closed (or already
-		// gone) the gone trigger fires again after switchGrace and walks on
-		// to the next candidate.
+		// Count the attempt and leave the binding for the next tick.
 		if counted {
 			b.RoundSwitches++
 		}
@@ -164,53 +137,29 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	b.Builder = ep
-	if !ep.Headless() {
-		// The replacement pane starts a fresh session (#184): offset 0, since
-		// its own record file starts empty. The round's log keeps appending,
-		// after the marker line below.
-		b.Builder.StreamRound, b.Builder.StreamOffset, b.Builder.LogPath = b.Round, 0, rt.Store.BuilderLogPath(b.Name, b.Round)
-	}
 	b.BuilderCandidate = res.Token()
 	if counted {
 		b.RoundSwitches++
 	}
 	b.BuilderMissingSince = time.Time{}
-	b.BuilderScreen = ""
-	b.BuilderScreenAt = time.Time{}
 	b.State = store.StateActive
 
 	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res)); err != nil {
 		return b, err
 	}
 
-	if b.Builder.Headless() {
-		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "switched to "+res.Token()+" ("+reason+")")
-	}
+	appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "switched to "+res.Token()+" ("+reason+")")
 
 	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
-	if b.Builder.Headless() {
-		started, err := startRound(ctx, rt, b, text)
-		if err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: switched builder to %s but could not start round %d: %v",
-				b.Name, res.Token(), b.Round, err))
-		}
-		b = started
-	} else if err := promptWithRetry(ctx, rt, ep.PaneID, text, rt.Store.PlanPath(b.Name, b.Round)); err != nil {
-		if errors.Is(err, ErrPromptLate) {
-			slog.Info("plan handed to switched builder late", "binding", b.Name, "round", b.Round)
-		} else {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: switched builder to %s but could not hand it round %d: %v",
-				b.Name, res.Token(), b.Round, err))
-		}
+	started, err := startRound(ctx, rt, b, text)
+	if err != nil {
+		return haltBinding(ctx, rt, b, fmt.Sprintf(
+			"%s: switched builder to %s but could not start round %d: %v",
+			b.Name, res.Token(), b.Round, err))
 	}
+	b = started
 
 	b.RoundStartedAt = now
-
-	if err := rt.Herdr.Notify(ctx, fmt.Sprintf("%s: switched builder to %s (%s)", b.Name, res.Token(), reason), reason, herdr.SoundNone); err != nil {
-		slog.Warn("switch notify failed", "binding", b.Name, "err", err)
-	}
 
 	slog.Info("builder switched", "binding", b.Name, "round", b.Round,
 		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)

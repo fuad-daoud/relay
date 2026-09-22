@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -128,15 +127,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		}
 		b = started
 	} else {
-		if err := promptWithRetry(ctx, rt, b.Builder.PaneID, prompt, planPath); err != nil && !errors.Is(err, ErrPromptLate) {
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
-		}
-		// A pane builder's round log is cut at the session record's current
-		// size, exactly as Send does (#184); a remote endpoint has no local
-		// record to render.
-		if !b.Builder.Remote() {
-			b = armSessionCursor(rt, b)
-		}
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, ErrPaneBuilder))
 	}
 
 	if err := tx.AppendLog(b.Name, store.LogEntry{

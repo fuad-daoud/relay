@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // ErrHeadlessNoDialog: a headless builder (#99) runs with stdin closed and
@@ -27,17 +24,7 @@ type AnswerInput struct {
 	Choice int
 }
 
-// DialogSource and DialogLines are how relay reads a blocking dialog. A TUI
-// approval prompt is drawn on the alternate screen, which never reaches the
-// scrollback recent-unwrapped reads, so the dialog has to come from detection
-// instead. The daemon's blocked handler and the answer picker use the same
-// pair so the human sees what the daemon saw.
-const (
-	DialogSource = "detection"
-	DialogLines  = 200
-)
-
-// logicalKeys are the key names herdr send-keys accepts by name. Anything
+// logicalKeys are the key names a dialog answer accepts by name. Anything
 // else typed at the answer picker is literal text.
 var logicalKeys = map[string]bool{
 	"enter": true, "esc": true, "tab": true, "up": true, "down": true, "space": true,
@@ -84,93 +71,27 @@ func (a AnswerInput) resolve() (string, error) {
 	}
 }
 
-// Answer sends the planner's decision into a blocked builder as keystrokes.
-// herdr refuses agent prompt against a blocked agent, so send-keys is the only
-// channel that works here.
+// Answer used to send the planner's decision into a blocked pane builder as
+// keystrokes. Headless builders run with stdin closed and remote ones on
+// another machine, so no builder relay runs can take a dialog answer.
+//
+// SPIKE(decision): with pane builders gone, `relay answer`, the MCP answer
+// tool and the picker's answer flow have no target. Delete them (and
+// AnswerInput/ParseAnswer) or keep the verb as this refusal.
 func Answer(ctx context.Context, rt Runtime, name string, in AnswerInput) error {
-	keys, err := in.resolve()
+	if _, err := in.resolve(); err != nil {
+		return err
+	}
+	b, err := rt.Store.Load(name)
 	if err != nil {
 		return err
 	}
-
-	var builder herdr.Agent
-	var locatedBuilder bool
-	if hint, err := rt.Store.Load(name); err == nil {
-		if hint.Builder.Remote() {
-			return fmt.Errorf("%s: %w", name, ErrRemoteNoDialog)
-		}
-		if hint.Builder.Headless() {
-			where := "no round is running"
-			if hint.Builder.LogPath != "" {
-				where = "read " + hint.Builder.LogPath
-			}
-			return fmt.Errorf("%s's %w; %s", name, ErrHeadlessNoDialog, where)
-		}
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return fmt.Errorf("list agents: %w", err)
-		}
-		var ok bool
-		builder, ok = FindAgent(agents, hint.Builder)
-		if !ok {
-			return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, hint.Builder.PaneID, hint.BuilderCandidate, ErrBuilderGone)
-		}
-
-		// Refuse unless herdr still reports the builder blocked. relay sets
-		// NEEDS YOU and prints an answer instruction whenever herdr's screen
-		// detection fires, including on a false positive (#55), and the
-		// planner is a model following that instruction -- so the guard has to
-		// be here, where the keystrokes are, not in the prose.
-		//
-		// This deliberately uses the list fetched above rather than the
-		// daemon's snapshot: the window between the notification and the
-		// answer is unbounded, and a genuine block may have resolved itself
-		// while the human was reading.
-		//
-		// No --force. Anyone who really means to type into a running agent has
-		// `herdr agent send-keys <pane> <keys>`; relay does not need an escape
-		// hatch whose only purpose is to defeat the guard it just added.
-		if builder.Status != herdr.StatusBlocked {
-			return fmt.Errorf("binding %q (pane %s): herdr reports the builder %s: %w",
-				name, builder.PaneID, builder.Status, ErrBuilderNotBlocked)
-		}
-		locatedBuilder = true
+	if b.Builder.Remote() {
+		return fmt.Errorf("%s: %w", name, ErrRemoteNoDialog)
 	}
-
-	// Load-modify-save, so it runs inside the state lock: the daemon rewrites
-	// this binding on every tick and would otherwise clobber the state change
-	// that records the builder is no longer waiting on a human.
-	return rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load(name)
-		if err != nil {
-			return err
-		}
-
-		// The pre-lock load and this locked load are two separate acquisitions
-		// of the state lock, so a binding can appear between them. An unlocated
-		// builder must never fall through to an empty target.
-		if !locatedBuilder {
-			return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
-		}
-		if !SameAgent(builder, b.Builder) {
-			return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
-		}
-
-		if err := rt.Herdr.SendKeys(ctx, builder.PaneID, keys); err != nil {
-			return fmt.Errorf("send keys to builder: %w", err)
-		}
-
-		entry := store.LogEntry{
-			TS: rt.Now().UTC(), Round: b.Round,
-			Direction: store.DirToBuilder, Kind: store.KindAnswer,
-			Payload: keys, Confirmed: true,
-		}
-		if err := tx.AppendLog(name, entry); err != nil {
-			return err
-		}
-
-		b.State = store.StateActive
-
-		return tx.Save(b)
-	})
+	where := "no round is running"
+	if b.Builder.LogPath != "" {
+		where = "read " + b.Builder.LogPath
+	}
+	return fmt.Errorf("%s's %w; %s", name, ErrHeadlessNoDialog, where)
 }

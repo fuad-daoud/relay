@@ -16,21 +16,15 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// bindPreflightTimeout bounds the bind-time preflight. The hot path must not be
-// slowed by a hung herdr: the herdr client's own per-call timeout is 30s, and
-// two calls would add a minute to `relay bind`.
+// bindPreflightTimeout bounds the bind-time preflight, so a hung harness
+// --version probe cannot slow `relay bind`.
 const bindPreflightTimeout = 2 * time.Second
-
-// Compile-time proof that the concrete herdr client satisfies the interface
-// doctor needs, so the assertion in newDoctorEnv can never panic at runtime.
-var _ doctor.HerdrClient = (*herdr.Client)(nil)
 
 // assembleKinds is the scope: every kind named by a configured candidate,
 // plus every existing binding's builder kind. storeErr is returned rather than
@@ -205,11 +199,7 @@ func cmdDoctor(args []string) error {
 	}
 
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
-	hc, ok := rt.Herdr.(doctor.HerdrClient)
-	if !ok {
-		return fmt.Errorf("herdr client does not support the probes doctor needs")
-	}
-	env := doctor.NewEnv(hc, rt.Store)
+	env := doctor.NewEnv(rt.Store)
 
 	opencodeConfigured := false
 	for _, k := range kinds {
@@ -479,12 +469,11 @@ func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
 
 // bindPreflight runs the bind-time preflight for one kind and renders its
 // warning lines. The timeout lives here, not at the call site, so it cannot be
-// dropped by accident; adopted is passed through to doctor.Run, which owns what
-// an adopted pane is and is not checked for.
-func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
+// dropped by accident.
+func bindPreflight(ctx context.Context, env doctor.Env, kind string) []string {
 	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
 	defer cancel()
-	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: builderDefinitions()})))
+	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithDefinitions(map[string][]string{kind: builderDefinitions()})))
 }
 
 func bindWarningLines(rep doctor.Report) []string {

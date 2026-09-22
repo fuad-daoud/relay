@@ -17,7 +17,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -262,12 +261,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	//                 BuilderCandidate: view.Candidate, Round: 1, State: active, RoundCap/Timeout as Add}
 	// Save under lock; append the same pick log entry Add writes, with the candidate the server reported.
 	var planner store.Endpoint
-	if opts.PlannerPane != "" && rt.Herdr != nil {
-		if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
-			if p, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane}); ok {
-				planner = endpointOf(p)
-			}
-		}
+	if opts.PlannerPane != "" {
+		planner = plannerEndpoint(opts.PlannerPane)
 	}
 
 	builderKind := ""
@@ -306,7 +301,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.SessionID)
 
 	res := Resolution{
 		Candidate: cand,
@@ -551,23 +545,13 @@ func writeTempAndRename(dest string, r io.Reader) error {
 	return os.Rename(tmpName, dest)
 }
 
-// observeRemote advances b from the server's view: planner refresh, candidate
-// refresh, mirrored log, and (on a newly closed round) catchUp -- everything
-// reconcileRemote used to do, except the final delivery to the planner pane.
-// deliver reports whether the caller should follow up with deliverAndSettle;
-// it is false for every path that already returned on its own in the
-// original function (a running mirror, a fresh halt, an unreachable/cert/
-// other error).
-//
-// The split exists for SyncRemote (spec §2.2): a read path with no agents
-// list must observe the server's state without ever calling
-// deliverAndSettle, because deliverAndSettle reads a nil/empty agents list
-// as "the planner is gone" and orphans the binding.
-func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, bool, error) {
-	if planner, ok := FindAgent(agents, b.Planner); ok {
-		b.Planner = refreshEndpoint(b.Planner, planner)
-	}
-
+// observeRemote advances b from the server's view: candidate refresh,
+// mirrored log, and (on a newly closed round) catchUp -- everything
+// reconcileRemote does except the final settle. deliver reports whether the
+// caller should follow up with deliverAndSettle; it is false for every path
+// that already returned on its own (a running mirror, a fresh halt, an
+// unreachable/cert/other error). SyncRemote (spec §2.2) calls it alone.
+func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
 		return b, false, nil
@@ -708,23 +692,20 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 // reconcileRemote is the daemon tick's entry point for a remote binding: it
 // observes the server's state and, unless observeRemote already returned
-// (a halt, a running mirror, an error), delivers any pending payload to the
-// planner pane.
-func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
-	next, deliver, err := observeRemote(ctx, rt, tx, b, agents)
+// (a halt, a running mirror, an error), settles it.
+func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
+	next, deliver, err := observeRemote(ctx, rt, tx, b)
 	if err != nil || !deliver {
 		return next, err
 	}
-	return deliverAndSettle(ctx, rt, tx, next, agents)
+	return deliverAndSettle(ctx, rt, tx, next)
 }
 
 // SyncRemote runs one read-only observe pass over every remote binding that
 // is still relaying (not store.StateDone), so `relay status`, `relay pull`
 // and each `relay wait` iteration collect a closed round without the daemon
-// running (spec §2.2). It never delivers to a planner pane: it calls
-// observeRemote directly, not reconcileRemote, with a nil agents list --
-// deliverAndSettle would read that as "the planner is gone" and orphan a
-// binding whose planner simply is not running `relay daemon` right now.
+// running (spec §2.2). It calls observeRemote directly, not
+// reconcileRemote.
 //
 // synced counts bindings whose stored state actually changed under the
 // pass; per-binding errors are joined into one returned error rather than
@@ -757,7 +738,7 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			if err != nil {
 				return err
 			}
-			next, _, err := observeRemote(ctx, rt, tx, fresh, nil)
+			next, _, err := observeRemote(ctx, rt, tx, fresh)
 			if err != nil {
 				return err
 			}
@@ -1234,7 +1215,7 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 // ServerInUse names every binding that names server -- the pure rule behind
 // `relay client rm-server`'s refusal (§4.7). A pure function over the
 // binding list rather than a store read, so the CLI (cmd/relay) can be
-// tested without touching herdr or the network -- the caller loads the
+// tested without touching the network -- the caller loads the
 // bindings and this function decides.
 func ServerInUse(bindings []store.Binding, server string) []string {
 	var names []string

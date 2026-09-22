@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -21,33 +20,15 @@ import (
 // `relay done` the binding first.
 var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abandon it")
 
-// ErrBuilderUnverified reports a rebind attempt against a binding whose builder
-// could not be located but was never session-identified.
-//
-// SameAgent falls back to pane plus kind when no session is recorded, and a
-// workspace move changes the pane id -- so a failed match means either "dead"
-// or "moved, still running". relay cannot tell which, and rebinding on the
-// guess spawns a replacement and orphans a builder that is still working.
-// It refuses instead, until a human says the builder really is gone.
-var ErrBuilderUnverified = errors.New("builder was never session-identified")
-
-// ErrHeadlessAdopt: --headless describes a process relay will run; a pane
-// the human already started is the opposite of that (headless spec §3.6).
-var ErrHeadlessAdopt = errors.New("--headless spawns a process; it cannot adopt a pane (drop --builder <pane>)")
-
-// ErrHeadlessResume: a binding's mode is fixed at creation. Changing it
-// under a live round would leave the old shape's state (pane id, or pid and
-// log) meaning nothing (headless spec §1, scope boundary).
-var ErrHeadlessResume = errors.New("--headless cannot change an existing binding's mode; unbind and bind again")
-
-// BindOptions describes one bind request. BuilderPane adopts an existing pane;
-// leaving it empty spawns a new one from Candidate.
+// BindOptions describes one bind request. The builder is always a headless
+// process relay runs per round (#99).
 type BindOptions struct {
 	Name string
 	// Candidate is a harness/provider/model token; empty means resolve by role
 	// through resolveCandidate, except in resume, where empty means "not rebinding".
-	Candidate   string
-	BuilderPane string
+	Candidate string
+	// PlannerPane identifies the planner.
+	// SPIKE(planner-id): was $HERDR_PANE_ID; now --planner / $RELAY_PLANNER.
 	PlannerPane string
 	CWD         string
 	Resume      bool
@@ -55,26 +36,13 @@ type BindOptions struct {
 	// Rebind, with Resume, replaces a builder that is gone by resolving a
 	// candidate through policy.json order and the ledger, exactly as a
 	// fresh bind with Candidate empty does (#92). Without it, an empty
-	// Candidate and BuilderPane on resume mean "planner-only: touch no
-	// builder". Ignored when Candidate or BuilderPane is set.
+	// Candidate on resume means "planner-only: touch no builder". Ignored
+	// when Candidate is set.
 	Rebind bool
-
-	// AssumeDead releases the ErrBuilderUnverified guard: the caller asserts a
-	// builder relay cannot verify is gone really is gone. It never overrides
-	// ErrBuilderAlive -- a builder relay can positively see is refused either
-	// way.
-	AssumeDead bool
-
-	// WorkspaceID scopes the builder's tab to the planner's workspace.
-	WorkspaceID string
 
 	// RoundTimeout overrides the binding's round budget. Zero keeps the
 	// store's default.
 	RoundTimeout time.Duration
-
-	// Headless makes the builder a process relay runs per round instead of
-	// a pane it watches (#99). Refused with BuilderPane and with Resume.
-	Headless bool
 
 	// Tier overrides the candidate/policy permission tier (#141).
 	Tier string
@@ -104,33 +72,31 @@ type BindOptions struct {
 	Feature string
 }
 
-// BindResolved ties the calling planner pane to a builder over one working
-// tree. The second return is how the builder was chosen, zero when a pane
-// was adopted.
+// ErrNoPlanner reports a verb that records a planner run without one.
+// SPIKE(planner-id): was "no planner pane; is HERDR_PANE_ID set".
+var ErrNoPlanner = errors.New("no planner; pass --planner or set RELAY_PLANNER")
+
+// plannerEndpoint is the planner side of a binding. Under herdr it was the
+// live agent in $HERDR_PANE_ID, carrying its kind and harness session.
+//
+// SPIKE(planner-id): the planner is now just an opaque id string, with no
+// kind and no session, so Planner.TranscriptLocator (#172) cannot be
+// resolved at bind time any more.
+func plannerEndpoint(id string) store.Endpoint {
+	return store.Endpoint{PaneID: id}
+}
+
+// BindResolved ties the calling planner to a headless builder over one
+// working tree. The second return is how the builder was chosen.
 func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, Resolution, error) {
 	if opts.PlannerPane == "" {
-		return store.Binding{}, Resolution{}, errors.New("no planner pane; is HERDR_PANE_ID set")
+		return store.Binding{}, Resolution{}, ErrNoPlanner
 	}
 	if opts.CWD == "" {
 		return store.Binding{}, Resolution{}, errors.New("no working directory")
 	}
 
-	if opts.Headless && opts.BuilderPane != "" {
-		return store.Binding{}, Resolution{}, ErrHeadlessAdopt
-	}
-	if opts.Headless && opts.Resume {
-		return store.Binding{}, Resolution{}, ErrHeadlessResume
-	}
-
-	agents, err := rt.Herdr.ListAgents(ctx)
-	if err != nil {
-		return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-	}
-
-	planner, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-	if !ok {
-		return store.Binding{}, Resolution{}, fmt.Errorf("no agent in planner pane %s", opts.PlannerPane)
-	}
+	planner := plannerEndpoint(opts.PlannerPane)
 
 	if opts.Resume {
 		return resume(ctx, rt, opts, planner)
@@ -147,36 +113,29 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 	return b, err
 }
 
-// resume re-points an existing binding at the calling planner pane, and -- when
+// resume re-points an existing binding at the calling planner, and -- when
 // the caller supplied a builder, or asked for one with Rebind -- at a new builder as well.
 //
 // Preconditions:  the binding exists. When a builder is supplied, the binding's
 //
 //	current builder must NOT be alive: rebinding over a working
-//	builder would abandon a round mid-flight and strand its pane.
-//	A binding whose builder cannot be found by session identity is
-//	treated as gone, even if another agent now occupies its former pane.
-//	A headless binding's builder is a process; it is alive when
-//	the Runner says so, and a pane can never replace it
-//	(ErrHeadlessAdopt).
+//	builder would abandon a round mid-flight. A headless binding's
+//	builder is a process; it is alive when the Runner says so.
 //
 // Postconditions: Planner points at the caller. A rebind of a DONE binding is
 //
 //	refused. A planner-only resume of one is allowed, and
 //	reactivates it, exactly as before this feature existed. When
-//	a builder was supplied: Builder is the new endpoint with its
-//	session id recorded, State is Active,
-//	HaltNotifiedRound is 0, and the builder-screen fields are
-//	cleared. RoundClosedTree is cleared when a builder was supplied:
+//	a builder was supplied: Builder is the new headless endpoint,
+//	State is Active, and HaltNotifiedRound is 0. RoundClosedTree is cleared when a builder was supplied:
 //	a tree that changed hands says nothing about a builder that no
 //	longer exists. Round, CWD, Name, RoundBaselineTree and the round
 //	log are untouched.
-//	The binding's mode is untouched too: a headless binding
-//	rebinds to a headless endpoint, a pane binding to a pane.
+//	A legacy pane binding (see ErrPaneBuilder) rebinds to a
+//	headless endpoint.
 //
-// Errors: store.ErrNotFound; ErrBuilderAlive; ErrBuilderUnverified; ErrHeadlessAdopt;
-// ErrRunnerUnavailable; a wrapped herdr failure.
-func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
+// Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable.
+func resume(ctx context.Context, rt Runtime, opts BindOptions, planner store.Endpoint) (store.Binding, Resolution, error) {
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
 			return store.Binding{}, Resolution{}, err
@@ -188,9 +147,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		return store.Binding{}, Resolution{}, err
 	}
 
-	// A remote binding has no pane and no worktree: its mode is fixed at
-	// creation (like a headless binding's), so none of the pane/worktree
-	// logic below applies to it. §4.6.
+	// A remote binding has no local worktree: its mode is fixed at
+	// creation, so none of the worktree logic below applies to it. §4.6.
 	if b.Builder.Remote() {
 		return resumeRemote(ctx, rt, opts, planner, b)
 	}
@@ -229,12 +187,9 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		}
 		res.RestoredWorktree = b.Worktree
 		res.RestoredBranch = b.Branch
-		if !b.Builder.Headless() && b.Builder.PaneID != "" {
-			res.OrphanedPane = b.Builder.PaneID
-		}
 	}
 
-	rebinding := opts.Rebind || opts.Candidate != "" || opts.BuilderPane != ""
+	rebinding := opts.Rebind || opts.Candidate != ""
 	// A paused binding has no builder identity left -- pause cleared it -- so
 	// a resume from PAUSED always rebinds; --rebind is implied (#137).
 	if b.State == store.StatePaused {
@@ -249,14 +204,10 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		if b.State == store.StateDone && !restore {
 			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relay bind` to start fresh", opts.Name)
 		}
+		// A legacy pane builder cannot be observed any more; it is rebound
+		// to a headless endpoint without a liveness check.
 		if b.Builder.Headless() {
-			// A binding's mode is fixed at creation (#119). The old builder
-			// is a process, so herdr's agent list says nothing about it:
-			// ask the Runner. A PID has no "moved pane" ambiguity, so the
-			// DiagnoseBuilder guard below does not apply.
-			if opts.BuilderPane != "" {
-				return store.Binding{}, Resolution{}, ErrHeadlessAdopt
-			}
+			// The old builder is a process: ask the Runner.
 			if rt.Runner == nil {
 				return store.Binding{}, Resolution{}, ErrRunnerUnavailable
 			}
@@ -269,39 +220,8 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 					return store.Binding{}, Resolution{}, ErrBuilderAlive
 				}
 			}
-			opts.Headless = true
-		} else {
-			// A pane builder whose worktree was released is gone by definition --
-			// its cwd is a deleted inode even after the path is recreated (§1).
-			if !restore {
-				agents, err := rt.Herdr.ListAgents(ctx)
-				if err != nil {
-					return store.Binding{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-				}
-				if _, alive := FindAgent(agents, b.Builder); alive {
-					return store.Binding{}, Resolution{}, ErrBuilderAlive
-				}
-				// Reached only when the builder was NOT located. Without a recorded
-				// session that miss is ambiguous: the pane id it would match on is the
-				// one a workspace move invalidates.
-				//
-				// Only refuse when a round is open. That is where #21's harm lives --
-				// orphaning a builder "still running the round" -- and it is what
-				// keeps #20's recovery (PR #22) working: a session-less builder with
-				// nothing in flight still rebinds without ceremony.
-				//
-				// Keyed on live evidence rather than b.State so the guard does not
-				// depend on whether the daemon has ticked since the pane went away.
-				d := DiagnoseBuilder(b)
-				if !d.Identified && d.RoundOpen && !opts.AssumeDead {
-					return store.Binding{}, Resolution{}, fmt.Errorf(
-						"%w: relay cannot tell a dead builder for %q from a moved pane. "+
-							"Check %s is really gone, then re-run with --assume-dead",
-						ErrBuilderUnverified, opts.Name, b.Builder.PaneID)
-				}
-			}
 		}
-		if opts.BuilderPane == "" {
+		{
 			resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 			if err != nil {
 				return store.Binding{}, Resolution{}, err
@@ -318,16 +238,14 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 			}
 		}
 		var res2 Resolution
-		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name, planner.PaneID)
+		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name)
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
 		res2.RestoredWorktree = res.RestoredWorktree
 		res2.RestoredBranch = res.RestoredBranch
-		res2.OrphanedPane = res.OrphanedPane
 		res2.WasPaused = res.WasPaused
 		res = res2
-		// IRREVERSIBLE: a pane may now exist. Never closed by relay.
 	}
 
 	var out store.Binding
@@ -343,16 +261,10 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		// RepoRef and Feature are deliberately left untouched here (beyond
 		// the explicit Feature override below): a resume re-points endpoints,
 		// it does not rediscover facts a fresh bind already captured. The
-		// planner transcript locator is the one exception -- endpointOf wipes
-		// it, since a live agent carries no such field, so it is refreshed
-		// only when the binding did not already have one.
+		// planner transcript locator is kept from the old endpoint.
 		oldTranscriptLocator := b.Planner.TranscriptLocator
-		b.Planner = endpointOf(planner)
-		if oldTranscriptLocator == "" {
-			b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
-		} else {
-			b.Planner.TranscriptLocator = oldTranscriptLocator
-		}
+		b.Planner = planner
+		b.Planner.TranscriptLocator = oldTranscriptLocator
 		if opts.Feature != "" {
 			b.Feature = opts.Feature
 		}
@@ -368,12 +280,10 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		b.StaleNotifiedAt = time.Time{}
 		if rebinding {
 			b.Builder = builder
-			b.BuilderCandidate = res.Token() // "" when adopting a pane
+			b.BuilderCandidate = res.Token()
 			b.HaltNotifiedRound = 0
 			b.Halt = ""
 			b.HaltAt = time.Time{}
-			b.BuilderScreen = ""
-			b.BuilderScreenAt = time.Time{}
 			b.RoundClosedTree = ""
 			if opts.Tier != "" {
 				b.Tier = opts.Tier
@@ -415,16 +325,14 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 }
 
 // resumeRemote is resume's remote-binding path (§4.6). A remote binding's
-// mode is fixed at creation, so this never adopts a pane or spawns one: it
-// only forwards to the server and, once the server agrees, repoints the
+// mode is fixed at creation, so this never spawns anything: it only forwards to the server and, once the server agrees, repoints the
 // planner and reactivates the binding locally.
 //
 // Errors: "cannot change a remote builder; unbind and add" when the caller
-// asked to change the builder (--rebind, --candidate, --builder pane, or
-// --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
+// asked to change the builder (--rebind or --candidate); ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
-func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent, b store.Binding) (store.Binding, Resolution, error) {
-	if opts.Rebind || opts.Candidate != "" || opts.BuilderPane != "" || opts.Headless {
+func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, planner store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
+	if opts.Rebind || opts.Candidate != "" {
 		return store.Binding{}, Resolution{}, errors.New("cannot change a remote builder; unbind and add")
 	}
 	if rt.Remote == nil {
@@ -459,7 +367,7 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, planner her
 		if err != nil {
 			return err
 		}
-		cur.Planner = endpointOf(planner)
+		cur.Planner = planner
 		cur.State = store.StateActive
 		if err := tx.Save(cur); err != nil {
 			return err
@@ -497,7 +405,7 @@ func resolveRegate(regate *int, pol policy.Policy) int {
 	return pol.GateRegate()
 }
 
-func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Agent) (store.Binding, Resolution, error) {
+func create(ctx context.Context, rt Runtime, opts BindOptions, planner store.Endpoint) (store.Binding, Resolution, error) {
 	name := opts.Name
 	if name == "" {
 		name = SanitizeName(baseName(opts.CWD))
@@ -515,7 +423,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	// would overwrite only bind.json: the round log and the NNN-*.md files
 	// survive, so a fresh round 1 would collide with the previous session's
 	// round 1 and Reconcile would read that old report entry as "already
-	// handled" -- silently, with no error and no notification.
+	// handled" -- silently, with no error.
 	if _, err := rt.Store.Load(name); err == nil {
 		return store.Binding{}, Resolution{}, fmt.Errorf(
 			"binding %q already exists: `relay unbind %s` to start fresh, or `relay bind --resume --name %s` to adopt it",
@@ -524,20 +432,19 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		return store.Binding{}, Resolution{}, err
 	}
 
-	// Check the working tree before spawning anything. Save re-checks under the
-	// lock and stays authoritative, but without this a refused bind would leave
-	// a started builder pane stranded with nothing pointing at it.
+	// Check the working tree before recording anything. Save re-checks under
+	// the lock and stays authoritative.
 	other, found, err := rt.Store.FindByCWD(opts.CWD)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
 	if found && other.Name != name && other.State != store.StateDone {
-		return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			opts.CWD, other.Name, other.Builder.PaneID, other.Round, store.ErrCWDTaken)
+		return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (round %d): %w",
+			opts.CWD, other.Name, other.Round, store.ErrCWDTaken)
 	}
 
 	var tier harness.Tier
-	if opts.BuilderPane == "" {
+	{
 		resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
@@ -549,7 +456,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		opts.Tier = string(tier)
 	}
 
-	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name, planner.PaneID)
+	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -557,7 +464,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	b := store.Binding{
 		Name:             name,
 		CWD:              opts.CWD,
-		Planner:          endpointOf(planner),
+		Planner:          planner,
 		Builder:          builder,
 		BuilderCandidate: res.Token(),
 		Round:            1,
@@ -568,7 +475,6 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		RepoRef:          captureRepo(ctx, rt, opts.CWD),
 		Feature:          opts.Feature,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.Session.Value)
 	if opts.RoundTimeout > 0 {
 		b.RoundTimeoutMS = int(opts.RoundTimeout / time.Millisecond)
 	}
@@ -583,10 +489,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 		return tx.AppendLog(name, pickEntry(rt.Now(), 1, "builder", res))
 	})
 	if err != nil {
-		// The pre-check passed but the lock disagreed, so a builder pane is now
-		// running with no binding. Name it: relay never closes a pane itself.
-		return store.Binding{}, Resolution{}, fmt.Errorf("bind failed after starting builder in pane %s (close it yourself): %w",
-			builder.PaneID, err)
+		return store.Binding{}, Resolution{}, fmt.Errorf("bind: %w", err)
 	}
 
 	// Save fills in the defaults it owns -- round cap, round budget -- on its
@@ -600,137 +503,20 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, planner herdr.Age
 	return stored, res, nil
 }
 
-// builderAgentName composes and validates the herdr agent name for a
-// binding's builder. It runs before any pane or worktree exists, so a name
-// herdr would refuse fails as a validation error with nothing to clean up.
-func builderAgentName(name string) (string, error) {
-	agentName := name + "-builder"
-	if err := herdr.ValidateAgentName(agentName); err != nil {
-		return "", fmt.Errorf("builder agent name %q: %w -- use a binding name of at most %d characters",
-			agentName, err, herdr.MaxAgentNameLen-len("-builder"))
-	}
-	return agentName, nil
+// builderAgentName composes the agent name recorded for a binding's builder.
+func builderAgentName(name string) string {
+	return name + "-builder"
 }
 
-// resolveBuilder adopts an existing builder pane, opens a tab and starts the
-// candidate agent in its root pane, or -- with opts.Headless -- records a
-// headless endpoint and spawns nothing (#99). Focus stays with the planner
-// either way.
-//
-// The candidate is resolved only on the spawn path. Adopting a pane needs no
-// candidate: the human launched that agent themselves, so relay has no kind or
-// args to supply -- and for agy, their fish function already activated the
-// plan-executor role in that session. The second return is the resolution,
-// zero when adopting.
-//
-// tx witnesses whether the caller already holds the state lock: nil means it
-// does not (create, resume, Add and Fork all call resolveBuilder before their
-// own WithLock, and pass nil), non-nil means it does (switchBuilder runs
-// inside Reconcile's WithLock and passes its tx). It decides nothing about
-// what resolveBuilder does -- the ledger file stays outside the store's
-// transaction -- it only selects which spawn-failure recorder is safe to
-// call: recordSpawnFailure takes Store.WithLock itself, which would deadlock
-// a caller that is already inside it, so a non-nil tx routes to
-// recordSpawnFailureLocked instead, which performs the same append without
-// re-taking the lock.
-func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name, plannerPane string) (store.Endpoint, Resolution, error) {
-	if opts.BuilderPane != "" {
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return store.Endpoint{}, Resolution{}, fmt.Errorf("list agents: %w", err)
-		}
-		found, ok := FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane})
-		if !ok {
-			return store.Endpoint{}, Resolution{}, fmt.Errorf("no agent in builder pane %s", opts.BuilderPane)
-		}
-		return endpointOf(found), Resolution{}, nil
-	}
-
+// resolveBuilder resolves the builder candidate and records a headless
+// endpoint; it spawns nothing (#99). Send fills in the process fields per
+// round (spec §5.3). tx is unused and kept for its callers' shape.
+func resolveBuilder(_ context.Context, rt Runtime, _ *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
 	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
-	c := res.Candidate
-	agentName, err := builderAgentName(name)
-	if err != nil {
-		return store.Endpoint{}, Resolution{}, err
-	}
-
-	// Headless (#99): the builder is a process relay starts on each send,
-	// not a pane. Nothing to open, nothing to start, nothing to strand; the
-	// endpoint records the mode, the name and the kind, and Send fills in
-	// the process fields per round (spec §5.3).
-	if opts.Headless {
-		return store.Endpoint{AgentName: agentName, Kind: c.Harness, Mode: store.ModeHeadless}, res, nil
-	}
-
-	role, _ := harness.RoleByName("builder")
-	h, _ := harness.Lookup(c.Harness) // cannot miss: Load validated it
-	tier := harness.Tier(opts.Tier)
-	if tier == "" {
-		tier = harness.TierHarness
-	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
-	if err != nil {
-		return store.Endpoint{}, Resolution{}, err
-	}
-
-	paneID, err := openTab(ctx, rt, opts.WorkspaceID, opts.CWD, agentName)
-	if err != nil {
-		return store.Endpoint{}, Resolution{}, err
-	}
-
-	if err := rt.Herdr.StartAgent(ctx, agentName, l.Kind, paneID, l.PaneArgs(rt.Store.Dir(name))); err != nil {
-		if tx != nil {
-			recordSpawnFailureLocked(rt, c.Ref().String(), name, err)
-		} else {
-			recordSpawnFailure(rt, c.Ref().String(), name, err)
-		}
-		return store.Endpoint{}, Resolution{}, fmt.Errorf("start builder %q: %w", agentName, err)
-	}
-
-	ep := store.Endpoint{AgentName: agentName, PaneID: paneID, Kind: l.Kind}
-
-	// Record the new agent's session id. It is what lets a later
-	// disappearance be told apart from a different agent taking over the same
-	// pane, so a binding can recover from a detection flicker without ever
-	// resuming into a stranger.
-	//
-	// Best effort only. This lookup races the agent's registration for every
-	// harness: claude usually wins it, while agy usually loses it because its
-	// session does not exist until the agent starts work. Either way, failing
-	// the bind here would strand a live pane over a lookup relay can recover
-	// without, and Reconcile backfills the session on a later tick.
-	if agents, err := rt.Herdr.ListAgents(ctx); err == nil {
-		if started, ok := FindAgent(agents, store.Endpoint{PaneID: paneID}); ok {
-			ep.SessionID = started.Session.Value
-		}
-	}
-
-	return ep, res, nil
-}
-
-// endpointOf projects a live herdr agent onto the store's durable endpoint
-// shape, used for both a binding's planner and an adopted builder.
-func endpointOf(a herdr.Agent) store.Endpoint {
-	return store.Endpoint{
-		PaneID:    a.PaneID,
-		SessionID: a.Session.Value,
-		Kind:      a.Kind,
-	}
-}
-
-// openTab makes somewhere for a spawned agent to live: its own herdr tab in
-// the planner's workspace, rooted at cwd and labelled so the tab strip says
-// which builder or consult lives there. Focus stays with the planner.
-// Every spawn site (bind, add, fork, ask) comes through here; placement is
-// not a per-command decision (#79).
-func openTab(ctx context.Context, rt Runtime, workspaceID, cwd, label string) (string, error) {
-	paneID, err := rt.Herdr.CreateTab(ctx, workspaceID, cwd, label)
-	if err != nil {
-		return "", fmt.Errorf("create tab %q: %w", label, err)
-	}
-	return paneID, nil
+	return store.Endpoint{AgentName: builderAgentName(name), Kind: res.Candidate.Harness, Mode: store.ModeHeadless}, res, nil
 }
 
 // worktreeOutcome is what a teardown attempt decided about one binding's
@@ -800,12 +586,12 @@ type UnbindResult struct {
 	WorktreeGone    string // recorded worktree whose directory no longer exists, or ""
 	// ProcessStopped is the headless builder process relay stopped, or 0
 	// (#99). ProcessErr is why a stop failed; "" when it did not. Both
-	// zero for a pane binding and for a headless one between rounds.
+	// zero between rounds.
 	ProcessStopped int
 	ProcessErr     string
 }
 
-// Unbind clears away one binding's state, leaving its herdr panes untouched.
+// Unbind clears away one binding's state.
 //
 // When archive is set the binding's directory is moved aside rather than
 // deleted, which frees the name for a fresh bind while keeping log.jsonl and
@@ -870,7 +656,7 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	return res, nil
 }
 
-// SanitizeName coerces a directory name into herdr's agent-name rule.
+// SanitizeName coerces a directory name into a valid binding name.
 func SanitizeName(s string) string {
 	var sb strings.Builder
 	for _, r := range strings.ToLower(s) {

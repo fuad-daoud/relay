@@ -37,14 +37,11 @@ func RestoreText(res Resolution) string {
 	lines := []string{
 		fmt.Sprintf("restored worktree %s on %s", res.RestoredWorktree, res.RestoredBranch),
 	}
-	if res.OrphanedPane != "" {
-		lines = append(lines, fmt.Sprintf("old builder pane %s is in the removed directory; close it: herdr pane close %s", res.OrphanedPane, res.OrphanedPane))
-	}
 	return strings.Join(lines, "\n")
 }
 
 // PauseText is what `relay pause` says on success: the binding and what it
-// kept, then what it did with the builder pane, then how to bring it back.
+// kept, then how to bring it back.
 func PauseText(name string, r PauseResult) string {
 	lines := []string{
 		fmt.Sprintf("%s paused after round %d; worktree %s released, branch %s kept", name, r.Round, r.Worktree, r.Branch),
@@ -55,12 +52,6 @@ func PauseText(name string, r PauseResult) string {
 			sha12 = sha12[:12]
 		}
 		lines = append(lines, fmt.Sprintf("  committed %s ([relay] %s: paused after round %d)", sha12, name, r.Round))
-	}
-	switch {
-	case r.PaneCloseErr != "":
-		lines = append(lines, fmt.Sprintf("  builder pane %s not closed: %s; close it yourself: herdr pane close %s", r.PaneClosed, r.PaneCloseErr, r.PaneClosed))
-	case r.PaneClosed != "":
-		lines = append(lines, fmt.Sprintf("  closed builder pane %s", r.PaneClosed))
 	}
 	lines = append(lines, fmt.Sprintf("  resume: relay bind --resume --name %s", name))
 	return strings.Join(lines, "\n")
@@ -89,16 +80,11 @@ func LandText(res LandResult) string {
 	return line
 }
 
-// StopText is what `relay stop` says on success: what happened to the round,
-// and for an abandoned pane, the one instruction the human needs.
+// StopText is what `relay stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
 	switch res.Action {
-	case "requested":
-		return fmt.Sprintf("stop requested for %s round %d; grace %s -- the round closes on the builder's marker", name, res.Round, res.Grace)
 	case "killed":
 		return fmt.Sprintf("%s round %d stopped: process killed; round closed without a report unless one was on disk", name, res.Round)
-	case "abandoned":
-		return fmt.Sprintf("%s round %d: NEEDS YOU -- the pane is still running; close it yourself", name, res.Round)
 	default:
 		return fmt.Sprintf("%s has no open round; nothing to stop", name)
 	}

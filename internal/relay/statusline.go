@@ -111,12 +111,6 @@ func waiting(b BindingStatus) string {
 	if b.Detail != "" {
 		return b.Detail
 	}
-	if hold := HoldText(b); hold != "" {
-		return "report → planner · " + hold
-	}
-	if b.Nudge != nil {
-		return "nudged · " + NudgeText(*b.Nudge)
-	}
 	if b.LastPayload == nil {
 		return "no plan yet"
 	}
@@ -212,8 +206,9 @@ func ShouldDrainStdin(mode os.FileMode) bool {
 	return mode&os.ModeCharDevice == 0
 }
 
-// PlannerStatus filters stored bindings to one planner pane and builds rows
-// through buildReport from the store alone per spec §4.1. It never probes herdr.
+// PlannerStatus filters stored bindings to one planner and builds rows
+// through buildReport from the store alone per spec §4.1.
+// SPIKE(planner-id): pane is the --planner / $RELAY_PLANNER id.
 func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error) {
 	if pane == "" {
 		return Report{}, nil
@@ -228,5 +223,5 @@ func PlannerStatus(ctx context.Context, rt Runtime, pane string) (Report, error)
 			kept = append(kept, b)
 		}
 	}
-	return buildReport(ctx, rt, kept, nil, nil)
+	return buildReport(ctx, rt, kept)
 }
