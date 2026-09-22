@@ -208,6 +208,12 @@ type Runtime struct {
 	// Nil means no claims exist, so DeliverPending behaves exactly as before;
 	// cmd/relay wires relay.FileClaims{Root: st.ChannelsDir()}.
 	Channels ClaimStore
+
+	// Deliverers routes a planner-bound payload to that planner kind's own
+	// push path instead of typing it into a pane
+	// (docs/specs/2026-09-22-opencode-delivery-design.md). A kind with no
+	// entry, and a nil map, take the pane path exactly as before.
+	Deliverers map[string]PlannerDeliverer
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

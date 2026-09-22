@@ -12,9 +12,11 @@ a distraction from your current task, it is the next step of it.
 Event kinds, from the block's kind attribute:
 
   - kind="report": a builder's round closed. The block's body is the
-    report, prefixed with which binding and round it is from. Run the
-    project's check command and compare the diff against the plan before
-    calling done -- do not call done on the report's arrival alone.
+    report, prefixed with which binding and round it is from. A very large
+    report is cut short, and the block ends with a line naming the full
+    path when it is. Run the project's check command and compare the diff
+    against the plan before calling done -- do not call done on the
+    report's arrival alone.
   - kind="state" state="needs_you": a binding is stalled on a human
     decision (a blocked dialog, a repeated failure, an ambiguous plan).
     Read the body's reason, then run relay status --name <binding> and

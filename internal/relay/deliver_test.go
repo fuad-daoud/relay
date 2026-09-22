@@ -262,6 +262,25 @@ func TestDeliverReportsPlannerGone(t *testing.T) {
 	}
 }
 
+// TestDeliverReportsPlannerGoneWithNothingPending pins the case the
+// round-1 reorder broke: a binding whose planner pane is gone must report
+// PlannerGone even when no payload is waiting, because reconcile.go turns
+// that into StateOrphaned. TestDeliverReportsPlannerGone does not cover it
+// -- queuedBinding always seeds a payload.
+func TestDeliverReportsPlannerGoneWithNothingPending(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := seedBound(t, f) // seedBound queues nothing
+	f.agents = nil
+
+	_, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.PlannerGone {
+		t.Fatalf("want PlannerGone so reconcile marks it ORPHANED, got %+v", got)
+	}
+}
+
 // TestDeliverYieldsToLiveClaim is the daemon-guard test the plan requires:
 // a live claim on the planner's pane must produce an all-false Delivery,
 // with zero prompts, zero notifies, the entry still pending, and the
@@ -317,6 +336,75 @@ func TestDeliverIgnoresStaleClaim(t *testing.T) {
 	}
 	if !got.Delivered {
 		t.Fatalf("want delivered as before, got %+v", got)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("prompts = %+v, want one", f.prompts)
+	}
+}
+
+// stubDeliverer is the PlannerDeliverer test double deliver_test.go controls
+// directly, so DeliverPending's consult step can be exercised without a
+// real opencode service.
+type stubDeliverer struct {
+	outcome Outcome
+	reason  string
+	err     error
+	calls   int
+}
+
+func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string, _ time.Time) (Outcome, string, error) {
+	s.calls++
+	return s.outcome, s.reason, s.err
+}
+
+// TestDeliverConsultsDelivererForMatchingKind proves the reordered
+// DeliverPending routes an opencode planner's payload through
+// rt.Deliverers instead of typing it into a pane: the stub reports
+// OutcomeDelivered, the entry is confirmed, and fakeHerdr never sees a prompt.
+func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	b.Planner.Kind = "opencode"
+	stub := &stubDeliverer{outcome: OutcomeDelivered, reason: "already present"}
+	rt.Deliverers = map[string]PlannerDeliverer{"opencode": stub}
+
+	next, got, err := deliverPending(t, rt, b, nil)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.Delivered || got.Reason != "already present" {
+		t.Fatalf("want delivered via the deliverer, got %+v", got)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("deliverer calls = %d, want 1", stub.calls)
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("a deliverer-routed payload must never be typed into a pane, got %+v", f.prompts)
+	}
+	if _, pending, err := rt.Store.PendingForPlanner(b.Name); err != nil || pending {
+		t.Errorf("an OutcomeDelivered outcome must confirm the log entry: pending=%v err=%v", pending, err)
+	}
+	if next.PlannerScreen != "" {
+		t.Errorf("a deliverer-routed delivery must clear the fingerprint state, got %+v", next)
+	}
+}
+
+// TestDeliverNilDeliverersBehavesAsToday proves a nil Deliverers map -- the
+// zero value every existing test already runs with -- takes the pane path
+// exactly as it did before this round.
+func TestDeliverNilDeliverersBehavesAsToday(t *testing.T) {
+	f := &fakeHerdr{}
+	rt, b := queuedBinding(t, f)
+	rt.Deliverers = nil
+	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false)}
+	f.prompts = nil
+
+	_, got, err := deliverPending(t, rt, b, f.agents)
+	if err != nil {
+		t.Fatalf("DeliverPending: %v", err)
+	}
+	if !got.Delivered {
+		t.Fatalf("want delivered via the pane path, got %+v", got)
 	}
 	if len(f.prompts) != 1 {
 		t.Fatalf("prompts = %+v, want one", f.prompts)
