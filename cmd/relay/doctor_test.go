@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -306,9 +310,367 @@ func TestServerChecksScopesWarning(t *testing.T) {
 	}
 }
 
-// The bind preflight must be bounded: the herdr client allows 30s per call, so
-// an unbounded preflight can add a minute to `relay bind`.
-// An adopted pane's integration row must survive a binary that is not on PATH:
-// the user launched that agent themselves, but the integration still decides
-// whether the round can ever be observed to finish. Fails if the call site stops
-// passing `adopted` through.
+func TestRefusalChecks(t *testing.T) {
+	refusals := []relay.RoleRefusal{
+		{Role: "builder", Text: "3 candidates serve builder and no order is set", NoOrder: true,
+			Serving: []string{"agy/test/m", "claude/test/m", "opencode/test/m"}},
+		{Role: "reviewer", Text: "every candidate serving reviewer is gated",
+			Serving: []string{"claude/test/m"}, Gated: []string{"test"}},
+	}
+
+	checks := refusalChecks(refusals)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
+	}
+	for i, c := range checks {
+		if c.Group != "" || c.Name != "policy" || c.Severity != doctor.SevWarn {
+			t.Errorf("check %d = %+v", i, c)
+		}
+	}
+	if want := "3 candidates serve builder and no order is set -- add/bind without --builder would refuse"; checks[0].Detail != want {
+		t.Errorf("builder Detail = %q, want %q", checks[0].Detail, want)
+	}
+	if want := `write ~/.config/relay/policy.json, e.g. {"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}`; checks[0].Fix != want {
+		t.Errorf("builder Fix = %q, want %q", checks[0].Fix, want)
+	}
+	if want := "every candidate serving reviewer is gated -- ask --role reviewer without --candidate would refuse"; checks[1].Detail != want {
+		t.Errorf("reviewer Detail = %q, want %q", checks[1].Detail, want)
+	}
+	if want := "relay available test"; checks[1].Fix != want {
+		t.Errorf("reviewer Fix = %q, want %q", checks[1].Fix, want)
+	}
+	if got := refusalChecks(nil); len(got) != 0 {
+		t.Errorf("refusalChecks(nil) = %+v, want empty", got)
+	}
+}
+
+// The unreadable-store gap is reported as a global row, positioned with the
+// other global rows rather than after the per-kind blocks.
+func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
+	checks := []doctor.Check{
+		{Name: "release", Severity: doctor.SevOK},
+		{Name: "daemon", Severity: doctor.SevOK},
+		{Group: "claude", Name: "binary", Severity: doctor.SevOK},
+	}
+	out := insertGlobalCheck(checks, doctor.Check{Name: "bindings", Severity: doctor.SevWarn, Detail: "could not list bindings"})
+	if len(out) != 4 {
+		t.Fatalf("len = %d, want 4", len(out))
+	}
+	if out[2].Name != "bindings" {
+		t.Errorf("inserted row at %d (%q), want index 2 -- after the last global row", 2, out[2].Name)
+	}
+	if out[3].Group != "claude" {
+		t.Errorf("per-kind rows must stay after the globals, got %+v", out[3])
+	}
+}
+
+func TestRenderReportVerdict(t *testing.T) {
+	// Success case
+	repOk := doctor.Report{
+		Checks: []doctor.Check{
+			{Group: "", Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
+			{Group: "", Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
+			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
+			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relay agent install --kind claude --role plan-executor"},
+		},
+		UsableBuilder: true,
+	}
+
+	var buf bytes.Buffer
+	renderReport(&buf, repOk)
+	out := buf.String()
+
+	if !strings.Contains(out, "1 warning, 0 failures -- relay can run.") {
+		t.Errorf("expected success footer, got: %s", out)
+	}
+	if !strings.Contains(out, "    fix: relay agent install --kind claude --role plan-executor") {
+		t.Errorf("expected indented fix line, got: %s", out)
+	}
+
+	// Failure case
+	repFail := doctor.Report{
+		Checks: []doctor.Check{
+			{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"},
+		},
+		UsableBuilder: false,
+	}
+
+	buf.Reset()
+	renderReport(&buf, repFail)
+	outFail := buf.String()
+
+	if !strings.Contains(outFail, "1 failure, 0 warnings -- no usable builder. Fix the failure above.") {
+		t.Errorf("expected failure footer, got: %s", outFail)
+	}
+
+	// Middle case: no failures, !UsableBuilder (no checked harness on PATH)
+	envStub := &stubDoctorEnv{
+		daemonRun: true,
+		lookPaths: map[string]string{},
+	}
+	repUnverified := doctor.Run(context.Background(), envStub, []string{"claude"})
+	if repUnverified.Failures() != 0 {
+		t.Fatalf("expected 0 failures, got %d", repUnverified.Failures())
+	}
+	if repUnverified.UsableBuilder {
+		t.Fatal("expected UsableBuilder = false when no checked harness is on PATH")
+	}
+
+	buf.Reset()
+	renderReport(&buf, repUnverified)
+	outUnverified := buf.String()
+	if !strings.Contains(outUnverified, "could not establish a usable builder: no checked harness") {
+		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
+	}
+}
+
+func TestRenderReportFooterPrecedence(t *testing.T) {
+	healthy := []doctor.Check{
+		{Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
+		{Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
+		{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
+		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
+	}
+	cases := []struct {
+		name string
+		rep  doctor.Report
+		want string
+	}{
+		{"refusal beats can run",
+			doctor.Report{Checks: healthy, UsableBuilder: true, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			"0 warnings, 0 failures -- relay cannot pick a builder: 3 candidates serve builder and no order is set."},
+		{"no usable builder beats refusal",
+			doctor.Report{Checks: healthy, UsableBuilder: false, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			"could not establish a usable builder"},
+		{"no candidates beats no usable builder",
+			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
+			"0 warnings, 0 failures -- no candidates configured; write ~/.config/relay/candidates.json first."},
+		{"a failure beats everything",
+			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
+			"Fix the failure above."},
+		{"clean machine can run",
+			doctor.Report{Checks: healthy, UsableBuilder: true},
+			"0 warnings, 0 failures -- relay can run."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			renderReport(&buf, tc.rep)
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("footer missing %q in:\n%s", tc.want, buf.String())
+			}
+		})
+	}
+}
+
+func TestPolicyExample(t *testing.T) {
+	got := policyExample("builder", []string{"agy/test/m", "claude/test/m"})
+	want := `{"order":{"builder":["agy/test/m","claude/test/m"]}}`
+	if got != want {
+		t.Errorf("policyExample = %s, want %s", got, want)
+	}
+}
+
+type stubDoctorEnv struct {
+	daemonRun bool
+	daemonErr error
+	lookPaths map[string]string
+	statErr   error // nil means every role file exists
+}
+
+func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
+	return s.daemonRun, s.daemonErr
+}
+func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
+	if p, ok := s.lookPaths[binary]; ok {
+		return p, nil
+	}
+	return "", os.ErrNotExist
+}
+func (s *stubDoctorEnv) HomePath(rel string) (string, error) {
+	return filepath.Join("/tmp", rel), nil
+}
+func (s *stubDoctorEnv) Stat(path string) error {
+	return s.statErr
+}
+
+// ReleaseState satisfies doctor.Env (#293). These tests assert on severities
+// and fix commands for the other rows, so every release state here reads as
+// "no usable cache": the release row is SevOK/not checked and cannot mask one.
+func (s *stubDoctorEnv) ReleaseState() (string, string, bool, release.Kind) {
+	return "", "", false, release.KindUnknown
+}
+
+// ReadFile satisfies doctor.Env. These tests assert on severities and fix
+// commands, not on role-file contents, so every file reads as empty -- which
+// doctor must render as a role row with no model suffix.
+func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
+	return nil, nil
+}
+
+// BinaryVersion satisfies doctor.Env. None of these tests exercise a kind
+// with a MinVersion floor, so this is never called; it exists only to keep
+// stubDoctorEnv implementing the interface.
+func (s *stubDoctorEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
+	return "", nil
+}
+
+func (s *stubDoctorEnv) Probe(dir string) error {
+	return nil
+}
+
+// Command satisfies doctor.Env. None of these tests exercise a kind whose
+// checks shell out (the opencode session-count note is kind-gated and these
+// tests only ever pass "claude"), so this exists only to keep stubDoctorEnv
+// implementing the interface.
+func (s *stubDoctorEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+
+// A probe relay could not complete is not actionable and stays off the hot path.
+// An actionable row in the same report must survive it -- the all-or-nothing
+// filter this replaces dropped both, and its test could not tell the difference
+// because the stub's Stat always succeeded.
+func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
+	env := &stubDoctorEnv{
+		daemonErr: errors.New("connection reset by peer"),
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		statErr:   os.ErrNotExist,
+	}
+	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	joined := strings.Join(bindWarningLines(rep), "\n")
+
+	if strings.Contains(joined, "probe error") {
+		t.Errorf("a row relay could not establish must not reach the hot path: %s", joined)
+	}
+	if !strings.Contains(joined, "plan-executor") {
+		t.Errorf("an actionable row must survive a failed probe elsewhere: %s", joined)
+	}
+}
+
+// The exception: a failed probe whose verdict is SevFail means relay cannot run.
+// Silence would be the worst possible answer, so it prints anyway.
+func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
+	rep := doctor.Report{Checks: []doctor.Check{
+		{Group: "agy", Name: "version", Severity: doctor.SevFail,
+			Detail: "1.1.5 (below floor 1.1.6)", Fix: "upgrade agy to >= 1.1.6", ProbeFailed: true},
+	}}
+	joined := strings.Join(bindWarningLines(rep), "\n")
+	if !strings.Contains(joined, "version") {
+		t.Errorf("a SevFail probe failure must still be reported at bind: %s", joined)
+	}
+}
+
+func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
+	env := &stubDoctorEnv{
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+	}
+	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	if lines := bindWarningLines(rep); len(lines) != 0 {
+		t.Errorf("a healthy machine must yield zero lines, got: %v", lines)
+	}
+}
+
+// Global rows reach bind too: a stopped daemon makes a binding exactly as inert
+// as a missing role file, which is the failure #24 is about.
+func TestBindWarningLinesIncludesGlobalRows(t *testing.T) {
+	rep := doctor.Report{Checks: []doctor.Check{
+		{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relay daemon"},
+		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
+	}}
+	joined := strings.Join(bindWarningLines(rep), "\n")
+	if !strings.Contains(joined, "daemon not running") {
+		t.Errorf("global rows must reach bind, got: %s", joined)
+	}
+}
+
+// deadlineEnv records whether the context it was handed carried a deadline.
+type deadlineEnv struct {
+	stubDoctorEnv
+	sawDeadline bool
+}
+
+func (e *deadlineEnv) DaemonRunning(ctx context.Context) (bool, error) {
+	_, ok := ctx.Deadline()
+	e.sawDeadline = ok
+	return e.stubDoctorEnv.DaemonRunning(ctx)
+}
+
+// The bind preflight must be bounded: a probe that hangs must not add its
+// delay to `relay bind`.
+func TestBindPreflightBoundsTheHotPath(t *testing.T) {
+	env := &deadlineEnv{stubDoctorEnv: stubDoctorEnv{daemonRun: true}}
+	bindPreflight(context.Background(), env, "claude", false)
+	if !env.sawDeadline {
+		t.Error("bindPreflight must hand doctor.Run a deadline-bounded context")
+	}
+}
+
+// An adopted pane's binary is the user's to provide: the preflight must not
+// warn about it. Fails if the call site stops passing `adopted` through.
+func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
+	env := &stubDoctorEnv{daemonRun: true}
+
+	adopted := strings.Join(bindPreflight(context.Background(), env, "claude", true), "\n")
+	if strings.Contains(adopted, "binary") {
+		t.Errorf("adopted preflight must not warn about the absent binary: %s", adopted)
+	}
+
+	normal := strings.Join(bindPreflight(context.Background(), env, "claude", false), "\n")
+	if !strings.Contains(normal, "binary") {
+		t.Errorf("non-adopted preflight must report the absent binary: %s", normal)
+	}
+}
+
+func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
+	env := &stubDoctorEnv{
+		daemonRun: true,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		statErr:   os.ErrNotExist, // no role file exists
+	}
+	lines := bindPreflight(context.Background(), env, "claude", false)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "plan-executor") || !strings.Contains(joined, "researcher") {
+		t.Errorf("preflight must warn about the builder's definitions, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "reviewer") {
+		t.Errorf("preflight must not warn about reviewer on a bind, got:\n%s", joined)
+	}
+}
+
+func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
+	envStub := &stubDoctorEnv{
+		daemonRun: true,
+		lookPaths: map[string]string{}, // binary absent
+	}
+
+	// Normal Run: the absent binary is reported
+	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	normalLines := bindWarningLines(normalRep)
+	joinedNormal := strings.Join(normalLines, "\n")
+	if !strings.Contains(joinedNormal, "binary") {
+		t.Errorf("expected binary warning for normal bind, got: %s", joinedNormal)
+	}
+
+	// Adopted Run: the binary is the user's own agent, so it must not warn
+	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
+	adoptedLines := bindWarningLines(adoptedRep)
+	joinedAdopted := strings.Join(adoptedLines, "\n")
+	if strings.Contains(joinedAdopted, "binary") {
+		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
+	}
+}
+
+func TestBindWarningDaemonDownRealRun(t *testing.T) {
+	envStub := &stubDoctorEnv{
+		daemonRun: false,
+		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+	}
+	rep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	lines := bindWarningLines(rep)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "daemon not running") {
+		t.Errorf("expected daemon warning when daemon is down, got: %s", joined)
+	}
+}
