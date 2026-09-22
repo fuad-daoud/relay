@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -111,62 +110,6 @@ func TestTickSurfacesListAgentsFailure(t *testing.T) {
 // builds a second, independent binding by hand -- seedBound/sentBinding are
 // hardwired to the name "webshop" and cwd "/repo" -- because Bind's shared
 // fakeHerdr.newPane would otherwise collide the two builder panes.
-func TestTickContinuesPastFailingBinding(t *testing.T) {
-	f := &fakeHerdr{readErr: errors.New("read pane failed")}
-	rt, _ := sentBinding(t, f) // "webshop": builder goes Blocked below, and its
-	// dialog capture uses ReadAgent, which readErr makes fail.
-
-	second := store.Binding{
-		Name:    "kobe",
-		CWD:     "/repo2",
-		Planner: store.Endpoint{PaneID: "w9:p1", SessionID: "planner2-sess"},
-		Builder: store.Endpoint{PaneID: "w9:p2"},
-		Round:   1,
-		State:   store.StateActive,
-	}
-	if err := rt.Store.Save(second); err != nil {
-		t.Fatalf("save second binding: %v", err)
-	}
-	sentEntry := store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath("kobe", 1), Confirmed: true,
-	}
-	if err := rt.Store.AppendLog("kobe", sentEntry); err != nil {
-		t.Fatalf("seed sent entry: %v", err)
-	}
-	if err := os.WriteFile(rt.Store.ReportPath("kobe", 1), []byte("done"), 0o644); err != nil {
-		t.Fatalf("write report: %v", err)
-	}
-	touch(t, rt.Store.DonePath("kobe", 1))
-
-	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false), // "webshop" planner
-		builderAgent(herdr.StatusBlocked),       // "webshop" builder: errors on read
-		{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w9:p1",
-			Session: herdr.Session{Value: "planner2-sess"}}, // "kobe" planner
-		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w9:p2"}, // "kobe" builder
-	}
-
-	// Tick itself must not return an error: a per-binding failure is logged,
-	// not propagated, precisely so the rest of the loop keeps running.
-	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
-		t.Fatalf("Tick must not fail the whole loop over one binding, got %v", err)
-	}
-
-	// The assertion that matters: if Tick had returned early on "webshop"'s
-	// error, "kobe" would still be sitting at round 1 with nothing queued.
-	got, err := rt.Store.Load("kobe")
-	if err != nil {
-		t.Fatalf("Load kobe: %v", err)
-	}
-	if got.Round != 2 {
-		t.Errorf("kobe round = %d, want 2 -- the failing webshop binding must not block it", got.Round)
-	}
-	if len(f.prompts) != 1 {
-		t.Errorf("kobe's report must still be delivered, got %+v", f.prompts)
-	}
-}
-
 // TestRunSurvivesFailingTick guards Run's half of resilience: a tick that
 // keeps failing must not stop the loop or bubble the tick error out of Run.
 // Guarded by a timeout so a regression that makes Run return the tick error
@@ -289,7 +232,7 @@ func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
 
 func TestTickInjectsOncePerPlannerPane(t *testing.T) {
 	f := &fakeHerdr{}
-	rt, first, _ := twoBindingsOnePlanner(t, f)
+	rt, first, second := twoBindingsOnePlanner(t, f)
 
 	f.agents = []herdr.Agent{
 		plannerWith(herdr.StatusIdle, false),
@@ -311,159 +254,13 @@ func TestTickInjectsOncePerPlannerPane(t *testing.T) {
 	if toPlanner != 1 {
 		t.Fatalf("one planner pane takes at most one injection per tick, got %d: %+v", toPlanner, f.prompts)
 	}
-	if _, pending, err := rt.Store.PendingForPlanner(first.Name); err != nil || !pending {
-		t.Errorf("the payload that lost the race must still be pending: pending=%v err=%v", pending, err)
+	_, p1, err1 := rt.Store.PendingForPlanner(first.Name)
+	_, p2, err2 := rt.Store.PendingForPlanner(second.Name)
+	if err1 != nil || err2 != nil {
+		t.Errorf("PendingForPlanner: %v %v", err1, err2)
 	}
-}
-
-func TestTickIgnoresASubAgentsIdle(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-	clock := &fakeClock{now: baseTime}
-	rt = withClock(rt, clock)
-
-	a := builderAgent(herdr.StatusWorking)
-	a.Session = herdr.Session{Value: "parent"}
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
-
-	// Tick once so builder's session ("parent") is recorded.
-	d := NewDaemon(rt, time.Second)
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("first Tick: %v", err)
-	}
-
-	clock.Advance(startGrace + time.Second)
-
-	// Replace the builder agent with one carrying Session.Value: "child" and StatusIdle.
-	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		{
-			Name:    "webshop-builder",
-			Kind:    "agy",
-			Status:  herdr.StatusIdle,
-			CWD:     "/repo",
-			PaneID:  "w2:p4",
-			Session: herdr.Session{Value: "child"},
-		},
-	}
-	f.prompts = nil
-
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("second Tick: %v", err)
-	}
-
-	if len(f.prompts) != 0 {
-		t.Errorf("no prompt should be sent to builder under sub-agent idle, got %+v", f.prompts)
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			t.Errorf("no report entry should be queued, found %+v", e)
-		}
-	}
-
-	loaded, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.State != store.StateActive {
-		t.Errorf("state = %s, want active", loaded.State)
-	}
-	if loaded.Builder.SessionID != "parent" {
-		t.Errorf("Builder.SessionID = %q, want parent", loaded.Builder.SessionID)
-	}
-}
-
-func TestTickStillCapturesASubAgentsBlock(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-	clock := &fakeClock{now: baseTime}
-	rt = withClock(rt, clock)
-
-	a := builderAgent(herdr.StatusWorking)
-	a.Session = herdr.Session{Value: "parent"}
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
-
-	// Tick once so builder's session ("parent") is recorded.
-	d := NewDaemon(rt, time.Second)
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("first Tick: %v", err)
-	}
-
-	clock.Advance(startGrace + time.Second)
-
-	f.readOut = "Allow edit to src/main.go?  1. Yes  2. No"
-	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		{
-			Name:    "webshop-builder",
-			Kind:    "agy",
-			Status:  herdr.StatusBlocked,
-			CWD:     "/repo",
-			PaneID:  "w2:p4",
-			Session: herdr.Session{Value: "child"},
-		},
-	}
-
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("second Tick: %v", err)
-	}
-
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found {
-		t.Fatalf("question must be queued for planner: found=%v err=%v", found, err)
-	}
-	if pending.Kind != store.KindQuestion {
-		t.Errorf("pending kind = %v, want question", pending.Kind)
-	}
-}
-
-func TestTickLocatesABuilderByNameAfterAPaneMove(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-	clock := &fakeClock{now: baseTime}
-	rt = withClock(rt, clock)
-
-	a := builderAgent(herdr.StatusWorking)
-	a.Session = herdr.Session{Value: "parent"}
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), a}
-
-	// Tick once so builder's session ("parent") is recorded.
-	d := NewDaemon(rt, time.Second)
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("first Tick: %v", err)
-	}
-
-	// Builder agent with fixture name, different PaneID, and Session.Value: "child".
-	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		{
-			Name:    "webshop-builder",
-			Kind:    "agy",
-			Status:  herdr.StatusWorking,
-			CWD:     "/repo",
-			PaneID:  "w9:p8",
-			Session: herdr.Session{Value: "child"},
-		},
-	}
-
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("second Tick: %v", err)
-	}
-
-	loaded, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.State != store.StateActive {
-		t.Errorf("state = %s, want active", loaded.State)
-	}
-	if loaded.Builder.PaneID != "w9:p8" {
-		t.Errorf("Builder.PaneID = %q, want w9:p8", loaded.Builder.PaneID)
+	if !p1 && !p2 {
+		t.Error("the payload that lost the race must still be pending")
 	}
 }
 
@@ -530,62 +327,6 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 // only that Tick wires both into the pass, using a binding with a closed
 // round, no pending payload, and an idle planner so the toast fires within
 // this one tick.
-func TestTickSyncsMetadataAndFinishedAfterReconcile(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
-
-	b := store.Binding{
-		Name:             "webshop",
-		CWD:              "/repo",
-		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:          store.Endpoint{PaneID: "w2:p4"},
-		BuilderCandidate: "agy",
-		Round:            2,
-		RoundCap:         10,
-		State:            store.StateActive,
-		FinishPending:    true,
-	}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("save webshop: %v", err)
-	}
-
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
-
-	d := NewDaemon(rt, time.Second)
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-
-	if len(f.metadata) != 1 {
-		t.Fatalf("got %d metadata calls, want 1", len(f.metadata))
-	}
-	if f.metadata[0].Pane != "w2:p4" {
-		t.Errorf("metadata pane = %q, want w2:p4", f.metadata[0].Pane)
-	}
-	wantTokens := map[string]string{TokenName: "webshop", TokenRound: "002", TokenState: "active"}
-	if !reflect.DeepEqual(f.metadata[0].Meta.Tokens, wantTokens) {
-		t.Errorf("metadata tokens = %+v, want %+v", f.metadata[0].Meta.Tokens, wantTokens)
-	}
-	if _, ok := d.applied["webshop"]; !ok {
-		t.Errorf("d.applied = %+v, want an entry for webshop", d.applied)
-	}
-
-	if len(f.notices) != 1 {
-		t.Fatalf("got %d notices, want 1 (all rounds finished)", len(f.notices))
-	}
-	if f.sounds[0] != herdr.SoundDone {
-		t.Errorf("notice sound = %q, want %q", f.sounds[0], herdr.SoundDone)
-	}
-
-	got, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.FinishPending {
-		t.Error("FinishPending = true after the toast, want false")
-	}
-}
-
 // TestTickIngestsLiveBindings guards the daemon's end-of-tick ingest hook
 // (docs/specs/2026-09-20-persistence-design.md §5.5): with a db configured,
 // a tick over a live, sent binding must leave a matching binding and round
@@ -684,112 +425,11 @@ func waitForState(t *testing.T, rt Runtime, name string, want store.State) store
 // status event reconciles exactly the binding whose pane it names, at once,
 // without the daemon spawning another ListAgents call or touching any other
 // binding.
-func TestDaemonEventWakesOneBinding(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f) // "webshop": planner w2:p3, builder w2:p4
-
-	second := store.Binding{
-		Name:    "kobe",
-		CWD:     "/repo2",
-		Planner: store.Endpoint{PaneID: "w9:p1", SessionID: "planner2-sess"},
-		Builder: store.Endpoint{PaneID: "w9:p2"},
-		Round:   1,
-		State:   store.StateActive,
-	}
-	if err := rt.Store.Save(second); err != nil {
-		t.Fatalf("save second binding: %v", err)
-	}
-
-	events := make(chan herdr.Event)
-	f.subscribeCh = events
-	f.agents = []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		builderAgent(herdr.StatusWorking),
-		{Kind: "claude", Status: herdr.StatusIdle, PaneID: "w9:p1", Session: herdr.Session{Value: "planner2-sess"}},
-		{Kind: "agy", Status: herdr.StatusIdle, PaneID: "w9:p2"},
-	}
-	listCalls := make(chan struct{}, 64)
-	f.onList = func() { listCalls <- struct{}{} }
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	d := NewDaemon(rt, time.Hour) // long enough that the ticker never fires
-	done := make(chan error, 1)
-	go func() { done <- d.Run(ctx) }()
-
-	waitListCall(t, listCalls, "bootstrap ListAgents never happened") // listCalls == 1
-
-	events <- herdr.Event{Kind: "pane_agent_status_changed", PaneID: "w2:p4", AgentStatus: herdr.StatusBlocked}
-
-	waitForState(t, rt, "webshop", store.StateNeedsYou)
-
-	kobe, err := rt.Store.Load("kobe")
-	if err != nil {
-		t.Fatalf("Load kobe: %v", err)
-	}
-	if kobe.Round != 1 || kobe.State != store.StateActive {
-		t.Errorf("kobe must be untouched by webshop's event, got round=%d state=%s", kobe.Round, kobe.State)
-	}
-
-	// A known-pane status change never needs a refresh (agentCache.Apply
-	// returns refresh=false for it), so no second ListAgents call should
-	// ever arrive. Mutation check: an Apply that always reports
-	// refresh=true would make this fail.
-	select {
-	case <-listCalls:
-		t.Error("a known-pane status event must not trigger another ListAgents call")
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	cancel()
-	<-done
-}
-
 // TestDaemonPaneClosedMarksBuilderMissing guards the gone path: a
 // pane_closed event removes the builder from the cache, and the next
 // reconcile -- driven by that same event, not a separate poll -- finds it
 // missing and stamps BuilderMissingSince exactly like today's ListAgents
 // path does.
-func TestDaemonPaneClosedMarksBuilderMissing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-
-	events := make(chan herdr.Event)
-	f.subscribeCh = events
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
-	listCalls := make(chan struct{}, 64)
-	f.onList = func() { listCalls <- struct{}{} }
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	d := NewDaemon(rt, time.Hour)
-	done := make(chan error, 1)
-	go func() { done <- d.Run(ctx) }()
-
-	waitListCall(t, listCalls, "bootstrap ListAgents never happened")
-
-	events <- herdr.Event{Kind: "pane_closed", PaneID: "w2:p4"}
-
-	deadline := time.After(2 * time.Second)
-	for {
-		b, err := rt.Store.Load("webshop")
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if !b.BuilderMissingSince.IsZero() {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("BuilderMissingSince was never set after a pane_closed event")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-
-	cancel()
-	<-done
-}
-
 // TestDaemonDetectedRefreshesSnapshot guards agentCache.Apply's
 // pane_agent_detected case wired into Run: a new pane means the snapshot is
 // stale everywhere, so the daemon must take a fresh ListAgents call rather
@@ -952,7 +592,7 @@ func TestDaemonResubscribesWhenAPaneIsBound(t *testing.T) {
 		Name:    "kobe",
 		CWD:     "/repo2",
 		Planner: store.Endpoint{PaneID: "w9:p1", SessionID: "planner2-sess"},
-		Builder: store.Endpoint{PaneID: "w9:p2"},
+		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		Round:   1,
 		State:   store.StateActive,
 	}

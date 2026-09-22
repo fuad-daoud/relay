@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	ErrTierAboveMax  = errors.New("tier exceeds max_tier")
-	ErrTierPaneFixed = errors.New("pane builder's tier is fixed at spawn")
+	ErrTierAboveMax = errors.New("tier exceeds max_tier")
 )
 
 // resolveTier is the chain: explicit, candidate.Tier, policy.TierFor(role),

@@ -17,11 +17,14 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// seedBound binds webshop on the agy test candidate, headless (#303): the
+// runtime gets a fakeRunner, and no herdr agent is added for the builder --
+// there is none.
 func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	t.Helper()
 	f.agents = []herdr.Agent{plannerAgent()}
-	f.newPane = "w2:p4"
 	rt := newRuntime(t, f)
+	rt.Runner = newFakeRunner()
 
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
@@ -29,13 +32,6 @@ func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-
-	// The spawned agent registers with herdr moments after StartAgent returns,
-	// which Bind's own post-spawn lookup is too early to see. Appending it here
-	// -- after Bind -- keeps the empty SessionID that lookup produces, which is
-	// the #20 condition several tests rely on, while letting Send and Reconcile
-	// locate the builder the way they would against a real herdr.
-	f.agents = append(f.agents, builderAgent(herdr.StatusWorking))
 
 	return rt, b
 }
@@ -49,120 +45,12 @@ func writePlan(t *testing.T, body string) string {
 	return path
 }
 
-func TestSendCopiesPlanAndPromptsBuilder(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	src := writePlan(t, "# do the thing")
-
-	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if res.Round != 1 {
-		t.Fatalf("round = %d, want 1", res.Round)
-	}
-
-	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
-	if err != nil {
-		t.Fatalf("plan not copied into state: %v", err)
-	}
-	if string(copied) != "# do the thing" {
-		t.Errorf("copied plan = %q", copied)
-	}
-
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
-	}
-	text := f.prompts[0].Text
-	if !strings.Contains(text, rt.Store.PlanPath("webshop", 1)) {
-		t.Error("prompt must name the plan path")
-	}
-	if !strings.Contains(text, rt.Store.ReportPath("webshop", 1)) {
-		t.Error("prompt must name the report path")
-	}
-	if f.prompts[0].Target != "w2:p4" {
-		t.Errorf("target = %q, want pane id w2:p4", f.prompts[0].Target)
-	}
-}
-
 // TestSendArmsSessionCursorForPaneBuilder pins Send's pane branch (#184):
 // after the plan lands, the builder's cursor is cut at the located session
 // record's current size, so the round's log holds only what the builder
 // writes to its own record from here on.
-func TestSendArmsSessionCursorForPaneBuilder(t *testing.T) {
-	f := &fakeHerdr{}
-	// The session id must be on the agent BEFORE Bind, so Bind's own
-	// post-spawn lookup (bind.go's best-effort ListAgents) records it on
-	// the endpoint -- the same pattern sentBindingWithBuilderSession uses.
-	f.agents = []herdr.Agent{
-		plannerAgent(),
-		{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: "S"}},
-	}
-	f.newPane = "w2:p4"
-	rt := newRuntime(t, f)
-
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	f.prompts = nil
-
-	record := filepath.Join(t.TempDir(), "S.jsonl")
-	if err := os.WriteFile(record, []byte(strings.Repeat("x", 42)), 0o644); err != nil {
-		t.Fatalf("write record: %v", err)
-	}
-	rt.Sessions = func(kind, sessionID string) (string, bool) {
-		if kind == "agy" && sessionID == "S" {
-			return record, true
-		}
-		return "", false
-	}
-
-	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if b.Builder.StreamRound != res.Round {
-		t.Errorf("StreamRound = %d, want round %d", b.Builder.StreamRound, res.Round)
-	}
-	if b.Builder.StreamOffset != 42 {
-		t.Errorf("StreamOffset = %d, want 42 (the record's size at send time)", b.Builder.StreamOffset)
-	}
-	if want := rt.Store.BuilderLogPath("webshop", res.Round); b.Builder.LogPath != want {
-		t.Errorf("LogPath = %q, want %q", b.Builder.LogPath, want)
-	}
-}
-
 // The role is selected with --agent at launch (#85); the plan prompt is
 // the plan prompt, on round 1 as on every other.
-func TestSendPromptCarriesNoPreamble(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f) // an agy candidate, the kind that used to get one
-	src := writePlan(t, "x")
-	if _, err := Send(context.Background(), rt, "webshop", src, SendOptions{}); err != nil {
-		t.Fatalf("round 1 Send: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d prompts, want 1", len(f.prompts))
-	}
-	if strings.Contains(f.prompts[0].Text, "Activate your") {
-		t.Errorf("round 1 prompt must not carry a preamble:\n%s", f.prompts[0].Text)
-	}
-	wantOrigin := OriginLine("webshop", 1, store.DirToBuilder, store.KindPlan)
-	if !strings.HasPrefix(f.prompts[0].Text, wantOrigin) {
-		t.Errorf("prompt must start with origin line:\n%s", f.prompts[0].Text)
-	}
-	if !strings.Contains(f.prompts[0].Text, "Your working tree is: /repo") {
-		t.Errorf("prompt must name the working tree (#192):\n%s", f.prompts[0].Text)
-	}
-}
-
 func TestSendLogsThePlan(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedBound(t, f)
@@ -181,187 +69,6 @@ func TestSendLogsThePlan(t *testing.T) {
 	}
 	if !entries[1].Confirmed {
 		t.Error("an outbound plan is confirmed the moment herdr accepts it")
-	}
-}
-
-func TestSendStallThenFingerprintOnScreenIsLate(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	f.stalls = 1
-	planPath := rt.Store.PlanPath("webshop", 1)
-	f.readOut = "previous output\n" + planPath + "\nsome other line"
-	f.prompts = nil
-	f.reads = nil
-
-	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
-	if err != nil {
-		t.Fatalf("Send failed: %v", err)
-	}
-	if res.Round != 1 {
-		t.Errorf("res.Round = %d, want 1", res.Round)
-	}
-	if len(f.prompts) != 0 {
-		t.Fatalf("got %d accepted prompts, want 0 (prompt was not re-sent)", len(f.prompts))
-	}
-	if len(f.reads) != 1 {
-		t.Fatalf("got %d reads, want 1", len(f.reads))
-	}
-	if f.reads[0].Source != "visible" {
-		t.Errorf("read source = %q, want visible", f.reads[0].Source)
-	}
-	if f.reads[0].Lines != lateScanLines {
-		t.Errorf("read lines = %d, want %d", f.reads[0].Lines, lateScanLines)
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	planEntry := entries[len(entries)-1]
-	if planEntry.Kind != store.KindPlan {
-		t.Fatalf("last entry kind = %v, want plan", planEntry.Kind)
-	}
-	if !planEntry.Late {
-		t.Error("planEntry.Late = false, want true")
-	}
-}
-
-func TestSendStallWithoutFingerprintRetries(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	f.stalls = 1
-	f.readOut = "some other screen"
-	f.prompts = nil
-
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
-		t.Fatalf("Send must retry once past a stall: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d accepted prompts, want 1", len(f.prompts))
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	planEntry := entries[len(entries)-1]
-	if planEntry.Late {
-		t.Error("planEntry.Late = true, want false")
-	}
-}
-
-func TestSendRetriesOnceOnStall(t *testing.T) {
-	TestSendStallWithoutFingerprintRetries(t)
-}
-
-func TestSendStallReadErrorStillRetries(t *testing.T) {
-	f := &fakeHerdr{
-		stalls:  1,
-		readErr: errors.New("cannot read visible screen"),
-	}
-	rt, _ := seedBound(t, f)
-	f.prompts = nil
-
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
-		t.Fatalf("Send failed: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("got %d accepted prompts, want 1 (retry should have succeeded)", len(f.prompts))
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	planEntry := entries[len(entries)-1]
-	if planEntry.Late {
-		t.Error("planEntry.Late = true, want false when read error fell through to retry")
-	}
-}
-
-func TestSendUnknownBuilderAtDialogIsBlocked(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
-	f.agents[1].Status = herdr.StatusUnknown
-	f.readOut = "Do you want to proceed?\n❯ 1. Yes"
-	f.prompts = nil
-	f.reads = nil
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
-	if !errors.Is(err, ErrBuilderBlocked) {
-		t.Fatalf("Send err = %v, want ErrBuilderBlocked", err)
-	}
-	if len(f.prompts) != 0 {
-		t.Errorf("prompts = %d, want 0", len(f.prompts))
-	}
-	if len(f.reads) != 1 {
-		t.Fatalf("reads = %d, want 1", len(f.reads))
-	}
-	if f.reads[0].Source != "visible" || f.reads[0].Lines != dialogScanLines {
-		t.Errorf("read = %+v, want visible with %d lines", f.reads[0], dialogScanLines)
-	}
-
-	after, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Round != b.Round {
-		t.Errorf("round = %d, want %d (round not advanced)", after.Round, b.Round)
-	}
-}
-
-func TestSendUnknownBuilderWithoutDialogSends(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	f.agents[1].Status = herdr.StatusUnknown
-	f.readOut = "$ "
-	f.prompts = nil
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Errorf("prompts = %d, want 1", len(f.prompts))
-	}
-}
-
-func TestSendIdleBuilderNeverScansForDialog(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	f.agents[1].Status = herdr.StatusIdle
-	f.readOut = "Do you want to proceed?\n❯ 1. Yes"
-	f.prompts = nil
-	f.reads = nil
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Errorf("prompts = %d, want 1", len(f.prompts))
-	}
-	if len(f.reads) != 0 {
-		t.Errorf("reads = %d, want 0", len(f.reads))
-	}
-}
-
-func TestSendGivesUpAfterTwoStalls(t *testing.T) {
-	f := &fakeHerdr{stalls: 2}
-	rt, _ := seedBound(t, f)
-
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err == nil {
-		t.Fatal("two stalls must fail rather than fire a third time")
-	}
-}
-
-func TestSendSurfacesBlockedBuilder(t *testing.T) {
-	f := &fakeHerdr{promptErr: herdr.ErrAgentBlocked}
-	rt, _ := seedBound(t, f)
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
-	if !errors.Is(err, ErrBuilderBlocked) {
-		t.Fatalf("got %v, want ErrBuilderBlocked", err)
 	}
 }
 
@@ -487,66 +194,8 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 	}
 }
 
-func TestSendAddressesTheLocatedPane(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if len(f.prompts) != 1 {
-		t.Fatalf("prompts = %d, want 1", len(f.prompts))
-	}
-	if f.prompts[0].Target != "w2:p4" {
-		t.Fatalf("target = %q, want the located pane w2:p4", f.prompts[0].Target)
-	}
-}
-
-func TestSendFailsAndStagesNothingWhenBuilderIsGone(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
-	if !errors.Is(err, ErrBuilderGone) {
-		t.Fatalf("err = %v, want ErrBuilderGone", err)
-	}
-	if len(f.prompts) != 0 {
-		t.Fatal("nothing may be prompted when the builder is gone")
-	}
-	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
-		t.Fatal("no plan may be staged when the builder is gone")
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if b.Round != 1 {
-		t.Fatalf("round = %d, want 1: a failed send must not advance the round", b.Round)
-	}
-}
-
 // A binding that appears only after the pre-lock load must never be addressed
 // with the zero agent's empty pane id. See round 3, Task 1.
-func TestSendRefusesWhenBuilderWasNeverLocated(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-
-	// Stand in for the interleaving: no builder could be located pre-lock,
-	// but the binding is present and healthy by the time the lock is held.
-	f.agents = []herdr.Agent{plannerAgent()}
-
-	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
-	if !errors.Is(err, ErrBuilderGone) {
-		t.Fatalf("err = %v, want ErrBuilderGone", err)
-	}
-	for _, p := range f.prompts {
-		if p.Target == "" {
-			t.Fatal("relay addressed the empty target instead of refusing")
-		}
-	}
-}
-
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
 func TestSendRefusesPaused(t *testing.T) {
@@ -740,130 +389,6 @@ func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
 	}
 }
 
-func TestSendFailedPromptPreservesRoundClosedTree(t *testing.T) {
-	f := &fakeHerdr{promptErr: errors.New("builder prompt crashed")}
-	rt, b := seedBound(t, f)
-	b.Round = 2
-	b.RoundClosedTree = "tree-1"
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	rt.Git = &fakeGit{
-		snapshotTreeID: "tree-2",
-		diffResult: git.Diff{
-			Stat:  git.Stat{FilesChanged: 1, Insertions: 3, Deletions: 1},
-			Patch: []byte("diff\n"),
-		},
-	}
-
-	src := writePlan(t, "plan")
-	_, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
-	if err == nil {
-		t.Fatal("expected Send to fail when prompt fails")
-	}
-
-	b, err = rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b.RoundClosedTree != "tree-1" {
-		t.Errorf("RoundClosedTree = %q, want tree-1 preserved after prompt failure", b.RoundClosedTree)
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Kind == store.KindDrift {
-			t.Fatalf("unexpected KindDrift entry when prompt failed: %+v", e)
-		}
-	}
-
-	// Subsequent successful send reports the drift
-	f.promptErr = nil
-	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
-	if err != nil {
-		t.Fatalf("subsequent Send failed: %v", err)
-	}
-	if res.Drift == "" {
-		t.Fatal("subsequent Send must report the drift")
-	}
-
-	entries, err = rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var driftCount int
-	for _, e := range entries {
-		if e.Kind == store.KindDrift {
-			driftCount++
-		}
-	}
-	if driftCount != 1 {
-		t.Fatalf("got %d KindDrift entries, want 1", driftCount)
-	}
-
-	b, err = rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b.RoundClosedTree != "" {
-		t.Errorf("RoundClosedTree = %q, want cleared after successful send", b.RoundClosedTree)
-	}
-}
-
-func TestSendConcurrentRoundAdvanceSkipsDrift(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
-	b.Round = 2
-	b.RoundClosedTree = "tree-1"
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	rt.Git = &fakeGit{
-		snapshotTreeID: "tree-2",
-		diffResult: git.Diff{
-			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
-			Patch: []byte("patch content\n"),
-		},
-	}
-
-	// f.onList fires inside rt.Herdr.ListAgents, which runs after hintRound is read
-	// and before WithLock is taken.
-	f.onList = func() {
-		cur, err := rt.Store.Load("webshop")
-		if err == nil {
-			cur.Round = 3
-			_ = rt.Store.Save(cur)
-		}
-	}
-
-	src := writePlan(t, "plan")
-	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if res.Round != 3 {
-		t.Fatalf("res.Round = %d, want 3", res.Round)
-	}
-	if res.Drift != "" {
-		t.Errorf("expected Drift to be empty on concurrent advance, got %q", res.Drift)
-	}
-
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Kind == store.KindDrift {
-			t.Fatalf("unexpected KindDrift entry on stale round snapshot: %+v", e)
-		}
-	}
-}
-
 func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := seedBound(t, f)
@@ -1020,28 +545,6 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 }
 
-func TestSendPaneBindingWithTierEditRefused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
-	if b.Builder.Headless() {
-		t.Fatal("seedBound must produce a pane builder")
-	}
-
-	src := writePlan(t, "# plan")
-	_, err := Send(context.Background(), rt, "webshop", src, SendOptions{Tier: "edit"})
-	if !errors.Is(err, ErrTierPaneFixed) {
-		t.Fatalf("Send err = %v, want ErrTierPaneFixed", err)
-	}
-
-	stored, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if stored.Round != 1 || stored.RoundStartedAt != (time.Time{}) {
-		t.Errorf("round must not advance on refusal: round=%d, startedAt=%v", stored.Round, stored.RoundStartedAt)
-	}
-}
-
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	f := &fakeHerdr{}
 	fr := newFakeRunner()
@@ -1099,61 +602,16 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 // TestSendDryRunPaneMakesNoWrites pins the dry run's contract for a pane
 // binding: it describes the round Send would open and writes nothing -- no
 // staged plan, no log entry, no prompt, no change to the binding (#149).
-func TestSendDryRunPaneMakesNoWrites(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
-	src := writePlan(t, "# do the thing")
-
-	bBefore, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+// endProcess scripts the binding's recorded process as exited, so a second
+// Send into the same binding is allowed: one process per round (#99 §5.2).
+func endProcess(t *testing.T, rt Runtime, b store.Binding) {
+	t.Helper()
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("runtime has no fakeRunner")
 	}
-	nBefore, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-
-	d, err := SendDryRun(context.Background(), rt, "webshop", src, SendOptions{})
-	if err != nil {
-		t.Fatalf("SendDryRun: %v", err)
-	}
-
-	if d.Round != 1 {
-		t.Errorf("Round = %d, want 1", d.Round)
-	}
-	if d.Mode != "pane" {
-		t.Errorf("Mode = %q, want pane", d.Mode)
-	}
-	if !strings.Contains(d.Where, "w2:p4") {
-		t.Errorf("Where = %q, want it to name the located pane w2:p4", d.Where)
-	}
-	if d.PlanPath != rt.Store.PlanPath("webshop", 1) {
-		t.Errorf("PlanPath = %q, want %q", d.PlanPath, rt.Store.PlanPath("webshop", 1))
-	}
-	wantOrigin := OriginLine("webshop", 1, store.DirToBuilder, store.KindPlan)
-	if len(d.PromptHead) == 0 || d.PromptHead[0] != wantOrigin {
-		t.Errorf("PromptHead = %q, want it to start with %q", d.PromptHead, wantOrigin)
-	}
-
-	if len(f.prompts) != 0 {
-		t.Fatalf("a dry run must not prompt: %+v", f.prompts)
-	}
-	if _, statErr := os.Stat(rt.Store.PlanPath("webshop", 1)); statErr == nil {
-		t.Error("no plan file may be staged by a dry run")
-	}
-	nAfter, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	if len(nAfter) != len(nBefore) {
-		t.Errorf("log length changed: %d -> %d", len(nBefore), len(nAfter))
-	}
-	after, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !store.SameBinding(bBefore, after) {
-		t.Error("a dry run changed the binding")
+	if b.Builder.PID != 0 {
+		fr.script(b.Builder.PID, false)
 	}
 }
 
@@ -1242,12 +700,6 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 		}
 		return rt, f, nil, "webshop", writePlan(t, "# x")
 	}
-	builderGone := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-		f := &fakeHerdr{}
-		rt, _ := seedBound(t, f)
-		f.agents = []herdr.Agent{plannerAgent()} // the builder pane is gone
-		return rt, f, nil, "webshop", writePlan(t, "# x")
-	}
 	headlessBusy := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
 		f := &fakeHerdr{}
 		fr := newFakeRunner()
@@ -1281,14 +733,8 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 		}},
 		{"broken binding", SendOptions{}, broken},
 		{"round cap", SendOptions{}, capped},
-		{"pane builder gone", SendOptions{}, builderGone},
 		{"headless busy", SendOptions{}, headlessBusy},
 		{"headless without runner", SendOptions{}, headlessNoRunner},
-		{"tier on a pane binding", SendOptions{Tier: "edit"}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-			f := &fakeHerdr{}
-			rt, _ := seedBound(t, f)
-			return rt, f, nil, "webshop", writePlan(t, "# x")
-		}},
 	}
 
 	for _, c := range cases {
@@ -1415,6 +861,7 @@ func TestVerifyPolicyDefault(t *testing.T) {
 	if !b.RoundVerify {
 		t.Errorf("RoundVerify = false, want true from policy verify.default")
 	}
+	endProcess(t, rt, b)
 
 	// An explicit --no-verify beats the policy default.
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "again"), SendOptions{Verify: ptr(false)}); err != nil {

@@ -57,12 +57,11 @@ Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
   add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
   fork      branch a new binding from an earlier round with its own worktree [--tier]
-  send      stage a plan file as the current round and prompt the builder [--tier] [--dry-run] [--verify|--no-verify]
+  send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending payload to stdout, without typing anywhere
   diff      print a round's captured patch to stdout [--anchors]
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
-  answer    answer a builder that is blocked at a dialog (--pick to choose it on screen)
   status    one row per binding: round, state, live pane status, what is pending [--all]
   statusline  this planner's builders, one row each, for Claude Code's statusLine setting
   log       print a binding's append-only round log
@@ -72,15 +71,15 @@ Commands:
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
-  pause     release a binding's worktree and pane between rounds; branch and log stay; bind --resume brings it back [--commit]
-  stop      ask a builder to wrap up and close its round on its marker; kill only after the grace [--grace] [--now]
+  pause     release a binding's worktree between rounds; branch and log stay; bind --resume brings it back [--commit]
+  stop      kill the builder process and close its round without a report unless one is already on disk
   land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
   edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relay edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
   gc        clear every binding the planner marked DONE
   reap      close the panes of terminal consults and drop their records
   daemon    run the long-running reconciler
-  mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/answer/done
+  mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
@@ -330,8 +329,6 @@ func run(args []string) error {
 		return cmdDiff(args[1:])
 	case "review":
 		return cmdReview(args[1:])
-	case "answer":
-		return cmdAnswer(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
 	case "statusline":
@@ -625,15 +622,29 @@ func notePick(role string, res relay.Resolution) {
 	fmt.Fprintln(os.Stderr, relay.ExplainResolution(role, res))
 }
 
-// isPaneID tells a herdr pane id apart from a candidate token on the same
-// --builder flag: a pane id has a ':' and never a '/', a candidate token
-// always has a '/'. A model name may contain ':', so ':' alone is not enough.
-func isPaneID(s string) bool {
-	return strings.Contains(s, ":") && !strings.Contains(s, "/")
+// headlessFlagNote is the one line relay prints when a local-builder verb is
+// passed --headless: the flag is accepted and ignored (#303).
+const headlessFlagNote = "relay: --headless is the default and only local mode; the flag is ignored"
+
+// headlessNoOpLines is what bind/add/fork print to stderr when --headless is
+// passed. Pure, so the rule is testable without running a subcommand that
+// reaches herdr.
+func headlessNoOpLines(headless bool) []string {
+	if !headless {
+		return nil
+	}
+	return []string{headlessFlagNote}
 }
 
-// builderWhere is how the bound/added lines name the builder's place: its
-// pane id, or "headless" for a process relay runs itself (#99).
+// printHeadlessNoOp prints headlessNoOpLines to stderr.
+func printHeadlessNoOp(headless bool) {
+	for _, line := range headlessNoOpLines(headless) {
+		fmt.Fprintln(os.Stderr, line)
+	}
+}
+
+// builderWhere is how the bound/added lines name the builder's place: a local
+// builder is always headless (a process relay runs itself, #99, #303).
 func builderWhere(ep store.Endpoint) string {
 	if ep.Headless() {
 		return "headless"
@@ -804,15 +815,13 @@ func cmdAvailable(args []string) error {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn, or a pane id to adopt; omit to take the first ungated candidate in policy.json order[builder]")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
-	assumeDead := fs.Bool("assume-dead", false,
-		"confirm a builder relay cannot verify is gone really is gone")
 	rebind := fs.Bool("rebind", false,
 		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relay flags the binding (default 24h)")
 	headless := fs.Bool("headless", false,
-		"run the builder as a process per round instead of a pane; not with --resume or a pane id in --builder")
+		"accepted and ignored: a local builder is always a headless process per round")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: policy.json gate.default)")
@@ -830,12 +839,7 @@ func cmdBind(args []string) error {
 	if *rebind && !*resume {
 		return fmt.Errorf("relay bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
 	}
-	if *headless && *resume {
-		return fmt.Errorf("relay bind --headless cannot be combined with --resume: a binding's mode is fixed at creation (unbind and bind again)")
-	}
-	if *headless && isPaneID(*builderAlias) {
-		return fmt.Errorf("relay bind --headless spawns a process; it cannot adopt pane %s (drop --builder or name a candidate)", *builderAlias)
-	}
+	printHeadlessNoOp(*headless)
 	if *feature != "" {
 		if err := store.ValidFeature(*feature); err != nil {
 			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
@@ -863,8 +867,6 @@ func cmdBind(args []string) error {
 		CWD:          cwd,
 		Resume:       *resume,
 		Rebind:       *rebind,
-		AssumeDead:   *assumeDead,
-		WorkspaceID:  os.Getenv("HERDR_WORKSPACE_ID"),
 		RoundTimeout: *timeout,
 		Headless:     *headless,
 		Tier:         *tier,
@@ -874,28 +876,17 @@ func cmdBind(args []string) error {
 		Regate:       regateOpt,
 		Feature:      *feature,
 	}
-	if isPaneID(*builderAlias) {
-		opts.BuilderPane = *builderAlias
-	} else {
-		opts.Candidate = *builderAlias
-	}
+	opts.Candidate = *builderAlias
 
-	adopted := *resume || opts.BuilderPane != ""
+	adopted := *resume
 	kind := ""
 	switch {
-	case *rebind && opts.BuilderPane == "":
+	case *rebind:
 		kind = relay.CandidateKind(rt, opts.Candidate)
 	case adopted:
-		if *resume && *name != "" {
+		if *name != "" {
 			if existing, err := rt.Store.Load(*name); err == nil {
 				kind = existing.Builder.Kind
-			}
-		}
-		if kind == "" && opts.BuilderPane != "" {
-			if agents, err := rt.Herdr.ListAgents(context.Background()); err == nil {
-				if a, ok := relay.FindAgent(agents, store.Endpoint{PaneID: opts.BuilderPane}); ok {
-					kind = a.Kind
-				}
 			}
 		}
 	default:
@@ -923,9 +914,9 @@ func cmdBind(args []string) error {
 	}
 
 	if *resume && (*builderAlias != "" || *rebind) {
-		builderDesc := b.Builder.PaneID
+		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", b.Builder.PaneID, b.BuilderCandidate)
+			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), b.BuilderCandidate)
 		}
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
@@ -961,7 +952,7 @@ func cmdFork(args []string) error {
 	newName := fs.String("new-name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
-	headless := fs.Bool("headless", false, "run the fork's builder as a process per round instead of a pane")
+	headless := fs.Bool("headless", false, "accepted and ignored: a local builder is always a headless process per round")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relay runs on the round's completion marker (default: inherits the source binding's gate)")
@@ -1006,7 +997,6 @@ func cmdFork(args []string) error {
 		NewName:     *newName,
 		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 		Headless:    *headless,
 		Tier:        *tier,
@@ -1016,6 +1006,7 @@ func cmdFork(args []string) error {
 		Regate:      regateOpt,
 		Feature:     *feature,
 	}
+	printHeadlessNoOp(*headless)
 
 	res, err := relay.Fork(context.Background(), rt, opts)
 	if err != nil {
@@ -1045,8 +1036,8 @@ func cmdAdd(args []string) error {
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relay/<name>")
-	headless := fs.Bool("headless", false, "run the builder as a process per round instead of a pane")
-	server := fs.String("server", "", "run the builder on this configured remote server instead of a local pane or process (relay servers)")
+	headless := fs.Bool("headless", false, "accepted and ignored: a local builder is always a headless process per round")
+	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relay servers)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
@@ -1100,7 +1091,6 @@ func cmdAdd(args []string) error {
 		Candidate:   *builderAlias,
 		PlannerPane: os.Getenv("HERDR_PANE_ID"),
 		Repo:        repo,
-		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
 		CWD:         *cwd,
 		Branch:      *branch,
 		Headless:    *headless,
@@ -1116,6 +1106,7 @@ func cmdAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	printHeadlessNoOp(*headless)
 
 	switch {
 	case res.Binding.Builder.Remote():
@@ -1128,8 +1119,8 @@ func cmdAdd(args []string) error {
 	case res.Binding.Builder.Headless():
 		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
 	default:
-		fmt.Printf("added %s: builder %s in pane %s\n",
-			res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.PaneID)
+		fmt.Printf("added %s: builder %s in %s\n",
+			res.Binding.Name, res.Binding.BuilderCandidate, builderWhere(res.Binding.Builder))
 	}
 	noteRegateNoGate(res.Binding)
 	if n := relay.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
@@ -1642,54 +1633,6 @@ func cmdDiff(args []string) error {
 	return nil
 }
 
-func cmdAnswer(args []string) error {
-	fs := flag.NewFlagSet("answer", flag.ContinueOnError)
-	name := fs.String("name", "", "binding whose builder to answer")
-	keys := fs.String("keys", "", "logical key to send, e.g. enter or esc")
-	text := fs.String("text", "", "literal text to send")
-	choice := fs.Int("choice", 0, "numbered dialog option to pick")
-	pickFlag := fs.Bool("pick", false, "choose the blocked builder from a list and type the answer there (needs a terminal)")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	if *pickFlag {
-		if err := pickNamesNothing(*name, fs.Args()); err != nil {
-			return err
-		}
-		if *keys != "" || *text != "" || *choice != 0 {
-			return errors.New("--pick takes the answer from the screen; drop --keys, --choice and --text")
-		}
-		return runPick(pick.Options{Verb: pick.VerbAnswer})
-	}
-
-	// answer presses a key into a live dialog, and with peer builders the cwd
-	// fallback resolves to builder #1 every time -- the planner's tree is the
-	// one it owns, while peers live in their own worktrees. Guessing here
-	// answers a prompt nobody read, so answer joins done and unbind in
-	// refusing to guess.
-	target, ok := explicitBinding(*name, fs.Args())
-	if !ok {
-		return fmt.Errorf("usage: relay answer <name> (--keys K | --choice N | --text S) | --pick  (or --name <name>)%s\n"+
-			"answer types into a live dialog; it will not guess which one you meant",
-			bindingHint("answer"))
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	if err := relay.Answer(context.Background(), rt, target,
-		relay.AnswerInput{Keys: *keys, Text: *text, Choice: *choice}); err != nil {
-		return err
-	}
-
-	fmt.Println(relay.AnswerText(target))
-	warnWaitingOnYou(rt, target)
-	return nil
-}
-
 // filterReport narrows a status report to one binding. An empty name keeps
 // every row, because listing them all is what a bare `relay status` is for.
 //
@@ -2089,36 +2032,28 @@ func cmdPause(args []string) error {
 	return nil
 }
 
-// cmdStop asks a binding's open round to stop on purpose (#138): the builder
-// is prompted to wrap up, commit and report, and the round closes on its
-// marker. It takes the binding from --name or a positional and never from the
-// current directory -- a stop ends a round, so it must not guess. --now skips
-// the prompt and abandons the pane at once; a non-positive --grace is a bad
-// value, not an omission, and is refused before any runtime is built.
+// cmdStop ends a binding's open round on purpose (#138): a headless builder
+// is killed now and the round closes without a report unless one is already
+// on disk. It takes the binding from --name or a positional and never from
+// the current directory -- a stop ends a round, so it must not guess.
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	name := fs.String("name", "", "binding whose open round to stop")
-	grace := fs.Duration("grace", relay.DefaultStopGrace, "how long the builder gets to wrap up before a pane round is abandoned")
-	now := fs.Bool("now", false, "abandon at once, without asking the builder to wrap up")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
-		return fmt.Errorf("usage: relay stop <name> | --name <name> [--grace 5m] [--now]\n" +
-			"stop asks a builder to wrap up and close its round on its marker; it must not guess")
-	}
-	if *grace <= 0 {
-		fmt.Fprintf(os.Stderr, "relay: --grace must be positive, got %s\n", *grace)
-		return exitCodeErr{code: 2}
+		return fmt.Errorf("usage: relay stop <name> | --name <name>\n" +
+			"stop kills the builder process and closes its round; it must not guess")
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	res, err := relay.Stop(context.Background(), rt, target, relay.StopOptions{Grace: *grace, Now: *now})
+	res, err := relay.Stop(context.Background(), rt, target, relay.StopOptions{})
 	if errors.Is(err, relay.ErrNothingToStop) {
 		// Nothing to stop is an answer, not a failure.
 		fmt.Printf("nothing to stop: %s has no open round\n", target)

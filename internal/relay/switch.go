@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -12,12 +11,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
-
-// switchGrace is how long a builder must be unlocatable before the daemon
-// replaces it. Measured from Binding.BuilderMissingSince. It is the same
-// 30s as startGrace and for the same reason: herdr's view lags reality, and
-// a replacement spawned on a flicker orphans a live builder (#20).
-const switchGrace = 30 * time.Second
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
 // candidate, if any. Pure over Gates(rt).
@@ -120,21 +113,15 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	if closeOld {
-		if b.Builder.Headless() {
-			// The one place besides done/unbind where relay stops a process
-			// it started (#99): the planner gated the provider while the
-			// round's process was still running.
-			if b.Builder.PID != 0 && rt.Runner != nil {
-				if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
-					return haltBinding(ctx, rt, b, fmt.Sprintf(
-						"%s: builder %s; could not stop its process %d to replace it: %v",
-						b.Name, reason, b.Builder.PID, err))
-				}
+		// The one place besides done/unbind where relay stops a process it
+		// started (#99): the planner gated the provider while the round's
+		// process was still running.
+		if b.Builder.PID != 0 && rt.Runner != nil {
+			if err := rt.Runner.Kill(ctx, handleOf(b.Builder)); err != nil {
+				return haltBinding(ctx, rt, b, fmt.Sprintf(
+					"%s: builder %s; could not stop its process %d to replace it: %v",
+					b.Name, reason, b.Builder.PID, err))
 			}
-		} else if err := rt.Herdr.ClosePane(ctx, b.Builder.PaneID); err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: builder %s; could not close its pane %s to replace it: %v",
-				b.Name, reason, b.Builder.PaneID, err))
 		}
 	}
 
@@ -164,12 +151,6 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	b.Builder = ep
-	if !ep.Headless() {
-		// The replacement pane starts a fresh session (#184): offset 0, since
-		// its own record file starts empty. The round's log keeps appending,
-		// after the marker line below.
-		b.Builder.StreamRound, b.Builder.StreamOffset, b.Builder.LogPath = b.Round, 0, rt.Store.BuilderLogPath(b.Name, b.Round)
-	}
 	b.BuilderCandidate = res.Token()
 	if counted {
 		b.RoundSwitches++
@@ -188,23 +169,13 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
-	if b.Builder.Headless() {
-		started, err := startRound(ctx, rt, b, text)
-		if err != nil {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: switched builder to %s but could not start round %d: %v",
-				b.Name, res.Token(), b.Round, err))
-		}
-		b = started
-	} else if err := promptWithRetry(ctx, rt, ep.PaneID, text, rt.Store.PlanPath(b.Name, b.Round)); err != nil {
-		if errors.Is(err, ErrPromptLate) {
-			slog.Info("plan handed to switched builder late", "binding", b.Name, "round", b.Round)
-		} else {
-			return haltBinding(ctx, rt, b, fmt.Sprintf(
-				"%s: switched builder to %s but could not hand it round %d: %v",
-				b.Name, res.Token(), b.Round, err))
-		}
+	started, err := startRound(ctx, rt, b, text)
+	if err != nil {
+		return haltBinding(ctx, rt, b, fmt.Sprintf(
+			"%s: switched builder to %s but could not start round %d: %v",
+			b.Name, res.Token(), b.Round, err))
 	}
+	b = started
 
 	b.RoundStartedAt = now
 

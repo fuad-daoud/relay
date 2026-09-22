@@ -26,20 +26,6 @@ var ErrPromptLate = errors.New("prompt landed late")
 // confirming a fingerprint.
 const lateScanLines = 40
 
-// ErrBuilderBlocked reports that the builder is sitting at a dialog, so a plan
-// cannot be submitted until the planner answers it with `relay answer`.
-var ErrBuilderBlocked = errors.New("builder is blocked at a dialog; answer it with relay answer")
-
-// ErrBuilderGone reports that a binding's builder could not be located among
-// the live agents, so there is nothing to address.
-var ErrBuilderGone = errors.New("builder is gone; rebind before sending")
-
-// ErrBuilderNotBlocked is returned when `relay answer` is asked to type into a
-// builder that is not at a dialog. herdr's blocked-detection false-positives
-// (#55), and relay prints an instruction to answer whenever it fires, so the
-// guard has to live where the keystrokes are sent rather than in the prose.
-var ErrBuilderNotBlocked = errors.New("builder is not blocked; nothing to answer")
-
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relay reads off the terminal. The marker is the
@@ -106,19 +92,17 @@ type SendOptions struct {
 }
 
 // preflight is everything Send checks before it takes the state lock and
-// writes: the plan bytes, the effective tier, the located pane builder (or the
-// headless launch argv), the paths and the composed prompt. sendPreflight
-// computes it read-only; Send and SendDryRun both call it, so a dry run can
-// never disagree with a real send about the state of the world (#149). A
-// failed precondition is an error in Send's exact wording.
+// writes: the plan bytes, the effective tier, the headless launch argv, the
+// paths and the composed prompt. sendPreflight computes it read-only; Send and
+// SendDryRun both call it, so a dry run can never disagree with a real send
+// about the state of the world (#149). A failed precondition is an error in
+// Send's exact wording.
 type preflight struct {
-	b       store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
-	body    []byte        // the plan file's bytes
-	tier    harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
-	builder herdr.Agent   // pane builders: the located agent
-	located bool          // pane builders: FindAgent succeeded
-	argv    []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for pane/remote
-	gate    *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	b    store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
+	body []byte        // the plan file's bytes
+	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 
 	planPath, reportPath, donePath string
 	prompt                         string // composePrompt(...) -- computed, never sent
@@ -202,9 +186,6 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return pf, nil
 	}
 
-	if opts.Tier != "" && !b.Builder.Headless() {
-		return preflight{}, fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
-	}
 	if b.State == store.StateBroken {
 		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
 	}
@@ -212,48 +193,36 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 	}
 
-	if b.Builder.Headless() {
-		// A headless builder (#99) is a process relay starts per round, so
-		// the runner must exist and no previous process may still be alive --
-		// and both are checked here, before Send stages anything.
-		if rt.Runner == nil {
-			return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
-		}
-		if b.Builder.PID != 0 {
-			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
-			if err != nil {
-				return preflight{}, fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
-			}
-			if alive {
-				return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
-			}
-		}
-		ref, err := candidate.ParseRef(b.BuilderCandidate)
-		if err != nil {
-			return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
-		}
-		c, err := rt.Candidates.Lookup(ref)
-		if err != nil {
-			return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
-		}
-		role, _ := harness.RoleByName("builder")
-		argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
-		if err != nil {
-			return preflight{}, err
-		}
-		pf.argv = argv
-	} else {
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return preflight{}, fmt.Errorf("list agents: %w", err)
-		}
-		builder, ok := FindAgent(agents, b.Builder)
-		if !ok {
-			return preflight{}, fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
-		}
-		pf.builder = builder
-		pf.located = true
+	// A headless builder (#99) is a process relay starts per round, so the
+	// runner must exist and no previous process may still be alive -- and both
+	// are checked here, before Send stages anything. A local builder is always
+	// headless since #303.
+	if rt.Runner == nil {
+		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
 	}
+	if b.Builder.PID != 0 {
+		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+		if err != nil {
+			return preflight{}, fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+		}
+		if alive {
+			return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+		}
+	}
+	ref, err := candidate.ParseRef(b.BuilderCandidate)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	role, _ := harness.RoleByName("builder")
+	argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	if err != nil {
+		return preflight{}, err
+	}
+	pf.argv = argv
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
@@ -292,8 +261,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// read-only preflight and is taken here, before the lock.
 	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
 	hintRound := pf.b.Round
-	builder := pf.builder
-	locatedBuilder := pf.located
 
 	var round int
 	var driftLineOut string
@@ -316,38 +283,24 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		if b.Round > b.RoundCap {
 			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
 		}
-		// The pre-lock load and this locked load are two separate acquisitions
-		// of the state lock, so a binding can appear between them. An unlocated
-		// builder must never fall through to an empty target.
-		if b.Builder.Headless() {
-			// One process per round (headless spec §5.2): a previous round's
-			// process still running means the human is early, not that
-			// relay should start a second builder in the same tree.
-			if b.Builder.PID != 0 {
-				if rt.Runner == nil {
-					return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
-				}
-				alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
-				if err != nil {
-					return fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
-				}
-				if alive {
-					return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
-				}
+		// One process per round (headless spec §5.2): a previous round's
+		// process still running means the human is early, not that relay
+		// should start a second builder in the same tree. A local builder is
+		// always headless since #303.
+		if b.Builder.PID != 0 {
+			if rt.Runner == nil {
+				return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
 			}
-		} else {
-			if !locatedBuilder {
-				return fmt.Errorf("binding %q: %w", name, ErrBuilderGone)
+			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+			if err != nil {
+				return fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
 			}
-			if !SameAgent(builder, b.Builder) {
-				return fmt.Errorf("binding %q (pane %s, candidate %s): %w", name, b.Builder.PaneID, b.BuilderCandidate, ErrBuilderGone)
+			if alive {
+				return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
 			}
 		}
 
 		if opts.Tier != "" {
-			if !b.Builder.Headless() {
-				return fmt.Errorf("%w: binding %q has a pane builder; its permissions were fixed when the pane was spawned -- re-bind with relay bind --resume --rebind --tier %s, or use a headless binding", ErrTierPaneFixed, name, opts.Tier)
-			}
 			b.RoundTier = opts.Tier
 		}
 
@@ -361,58 +314,30 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		text := composePrompt(b, planPath, reportPath, donePath)
 
 		// Defer stages the round without spawning: the caller (serve.admit
-		// or relay.Admit) starts the builder later (#285). A pane binding
-		// has no spawn to defer.
-		deferred := opts.Defer && b.Builder.Headless()
+		// or relay.Admit) starts the builder later (#285).
+		deferred := opts.Defer
 
 		late := false
-		if b.Builder.Headless() {
-			if !deferred {
-				started, err := startRound(ctx, rt, b, text)
-				if err != nil {
-					if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
-						_ = os.Remove(planPath)
-						return err
-					}
-					// The plan is staged and the round is open; nothing was
-					// started. NEEDS YOU says so in status, and the ledger's
-					// spawn_failed (written by startRound) gates the candidate
-					// for the next pick, as a pane spawn failure would.
-					b.State = store.StateNeedsYou
-					b.Halt = "builder spawn failed: " + err.Error()
-					b.HaltAt = rt.Now().UTC()
-					if saveErr := tx.Save(b); saveErr != nil {
-						return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
-					}
+		if !deferred {
+			started, err := startRound(ctx, rt, b, text)
+			if err != nil {
+				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+					_ = os.Remove(planPath)
 					return err
 				}
-				b = started
-			}
-		} else {
-			if builder.Status == herdr.StatusUnknown {
-				patterns := dialogPatterns(rt, builder.Kind, b.BuilderCandidate)
-				if dialogGuard(ctx, rt, builder.PaneID, patterns) {
-					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
+				// The plan is staged and the round is open; nothing was
+				// started. NEEDS YOU says so in status, and the ledger's
+				// spawn_failed (written by startRound) gates the candidate
+				// for the next pick.
+				b.State = store.StateNeedsYou
+				b.Halt = "builder spawn failed: " + err.Error()
+				b.HaltAt = rt.Now().UTC()
+				if saveErr := tx.Save(b); saveErr != nil {
+					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
 				}
+				return err
 			}
-
-			if err := promptWithRetry(ctx, rt, builder.PaneID, text, planPath); err != nil {
-				if errors.Is(err, ErrPromptLate) {
-					late = true
-				} else if errors.Is(err, herdr.ErrAgentBlocked) {
-					return fmt.Errorf("binding %q: %w", name, ErrBuilderBlocked)
-				} else {
-					return fmt.Errorf("prompt builder: %w", err)
-				}
-			}
-		}
-
-		// armSessionCursor cuts the pane builder's round log at the record's
-		// current size, the way startRound cuts a headless one's (#184). The
-		// guard restates what the branch above already implies: headless has
-		// startRound, remote has no local record to render.
-		if !b.Builder.Headless() && !b.Builder.Remote() {
-			b = armSessionCursor(rt, b)
+			b = started
 		}
 
 		entry := store.LogEntry{
@@ -557,38 +482,30 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 
 // dryRunMode names the builder's shape as the dry run prints it.
 func dryRunMode(b store.Binding) string {
-	switch {
-	case b.Builder.Remote():
+	if b.Builder.Remote() {
 		return "remote"
-	case b.Builder.Headless():
-		return "headless"
-	default:
-		return "pane"
 	}
+	return "headless"
 }
 
-// dryRunWhere is where the round would go: a located pane, the headless argv
-// that proves the launch is well-formed, or the remote server and the branch
-// the plan would be shipped from.
+// dryRunWhere is where the round would go: the headless argv that proves the
+// launch is well-formed, or the remote server and the branch the plan would be
+// shipped from.
 func dryRunWhere(pf preflight) string {
-	switch {
-	case pf.b.Builder.Remote():
+	if pf.b.Builder.Remote() {
 		sha := pf.remoteSHA
 		if len(sha) > 12 {
 			sha = sha[:12]
 		}
 		return fmt.Sprintf("server %s, branch %s @ %s; server not contacted", pf.b.Builder.Server, pf.b.Branch, sha)
-	case pf.b.Builder.Headless():
-		if len(pf.argv) == 0 {
-			return ""
-		}
-		if len(pf.argv) == 1 {
-			return pf.argv[0]
-		}
-		return pf.argv[0] + " " + pf.argv[1]
-	default:
-		return fmt.Sprintf("pane %s (%s)", pf.builder.PaneID, pf.builder.Status)
 	}
+	if len(pf.argv) == 0 {
+		return ""
+	}
+	if len(pf.argv) == 1 {
+		return pf.argv[0]
+	}
+	return pf.argv[0] + " " + pf.argv[1]
 }
 
 // dryRunGateNote is the advisory sentence for a gated candidate: what the gate

@@ -60,8 +60,7 @@ type tabContent struct {
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
 // the whole log for any round a human would read, a bounded body for a
-// runaway one. The pane-builder branch still reads viewport-height lines
-// -- that one is a screen, this one is a file.
+// runaway one. A builder's log is a file, not a screen.
 const headlessLogLines = 5000
 
 type tickMsg time.Time
@@ -315,12 +314,13 @@ func logTab(key, name, logPath string) (tabMsg, bool) {
 	}, true
 }
 
-// fetchTerminal resolves the builder agent and reads its recent output, or --
-// for a headless builder, or a claude pane builder whose session record is
-// located (#184) -- the tail of its round log. round is the round being
-// viewed; only the binding's current round (b.Round) has a live pane to
-// read, so a pane builder's non-current round with no round log of its own
-// reads as the empty prose "terminal is live; round N left no log" (#183).
+// fetchTerminal resolves the binding's builder log for the terminal tab: for
+// a headless builder, or a remote builder relay has a local log for, the tail
+// of its round log; otherwise a prose line saying where the builder runs.
+// round is the round being viewed; only the binding's current round (b.Round)
+// has a live process, so a headless builder's non-current round with no round
+// log of its own reads as the empty prose "terminal is live; round N left no
+// log" (#183).
 func fetchTerminal(ctx context.Context, src Source, key string, round, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
@@ -411,17 +411,14 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			}
 		}
 
-		// A claude pane builder's own session record is rendered into the
-		// round log the same way (#184), for whichever round is being
-		// viewed; any other pane builder has no record relay can read.
-		if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
-			msg.round = round
-			return msg
-		}
-
-		// No round log for round. The live pane only ever shows the
-		// binding's current round.
-		if round != b.Round {
+		// A remote builder (#100) runs on someone else's server: show the
+		// round's local builder log when relay has one, otherwise the single
+		// line naming where the builder runs.
+		if b.Builder.Remote() {
+			if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
+				msg.round = round
+				return msg
+			}
 			return tabMsg{
 				name:  key,
 				round: round,
@@ -429,60 +426,13 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  fmt.Sprintf("terminal is live; round %d left no log", round),
+					empty:  fmt.Sprintf("remote builder on %s: relay log %s", b.Builder.Server, name),
 				},
 			}
 		}
 
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabTerminal,
-				content: tabContent{
-					loaded: true,
-					at:     time.Now(),
-					err:    err,
-				},
-			}
-		}
-
-		agent, ok := relay.FindAgent(agents, b.Builder)
-		if !ok {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabTerminal,
-				content: tabContent{
-					loaded: true,
-					at:     time.Now(),
-					empty:  fmt.Sprintf("builder gone (`%s`); pane %s no longer exists", b.BuilderCandidate, b.Builder.PaneID),
-				},
-			}
-		}
-
-		// Address the agent FindAgent just located rather than replaying the
-		// recorded AgentName. herdr can forget a spawned agent's name across a
-		// server restart while its pane stays perfectly addressable, and the
-		// name then resolves to nothing -- which showed up as the terminal tab
-		// rendering `agent target relay-ui-builder not found` against a live
-		// builder. The located agent's pane id is current by construction.
-		// See relay#20 for the same hazard on the Send and Answer paths.
-		out, err := rt.Herdr.ReadAgent(ctx, agent.PaneID, lines)
-		if err != nil {
-			return tabMsg{
-				name:  key,
-				round: round,
-				t:     tabTerminal,
-				content: tabContent{
-					loaded: true,
-					at:     time.Now(),
-					err:    err,
-				},
-			}
-		}
-
+		// A local builder is always headless since #303; anything else has no
+		// relay-readable terminal.
 		return tabMsg{
 			name:  key,
 			round: round,
@@ -490,7 +440,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			content: tabContent{
 				loaded: true,
 				at:     time.Now(),
-				body:   out,
+				empty:  "no relay-readable terminal for this builder",
 			},
 		}
 	}

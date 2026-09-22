@@ -230,18 +230,6 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 		noSeparator bool
 	}{
 		{
-			name: "nudge",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				Nudge:            &NudgeInfo{QuietMS: 23000, GraceMS: 60000},
-				LastPayload:      &LastEvent{Kind: store.KindPlan},
-			},
-			expectMid: "nudged · quiet 23s of 1m0s",
-		},
-		{
 			name: "report note",
 			binding: BindingStatus{
 				Name:             "api",

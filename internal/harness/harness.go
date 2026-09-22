@@ -137,11 +137,6 @@ type Harness struct {
 	// TestLimitPatternsSetOnEveryKind enforces it. Case-insensitivity is
 	// written into the pattern with (?i).
 	LimitPatterns []string
-	// DialogPatterns are default regexes for the text this harness shows when
-	// it is waiting on a yes/no or option dialog. Every default must compile;
-	// TestDialogPatternsSetOnEveryKind enforces it. Case-insensitivity is
-	// written into the pattern with (?i).
-	DialogPatterns []string
 	// DenialPatterns are default regexes for the text this harness prints when
 	// a tool call was refused by its permission mode in print mode (#141).
 	// Every default must compile; TestDenialPatternsSetOnEveryKind enforces it.
@@ -149,15 +144,6 @@ type Harness struct {
 	// DocExt is the extension of this kind's shipped definition files under
 	// agents/; "" means "md". codex roles are TOML profiles (spec §5).
 	DocExt string
-}
-
-var defaultDialogPatterns = []string{
-	`(?i)\[y/n\]`,
-	`(?i)\(y/n\)`,
-	`(?i)do you want to (proceed|continue|allow)`,
-	`❯\s*1\.\s*Yes`,
-	`(?i)press enter to confirm`,
-	`(?i)esc to cancel`,
 }
 
 var knownHarnesses = map[string]Harness{
@@ -178,7 +164,6 @@ var knownHarnesses = map[string]Harness{
 			`(?i)RESOURCE_EXHAUSTED`,
 			`(?i)quota exceeded`,
 		},
-		DialogPatterns: defaultDialogPatterns,
 		// Denial patterns for agy; unverified against a real denied round; replace with the observed line when one is seen.
 		DenialPatterns: []string{
 			`(?i)permission (request )?(denied|rejected)`,
@@ -207,7 +192,6 @@ var knownHarnesses = map[string]Harness{
 			`(?i)rate limit reached`,
 			`(?i)limit .*resets`,
 		},
-		DialogPatterns: defaultDialogPatterns,
 		// Denial patterns for claude; unverified against a real denied round; replace with the observed line when one is seen.
 		DenialPatterns: []string{
 			`(?i)requested permissions to use .* but you haven't granted`,
@@ -240,7 +224,6 @@ var knownHarnesses = map[string]Harness{
 			`(?i)insufficient (credits|quota)`,
 			`(?i)RESOURCE_EXHAUSTED`,
 		},
-		DialogPatterns: defaultDialogPatterns,
 		// Denial patterns for opencode; unverified against a real denied round; replace with the observed line when one is seen.
 		DenialPatterns: []string{
 			`(?i)permission.*(denied|rejected)`,
@@ -270,7 +253,6 @@ var knownHarnesses = map[string]Harness{
 			`(?i)"status": 429`,
 			`(?i)too many requests`,
 		},
-		DialogPatterns: defaultDialogPatterns,
 		// Denial patterns for codex: first two observed 2026-09-20 (#230), the rest unverified.
 		DenialPatterns: []string{
 			`(?i)patch rejected: writing outside of the project`,

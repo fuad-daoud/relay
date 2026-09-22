@@ -239,17 +239,6 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 		res, err := s.Verbs.Send(ctx, a)
 		return toolResultFrom(res, err)
 
-	case "answer":
-		var a AnswerArgs
-		if err := decodeArgs(raw, &a); err != nil {
-			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
-		}
-		if err := validateAnswerArgs(a); err != nil {
-			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
-		}
-		res, err := s.Verbs.Answer(ctx, a)
-		return toolResultFrom(res, err)
-
 	case "done":
 		var a DoneArgs
 		if err := decodeArgs(raw, &a); err != nil {

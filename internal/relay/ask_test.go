@@ -902,6 +902,7 @@ func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
 func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, _ := seedForAsk(t, f)
+	rt.Runner = nil
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{

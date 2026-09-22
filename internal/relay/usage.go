@@ -47,18 +47,18 @@ func peekUsage(ctx context.Context, rt Runtime, b store.Binding, now time.Time) 
 
 // roundSource is everything the usage reader needs for the binding's
 // current round: the builder that closed it, its candidate's provider and
-// model when it was spawned from one, the round's stream file when
-// headless, the worktree when pane, and the window.
+// model when it was spawned from one, the round's stream file, the worktree
+// and the window. A local builder is always headless since #303, so the mode
+// defaults to headless.
 func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source {
 	src := usage.Source{
 		Harness:  b.Builder.Kind,
-		Mode:     usage.ModePane,
+		Mode:     usage.ModeHeadless,
 		Worktree: b.Worktree,
 		Start:    start,
 		End:      end,
 	}
 	if b.Builder.Headless() {
-		src.Mode = usage.ModeHeadless
 		src.StreamPath = rt.Store.BuilderStreamPath(b.Name, b.Round)
 	}
 	fillCandidate(&src, rt, b.BuilderCandidate)

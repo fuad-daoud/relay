@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -226,29 +225,6 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 	}
 	if sr.Round != 1 {
 		t.Errorf("Round = %d, want 1", sr.Round)
-	}
-}
-
-// TestRelayVerbsAnswerForwardsToRelayAnswer proves Answer forwards Name and
-// exactly one of AnswerArgs' three fields into relay.AnswerInput: a headless
-// binding's relay.Answer returns ErrHeadlessNoDialog only once resolve()
-// (which requires exactly one field set) has already succeeded, so seeing
-// that specific error -- not "needs one of" or "exactly one of" -- proves
-// Text made it through as the one field set.
-func TestRelayVerbsAnswerForwardsToRelayAnswer(t *testing.T) {
-	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
-	saveVerbBinding(t, s, store.Binding{
-		Name: "webshop", CWD: "/repo",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Mode: store.ModeHeadless},
-		Round:   1, State: store.StateNeedsYou,
-	})
-
-	v := &RelayVerbs{RT: rt, Pane: "w2:p3"}
-	_, err := v.Answer(context.Background(), AnswerArgs{Name: "webshop", Text: "go ahead"})
-	if !errors.Is(err, relay.ErrHeadlessNoDialog) {
-		t.Fatalf("Answer error = %v, want ErrHeadlessNoDialog", err)
 	}
 }
 

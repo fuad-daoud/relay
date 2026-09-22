@@ -12,7 +12,6 @@ type screen int
 
 const (
 	screenList screen = iota
-	screenAnswer
 	screenResult
 	screenConfirm
 )
@@ -47,7 +46,6 @@ type Model struct {
 	top    int
 
 	result resultModel
-	answer answerModel
 	// confirm is the row a done/unbind is waiting on a `y` for (#103).
 	// Meaningful only while screen == screenConfirm.
 	confirm relay.BindingStatus
@@ -76,8 +74,8 @@ func fetchStatus(ctx context.Context, rt relay.Runtime) tea.Cmd {
 }
 
 // runVerb runs the chosen verb and reports its text, which is the same text
-// the CLI prints (spec §5). in is only read by answer.
-func runVerb(ctx context.Context, rt relay.Runtime, opts Options, name string, in relay.AnswerInput) tea.Cmd {
+// the CLI prints (spec §5).
+func runVerb(ctx context.Context, rt relay.Runtime, opts Options, name string) tea.Cmd {
 	return func() tea.Msg {
 		switch opts.Verb {
 		case VerbDone:
@@ -92,11 +90,6 @@ func runVerb(ctx context.Context, rt relay.Runtime, opts Options, name string, i
 				return verbDoneMsg{err: err}
 			}
 			return verbDoneMsg{text: relay.UnbindText(name, res)}
-		case VerbAnswer:
-			if err := relay.Answer(ctx, rt, name, in); err != nil {
-				return verbDoneMsg{err: err}
-			}
-			return verbDoneMsg{text: relay.AnswerText(name)}
 		}
 		return verbDoneMsg{err: fmt.Errorf("unknown verb %q", opts.Verb)}
 	}
@@ -114,8 +107,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.top = listWindow(m.top, m.cursor, m.listRows(), len(m.rows))
-		m.answer.vp.Width = msg.Width
-		m.answer.vp.Height = bodyHeight(msg.Height)
 		return m, nil
 
 	case statusMsg:
@@ -128,9 +119,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case dialogMsg:
-		return m.onDialog(msg)
-
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m.quit(ErrCancelled)
@@ -138,18 +126,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenList:
 			return m.listKeys(msg)
-		case screenAnswer:
-			return m.answerKeys(msg)
 		case screenResult:
 			return m.resultKeys(msg)
 		case screenConfirm:
 			return m.confirmKeys(msg)
-		}
-	default:
-		if m.screen == screenAnswer {
-			var cmd tea.Cmd
-			m.answer.input, cmd = m.answer.input.Update(msg)
-			return m, cmd
 		}
 	}
 	return m, nil
@@ -167,9 +147,6 @@ func (m Model) onStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenResult
 		m.result = resultModel{text: emptyText(m.opts.Verb), outcome: ErrNothingToPick}
 		return m, nil
-	}
-	if m.opts.Verb == VerbAnswer && len(m.rows) == 1 {
-		return m.enterAnswer(m.rows[0].Name)
 	}
 	return m, nil
 }
@@ -197,8 +174,7 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // pick acts on the chosen row. done and unbind run at once on a DONE row and
-// stop for a `y` on any other (#103, needsConfirm); answer needs its own
-// screen first (spec §6).
+// stop for a `y` on any other (#103, needsConfirm).
 func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
@@ -208,8 +184,6 @@ func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.run(r.Name)
-	case VerbAnswer:
-		return m.enterAnswer(r.Name)
 	}
 	return m, nil
 }
@@ -219,7 +193,7 @@ func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
 func (m Model) run(name string) (tea.Model, tea.Cmd) {
 	m.screen = screenResult
 	m.result = resultModel{pending: true}
-	return m, runVerb(m.ctx, m.rt, m.opts, name, relay.AnswerInput{})
+	return m, runVerb(m.ctx, m.rt, m.opts, name)
 }
 
 // confirmKeys: only a lowercase y proceeds. Every other key -- Enter
@@ -243,8 +217,6 @@ func (m Model) resultKeys(_ tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	switch m.screen {
-	case screenAnswer:
-		return m.answerView()
 	case screenResult:
 		return m.resultView()
 	case screenConfirm:

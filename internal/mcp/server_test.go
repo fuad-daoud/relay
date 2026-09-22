@@ -9,12 +9,11 @@ import (
 	"testing"
 )
 
-// fakeVerbs is a Verbs whose four methods are swappable per test; a nil
+// fakeVerbs is a Verbs whose three methods are swappable per test; a nil
 // field returns (nil, nil).
 type fakeVerbs struct {
 	statusFn func(ctx context.Context, a StatusArgs) (any, error)
 	sendFn   func(ctx context.Context, a SendArgs) (any, error)
-	answerFn func(ctx context.Context, a AnswerArgs) (any, error)
 	doneFn   func(ctx context.Context, a DoneArgs) (any, error)
 }
 
@@ -30,13 +29,6 @@ func (f *fakeVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 		return nil, nil
 	}
 	return f.sendFn(ctx, a)
-}
-
-func (f *fakeVerbs) Answer(ctx context.Context, a AnswerArgs) (any, error) {
-	if f.answerFn == nil {
-		return nil, nil
-	}
-	return f.answerFn(ctx, a)
 }
 
 func (f *fakeVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
@@ -138,18 +130,18 @@ func TestServerInitializeSameVersionAnswersSame(t *testing.T) {
 	}
 }
 
-func TestServerToolsListHasFourToolsInOrderNoAdditionalProperties(t *testing.T) {
+func TestServerToolsListHasThreeToolsInOrderNoAdditionalProperties(t *testing.T) {
 	out := runServer(t, &fakeVerbs{}, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 	})
 	resp := decodeResponse(t, splitLines(out)[0])
 	result := resp.Result.(map[string]any)
 	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 4 {
-		t.Fatalf("tools = %#v, want exactly 4", result["tools"])
+	if !ok || len(tools) != 3 {
+		t.Fatalf("tools = %#v, want exactly 3", result["tools"])
 	}
 
-	wantOrder := []string{"status", "send", "answer", "done"}
+	wantOrder := []string{"status", "send", "done"}
 	for i, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok {
@@ -165,26 +157,6 @@ func TestServerToolsListHasFourToolsInOrderNoAdditionalProperties(t *testing.T) 
 		if ap, ok := schema["additionalProperties"].(bool); !ok || ap {
 			t.Errorf("tools[%d].inputSchema.additionalProperties = %#v, want false", i, schema["additionalProperties"])
 		}
-	}
-}
-
-func TestServerToolsCallAnswerRejectsTwoOfThree(t *testing.T) {
-	out := runServer(t, &fakeVerbs{}, []string{
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"answer","arguments":{"name":"judge","text":"ok","keys":"enter"}}}`,
-	})
-	resp := decodeResponse(t, splitLines(out)[0])
-	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
-		t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidParams)
-	}
-}
-
-func TestServerToolsCallAnswerRejectsMissingName(t *testing.T) {
-	out := runServer(t, &fakeVerbs{}, []string{
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"answer","arguments":{"text":"ok"}}}`,
-	})
-	resp := decodeResponse(t, splitLines(out)[0])
-	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
-		t.Fatalf("error = %+v, want code %d", resp.Error, CodeInvalidParams)
 	}
 }
 

@@ -174,23 +174,6 @@ func TestLandRefusesToGuessTheBinding(t *testing.T) {
 // TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
 // bad value, not an omission, so it exits 2. The check runs before any runtime
 // is built, so this touches neither the state directory nor herdr.
-func TestStopGraceMustBePositive(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"stop", "--name", "webshop", "--grace", "0"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "must be positive") {
-		t.Errorf("expected the error to say --grace must be positive, got %q", string(stderr))
-	}
-}
-
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -632,42 +615,6 @@ func TestHooksConfigHome(t *testing.T) {
 // would fail with "flag provided but not defined" and never reach the --name
 // check -- which runs before any runtime is built, so this test touches
 // neither the state directory nor herdr.
-func TestBindAcceptsAssumeDeadFlag(t *testing.T) {
-	err := run([]string{"bind", "--resume", "--assume-dead"})
-	if err == nil {
-		t.Fatal("relay bind --resume without --name must still be rejected")
-	}
-	if strings.Contains(err.Error(), "not defined") {
-		t.Fatalf("--assume-dead is not a defined flag: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--name") {
-		t.Errorf("expected the --name error, got %q", err)
-	}
-}
-
-func TestAnswerRefusesToGuessTheBinding(t *testing.T) {
-	// A bare `relay answer` used to resolve to whichever binding owns the cwd.
-	// With peer builders that is always builder #1, so an unqualified answer
-	// pressed a key into a dialog nobody had looked at.
-	err := run([]string{"answer", "--keys", "enter"})
-	if err == nil {
-		t.Fatal("a bare relay answer must be refused")
-	}
-	if !strings.Contains(err.Error(), "will not guess which one you meant") {
-		t.Fatalf("expected a refuse-to-guess error, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "usage: relay answer") {
-		t.Fatalf("expected the usage line, got %v", err)
-	}
-}
-
-func TestAnswerRefusesBothNameAndPositional(t *testing.T) {
-	err := run([]string{"answer", "--name", "webshop", "--keys", "enter", "webshop"})
-	if err == nil || !strings.Contains(err.Error(), "will not guess which one you meant") {
-		t.Fatalf("naming the binding twice must be refused, got %v", err)
-	}
-}
-
 func TestAddHelp(t *testing.T) {
 	err := run([]string{"add", "-h"})
 	if !errors.Is(err, errHelpShown) {
@@ -962,25 +909,6 @@ func TestParseFor(t *testing.T) {
 	}
 }
 
-func TestIsPaneID(t *testing.T) {
-	cases := []struct {
-		input string
-		want  bool
-	}{
-		{"w2:p4", true},
-		{"claude/anthropic/sonnet", false},
-		{"opencode/openrouter/z-ai/glm-5.3-flash", false},
-		{"claude/anthropic/model:tag", false},
-		{"", false},
-	}
-
-	for _, c := range cases {
-		if got := isPaneID(c.input); got != c.want {
-			t.Errorf("isPaneID(%q) = %v, want %v", c.input, got, c.want)
-		}
-	}
-}
-
 // TestBindRejectsTabFlag pins #79: placement is not a per-bind decision any
 // more, so the old --tab spelling must be an unknown flag, not a silent no-op.
 // It fails in parseFlags, before newRuntime, so it never reaches herdr.
@@ -1016,8 +944,6 @@ func TestPickRejectsAName(t *testing.T) {
 		{"done", "--pick", "--name", "x"},
 		{"unbind", "--pick", "x"},
 		{"unbind", "--pick", "--name", "x", "--archive"},
-		{"answer", "--pick", "x"},
-		{"answer", "--pick", "--name", "x"},
 	} {
 		err := run(args)
 		if err == nil || !strings.Contains(err.Error(), "--pick chooses the binding") {
@@ -1028,51 +954,33 @@ func TestPickRejectsAName(t *testing.T) {
 
 // TestPickRejectsAnswerFlags: the answer comes from the screen, so --keys,
 // --choice and --text have nothing to apply to. Fails before newRuntime.
-func TestPickRejectsAnswerFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"answer", "--pick", "--keys", "enter"},
-		{"answer", "--pick", "--choice", "2"},
-		{"answer", "--pick", "--text", "yes"},
-	} {
-		err := run(args)
-		if err == nil || !strings.Contains(err.Error(), "--pick takes the answer from the screen") {
-			t.Errorf("%v: got %v, want the answer-flags usage error", args, err)
-		}
-	}
-}
-
 // TestBindHeadlessConflictsFailBeforeNewRuntime pins headless spec §6: the
 // two flag conflicts are usage errors, refused before relay talks to herdr.
 // CI runners have no herdr binary, so reaching newRuntime would be a
 // different failure with a different message.
-func TestBindHeadlessConflictsFailBeforeNewRuntime(t *testing.T) {
-	cases := []struct {
-		args []string
-		want []string
-	}{
-		{[]string{"bind", "--headless", "--resume", "--name", "x"}, []string{"--headless", "--resume"}},
-		{[]string{"bind", "--headless", "--builder", "w2:p4"}, []string{"--headless", "pane"}},
-	}
-	for _, c := range cases {
-		err := run(c.args)
-		if err == nil {
-			t.Errorf("%v: want an error", c.args)
-			continue
-		}
-		for _, w := range c.want {
-			if !strings.Contains(err.Error(), w) {
-				t.Errorf("%v: error %q does not mention %q", c.args, err, w)
-			}
-		}
-	}
-}
-
 func TestBuilderWhere(t *testing.T) {
 	if got := builderWhere(store.Endpoint{PaneID: "w2:p4"}); got != "w2:p4" {
 		t.Errorf("pane: %q", got)
 	}
 	if got := builderWhere(store.Endpoint{Mode: store.ModeHeadless, AgentName: "x-builder"}); got != "headless" {
 		t.Errorf("headless: %q", got)
+	}
+}
+
+// TestBindHeadlessFlagIsNoOp is a rule test: --headless is the default and
+// only local mode since #303, so bind/add/fork accept it and print one
+// stderr note. It tests the pure flag-handling helper, not a subcommand:
+// CI runners have no herdr, so no test may run a subcommand that reaches it.
+func TestBindHeadlessFlagIsNoOp(t *testing.T) {
+	if got := headlessNoOpLines(false); got != nil {
+		t.Errorf("headlessNoOpLines(false) = %v, want nil", got)
+	}
+	got := headlessNoOpLines(true)
+	if len(got) != 1 || got[0] != headlessFlagNote {
+		t.Fatalf("headlessNoOpLines(true) = %v, want [%q]", got, headlessFlagNote)
+	}
+	if !strings.Contains(headlessFlagNote, "--headless is the default and only local mode") {
+		t.Errorf("note = %q", headlessFlagNote)
 	}
 }
 

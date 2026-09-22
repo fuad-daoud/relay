@@ -513,23 +513,6 @@ func TestSendClearsAStaleHalt(t *testing.T) {
 	}
 }
 
-func TestSendPanePathIsUntouchedByHeadless(t *testing.T) {
-	// A pane binding with a Runner configured never touches it.
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, _ := seedBound(t, f)
-	rt.Runner = fr
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if len(fr.specs) != 0 {
-		t.Errorf("pane send started a process: %+v", fr.specs)
-	}
-	if len(f.prompts) != 1 {
-		t.Errorf("pane send must still Prompt once: %d", len(f.prompts))
-	}
-}
-
 func TestLogTailReturnsTheLastLines(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "003-builder.log")
@@ -1074,27 +1057,6 @@ func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[len(lines)-1], "--- relay ") {
 		t.Errorf("last line = %q, want prefix --- relay ", lines[len(lines)-1])
-	}
-}
-
-func TestSwitchBuilderPaneWritesNoLog(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
-
-	got, err := reconcile(t, rt, b, gone())
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	got, err = reconcile(t, at(rt, 31*time.Second), got, gone())
-	if err != nil {
-		t.Fatalf("Reconcile at +31s: %v", err)
-	}
-	if got.RoundSwitches != 1 {
-		t.Fatalf("RoundSwitches = %d, want 1", got.RoundSwitches)
-	}
-	logPath := rt.Store.BuilderLogPath(got.Name, got.Round)
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Errorf("pane switch created a log file: %s", logPath)
 	}
 }
 
@@ -2000,26 +1962,6 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 	}
 }
 
-func TestReconcilePanePathUntouchedByHeadless(t *testing.T) {
-	// The existing pane tests are the real pin; this one adds a Runner to a
-	// pane binding and checks it is never consulted.
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	fr := newFakeRunner()
-	rt.Runner = fr
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	touch(t, rt.Store.DonePath("webshop", 1))
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)})
-	if err != nil || got.Round != 2 {
-		t.Fatalf("pane report path: round=%d err=%v", got.Round, err)
-	}
-	if len(fr.specs) != 0 || len(fr.kills) != 0 {
-		t.Errorf("pane path touched the Runner: specs=%d kills=%d", len(fr.specs), len(fr.kills))
-	}
-}
-
 func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
@@ -2197,19 +2139,6 @@ func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
 	}
 }
 
-func TestDonePaneNeverTouchesTheRunner(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-	fr := newFakeRunner()
-	rt.Runner = fr
-	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
-		t.Fatal(err)
-	}
-	if len(fr.kills) != 0 {
-		t.Errorf("pane done killed something: %+v", fr.kills)
-	}
-}
-
 func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
@@ -2252,30 +2181,6 @@ func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
 	}
 	if res.ArchivedTo == "" {
 		t.Error("the archive still happens")
-	}
-}
-
-func TestAnswerRefusesAHeadlessBuilderBeforeAskingHerdr(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-
-	err := Answer(context.Background(), rt, "webshop", AnswerInput{Keys: "enter"})
-	if !errors.Is(err, ErrHeadlessNoDialog) {
-		t.Fatalf("err = %v, want ErrHeadlessNoDialog", err)
-	}
-	if !strings.Contains(err.Error(), b.Builder.LogPath) {
-		t.Errorf("the refusal must point at the log: %v", err)
-	}
-	if len(f.keys) != 0 || f.listCalls != 0 {
-		t.Errorf("nothing may reach herdr: keys=%d listCalls=%d", len(f.keys), f.listCalls)
-	}
-
-	// Between rounds there is no log to point at; the refusal still stands.
-	rt2, _ := seedHeadless(t, &fakeHerdr{}, newFakeRunner())
-	err = Answer(context.Background(), rt2, "webshop", AnswerInput{Keys: "enter"})
-	if !errors.Is(err, ErrHeadlessNoDialog) || !strings.Contains(err.Error(), "no round is running") {
-		t.Errorf("idle headless: err = %v", err)
 	}
 }
 
@@ -2372,20 +2277,6 @@ func TestStatusHeadlessWithoutRunnerIsUnknown(t *testing.T) {
 	}
 	if rep.Bindings[0].BuilderStatus != "unknown" {
 		t.Errorf("status = %q, want unknown when no Runner can answer", rep.Bindings[0].BuilderStatus)
-	}
-}
-
-func TestStatusPaneRowHasNoHeadlessInfo(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := sentBinding(t, f)
-	rt.Runner = newFakeRunner()
-	f.agents = []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
-	rep, err := Status(context.Background(), rt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.Bindings[0].Headless != nil || rep.Bindings[0].BuilderPane != "w2:p4" {
-		t.Errorf("pane row = %+v", rep.Bindings[0])
 	}
 }
 

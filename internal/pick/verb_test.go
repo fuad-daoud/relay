@@ -32,7 +32,6 @@ func TestRowsForFiltersPerVerb(t *testing.T) {
 	}{
 		{VerbDone, []string{"active", "blocked"}},
 		{VerbUnbind, []string{"active", "blocked", "finished"}},
-		{VerbAnswer, []string{"blocked"}},
 	}
 	for _, c := range cases {
 		got := names(rowsFor(c.verb, rep))
@@ -53,7 +52,6 @@ func TestEmptyTextPerVerb(t *testing.T) {
 	cases := map[Verb]string{
 		VerbDone:   "no bindings to mark done",
 		VerbUnbind: "nothing bound",
-		VerbAnswer: "no builder is blocked",
 	}
 	for verb, want := range cases {
 		if got := emptyText(verb); got != want {
@@ -70,9 +68,6 @@ func TestNeedsConfirmOnlyForLiveRowsUnderDestructiveVerbs(t *testing.T) {
 		}
 		if !needsConfirm(VerbUnbind, row("a", d, "working")) {
 			t.Errorf("unbind on %s row: needsConfirm = false, want true", d)
-		}
-		if needsConfirm(VerbAnswer, row("a", d, "blocked")) {
-			t.Errorf("answer on %s row: needsConfirm = true, want false", d)
 		}
 	}
 	if needsConfirm(VerbUnbind, row("a", "DONE", "idle")) {

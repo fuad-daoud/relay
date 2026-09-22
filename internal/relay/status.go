@@ -54,11 +54,6 @@ type BindingStatus struct {
 	BuilderPane      string `json:"builder_pane"`
 	BuilderKind      string `json:"builder_kind"`
 	BuilderStatus    string `json:"builder_status"`
-	// StopRequestedAt and StopGraceMS mirror the binding's stop bookkeeping
-	// (#138) while a stop is in flight; both are absent otherwise. They are
-	// the data behind BuilderStatus's "stopping <elapsed> of <grace>".
-	StopRequestedAt time.Time `json:"stop_requested_at,omitempty"`
-	StopGraceMS     int       `json:"stop_grace_ms,omitempty"`
 	// Headless is set for a headless builder (#99): its process state and
 	// log. BuilderPane reads "headless" and BuilderStatus is one of idle,
 	// working, exited N, exited, unknown. Nil for a pane builder.
@@ -99,10 +94,6 @@ type BindingStatus struct {
 	// the expected state.
 	Dirty   bool         `json:"dirty"`
 	Pending *PendingInfo `json:"pending,omitempty"`
-	// Nudge is set while the current round has been nudged and no report has
-	// arrived: when relay nudged, and how long the builder's terminal has been
-	// unchanged against the grace after which relay scrapes it. Nil otherwise.
-	Nudge *NudgeInfo `json:"nudge,omitempty"`
 	// Foreign lists live agents occupying this binding's working tree that no
 	// binding accounts for. It is an observation, never a judgement: relay
 	// cannot see writes, so a sanctioned read-only researcher and a rogue
@@ -254,21 +245,6 @@ type HoldInfo struct {
 	GraceMS int `json:"grace_ms,omitempty"`
 }
 
-// NudgeInfo is the quiescence clock carried as data, like HoldInfo. The
-// grace needs no state field: nudgeGrace is a constant in this package, so
-// status knows it without the daemon writing it down.
-type NudgeInfo struct {
-	At      time.Time `json:"at"`
-	QuietMS int       `json:"quiet_ms"`
-	GraceMS int       `json:"grace_ms"`
-}
-
-// NudgeText is the human form of the quiescence clock: "quiet 23s of 1m0s".
-func NudgeText(n NudgeInfo) string {
-	quiet := (time.Duration(n.QuietMS) * time.Millisecond).Truncate(time.Second)
-	return fmt.Sprintf("quiet %s of %s", quiet, time.Duration(n.GraceMS)*time.Millisecond)
-}
-
 // Report is the whole status surface.
 type Report struct {
 	Bindings []BindingStatus `json:"bindings"`
@@ -361,7 +337,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
 		PlannerPane:      b.Planner.PaneID, PlannerKind: b.Planner.Kind, PlannerStatus: absent,
-		BuilderPane: b.Builder.PaneID, BuilderKind: b.Builder.Kind, BuilderStatus: absent,
+		BuilderKind: b.Builder.Kind, BuilderStatus: absent,
 	}
 
 	// #136: a binding landed since its last send says so until the branch
@@ -397,9 +373,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 		if !b.StalledSince.IsZero() && row.BuilderStatus == "running" {
 			row.BuilderStatus = "stalled " + AgeText(rt.Now().Sub(b.StalledSince))
 		}
-	} else if a, ok := FindAgent(agents, b.Builder); ok {
-		row.BuilderStatus = effectiveStatus(b.Builder, a)
-		row.BuilderPane = a.PaneID
 	}
 
 	// #135's progress labels. The stale label is the row's own; the working
@@ -425,9 +398,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	case strings.HasPrefix(working, "exploring "):
 		row.Exploring = working
 	}
-	if !b.Builder.Headless() && !b.Builder.Remote() && row.BuilderStatus == herdr.StatusWorking && working != "" {
-		row.BuilderStatus = working
-	}
 
 	// A gate in flight overrides whatever the builder itself reports (#132):
 	// the round is held on the gate, not on the builder, which the marker
@@ -435,19 +405,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 	if b.GateRun != nil {
 		age := rt.Now().Sub(time.Unix(b.GateRun.StartedAt, 0)).Truncate(time.Second)
 		row.BuilderStatus = fmt.Sprintf("gating %s", age)
-	}
-
-	// A stop in flight overrides whatever the builder itself reports (#138),
-	// the way a gate in flight does: the round is closing, not working. The
-	// grace comes from the binding, so it reads the same here as in the
-	// daemon that will abandon the pane when it elapses. Once the grace has
-	// elapsed the binding is NEEDS YOU and that line already says why, so
-	// "stopping" only shows while stopDecision still says to wait.
-	if !b.StopRequestedAt.IsZero() && !b.RoundStartedAt.IsZero() && stopDecision(b, rt.Now()) == stopWait {
-		row.BuilderStatus = fmt.Sprintf("stopping %s of %s",
-			AgeText(rt.Now().UTC().Sub(b.StopRequestedAt)), stopGrace(b))
-		row.StopRequestedAt = b.StopRequestedAt
-		row.StopGraceMS = b.StopGraceMS
 	}
 
 	// Only broken is overloaded: it means "builder pane is gone", which covers
@@ -542,25 +499,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, agents []herdr.
 			row.Unread = true
 		}
 		break
-	}
-
-	// What relay acts on is what it shows: the clock starts where
-	// builderQuiescent starts it -- at the last fingerprint, falling back to
-	// the nudge itself when none has been taken yet.
-	if nudgedAt, ok := nudgeTime(entries, b.Round); ok {
-		since := b.BuilderScreenAt
-		if since.IsZero() {
-			since = nudgedAt
-		}
-		quiet := rt.Now().UTC().Sub(since)
-		if quiet < 0 {
-			quiet = 0
-		}
-		row.Nudge = &NudgeInfo{
-			At:      nudgedAt,
-			QuietMS: int(quiet / time.Millisecond),
-			GraceMS: int(nudgeGrace / time.Millisecond),
-		}
 	}
 
 	pending, found, err := rt.Store.PendingForPlanner(b.Name)
@@ -854,10 +792,6 @@ func RenderStatus(r Report) string {
 		}
 		if b.Detail != "" {
 			fmt.Fprintf(&sb, "  detail   %s\n", b.Detail)
-		}
-		if b.Nudge != nil {
-			fmt.Fprintf(&sb, "  nudge    %s  %s\n",
-				b.Nudge.At.Local().Format("15:04:05"), NudgeText(*b.Nudge))
 		}
 		if b.Last != nil {
 			fmt.Fprintf(&sb, "  last     %s %s %s round %d",

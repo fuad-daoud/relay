@@ -77,12 +77,8 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 		age = relay.HoldText(b)
 	case "ACTIVE":
 		what = b.BuilderStatus
-		if b.Nudge != nil {
-			age = relay.NudgeText(*b.Nudge)
-		}
-		// #143: an ACTIVE row's own quiet clock, distinct from a nudge's --
-		// present whenever the round has been sampled at least once, nudged
-		// or not.
+		// #143: an ACTIVE row's own quiet clock, present whenever the round
+		// has been sampled at least once.
 		if b.QuietFor != "" {
 			what += " · quiet " + b.QuietFor
 		}

@@ -77,6 +77,11 @@ const (
 	// KindQueue is relay -> log only: a served round was queued, admitted or
 	// re-queued (#285).
 	KindQueue Kind = "queue"
+
+	// KindRetired is relay -> log only: a legacy pane binding was closed at
+	// upgrade because pane builders were removed (#303, §5.6). The binding's
+	// state becomes DONE and its worktree is left exactly as it is.
+	KindRetired Kind = "retired"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also

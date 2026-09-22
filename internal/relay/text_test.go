@@ -31,12 +31,6 @@ func TestDoneText(t *testing.T) {
 	}
 }
 
-func TestAnswerText(t *testing.T) {
-	if got, want := AnswerText("webshop"), "answered webshop's builder"; got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
 func TestUnbindText(t *testing.T) {
 	cases := []struct {
 		name string
@@ -82,14 +76,10 @@ func TestPauseText(t *testing.T) {
 		res  PauseResult
 		want string
 	}{
-		{"pane closed", PauseResult{Round: 1, Branch: "relay/x", Worktree: "/w", PaneClosed: "w2:p4"},
-			"webshop paused after round 1; worktree /w released, branch relay/x kept\n  closed builder pane w2:p4\n  resume: relay bind --resume --name webshop"},
-		{"committed", PauseResult{Round: 2, Branch: "relay/x", Worktree: "/w", Committed: "abcdef1234567890", PaneClosed: "w2:p4"},
-			"webshop paused after round 2; worktree /w released, branch relay/x kept\n  committed abcdef123456 ([relay] webshop: paused after round 2)\n  closed builder pane w2:p4\n  resume: relay bind --resume --name webshop"},
-		{"pane not closed", PauseResult{Round: 1, Branch: "relay/x", Worktree: "/w", PaneClosed: "w2:p4", PaneCloseErr: "gone"},
-			"webshop paused after round 1; worktree /w released, branch relay/x kept\n  builder pane w2:p4 not closed: gone; close it yourself: herdr pane close w2:p4\n  resume: relay bind --resume --name webshop"},
-		{"headless keeps no pane line", PauseResult{Round: 3, Branch: "relay/x", Worktree: "/w"},
-			"webshop paused after round 3; worktree /w released, branch relay/x kept\n  resume: relay bind --resume --name webshop"},
+		{"between rounds", PauseResult{Round: 1, Branch: "relay/x", Worktree: "/w"},
+			"webshop paused after round 1; worktree /w released, branch relay/x kept\n  resume: relay bind --resume --name webshop"},
+		{"committed", PauseResult{Round: 2, Branch: "relay/x", Worktree: "/w", Committed: "abcdef1234567890"},
+			"webshop paused after round 2; worktree /w released, branch relay/x kept\n  committed abcdef123456 ([relay] webshop: paused after round 2)\n  resume: relay bind --resume --name webshop"},
 	}
 	for _, c := range cases {
 		if got := PauseText("webshop", c.res); got != c.want {
@@ -108,8 +98,6 @@ func TestRestoreText(t *testing.T) {
 			""},
 		{"restored", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x"},
 			"restored worktree /w on relay/x"},
-		{"restored with orphaned pane", Resolution{RestoredWorktree: "/w", RestoredBranch: "relay/x", OrphanedPane: "w2:p4"},
-			"restored worktree /w on relay/x\nold builder pane w2:p4 is in the removed directory; close it: herdr pane close w2:p4"},
 	}
 	for _, c := range cases {
 		if got := RestoreText(c.res); got != c.want {

@@ -445,7 +445,7 @@ func (s *Store) assertCWDFree(b Binding) error {
 		}
 		if other.CWD == b.CWD && other.Name != b.Name && other.State != StateDone {
 			return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-				b.CWD, other.Name, other.Builder.PaneID, other.Round, ErrCWDTaken)
+				b.CWD, other.Name, other.BuilderCandidate, other.Round, ErrCWDTaken)
 		}
 	}
 	return nil

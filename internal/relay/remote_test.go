@@ -3195,21 +3195,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	}
 }
 
-func TestAnswerAskForkRefuseRemote(t *testing.T) {
-	t.Run("Answer", func(t *testing.T) {
-		st := store.New(t.TempDir())
-		b := remoteBinding("zen")
-		if err := st.Save(b); err != nil {
-			t.Fatal(err)
-		}
-		rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
-
-		err := Answer(context.Background(), rt, "api", AnswerInput{Keys: "y"})
-		if err == nil || !strings.Contains(err.Error(), "remote builders take no dialogs") {
-			t.Fatalf("Answer err = %v, want the remote-dialog refusal", err)
-		}
-	})
-
+func TestAskForkRefuseRemote(t *testing.T) {
 	t.Run("Ask", func(t *testing.T) {
 		f := &fakeHerdr{}
 		rt, _ := seedForAsk(t, f)

@@ -31,45 +31,6 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 	return cp
 }
 
-func TestReconcile_EmitsStateChangedOnBroken(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	disp := &recordDispatcher{}
-	rt.Hooks = disp
-
-	var out store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		// Empty agents slice causes FindAgent to fail -> b.State becomes StateBroken
-		out, err = Reconcile(context.Background(), rt, tx, b, nil)
-		return err
-	})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-
-	if out.State != store.StateBroken {
-		t.Fatalf("expected state Broken, got %s", out.State)
-	}
-
-	events := disp.getEvents()
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d: %+v", len(events), events)
-	}
-	if events[0].Type != hooks.EventStateChanged {
-		t.Errorf("expected EventStateChanged, got %s", events[0].Type)
-	}
-	if events[0].State != string(store.StateBroken) {
-		t.Errorf("expected State %s, got %s", store.StateBroken, events[0].State)
-	}
-	if events[0].OldState != string(store.StateActive) {
-		t.Errorf("expected OldState %s, got %s", store.StateActive, events[0].OldState)
-	}
-	if events[0].BindingID != b.Name {
-		t.Errorf("expected BindingID %s, got %s", b.Name, events[0].BindingID)
-	}
-}
-
 func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 	f := &fakeHerdr{}
 	rt, b := sentBinding(t, f)

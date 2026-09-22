@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -234,27 +235,6 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("a name already in use must be refused")
-	}
-}
-
-func TestAddRollsBackTheWorktreeWhenTheBuilderFailsToStart(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	// No newPane, so splitting the planner's pane yields nothing to start in.
-	fh.newPane = ""
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
-
-	_, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: testAgyRef, PlannerPane: "w2:p3", Repo: addRepo(t),
-	})
-	if err == nil {
-		t.Fatal("expected the add to fail")
-	}
-	if len(fg.removeWorktreeCalls) != 1 {
-		t.Errorf("a failed add must not leave its worktree behind, calls = %+v", fg.removeWorktreeCalls)
-	}
-	if _, err := rt.Store.Load("frontend"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("a failed add must leave no binding, got %v", err)
 	}
 }
 
@@ -660,4 +640,32 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 			t.Errorf("done+gc deleted the adopted branch: %+v", fg.deleteBranchCalls)
 		}
 	})
+}
+
+// TestAddRefusesUnsupportedTierBeforeWorktree pins the early tier refusal
+// (#303 §1): Add renders the candidate's headless launch through
+// resolveBuilder's headlessLaunch before the round can start, so a harness
+// that cannot honour the tier is refused and the worktree Add just cut is
+// rolled back -- no binding, no kept tree.
+func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
+	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fh, fg, nil)
+	repo := addRepo(t)
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testOpencodeRef, PlannerPane: "w2:p3", Repo: repo, Tier: "read",
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if len(fg.addWorktreeCalls) != 1 {
+		t.Fatalf("AddWorktree calls = %d, want 1 (cut before the launch check)", len(fg.addWorktreeCalls))
+	}
+	if len(fg.removeWorktreeCalls) != 1 || !fg.removeWorktreeCalls[0].Force {
+		t.Errorf("rollback = %+v, want one forced RemoveWorktree", fg.removeWorktreeCalls)
+	}
+	if _, err := rt.Store.Load("frontend"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding must not exist, got %v", err)
+	}
 }
