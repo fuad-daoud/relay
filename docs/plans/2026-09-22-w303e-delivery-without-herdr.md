@@ -7,6 +7,13 @@ The design is `docs/specs/2026-09-22-drop-herdr-design.md` (§1.2 D4–D7,
 - channel claims are keyed by planner id;
 - builders and consults are headless or remote only.
 
+**D6 was revised (#328, merged).** A plain `claude` launch runs `relay mcp`
+in **tools mode**, and its reports arrive by a **background wait**, not a
+push. Read the spec's §1.1 ("The channel needs a flag…", "Background
+commands wake an idle session"), D6, §4.5, §4.8 and §5.4 as they are on
+`main` now. Where this plan and the spec differ, the spec's revised D6 text
+wins, and you say so in the report.
+
 If a step is impossible as written or contradicts the code, **halt and
 report**. Do not improvise around it.
 
@@ -51,13 +58,215 @@ of this round is its **number of steps**, so:
 Tests may still say "herdr" only in comments explaining history. No test
 may construct or fake a herdr client: CI has no herdr.
 
+## 0. First pass: delete by script, not by hand
+
+Most of this round is deletion. Do the mechanical part in **one** command
+per file with the tool below, then let the compiler list what's left.
+
+1. Save the tool to `/tmp/deldecl/main.go` and build it:
+   `cd /tmp/deldecl && go mod init deldecl >/dev/null 2>&1; go build -o deldecl .`
+   It deletes named top-level declarations (and their doc comments) from one
+   file, then gofmt-formats it. A name it can't find aborts with nothing
+   written. Usage: `/tmp/deldecl/deldecl FILE NAME [NAME...]`; a method is
+   `Recv.Method`.
+
+```go
+// deldecl deletes named top-level declarations (with their doc comments)
+// from Go files, in one pass, then gofmt-formats the result.
+//
+//	go run deldecl.go FILE NAME [NAME...]
+//
+// NAME is a func, type, const or var name, or Recv.Method for a method
+// (Recv without '*'). A const/var/type inside a grouped (...) declaration
+// removes only that spec; the group goes when it becomes empty. Unknown
+// names are an error, and nothing is written, so a typo never half-edits.
+package main
+
+import (
+	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"os"
+	"sort"
+)
+
+type span struct{ from, to int }
+
+func main() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: deldecl FILE NAME [NAME...]")
+		os.Exit(2)
+	}
+	path, names := os.Args[1], os.Args[2:]
+	src, err := os.ReadFile(path)
+	must(err)
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	must(err)
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	found := map[string]bool{}
+	off := func(p token.Pos) int { return fset.Position(p).Offset }
+	var spans []span
+	cut := func(doc *ast.CommentGroup, from, to token.Pos) {
+		if doc != nil {
+			from = doc.Pos()
+		}
+		s, e := off(from), off(to)
+		for e < len(src) && src[e] == '\n' { // take the trailing newline(s) with it
+			e++
+			break
+		}
+		spans = append(spans, span{s, e})
+	}
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			key := d.Name.Name
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				t := d.Recv.List[0].Type
+				if st, ok := t.(*ast.StarExpr); ok {
+					t = st.X
+				}
+				if ix, ok := t.(*ast.IndexExpr); ok {
+					t = ix.X
+				}
+				if id, ok := t.(*ast.Ident); ok {
+					key = id.Name + "." + d.Name.Name
+				}
+			}
+			if want[key] {
+				found[key] = true
+				cut(d.Doc, d.Pos(), d.End())
+			}
+		case *ast.GenDecl:
+			var keep int
+			var hits []ast.Spec
+			for _, s := range d.Specs {
+				hit := false
+				switch s := s.(type) {
+				case *ast.TypeSpec:
+					if want[s.Name.Name] {
+						found[s.Name.Name], hit = true, true
+					}
+				case *ast.ValueSpec:
+					all := true
+					for _, n := range s.Names {
+						if want[n.Name] {
+							found[n.Name] = true
+						} else {
+							all = false
+						}
+					}
+					if all {
+						hit = true
+					} else {
+						for _, n := range s.Names {
+							if want[n.Name] {
+								fmt.Fprintf(os.Stderr, "deldecl: %s shares a spec with other names; edit it by hand\n", n.Name)
+								os.Exit(1)
+							}
+						}
+					}
+				}
+				if hit {
+					hits = append(hits, s)
+				} else {
+					keep++
+				}
+			}
+			if len(hits) == 0 {
+				continue
+			}
+			if keep == 0 {
+				cut(d.Doc, d.Pos(), d.End())
+				continue
+			}
+			for _, s := range hits {
+				var doc *ast.CommentGroup
+				switch s := s.(type) {
+				case *ast.TypeSpec:
+					doc = s.Doc
+				case *ast.ValueSpec:
+					doc = s.Doc
+				}
+				cut(doc, s.Pos(), s.End())
+			}
+		}
+	}
+	var missing []string
+	for _, n := range names {
+		if !found[n] {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "deldecl: not found in %s: %v (nothing written)\n", path, missing)
+		os.Exit(1)
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].from > spans[j].from })
+	out := src
+	for _, s := range spans {
+		out = append(append([]byte{}, out[:s.from]...), out[s.to:]...)
+	}
+	formatted, err := format.Source(out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "deldecl: result does not parse (%v); nothing written\n", err)
+		os.Exit(1)
+	}
+	must(os.WriteFile(path, formatted, 0o644))
+	fmt.Printf("deldecl: %s: removed %d declaration(s)\n", path, len(spans))
+}
+
+func must(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "deldecl:", err)
+		os.Exit(1)
+	}
+}
+```
+
+2. Run this manifest in one step (a single shell command chaining them all):
+
+```
+git rm -q -r internal/herdr internal/serve/herdr.go \
+  internal/relay/held.go internal/relay/foreign.go internal/relay/coverage.go \
+  internal/relay/daemon_events.go
+D=/tmp/deldecl/deldecl
+$D internal/relay/send.go promptWithRetry Target ErrPromptLate lateScanLines
+$D internal/relay/herdr.go Herdr SameAgent findAgentIndex FindAgent
+$D internal/relay/finished.go notifyFinished finishedTitle finishedBody
+$D internal/relay/diagnose.go movedPaneWarning
+```
+
+   Then delete the matching `*_test.go` files for the removed files
+   (`held_test.go`, `foreign_test.go`, `coverage_test.go`,
+   `daemon_events_test.go`, and `internal/herdr`'s own tests went with the
+   package).
+3. `go build ./... 2>&1 | head -120` and fix **every** listed error in one
+   pass, grouping edits by file (one edit call per file). Use `deldecl` again
+   for any further whole declarations the errors show are herdr-only. Repeat
+   build → fix until it builds. Only then move on to the sections below,
+   which describe what the remaining code must do.
+
+The manifest is a starting point and doesn't cover everything. If a name
+in it no longer exists on your tree, drop that name and say so in the
+report; don't halt for it.
+
 ## 1. Delivery (spec §5.4)
 
 `DeliverPending` becomes exactly the §5.4 pseudocode:
 1. the channel route (a live claim for `b.PlannerID`);
 2. then `rt.Deliverers[b.Planner.Kind]`, #300's port, **unchanged**;
-3. otherwise the entry stays pending with `Delivery.Reason = "no push route
-   for planner <name> (<kind>): relay wait/pull"`.
+3. otherwise the entry stays pending with `Delivery.Route = "pull"` and
+   `Delivery.Reason = "awaiting pull for planner <name> (<kind>)"`. For a
+   Claude Code planner in tools mode, this is the **normal** path (the
+   background wait's `relay pull` delivers it), not a fault. There is **no**
+   `Deliverers["claude"]`.
 
 Every `LogEntry` for a delivery gains `route` (`channel`,
 `deliverer:<kind>` or `pull`). `relay pull` marks a pending entry
@@ -115,7 +324,7 @@ mapping where `store` decodes `State`.
 - **Remove:** `planner_pane`, `planner_status`, `planner_focused`,
   `workspace`, `builder_pane`, `foreign`, `sub_agents`, `hold`,
   `herdr_error`, and any other field left fed by deleted code.
-- **Add:** `planner_route` (`channel` | `deliverer` | `none`) and
+- **Add:** `planner_route` (`channel` | `deliverer` | `pull`; `pull` is a route, not a fault) and
   `planner_route_live` (bool).
 - Update **every** consumer in the tree in this round: `relay status`
   text, `statusline`, `internal/ui` (rail and detail pane, including the
@@ -127,16 +336,46 @@ mapping where `store` decodes `State`.
 ## 5. doctor (spec §4.8)
 
 Delete every herdr row: the binary, the version, `MinVersion`, the socket,
-integrations and pane env. Keep the `plugin`, `plugin hook` and `planner`
-rows from step 1b, and add the opencode-server WARN row and the stale
-planner INFO row if 1b didn't. `UsableBuilder` means "binary on PATH and
+integrations and pane env. Keep `plugin` and `plugin hook` from step 1b.
+**Change the `planner` row** to the revised §4.8:
+- **FAIL** when, from a Claude Code session, `Resolve()` misses, or no `relay
+  mcp` process is a child of the planner's host process (read
+  `/proc/<pid>/task/*/children` or `ps --ppid`, whichever the tree already
+  uses; a pure-function test gets the process list injected);
+- a missing live channel claim is **INFO**, never FAIL, with the spec's
+  text ("tools mode: reports arrive by background wait. For push, launch
+  with `--dangerously-load-development-channels plugin:relay@relay`, or
+  have an org admin add relay to `allowedChannelPlugins`").
+
+Step 1b's current behaviour, FAIL on no claim, is what changes. `UsableBuilder` means "binary on PATH and
 the candidate parses".
 
-## 6. MCP
+## 6. MCP (spec §4.5, revised D6)
 
-- `internal/mcp/instructions.go`: drop every `broken`/`orphaned` mention.
-  Keep `report` and `needs_you`.
+- **The instructions depend on the mode.** The mode is known before
+  `initialize` is answered, so `relay mcp` serves one of two texts:
+  - *channel*: today's text, minus every `broken`/`orphaned` mention;
+  - *tools*: no events arrive. After every `send`, start the background wait
+    for that binding and end the turn. When the wait exits, act on its
+    output as you would a `report` or `needs_you` event.
+  
+  Use the spec's §4.5 wording.
+- **In tools mode, the `send` tool's result ends with the command**, exactly:
+
+  ```
+  background wait (run with run_in_background, then end your turn):
+    relay wait --name <name> --timeout <budget>; relay pull --name <name>
+  ```
+
+  `<budget>` is the binding's round budget (the `send --timeout` default is
+  24h). Check how `send` stores it and render it in a form `relay wait
+  --timeout` accepts. In **channel** mode the result has no such line.
+- The instructions tell the model to act on the pull output after every
+  wait exit except `WaitTimeout`. On `WaitTimeout`, run `relay status
+  --name <name>` and start the wait again if the round is still running.
 - The `status` tool's rows follow §4.
+- The wording still saying "this pane" (tools.go, instructions.go) becomes
+  "this planner".
 
 ## 7. Tests
 
@@ -149,12 +388,19 @@ the candidate parses".
   status goldens are regenerated from the new JSON (review each golden
   diff, and say in the report that you did); `FlatStatus`.
 - **New:**
-  - `TestDeliverPendingNoRouteStaysPending`;
+  - `TestDeliverPendingNoRouteStaysPendingAsPull`;
   - `TestDeliverPendingDelivererNotMineStaysPending` (the old fallback is
     gone);
   - `TestPullMarksDeliveredRoutePull`;
   - `TestLoadMapsHeldAndOrphanedToActive`;
-  - `TestStatusJSONHasRouteFields`.
+  - `TestStatusJSONHasRouteFields` (`planner_route` is `pull` for a tools-mode
+    planner, `channel` with a live claim);
+  - `TestMCPToolsModeSendResultCarriesBackgroundWait`: exact command, this
+    binding's name and budget;
+  - `TestMCPChannelModeSendResultHasNoWaitLine`;
+  - `TestMCPInstructionsDependOnMode`;
+  - `TestDoctorPlannerRowNoClaimIsInfo` and
+    `TestDoctorPlannerRowNoMCPChildFails`.
 - Remove the fake herdr from every test package. Where a test only needed
   it to satisfy `Runtime.Herdr`, drop the field. The `internal/e2e` remote
   tests keep running without it: assert on the queued report / mailbox
@@ -165,6 +411,8 @@ the candidate parses".
   target alone; step 4 handles it.
 
 Mutation checks: do these and report each result.
+0. Drop the command from the tools-mode `send` result.
+   `TestMCPToolsModeSendResultCarriesBackgroundWait` fails.
 1. Put back a fall-through from `OutcomeNotMine` to "delivered".
    `TestDeliverPendingDelivererNotMineStaysPending` fails.
 2. Drop the held/orphaned load mapping. `TestLoadMapsHeldAndOrphanedToActive`
