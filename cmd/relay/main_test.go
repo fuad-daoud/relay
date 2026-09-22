@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -1072,5 +1073,111 @@ func TestBuilderWhere(t *testing.T) {
 	}
 	if got := builderWhere(store.Endpoint{Mode: store.ModeHeadless, AgentName: "x-builder"}); got != "headless" {
 		t.Errorf("headless: %q", got)
+	}
+}
+
+// TestStatusNotice is §4.6: exactly one line when the cached check proves
+// relay is behind, and "" for every row the doctor's release table reports as
+// SevOK. It is the pure function only -- no subcommand runs, because CI
+// runners have no herdr.
+func TestStatusNotice(t *testing.T) {
+	cases := []struct {
+		name    string
+		running string
+		latest  string
+		ok      bool
+		kind    release.Kind
+		want    string
+	}{
+		{
+			name:    "behind a plugin release",
+			running: "v0.6.0",
+			latest:  "v0.7.0",
+			ok:      true,
+			kind:    release.KindPluginRelease,
+			want:    "relay v0.6.0 is behind v0.7.0 -- run relay doctor",
+		},
+		{
+			name:    "behind a go install",
+			running: "v0.6.0",
+			latest:  "v0.7.0",
+			ok:      true,
+			kind:    release.KindGoInstall,
+			want:    "relay v0.6.0 is behind v0.7.0 -- run relay doctor",
+		},
+		{
+			name:    "no usable cache",
+			running: "v0.6.0",
+			latest:  "v0.7.0",
+			ok:      false,
+			kind:    release.KindPluginRelease,
+			want:    "",
+		},
+		{
+			name:    "unknown install kind",
+			running: "v0.6.0",
+			latest:  "v0.7.0",
+			ok:      true,
+			kind:    release.KindUnknown,
+			want:    "",
+		},
+		{
+			name:    "local build has nothing to update to",
+			running: "v0.7.0-8-gbd8aed0",
+			latest:  "v0.8.0",
+			ok:      true,
+			kind:    release.KindLocalBuild,
+			want:    "",
+		},
+		{
+			name:    "(devel) claims nothing",
+			running: "(devel)",
+			latest:  "v0.8.0",
+			ok:      true,
+			kind:    release.KindLocalBuild,
+			want:    "",
+		},
+		{
+			name:    "unparseable latest",
+			running: "v0.6.0",
+			latest:  "nightly",
+			ok:      true,
+			kind:    release.KindGoInstall,
+			want:    "",
+		},
+		{
+			name:    "already current",
+			running: "v0.7.0",
+			latest:  "v0.7.0",
+			ok:      true,
+			kind:    release.KindGoInstall,
+			want:    "",
+		},
+		{
+			// A describe of the very tag the cache names is not "behind" it.
+			name:    "describe is not behind its own tag",
+			running: "v0.7.0-8-gbd8aed0",
+			latest:  "v0.7.0",
+			ok:      true,
+			kind:    release.KindPluginSource,
+			want:    "",
+		},
+		{
+			name:    "cached latest is older",
+			running: "v0.7.0",
+			latest:  "v0.6.0",
+			ok:      true,
+			kind:    release.KindGoInstall,
+			want:    "",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := statusNotice(c.running, c.latest, c.ok, c.kind); got != c.want {
+				t.Errorf("statusNotice(%q, %q, %v, %q) = %q, want %q",
+					c.running, c.latest, c.ok, c.kind, got, c.want)
+			}
+		})
 	}
 }

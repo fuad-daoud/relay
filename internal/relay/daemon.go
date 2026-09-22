@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ingest"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -345,7 +346,59 @@ func (d *Daemon) Tick(ctx context.Context) error {
 
 	ingestLiveBindings(ctx, d.rt, fresh)
 
+	d.refreshRelease(ctx)
+
 	return nil
+}
+
+// refreshRelease refreshes the day-cached answer to "is a newer relay out?"
+// (#293). It runs after everything else Tick does and never before it: no
+// reconcile decision may wait on a release check.
+//
+// The common path is one small file read -- a fresh cache ends it there, so a
+// 2s tick stays cheap. A stale cache costs one bracketed HTTP GET, and every
+// failure of that GET is swallowed and logged at debug: an offline machine
+// saves nothing, writes no wrong answer, and simply retries next tick.
+func (d *Daemon) refreshRelease(ctx context.Context) {
+	if d.rt.Fetcher == nil {
+		return
+	}
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		slog.Debug("release check: no state root", "err", err)
+		return
+	}
+
+	now := time.Now
+	if d.rt.Now != nil {
+		now = d.rt.Now
+	}
+
+	cached, ok, err := release.Load(root)
+	if err != nil {
+		slog.Debug("release check: read cache", "err", err)
+		return
+	}
+	if !release.Stale(cached, ok, now(), release.TTL) {
+		return
+	}
+
+	tag, err := d.rt.Fetcher.Latest(ctx)
+	if err != nil {
+		// Save nothing: a wrong or empty answer in the cache would read as
+		// truth for a whole day.
+		slog.Debug("release check: fetch", "err", err)
+		return
+	}
+
+	if err := release.Save(root, release.Cache{
+		Latest:    tag,
+		CheckedAt: now(),
+		Source:    release.Source(),
+	}); err != nil {
+		slog.Debug("release check: save cache", "err", err)
+	}
 }
 
 // armedFires collects every fire-mode edge left armed across every binding:

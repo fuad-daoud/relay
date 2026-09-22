@@ -32,6 +32,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/serve"
@@ -151,6 +152,72 @@ func buildVersion() string {
 		return info.Main.Version
 	}
 	return "(devel)"
+}
+
+// releaseInputs gathers what release.Detect needs about the running binary:
+// the version buildVersion chose, whether the module rather than an ldflags
+// stamp supplied it, and the herdr-plugin.toml sitting beside the executable
+// (the marker of either plugin install, since both leave ./relay in that
+// directory). Disk reads only -- the release check never touches the network
+// to learn who it is.
+func releaseInputs() release.Inputs {
+	in := release.Inputs{Version: buildVersion()}
+
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			in.ExeDir = filepath.Dir(resolved)
+			in.ManifestVersion = manifestVersion(filepath.Join(in.ExeDir, "herdr-plugin.toml"))
+		}
+	}
+
+	// FromModule is true only when the ldflags stamp was empty and the module
+	// version was not: exactly buildVersion's own fallback order.
+	if version == "" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+			in.FromModule = true
+		}
+	}
+	return in
+}
+
+// manifestVersion reads the version line of a plugin manifest the way
+// scripts/plugin-fetch.sh does (sed -n 's/^version = "\(.*\)"$/\1/p'): a
+// missing file or a manifest without the line is "", which is what makes a
+// plugin install unrecognisable -- not an error.
+func manifestVersion(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), `version = "`)
+		if !ok {
+			continue
+		}
+		if v, ok := strings.CutSuffix(v, `"`); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// statusNotice is the line `relay status` prints above the rows when the
+// cached check says a newer release exists, and "" whenever it does not.
+// Pure: every input is an argument, so it is table-tested without a
+// store, a daemon or a network (CI has no herdr).
+//
+// It returns "" for every SevOK row of the doctor's release table, so the
+// statusline stays quiet exactly where `relay doctor` says "not checked",
+// "nothing to update to" or "is current" -- and never claims an update
+// relay cannot prove.
+func statusNotice(running, latest string, ok bool, kind release.Kind) string {
+	if !ok || kind == release.KindUnknown || kind == release.KindLocalBuild {
+		return ""
+	}
+	if !release.NewerStrings(running, latest) {
+		return ""
+	}
+	return fmt.Sprintf("relay %s is behind %s -- run relay doctor", running, latest)
 }
 
 // parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
@@ -445,6 +512,7 @@ func newRuntime() (relay.Runtime, error) {
 		Usage:            reader,
 		Sessions:         relay.HomeSessionLocator(home),
 		Prices:           prices,
+		Fetcher:          release.NewHTTPFetcher(release.Source(), 5*time.Second),
 		Now:              time.Now,
 		Hooks:            dispatcher,
 		Remote:           remoteClient,
@@ -1646,6 +1714,17 @@ func cmdStatus(args []string) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
+	}
+
+	// #293: one line above the rows, only when the daemon's cached check has
+	// seen a newer release. Read through the doctor's own Env so `status` and
+	// `doctor` can never disagree about the same file -- only ReleaseState is
+	// called here, which is why the nil herdr client is harmless. JSON output
+	// above stays notice-free.
+	env := doctor.NewEnv(nil, rt.Store, releaseInputs())
+	running, latest, ok, kind := env.ReleaseState()
+	if notice := statusNotice(running, latest, ok, kind); notice != "" {
+		fmt.Println(notice)
 	}
 
 	fmt.Print(relay.RenderStatus(rep))

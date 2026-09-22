@@ -1,0 +1,123 @@
+package release
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+// TestHTTPFetcherParsesTag uses httptest only: no test in this package may
+// reach api.github.com, and no test may reach the network at all.
+func TestHTTPFetcherParsesTag(t *testing.T) {
+	var gotPath, gotAuth, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAccept = r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tag_name":"v0.7.0","name":"relay v0.7.0","draft":false}`))
+	}))
+	defer srv.Close()
+
+	tag, err := NewHTTPFetcher(srv.URL+"/repos/fuad-daoud/relay/releases/latest", 5*time.Second).
+		Latest(context.Background())
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if tag != "v0.7.0" {
+		t.Errorf("Latest = %q, want %q", tag, "v0.7.0")
+	}
+	if gotPath != "/repos/fuad-daoud/relay/releases/latest" {
+		t.Errorf("path = %q, want /repos/fuad-daoud/relay/releases/latest", gotPath)
+	}
+	// No auth header: an unauthenticated read, so an air-gapped or
+	// rate-limited machine degrades to "not checked" rather than erroring.
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want empty", gotAuth)
+	}
+	if gotAccept == "" {
+		t.Error("Accept header is empty; the GitHub API is read as JSON")
+	}
+}
+
+// TestHTTPFetcherEndpointFromEnv pins the RELAY_RELEASE_API override, which is
+// what lets a test or an air-gapped install point the check elsewhere.
+func TestHTTPFetcherEndpointFromEnv(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("RELAY_RELEASE_API", srv.URL)
+
+	tag, err := NewHTTPFetcher("", 5*time.Second).Latest(context.Background())
+	if err != nil {
+		t.Fatalf("Latest: %v", err)
+	}
+	if tag != "v9.9.9" {
+		t.Errorf("Latest = %q, want v9.9.9 from RELAY_RELEASE_API", tag)
+	}
+}
+
+// TestHTTPFetcherFailures pins every failure mode as an error the caller
+// swallows: a dead endpoint is ErrOffline, a bad answer is its own error, and
+// neither is a panic or a hang.
+func TestHTTPFetcherFailures(t *testing.T) {
+	t.Run("prefix tags are kept verbatim", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"tag_name":"v0.7.0-rc1"}`))
+		}))
+		defer srv.Close()
+
+		tag, err := NewHTTPFetcher(srv.URL, time.Second).Latest(context.Background())
+		if err != nil || tag != "v0.7.0-rc1" {
+			t.Errorf("Latest = (%q, %v), want (v0.7.0-rc1, nil)", tag, err)
+		}
+	})
+
+	t.Run("status", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusForbidden)
+		}))
+		defer srv.Close()
+
+		if _, err := NewHTTPFetcher(srv.URL, time.Second).Latest(context.Background()); err == nil {
+			t.Error("Latest on a 403 = nil error, want an error")
+		}
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"tag_name":`))
+		}))
+		defer srv.Close()
+
+		if _, err := NewHTTPFetcher(srv.URL, time.Second).Latest(context.Background()); err == nil {
+			t.Error("Latest on a truncated body = nil error, want an error")
+		}
+	})
+
+	t.Run("no tag_name", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"name":"relay"}`))
+		}))
+		defer srv.Close()
+
+		if _, err := NewHTTPFetcher(srv.URL, time.Second).Latest(context.Background()); err == nil {
+			t.Error("Latest with no tag_name = nil error, want an error")
+		}
+	})
+
+	t.Run("unreachable", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		url := srv.URL
+		srv.Close()
+
+		_, err := NewHTTPFetcher(url, time.Second).Latest(context.Background())
+		if !errors.Is(err, ErrOffline) {
+			t.Errorf("Latest on a closed server = %v, want ErrOffline", err)
+		}
+	})
+}

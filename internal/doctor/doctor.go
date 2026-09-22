@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
 
@@ -353,6 +354,63 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
 }
 
+// releaseCheck is the one row about relay itself (#293): which install this
+// is, and whether the daemon's cached check has seen a newer release.
+//
+// It is never SevFail -- a stale relay runs fine -- and SevOK whenever relay
+// cannot prove anything, so an unrefreshed cache, an offline machine, an
+// unclassifiable install and a (devel) build all read as "not checked".
+func releaseCheck(env Env) Check {
+	running, latest, ok, kind := env.ReleaseState()
+
+	if !ok || kind == release.KindUnknown {
+		return Check{Name: "release", Severity: SevOK, Detail: "not checked"}
+	}
+	// Neither side parseable means no honest claim is available; "(devel)"
+	// lands here, which is why an untagged local build stays quiet.
+	if _, rok := release.ParseVersion(running); !rok {
+		return Check{Name: "release", Severity: SevOK, Detail: "not checked"}
+	}
+	if _, lok := release.ParseVersion(latest); !lok {
+		return Check{Name: "release", Severity: SevOK, Detail: "not checked"}
+	}
+	if kind == release.KindLocalBuild {
+		return Check{
+			Name:     "release",
+			Severity: SevOK,
+			Detail:   fmt.Sprintf("local build %s; nothing to update to", running),
+		}
+	}
+	if !release.NewerStrings(running, latest) {
+		return Check{
+			Name:     "release",
+			Severity: SevOK,
+			Detail:   fmt.Sprintf("%s is current", running),
+		}
+	}
+	return Check{
+		Name:     "release",
+		Severity: SevWarn,
+		Detail:   fmt.Sprintf("%s is behind %s", running, latest),
+		Fix:      releaseFix(kind),
+	}
+}
+
+// releaseFix names the update path of the variant that is actually
+// installed. KindUnknown and KindLocalBuild have no path, but neither
+// reaches a Fix: both are SevOK.
+func releaseFix(kind release.Kind) string {
+	switch kind {
+	case release.KindPluginRelease:
+		return "sh scripts/plugin-fetch.sh"
+	case release.KindPluginSource:
+		return "sh scripts/plugin-build.sh"
+	case release.KindGoInstall:
+		return "go install github.com/fuad-daoud/relay/cmd/relay@latest"
+	}
+	return ""
+}
+
 // Run executes every check for the given kinds against env.
 // kinds is the caller's choice of scope; Run does not discover it.
 // Run never returns an error -- a failed probe becomes a Check saying so.
@@ -403,6 +461,11 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			})
 		}
 	}
+
+	// Relay's own install and release state (#293), right beside the herdr
+	// probe and for the same reason: it is unconditional. There is nothing to
+	// opt into -- it reads one small file and never touches the network.
+	checks = append(checks, releaseCheck(env))
 
 	// 2. daemon probe
 	daemonRunning, dErr := env.DaemonRunning(ctx)

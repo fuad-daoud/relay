@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/ingest"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
@@ -163,6 +164,12 @@ type Runtime struct {
 	// Prices is ~/.config/relay/prices.json over the embedded default. The
 	// zero value prices nothing, so every estimate is unknown.
 	Prices usage.Prices
+
+	// Fetcher reads the newest published release tag for the day-cached
+	// staleness check (#293). Nil means no check runs at all: a served
+	// daemon, an air-gapped build and every test that does not set it tick
+	// exactly as before. cmd/relay wires release.NewHTTPFetcher.
+	Fetcher release.Fetcher
 
 	Now       func() time.Time
 	Hooks     hooks.Dispatcher

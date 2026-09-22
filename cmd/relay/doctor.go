@@ -209,7 +209,7 @@ func cmdDoctor(args []string) error {
 	if !ok {
 		return fmt.Errorf("herdr client does not support the probes doctor needs")
 	}
-	env := doctor.NewEnv(hc, rt.Store)
+	env := doctor.NewEnv(hc, rt.Store, releaseInputs())
 
 	opencodeConfigured := false
 	for _, k := range kinds {

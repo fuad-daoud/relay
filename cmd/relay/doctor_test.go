@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -506,6 +507,13 @@ func (s *stubDoctorEnv) HomePath(rel string) (string, error) {
 }
 func (s *stubDoctorEnv) Stat(path string) error {
 	return s.statErr
+}
+
+// ReleaseState satisfies doctor.Env (#293). These tests assert on severities
+// and fix commands for the other rows, so every release state here reads as
+// "no usable cache": the release row is SevOK/not checked and cannot mask one.
+func (s *stubDoctorEnv) ReleaseState() (string, string, bool, release.Kind) {
+	return "", "", false, release.KindUnknown
 }
 
 // ReadFile satisfies doctor.Env. These tests assert on severities and fix
