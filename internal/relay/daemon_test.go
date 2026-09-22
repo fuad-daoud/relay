@@ -1,37 +1,194 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/db"
 	"github.com/fuad-daoud/relay/internal/planner"
+	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
+
+func TestTickReconcilesAndPersists(t *testing.T) {
+	rt, _ := sentBinding(t)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 2 {
+		t.Errorf("tick must persist the advanced round, got %d", b.Round)
+	}
+	// #303 deleted the pane injection; the report is queued for the planner
+	// and, with no live channel claim and no deliverer, stays pending for
+	// `relay pull`.
+	pending, found, err := rt.Store.PendingForPlanner("webshop")
+	if err != nil || !found {
+		t.Fatalf("the closed round's report must be queued for the planner: found=%v err=%v", found, err)
+	}
+	if pending.Kind != store.KindReport {
+		t.Errorf("pending kind = %s, want report", pending.Kind)
+	}
+}
+
+func TestRunStopsOnContextCancel(t *testing.T) {
+	rt, _ := seedBound(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := NewDaemon(rt, 10*time.Millisecond).Run(ctx); err != nil {
+		t.Fatalf("Run must exit cleanly on cancel, got %v", err)
+	}
+}
+
+func TestTickSkipsDoneBindings(t *testing.T) {
+	rt, b := sentBinding(t)
+	b.State = store.StateDone
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	before, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !store.SameBinding(before, after) {
+		t.Error("a done binding must be left entirely alone")
+	}
+}
 
 // TestDaemonBackfillsPlannerID is the plan's required case for §5.6 (last
 // paragraph): a tick back-fills PlannerID from (Planner.Kind,
 // Planner.SessionID) when the registry knows that session, and leaves it
 // empty when it does not.
-// TestTickSurfacesListAgentsFailure guards the resilience contract at the
-// boundary where the daemon actually talks to herdr: a hiccup in the one
-// ListAgents call a tick makes must be visible to the caller, not silently
-// swallowed. listErr's gate fires from the second ListAgents call onward, and
-// sentBinding's Bind already made the first, so setting listErr here targets
-// exactly the tick's own call.
+func TestDaemonBackfillsPlannerID(t *testing.T) {
+	// A binding written before PlannerID existed: its planner endpoint names
+	// the session, and PlannerID is empty.
+	legacy := func(t *testing.T, rt Runtime, session string) store.Binding {
+		t.Helper()
+		b := store.Binding{
+			Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive,
+			Planner: store.Endpoint{Kind: "claude", SessionID: session},
+			Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("seed legacy binding: %v", err)
+		}
+		return b
+	}
+
+	rt := newRuntime(t)
+	b := legacy(t, rt, "sess-architect") // the record newRuntime seeds
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.PlannerID != testPlannerID {
+		t.Errorf("PlannerID = %q, want the record's %q", got.PlannerID, testPlannerID)
+	}
+
+	// A miss does nothing: no record for this session, no PlannerID.
+	rt2 := newRuntime(t)
+	rt2.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	b2 := legacy(t, rt2, "sess-nobody")
+	if err := NewDaemon(rt2, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick (miss): %v", err)
+	}
+	got2, err := rt2.Store.Load(b2.Name)
+	if err != nil {
+		t.Fatalf("Load (miss): %v", err)
+	}
+	if got2.PlannerID != "" {
+		t.Errorf("a miss must leave PlannerID empty, got %q", got2.PlannerID)
+	}
+}
+
+// TestTickSurfacesListAgentsFailure guarded the resilience contract at the
+// boundary where the daemon actually talks to herdr; #303 deleted that
+// boundary (closed-list item 6: the herdr client and its agent list). The
+// daemon's one list call is now the store's, so the same contract is pinned
+// there: a tick whose binding list fails is visible to the caller.
+func TestTickSurfacesListAgentsFailure(t *testing.T) {
+	rt, _ := sentBinding(t)
+	// A state root that cannot be prepared: the "directory" is a regular
+	// file, so MkdirAll fails and every store call with it.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.Store = store.New(notADir)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err == nil {
+		t.Fatal("Tick must surface a failing binding list")
+	}
+}
+
 // TestTickContinuesPastFailingBinding guards the other half of resilience:
-// one binding's reconcile error must not abort the rest of the tick. It
-// builds a second, independent binding by hand -- seedBound/sentBinding are
-// hardwired to the name "webshop" and cwd "/repo" -- because Bind's shared
-// fakeHerdr.newPane would otherwise collide the two builder panes.
+// one binding's reconcile error must not abort the rest of the tick; here the
+// error is the tick's own list call, and Run's half is
+// TestRunSurvivesFailingTick below.
 // TestRunSurvivesFailingTick guards Run's half of resilience: a tick that
 // keeps failing must not stop the loop or bubble the tick error out of Run.
 // Guarded by a timeout so a regression that makes Run return the tick error
 // (or hang) fails the test loudly instead of wedging the suite, the same
 // shape as store.TestNestedAccessDoesNotDeadlock.
+func TestRunSurvivesFailingTick(t *testing.T) {
+	rt, _ := sentBinding(t)
+	// Every tick's first step fails: the state root cannot be prepared.
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.Store = store.New(notADir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- NewDaemon(rt, 10*time.Millisecond).Run(ctx)
+	}()
+
+	time.Sleep(1100 * time.Millisecond) // a few floored (500ms) tick intervals
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run must survive repeated tick failures and exit clean on cancel, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel (timeout) -- a failing tick must not wedge it")
+	}
+}
+
 // TestNewDaemonFloorsInterval guards the floor by inspection made concrete:
-// a misconfigured (zero or negative) interval must not spin the herdr socket.
+// a misconfigured (zero or negative) interval must not spin the tick.
 func TestNewDaemonFloorsInterval(t *testing.T) {
 	rt := Runtime{LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
 
@@ -48,14 +205,108 @@ func TestNewDaemonFloorsInterval(t *testing.T) {
 
 // TestTickIgnoresBindingUnboundMidTick covers the window between Tick's
 // binding list and its per-binding load: a `relay unbind` landing in it is
-// normal use, not a failure, and must not be logged as one.
+// normal use, not a failure, and must not be logged as one. #303 deleted
+// fakeHerdr's onList hook, which is what used to interpose the unbind inside
+// the tick, so the test drives tickOne -- the exact function holding the
+// guard -- directly.
+func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
+	rt, _ := sentBinding(t)
+	if err := rt.Store.Delete("webshop"); err != nil {
+		t.Fatalf("unbind mid-tick: %v", err)
+	}
+
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	defer slog.SetDefault(previous)
+
+	if err := NewDaemon(rt, time.Second).tickOne(context.Background(), "webshop"); err != nil {
+		t.Fatalf("a binding unbound mid-tick must be skipped, got %v", err)
+	}
+	if strings.Contains(logged.String(), "reconcile failed") {
+		t.Errorf("an unbind mid-tick must not be logged as a failure: %s", logged.String())
+	}
+}
+
+func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
+	// The next == fresh short-circuit this replaces was never tested. save()
+	// stamps UpdatedAt unconditionally, so without the short-circuit every tick
+	// rewrites every bind.json and UpdatedAt stops meaning "last change".
+	rt, b := seedBound(t)
+
+	before, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	after, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("UpdatedAt moved %v -> %v on a tick that changed nothing",
+			before.UpdatedAt, after.UpdatedAt)
+	}
+}
+
 // TestTickRefreshesRuntimeBeforeReconcile confirms Tick calls d.refresh
 // before it reconciles, so the round the reconcile pass sees is whatever the
 // refresh just swapped in -- not last tick's copy.
+func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
+	rt, _ := sentBinding(t)
+
+	const marker = "refreshed-marker"
+	refreshCalls := 0
+	d := NewDaemon(rt, time.Second).WithRefresh(func(in Runtime) Runtime {
+		refreshCalls++
+		in.Policy = policy.Policy{Order: map[string][]string{"builder": {marker}}}
+		return in
+	})
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if refreshCalls != 1 {
+		t.Errorf("refresh calls = %d, want 1", refreshCalls)
+	}
+	if got := d.rt.Policy.Order["builder"]; len(got) != 1 || got[0] != marker {
+		t.Errorf("d.rt.Policy not swapped by refresh, got %v", got)
+	}
+}
+
 // TestTickWithoutRefreshIsUnchanged confirms a Daemon with no WithRefresh
 // call behaves exactly as before #209 -- the same fixture and assertions as
 // TestTickReconcilesAndPersists, the test this one relies on to prove the
 // nil-refresh path is untouched.
+func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
+	rt, _ := sentBinding(t)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 2 {
+		t.Errorf("tick must persist the advanced round, got %d", b.Round)
+	}
+	if _, found, err := rt.Store.PendingForPlanner("webshop"); err != nil || !found {
+		t.Errorf("the closed round's report must be queued: found=%v err=%v", found, err)
+	}
+}
+
 // TestTickSyncsMetadataAndFinishedAfterReconcile checks that Tick calls both
 // syncPaneMetadata and notifyFinished after the binding loop (#129, #182).
 // The finished-toast decision itself is covered by finished_test.go; here
@@ -66,30 +317,54 @@ func TestNewDaemonFloorsInterval(t *testing.T) {
 // (docs/specs/2026-09-20-persistence-design.md §5.5): with a db configured,
 // a tick over a live, sent binding must leave a matching binding and round
 // row behind.
+func TestTickIngestsLiveBindings(t *testing.T) {
+	rt, _ := sentBinding(t)
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+	rt.DB = d
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	b, found, err := d.Binding("webshop")
+	if err != nil {
+		t.Fatalf("Binding: %v", err)
+	}
+	if !found {
+		t.Fatal("Binding(webshop) not found after Tick")
+	}
+	rounds, err := d.Rounds(b.ID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Errorf("len(rounds) = %d, want 1", len(rounds))
+	}
+}
+
 // TestTickWithoutDBIsUnchanged guards the nil-DB path: every call site
 // (here, the ingest hook) must treat Runtime.DB == nil exactly like a
 // machine with no database -- no panic, and no relay.db file conjured into
 // existence by the mere act of ticking.
-// waitListCall drains one signal from a channel fed by fakeHerdr.onList,
-// which is the race-safe way these event-loop tests observe a ListAgents
-// call: fakeHerdr has no lock of its own, so reading its listCalls counter
-// directly from the test goroutine while Run's goroutine (or a reconnect
-// goroutine it spawned) may still be writing it would be a data race. The
-// channel receive is the synchronisation point instead, and it also gives a
-// happens-before edge for anything that goroutine did earlier in the same
-// call (e.g. appending to subscribeCalls before making the ListAgents call
-// that follows it in d.subscribe).
-func waitListCall(t *testing.T, ch <-chan struct{}, msg string) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
-		t.Fatal(msg)
+func TestTickWithoutDBIsUnchanged(t *testing.T) {
+	rt, _ := sentBinding(t)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if _, err := os.Stat(rt.Store.DBPath()); !os.IsNotExist(err) {
+		t.Errorf("relay.db stat = %v, want os.ErrNotExist (DB == nil must write nothing)", err)
 	}
 }
 
-// waitForState busy-polls the store (itself lock-synchronised, unlike
-// fakeHerdr) until name reaches want or the deadline passes.
+// waitForState busy-polls the store (itself lock-synchronised) until name
+// reaches want or the deadline passes.
 func waitForState(t *testing.T, rt Runtime, name string, want store.State) store.Binding {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
@@ -109,32 +384,6 @@ func waitForState(t *testing.T, rt Runtime, name string, want store.State) store
 	}
 }
 
-// TestDaemonEventWakesOneBinding guards the whole point of #146: a socket
-// status event reconciles exactly the binding whose pane it names, at once,
-// without the daemon spawning another ListAgents call or touching any other
-// binding.
-// TestDaemonPaneClosedMarksBuilderMissing guards the gone path: a
-// pane_closed event removes the builder from the cache, and the next
-// reconcile -- driven by that same event, not a separate poll -- finds it
-// missing and stamps BuilderMissingSince exactly like today's ListAgents
-// path does.
-// TestDaemonDetectedRefreshesSnapshot guards agentCache.Apply's
-// pane_agent_detected case wired into Run: a new pane means the snapshot is
-// stale everywhere, so the daemon must take a fresh ListAgents call rather
-// than trust the cache.
-// TestDaemonFallsBackToPollingWithoutSocket guards the default mode every
-// other daemon test runs in: fakeHerdr.Subscribe returns herdr.ErrNoSocket
-// with nothing scripted, so Run must fall back to calling ListAgents on
-// every tick exactly as it did before #146.
-// TestDaemonReconnectsAfterStreamClose guards the reconnect loop: a stream
-// close drops eventsLive at once (so the very next tick polls instead of
-// trusting a cache the daemon no longer believes), and reconnect retries
-// with backoff, re-subscribes, and re-snapshots via ListAgents.
-// TestDaemonResubscribesWhenAPaneIsBound guards Tick's post-loop check: a
-// binding created after Run's bootstrap subscription is not in
-// d.subscribedPanes, and the next tick must notice and resubscribe with the
-// full, current pane list rather than wait forever for an event on a pane
-// the daemon never asked herdr to watch.
 // fakeFetcher counts calls so a test can prove the tick asked the endpoint --
 // or, on a fresh cache, never asked at all.
 type fakeFetcher struct {
@@ -166,9 +415,128 @@ func releaseStateRoot(t *testing.T) string {
 
 // TestTickRefreshesOncePastTTL counts fetches: none while the cached answer is
 // fresh, one once it is stale. Drop the Stale guard and the fresh case fails.
+func TestTickRefreshesOncePastTTL(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		seed      bool
+		checkedAt time.Time
+		wantCalls int
+	}{
+		{
+			name:      "fresh cache is left alone",
+			seed:      true,
+			checkedAt: now.Add(-(release.TTL - time.Second)),
+			wantCalls: 0,
+		},
+		{
+			name:      "stale cache refetches",
+			seed:      true,
+			checkedAt: now.Add(-(release.TTL + time.Second)),
+			wantCalls: 1,
+		},
+		{
+			name:      "no cache at all fetches",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := releaseStateRoot(t)
+			if tc.seed {
+				if err := release.Save(root, release.Cache{
+					Latest:    "v0.7.0",
+					CheckedAt: tc.checkedAt,
+					Source:    "test",
+				}); err != nil {
+					t.Fatalf("seed cache: %v", err)
+				}
+			}
+
+			ff := &fakeFetcher{tag: "v0.8.0"}
+			rt, _ := sentBinding(t)
+			rt.Fetcher = ff
+			rt.Now = func() time.Time { return now }
+
+			if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+
+			if ff.calls != tc.wantCalls {
+				t.Errorf("fetch calls = %d, want %d", ff.calls, tc.wantCalls)
+			}
+
+			c, ok, err := release.Load(root)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := "v0.8.0"
+			if tc.wantCalls == 0 {
+				want = "v0.7.0" // the fresh answer stays exactly as it was
+			}
+			if !ok || c.Latest != want {
+				t.Errorf("cache = (%+v, ok %v), want latest %s", c, ok, want)
+			}
+			if tc.wantCalls == 0 && !c.CheckedAt.Equal(tc.checkedAt) {
+				t.Errorf("fresh cache checked_at = %s, want it untouched at %s", c.CheckedAt, tc.checkedAt)
+			}
+		})
+	}
+}
+
 // TestTickSurvivesFetchError pins §4.4's failure rule: a fetch error is
 // swallowed, Tick still returns nil, and the cache is not written -- so an
 // offline machine retries next tick instead of recording a wrong answer.
+func TestTickSurvivesFetchError(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	t.Run("no cache yet", func(t *testing.T) {
+		root := releaseStateRoot(t)
+
+		ff := &fakeFetcher{err: errors.New("dial tcp: network is unreachable")}
+		rt, _ := sentBinding(t)
+		rt.Fetcher = ff
+		rt.Now = func() time.Time { return now }
+
+		if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+			t.Errorf("Tick = %v, want nil: a failed release check must not stop the daemon", err)
+		}
+		if ff.calls != 1 {
+			t.Errorf("fetch calls = %d, want 1 (the stale check tried)", ff.calls)
+		}
+		if _, err := os.Stat(filepath.Join(root, "release-check.json")); !os.IsNotExist(err) {
+			t.Errorf("cache stat = %v, want os.ErrNotExist: a failed fetch saves nothing", err)
+		}
+	})
+
+	t.Run("stale cache is left alone", func(t *testing.T) {
+		root := releaseStateRoot(t)
+		stale := release.Cache{Latest: "v0.7.0", CheckedAt: now.Add(-2 * release.TTL), Source: "test"}
+		if err := release.Save(root, stale); err != nil {
+			t.Fatalf("seed cache: %v", err)
+		}
+
+		ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
+		rt, _ := sentBinding(t)
+		rt.Fetcher = ff
+		rt.Now = func() time.Time { return now }
+
+		if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+			t.Errorf("Tick = %v, want nil", err)
+		}
+
+		c, ok, err := release.Load(root)
+		if err != nil || !ok {
+			t.Fatalf("Load = (%+v, ok %v, %v), want the seeded cache", c, ok, err)
+		}
+		if c.Latest != stale.Latest || !c.CheckedAt.Equal(stale.CheckedAt) {
+			t.Errorf("cache = %+v, want the stale answer untouched at %+v", c, stale)
+		}
+	})
+}
+
 // TestBackfillLeavesDoneBindingsAlone pins the DONE guard in
 // backfillPlannerID: a finished binding is history, and a tick must not
 // rewrite it even when its planner session now has a record.

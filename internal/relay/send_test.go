@@ -1,17 +1,21 @@
 package relay
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// seedBound binds webshop on the agy test candidate, headless (#303): the
-// runtime gets a fakeRunner, and no herdr agent is added for the builder --
-// there is none.
 func writePlan(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plan.md")
@@ -27,19 +31,329 @@ func writePlan(t *testing.T, body string) string {
 // writes to its own record from here on.
 // The role is selected with --agent at launch (#85); the plan prompt is
 // the plan prompt, on round 1 as on every other.
-// TestPromptRetryReportsANonStallFailureAsItself keeps the second failure
-// honest: the retry can fail for an unrelated reason -- the builder became
-// blocked between the two attempts, say -- and calling that a stall sends the
-// human looking at the wrong thing.
-// TestPromptRetryReportsASecondStallAsAStall is the other branch: two genuine
-// stalls stay labelled as such, and relay never fires a third time.
+// TestPromptRetryReportsANonStallFailureAsItself and
+// TestPromptRetryReportsASecondStallAsAStall are gone with the pane delivery
+// path itself (#303, closed-list item 1): promptWithRetry typed into a pane,
+// and there is no pane to type into any more. The headless equivalent -- a
+// process that cannot start -- is startRound's ErrRunnerUnavailable and the
+// spawn-failed switch, both covered in headless_test.go.
+func TestSendLogsThePlan(t *testing.T) {
+	rt, _ := seedBound(t)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	// seedBound's underlying Bind already wrote the builder bind's pick entry.
+	if len(entries) != 2 || entries[0].Kind != store.KindPick || entries[1].Kind != store.KindPlan || entries[1].Direction != store.DirToBuilder {
+		t.Fatalf("log = %+v", entries)
+	}
+	if !entries[1].Confirmed {
+		t.Error("an outbound plan is confirmed the moment the process is started")
+	}
+}
+
+func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
+	rt, _ := seedBound(t)
+	fg := &fakeGit{snapshotTreeID: "tree-abc123", headCommitID: "head-abc123"}
+	rt.Git = fg
+
+	src := writePlan(t, "# test plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Fatalf("round = %d, want 1", res.Round)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "tree-abc123" {
+		t.Errorf("RoundBaselineTree = %q, want tree-abc123", b.RoundBaselineTree)
+	}
+	if b.RoundBaselineHead != "head-abc123" {
+		t.Errorf("RoundBaselineHead = %q, want head-abc123", b.RoundBaselineHead)
+	}
+	if fg.snapshotCalls != 1 {
+		t.Errorf("snapshotCalls = %d, want 1", fg.snapshotCalls)
+	}
+	if !b.FinishPending {
+		t.Error("FinishPending = false, want true after Send opens a round")
+	}
+}
+
+func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
+	rt, _ := seedBound(t)
+	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# test plan"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "tree-abc123" || b.RoundBaselineHead != "" {
+		t.Errorf("baseline = (%q, %q), want (tree-abc123, \"\")", b.RoundBaselineTree, b.RoundBaselineHead)
+	}
+}
+
+func TestSendBaselineFailureTolerated(t *testing.T) {
+	rt, _ := seedBound(t)
+	fg := &fakeGit{snapshotTreeErr: errors.New("git broken")}
+	rt.Git = fg
+
+	src := writePlan(t, "# test plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Fatalf("round = %d, want 1", res.Round)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree != "" {
+		t.Errorf("RoundBaselineTree = %q, want empty", b.RoundBaselineTree)
+	}
+
+	// Verify plan was still copied and logged
+	copied, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	if err != nil || string(copied) != "# test plan" {
+		t.Fatalf("plan file error: %v, content: %q", err, string(copied))
+	}
+	log, err := rt.Store.ReadLog("webshop")
+	if err != nil || len(log) == 0 || log[len(log)-1].Kind != store.KindPlan {
+		t.Fatalf("expected plan log entry, got %v, err: %v", log, err)
+	}
+}
+
 // A binding that appears only after the pre-lock load must never be addressed
 // with the zero agent's empty pane id. See round 3, Task 1.
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
+func TestSendRefusesPaused(t *testing.T) {
+	rt := newRuntime(t)
+
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo", Worktree: "/wt/webshop", Branch: "relay/webshop",
+		Planner: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
+		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Round:   2, State: store.StatePaused,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save paused: %v", err)
+	}
+
+	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send on a paused binding must be refused")
+	}
+	if !strings.Contains(err.Error(), "paused") {
+		t.Errorf("err = %q, want it to mention paused", err)
+	}
+	if entries, _ := rt.Store.ReadLog("webshop"); len(entries) != 0 {
+		t.Errorf("no plan may be staged: log = %+v", entries)
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("no process may be started: %d specs", got)
+	}
+}
+
+func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
+	rt, b := seedBound(t)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift != "" {
+		t.Errorf("got Drift %q, want empty", res.Drift)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry: %+v", e)
+		}
+	}
+}
+
+func TestSendChangedTreeBetweenRounds(t *testing.T) {
+	rt, b := seedBound(t)
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+			Patch: []byte("patch content\n"),
+		},
+	}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 2 {
+		t.Fatalf("res.Round = %d, want 2", res.Round)
+	}
+	if res.Drift == "" {
+		t.Fatal("expected non-empty Drift line")
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var driftEntries []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			driftEntries = append(driftEntries, e)
+		}
+	}
+	if len(driftEntries) != 1 {
+		t.Fatalf("got %d KindDrift entries, want 1", len(driftEntries))
+	}
+	de := driftEntries[0]
+	if de.Round != 2 {
+		t.Errorf("drift entry Round = %d, want opening round 2", de.Round)
+	}
+	if !de.Confirmed {
+		t.Error("drift entry must have Confirmed == true")
+	}
+	if de.Direction != store.DirToPlanner {
+		t.Errorf("drift entry Direction = %v, want DirToPlanner", de.Direction)
+	}
+	if de.Path == "" {
+		t.Fatal("drift entry Path is empty")
+	}
+	patch, err := os.ReadFile(de.Path)
+	if err != nil {
+		t.Fatalf("read drift patch %s: %v", de.Path, err)
+	}
+	if string(patch) != "patch content\n" {
+		t.Errorf("patch = %q, want %q", string(patch), "patch content\n")
+	}
+}
+
 // TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport asserts that
 // an unconsumed pending report is still returned by Pull after a Send with drift.
 // An unconfirmed drift entry would shadow the report in pendingForPlanner.
+func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
+	rt, b := queuedBinding(t) // queues an unconfirmed report for round 1
+	b.Round = 2
+	b.RoundClosedTree = "tree-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.Git = &fakeGit{
+		snapshotTreeID: "tree-2",
+		diffResult: git.Diff{
+			Stat:  git.Stat{FilesChanged: 1, Insertions: 5, Deletions: 2},
+			Patch: []byte("patch content\n"),
+		},
+	}
+
+	src := writePlan(t, "plan round 2")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift == "" {
+		t.Fatal("expected drift to be detected")
+	}
+
+	payload, found, err := Pull(context.Background(), rt, "webshop")
+	if err != nil || !found {
+		t.Fatalf("Pull: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(payload, "001-report.md") {
+		t.Fatalf("Pull returned payload %q, want pending report", payload)
+	}
+}
+
+func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
+	rt, b := seedBound(t)
+	if b.RoundClosedTree != "" {
+		t.Fatalf("expected round 1 RoundClosedTree to be empty, got %q", b.RoundClosedTree)
+	}
+
+	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Drift != "" {
+		t.Errorf("res.Drift = %q, want empty", res.Drift)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindDrift {
+			t.Fatalf("unexpected KindDrift entry on round 1: %+v", e)
+		}
+	}
+}
+
+func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
+	rt, b := seedBound(t)
+	b.Round = 2
+	b.RoundClosedTree = "tree-closed"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	src := writePlan(t, "plan")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 2 {
+		t.Fatalf("round = %d, want 2", res.Round)
+	}
+
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RoundClosedTree != "" {
+		t.Errorf("RoundClosedTree = %q, want empty after successful send", b.RoundClosedTree)
+	}
+}
+
 // TestComposePromptNamesPlanReportAndMarkerInOrder pins the handoff contract:
 // the builder is told the plan, the report and the completion marker, in that
 // order, and told the marker is its last action (spec §3.3).
@@ -73,6 +387,154 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	}
 }
 
+func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
+	fr := newFakeRunner()
+	// Create an agy candidate without extra_args so TierYolo adds --dangerously-skip-permissions cleanly
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
+	rt.Runner = fr
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:      "webshop",
+		Candidate: "agy/test/m",
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Headless:  true,
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	src := writePlan(t, "# do yolo")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{Tier: "yolo", AllowYolo: true})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.RoundTier != "yolo" {
+		t.Errorf("RoundTier = %q, want %q", stored.RoundTier, "yolo")
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d specs, want 1", len(fr.specs))
+	}
+	hasYoloFlag := false
+	for _, arg := range fr.specs[0].Argv {
+		if arg == "--dangerously-skip-permissions" {
+			hasYoloFlag = true
+			break
+		}
+	}
+	if !hasYoloFlag {
+		t.Errorf("expected --dangerously-skip-permissions in argv, got %v", fr.specs[0].Argv)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var planEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+			planEntry = &entries[i]
+			break
+		}
+	}
+	if planEntry == nil {
+		t.Fatal("no plan entry found in log")
+	}
+	if planEntry.Tier != "yolo" {
+		t.Errorf("plan entry Tier = %q, want %q", planEntry.Tier, "yolo")
+	}
+
+	// Now round close via queueReport
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		entries, err := tx.ReadLog("webshop")
+		if err != nil {
+			return err
+		}
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil, nil)
+		if err != nil {
+			return err
+		}
+		return tx.Save(next)
+	})
+	if err != nil {
+		t.Fatalf("queueReport round close: %v", err)
+	}
+
+	closedB, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after close: %v", err)
+	}
+	if closedB.RoundTier != "" {
+		t.Errorf("RoundTier after round close = %q, want empty", closedB.RoundTier)
+	}
+}
+
+func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	src := writePlan(t, "# do default")
+	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var planEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Round == 1 && entries[i].Kind == store.KindPlan {
+			planEntry = &entries[i]
+			break
+		}
+	}
+	if planEntry == nil {
+		t.Fatal("no plan entry found in log")
+	}
+	if planEntry.Tier != "harness" {
+		t.Errorf("plan entry Tier = %q, want %q", planEntry.Tier, "harness")
+	}
+
+	// Verify argv is identical to pre-#141 (contains extra_args from candidate)
+	if len(fr.specs) != 1 {
+		t.Fatalf("got %d specs, want 1", len(fr.specs))
+	}
+	planPath := rt.Store.PlanPath("webshop", 1)
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	donePath := rt.Store.DonePath("webshop", 1)
+	b, _ := rt.Store.Load("webshop")
+	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	wantArgv := []string{
+		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
+		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",
+		"--dangerously-skip-permissions",
+	}
+	if !reflect.DeepEqual(fr.specs[0].Argv, wantArgv) {
+		t.Errorf("argv =\n%v\nwant =\n%v", fr.specs[0].Argv, wantArgv)
+	}
+	if !b.FinishPending {
+		t.Error("FinishPending = false, want true after Send opens a round")
+	}
+}
+
 // TestSendDryRunPaneMakesNoWrites pins the dry run's contract for a pane
 // binding: it describes the round Send would open and writes nothing -- no
 // staged plan, no log entry, no prompt, no change to the binding (#149).
@@ -92,11 +554,165 @@ func endProcess(t *testing.T, rt Runtime, b store.Binding) {
 // TestSendDryRunHeadlessShowsArgv pins that a dry run of a headless binding
 // reports the launch it would use -- the harness binary first -- without
 // starting anything.
+func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	if d.Mode != "headless" {
+		t.Errorf("Mode = %q, want headless", d.Mode)
+	}
+	h, ok := harness.Lookup("agy")
+	if !ok || h.Binary == "" {
+		t.Fatal("no agy harness to name")
+	}
+	if !strings.HasPrefix(d.Where, h.Binary) {
+		t.Errorf("Where = %q, want it to start with the harness binary %q", d.Where, h.Binary)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("a dry run must start nothing: %+v", fr.specs)
+	}
+}
+
 // TestSendDryRunGateNote pins the advisory gate note: a rate-limited candidate
 // still dry-runs, but the note says the daemon would switch after the start.
+func TestSendDryRunGateNote(t *testing.T) {
+	rt, _ := seedBound(t)
+
+	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# x"), SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	if !strings.Contains(d.GateNote, "rate-limited") {
+		t.Errorf("GateNote = %q, want it to say rate-limited", d.GateNote)
+	}
+	if !strings.Contains(d.GateNote, "would switch") {
+		t.Errorf("GateNote = %q, want it to say the daemon would switch", d.GateNote)
+	}
+}
+
 // TestSendDryRunErrorsMatchSend pins §6: for every precondition, the dry run
 // returns the identical error Send would, exit-1 text included, and writes
 // nothing on the way.
+func TestSendDryRunErrorsMatchSend(t *testing.T) {
+	type dryRunCase struct {
+		name  string
+		opts  SendOptions
+		setup func(t *testing.T) (Runtime, *fakeRunner, string, string)
+	}
+
+	broken := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedBound(t)
+		b, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.State = store.StateBroken
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		return rt, nil, "webshop", writePlan(t, "# x")
+	}
+	capped := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedBound(t)
+		b, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Round, b.RoundCap = 5, 3
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		return rt, nil, "webshop", writePlan(t, "# x")
+	}
+	headlessBusy := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		fr := newFakeRunner()
+		rt, _ := seedHeadless(t, fr)
+		// Prime a live process: unscripted, the fake reports it alive forever.
+		if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+			t.Fatalf("prime Send: %v", err)
+		}
+		return rt, fr, "webshop", writePlan(t, "# two")
+	}
+	headlessNoRunner := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedHeadless(t, newFakeRunner())
+		rt.Runner = nil
+		return rt, nil, "webshop", writePlan(t, "# x")
+	}
+
+	// The missing-plan case's path is fixed once: the error text names the
+	// file, and t.TempDir() mints a new directory on every call.
+	missingPlan := filepath.Join(t.TempDir(), "nope.md")
+	cases := []dryRunCase{
+		{"missing plan file", SendOptions{}, func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+			rt, _ := seedBound(t)
+			return rt, nil, "webshop", missingPlan
+		}},
+		{"unknown binding", SendOptions{}, func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+			rt, _ := seedBound(t)
+			return rt, nil, "ghost", writePlan(t, "# x")
+		}},
+		{"broken binding", SendOptions{}, broken},
+		{"round cap", SendOptions{}, capped},
+		{"headless busy", SendOptions{}, headlessBusy},
+		{"headless without runner", SendOptions{}, headlessNoRunner},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rtDry, frDry, nameDry, fileDry := c.setup(t)
+			rtSend, _, nameSend, fileSend := c.setup(t)
+
+			nBefore, err := rtDry.Store.ReadLog(nameDry)
+			if err != nil {
+				t.Fatalf("ReadLog: %v", err)
+			}
+			planPath := rtDry.Store.PlanPath(nameDry, 1)
+			_, statBefore := os.Stat(planPath)
+			planExisted := statBefore == nil
+			specsBefore := 0
+			if frDry != nil {
+				specsBefore = len(frDry.specs)
+			}
+
+			_, dryErr := SendDryRun(context.Background(), rtDry, nameDry, fileDry, c.opts)
+			if dryErr == nil {
+				t.Fatal("SendDryRun: want the error Send gives, got nil")
+			}
+			_, sendErr := Send(context.Background(), rtSend, nameSend, fileSend, c.opts)
+			if sendErr == nil {
+				t.Fatal("Send: want an error, got nil")
+			}
+			if dryErr.Error() != sendErr.Error() {
+				t.Errorf("dry run error %q != send error %q", dryErr, sendErr)
+			}
+
+			// The dry run wrote nothing.
+			if frDry != nil && len(frDry.specs) != specsBefore {
+				t.Errorf("dry run started a process: %+v", frDry.specs[specsBefore:])
+			}
+			nAfter, err := rtDry.Store.ReadLog(nameDry)
+			if err != nil {
+				t.Fatalf("ReadLog: %v", err)
+			}
+			if len(nAfter) != len(nBefore) {
+				t.Errorf("dry run changed the log: %d -> %d", len(nBefore), len(nAfter))
+			}
+			_, statAfter := os.Stat(planPath)
+			if (statAfter == nil) != planExisted {
+				t.Error("dry run changed whether the plan file exists")
+			}
+		})
+	}
+}
+
 // TestRenderDryRunShape pins the exact rendered shape of a dry run: the seven
 // labelled lines, in order, with the 1024-based size.
 func TestRenderDryRunShape(t *testing.T) {
@@ -154,3 +770,31 @@ func TestRenderDryRunShape(t *testing.T) {
 
 // TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
 // wins, and a plain Send takes policy.json verify.default.
+func TestVerifyPolicyDefault(t *testing.T) {
+	rt, _ := seedBound(t)
+	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !b.RoundVerify {
+		t.Errorf("RoundVerify = false, want true from policy verify.default")
+	}
+	endProcess(t, rt, b)
+
+	// An explicit --no-verify beats the policy default.
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "again"), SendOptions{Verify: ptr(false)}); err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundVerify {
+		t.Errorf("RoundVerify = true after Send{Verify: false}, want false")
+	}
+}
