@@ -2,7 +2,7 @@
   "name": "relay",
   "displayName": "relay",
   "description": "Planner/builder handoff: builder reports and NEEDS YOU pushed into this session; status/send/answer/done as tools",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {"name": "Fuad Daoud"},
   "repository": "https://github.com/fuad-daoud/relay",
   "license": "MIT",
