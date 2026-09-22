@@ -142,9 +142,25 @@ func TestListenRefusesWithoutTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = srv.ListenAndServe(context.Background(), ListenConfig{Addr: "127.0.0.1:0"})
-	if !errors.Is(err, ErrNoTLS) {
-		t.Fatalf("ListenAndServe without TLS err = %v, want ErrNoTLS", err)
+	// The refusal has to be observed with a deadline, not by calling
+	// ListenAndServe straight: take the guard away and it binds the port and
+	// blocks in Serve until the context is cancelled, so a direct call hangs
+	// forever instead of failing and pins nothing (#216).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe(ctx, ListenConfig{Addr: "127.0.0.1:0"})
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrNoTLS) {
+			t.Fatalf("ListenAndServe without TLS err = %v, want ErrNoTLS", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListenAndServe without TLS never returned: the no-certificate guard is gone and the server is serving")
 	}
 }
 
