@@ -26,10 +26,14 @@ After this change:
   Claude Code process they share. No verb guesses who its planner is.
 - **Builders are headless or remote only.** Pane mode, `relay answer`, and
   `relay stop`'s typed wrap-up are deleted.
-- **Planner delivery is push-only through a route that isn't a pane**: the
-  MCP channel (Claude Code), a #300 deliverer (opencode), or nothing (the
-  report waits for `relay wait` / `relay pull`). `relay doctor` fails when a
-  Claude Code planner has no relay plugin, or no hook, enabled.
+- **Planner delivery never goes through a pane.** It uses the MCP channel
+  (Claude Code launched with the channel flag), a #300 deliverer (opencode),
+  or the **background wait**. The background wait is the default for Claude
+  Code: after each `send`, the planner runs `relay wait` as a background Bash
+  command, and Claude Code wakes the session when that command exits (D6,
+  §4.5). A planner with none of the three still gets the report through
+  `relay pull`. `relay doctor` fails when a Claude Code planner has no relay
+  plugin, or no hook, enabled.
 
 ### 1.1 Evidence this rests on (all verified 2026-09-22, Claude Code 2.1.280, opencode 2.0.12)
 
@@ -89,6 +93,69 @@ project-settings hook that logs its stdin and env and writes to
   then `PendingForPlanner`, then `rt.Deliverers[b.Planner.Kind]`, and only
   then `FindAgent` and the pane path (`deliver.go:68–103`).
 
+**The channel needs a flag most users won't pass** (Claude Code docs,
+`code.claude.com/docs/en/channels` and `/channels-reference`, read
+2026-09-22):
+- During the research preview, `--channels` registers only plugins on an
+  allowlist. Anthropic's default list is "the channel plugins in
+  `claude-plugins-official`, which Anthropic curates at its discretion". The
+  plugin directory submission forms feed the community marketplace, "which
+  is not on the channel allowlist". The only route the docs name is an
+  Anthropic partner contact.
+- A Team or Enterprise admin can set `allowedChannelPlugins` (with
+  `channelsEnabled: true`) in managed settings. That list replaces
+  Anthropic's, so `{"marketplace": "relay", "plugin": "relay"}` there makes
+  plain `--channels plugin:relay@relay` work for that org.
+- Everyone else needs `--dangerously-load-development-channels`, which asks
+  for confirmation at every start.
+- Without either flag, `relay mcp` runs in tools mode (`internal/mcp/mode.go`
+  reads the parent's argv): the tools work and nothing is pushed. That is how
+  a plain `claude` launch runs today. It is the case every new user is in.
+
+**Background commands wake an idle session** (step 0b, first half). The
+Bash tool's `run_in_background` documents that a background command
+"re-invokes you when it exits". Probe, in an interactive Claude Code 2.1.280
+session in tools mode (a plain `claude` launch):
+- The command was `sleep 300; echo relay-wake-probe`, started mid-turn.
+- The turn then ended, and the session sat idle.
+- The command exited at 20:13:46 UTC.
+- A new turn opened carrying the task-completion notice. The command's output
+  was readable from it by 20:13:51.
+
+**The background wait delivers a real round to an idle planner** (step 0b,
+second half, 2026-09-22):
+- **Setup.** Binding `wake-probe`: a headless opencode builder
+  (`cline-pass/deepseek-v4.1-flash`), no gate, no reviewer. The planner was
+  an interactive Claude Code 2.1.280 session in tools mode, in herdr pane
+  `w0:p5`.
+- **Pane delivery was switched off.** A stand-in channel claim held
+  `channels/w0_p5.json`, so `DeliverPending` returned "planner has a
+  channel" and never typed into the pane, as after step 3.
+- **The waiter.** After `relay send`, the planner started
+  `relay wait --name wake-probe --timeout 30m; relay pull --name wake-probe`
+  with `run_in_background` and ended its turn.
+- **Round 2 timeline (UTC).** The planner's turn ended at 20:18:40. The
+  builder slept 120 s, and the waiter exited at 20:20:51. A new turn opened
+  at 20:20:52, and the waiter's output (the `relay pull` payload with the
+  report path) was in it. `relay pull` found the entry still pending, which
+  shows no other route had taken it.
+- **Round 1 doesn't count.** Its round closed 14 s after the send, while the
+  planner's turn was still running (it ended at 20:18:11, and the waiter
+  exited at 20:18:08). Claude Code queued the notice and delivered it at the
+  end of the turn. That is the right behaviour, but it doesn't show an idle
+  wake.
+- **Both rounds exited `WaitUnmarked` (2)**: this builder closed without the
+  completion marker. `relay pull` delivered the report anyway. The §4.5
+  instructions therefore treat every wait exit except `WaitTimeout` as "act
+  on the pull output", not only `WaitClosed`.
+
+**`relay wait` is already the right primitive** (`cmd/relay/main.go`
+`cmdWait`, `internal/relay/wait.go`): it blocks until the round closes or
+needs a human, prints the report path, and exits with a code for each outcome
+(`WaitClosed`, `WaitHalted`, `WaitNeedsYou`, `WaitGone`, `WaitTimeout`, …).
+Its `--timeout` defaults to 10 minutes and must be positive, which is
+shorter than many rounds.
+
 **Spike** (local branches `worktree-agent-ab573741dd87c1045` for Go and
 `worktree-agent-a47b65411336ce6a7` for everything else, base `15e2b74`, not
 pushed): the full deletion built, vetted and passed `make check`. 158 Go
@@ -104,7 +171,7 @@ files, +2,303 / −21,700 lines. Tests went from 1,951 to 1,553; some of the
 | D3 | `relay stop` loses the pane wrap-up (`stopPrompt`, `--grace`, `--now`). It already kills a headless round straight away. |
 | D4 | Halt, stall, stale and "all rounds finished" notifications are dropped. The `LogEntry` records stay. |
 | D5 | ORPHANED detection and the `herdr plugin install` path are dropped without a replacement. |
-| D6 | A planner with no push route gets reports through `relay wait` / `relay pull` only. The relay plugin, with its MCP channel and its hook, is expected to always be installed, and `relay doctor` enforces it for Claude Code. |
+| D6 | *Revised 2026-09-22 (§1.1, the channel allowlist).* A Claude Code planner that isn't on a channel gets each report through a **background wait**: `relay mcp` in tools mode tells the model, in its instructions and in every `send` result, to run `relay wait` for that binding as a background Bash command. Claude Code wakes the session when the command exits. The background wait is the default. The channel is an opt-in upgrade for users who pass the development flag or whose org allowlists relay. A planner with neither route still has `relay pull`. The relay plugin and its hook must always be installed, and `relay doctor` enforces that for Claude Code. A live channel isn't required. |
 | D7 | Pane-mode bindings: history rows stay readable; a pane binding still active at upgrade is closed with a message (§5.6). |
 | D8 | The planner doesn't pass its name by hand on every call. The hook exports it; `--planner` stays as an override only. |
 
@@ -246,7 +313,9 @@ exported; relay resolves this session through its host process."
 Removed: `planner_pane`, `planner_status`, `planner_focused`, `workspace`,
 `builder_pane`, `foreign`, `sub_agents`, `nudge`, `hold`, `stop_grace*`,
 `herdr_error`. Added: `planner_id`, `planner_name`, `planner_route`
-(`channel` | `deliverer` | `none`), `planner_route_live` (bool). Every
+(`channel` | `deliverer` | `pull`), `planner_route_live` (bool). `pull`
+covers the background wait (D6). The daemon can't tell whether a background
+wait is running, so `pull` is reported as a route, not as a fault. Every
 consumer in the tree is updated in the same PR. The remote wire protocol
 (`internal/remote/proto.go`) carries none of these fields and doesn't change.
 
@@ -351,12 +420,41 @@ and session; its `session_id` is the caller's; its `seen_at` is now.
 - The `status` tool filters by planner id. The `answer` tool is deleted
   (D2). The instructions text loses `broken` and `orphaned` and keeps
   `report` and `needs_you`.
+- **The instructions depend on the mode** (D6). The mode is known before
+  `initialize` is answered, so `relay mcp` serves one of two texts:
+  - *channel*: today's text (events arrive as `<channel source="relay">`
+    blocks);
+  - *tools*: no events arrive. After every `send`, start the background wait
+    for that binding and end the turn. When it exits, its output is the
+    report or the reason it stopped; act on it as you would a `report` or
+    `needs_you` event.
+- **In tools mode, the `send` tool result carries the command**, so the model
+  doesn't have to remember it from the instructions:
+
+  ```
+  background wait (run with run_in_background, then end your turn):
+    relay wait --name <name> --timeout <budget>; relay pull --name <name>
+  ```
+
+  `<budget>` is the binding's round budget (default 24h, `cmd/relay/main.go`
+  `send --timeout`), so the wait doesn't time out before the round does.
+  `relay pull` prints the report text and marks the entry delivered
+  (`route=pull`, §5.4). The model acts on the pull output after every exit
+  except `WaitTimeout`, including `WaitUnmarked` and `WaitHalted`: a real
+  builder closed a round unmarked twice in step 0b (§1.1), and the report
+  was still there. On `WaitNeedsYou` pull prints `nothing pending`, and the
+  wait's own line gives the reason. On `WaitTimeout` the model runs
+  `relay status --name <name>`, and starts the background wait again if the
+  round is still running.
+- In channel mode the `send` result doesn't include the command. A report
+  must not arrive twice, once by channel and once by pull. If it does
+  anyway, `relay pull` prints `nothing pending`, which is harmless.
 
 ### 4.6 Planner delivery (`DeliverPending`, after PR 3)
 
 ```
 DeliverPending(ctx, rt, b) (Binding, Delivery, error)
-Delivery.Route = "channel" | "deliverer:<kind>" | "none"
+Delivery.Route = "channel" | "deliverer:<kind>" | "pull"   # "pull": left pending for relay pull
 ```
 
 Postcondition: a pending entry is either handed to exactly one route and
@@ -383,7 +481,8 @@ today's `--assume-dead` rebind. There is no separate `adopt` verb.
 |---|---|---|
 | relay plugin enabled in Claude Code (`enabledPlugins["relay@relay"] == true` in user or project settings) | a `claude` candidate or planner exists | **FAIL** (D6) |
 | the installed plugin's version ships the `SessionStart` hook | same | FAIL |
-| run from a Claude Code session: `Resolve()` succeeds, and a live channel claim exists for that planner | `Detect` = claude | FAIL |
+| run from a Claude Code session: `Resolve()` succeeds, and a `relay mcp` process is a child of the planner's host process | `Detect` = claude | FAIL |
+| same session: a live channel claim exists for that planner | `Detect` = claude | INFO when absent, never FAIL (D6): "tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relay@relay`, or have an org admin add relay to `allowedChannelPlugins`" |
 | opencode server reachable (`$XDG_STATE_HOME/opencode/service.json`, loopback) | an opencode planner record exists | WARN |
 | planner records with `seen_at` older than 7 days and no live binding | always | INFO: suggest `relay planner forget` |
 
@@ -447,11 +546,14 @@ if d := rt.Deliverers[b.Planner.Kind]; d != nil:              # #300, unchanged
     out, reason := d.Deliver(ctx, b.Planner, PushText(e), e.Path, e.TS)
     if out confirmed: mark delivered, route=deliverer:<kind>; return
     leave pending, reason; return
-leave pending, reason="no push route for planner <name> (<kind>): relay wait/pull"
+leave pending, reason="awaiting pull for planner <name> (<kind>)"
 ```
 
 A pending entry stays pending until a route takes it or `relay pull` reads
-it. `relay pull` marks it delivered with `route=pull`.
+it. `relay pull` marks it delivered with `route=pull`. For a Claude Code
+planner in tools mode, this is the normal path, not a fault: the background
+wait's `relay pull` is what delivers the report (D6, §4.5). There is no
+`Deliverers["claude"]`.
 
 ### 5.5 Daemon tick (after PR 3; `ListAgents` is gone)
 
@@ -487,7 +589,7 @@ its planner's session (`BySession`) back-fills `PlannerID`.
 | `ErrNameTaken`, `ErrSessionTaken`, `ErrHostTaken`, `ErrInUse` | yes | CLI exit 1 |
 | any error inside `init --hook` | yes | never an exit ≠ 0; `additionalContext` note + stderr; `doctor` FAIL on the next run |
 | registry file corrupt | no for that record | `doctor` FAIL naming the file; verbs that don't resolve are unaffected |
-| no push route | yes | a status `planner_route=none` row; the report waits for `pull` |
+| no push route | yes | a status `planner_route=pull` row; the report waits for `relay pull`. For a Claude Code planner in tools mode that is the background wait, and not an error (D6) |
 | deliverer refusal (#300's taxonomy) | per #300 | unchanged |
 
 ### 6.2 Observability
@@ -513,10 +615,18 @@ that list fails review.
 `PATH` writes the report and done marker. The scenario:
 1. run `relay planner init --hook claude` on a canned `HookInput`, with a
    temp `CLAUDE_ENV_FILE`;
-2. start an in-process `relay mcp` stdio client with `CLAUDECODE=1`;
+2. start an in-process `relay mcp` stdio client with `CLAUDECODE=1` and
+   `--mode channel`. The test binary's argv carries no channel flag, so
+   the mode is set explicitly;
 3. bind, send, receive the report on the channel, pull, done;
 4. run the hook again with `source: clear` and a new `session_id`, and
-   assert the same planner id and a moved session.
+   assert the same planner id and a moved session;
+5. **tools mode (D6)**: start `relay mcp --mode tools`, bind, and call
+   `send`. Assert that the result carries the §4.5 background-wait command
+   with this binding's name and budget. Run that command as a subprocess and
+   assert that its output is the report text, that the entry is marked
+   delivered with `route=pull`, and that nothing was written to a channel
+   mailbox.
 
 The herdr-session e2e (`internal/relay/e2e_test.go`) and the fake herdr in
 `internal/e2e/fakes_test.go` are deleted. CLAUDE.md's "run `make e2e` after
@@ -531,11 +641,12 @@ human until step 4, because #310 detects `plugin-release` and
 | step | owner | deliverable | depends on | done when |
 |---|---|---|---|---|
 | 0 | planner | **done 2026-09-22** (§1.1): Claude session and hook behaviour verified; opencode `shell.env` unverified | -- | -- |
+| 0b | planner | **done 2026-09-22** (§1.1): both halves passed. **Background-wait probe** (D6): in an interactive Claude Code 2.1.280 session in tools mode, start a background Bash command that exits after the turn has ended, and record whether the idle session is re-invoked with its output. Then repeat with `relay wait` on a real headless round. Record the result in §1.1 | -- | both runs wake the idle session. **If either doesn't, halt**: D6 goes back to the human, and steps 3–5 don't start |
 | 1 | builder | **Planner identity**, with herdr still in the tree: `internal/planner`, `relay planner init/list/rename/forget`, the plugin's `SessionStart` hook, `Binding.PlannerID`, bind/add/fork/ask use `Resolve` (herdr is still the pane path's source of `PaneID`), `relay mcp` joins by host and claims by planner id, MCP `status` filters by planner, ingest uses record ids, doctor's plugin + hook checks | #300 ✓ | `make check`. **Live check by the planner, not the builder:** a fresh Claude session in a pane gets `RELAY_PLANNER` and the "You are relay planner" context; `/clear` then a prompt keeps the same id; `relay mcp`'s claim names that id |
 | 2 | builder | **Headless-only builders**: delete pane builder mode, `relay answer` + MCP tool + `pick` answer, `stop --grace/--now` and `stopPrompt`, ui pane capture, harness `PaneArgs`/`Integration`/`SubAgents`/coverage, the pane usage reader, the `--builder <pane>`/`--workspace`/`--assume-dead`/`--held-grace` flags; `--headless` becomes a no-op; the §5.6 retire rule | 1 | `make check`; no builder code path reads a pane; the ported tests listed |
-| 3 | builder | **Planner delivery without herdr**: §5.4 routes, delete pane delivery and `held.go`, the notifications (D4), daemon `ListAgents`, ORPHANED/BROKEN-from-herdr, status JSON §3.6 and every consumer, the `internal/herdr` package, every `HERDR_*` read | 2 | `grep -rli herdr --include=*.go . \| grep -v _test` is empty; `make check` |
-| 4 | builder | **Everything that isn't Go**: packaging, `scripts/plugin-*`, `check-plugin-version` reduced to the Claude plugin manifests, `make release` and `release.yml`, README/CONTRIBUTING/CLAUDE.md, architect and reviewer definitions (and `TestArchitectHandoffIsSharedAcrossKinds`), `release.Provenance` without the plugin kinds, issue templates, `dist/` comments | 3 | `make check`; `grep -rli herdr . --exclude-dir=.git` lists only `docs/specs`, `docs/plans` and `docs/superpowers` history |
-| 5 | builder | **Headless e2e in CI** (§6.4) | 3 | the CI job runs it; mutation check: break §5.4's channel route, and the test fails |
+| 3 | builder | **Planner delivery without herdr**: §5.4 routes, delete pane delivery and `held.go`, the notifications (D4), daemon `ListAgents`, ORPHANED/BROKEN-from-herdr, status JSON §3.6 and every consumer, the `internal/herdr` package, every `HERDR_*` read; `relay mcp`'s mode-dependent instructions and the tools-mode `send` result (§4.5); doctor's mcp-child and channel-INFO rows (§4.8) | 2, 0b | `grep -rli herdr --include=*.go . \| grep -v _test` is empty; `make check` |
+| 4 | builder | **Everything that isn't Go**: packaging, `scripts/plugin-*`, `check-plugin-version` reduced to the Claude plugin manifests, `make release` and `release.yml`, README/CONTRIBUTING/CLAUDE.md (the README's Claude Code section leads with a plain `claude` launch and the background wait. The channel flag and the `allowedChannelPlugins` snippet are presented as the opt-in upgrade, with the allowlist facts from §1.1), architect and reviewer definitions (the Claude architect's "Handing off" names the background wait after every send) (and `TestArchitectHandoffIsSharedAcrossKinds`), `release.Provenance` without the plugin kinds, issue templates, `dist/` comments | 3 | `make check`; `grep -rli herdr . --exclude-dir=.git` lists only `docs/specs`, `docs/plans` and `docs/superpowers` history |
+| 5 | builder | **Headless e2e in CI** (§6.4) | 3 | the CI job runs it; mutation checks: break §5.4's channel route, and the test fails; drop the command from the tools-mode `send` result, and scenario 5 fails |
 | 6 | follow-up issue | **relay opencode plugin**: `shell.env` exports `RELAY_PLANNER`; `chat.message`/`event` supply the `ses_` id to `relay planner init --kind opencode`. It first needs a probe that gets an `opencode run` to finish with a valid plugin loaded (§1.1) | 1 | a probe transcript in the issue |
 
 After step 5: #303 closes. #205 closes as superseded. #292 (rename) can
