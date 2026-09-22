@@ -30,22 +30,13 @@ func providerOf(tok string) string {
 // move it to policy.json with the other cooldowns.
 const SpawnFailedCooldown = 10 * time.Minute
 
-// mutateLedger loads, prunes, applies fn and saves the ledger under the
-// state lock, so a bind recording a failure and a planner running
-// `relay unavailable` in another pane serialise on the flock that already
-// serialises bind.json (spec §3.3).
-func mutateLedger(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
-	return rt.Store.WithLock(func(*store.Tx) error {
-		return mutateLedgerLocked(rt, fn)
-	})
-}
-
-// mutateLedgerLocked is mutateLedger for a caller that already holds the
-// state lock -- switchBuilder, via resolveBuilder's tx parameter (#61 step
-// 6). It does the same load-prune-apply-save without taking Store.WithLock
-// itself, since that lock is a plain mutex and is not reentrant: a second
-// Lock from the same goroutine that already holds it blocks forever rather
-// than erroring.
+// mutateLedgerLocked loads, prunes, applies fn and saves the ledger for a
+// caller that already holds the state lock, so every ledger write
+// serialises on the flock that already serialises bind.json (spec §3.3).
+// It does not take Store.WithLock itself: that lock is a plain mutex and is
+// not reentrant, so a second Lock from the goroutine that already holds it
+// blocks forever rather than erroring. (Its unlocked twin, mutateLedger,
+// went with #302: Available was its last caller.)
 func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
 	l, err := ledger.Load(rt.LedgerPath)
 	if err != nil {
