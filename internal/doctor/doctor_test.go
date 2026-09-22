@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/release"
 )
 
 // shippedDoc returns the exact bytes this relay ships for role/kind, so a
@@ -42,6 +43,13 @@ type fakeEnv struct {
 	probeErr      error
 	commandOut    []byte
 	commandErr    error
+
+	// release* are what ReleaseState reports: the running version, the cached
+	// latest, whether that cache is usable, and the install kind (#293).
+	releaseRunning string
+	releaseLatest  string
+	releaseOK      bool
+	releaseKind    release.Kind
 }
 
 func (f *fakeEnv) HerdrVersion(ctx context.Context) (string, error) {
@@ -116,6 +124,10 @@ func (f *fakeEnv) Command(ctx context.Context, bin string, args ...string) ([]by
 		return nil, f.commandErr
 	}
 	return f.commandOut, nil
+}
+
+func (f *fakeEnv) ReleaseState() (string, string, bool, release.Kind) {
+	return f.releaseRunning, f.releaseLatest, f.releaseOK, f.releaseKind
 }
 
 func findCheck(report Report, group, name string) *Check {
@@ -1236,5 +1248,124 @@ func TestOpencodeAllowlistRow(t *testing.T) {
 		if c.Name == "external_directory" {
 			t.Errorf("claude must not carry the opencode allowlist row: %+v", c)
 		}
+	}
+}
+
+// TestDoctorReleaseCheck walks §4.5's table through fakeEnv: every row, the
+// Fix for each install variant, and the standing promise that a stale relay
+// is a warning, never a failure.
+func TestDoctorReleaseCheck(t *testing.T) {
+	tests := []struct {
+		name         string
+		env          fakeEnv
+		wantSeverity Severity
+		wantDetail   string
+		wantFix      string
+	}{
+		{
+			name:         "no cache: not checked",
+			env:          fakeEnv{herdrVer: "0.9.0"},
+			wantSeverity: SevOK,
+			wantDetail:   "not checked",
+		},
+		{
+			name: "unparseable running side: not checked",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "(devel)", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindLocalBuild,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "not checked",
+		},
+		{
+			name: "unparseable latest side: not checked",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "not-a-tag",
+				releaseOK: true, releaseKind: release.KindGoInstall,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "not checked",
+		},
+		{
+			name: "unknown install kind: not checked",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindUnknown,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "not checked",
+		},
+		{
+			name: "local build: nothing to update to",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.7.0-8-gbd8aed0", releaseLatest: "v0.8.0",
+				releaseOK: true, releaseKind: release.KindLocalBuild,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "local build v0.7.0-8-gbd8aed0; nothing to update to",
+		},
+		{
+			name: "latest not newer: current",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.7.0", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindGoInstall,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "v0.7.0 is current",
+		},
+		{
+			name: "behind a plugin release: re-run the fetch",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindPluginRelease,
+			},
+			wantSeverity: SevWarn,
+			wantDetail:   "v0.6.0 is behind v0.7.0",
+			wantFix:      "sh scripts/plugin-fetch.sh",
+		},
+		{
+			name: "behind a plugin source build: re-run the build",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindPluginSource,
+			},
+			wantSeverity: SevWarn,
+			wantDetail:   "v0.6.0 is behind v0.7.0",
+			wantFix:      "sh scripts/plugin-build.sh",
+		},
+		{
+			name: "behind a go install: go install",
+			env: fakeEnv{
+				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseOK: true, releaseKind: release.KindGoInstall,
+			},
+			wantSeverity: SevWarn,
+			wantDetail:   "v0.6.0 is behind v0.7.0",
+			wantFix:      "go install github.com/fuad-daoud/relay/cmd/relay@latest",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tc.env
+			rep := Run(context.Background(), &env, nil)
+
+			c := findCheck(rep, "", "release")
+			if c == nil {
+				t.Fatal("release check not found in report")
+			}
+			if c.Severity == SevFail {
+				t.Errorf("release severity = SevFail; a stale relay runs fine")
+			}
+			if c.Severity != tc.wantSeverity {
+				t.Errorf("release severity = %v, want %v (detail %q)", c.Severity, tc.wantSeverity, c.Detail)
+			}
+			if c.Detail != tc.wantDetail {
+				t.Errorf("release detail = %q, want %q", c.Detail, tc.wantDetail)
+			}
+			if c.Fix != tc.wantFix {
+				t.Errorf("release fix = %q, want %q", c.Fix, tc.wantFix)
+			}
+		})
 	}
 }

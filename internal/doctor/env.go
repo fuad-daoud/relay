@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -47,16 +48,35 @@ type Env interface {
 	// no credential). bin not being on PATH is a plain error, like any other
 	// exec.CommandContext failure.
 	Command(ctx context.Context, bin string, args ...string) ([]byte, error)
+	// ReleaseState returns the running version, the cached latest (ok false
+	// when there is no usable cache) and the install kind (#293). Cache read
+	// only: it never touches the network, which is why the release check can
+	// be unconditional while every claim it makes is one relay can prove.
+	ReleaseState() (running string, latest string, ok bool, kind release.Kind)
 }
 
 type realEnv struct {
 	herdr HerdrClient
 	store *store.Store
+
+	// self is relay's own build fact. Only package main can see
+	// buildVersion(), so the caller gathers it and passes it to NewEnv; the
+	// zero value means this install cannot be classified, which
+	// ReleaseState reports as release.KindUnknown.
+	self release.Inputs
 }
 
 // NewEnv returns a real Env backed by the given herdr client and store.
-func NewEnv(client HerdrClient, st *store.Store) Env {
-	return &realEnv{herdr: client, store: st}
+//
+// self is release.Detect's Inputs for the running relay, optional because a
+// caller that never reads ReleaseState (the bind preflight) need not gather
+// it: the check then reads as "not checked" rather than guessing.
+func NewEnv(client HerdrClient, st *store.Store, self ...release.Inputs) Env {
+	env := &realEnv{herdr: client, store: st}
+	if len(self) > 0 {
+		env.self = self[0]
+	}
+	return env
 }
 
 func (e *realEnv) HerdrVersion(ctx context.Context) (string, error) {
@@ -128,6 +148,25 @@ func versionField(out string) (string, error) {
 
 func (e *realEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, bin, args...).Output()
+}
+
+// ReleaseState reads the daemon's cached answer and classifies this install.
+// It composes the cache path from store.DefaultRoot() rather than building an
+// XDG path by hand (#42), and a root or cache it cannot read is not an error:
+// it is "not checked", which is what every unrefreshed, offline or
+// unclassifiable install reads as.
+func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
+	kind := release.Detect(e.self)
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return e.self.Version, "", false, kind
+	}
+	cached, ok, err := release.Load(root)
+	if err != nil {
+		return e.self.Version, "", false, kind
+	}
+	return e.self.Version, cached.Latest, ok, kind
 }
 
 func (e *realEnv) Probe(dir string) error {

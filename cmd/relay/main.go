@@ -154,6 +154,53 @@ func buildVersion() string {
 	return "(devel)"
 }
 
+// releaseInputs gathers what release.Detect needs about the running binary:
+// the version buildVersion chose, whether the module rather than an ldflags
+// stamp supplied it, and the herdr-plugin.toml sitting beside the executable
+// (the marker of either plugin install, since both leave ./relay in that
+// directory). Disk reads only -- the release check never touches the network
+// to learn who it is.
+func releaseInputs() release.Inputs {
+	in := release.Inputs{Version: buildVersion()}
+
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			in.ExeDir = filepath.Dir(resolved)
+			in.ManifestVersion = manifestVersion(filepath.Join(in.ExeDir, "herdr-plugin.toml"))
+		}
+	}
+
+	// FromModule is true only when the ldflags stamp was empty and the module
+	// version was not: exactly buildVersion's own fallback order.
+	if version == "" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+			in.FromModule = true
+		}
+	}
+	return in
+}
+
+// manifestVersion reads the version line of a plugin manifest the way
+// scripts/plugin-fetch.sh does (sed -n 's/^version = "\(.*\)"$/\1/p'): a
+// missing file or a manifest without the line is "", which is what makes a
+// plugin install unrecognisable -- not an error.
+func manifestVersion(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), `version = "`)
+		if !ok {
+			continue
+		}
+		if v, ok := strings.CutSuffix(v, `"`); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // parseFlags parses one subcommand's flags. It turns `-h` into a clean exit:
 // the flag package has already printed usage, so the caller just returns.
 //
