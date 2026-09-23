@@ -108,17 +108,23 @@ None of them may import it: `policy` keeps validating its legacy `order` and
   - `f == nil`: **legacy derivation** (`Source = "legacy"`). R *serves* on
     exactly the candidates whose `roles` contain R (today's
     `Candidate.Serves`).
-    - If `pol.order[R]` is present, R's candidates are its tokens that
-      serve R, in order, and `Ordered = true`. A token that doesn't serve R
-      stays a `relay policy` warning (`policy_view.go:72`), computed from
-      the legacy files as today.
-    - Otherwise R's candidates are every serving candidate in
-      `candidates.json` order, with `Ordered = false`. The resolver keeps
-      today's rule for that case: one candidate is picked, and more than one
-      is `ErrAmbiguousCandidate`.
+    - R's `Ranked` list reproduces `rankedList` (`internal/relay/candidate.go:108-139`)
+      exactly:
+      1. first, each `pol.order[R]` token that parses, is configured, serves R
+         and is not a repeat, with `Position = its 1-based index in
+         order[R]`. The index counts skipped tokens too, as today's
+         "order #N" does;
+      2. then every other serving candidate, in `Set.ForRole` order (sorted
+         by ref), with `Position = 0` ("unlisted, after order").
+    - `Ordered = len(pol.order[R]) > 0`. When it is false and more than one
+      candidate serves R, the resolver keeps today's `ErrAmbiguousCandidate`.
+    - A token that doesn't serve R stays a `relay policy` warning
+      (`policy_view.go:72`), computed from the legacy files as today.
     - R's tier stays today's chain (§4.1). Nothing about today's behaviour
       changes.
-  - With `roles.json`, a role's `candidates` list is always `Ordered = true`.
+  - With `roles.json`, `Ranked` is the role's `candidates` tokens that are
+    configured and have a definition for their kind, each with `Position =
+    its 1-based index`. There are no unlisted entries, and `Ordered = true`.
 - `Registry.Names() []string`: built-ins first in table order, then new roles
   sorted.
 - `Registry.Role(name) (Role, bool)`.
@@ -136,8 +142,9 @@ None of them may import it: `policy` keeps validating its legacy `order` and
 - `Registry.Source() string`: `"roles.json"` or `"legacy"`.
 
 `Role` holds `Name`, `Shape` (`harness.ShapeBuilder` for writer,
-`harness.ShapeConsult` for reader, in S1), `Gate bool`, `Candidates []string`,
-`Ordered bool`,
+`harness.ShapeConsult` for reader, in S1), `Gate bool`, `Candidates []string`
+(the tokens as written: `order[R]` in legacy mode, `candidates` in the file),
+`Ranked []Ranked{Token string; Position int}`, `Ordered bool`,
 `Tier (harness.Tier, bool)`, `Builtin bool`, and
 `Definitions map[kind]Definition{Agent string; Requires []string; Custom bool}`,
 where the map holds the resolved definition for every kind the role runs on.
@@ -173,7 +180,7 @@ and `pol.TierFor` directly.
 | `internal/relay/ask.go:132` | `RoleByName(opts.Role)`, and a shape check | `rt.Roles.Role` + `Spec`. A writer role returns `ErrNotAConsultRole`, whose text is generalised to "a writer role; bind it / send it, not relay ask" |
 | `internal/relay/names.go:20` | built-in consult roles | every reader role in the registry |
 | `internal/relay/probe.go:79` | first known role in `c.Roles` | the first role in `rt.Roles.Names()` that `Serves` this candidate; none returns `"serves no role"` |
-| `internal/relay/candidate.go:186` `resolveCandidate` | `set.ForRole` + `pol.OrderFor` | `rt.Roles.Role(role)`: `Candidates` in order when `Ordered`, else today's one-or-ambiguous rule. An explicit token must satisfy `Serves` or it is `ErrRoleNotServed` |
+| `internal/relay/candidate.go:108,186` `rankedList`, `resolveCandidate` | `set.ForRole` + `pol.OrderFor` | `rt.Roles.Role(role).Ranked` (`Position > 0` → `HowOrder`, `0` → `HowUnlisted`). Today's rules stay: one candidate → `HowSole`; several and `!Ordered` → ambiguous. An explicit token must satisfy `Serves`, or it is `ErrRoleNotServed` |
 | `internal/relay/policy_view.go:39,72,115,184` | `harness.RoleNames()`, `c.Roles` | `rt.Roles.Names()`, `Serves` |
 | `internal/relay/candidates_list.go:50` | the `roles` column from `c.Roles` | the roles that `Serves` the candidate, from the registry |
 | `internal/harness/roles.go:54` `osRoleChecker.Missing(kind)` | the builder's shipped `Definitions` | `Missing(kind string, defs []string)`: the caller passes the resolved `Spec(...).Definitions`. `MissingDefinitions` resolves a non-shipped name to that kind's path convention (§5) |
