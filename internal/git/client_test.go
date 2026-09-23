@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -2207,5 +2208,126 @@ func TestNormalizeOriginURL(t *testing.T) {
 				t.Errorf("NormalizeOriginURL(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+// TestClientSetsNoOptionalLocks pins relay's git reads to GIT_OPTIONAL_LOCKS=0:
+// without it a read can take the repository's index.lock, and that lock is what
+// fails a builder's concurrent commit in the same worktree.
+//
+// The client's binary is a shell script in place of git, because NewClient
+// takes the binary path. It prints the variable's value where each path parses
+// its output: plain text for run, a numstat line plus the patch for DiffTrees.
+func TestClientSetsNoOptionalLocks(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	fakeGit := filepath.Join(dir, "fake-git")
+	script := `#!/bin/sh
+case "$*" in
+*--numstat*)
+	printf '1\t1\tfile.txt\n'
+	;;
+*diff*)
+	printf 'GIT_OPTIONAL_LOCKS=%s\n' "${GIT_OPTIONAL_LOCKS:-unset}"
+	;;
+*)
+	printf '%s\n' "${GIT_OPTIONAL_LOCKS:-unset}"
+	;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	client := NewClient(fakeGit, 5*time.Second, DefaultMaxPatchBytes)
+
+	// The run path: every Client method but DiffTrees' patch read uses it.
+	sha, err := client.HeadCommit(ctx, dir)
+	if err != nil {
+		t.Fatalf("HeadCommit through the fake git: %v", err)
+	}
+	if sha != "0" {
+		t.Errorf("run path GIT_OPTIONAL_LOCKS = %q, want %q", sha, "0")
+	}
+
+	// The diff path: DiffTrees' patch read builds its own exec.Command, so it
+	// does not inherit run's environment by construction.
+	d, err := client.DiffTrees(ctx, dir, "from", "to")
+	if err != nil {
+		t.Fatalf("DiffTrees through the fake git: %v", err)
+	}
+	if got := strings.TrimSpace(string(d.Patch)); got != "GIT_OPTIONAL_LOCKS=0" {
+		t.Errorf("diff path reported %q, want GIT_OPTIONAL_LOCKS=0", got)
+	}
+}
+
+// TestStatusDoesNotTakeIndexLock is the regression test for the collision that
+// failed TestRemoteTierOverWire: relay's git read took the index lock while a
+// builder was committing in the same worktree, and the builder's commit died
+// with `fatal: Unable to create '.../index.lock': File exists`.
+//
+// Real git, two assertions. First, a status read over an index that a plain
+// `git status` would refresh leaves .git/index byte-for-byte alone: writing it
+// means taking index.lock, and it is GIT_OPTIONAL_LOCKS=0 that makes git skip
+// that write (git asks for the index lock only when optional locks are on).
+// Drop the variable from gitEnv and this assertion fails, because git then
+// rewrites the index. Second, with .git/index.lock held by hand the way a
+// concurrent git write holds it, the read still succeeds.
+func TestStatusDoesNotTakeIndexLock(t *testing.T) {
+	ctx := context.Background()
+	repoDir := t.TempDir()
+
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+
+	tracked := filepath.Join(repoDir, "a.txt")
+	if err := os.WriteFile(tracked, []byte("one\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-qm", "init")
+
+	// Backdate the tracked file: the index's recorded stat data is then stale,
+	// so a plain `git status` re-hashes the file, finds its content unchanged,
+	// and rewrites the index to record the new mtime.
+	stale := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(tracked, stale, stale); err != nil {
+		t.Fatalf("backdate a.txt: %v", err)
+	}
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	indexPath := filepath.Join(repoDir, ".git", "index")
+	indexBefore, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read .git/index: %v", err)
+	}
+
+	dirty, err := client.Dirty(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("Dirty with a stale index: %v", err)
+	}
+	if dirty {
+		t.Error("Dirty reported a change, but a.txt's content is unchanged")
+	}
+	indexAfter, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read .git/index after the status read: %v", err)
+	}
+	if !bytes.Equal(indexBefore, indexAfter) {
+		t.Error("the status read rewrote .git/index, so it took index.lock; a builder's commit in this worktree would fail against it")
+	}
+
+	// The same read with the lock held by hand, as another process would hold
+	// it: relay's read must still succeed.
+	lockPath := filepath.Join(repoDir, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, nil, 0o644); err != nil {
+		t.Fatalf("hold .git/index.lock: %v", err)
+	}
+	defer os.Remove(lockPath)
+
+	if _, err := client.Dirty(ctx, repoDir); err != nil {
+		t.Fatalf("Dirty while .git/index.lock is held: %v", err)
 	}
 }
