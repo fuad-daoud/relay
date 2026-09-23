@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/db"
@@ -30,7 +31,8 @@ func cmdPlanner(args []string) error {
 	const usage = `usage: relay planner init [--name N] [--kind K --session S] [--hook claude]
        relay planner list [--json]
        relay planner rename <id|name> <new-name>
-       relay planner forget <id|name>`
+       relay planner forget <id|name>
+       relay planner prune [--dry-run]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -46,6 +48,8 @@ func cmdPlanner(args []string) error {
 		return cmdPlannerRename(args[1:])
 	case "forget":
 		return cmdPlannerForget(args[1:])
+	case "prune":
+		return cmdPlannerPrune(args[1:])
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
@@ -287,24 +291,53 @@ func cmdPlannerList(args []string) error {
 		return err
 	}
 
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(records)
+	// The count of non-DONE bindings naming each planner, from the same store
+	// walk forget's guard uses. Both it and the state column are derived here,
+	// not stored on the record: the file is identity, and this is the
+	// machine's present answer about it.
+	counts, err := plannerBindingCounts(rt)
+	if err != nil {
+		return err
 	}
 
-	fmt.Printf("%-20s %-16s %-9s %-24s %-8s %s  %s\n",
-		"name", "id", "kind", "session", "host", "cwd", "seen")
+	if *asJSON {
+		views := make([]plannerListView, 0, len(records))
+		for _, rec := range records {
+			views = append(views, plannerListView{
+				Record:   rec,
+				State:    string(planner.RecordState(rec, rt.ProcStart)),
+				Bindings: counts[rec.ID],
+			})
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(views)
+	}
+
+	// tabwriter, not fixed widths: a 36-character session id or a long cwd
+	// used to overflow its cell and shift every column after it.
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "name\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
 	for _, rec := range records {
 		host := "-"
 		if rec.HostPID > 0 {
 			host = strconv.Itoa(rec.HostPID)
 		}
-		fmt.Printf("%-20s %-16s %-9s %-24s %-8s %s  %s\n",
-			rec.Name, rec.ID, rec.HarnessKind, rec.SessionID, host, rec.CWD,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			rec.Name, rec.ID, rec.HarnessKind, rec.SessionID, host,
+			planner.RecordState(rec, rt.ProcStart), counts[rec.ID], rec.CWD,
 			rec.SeenAt.UTC().Format(time.RFC3339))
 	}
-	return nil
+	return w.Flush()
+}
+
+// plannerListView is one record as `relay planner list --json` renders it: the
+// record's own fields, flattened by the embedded struct, plus the two derived
+// columns the table shows.
+type plannerListView struct {
+	planner.Record
+	State    string `json:"state"`
+	Bindings int    `json:"bindings"`
 }
 
 func cmdPlannerRename(args []string) error {
@@ -368,6 +401,47 @@ func cmdPlannerForget(args []string) error {
 	return nil
 }
 
+// cmdPlannerPrune forgets every record that is gone and that no binding still
+// names (§4.7): `relay planner forget` for the pile-up, without naming each
+// record by hand. --dry-run lists what it would forget and forgets nothing.
+func cmdPlannerPrune(args []string) error {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "list what prune would forget, without forgetting it")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	counts, err := plannerBindingCounts(rt)
+	if err != nil {
+		return err
+	}
+
+	forgotten, err := planner.Prune(plannerRegistry(rt), rt.ProcStart,
+		func(id string) int { return counts[id] }, *dryRun)
+	if err != nil {
+		return err
+	}
+
+	for _, rec := range forgotten {
+		if *dryRun {
+			fmt.Printf("would forget planner %s (%s)\n", rec.Name, rec.ID)
+			continue
+		}
+		fmt.Printf("forgot planner %s (%s)\n", rec.Name, rec.ID)
+	}
+	if *dryRun {
+		fmt.Printf("%d would be forgotten\n", len(forgotten))
+	} else {
+		fmt.Printf("%d forgotten\n", len(forgotten))
+	}
+	return nil
+}
+
 // plannerLookup resolves one <id|name> argument the way Resolve resolves a
 // --planner value: by id when it has the id shape, else by name.
 func plannerLookup(reg planner.Registry, ref string) (planner.Record, error) {
@@ -426,15 +500,28 @@ func plannerFilter(rt relay.Runtime) (planner.Record, bool) {
 // name is worse than making the human retry.
 func plannerInUse(rt relay.Runtime) func(id string) bool {
 	return func(id string) bool {
-		bindings, err := rt.Store.List()
+		counts, err := plannerBindingCounts(rt)
 		if err != nil {
 			return true
 		}
-		for _, b := range bindings {
-			if b.State != store.StateDone && b.PlannerID == id {
-				return true
-			}
-		}
-		return false
+		return counts[id] > 0
 	}
+}
+
+// plannerBindingCounts counts, per planner id, the bindings that are not DONE
+// and name that planner -- the store listing Forget's in-use guard walks. An
+// unreadable store is an error, never an empty map: "no bindings" would let
+// `relay planner prune` delete a record a binding still names.
+func plannerBindingCounts(rt relay.Runtime) (map[string]int, error) {
+	bindings, err := rt.Store.List()
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int)
+	for _, b := range bindings {
+		if b.State != store.StateDone && b.PlannerID != "" {
+			counts[b.PlannerID]++
+		}
+	}
+	return counts, nil
 }
