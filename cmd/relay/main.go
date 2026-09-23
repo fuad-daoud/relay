@@ -58,7 +58,7 @@ Commands:
   fork      branch a new binding from an earlier round with its own worktree [--tier]
   send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
-  pull      print the oldest pending payload to stdout, without typing anywhere
+  pull      print the oldest pending report's text to stdout and mark it delivered [--path-only]
   diff      print a round's captured patch to stdout [--anchors]
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
   status    one row per binding: round, state, live pane status, what is pending [--all]
@@ -1415,6 +1415,7 @@ func cmdAsk(args []string) error {
 func cmdPull(args []string) error {
 	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
+	pathOnly := fs.Bool("path-only", false, "print the pointer payload (report path and diff line) instead of the report text")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1434,7 +1435,7 @@ func cmdPull(args []string) error {
 		}
 	}
 
-	payload, found, err := relay.Pull(context.Background(), rt, target)
+	payload, found, err := relay.Pull(context.Background(), rt, target, relay.PullOptions{PathOnly: *pathOnly})
 	if err != nil {
 		return err
 	}
