@@ -352,7 +352,13 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		seenKinds[r.Harness] = true
-		if missing := roles.Missing(r.Harness); len(missing) > 0 {
+		// The gate checks the builder's resolved definitions: in roles.json
+		// mode a custom name may be what the row launches (#374 §5).
+		spec, err := reg.Spec("builder", r.Harness)
+		if err != nil {
+			continue
+		}
+		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
 			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relay agent install --kind "+r.Harness)
 		} else {
 			slog.Info("roles present", "harness", r.Harness)

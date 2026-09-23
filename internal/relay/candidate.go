@@ -154,6 +154,20 @@ func skipsFor(gates []ledger.Gate, token string) []Skip {
 	return out
 }
 
+// gatesForRole keeps every gate that applies to role: an unscoped gate
+// (Role == "") and the ones scoped to role itself. A roles-missing gate for
+// another role must neither refuse nor skip this role's picks (#374 §5). It is
+// pure and returns a new slice.
+func gatesForRole(gates []ledger.Gate, role string) []ledger.Gate {
+	out := make([]ledger.Gate, 0, len(gates))
+	for _, g := range gates {
+		if g.Role == "" || g.Role == role {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // skipText renders one Skip as "<token> (<kind> <until>)".
 func skipText(s Skip) string {
 	return fmt.Sprintf("%s (%s %s)", s.Token, GateKindText(s.Kind), GateUntilText(s.Until))
@@ -200,6 +214,7 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 // except where a candidate is refused for not being in the file's list, which
 // the registry can only know in file mode.
 func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, token, role string) (Resolution, error) {
+	gates = gatesForRole(gates, role)
 	if token != "" {
 		ref, err := candidate.ParseRef(token)
 		if err != nil {
