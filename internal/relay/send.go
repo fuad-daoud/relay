@@ -159,7 +159,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 				return preflight{}, err
 			}
 			if p != nil {
-				b2, err := applyBuilder(b, *p, rt.Policy, opts.AllowYolo)
+				b2, err := applyBuilder(b, *p, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
 				if err != nil {
 					return preflight{}, err
 				}
@@ -242,7 +242,11 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
-	role, _ := harness.RoleByName("builder")
+	var role harness.RoleSpec
+	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
+	}
 	argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
 	if err != nil {
 		return preflight{}, err
@@ -335,7 +339,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			if roundOpenIn(entries, b.Round) {
 				return fmt.Errorf("binding %q has round %d open; relay stop %s ends it, then send again with --builder", name, b.Round, name)
 			}
-			b, err = applyBuilder(b, *pf.pick, rt.Policy, opts.AllowYolo)
+			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
 			if err != nil {
 				return err
 			}

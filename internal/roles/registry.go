@@ -81,12 +81,19 @@ type Registry struct {
 // Build returns the registry for f, or the legacy derivation of set and pol
 // when f is nil.
 //
-// set must be non-nil; an empty set (a machine with no candidates.json) is
-// allowed and means no role can serve any candidate. With a file, a role's
-// tier above pol.MaxTierOrDefault() is an error wrapping ErrBadRoles, the same
-// cap policy.json enforces on its own tier map. The legacy derivation never
+// A nil set is treated as an empty set -- a machine with no candidates.json --
+// and means no role can serve any candidate; in legacy mode, with no set to
+// look up, Serves is false. With a file, a role's tier above
+// pol.MaxTierOrDefault() is an error wrapping ErrBadRoles, the same cap
+// policy.json enforces on its own tier map. The legacy derivation never
 // errors.
 func Build(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
+	if set == nil {
+		// A nil set is a machine with no candidates.json: treated as empty,
+		// not as a precondition failure (#374 §4.1). Lookup then misses and
+		// ForRole yields nothing.
+		set = &candidate.Set{}
+	}
 	if f == nil {
 		return buildLegacy(set, pol), nil
 	}

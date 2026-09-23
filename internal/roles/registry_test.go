@@ -102,6 +102,39 @@ func TestBuildNoOverridePin(t *testing.T) {
 	}
 }
 
+// TestBuildNilSet pins #374 §4.1: Build tolerates a nil set, treating it as a
+// machine with no candidates.json -- legacy Build succeeds, a built-in role's
+// spec is byte-for-byte harness.RoleByName, and no candidate is ranked.
+func TestBuildNilSet(t *testing.T) {
+	reg, err := Build(nil, nil, policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build(nil, nil, policy.Policy{}): %v", err)
+	}
+	if reg.Source() != SourceLegacy {
+		t.Errorf("Source() = %q, want %q", reg.Source(), SourceLegacy)
+	}
+
+	want, ok := harness.RoleByName("builder")
+	if !ok {
+		t.Fatal("harness.RoleByName(\"builder\") not found")
+	}
+	got, err := reg.Spec("builder", "claude")
+	if err != nil {
+		t.Fatalf("Spec(builder, claude): %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Spec(builder, claude) = %+v, want %+v", got, want)
+	}
+
+	builder, ok := reg.Role("builder")
+	if !ok {
+		t.Fatal("Role(\"builder\") not found")
+	}
+	if len(builder.Ranked) != 0 {
+		t.Errorf("builder.Ranked = %v, want empty", builder.Ranked)
+	}
+}
+
 // TestLegacyDerivationMachineConfig pins the legacy derivation against this
 // machine's own config: the registry must rank and tier exactly as today's
 // rankedList and resolveTier do.

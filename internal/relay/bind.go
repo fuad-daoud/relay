@@ -273,12 +273,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 			}
 		}
 		opts.Headless = true
-		resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
 		if opts.Tier != "" {
-			tier := resolveTier(opts.Tier, resCandidate.Candidate, rt.Policy, "builder")
+			tier := resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), "builder")
 			if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 				return store.Binding{}, Resolution{}, err
 			}
@@ -509,11 +509,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	}
 
 	var tier harness.Tier
-	resCandidate, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
-	tier = resolveTier(opts.Tier, resCandidate.Candidate, rt.Policy, "builder")
+	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), "builder")
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -593,7 +593,7 @@ func builderAgentName(name string) (string, error) {
 //
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
@@ -603,7 +603,11 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 		return store.Endpoint{}, Resolution{}, err
 	}
 
-	role, _ := harness.RoleByName("builder")
+	var role harness.RoleSpec
+	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	if err != nil {
+		return store.Endpoint{}, Resolution{}, fmt.Errorf("binding %q builder: %w", name, err)
+	}
 	tier := harness.Tier(opts.Tier)
 	if tier == "" {
 		tier = harness.TierHarness

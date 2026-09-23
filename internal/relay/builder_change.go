@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -25,7 +26,7 @@ var ErrBadBuilder = errors.New("send --builder")
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
 func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) {
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
 	}
@@ -43,8 +44,8 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 // It leaves Builder.Mode, AgentName and Server as they are. A candidate whose
 // re-derived tier is above max_tier without allowYolo is refused with
 // ErrBadBuilder, leaving the binding unchanged. Pure.
-func applyBuilder(b store.Binding, res Resolution, pol policy.Policy, allowYolo bool) (store.Binding, error) {
-	tier := resolveTier("", res.Candidate, pol, "builder")
+func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
+	tier := resolveRoleTier("", res.Candidate, reg, "builder")
 	if err := checkTierCap(tier, pol, allowYolo); err != nil {
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}

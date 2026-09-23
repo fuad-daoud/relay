@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -14,24 +15,28 @@ var (
 	ErrTierAboveMax = errors.New("tier exceeds max_tier")
 )
 
-// resolveTier is the chain: explicit, candidate.Tier, policy.TierFor(role),
-// TierHarness. explicit and candidate values are already validated by their
-// parsers; an unparseable stored value is treated as harness.
-func resolveTier(explicit string, c candidate.Candidate, pol policy.Policy, role string) harness.Tier {
+// resolveRoleTier is the chain: explicit, the registry's tier for the role,
+// harness. explicit and candidate values are already validated by their
+// parsers; an unparseable stored value is treated as harness. In legacy mode
+// reg.TierFor is candidate.Tier then policy.TierFor(role), so the chain is
+// unchanged; in file mode it is the role's row tier (#374 §4.4).
+func resolveRoleTier(explicit string, c candidate.Candidate, reg *roles.Registry, role string) harness.Tier {
 	if explicit != "" {
 		if t, err := harness.ParseTier(explicit); err == nil {
 			return t
 		}
 	}
-	if c.Tier != "" {
-		if t, err := harness.ParseTier(c.Tier); err == nil {
-			return t
-		}
-	}
-	if t, ok := pol.TierFor(role); ok {
+	if t, ok := reg.TierFor(role, c); ok {
 		return t
 	}
 	return harness.TierHarness
+}
+
+// resolveTier is resolveRoleTier over the legacy registry derived from pol,
+// which is what every pre-roles.json caller meant. It stays for tests
+// (#374 §4.4).
+func resolveTier(explicit string, c candidate.Candidate, pol policy.Policy, role string) harness.Tier {
+	return resolveRoleTier(explicit, c, legacyRegistry(nil, pol), role)
 }
 
 // checkTierCap refuses tier when tier.Above(pol.MaxTierOrDefault()) and

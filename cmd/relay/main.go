@@ -36,6 +36,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -540,10 +541,19 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	rolesFile, roleWarnings, err := roles.LoadWithWarnings(filepath.Join(configDir, "relay", "roles.json"))
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+	reg, err := roles.Build(rolesFile, candidates, pol)
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
 	// so printing here would be noise (#372 §4.4). `relay doctor` renders them
 	// and the daemon logs each once.
-	configWarnings := append(append([]string(nil), candWarnings...), polWarnings...)
+	configWarnings := append(append(append([]string(nil), candWarnings...), polWarnings...), roleWarnings...)
 
 	cls, _ := classify.Resolve(pol.Classify, configDir, os.Getenv)
 
@@ -573,6 +583,7 @@ func newRuntime() (relay.Runtime, error) {
 		AvailabilityPath: st.AvailabilityPath(),
 		LatencyPath:      st.LatencyPath(),
 		Policy:           pol,
+		Registry:         reg,
 		ConfigWarnings:   configWarnings,
 		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
@@ -2336,6 +2347,7 @@ func cmdDaemon(args []string) error {
 	watcher := relay.NewConfigWatcher(relay.ConfigPaths{
 		Candidates: filepath.Join(configDir, "relay", "candidates.json"),
 		Policy:     filepath.Join(configDir, "relay", "policy.json"),
+		Roles:      filepath.Join(configDir, "relay", "roles.json"),
 		ConfigDir:  configDir,
 		Getenv:     os.Getenv,
 	})

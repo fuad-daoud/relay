@@ -98,7 +98,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, append(Gates(rt), roundExclusionGates(b)...), "", "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(Gates(rt), roundExclusionGates(b)...), "", "builder")
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",

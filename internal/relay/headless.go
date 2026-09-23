@@ -199,7 +199,11 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
-	role, _ := harness.RoleByName("builder")
+	var role harness.RoleSpec
+	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	if err != nil {
+		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
+	}
 	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
@@ -284,7 +288,11 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if !ok {
 		return b, fmt.Errorf("unknown harness kind %q", c.Harness)
 	}
-	role, _ := harness.RoleByName("builder")
+	var role harness.RoleSpec
+	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	if err != nil {
+		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
+	}
 	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, effectiveTier(b))
 	if err != nil {
 		return b, err

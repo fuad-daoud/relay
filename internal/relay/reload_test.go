@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 )
 
 func TestRefreshLoadsOnFirstCall(t *testing.T) {
@@ -523,5 +524,186 @@ func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
 	}
 	if len(warns) != 2 {
 		t.Errorf("warn calls after an unchanged reload = %v, want still 2", warns)
+	}
+}
+
+// TestRefreshReloadsOnRolesChange pins §5.1: a changed roles.json stamp alone
+// reloads the file and replaces the runtime's registry.
+func TestRefreshReloadsOnRolesChange(t *testing.T) {
+	paths := ConfigPaths{
+		Candidates: "/cand.json",
+		Policy:     "/pol.json",
+		Roles:      "/roles.json",
+		ConfigDir:  "/cfg",
+	}
+	w := NewConfigWatcher(paths)
+
+	t0 := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	candStamp := fileStamp{mtime: t0, size: 50, exists: true}
+	polStamp := fileStamp{mtime: t0, size: 100, exists: true}
+	roleStamp := fileStamp{mtime: t0, size: 10, exists: true}
+	w.stat = func(path string) (fileStamp, error) {
+		switch path {
+		case paths.Candidates:
+			return candStamp, nil
+		case paths.Policy:
+			return polStamp, nil
+		case paths.Roles:
+			return roleStamp, nil
+		}
+		return fileStamp{}, errors.New("unexpected path " + path)
+	}
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
+	}
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
+		return policy.Policy{}, nil, nil
+	}
+	roleCalls := 0
+	w.loadRoles = func(path string) (*roles.File, []string, error) {
+		roleCalls++
+		return &roles.File{Rows: map[string]roles.Row{
+			"builder": {Candidates: []string{"claude/test/m"}},
+		}}, nil, nil
+	}
+	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
+		return &classify.Fake{}
+	}
+
+	out1 := w.Refresh(Runtime{})
+	if roleCalls != 1 {
+		t.Fatalf("loadRoles calls = %d, want 1", roleCalls)
+	}
+	if out1.Registry == nil || out1.Registry.Source() != roles.SourceFile {
+		t.Fatalf("Registry = %+v, want a roles.json registry", out1.Registry)
+	}
+
+	// Change only the roles stamp.
+	roleStamp.mtime = roleStamp.mtime.Add(time.Second)
+	w.loadRoles = func(path string) (*roles.File, []string, error) {
+		roleCalls++
+		return &roles.File{Rows: map[string]roles.Row{
+			"builder": {Candidates: []string{"agy/test/m"}},
+		}}, nil, nil
+	}
+
+	out2 := w.Refresh(out1)
+	if roleCalls != 2 {
+		t.Errorf("loadRoles calls = %d, want 2", roleCalls)
+	}
+	if out2.Registry == out1.Registry {
+		t.Error("Registry was not replaced after a roles.json change")
+	}
+	builder, ok := out2.Registry.Role("builder")
+	if !ok {
+		t.Fatal("Role(\"builder\") not found")
+	}
+	if len(builder.Candidates) != 1 || builder.Candidates[0] != "agy/test/m" {
+		t.Errorf("builder.Candidates = %v, want the reloaded row", builder.Candidates)
+	}
+}
+
+// TestRefreshKeepsLastGoodRegistryOnBadRoles pins §6: a bad roles.json keeps
+// the previous registry and warns, exactly as a bad policy.json does.
+func TestRefreshKeepsLastGoodRegistryOnBadRoles(t *testing.T) {
+	paths := ConfigPaths{
+		Candidates: "/cand.json",
+		Policy:     "/pol.json",
+		Roles:      "/roles.json",
+		ConfigDir:  "/cfg",
+	}
+	w := NewConfigWatcher(paths)
+
+	t0 := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	roleStamp := fileStamp{mtime: t0, size: 10, exists: true}
+	w.stat = func(path string) (fileStamp, error) {
+		if path == paths.Roles {
+			return roleStamp, nil
+		}
+		return fileStamp{mtime: t0, size: 10, exists: true}, nil
+	}
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
+	}
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
+		return policy.Policy{}, nil, nil
+	}
+	roleErr := error(nil)
+	w.loadRoles = func(path string) (*roles.File, []string, error) {
+		if roleErr != nil {
+			return nil, nil, roleErr
+		}
+		return &roles.File{Rows: map[string]roles.Row{
+			"builder": {Candidates: []string{"claude/test/m"}},
+		}}, nil, nil
+	}
+	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
+		return &classify.Fake{}
+	}
+	var warnMsgs []string
+	w.warn = func(msg string, args ...any) {
+		warnMsgs = append(warnMsgs, msg)
+	}
+
+	rt := Runtime{Now: func() time.Time { return t0 }}
+	out1 := w.Refresh(rt)
+	if out1.Registry == nil || out1.Registry.Source() != roles.SourceFile {
+		t.Fatalf("Registry = %+v, want the roles.json registry", out1.Registry)
+	}
+
+	// The roles file changes and now fails to load.
+	roleErr = roles.ErrBadRoles
+	roleStamp.mtime = roleStamp.mtime.Add(time.Second)
+	out2 := w.Refresh(out1)
+
+	if out2.Registry != out1.Registry {
+		t.Error("Registry changed on a bad roles.json")
+	}
+	if len(warnMsgs) != 1 {
+		t.Fatalf("warn called %d times, want 1", len(warnMsgs))
+	}
+	if !strings.Contains(warnMsgs[0], "keeping the copy loaded at") {
+		t.Errorf("warn text %q does not contain %q", warnMsgs[0], "keeping the copy loaded at")
+	}
+}
+
+// TestRefreshLoadsLegacyRegistryWhenRolesPathEmpty pins §5.1: a ConfigPaths
+// with no Roles still loads, and the registry it builds is the legacy
+// derivation.
+func TestRefreshLoadsLegacyRegistryWhenRolesPathEmpty(t *testing.T) {
+	paths := ConfigPaths{
+		Candidates: "/cand.json",
+		Policy:     "/pol.json",
+		ConfigDir:  "/cfg",
+	}
+	w := NewConfigWatcher(paths)
+
+	t0 := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	w.stat = func(path string) (fileStamp, error) {
+		if path == "" {
+			t.Error("stat called for an empty Roles path")
+		}
+		return fileStamp{mtime: t0, size: 10, exists: true}, nil
+	}
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
+	}
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
+		return policy.Policy{}, nil, nil
+	}
+	w.loadRoles = func(path string) (*roles.File, []string, error) {
+		t.Error("loadRoles called with an empty Roles path")
+		return nil, nil, nil
+	}
+	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
+		return &classify.Fake{}
+	}
+
+	out := w.Refresh(Runtime{})
+	if out.Registry == nil {
+		t.Fatal("Registry = nil, want the legacy derivation")
+	}
+	if out.Registry.Source() != roles.SourceLegacy {
+		t.Errorf("Source() = %q, want %q", out.Registry.Source(), roles.SourceLegacy)
 	}
 }

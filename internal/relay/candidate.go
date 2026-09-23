@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -101,16 +102,18 @@ type rankedEntry struct {
 	Position  int // 1-based index in order[role] for HowOrder; 0 for HowUnlisted
 }
 
-// rankedList is the order's configured, serving entries first, then every
-// other serving candidate in ref order; an order entry relay cannot use is
-// skipped here and reported by PolicyWarnings (T4), never an error, because
-// removing a candidate must not break every subcommand (spec §3.1).
-func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntry {
+// rankedRole is one role's candidates in the registry's ranked order, as the
+// walk wants them: the candidate behind each token is looked up in set, and an
+// entry whose token does not parse or is not configured is skipped here. An
+// unknown role has no ranked list, so the result is nil (#374 §4.3).
+func rankedRole(reg *roles.Registry, set *candidate.Set, role string) []rankedEntry {
+	info, ok := reg.Role(role)
+	if !ok {
+		return nil
+	}
 	var out []rankedEntry
-	seen := make(map[string]bool)
-
-	for i, tok := range pol.OrderFor(role) {
-		ref, err := candidate.ParseRef(tok)
+	for _, r := range info.Ranked {
+		ref, err := candidate.ParseRef(r.Token)
 		if err != nil {
 			continue
 		}
@@ -118,24 +121,25 @@ func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntr
 		if err != nil {
 			continue
 		}
-		if !c.Serves(role) {
-			continue
-		}
-		if seen[tok] {
-			continue
-		}
-		seen[tok] = true
-		out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: i + 1})
-	}
-
-	for _, c := range set.ForRole(role) {
-		if seen[c.Ref().String()] {
+		if r.Position > 0 {
+			out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: r.Position})
 			continue
 		}
 		out = append(out, rankedEntry{Candidate: c, How: HowUnlisted})
 	}
-
 	return out
+}
+
+// rankedList is the order's configured, serving entries first, then every
+// other serving candidate in ref order; an order entry relay cannot use is
+// skipped here and reported by PolicyWarnings (T4), never an error, because
+// removing a candidate must not break every subcommand (spec §3.1).
+//
+// It is the legacy registry's ranked list: rankedRole over the derivation of
+// set and pol, which is what every pre-roles.json caller meant. It stays for
+// policy_view.go (#374 §4.3).
+func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntry {
+	return rankedRole(legacyRegistry(set, pol), set, role)
 }
 
 // skipsFor is one Skip per gate whose Token == token, in gates order.
@@ -183,7 +187,19 @@ func uniqStrings(in []string) []string {
 // nothing is ordered and several serve (the seam #61 step 3 fills). It is
 // pure and deterministic: it takes gates as a value and never opens the
 // ledger itself.
+//
+// It is the legacy registry's resolver: resolveRole over the derivation of
+// set and pol. It stays for tests and policy_view.go (#374 §4.3).
 func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, token, role string) (Resolution, error) {
+	return resolveRole(legacyRegistry(set, pol), set, gates, token, role)
+}
+
+// resolveRole is resolveCandidate's rule with the role's ranked candidates,
+// order and tier read from the registry -- roles.json when one is loaded, the
+// legacy derivation otherwise (#374 §4.3). Every error text is the legacy one
+// except where a candidate is refused for not being in the file's list, which
+// the registry can only know in file mode.
+func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, token, role string) (Resolution, error) {
 	if token != "" {
 		ref, err := candidate.ParseRef(token)
 		if err != nil {
@@ -193,7 +209,10 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 		if err != nil {
 			return Resolution{}, err
 		}
-		if !c.Serves(role) {
+		if !reg.Serves(role, ref) {
+			if reg.Source() == roles.SourceFile {
+				return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (not in roles.json %s.candidates, or no definition for %s): %w", token, role, role, c.Harness, ErrRoleNotServed)
+			}
 			return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (its roles: %v): %w", token, role, c.Roles, ErrRoleNotServed)
 		}
 		// Unlike every other gate, roles_missing is refused even for an
@@ -213,7 +232,16 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 		return Resolution{}, fmt.Errorf("%w; write ~/.config/relay/candidates.json (see README \"Candidates\")", ErrNoCandidates)
 	}
 
-	serving := set.ForRole(role)
+	info, ok := reg.Role(role)
+	if !ok {
+		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
+	}
+
+	ranked := rankedRole(reg, set, role)
+	serving := make([]candidate.Candidate, 0, len(ranked))
+	for _, r := range ranked {
+		serving = append(serving, r.Candidate)
+	}
 	if len(serving) == 0 {
 		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
@@ -224,7 +252,7 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 		return Resolution{Candidate: serving[0], How: HowSole}, nil
 	}
 
-	if len(pol.OrderFor(role)) == 0 {
+	if !info.Ordered {
 		refs := make([]string, 0, len(serving))
 		for _, c := range serving {
 			refs = append(refs, c.Ref().String())
@@ -233,7 +261,7 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 	}
 
 	var skipped []Skip
-	for _, r := range rankedList(set, pol, role) {
+	for _, r := range ranked {
 		s := skipsFor(gates, r.Candidate.Ref().String())
 		if len(s) == 0 {
 			return Resolution{Candidate: r.Candidate, How: r.How, Position: r.Position, Skipped: skipped}, nil
@@ -312,7 +340,7 @@ func pickEntry(now time.Time, round int, role string, res Resolution) store.LogE
 // for advisory preflight only; every error is reported as "" because the real
 // resolution happens inside Bind and says why.
 func CandidateKind(rt Runtime, token string) string {
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
 	if err != nil {
 		return ""
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 )
 
 // ConfigPaths names the files the daemon reloads and what Classify
@@ -17,6 +18,7 @@ import (
 type ConfigPaths struct {
 	Candidates string              // .../relay/candidates.json
 	Policy     string              // .../relay/policy.json
+	Roles      string              // .../relay/roles.json
 	ConfigDir  string              // the dir classify.Resolve takes
 	Getenv     func(string) string // os.Getenv in production
 }
@@ -29,11 +31,13 @@ type fileStamp struct {
 	exists bool
 }
 
-// ConfigWatcher reloads candidates.json and policy.json when they change.
+// ConfigWatcher reloads candidates.json, policy.json and roles.json when they
+// change.
 type ConfigWatcher struct {
 	paths    ConfigPaths
 	cand     fileStamp // stamps at the last SUCCESSFUL load
 	pol      fileStamp
+	roles    fileStamp
 	lastErr  string // last warning logged; "" after a good load
 	loaded   bool   // false until the first successful load through Refresh
 	loadedAt time.Time
@@ -42,6 +46,7 @@ type ConfigWatcher struct {
 	stat           func(path string) (fileStamp, error)
 	loadCandidates func(path string) (*candidate.Set, []string, error)
 	loadPolicy     func(path string) (policy.Policy, []string, error)
+	loadRoles      func(path string) (*roles.File, []string, error)
 	resolve        func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier
 	warn           func(msg string, args ...any) // slog.Warn
 
@@ -51,14 +56,16 @@ type ConfigWatcher struct {
 }
 
 // NewConfigWatcher returns a watcher with production seams: os.Stat,
-// candidate.LoadWithWarnings, policy.LoadWithWarnings, classify.Resolve (first
-// return only), slog.Warn. It does not read anything yet.
+// candidate.LoadWithWarnings, policy.LoadWithWarnings, roles.LoadWithWarnings,
+// classify.Resolve (first return only), slog.Warn. It does not read anything
+// yet.
 func NewConfigWatcher(paths ConfigPaths) *ConfigWatcher {
 	return &ConfigWatcher{
 		paths:          paths,
 		stat:           defaultStat,
 		loadCandidates: candidate.LoadWithWarnings,
 		loadPolicy:     policy.LoadWithWarnings,
+		loadRoles:      roles.LoadWithWarnings,
 		resolve: func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 			cls, _ := classify.Resolve(cfg, configDir, getenv)
 			return cls
@@ -82,20 +89,25 @@ func defaultStat(path string) (fileStamp, error) {
 	}, nil
 }
 
-// Refresh returns rt with Candidates, Policy and Classify replaced from disk
-// when either file's stamp differs from the stamp at the last successful
-// load, or when no load has happened yet through this watcher. Unchanged
-// stamps -> rt returned as given (no load). Both files are always loaded
-// together: policy validation is independent of candidates, but a switch
-// that sees a new order with old candidates is the bug this fixes.
+// Refresh returns rt with Candidates, Policy, Registry and Classify replaced
+// from disk when any of candidates.json, policy.json and roles.json differs
+// in stamp from the stamp at the last successful load, or when no load has
+// happened yet through this watcher. Unchanged stamps -> rt returned as given
+// (no load). The three files are always loaded together: policy validation is
+// independent of candidates, but a switch that sees a new order with old
+// candidates is the bug this fixes, and roles.json ranks over both.
+//
+// A ConfigPaths.Roles that is empty means the caller knows of no roles.json:
+// it is not statted and not loaded, and the registry is the legacy
+// derivation of the loaded candidates and policy.
 //
 // Failure: a stat error other than not-exist, or a load error, keeps rt's
 // current values, does NOT update the stamps (so the next tick retries),
 // and calls warn once per distinct error string: "config reload: <err>
 // (keeping the copy loaded at HH:MM:SS)" -- the time is rt.Now() of the
 // last good load, or "startup" when this watcher never loaded. A missing
-// file is not an error: candidate.Load / policy.Load already treat absence
-// as empty, and the stamp records exists == false.
+// file is not an error: candidate.Load / policy.Load / roles.Load already
+// treat absence as empty, and the stamp records exists == false.
 //
 // Postconditions on success: stamps updated, lastErr = "", loaded = true.
 func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
@@ -107,7 +119,15 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 	if errP != nil {
 		return w.fail(rt, errP)
 	}
-	if w.loaded && cs == w.cand && ps == w.pol {
+	rs := fileStamp{}
+	if w.paths.Roles != "" {
+		var errR error
+		rs, errR = w.stat(w.paths.Roles)
+		if errR != nil {
+			return w.fail(rt, errR)
+		}
+	}
+	if w.loaded && cs == w.cand && ps == w.pol && rs == w.roles {
 		return rt
 	}
 	cands, candWarnings, err := w.loadCandidates(w.paths.Candidates)
@@ -118,15 +138,29 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 	if err != nil {
 		return w.fail(rt, err)
 	}
+	var rf *roles.File
+	var roleWarnings []string
+	if w.paths.Roles != "" {
+		rf, roleWarnings, err = w.loadRoles(w.paths.Roles)
+		if err != nil {
+			return w.fail(rt, err)
+		}
+	}
+	reg, err := roles.Build(rf, cands, pol)
+	if err != nil {
+		return w.fail(rt, err)
+	}
 	rt.Candidates = cands
 	rt.Policy = pol
-	rt.ConfigWarnings = append(append([]string(nil), candWarnings...), polWarnings...)
+	rt.Registry = reg
+	rt.ConfigWarnings = append(append(append([]string(nil), candWarnings...), polWarnings...), roleWarnings...)
 	w.logWarnings(rt.ConfigWarnings)
 	if w.resolve != nil {
 		rt.Classify = w.resolve(pol.Classify, w.paths.ConfigDir, w.paths.Getenv)
 	}
 	w.cand = cs
 	w.pol = ps
+	w.roles = rs
 	w.loaded = true
 	w.lastErr = ""
 	if rt.Now != nil {

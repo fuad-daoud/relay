@@ -171,7 +171,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if token == "" {
 		token = src.BuilderCandidate
 	}
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
 	if err != nil && token == "" {
 		return ForkResult{}, fmt.Errorf("%w (%v)", ErrNoBuilderCandidate, err)
 	}
@@ -184,7 +184,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if explicitTier == "" && src.Tier != "" {
 		explicitTier = src.Tier
 	}
-	tier := resolveTier(explicitTier, c, rt.Policy, "builder")
+	tier := resolveRoleTier(explicitTier, c, rt.RoleRegistry(), "builder")
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return ForkResult{}, err
 	}
