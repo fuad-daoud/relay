@@ -93,6 +93,7 @@ Commands:
   doctor    preflight check: plugin, daemon, harness binaries, roles
   candidates   list the configured harness/provider/model candidates [--probe]
   policy       show, per role, which candidate relay would pick right now and why
+  roles        list each role's shape, candidates, tier and definitions; roles init writes roles.json
   planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit locally and on every server your bindings name: relay available <provider|token>
@@ -360,6 +361,8 @@ func run(args []string) error {
 		return cmdCandidates(args[1:])
 	case "policy":
 		return cmdPolicy(args[1:])
+	case "roles":
+		return cmdRoles(args[1:])
 	case "planner":
 		return cmdPlanner(args[1:])
 	case "unavailable":

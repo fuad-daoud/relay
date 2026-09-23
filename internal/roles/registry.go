@@ -324,6 +324,17 @@ func (r *Registry) TierFor(name string, c candidate.Candidate) (harness.Tier, bo
 	return r.pol.TierFor(name)
 }
 
+// RoleTier returns name's own tier, without a candidate: the file tier in file
+// mode, and policy's tier for the role in legacy mode (#374 §3.2). ok is false
+// when neither sets one.
+func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
+	if r.source == SourceFile {
+		t, ok := r.tiers[name]
+		return t, ok
+	}
+	return r.pol.TierFor(name)
+}
+
 // Source returns where the registry's roles came from: SourceFile or
 // SourceLegacy.
 func (r *Registry) Source() string {

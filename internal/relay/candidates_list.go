@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -96,13 +97,68 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 			sb.WriteString(fmt.Sprintf(`   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag))
 		}
 		if rowGates := byToken[ref]; len(rowGates) > 0 {
-			parts := make([]string, len(rowGates))
-			for i, g := range rowGates {
-				parts[i] = fmt.Sprintf("%s %s", GateKindText(g.Kind), GateUntilText(g.Until))
-			}
-			sb.WriteString("   unavailable: " + strings.Join(parts, "; "))
+			sb.WriteString("   unavailable: " + strings.Join(mergeGateTexts(rowGates), "; "))
 		}
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// mergeGateTexts renders one token's gates as the parts of the unavailable:
+// note (#374 §3.3): gates are grouped by their kind and until time, in
+// first-seen order, so a candidate gated for three roles prints one part, not
+// three. A group whose gates all apply to every role renders exactly as it did
+// before -- `<kind text> <until text>`; a group any role scopes names the roles
+// it covers, sorted and de-duplicated:
+//
+//	roles missing (builder, reviewer) until cleared
+func mergeGateTexts(gates []ledger.Gate) []string {
+	type group struct {
+		kind     string
+		until    string
+		roles    []string
+		hasRoles bool
+	}
+
+	var groups []*group
+	index := make(map[[2]string]*group, len(gates))
+	for _, g := range gates {
+		kind, until := GateKindText(g.Kind), GateUntilText(g.Until)
+		key := [2]string{kind, until}
+		grp, ok := index[key]
+		if !ok {
+			grp = &group{kind: kind, until: until}
+			index[key] = grp
+			groups = append(groups, grp)
+		}
+		if g.Role != "" {
+			grp.hasRoles = true
+			grp.roles = append(grp.roles, g.Role)
+		}
+	}
+
+	parts := make([]string, 0, len(groups))
+	for _, grp := range groups {
+		if !grp.hasRoles {
+			parts = append(parts, grp.kind+" "+grp.until)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s) %s", grp.kind, strings.Join(uniqSorted(grp.roles), ", "), grp.until))
+	}
+	return parts
+}
+
+// uniqSorted returns in's distinct values, sorted.
+func uniqSorted(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }

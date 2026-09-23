@@ -249,6 +249,9 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 
 	info, ok := reg.Role(role)
 	if !ok {
+		if reg.Source() == roles.SourceFile {
+			return Resolution{}, fmt.Errorf("no candidate in roles.json %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 
@@ -258,6 +261,9 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		serving = append(serving, r.Candidate)
 	}
 	if len(serving) == 0 {
+		if reg.Source() == roles.SourceFile {
+			return Resolution{}, fmt.Errorf("no candidate in roles.json %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 	if len(serving) == 1 {

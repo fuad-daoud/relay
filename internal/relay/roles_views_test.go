@@ -6,6 +6,7 @@ package relay
 // not. The legacy behaviour is pinned by the older tests, which stay unedited.
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -258,5 +259,53 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 	legacy, _ := roles.Build(nil, set, pol)
 	if got := LegacyRoleFieldWarnings(legacy, set, pol); got != nil {
 		t.Errorf("LegacyRoleFieldWarnings(legacy) = %q, want nil", got)
+	}
+}
+
+// TestRolesViewsMergedGateTexts pins §3.3: a candidate gated for two roles
+// prints one merged roles-missing part naming both, in sorted order, beside the
+// role-free gate rendered as it always was.
+//
+// Mutation check: render one part per gate instead of grouping by kind and
+// until, and the merged roles-missing part is gone.
+func TestRolesViewsMergedGateTexts(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	until := baseTime.Add(time.Hour)
+	gates := []ledger.Gate{
+		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer"},
+		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "builder"},
+		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: until},
+	}
+
+	got := FormatCandidates(set, gates)
+
+	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
+		GateKindText(ledger.RateLimited) + " " + GateUntilText(until)
+	if !strings.Contains(got, want) {
+		t.Errorf("FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
+	}
+	if n := strings.Count(got, "roles missing"); n != 1 {
+		t.Errorf("roles missing appears %d times, want the merged part once:\n%s", n, got)
+	}
+}
+
+// TestRolesViewsResolveRoleFileModeNothingServes pins §3.4: in file mode a role
+// whose row lists nothing gives the roles.json wording, and the error still
+// matches ErrRoleNotServed.
+func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
+		"builder": {Candidates: []string{}},
+	})
+
+	_, err := resolveRole(reg, set, nil, "", "builder")
+	if err == nil {
+		t.Fatal("resolveRole with an empty roles.json builder.candidates = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "roles.json builder.candidates") {
+		t.Errorf("err = %q, want it to name roles.json builder.candidates", err)
+	}
+	if !errors.Is(err, ErrRoleNotServed) {
+		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)
 	}
 }
