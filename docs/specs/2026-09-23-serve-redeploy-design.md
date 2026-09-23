@@ -42,7 +42,7 @@ R2 client
 ## 3. Data structures
 
 - **`remote.FeatureIdempotentSend = "idempotent_send"`**: the server returns 200 plus the current view for a start-round request whose `round` equals the open round and whose plan sha256 equals the plan saved for that round.
-- **`remote.FeatureAuthor = "author"`**: the server honours `CreateBindingRequest.Author` (#335). A client whose server lacks it logs a Warn once per server and continues.
+- **`remote.FeatureAuthor = "author"`**: the server honours `CreateBindingRequest.Author` (#335). The client does not warn: servers since #335 honour the author without advertising `author`, so a missing token doesn't mean it is ignored; `author` is advertised from #373 on for future use.
 - **`relay.AuthGrace`**:
   - fields: `mu sync.Mutex` and `since map[string]time.Time`, keyed by binding name;
   - methods:
@@ -101,7 +101,7 @@ At `serve` start, before listening: remove `<root>/tmp/req-body-*` and `<root>/t
 
   This recovers a report whose ack reached the server while the local bookkeeping didn't.
 - **`sendRemote`:** it passes `retry: slices.Contains(who.Features, remote.FeatureIdempotentSend)`. A 200 for the open round is treated as success, exactly like a 201, and is recorded locally.
-- **Author:** where `CreateBindingRequest.Author` is set and the server lacks `FeatureAuthor`, log a Warn: `<server> ignores the commit author (older relay serve)`.
+- **Author:** the client does not warn: servers since #335 honour the author without advertising `author`, so a missing token doesn't mean it is ignored; `author` is advertised from #373 on for future use.
 
 ### 4.6 401 classification (R2)
 

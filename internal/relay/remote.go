@@ -201,8 +201,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		}
 	}
 
-	// 4.5. tier check: opts.Tier requires checkTierCap, the client's own policy,
-	// exactly as Add does locally, before the server is asked anything.
+	// 4.5. tier probe: opts.Tier requires the server to advertise FeatureTier
+	// before any binding is created there. checkTierCap here is the client's
+	// own policy, as Add does locally.
 	wireTier := ""
 	if opts.Tier != "" {
 		t, err := harness.ParseTier(opts.Tier)
@@ -212,22 +213,14 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
 			return AddResult{}, err
 		}
+		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
+		if err != nil {
+			return AddResult{}, err
+		}
+		if !slices.Contains(who.Features, remote.FeatureTier) {
+			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
+		}
 		wireTier = string(t)
-	}
-
-	// 4.6. The server's own features: a requested tier needs a server that
-	// advertises FeatureTier, and #335's author needs one that advertises
-	// FeatureAuthor -- an older server ignores the author, which is warned
-	// about once per server and does not refuse the add (#373 §4.5).
-	who, err := rt.Remote.WhoAmI(ctx, opts.Server)
-	if err != nil {
-		return AddResult{}, err
-	}
-	if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
-		return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
-	}
-	if !slices.Contains(who.Features, remote.FeatureAuthor) {
-		warnAuthorIgnored(opts.Server)
 	}
 
 	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS, Tier})
@@ -585,21 +578,6 @@ const unreachableGrace = 30 * time.Minute
 // SyncRemote (#253). Process-local on purpose: the daemon and `relay wait` are
 // separate processes and each says it once.
 var checkedOutWarned sync.Map // binding name -> struct{}
-
-// authorWarned records the servers whose WhoAmI did not advertise
-// remote.FeatureAuthor, so the "ignores the commit author" warning is logged
-// once per (process, server) rather than on every add (#373 §4.5).
-// Process-local on purpose, like checkedOutWarned: each process says it once.
-var authorWarned sync.Map // server name -> struct{}
-
-// warnAuthorIgnored says relay's one-line author warning for server, at most
-// once per process.
-func warnAuthorIgnored(server string) {
-	if _, seen := authorWarned.LoadOrStore(server, struct{}{}); seen {
-		return
-	}
-	slog.Warn(fmt.Sprintf("%s ignores the commit author (older relay serve)", server), "server", server)
-}
 
 func writeTempAndRename(dest string, r io.Reader) error {
 	dir := filepath.Dir(dest)

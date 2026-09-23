@@ -739,15 +739,10 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 	}
 }
 
-// TestAddRemoteNoTierSendsNoTier pins the no-op path: omitting --tier sends no
-// Tier on the wire, so a pre-tier server is unaffected by a plain `relay add
-// --server` (#141 remote half).
-//
-// #373 changed one thing this test used to pin: a plain add now probes WhoAmI
-// once, because §4.5's author warning needs the server's features. The probe is
-// counted here so the old rule's mechanism is still watched -- one WhoAmI, no
-// tier on the wire.
-func TestAddRemoteNoTierSendsNoTier(t *testing.T) {
+// TestAddRemoteNoTierSkipsProbe pins the no-op path: omitting --tier never
+// probes WhoAmI and sends no Tier on the wire, so a pre-tier server is
+// unaffected by a plain `relay add --server` (#141 remote half).
+func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -769,60 +764,13 @@ func TestAddRemoteNoTierSendsNoTier(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
-	probes := 0
 	for _, c := range fr.calls {
-		if c == "WhoAmI:zen" {
-			probes++
+		if strings.HasPrefix(c, "WhoAmI") {
+			t.Fatalf("calls = %v, want no WhoAmI", fr.calls)
 		}
-	}
-	if probes != 1 {
-		t.Fatalf("WhoAmI calls = %d (%v), want exactly 1 for #373's author probe", probes, fr.calls)
 	}
 	if fr.createBindingReq.Tier != "" {
 		t.Fatalf("CreateBindingRequest.Tier = %q, want empty", fr.createBindingReq.Tier)
-	}
-}
-
-// TestAddRemoteWarnsOnceWhenServerIgnoresAuthor pins #373 §4.5's author
-// warning: a server whose WhoAmI does not advertise FeatureAuthor gets one
-// Warn naming it, and a second add to the same server does not repeat it.
-func TestAddRemoteWarnsOnceWhenServerIgnoresAuthor(t *testing.T) {
-	ctx := context.Background()
-	st := store.New(t.TempDir())
-	fg := &fakeGit{
-		headCommitID:  "1111111111111111111111111111111111111111",
-		rootCommitSHA: "2222222222222222222222222222222222222222",
-		identityName:  "Ada Lovelace",
-		identityEmail: "ada@example.com",
-	}
-	fr := &fakeRemote{
-		createBindingResp: remote.BindingView{Name: "api", Candidate: "claude/anthropic/haiku"},
-	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
-
-	// The once-per-(process, server) set is package state, so start clean.
-	authorWarned.Delete("zen")
-	t.Cleanup(func() { authorWarned.Delete("zen") })
-
-	handler := &captureHandler{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	for _, name := range []string{"api", "web"} {
-		if _, err := Add(ctx, rt, AddOptions{Name: name, Server: "zen", Repo: "/fake/repo"}); err != nil {
-			t.Fatalf("Add %s: %v", name, err)
-		}
-	}
-
-	warns := 0
-	for _, r := range handler.snapshot() {
-		if strings.Contains(r.Message, "ignores the commit author (older relay serve)") {
-			warns++
-		}
-	}
-	if warns != 1 {
-		t.Fatalf("author warnings = %d, want exactly 1 for two adds to one server", warns)
 	}
 }
 
