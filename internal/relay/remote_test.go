@@ -1808,8 +1808,11 @@ func TestDoneRemoteForwardsFirst(t *testing.T) {
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	_, err := Done(ctx, rt, "api")
-	if err == nil || !strings.Contains(err.Error(), "round 1 is running on zen; wait or relay unbind --force") {
+	if err == nil || !strings.Contains(err.Error(), "round 1 is running on zen; wait for it, or relay unbind api to stop it and drop the binding") {
 		t.Fatalf("Done err = %v, want the round-open refusal", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "--force") {
+		t.Fatalf("Done err = %v, must not name --force: the local unbind has no such flag", err)
 	}
 
 	reloaded, lerr := st.Load("api")
@@ -1847,6 +1850,42 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("server Unbind never called: %v", fr.calls)
+	}
+}
+
+// TestUnbindRemoteRunningRoundForwardsAndDeletes pins #331's premise for the
+// local verb the hints now name: `relay unbind` has no running-round guard,
+// and does not need one. It tells the server first -- whose wire unbind kills
+// the headless builder and archives its copy -- then deletes the local
+// record, whether or not a round is open.
+func TestUnbindRemoteRunningRoundForwardsAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundStartedAt = baseTime
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := Unbind(ctx, rt, "api", false); err != nil {
+		t.Fatalf("Unbind: %v, want a running round to proceed", err)
+	}
+
+	foundUnbind := false
+	for _, c := range fr.calls {
+		if c == "Unbind:zen:api" {
+			foundUnbind = true
+		}
+	}
+	if !foundUnbind {
+		t.Fatalf("server Unbind never called: %v", fr.calls)
+	}
+
+	if _, err := st.Load("api"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Load after unbind: err = %v, want ErrNotFound", err)
 	}
 }
 

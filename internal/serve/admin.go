@@ -267,9 +267,10 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 // binding by that name for that client, with no local counterpart to
 // resume it (#100). owner resolves by exact client label or exact id; a
 // label shared by two clients is refused rather than guessed at. A running
-// round is refused unless force is set, matching relay unbind's own
-// guardedness; archiving (not deleting) keeps log.jsonl and every round
-// file, same as relay unbind --archive.
+// round is refused unless force is set: this is the admin's guard against
+// clearing a live client's work by mistake; the owning client's own unbind
+// (the wire verb) needs no force. Archiving (not deleting) keeps log.jsonl
+// and every round file, same as relay unbind --archive.
 func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relay.UnbindResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
