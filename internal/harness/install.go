@@ -161,6 +161,17 @@ func Install(env InstallEnv, opts InstallOptions) ([]InstallResult, error) {
 	return results, merr
 }
 
+// agentDocBase is the embedded definition's basename for role r of kind:
+// "<Role.Doc>.<DocExt or md>", exactly as AgentDoc composes its embed path
+// (#371 round 3 §4). It is the key ShippedBefore indexes.
+func agentDocBase(r Role, kind string) string {
+	ext := "md"
+	if h, ok := Lookup(kind); ok && h.DocExt != "" {
+		ext = h.DocExt
+	}
+	return r.Doc + "." + ext
+}
+
 // installOne applies §5's decision table to one (kind, role). Its bool reports
 // whether the manifest changed, so Install can save it once; a write that
 // failed records nothing.
@@ -185,6 +196,7 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		Path: r.Path,
 	}
 	existing, rerr := env.ReadFile(full)
+	existingSHA := docSHA(existing)
 	switch {
 	case errors.Is(rerr, fs.ErrNotExist):
 		if opts.DryRun {
@@ -198,11 +210,12 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		return res, record(manifest, r.Path, docSHA(shipped)), nil
 	case rerr == nil && DocEqual(shipped, existing):
 		res.Outcome = OutcomeKeptIdentical
-		return res, record(manifest, r.Path, docSHA(existing)), nil
-	case rerr == nil && manifest[r.Path] == docSHA(existing):
-		// The bytes on disk are exactly what relay last wrote, so the
+		return res, record(manifest, r.Path, existingSHA), nil
+	case rerr == nil && (manifest[r.Path] == existingSHA || ShippedBefore(agentDocBase(r, kind), existingSHA)):
+		// The bytes on disk are exactly what relay last wrote, or a blob
+		// some past relay shipped before manifests existed, so the
 		// difference from the shipped copy is relay's own older release,
-		// not the user's edit: safe to refresh (#371 §4.10).
+		// not the user's edit: safe to refresh (#371 §4.10, round 3 §4).
 		if opts.DryRun {
 			res.Outcome = OutcomeWouldUpdate
 			return res, false, nil

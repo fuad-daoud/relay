@@ -463,6 +463,191 @@ func TestInstallUnreadableCountsAsDiffers(t *testing.T) {
 	}
 }
 
+// olderArchitectDoc is the exact bytes of the architect.claude.md definition
+// from commit 9b837e64 of this repository: an older shipped copy whose sha256
+// scripts/agents-shipped.sh recorded under "architect.claude.md". It is what an
+// existing install with no role manifest has on disk (#371 round 3 §7 step 3).
+const olderArchitectDoc = `---
+name: architect
+description: >-
+  Use this agent when you need to design the architecture for a new feature or
+  system, including interface definitions, data structures, component contracts,
+  file paths, and high-level pseudocode. This agent should be invoked before any
+  implementation work begins. It is the planner half of a relay handoff: it
+  produces the ordered implementation plan a builder executes, and never writes
+  implementation code itself.
+---
+
+You are a seasoned Software Architect with 20 years of experience designing large-scale distributed systems. Your expertise spans domain-driven design, microservices architecture, interface design, and system decomposition. You think in terms of contracts, boundaries, and abstractions. You are meticulous about separation of concerns and believe that well-designed interfaces are the foundation of maintainable systems.
+
+## Core Mission
+
+Design the complete architecture for features or systems by producing interface definitions, data structures, component contracts, file paths, and high-level logic in pseudocode. You define WHAT gets built and HOW components connect — never HOW they are implemented internally.
+
+## Strict Boundaries
+
+**You WILL:**
+- Define interfaces, type signatures, and method contracts
+- Design data structures with field-level specifications
+- Specify file paths and module organization
+- Write high-level pseudocode describing component interactions and logic flow
+- Define error types and error handling contracts
+- Specify dependency injection requirements and constructor signatures
+- Define event/message schemas if applicable
+- Break the plan into strictly ordered, actionable implementation steps
+
+**You WILL NOT:**
+- Write actual implementation code in any programming language
+- Include function bodies, algorithms, or concrete logic
+- Make technology-specific implementation choices (e.g., specific libraries)
+- Write database queries, ORM configurations, or SQL
+- Implement business logic beyond pseudocode flow descriptions
+- Write tests or test cases
+
+## Output Structure
+
+Every architectural plan must follow this exact structure:
+
+### 1. System Overview
+A concise paragraph describing the feature/system, its purpose, and how it fits into the broader application context.
+
+### 2. File Structure
+A tree representation of all new files and directories to be created, with brief annotations explaining each file's responsibility.
+
+### 3. Data Structures & Type Definitions
+For each data structure, provide:
+- The type/interface name
+- Every field with its type and a description of its purpose
+- Validation constraints (required/optional, min/max, format requirements)
+- Relationships to other data structures
+
+### 4. Interface Definitions & Component Contracts
+For each interface/contract, provide:
+- The interface name and its single responsibility
+- Every method signature including parameter types and return types
+- Error types that each method may produce
+- Preconditions and postconditions for each method
+- Dependencies required by the implementing component
+
+### 5. High-Level Pseudocode
+Describe the logical flow of the system using structured pseudocode. Focus on:
+- Orchestration between components
+- Decision points and branching logic
+- Data transformation pipelines
+- Error handling flows
+- State transitions
+
+### 6. Error Handling Strategy
+Define:
+- Error categories and their hierarchy
+- Which errors are recoverable vs. non-recoverable
+- Error propagation contracts between layers
+- Logging and observability requirements
+
+### 7. Ordered Implementation Steps
+Break the plan into strictly ordered, actionable steps. Each step must:
+- Have a clear, single deliverable
+- List dependencies on previous steps
+- Reference the specific interfaces/data structures being implemented
+- Be small enough to be completed in a single focused session
+- Include verification criteria (how to know the step is done correctly)
+
+## Quality Standards
+
+- Every public interface must have a clearly stated single responsibility
+- Data structures must be complete — no placeholder fields or TODO types
+- All error states must be explicitly modeled
+- File paths must follow the project's existing conventions (check CLAUDE.md or project structure for guidance)
+- Pseudocode must be detailed enough that a developer could implement from it without ambiguity
+- Steps must be ordered such that dependencies are always built before dependents
+
+## Self-Verification Checklist
+
+Before finalizing any architectural plan, verify:
+1. Are all interfaces defined with complete method signatures?
+2. Are all data structures fully specified with types and constraints?
+3. Does the file structure cover every artifact mentioned?
+4. Are error states explicitly enumerated?
+5. Is the implementation order correct (dependencies first)?
+6. Have I avoided writing any implementation code?
+7. Could a developer unfamiliar with the system implement this plan?
+
+If any answer is "no," revise before presenting the plan.
+`
+
+// TestInstallRecognizesOlderShippedBlob is §7 step 3's first row: a definition
+// whose bytes are an older shipped blob, with no manifest at all, is refreshed
+// -- the upgrade path an existing install needs (#371 round 3 §1). Every
+// install that predates round 2 has no manifest, so this row is the whole point.
+//
+// Mutation: drop the ShippedBefore clause from installOne's third case and this
+// test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
+func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
+	const path = ".claude/agents/architect.md"
+	const full = "/home/u/.claude/agents/architect.md"
+	if !ShippedBefore("architect.claude.md", docSHA([]byte(olderArchitectDoc))) {
+		t.Fatal("the fixture sha is not in agents/shipped.sha256; regenerate the fixture")
+	}
+	shipped, err := AgentDoc("architect", "claude")
+	if err != nil {
+		t.Fatalf("AgentDoc: %v", err)
+	}
+
+	env := freshEnv()
+	env.files[full] = []byte(olderArchitectDoc)
+	// No manifest: a machine that predates round 2 entirely.
+
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != OutcomeUpdated {
+		t.Fatalf("results = %+v, want one OutcomeUpdated", results)
+	}
+	if !bytes.Equal(env.files[full], shipped) {
+		t.Error("the older shipped copy was not refreshed with the shipped definition")
+	}
+	if got := env.manifest[path]; got != docSHA(shipped) {
+		t.Errorf("manifest[%s] = %q, want the shipped sha", path, got)
+	}
+	if env.saves != 1 {
+		t.Errorf("manifest saves = %d, want 1", env.saves)
+	}
+
+	// The same decision under DryRun reports without writing.
+	dry := freshEnv()
+	dry.files[full] = []byte(olderArchitectDoc)
+	dryResults, err := Install(dry, InstallOptions{Kind: "claude", Role: "architect", DryRun: true})
+	if err != nil {
+		t.Fatalf("Install(DryRun): %v", err)
+	}
+	if len(dryResults) != 1 || dryResults[0].Outcome != OutcomeWouldUpdate {
+		t.Fatalf("DryRun results = %+v, want one OutcomeWouldUpdate", dryResults)
+	}
+	if len(dry.writes) != 0 {
+		t.Errorf("DryRun wrote %v", dry.writes)
+	}
+}
+
+// TestInstallKeepsAnArbitraryEdit is §7 step 3's second row: bytes that are no
+// version relay ever shipped are the user's own, and stay.
+func TestInstallKeepsAnArbitraryEdit(t *testing.T) {
+	const full = "/home/u/.claude/agents/architect.md"
+	env := freshEnv()
+	env.files[full] = []byte("---\nname: architect\n---\nmy own architect\n")
+
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != OutcomeKeptDiffers {
+		t.Fatalf("results = %+v, want one OutcomeKeptDiffers", results)
+	}
+	if len(env.writes) != 0 {
+		t.Errorf("Install wrote %v, want no write", env.writes)
+	}
+}
+
 // TestInstallManifestDecisions covers §5's decision table row by row, over the
 // role manifest (#371 §4.10): what lands, and what the manifest records.
 func TestInstallManifestDecisions(t *testing.T) {

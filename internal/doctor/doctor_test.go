@@ -199,10 +199,10 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 }
 
 // TestDoctorRolesRow covers §4.10's role-staleness row: stale when the daemon
-// would write or update a definition, OK with the "edited by you (kept)"
-// detail when the user's own edit is being kept, and OK when everything is
-// current. A harness whose binary is not on PATH gets no row, because it gets
-// no other per-harness row either.
+// would write or update a definition, OK with the "differs from every copy
+// relay has shipped (kept as your edit)" detail when the user's own edit is
+// being kept, and OK when everything is current. A harness whose binary is not
+// on PATH gets no row, because it gets no other per-harness row either.
 func TestDoctorRolesRow(t *testing.T) {
 	claudeRoles := []string{"plan-executor", "researcher", "reviewer", "architect"}
 	relPath := func(role string) string { return ".claude/agents/" + role + ".md" }
@@ -251,8 +251,8 @@ func TestDoctorRolesRow(t *testing.T) {
 		if c == nil {
 			t.Fatal("claude has its binary on PATH, so it needs a roles row")
 		}
-		if c.Severity != SevOK || c.Detail != "edited by you (kept)" {
-			t.Errorf("row = %+v, want OK with detail %q", *c, "edited by you (kept)")
+		if c.Severity != SevOK || c.Detail != "differs from every copy relay has shipped (kept as your edit)" {
+			t.Errorf("row = %+v, want OK with detail %q", *c, "differs from every copy relay has shipped (kept as your edit)")
 		}
 	})
 

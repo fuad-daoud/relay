@@ -439,7 +439,7 @@ func rolesCheck(env Env, kind string) Check {
 			Fix:    "relay agent install",
 		}
 	case edited:
-		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "edited by you (kept)"}
+		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "differs from every copy relay has shipped (kept as your edit)"}
 	default:
 		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "up to date"}
 	}

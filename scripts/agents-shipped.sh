@@ -36,10 +36,10 @@ mode=
 while [ $# -gt 0 ]; do
 	case $1 in
 	--write)
-		mode=write
+		mode='write'
 		;;
 	--check)
-		mode=check
+		mode='check'
 		;;
 	--root)
 		shift
