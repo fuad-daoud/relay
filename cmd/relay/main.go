@@ -157,9 +157,6 @@ func buildVersion() string {
 // the version buildVersion chose, whether the module rather than an ldflags
 // stamp supplied it, and where the executable lives. Disk reads only -- the
 // release check never touches the network to learn who it is.
-//
-// ManifestVersion is left empty: the plugin manifests that carried it are
-// packaging, which #303 step 4 owns.
 func releaseInputs() release.Inputs {
 	in := release.Inputs{Version: buildVersion()}
 
@@ -177,27 +174,6 @@ func releaseInputs() release.Inputs {
 		}
 	}
 	return in
-}
-
-// manifestVersion reads the version line of a plugin manifest the way
-// scripts/plugin-fetch.sh does (sed -n 's/^version = "\(.*\)"$/\1/p'): a
-// missing file or a manifest without the line is "", which is what makes a
-// plugin install unrecognisable -- not an error.
-func manifestVersion(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		v, ok := strings.CutPrefix(strings.TrimSpace(line), `version = "`)
-		if !ok {
-			continue
-		}
-		if v, ok := strings.CutSuffix(v, `"`); ok {
-			return v
-		}
-	}
-	return ""
 }
 
 // statusNotice is the line `relay status` prints above the rows when the
