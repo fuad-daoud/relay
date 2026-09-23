@@ -591,8 +591,8 @@ func TestDoneRefusesQueued(t *testing.T) {
 
 	if _, err := Done(context.Background(), rt, b.Name); err == nil {
 		t.Fatal("Done: want an error refusing a queued round")
-	} else if !strings.Contains(err.Error(), "is queued") || !strings.Contains(err.Error(), "unbind to drop it") {
-		t.Fatalf("Done err = %q, want it to mention the round is queued and to unbind", err.Error())
+	} else if !strings.Contains(err.Error(), "is queued") || !strings.Contains(err.Error(), "relay stop to drop it from the queue") {
+		t.Fatalf("Done err = %q, want it to mention the round is queued and to relay stop", err.Error())
 	}
 
 	got, err := rt.Store.Load(b.Name)

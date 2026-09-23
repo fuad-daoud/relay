@@ -93,6 +93,10 @@ type BindingView struct {
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
 	ReportOutcome string     `json:"report_outcome,omitempty"` // relay.ReportTail.Status or "unstructured"
+	// Stopped is how the closed round (ClosedRound) was stopped: "killed"
+	// or "dequeued". It is "" when that round closed any other way, on a
+	// pre-stop server, or when ClosedRound is 0.
+	Stopped string `json:"stopped,omitempty"`
 	// DiffNote, DiffCommits and DiffTree are the closed round's diff facts,
 	// from the newest KindDiff entry for Serve.ClosedRound -- the same facts
 	// DiffSummary wrote to the server's own log at close. Empty/zero on any
@@ -200,6 +204,9 @@ const (
 	// binding halted trying to start it (e.g. a builder spawn failure);
 	// Message is the binding's Halt text.
 	CodeRoundHalted Code = "round_halted"
+	// CodeNothingToStop is a 409: the binding has no running or queued
+	// round to stop.
+	CodeNothingToStop Code = "nothing_to_stop"
 )
 
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier
@@ -209,6 +216,10 @@ const FeatureTier = "tier"
 // FeatureQueue is the WhoAmI.Features token a server with the builder
 // cap/queue advertises (#285).
 const FeatureQueue = "queue"
+
+// FeatureStop is the WhoAmI.Features token a server with
+// POST /v1/bindings/{name}/stop advertises (#344).
+const FeatureStop = "stop"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {

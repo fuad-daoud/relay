@@ -80,6 +80,8 @@ func StopText(name string, res StopResult) string {
 	switch res.Action {
 	case "killed":
 		return fmt.Sprintf("%s round %d stopped: process killed; round closed without a report unless one was on disk", name, res.Round)
+	case "dequeued":
+		return fmt.Sprintf("%s round %d stopped: dropped from the server queue before it started; round closed without a report", name, res.Round)
 	default:
 		return fmt.Sprintf("%s has no open round; nothing to stop", name)
 	}

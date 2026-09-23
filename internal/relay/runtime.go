@@ -243,4 +243,5 @@ type RemoteClient interface {
 	Done(ctx context.Context, server, name string) error
 	Unbind(ctx context.Context, server, name string) error
 	Resume(ctx context.Context, server, name string) (remote.BindingView, error)
+	Stop(ctx context.Context, server, name string) (remote.BindingView, error)
 }

@@ -489,8 +489,8 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	if len(who.Features) != 2 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue {
-		t.Fatalf("Features = %v, want [%s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue)
+	if len(who.Features) != 3 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue || who.Features[2] != remote.FeatureStop {
+		t.Fatalf("Features = %v, want [%s %s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop)
 	}
 	if who.Builders == nil || who.Builders.Cap <= 0 {
 		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
@@ -2482,6 +2482,86 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 	catOut := runGit(t, env.clientDir, "cat-file", "-p", sideSHA)
 	if !strings.Contains(catOut, "parent "+env.headSHA) {
 		t.Fatalf("side ref commit missing parent %q:\n%s", env.headSHA, catOut)
+	}
+}
+
+// TestStopRunningRoundKeepsBinding pins #344's wire stop: POST
+// /v1/bindings/{name}/stop kills the running builder, closes the round as
+// stopped, and leaves the binding active -- unlike unbind, which drops it. A
+// second stop is 409 nothing_to_stop.
+func TestStopRunningRoundKeepsBinding(t *testing.T) {
+	env := setupTestEnv(t)
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+	if view := decodeView(t, body); view.RoundState != remote.RoundRunning {
+		t.Fatalf("round_state = %q, want running", view.RoundState)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	pid := b.Builder.PID
+	if pid == 0 {
+		t.Fatal("builder PID = 0, want a running process")
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	view := decodeView(t, body)
+	if view.State != string(store.StateActive) {
+		t.Errorf("state = %q, want active: a stop keeps the binding", view.State)
+	}
+	if view.RoundState != remote.RoundClosed {
+		t.Errorf("round_state = %q, want closed", view.RoundState)
+	}
+	if view.Stopped != "killed" {
+		t.Errorf("stopped = %q, want killed", view.Stopped)
+	}
+	if view.ClosedRound != 1 {
+		t.Errorf("closed_round = %d, want 1", view.ClosedRound)
+	}
+
+	env.runner.mu.Lock()
+	alive := env.runner.alive[pid]
+	env.runner.mu.Unlock()
+	if alive {
+		t.Errorf("builder pid %d still alive after stop, want killed", pid)
+	}
+
+	if _, err := rt.Store.Load("api"); err != nil {
+		t.Fatalf("Load after stop: %v, want the binding to still exist", err)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second stop status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
+	}
+	if errBody.Code != remote.CodeNothingToStop {
+		t.Errorf("second stop code = %q, want %q", errBody.Code, remote.CodeNothingToStop)
+	}
+}
+
+// TestStopAnotherOwnersBindingIs404 pins the owner check: stopping a binding
+// that belongs to another client is a 404, exactly as done and unbind answer.
+func TestStopAnotherOwnersBindingIs404(t *testing.T) {
+	env := setupTestEnv(t)
+	ownerB := addOwner(t, env, "bob")
+
+	resp, body := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, resp, body, "B")
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("stop of another owner's binding = %d, want 404; body: %s", resp.StatusCode, string(body))
 	}
 }
 

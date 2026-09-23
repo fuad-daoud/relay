@@ -770,7 +770,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// completed round to hand back; refuse the same way the wire does, so
 		// the server-local `relay serve` admin verbs agree with it.
 		if b.Owner != "" && !b.QueuedAt.IsZero() {
-			return fmt.Errorf("round %d is queued; unbind to drop it", b.Round)
+			return fmt.Errorf("round %d is queued; relay stop to drop it from the queue, or unbind", b.Round)
 		}
 
 		// A remote binding's server is told first (§4.6): the server is the
@@ -783,7 +783,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			if derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name); derr != nil {
 				var httpErr *client.HTTPError
 				if errors.As(derr, &httpErr) && httpErr.Status == 409 {
-					return fmt.Errorf("round %d is running on %s; wait for it, or relay unbind %s to stop it and drop the binding", b.Round, b.Builder.Server, b.Name)
+					return fmt.Errorf("round %d is running on %s; relay stop %s to stop it and keep the binding, or relay unbind %s to drop it", b.Round, b.Builder.Server, b.Name, b.Name)
 				}
 				if errors.Is(derr, client.ErrUnreachable) {
 					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
