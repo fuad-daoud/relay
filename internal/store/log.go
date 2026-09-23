@@ -434,9 +434,14 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 	return LogEntry{}, 0, false, nil
 }
 
-// confirmIndex marks one entry as delivered by route, rewriting the log. The
-// log is small and append-only, so a full rewrite is simpler and safer than
-// in-place mutation.
+// confirmIndex marks one entry as delivered by route, patching that line in
+// place rather than re-marshalling the whole log.
+//
+// It decodes only the line it rewrites into map[string]json.RawMessage, sets
+// "confirmed", "delivered_at" and (when route is non-empty) "route", and
+// writes the map back. Every other line keeps its exact bytes, so a key a
+// newer relay wrote on any line survives this binary (spec §4.3). Seq stays a
+// newline count: an unchanged line is never re-encoded at all.
 //
 // It takes an index rather than re-deriving "the entry we must have meant"
 // because the pair it replaced -- pendingForPlanner and confirmLatest -- agreed
@@ -444,33 +449,78 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 // implicit and survived exactly as long as nobody edited one of them. Callers
 // hold the state lock across both calls, so the index is stable.
 func (s *Store) confirmIndex(name string, idx int, route string) error {
-	entries, err := s.readLog(name)
-	if err != nil {
-		return err
+	data, err := os.ReadFile(s.logPath(name))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read log for %q: %w", name, err)
 	}
-	if idx < 0 || idx >= len(entries) {
-		return fmt.Errorf("confirm entry %d for %q: log has %d entries", idx, name, len(entries))
+
+	// bytes.Split on '\n' then bytes.Join yields the file's exact bytes back,
+	// trailing newline included (the final empty segment). Empty lines are not
+	// entries -- readLog skips them -- so the entry at idx is the idx'th
+	// non-empty line.
+	lines := bytes.Split(data, []byte("\n"))
+	var lineIdx []int
+	for i, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		lineIdx = append(lineIdx, i)
 	}
-	if entries[idx].Confirmed {
+	if idx < 0 || idx >= len(lineIdx) {
+		return fmt.Errorf("confirm entry %d for %q: log has %d entries", idx, name, len(lineIdx))
+	}
+	li := lineIdx[idx]
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(lines[li], &m); err != nil {
+		return fmt.Errorf("decode log entry %d for %q: %w", idx, name, err)
+	}
+	var confirmed bool
+	if raw, ok := m["confirmed"]; ok {
+		if err := json.Unmarshal(raw, &confirmed); err != nil {
+			return fmt.Errorf("decode confirmed for %q entry %d: %w", name, idx, err)
+		}
+	}
+	if confirmed {
 		return nil
 	}
 
 	now := time.Now().UTC()
-	entries[idx].Confirmed = true
-	entries[idx].DeliveredAt = &now
+	delivered, err := json.Marshal(now)
+	if err != nil {
+		return fmt.Errorf("encode delivered_at: %w", err)
+	}
+	m["confirmed"] = json.RawMessage("true")
+	m["delivered_at"] = delivered
 	if route != "" {
-		entries[idx].Route = route
-	}
-
-	var buf []byte
-	for _, e := range entries {
-		raw, err := json.Marshal(e)
+		encodedRoute, err := json.Marshal(route)
 		if err != nil {
-			return fmt.Errorf("encode log entry: %w", err)
+			return fmt.Errorf("encode route: %w", err)
 		}
-		buf = append(buf, raw...)
-		buf = append(buf, '\n')
+		m["route"] = encodedRoute
 	}
 
-	return writeFileAtomic(s.logPath(name), buf, bindingFileMode)
+	// Seq stays a newline count: the changed line carries its 1-based
+	// position, exactly as readLog fills it for a line that predates the
+	// field, so the rewrite writes it through as before.
+	seq := idx + 1
+	if raw, ok := m["seq"]; ok {
+		var n int
+		if err := json.Unmarshal(raw, &n); err == nil && n != 0 {
+			seq = n
+		}
+	}
+	encodedSeq, err := json.Marshal(seq)
+	if err != nil {
+		return fmt.Errorf("encode seq: %w", err)
+	}
+	m["seq"] = encodedSeq
+
+	patched, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("encode log entry: %w", err)
+	}
+	lines[li] = patched
+
+	return writeFileAtomic(s.logPath(name), bytes.Join(lines, []byte("\n")), bindingFileMode)
 }

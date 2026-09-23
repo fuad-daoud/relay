@@ -28,20 +28,20 @@ func TestRefreshLoadsOnFirstCall(t *testing.T) {
 		return fileStamp{mtime: t0, size: 100, exists: true}, nil
 	}
 	cands := &candidate.Set{}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
 		candCalls++
 		if path != paths.Candidates {
 			t.Errorf("loadCandidates path = %s, want %s", path, paths.Candidates)
 		}
-		return cands, nil
+		return cands, nil, nil
 	}
 	pol := policy.Policy{Order: map[string][]string{"builder": {"agy"}}}
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
 		if path != paths.Policy {
 			t.Errorf("loadPolicy path = %s, want %s", path, paths.Policy)
 		}
-		return pol, nil
+		return pol, nil, nil
 	}
 	cls := &classify.Fake{}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
@@ -89,13 +89,13 @@ func TestRefreshSkipsWhenUnchanged(t *testing.T) {
 		return fileStamp{mtime: t0, size: 100, exists: true}, nil
 	}
 	cands := &candidate.Set{}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
 		candCalls++
-		return cands, nil
+		return cands, nil, nil
 	}
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
-		return policy.Policy{}, nil
+		return policy.Policy{}, nil, nil
 	}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 		resolveCalls++
@@ -139,14 +139,14 @@ func TestRefreshReloadsOnPolicyChange(t *testing.T) {
 		}
 		return candStamp, nil
 	}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
 		candCalls++
-		return &candidate.Set{}, nil
+		return &candidate.Set{}, nil, nil
 	}
 	curOrder := []string{"agy"}
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
-		return policy.Policy{Order: map[string][]string{"builder": curOrder}}, nil
+		return policy.Policy{Order: map[string][]string{"builder": curOrder}}, nil, nil
 	}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 		resolveCalls++
@@ -200,13 +200,13 @@ func TestRefreshReloadsOnCandidatesChange(t *testing.T) {
 		}
 		return polStamp, nil
 	}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
 		candCalls++
-		return &candidate.Set{}, nil
+		return &candidate.Set{}, nil, nil
 	}
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
-		return policy.Policy{}, nil
+		return policy.Policy{}, nil, nil
 	}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 		resolveCalls++
@@ -254,19 +254,19 @@ func TestRefreshKeepsLastGoodOnBadPolicy(t *testing.T) {
 	}
 
 	goodCands := &candidate.Set{}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
-		return goodCands, nil
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return goodCands, nil, nil
 	}
 
 	goodPolicy := policy.Policy{Order: map[string][]string{"builder": {"good"}}}
 	polErr := error(nil)
 	polCalls := 0
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
 		if polErr != nil {
-			return policy.Policy{}, polErr
+			return policy.Policy{}, nil, polErr
 		}
-		return goodPolicy, nil
+		return goodPolicy, nil, nil
 	}
 
 	goodCls := &classify.Fake{}
@@ -343,16 +343,16 @@ func TestRefreshWarnsOncePerDistinctError(t *testing.T) {
 		}
 		return polStamp, nil
 	}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
-		return &candidate.Set{}, nil
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
 	}
 
 	var polErr error = errors.New("error one")
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		if polErr != nil {
-			return policy.Policy{}, polErr
+			return policy.Policy{}, nil, polErr
 		}
-		return policy.Policy{}, nil
+		return policy.Policy{}, nil, nil
 	}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 		return &classify.Fake{}
@@ -415,13 +415,13 @@ func TestRefreshMissingFileIsEmptyNotError(t *testing.T) {
 		}
 		return candStamp, nil
 	}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
-		return &candidate.Set{}, nil
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
 	}
 	polCalls := 0
-	w.loadPolicy = func(path string) (policy.Policy, error) {
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
 		polCalls++
-		return policy.Policy{}, nil
+		return policy.Policy{}, nil, nil
 	}
 	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 		return &classify.Fake{}
@@ -454,11 +454,11 @@ func TestRefreshStartupFailureSaysStartup(t *testing.T) {
 	w.stat = func(path string) (fileStamp, error) {
 		return fileStamp{mtime: t0, size: 100, exists: true}, nil
 	}
-	w.loadCandidates = func(path string) (*candidate.Set, error) {
-		return &candidate.Set{}, nil
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, nil, nil
 	}
-	w.loadPolicy = func(path string) (policy.Policy, error) {
-		return policy.Policy{}, errors.New("parse error")
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
+		return policy.Policy{}, nil, errors.New("parse error")
 	}
 
 	var warnMsgs []string
@@ -474,5 +474,54 @@ func TestRefreshStartupFailureSaysStartup(t *testing.T) {
 	}
 	if !strings.Contains(warnMsgs[0], "startup") {
 		t.Errorf("warn text %q does not contain 'startup'", warnMsgs[0])
+	}
+}
+
+// TestRefreshCarriesAndLogsConfigWarnings pins #372 §4.4: the watcher carries
+// the config warnings on the Runtime, logs each distinct text once, and does
+// not repeat an unchanged warning on a later reload.
+func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
+	paths := ConfigPaths{Candidates: "/cand.json", Policy: "/pol.json", ConfigDir: "/cfg"}
+	w := NewConfigWatcher(paths)
+
+	t0 := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	polStamp := fileStamp{mtime: t0, size: 1, exists: true}
+	candStamp := fileStamp{mtime: t0, size: 1, exists: true}
+	w.stat = func(path string) (fileStamp, error) {
+		if path == paths.Policy {
+			return polStamp, nil
+		}
+		return candStamp, nil
+	}
+	w.loadCandidates = func(path string) (*candidate.Set, []string, error) {
+		return &candidate.Set{}, []string{"candidates.json: cand warning"}, nil
+	}
+	w.loadPolicy = func(path string) (policy.Policy, []string, error) {
+		return policy.Policy{}, []string{"policy.json: policy warning"}, nil
+	}
+	w.resolve = func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
+		return &classify.Fake{}
+	}
+
+	var warns []string
+	w.warn = func(msg string, args ...any) { warns = append(warns, msg) }
+
+	out := w.Refresh(Runtime{})
+	want := []string{"candidates.json: cand warning", "policy.json: policy warning"}
+	if len(out.ConfigWarnings) != 2 || out.ConfigWarnings[0] != want[0] || out.ConfigWarnings[1] != want[1] {
+		t.Fatalf("ConfigWarnings = %v, want %v", out.ConfigWarnings, want)
+	}
+	if len(warns) != 2 {
+		t.Fatalf("warn calls = %v, want both warnings logged", warns)
+	}
+
+	// A reload that produces the same warnings must not log them again.
+	polStamp.mtime = polStamp.mtime.Add(time.Second)
+	out2 := w.Refresh(out)
+	if len(out2.ConfigWarnings) != 2 {
+		t.Fatalf("ConfigWarnings after reload = %v, want 2", out2.ConfigWarnings)
+	}
+	if len(warns) != 2 {
+		t.Errorf("warn calls after an unchanged reload = %v, want still 2", warns)
 	}
 }

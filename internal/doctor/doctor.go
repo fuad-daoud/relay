@@ -149,12 +149,13 @@ func semverAtLeast(v, floor string) (bool, error) {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	adopted       bool
-	definitions   map[string][]string
-	usagePrices   string
-	usageOpencode bool
-	extra         []Check
-	stateRoot     string
+	adopted        bool
+	definitions    map[string][]string
+	usagePrices    string
+	usageOpencode  bool
+	extra          []Check
+	stateRoot      string
+	configWarnings []string
 }
 
 // WithAdopted scopes the per-kind checks to an adopted builder: the user
@@ -207,6 +208,32 @@ func WithStateRoot(root string) RunOption {
 	return func(cfg *runConfig) {
 		cfg.stateRoot = root
 	}
+}
+
+// WithConfigWarnings supplies the unknown-key and skipped-candidate warnings
+// the config readers produced (#372 §4.4), rendered as the one global `config`
+// row. No warnings renders it OK.
+func WithConfigWarnings(warnings []string) RunOption {
+	return func(cfg *runConfig) {
+		cfg.configWarnings = warnings
+	}
+}
+
+// ConfigCheck is the one global doctor row for config the readers could not
+// fully use: unknown keys in policy.json, and candidates skipped for an
+// unknown harness or role (#372 §4.4). No warnings -> OK; otherwise a Warn
+// listing them all.
+func ConfigCheck(warnings []string) Check {
+	c := Check{Name: "config", Group: ""}
+	if len(warnings) == 0 {
+		c.Severity = SevOK
+		c.Detail = "policy.json and candidates.json have no unknown keys"
+		return c
+	}
+	c.Severity = SevWarn
+	c.Detail = strings.Join(warnings, "; ")
+	c.Fix = "remove the unknown keys, or upgrade relay to the version that reads them"
+	return c
 }
 
 // wants reports whether the role row for definition name on kind is in
@@ -589,6 +616,10 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 	} else {
 		checks = append(checks, daemonCheck(env))
 	}
+
+	// #372 §4.4: one global row for the config keys this relay could not use,
+	// from candidates.json and policy.json.
+	checks = append(checks, ConfigCheck(cfg.configWarnings))
 
 	usableBuilder := false
 

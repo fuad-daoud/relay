@@ -530,15 +530,20 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
-	candidates, err := candidate.Load(filepath.Join(configDir, "relay", "candidates.json"))
+	candidates, candWarnings, err := candidate.LoadWithWarnings(filepath.Join(configDir, "relay", "candidates.json"))
 	if err != nil {
 		return relay.Runtime{}, err
 	}
 
-	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
+	pol, polWarnings, err := policy.LoadWithWarnings(filepath.Join(configDir, "relay", "policy.json"))
 	if err != nil {
 		return relay.Runtime{}, err
 	}
+
+	// Warnings are carried, never printed: every CLI command calls newRuntime,
+	// so printing here would be noise (#372 §4.4). `relay doctor` renders them
+	// and the daemon logs each once.
+	configWarnings := append(append([]string(nil), candWarnings...), polWarnings...)
 
 	cls, _ := classify.Resolve(pol.Classify, configDir, os.Getenv)
 
@@ -568,6 +573,7 @@ func newRuntime() (relay.Runtime, error) {
 		AvailabilityPath: st.AvailabilityPath(),
 		LatencyPath:      st.LatencyPath(),
 		Policy:           pol,
+		ConfigWarnings:   configWarnings,
 		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
 		Usage:            reader,
@@ -901,8 +907,10 @@ func cmdAvailable(args []string) error {
 	}
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
-	// is not the ledger that gates anything: the daemon reads its own.
-	if defRoot, err := store.DefaultRoot(); err == nil {
+	// is not the ledger that gates anything: the daemon reads its own. The
+	// pointer lives under the serve root (#372 §4.6): the client root's
+	// daemon.json is DaemonInfo, which decodes as a pointer with a live pid.
+	if defRoot, err := defaultServeRoot(); err == nil {
 		if p, ok, _ := serve.ReadPointer(defRoot); ok && pidAlive(p.PID) {
 			fmt.Printf("note: a relay serve daemon runs here with its own ledger (%s); use relay serve gates / relay serve available\n", filepath.Join(p.Root, "ledger.json"))
 		}
@@ -2317,11 +2325,50 @@ func cmdDaemon(args []string) error {
 		slog.Warn("re-exec disabled", "err", reason)
 	}
 
-	// The database is opened only here (and by `relay db *`): the daemon
-	// is the process that writes it every tick; `relay serve`'s state root
-	// is its own and stays out of scope. An open failure never blocks the
-	// daemon from starting -- every ingest call site treats DB == nil like
-	// a machine with no database.
+	// The database is opened only after --check has returned and after
+	// AcquireDaemonLock (#372 §4.5): the plugin's --check probe must not
+	// create or migrate the db, and only the lock holder writes it.
+	// `relay serve`'s state root is its own and stays out of scope.
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return err
+	}
+	watcher := relay.NewConfigWatcher(relay.ConfigPaths{
+		Candidates: filepath.Join(configDir, "relay", "candidates.json"),
+		Policy:     filepath.Join(configDir, "relay", "policy.json"),
+		ConfigDir:  configDir,
+		Getenv:     os.Getenv,
+	})
+
+	// --check is the plugin startup hook's probe. It prints nothing on either
+	// path: the exit status is the whole answer, and a hook that printed would
+	// only fill a log with noise on every server start. Returning exitCodeErr
+	// rather than calling os.Exit keeps the no-db-yet ordering a test can call
+	// (#372 §4.5): main maps the code to the same exit status.
+	if *check {
+		running, err := rt.Store.DaemonRunning()
+		if err != nil {
+			return err
+		}
+		if !running {
+			return exitCodeErr{code: 1}
+		}
+		return nil
+	}
+
+	lock, err := rt.Store.AcquireDaemonLock()
+	if err != nil {
+		return err
+	}
+	// DaemonLock.Close is already idempotent (it nils its file), so the
+	// explicit close on the re-exec path and this defer cannot double-close
+	// into an error that matters.
+	defer lock.Close()
+
+	// The database is opened only here (and by `relay db *`): the daemon is
+	// the process that writes it every tick. An open failure never blocks the
+	// daemon from starting -- every ingest call site treats DB == nil like a
+	// machine with no database.
 	//
 	// Closing is explicit rather than a bare defer: the re-exec path closes
 	// the DB itself before syscall.Exec, and the deferred pass must then do
@@ -2340,43 +2387,16 @@ func cmdDaemon(args []string) error {
 
 	if d, derr := openDB(rt.Store.DBPath()); derr != nil {
 		slog.Warn("relay daemon: db unavailable; ingest disabled", "err", derr)
+	} else if d.Newer() {
+		// A schema a newer relay wrote is never migrated or written by this
+		// binary: leave rt.DB nil so every ingest call site treats it as a
+		// machine with no database, and say why once (#372 §4.5).
+		have, know := d.SchemaVersions()
+		slog.Warn(fmt.Sprintf("relay.db schema v%d is newer than this relay (v%d); ingest paused until relay is upgraded", have, know))
+		_ = d.Close()
 	} else {
 		rt.DB = d
 	}
-
-	configDir, err := userConfigRoot()
-	if err != nil {
-		return err
-	}
-	watcher := relay.NewConfigWatcher(relay.ConfigPaths{
-		Candidates: filepath.Join(configDir, "relay", "candidates.json"),
-		Policy:     filepath.Join(configDir, "relay", "policy.json"),
-		ConfigDir:  configDir,
-		Getenv:     os.Getenv,
-	})
-
-	// --check is the plugin startup hook's probe. It prints nothing on either
-	// path: the exit status is the whole answer, and a hook that printed would
-	// only fill a log with noise on every server start.
-	if *check {
-		running, err := rt.Store.DaemonRunning()
-		if err != nil {
-			return err
-		}
-		if !running {
-			os.Exit(1)
-		}
-		return nil
-	}
-
-	lock, err := rt.Store.AcquireDaemonLock()
-	if err != nil {
-		return err
-	}
-	// DaemonLock.Close is already idempotent (it nils its file), so the
-	// explicit close on the re-exec path and this defer cannot double-close
-	// into an error that matters.
-	defer lock.Close()
 
 	// daemon.json: what this image runs. Written under the lock, so its
 	// presence with the lock held means a #371 daemon; removed on a clean

@@ -165,11 +165,6 @@ func TestLoadValidation(t *testing.T) {
 			wantSubstring: "provider must be a single segment",
 		},
 		{
-			name:          "unknown harness",
-			body:          `[{"harness":"nope","provider":"p","model":"m","roles":["builder"]}]`,
-			wantSubstring: `unknown harness "nope"`,
-		},
-		{
 			name:          "empty roles array",
 			body:          `[{"harness":"claude","provider":"p","model":"m","roles":[]}]`,
 			wantSubstring: "roles must not be empty",
@@ -178,11 +173,6 @@ func TestLoadValidation(t *testing.T) {
 			name:          "omitted roles",
 			body:          `[{"harness":"claude","provider":"p","model":"m"}]`,
 			wantSubstring: "roles must not be empty",
-		},
-		{
-			name:          "unknown role",
-			body:          `[{"harness":"claude","provider":"p","model":"m","roles":["reviwer"]}]`,
-			wantSubstring: `unknown role "reviwer"`,
 		},
 		{
 			name:          "invalid tree value",
@@ -236,6 +226,63 @@ func TestLoadValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// loadWarnings writes body to a temp candidates.json and loads it with
+// LoadWithWarnings, failing on any error.
+func loadWarnings(t *testing.T, body string) (*Set, []string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, warnings, err := LoadWithWarnings(path)
+	if err != nil {
+		t.Fatalf("LoadWithWarnings(%s): %v", body, err)
+	}
+	return set, warnings
+}
+
+// TestLoadSkipsUnknownHarnessAndRole pins #372 §4.4: a candidate whose harness
+// or one of whose roles is unknown is skipped with a warning, and the others
+// still load. A duplicate still fails.
+func TestLoadSkipsUnknownHarnessAndRole(t *testing.T) {
+	t.Run("unknown harness", func(t *testing.T) {
+		set, warnings := loadWarnings(t, `[
+			{"harness":"nope","provider":"p","model":"m","roles":["builder"]},
+			{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"]}
+		]`)
+		if set.Len() != 1 || len(set.Refs()) != 1 || set.Refs()[0] != "claude/anthropic/m" {
+			t.Fatalf("set = %v, want only claude/anthropic/m", set.Refs())
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown harness "nope" (skipped)`) {
+			t.Fatalf("warnings = %v, want one naming the unknown harness", warnings)
+		}
+	})
+
+	t.Run("unknown role", func(t *testing.T) {
+		set, warnings := loadWarnings(t, `[
+			{"harness":"claude","provider":"p","model":"m","roles":["reviwer"]},
+			{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"]}
+		]`)
+		if set.Len() != 1 || len(set.Refs()) != 1 || set.Refs()[0] != "claude/anthropic/m" {
+			t.Fatalf("set = %v, want only claude/anthropic/m", set.Refs())
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown role "reviwer" (skipped)`) {
+			t.Fatalf("warnings = %v, want one naming the unknown role", warnings)
+		}
+	})
+
+	t.Run("a duplicate still fails", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "candidates.json")
+		body := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]},{"harness":"claude","provider":"p","model":"m","roles":["reviewer"]}]`
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := LoadWithWarnings(path); err == nil || !strings.Contains(err.Error(), "duplicate candidate") {
+			t.Fatalf("LoadWithWarnings err = %v, want a duplicate error", err)
+		}
+	})
 }
 
 func TestLoadAcceptsExtraArgsAndTree(t *testing.T) {

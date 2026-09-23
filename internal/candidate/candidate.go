@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -162,85 +163,102 @@ func (s *Set) Providers() []string {
 	return out
 }
 
-// Load reads and validates candidate definitions from a JSON file. A missing
-// file is zero candidates and not an error, because relay ships none (spec §1
-// point 3); a present file that does not validate is an error at startup for
-// every subcommand, because a daemon running on config it cannot parse is
-// worse than one that refuses to start (spec §6).
+// Load reads and validates candidate definitions from a JSON file, discarding
+// the warnings LoadWithWarnings returns. A missing file is zero candidates and
+// not an error, because relay ships none (spec §1 point 3); a present file that
+// does not validate is an error at startup for every subcommand, because a
+// daemon running on config it cannot parse is worse than one that refuses to
+// start (spec §6).
 func Load(path string) (*Set, error) {
+	set, _, err := LoadWithWarnings(path)
+	return set, err
+}
+
+// LoadWithWarnings reads and validates candidate definitions, returning a
+// warning for every candidate this relay drops because its harness or one of
+// its roles is unknown (#372 §4.4). A newer relay's candidate must not stop
+// this relay, and the drop surfaces in `relay doctor`.
+//
+// Only an unknown harness and an unknown role are skipped: duplicates, a bad
+// tree, tier or pattern, and every other validation failure still fail the load.
+func LoadWithWarnings(path string) (*Set, []string, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return newSet(), nil
+		return newSet(), nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read candidates %s: %w", path, err)
+		return nil, nil, fmt.Errorf("read candidates %s: %w", path, err)
 	}
 
 	var entries []Candidate
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("decode candidates %s: %w", path, err)
+		return nil, nil, fmt.Errorf("decode candidates %s: %w", path, err)
 	}
 
 	set := newSet()
 	seen := make(map[string]int)
-
-	var knownKinds []string
-	for _, h := range harness.All() {
-		knownKinds = append(knownKinds, h.Kind)
-	}
+	base := filepath.Base(path)
+	var warnings []string
 
 	for i, c := range entries {
 		if c.Harness == "" || c.Provider == "" || c.Model == "" {
-			return nil, fmt.Errorf("candidates %s: candidate %d: harness, provider and model are required", path, i)
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: harness, provider and model are required", path, i)
 		}
 		if strings.Contains(c.Provider, "/") {
-			return nil, fmt.Errorf("candidates %s: candidate %d: provider must be a single segment", path, i)
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: provider must be a single segment", path, i)
 		}
 		h, ok := harness.Lookup(c.Harness)
 		if !ok {
-			return nil, fmt.Errorf("candidates %s: candidate %d: unknown harness %q (known: %v)", path, i, c.Harness, knownKinds)
+			warnings = append(warnings, fmt.Sprintf("%s: %s: unknown harness %q (skipped)", base, c.Ref().String(), c.Harness))
+			continue
 		}
 		if len(c.Roles) == 0 {
-			return nil, fmt.Errorf("candidates %s: candidate %d: roles must not be empty", path, i)
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: roles must not be empty", path, i)
 		}
+		unknownRole := ""
 		for _, r := range c.Roles {
 			if _, ok := harness.RoleByName(r); !ok {
-				return nil, fmt.Errorf("candidates %s: candidate %d: unknown role %q (known: %v)", path, i, r, harness.RoleNames())
+				unknownRole = r
+				break
 			}
 			if !h.CanServe(r) {
-				return nil, fmt.Errorf("candidates %s: candidate %d: harness %q has no definition for role %q", path, i, c.Harness, r)
+				return nil, nil, fmt.Errorf("candidates %s: candidate %d: harness %q has no definition for role %q", path, i, c.Harness, r)
 			}
 		}
+		if unknownRole != "" {
+			warnings = append(warnings, fmt.Sprintf("%s: %s: unknown role %q (skipped)", base, c.Ref().String(), unknownRole))
+			continue
+		}
 		if c.Tree != "" && c.Tree != "binding" && c.Tree != "none" {
-			return nil, fmt.Errorf("candidates %s: candidate %d: tree must be \"binding\" or \"none\"", path, i)
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: tree must be \"binding\" or \"none\"", path, i)
 		}
 		for j, pat := range c.LimitPatterns {
 			if _, err := regexp.Compile(pat); err != nil {
-				return nil, fmt.Errorf("candidates %s: candidate %d: limit_patterns[%d]: %w", path, i, j, err)
+				return nil, nil, fmt.Errorf("candidates %s: candidate %d: limit_patterns[%d]: %w", path, i, j, err)
 			}
 		}
 		for j, pat := range c.DialogPatterns {
 			if _, err := regexp.Compile(pat); err != nil {
-				return nil, fmt.Errorf("candidates %s: candidate %d: dialog_patterns[%d]: %w", path, i, j, err)
+				return nil, nil, fmt.Errorf("candidates %s: candidate %d: dialog_patterns[%d]: %w", path, i, j, err)
 			}
 		}
 		if c.Tier != "" {
 			if _, err := harness.ParseTier(c.Tier); err != nil {
-				return nil, fmt.Errorf("candidates %s: candidate %d: tier: %v", path, i, err)
+				return nil, nil, fmt.Errorf("candidates %s: candidate %d: tier: %v", path, i, err)
 			}
 		}
 		for j, pat := range c.DenialPatterns {
 			if _, err := regexp.Compile(pat); err != nil {
-				return nil, fmt.Errorf("candidates %s: candidate %d: denial_patterns[%d]: %w", path, i, j, err)
+				return nil, nil, fmt.Errorf("candidates %s: candidate %d: denial_patterns[%d]: %w", path, i, j, err)
 			}
 		}
 		key := c.Ref().String()
 		if first, exists := seen[key]; exists {
-			return nil, fmt.Errorf("candidates %s: candidate %d: duplicate candidate %s at index %d and %d", path, i, key, first, i)
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: duplicate candidate %s at index %d and %d", path, i, key, first, i)
 		}
 		seen[key] = i
 		set.byRef[key] = c
 	}
 
-	return set, nil
+	return set, warnings, nil
 }

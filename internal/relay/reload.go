@@ -40,21 +40,25 @@ type ConfigWatcher struct {
 
 	// seams; production values set by NewConfigWatcher, tests replace them
 	stat           func(path string) (fileStamp, error)
-	loadCandidates func(path string) (*candidate.Set, error)
-	loadPolicy     func(path string) (policy.Policy, error)
+	loadCandidates func(path string) (*candidate.Set, []string, error)
+	loadPolicy     func(path string) (policy.Policy, []string, error)
 	resolve        func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier
 	warn           func(msg string, args ...any) // slog.Warn
+
+	// logged is the set of config warning texts already logged this process,
+	// so the daemon logs each distinct warning once (#372 §4.4).
+	logged map[string]bool
 }
 
 // NewConfigWatcher returns a watcher with production seams: os.Stat,
-// candidate.Load, policy.Load, classify.Resolve (first return only),
-// slog.Warn. It does not read anything yet.
+// candidate.LoadWithWarnings, policy.LoadWithWarnings, classify.Resolve (first
+// return only), slog.Warn. It does not read anything yet.
 func NewConfigWatcher(paths ConfigPaths) *ConfigWatcher {
 	return &ConfigWatcher{
 		paths:          paths,
 		stat:           defaultStat,
-		loadCandidates: candidate.Load,
-		loadPolicy:     policy.Load,
+		loadCandidates: candidate.LoadWithWarnings,
+		loadPolicy:     policy.LoadWithWarnings,
 		resolve: func(cfg *policy.Classify, configDir string, getenv func(string) string) classify.Classifier {
 			cls, _ := classify.Resolve(cfg, configDir, getenv)
 			return cls
@@ -106,16 +110,18 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 	if w.loaded && cs == w.cand && ps == w.pol {
 		return rt
 	}
-	cands, err := w.loadCandidates(w.paths.Candidates)
+	cands, candWarnings, err := w.loadCandidates(w.paths.Candidates)
 	if err != nil {
 		return w.fail(rt, err)
 	}
-	pol, err := w.loadPolicy(w.paths.Policy)
+	pol, polWarnings, err := w.loadPolicy(w.paths.Policy)
 	if err != nil {
 		return w.fail(rt, err)
 	}
 	rt.Candidates = cands
 	rt.Policy = pol
+	rt.ConfigWarnings = append(append([]string(nil), candWarnings...), polWarnings...)
+	w.logWarnings(rt.ConfigWarnings)
 	if w.resolve != nil {
 		rt.Classify = w.resolve(pol.Classify, w.paths.ConfigDir, w.paths.Getenv)
 	}
@@ -129,6 +135,24 @@ func (w *ConfigWatcher) Refresh(rt Runtime) Runtime {
 		w.loadedAt = time.Now()
 	}
 	return rt
+}
+
+// logWarnings logs each config warning once per distinct text for this
+// process, so an unchanged warning is not repeated on every successful
+// reload; a changed set logs the new texts (#372 §4.4).
+func (w *ConfigWatcher) logWarnings(warnings []string) {
+	for _, msg := range warnings {
+		if w.logged[msg] {
+			continue
+		}
+		if w.logged == nil {
+			w.logged = map[string]bool{}
+		}
+		w.logged[msg] = true
+		if w.warn != nil {
+			w.warn(msg)
+		}
+	}
 }
 
 func (w *ConfigWatcher) fail(rt Runtime, err error) Runtime {

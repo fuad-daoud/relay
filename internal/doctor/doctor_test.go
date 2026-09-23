@@ -156,6 +156,49 @@ func countChecksForGroup(report Report, group string) int {
 	return count
 }
 
+// TestConfigCheck pins #372 §4.4's config row: no warnings is OK, and warnings
+// render as a Warn listing every one.
+func TestConfigCheck(t *testing.T) {
+	ok := ConfigCheck(nil)
+	if ok.Name != "config" || ok.Group != "" || ok.Severity != SevOK {
+		t.Errorf("ConfigCheck(nil) = %+v, want an OK global config row", ok)
+	}
+
+	warnings := []string{
+		`policy.json: unknown key "orders" (a typo, or a key a newer relay reads)`,
+		`candidates.json: nope/p/m: unknown harness "nope" (skipped)`,
+	}
+	w := ConfigCheck(warnings)
+	if w.Severity != SevWarn {
+		t.Errorf("ConfigCheck(2) severity = %v, want SevWarn", w.Severity)
+	}
+	for _, want := range []string{"orders", "unknown harness"} {
+		if !strings.Contains(w.Detail, want) {
+			t.Errorf("ConfigCheck(2) detail %q does not contain %q", w.Detail, want)
+		}
+	}
+}
+
+// TestDoctorConfigRow pins that Run renders the config row from
+// WithConfigWarnings.
+func TestDoctorConfigRow(t *testing.T) {
+	rep := Run(context.Background(), &fakeEnv{}, nil,
+		WithConfigWarnings([]string{"w1", "w2"}))
+
+	c := findCheck(rep, "", "config")
+	if c == nil {
+		t.Fatal("no config row in the report")
+	}
+	if c.Severity != SevWarn || !strings.Contains(c.Detail, "w1") || !strings.Contains(c.Detail, "w2") {
+		t.Errorf("config row = %+v, want a Warn listing both warnings", c)
+	}
+
+	clean := Run(context.Background(), &fakeEnv{}, nil, WithConfigWarnings(nil))
+	if c := findCheck(clean, "", "config"); c == nil || c.Severity != SevOK {
+		t.Errorf("config row with no warnings = %+v, want OK", c)
+	}
+}
+
 func TestDoctorMissingBinarySuppressesRemainingRows(t *testing.T) {
 	env := &fakeEnv{
 		lookPaths: map[string]string{}, // nothing on PATH
