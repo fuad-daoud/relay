@@ -68,16 +68,22 @@ func switchesForRound(events []store.LogEntry, n int) int {
 
 // builderForRound resolves round n's builder: the token parsed from the
 // last pick or switch entry's note for the round, falling back to
-// b.BuilderCandidate. candidateTok is the token verbatim (with any effort
-// suffix kept); ref is parsed from it with a trailing "#..." suffix
-// stripped (a ":effort" suffix belongs to the model and stays). ok is
-// false when no token was found at all -- from a note or from the binding.
+// b.BuilderCandidate. A consult's pick is not the builder: a pick whose note
+// names a role other than "builder" (isRolePick) is skipped, so a consult
+// asked after the builder pick cannot overwrite the round's builder.
+// candidateTok is the token verbatim (with any effort suffix kept); ref is
+// parsed from it with a trailing "#..." suffix stripped (a ":effort" suffix
+// belongs to the model and stays). ok is false when no token was found at
+// all -- from a note or from the binding.
 func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
 	var lastKind store.Kind
 	var lastNote string
 	var found bool
 	for _, e := range events {
 		if e.Round != n {
+			continue
+		}
+		if e.Kind == store.KindPick && isRolePick(e.Note) {
 			continue
 		}
 		if e.Kind == store.KindPick || e.Kind == store.KindSwitch {
@@ -100,6 +106,37 @@ func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidate
 		ref = r
 	}
 	return tok, ref, true
+}
+
+// isRolePick reports whether note is the pick `ask` writes for a consult:
+// "picked <tok> for <role>: ..." with a role other than "builder". It
+// recognises that consult pick and deliberately nothing else, so a builder
+// pick, a remote " on <server>:" pick, and any older or unrecognised shape
+// all return false.
+func isRolePick(note string) bool {
+	const prefix = "picked "
+	if !strings.HasPrefix(note, prefix) {
+		return false
+	}
+	rest := note[len(prefix):]
+	sp := strings.IndexByte(rest, ' ')
+	if sp < 0 {
+		return false
+	}
+	const sep = " for "
+	if !strings.HasPrefix(rest[sp:], sep) {
+		return false
+	}
+	rolePart := rest[sp+len(sep):]
+	ci := strings.IndexByte(rolePart, ':')
+	if ci < 0 {
+		return false
+	}
+	role := rolePart[:ci]
+	if role == "" || role == "builder" || strings.IndexByte(role, ' ') >= 0 {
+		return false
+	}
+	return true
 }
 
 // parseBuilderNote extracts the candidate token from a pick or switch log

@@ -212,6 +212,74 @@ func TestBuilderForRoundFromSwitchEntry(t *testing.T) {
 	}
 }
 
+// TestIsRolePick pins the negative rule: only the consult pick `ask` writes,
+// "picked <tok> for <role>:" with role != builder, is a role pick. A builder
+// pick, a remote " on <server>:" pick, an unrecognised shape and a switch
+// note (which does not start with "picked ") are not.
+func TestIsRolePick(t *testing.T) {
+	tests := []struct {
+		note string
+		want bool
+	}{
+		{"picked claude/anthropic/sonnet for reviewer: order #1", true},
+		{"picked a/b/c for verify: sole candidate", true},
+		{"picked a/b/c for builder: order #1", false},
+		{"picked a/b/c on host1: spawn", false},
+		{"picked a/b/c", false},
+		{"picked a/b/c for : x", false},
+		{"switched builder (exited (code 1) without a report): picked a/b/c for builder: order #5", false},
+	}
+	for _, tt := range tests {
+		if got := isRolePick(tt.note); got != tt.want {
+			t.Errorf("isRolePick(%q) = %v, want %v", tt.note, got, tt.want)
+		}
+	}
+}
+
+// TestBuilderForRoundSkipsConsultPick pins bug 1's fix: a consult's pick,
+// filed after the builder's, does not become the round's builder.
+func TestBuilderForRoundSkipsConsultPick(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPick, Note: "picked opencode/cline-pass/cline-pass/glm-5.3-flash#high for builder: order #1"},
+		{Round: 1, Kind: store.KindPick, Note: "picked claude/anthropic/sonnet for reviewer: order #1"},
+	}
+	b := store.Binding{}
+
+	tok, ref, ok := builderForRound(events, 1, b)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if tok != "opencode/cline-pass/cline-pass/glm-5.3-flash#high" {
+		t.Errorf("token = %q, want the builder pick's", tok)
+	}
+	want := candidateRef(t, "opencode", "cline-pass", "cline-pass/glm-5.3-flash")
+	if ref != want {
+		t.Errorf("ref = %+v, want %+v", ref, want)
+	}
+}
+
+// TestBuilderForRoundOnlyConsultPickFallsBack pins that a round whose only
+// pick is a consult's falls back to b.BuilderCandidate, as a round with no
+// pick does today.
+func TestBuilderForRoundOnlyConsultPickFallsBack(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPick, Note: "picked claude/anthropic/sonnet for reviewer: order #1"},
+	}
+	b := store.Binding{BuilderCandidate: "claude/anthropic/sonnet"}
+
+	tok, ref, ok := builderForRound(events, 1, b)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if tok != "claude/anthropic/sonnet" {
+		t.Errorf("token = %q, want the binding's candidate", tok)
+	}
+	want := candidateRef(t, "claude", "anthropic", "sonnet")
+	if ref != want {
+		t.Errorf("ref = %+v, want %+v", ref, want)
+	}
+}
+
 func TestSwitchesForRound(t *testing.T) {
 	events := []store.LogEntry{
 		{Round: 1, Kind: store.KindSwitch},

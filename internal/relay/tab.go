@@ -91,6 +91,16 @@ func TabEntries(rt Runtime, cut time.Time, warn func(string)) ([]TabEntry, error
 	return entries, nil
 }
 
+// modelSansEffort cuts a model at its first "#", the candidate's effort
+// suffix, or returns it unchanged when it has none. A ":effort" suffix
+// belongs to the model and stays, as it does in ingest's stripEffortHash.
+func modelSansEffort(model string) string {
+	if i := strings.IndexByte(model, '#'); i >= 0 {
+		return model[:i]
+	}
+	return model
+}
+
 func tabKey(e TabEntry, by string) string {
 	u := e.Entry.Usage
 	switch by {
@@ -107,7 +117,7 @@ func tabKey(e TabEntry, by string) string {
 		if u.Provider == "" && u.Model == "" {
 			return "unknown"
 		}
-		return strings.Trim(u.Provider+"/"+u.Model, "/")
+		return strings.Trim(u.Provider+"/"+modelSansEffort(u.Model), "/")
 	}
 }
 

@@ -167,6 +167,51 @@ func TestTabRowsUnknownModelGroup(t *testing.T) {
 	}
 }
 
+// TestModelSansEffort pins the cut: a "#" effort suffix is removed, a
+// ":effort" suffix stays, and an empty model is empty.
+func TestModelSansEffort(t *testing.T) {
+	tests := []struct {
+		model string
+		want  string
+	}{
+		{"m#high", "m"},
+		{"gpt-5.6-terra:high", "gpt-5.6-terra:high"},
+		{"a/b#x#y", "a/b"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := modelSansEffort(tt.model); got != tt.want {
+			t.Errorf("modelSansEffort(%q) = %q, want %q", tt.model, got, tt.want)
+		}
+	}
+}
+
+// TestTabRowsOneKeyPerModel pins bug 2's fix: the same model with and
+// without its "#" effort suffix is one row, with both entries summed.
+func TestTabRowsOneKeyPerModel(t *testing.T) {
+	entries := []TabEntry{
+		tabEntry("api", 1*time.Hour, store.KindReport, "cline-pass", "cline-pass/deepseek-v4.1-flash#high", 0.50, usage.Measured),
+		tabEntry("api", 2*time.Hour, store.KindReport, "cline-pass", "cline-pass/deepseek-v4.1-flash", 0.25, usage.Measured),
+	}
+
+	rows, total, err := TabRows(entries, "model", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want exactly one", rows)
+	}
+	if rows[0].Group != "cline-pass/cline-pass/deepseek-v4.1-flash" {
+		t.Errorf("group = %q, want the effort suffix cut", rows[0].Group)
+	}
+	if rows[0].Spend.Rounds != 2 || rows[0].Spend.Measured != 0.75 {
+		t.Errorf("spend = %+v, want both entries summed", rows[0].Spend)
+	}
+	if total.Rounds != 2 || total.Measured != 0.75 {
+		t.Errorf("total = %+v, want both entries summed", total)
+	}
+}
+
 func TestRenderTab(t *testing.T) {
 	rows, total, _ := TabRows(tabFixture(), "binding", time.Time{})
 	out := RenderTab(TabReport{By: "binding", Rows: rows, Total: total})
