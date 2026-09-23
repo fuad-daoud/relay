@@ -1,6 +1,11 @@
 package proc
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/fuad-daoud/relay/internal/relay"
+)
 
 // DeniedEnv names the variables relay never passes to a builder process.
 // They are relay's own secrets, not the harness's: a builder IS the harness
@@ -29,4 +34,35 @@ func ChildEnv(parent, deny, extra []string) []string {
 		out = append(out, e)
 	}
 	return append(out, extra...)
+}
+
+// goMaxProcsEnv returns the GOMAXPROCS entry to add to a scoped child's
+// environment, or nil when none is wanted (#315): nil when scope is nil,
+// when the scope limits nothing (relay.GoMaxProcsFor), or when parent or
+// extra already carries a GOMAXPROCS entry -- a user who set it for the
+// daemon or the served process keeps their value. Otherwise it returns
+// exactly one entry, "GOMAXPROCS=<n>". Pure; never mutates its inputs.
+func goMaxProcsEnv(parent, extra []string, scope *relay.ScopeSpec) []string {
+	if scope == nil {
+		return nil
+	}
+	n, ok := relay.GoMaxProcsFor(*scope)
+	if !ok {
+		return nil
+	}
+	if hasEnvName(parent, "GOMAXPROCS") || hasEnvName(extra, "GOMAXPROCS") {
+		return nil
+	}
+	return []string{"GOMAXPROCS=" + strconv.Itoa(n)}
+}
+
+// hasEnvName reports whether env carries name, matching the same way
+// ChildEnv's deny list does: an entry "NAME=..." or exactly "NAME". Pure.
+func hasEnvName(env []string, name string) bool {
+	for _, e := range env {
+		if n, _, _ := strings.Cut(e, "="); n == name {
+			return true
+		}
+	}
+	return false
 }

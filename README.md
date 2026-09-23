@@ -579,9 +579,12 @@ on the whole pool instead. Pinning needs `cpuset` delegated to your user
 manager through a root drop-in on `user@.service`, and `relay doctor` checks
 this; if systemd refuses it, relay logs one warning and runs unpinned. #314
 measured a CPU-bound job pinned to one core using 10–18% less CPU time than the
-same job left to float. On a host without a usable systemd user manager relay
-logs one warning and runs builders unscoped, in `relay.service`'s cgroup,
-exactly as before.
+same job left to float. Every scoped builder, gate, consult and verify reviewer
+also gets `GOMAXPROCS` set to the CPUs its scope allows -- 1 for a pinned round,
+`ceil(quota)` otherwise -- unless the environment already sets it; this affects
+Go processes only, and Go's `-p` and `-parallel` follow it. On a host without a
+usable systemd user manager relay logs one warning and runs builders unscoped,
+in `relay.service`'s cgroup, exactly as before.
 
 ### Progress labels
 

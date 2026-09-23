@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -705,5 +706,188 @@ func TestStartDoesNotMutateCallerScope(t *testing.T) {
 	}
 	if scope.AllowedCPUs != "2" {
 		t.Errorf("caller's AllowedCPUs = %q, want it unchanged at 2", scope.AllowedCPUs)
+	}
+}
+
+// acceptScopeStub is a systemd-run that accepts every invocation: it execs
+// everything after "--", the way systemd-run --scope would, so both the scope
+// probe and the pin probe succeed and a scoped spawn really runs.
+const acceptScopeStub = `#!/bin/sh
+while [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+`
+
+// unsetGoMaxProcs removes any GOMAXPROCS this test process inherited, so the
+// value a scoped spawn adds is what the child sees. t.Setenv registers the
+// restore; the Unsetenv then removes the entry for the test's duration.
+func unsetGoMaxProcs(t *testing.T) {
+	t.Helper()
+	t.Setenv("GOMAXPROCS", "")
+	os.Unsetenv("GOMAXPROCS")
+}
+
+// childEnvValue returns the value of name in a spawn's stream, whose argv ran
+// `env`, and whether it was present at all; the last occurrence wins, as
+// os/exec does for a duplicated name.
+func childEnvValue(t *testing.T, stream, name string) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	value, found := "", false
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, name+"="); ok {
+			value, found = v, true
+		}
+	}
+	return value, found
+}
+
+// TestStartSetsGoMaxProcsFromThePin pins #315's pinned case: a scope with
+// AllowedCPUs=1, its pin probe accepted, gives the child GOMAXPROCS=1.
+func TestStartSetsGoMaxProcsFromThePin(t *testing.T) {
+	unsetGoMaxProcs(t)
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptScopeStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	got, ok := childEnvValue(t, stream, "GOMAXPROCS")
+	if !ok || got != "1" {
+		t.Errorf("child GOMAXPROCS = %q, %v; want 1, true", got, ok)
+	}
+}
+
+// TestStartGoMaxProcsFollowsThePinFallback pins #315's ordering: the value is
+// computed after the pin fallback, so a refused pin contributes nothing and
+// the quota alone gives the child GOMAXPROCS=2, never a stale 1.
+func TestStartGoMaxProcsFollowsThePinFallback(t *testing.T) {
+	unsetGoMaxProcs(t)
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, refusePinningStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+		Scope: &relay.ScopeSpec{
+			Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100,
+			AllowedCPUs: "1", CPUQuota: "200%",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	got, ok := childEnvValue(t, stream, "GOMAXPROCS")
+	if !ok || got != "2" {
+		t.Errorf("child GOMAXPROCS = %q, %v; want 2 (the quota, after the refused pin), true", got, ok)
+	}
+}
+
+// TestStartNoGoMaxProcsWithoutScopes pins #315's dropped-scope case: the scope
+// probe fails, the scope falls away, and the spawn carries no GOMAXPROCS even
+// though the dropped scope's quota would have asked for one.
+func TestStartNoGoMaxProcsWithoutScopes(t *testing.T) {
+	unsetGoMaxProcs(t)
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "#!/bin/sh\necho 'Failed to start transient scope unit: Permission denied' >&2\nexit 1\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, CPUQuota: "200%"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	if got, ok := childEnvValue(t, stream, "GOMAXPROCS"); ok {
+		t.Errorf("child GOMAXPROCS = %q, true; want it unset when the scope was dropped", got)
+	}
+}
+
+// TestStartParentGoMaxProcsWins pins #315's precedence: a GOMAXPROCS in the
+// parent environment wins over the scope-derived value, even for a pinned
+// scope.
+func TestStartParentGoMaxProcsWins(t *testing.T) {
+	t.Setenv("GOMAXPROCS", "7")
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptScopeStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	got, ok := childEnvValue(t, stream, "GOMAXPROCS")
+	if !ok || got != "7" {
+		t.Errorf("child GOMAXPROCS = %q, %v; want the parent's 7, true", got, ok)
+	}
+}
+
+// TestStartDoesNotMutateCallerEnv pins #315's copy discipline: appending the
+// GOMAXPROCS entry must not write the caller's Env backing array, even into
+// its spare capacity.
+func TestStartDoesNotMutateCallerEnv(t *testing.T) {
+	unsetGoMaxProcs(t)
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptScopeStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	caller := make([]string, 1, 4)
+	caller[0] = "RELAY_T5=keep"
+	before := slices.Clone(caller[:cap(caller)])
+
+	r := New()
+	dir := t.TempDir()
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"true"},
+		Env:     caller,
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	if want := []string{"RELAY_T5=keep"}; !reflect.DeepEqual(caller, want) {
+		t.Errorf("caller's Env = %v, want %v", caller, want)
+	}
+	if full := caller[:cap(caller)]; !reflect.DeepEqual(full, before) {
+		t.Errorf("caller's Env backing array = %v, want %v (Start must copy, not append in place)", full, before)
 	}
 }

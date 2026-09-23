@@ -209,6 +209,14 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 		}
 	}
 
+	// A scoped spawn gets GOMAXPROCS sized to the CPUs its scope allows
+	// (#315). It runs after both fallbacks so it follows the scope actually
+	// launched: a refused pin contributes nothing, and a dropped scope adds
+	// nothing at all. The full-slice expression forces a copy, so the append
+	// never writes the caller's backing array -- spec is a value copy, but
+	// spec.Env shares the caller's array.
+	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], goMaxProcsEnv(os.Environ(), spec.Env, spec.Scope)...)
+
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
