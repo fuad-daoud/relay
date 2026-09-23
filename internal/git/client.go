@@ -44,6 +44,26 @@ func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 	}
 }
 
+// gitEnv builds the environment every git child process Client starts: the
+// caller's own environment, any extra variables the call needs, and
+// GIT_OPTIONAL_LOCKS=0. extra comes last so a caller can still override it.
+//
+// Relay reads a builder's worktree with git while that builder works in it.
+// By default a read such as `git status` refreshes the index and takes the
+// repository's index.lock to write the refreshed stat data, which makes a
+// concurrent `git commit` in the same worktree fail with
+// `fatal: Unable to create '.../index.lock': File exists` (exit 128). With
+// optional locks off, git skips every side-effect write it does not strictly
+// need, so `status` and friends never take index.lock. Commands that must
+// write the index (`add`, `commit`, `checkout`, `reset`, ...) still take their
+// mandatory lock, so the setting is safe on every call.
+func gitEnv(extra ...string) []string {
+	env := make([]string, 0, len(os.Environ())+1+len(extra))
+	env = append(env, os.Environ()...)
+	env = append(env, "GIT_OPTIONAL_LOCKS=0")
+	return append(env, extra...)
+}
+
 func (c *Client) run(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -51,9 +71,7 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = dir
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = gitEnv(env...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -207,6 +225,7 @@ func (c *Client) DiffTrees(ctx context.Context, dir, from, to string) (Diff, err
 
 	cmd := exec.CommandContext(ctxTimeout, c.bin, "diff", from, to)
 	cmd.Dir = dir
+	cmd.Env = gitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

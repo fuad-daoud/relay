@@ -370,20 +370,11 @@ fi
 printf 'one round of fake work\n' > "$worktree/fake-round.txt"
 
 # One commit in the round's own worktree. The daemon reads that tree with git
-# while the round is open (truthful diff capture, the escape check), so a
-# transient index.lock is retried rather than treated as a failed round.
-tries=0
-while :; do
-	if git -C "$worktree" add -A && git -C "$worktree" commit -q -m "fake harness: one round"; then
-		break
-	fi
-	tries=$((tries + 1))
-	if [ "$tries" -ge 50 ]; then
-		echo "fake-claude: could not commit in $worktree after $tries tries" >&2
-		exit 3
-	fi
-	sleep 0.1
-done
+# while the round is open (truthful diff capture, the escape check), but every
+# read it makes runs with GIT_OPTIONAL_LOCKS=0, so it never takes index.lock
+# and this commit cannot be blocked by one.
+git -C "$worktree" add -A
+git -C "$worktree" commit -q -m "fake harness: one round"
 
 # The completion marker is the last thing the handoff asks for.
 : > "$marker"
