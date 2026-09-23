@@ -46,6 +46,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 			Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
 			LogPath:    log,
 			StreamPath: log,
+			Scope:      scopeFor(rt, scopeGate, scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, "")),
 		})
 		if err != nil {
 			return b, true, &store.GateRecord{Command: b.Gate, Result: "error", Note: err.Error(), LogPath: log}, nil
@@ -144,7 +145,9 @@ func gateLine(rec store.GateRecord, tail []string) string {
 }
 
 // tailLines returns the last n non-empty lines of the file at path, or nil
-// when it cannot be read; never an error (the log is a convenience).
+// when it cannot be read; never an error (the log is a convenience). Lines
+// carrying the rusage trailer are skipped (#313): any scoped spawn prints one
+// before its exit trailer, and it is not gate output.
 func tailLines(path string, n int) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -152,9 +155,10 @@ func tailLines(path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) != "" {
-			nonEmpty = append(nonEmpty, l)
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, RusageTrailerPrefix) {
+			continue
 		}
+		nonEmpty = append(nonEmpty, l)
 	}
 	if len(nonEmpty) > n {
 		nonEmpty = nonEmpty[len(nonEmpty)-n:]

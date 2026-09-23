@@ -127,7 +127,11 @@ type ScopePolicy struct {
 	CPUWeight int    `json:"cpu_weight,omitempty"` // 0 = 100; else 1..10000
 	MemoryMax string `json:"memory_max,omitempty"` // "" = none; else ^[0-9]+[KMGT]?$
 	CPUQuota  string `json:"cpu_quota,omitempty"`  // "" = none; else ^[0-9]+%$, at least 1%
-	TasksMax  int    `json:"tasks_max,omitempty"`  // 0 = none; else >= 1
+	// GateCPUQuota is the gate's own CPU ceiling (#313). "" means the gate
+	// uses CPUQuota, the same as a round. Otherwise it must match
+	// ^[0-9]+%$ and be at least 1%, the same grammar as CPUQuota.
+	GateCPUQuota string `json:"gate_cpu_quota,omitempty"`
+	TasksMax     int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
 }
 
 // NotifyPolicy configures webhook delivery of lifecycle events (#4).
@@ -401,6 +405,14 @@ func validateScope(path, prefix string, sc *ScopePolicy) error {
 		}
 		if n, err := strconv.Atoi(strings.TrimSuffix(sc.CPUQuota, "%")); err == nil && n < 1 {
 			return fmt.Errorf("%s: %s.cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.CPUQuota, ErrBadPolicy)
+		}
+	}
+	if sc.GateCPUQuota != "" {
+		if !cpuQuotaPattern.MatchString(sc.GateCPUQuota) {
+			return fmt.Errorf("%s: %s.gate_cpu_quota: must match ^[0-9]+%%$, got %q: %w", path, prefix, sc.GateCPUQuota, ErrBadPolicy)
+		}
+		if n, err := strconv.Atoi(strings.TrimSuffix(sc.GateCPUQuota, "%")); err == nil && n < 1 {
+			return fmt.Errorf("%s: %s.gate_cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.GateCPUQuota, ErrBadPolicy)
 		}
 	}
 	if sc.TasksMax != 0 && sc.TasksMax < 1 {

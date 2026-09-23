@@ -176,7 +176,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	}
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
-	consult, cwd, err := reserveConsult(rt, opts, id, role.Name,
+	consult, cwd, owner, err := reserveConsult(rt, opts, id, role.Name,
 		store.Endpoint{AgentName: agentName, Kind: l.Kind}, body)
 	if err != nil {
 		return AskResult{}, err
@@ -200,6 +200,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		Argv:       argv,
 		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
 		StreamPath: streamPath,
+		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID)),
 	}); err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)
@@ -240,17 +241,20 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 // fills in: every consult but a round one takes both from the candidate it
 // resolved. Nothing here reads the role table or a harness.RoleSpec:
 // roleName is a label, which is what lets a round consult call itself
-// roundRole.
-func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint store.Endpoint, body []byte) (store.Consult, string, error) {
+// roundRole. It also returns the loaded binding's Owner, for the consult's
+// scope unit name (#313), so the caller needs no second load.
+func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint store.Endpoint, body []byte) (store.Consult, string, string, error) {
 	var (
 		consult store.Consult
 		cwd     string
+		owner   string
 	)
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(opts.Name)
 		if err != nil {
 			return err
 		}
+		owner = b.Owner
 		if b.Builder.Remote() {
 			return errors.New("consults are local-only")
 		}
@@ -284,7 +288,7 @@ func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint s
 		cwd = b.CWD
 		return nil
 	})
-	return consult, cwd, err
+	return consult, cwd, owner, err
 }
 
 // recordConsult is the record phase every consult shares: upsert the record
@@ -411,7 +415,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	}
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
-	consult, cwd, err := reserveConsult(rt, opts, id, roundRole,
+	consult, cwd, owner, err := reserveConsult(rt, opts, id, roundRole,
 		store.Endpoint{AgentName: agentName, Kind: s.Kind, SessionID: s.ID}, body)
 	if err != nil {
 		return AskResult{}, err
@@ -425,6 +429,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 		Argv:       append([]string{h.Binary}, argv...),
 		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
 		StreamPath: streamPath,
+		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID)),
 	}); err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)

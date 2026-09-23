@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -335,6 +336,116 @@ func TestScopeUnitNameSafe(t *testing.T) {
 	if got, want := scopeUnitName(store.Binding{Name: "web/shop no", Round: 1}), "relay-round-local-web-shop-no-1"; got != want {
 		t.Errorf("scopeUnitName(unsafe name) = %q, want %q", got, want)
 	}
+}
+
+// TestScopeUnitNameFor is #313's unit-name table: each kind, id present and
+// absent, an owned binding whose owner8 comes from a real ClientID, and a name
+// that needs sanitising.
+func TestScopeUnitNameFor(t *testing.T) {
+	ownerID, ok := remote.IDFromDir("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	if !ok {
+		t.Fatal("seed client id did not parse")
+	}
+	cases := []struct {
+		name  string
+		kind  scopeKind
+		owner string
+		bname string
+		round int
+		id    string
+		want  string
+	}{
+		{"round, no id", scopeRound, "", "webshop", 3, "", "relay-round-local-webshop-3"},
+		{"gate, no id", scopeGate, "", "webshop", 3, "", "relay-gate-local-webshop-3"},
+		{"consult, with id", scopeConsult, "", "webshop", 2, "7f2a3c1d", "relay-consult-local-webshop-2-7f2a3c1d"},
+		{"verify, with id", scopeVerify, "", "webshop", 2, "7f2a3c1d", "relay-verify-local-webshop-2-7f2a3c1d"},
+		{"owned binding", scopeRound, string(ownerID), "webshop", 1, "", "relay-round-00010203-webshop-1"},
+		{"sanitised name and id", scopeConsult, "", "web/shop no", 1, "a b", "relay-consult-local-web-shop-no-1-a-b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scopeUnitNameFor(c.kind, c.owner, c.bname, c.round, c.id); got != c.want {
+				t.Errorf("scopeUnitNameFor = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestScopeFor is #313's scopeFor table: nil template gives nil, the spec
+// carries the template's other fields, a gate uses GateCPUQuota when set and
+// falls back to CPUQuota when not, the returned spec always zeroes
+// GateCPUQuota, and the template is never mutated.
+func TestScopeFor(t *testing.T) {
+	base := ScopeSpec{Slice: "relay.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
+
+	t.Run("nil template gives nil", func(t *testing.T) {
+		if got := scopeFor(Runtime{}, scopeGate, "relay-gate-local-webshop-1"); got != nil {
+			t.Fatalf("scopeFor(nil template) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("round and consult keep CPUQuota", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeRound, scopeConsult} {
+			tmpl := base
+			tmpl.GateCPUQuota = "300%"
+			rt := Runtime{Scope: &tmpl}
+			got := scopeFor(rt, kind, "unit")
+			if got == nil {
+				t.Fatalf("scopeFor(%s) = nil, want a spec", kind)
+			}
+			if got.Unit != "unit" {
+				t.Errorf("%s Unit = %q, want unit", kind, got.Unit)
+			}
+			if got.CPUQuota != "150%" {
+				t.Errorf("%s CPUQuota = %q, want the template's 150%%", kind, got.CPUQuota)
+			}
+			if got.GateCPUQuota != "" {
+				t.Errorf("%s GateCPUQuota = %q, want it zeroed", kind, got.GateCPUQuota)
+			}
+			if got.Slice != base.Slice || got.CPUWeight != base.CPUWeight ||
+				got.MemoryMax != base.MemoryMax || got.TasksMax != base.TasksMax {
+				t.Errorf("%s spec = %+v, want the template's other fields carried through", kind, got)
+			}
+		}
+	})
+
+	t.Run("gate with GateCPUQuota uses it", func(t *testing.T) {
+		tmpl := base
+		tmpl.GateCPUQuota = "300%"
+		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.CPUQuota != "300%" {
+			t.Errorf("gate CPUQuota = %q, want the gate quota 300%%", got.CPUQuota)
+		}
+		if got.GateCPUQuota != "" {
+			t.Errorf("gate GateCPUQuota = %q, want it zeroed", got.GateCPUQuota)
+		}
+	})
+
+	t.Run("gate without GateCPUQuota falls back to CPUQuota", func(t *testing.T) {
+		tmpl := base
+		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit")
+		if got == nil {
+			t.Fatal("scopeFor = nil, want a spec")
+		}
+		if got.CPUQuota != "150%" {
+			t.Errorf("gate CPUQuota = %q, want the template's 150%%", got.CPUQuota)
+		}
+	})
+
+	t.Run("template is not mutated", func(t *testing.T) {
+		tmpl := base
+		tmpl.GateCPUQuota = "300%"
+		before := tmpl
+		rt := Runtime{Scope: &tmpl}
+		_ = scopeFor(rt, scopeGate, "unit")
+		_ = scopeFor(rt, scopeConsult, "unit")
+		if tmpl != before {
+			t.Errorf("rt.Scope mutated: %+v, want %+v", tmpl, before)
+		}
+	})
 }
 
 // TestSendHeadlessWithoutRunnerStagesNothing pins #149's behaviour fix: the

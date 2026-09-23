@@ -562,12 +562,18 @@ running round alone instead of killing it, so a restart no longer looks to
 relay like a builder that "exited without a report". With no `scope` block
 configured this is the whole change: a local headless builder moves out of
 `relay.service`'s cgroup into its own scope, with no quota and no memory cap --
-only its location, and with it restart survival. `policy.json`'s top-level
-`scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
-`cpu_quota`, `memory_max`, `tasks_max`); `serve.scope` replaces that block
-entirely for served rounds, and `scope: {"enabled": false}` opts out. On a host
-without a usable systemd user manager relay logs one warning and runs builders
-unscoped, in `relay.service`'s cgroup, exactly as before.
+only its location, and with it restart survival. The gate, a consult and the
+verify reviewer each get a scope from the same template too, with a unit name
+that says what it is: `relay-gate-local-<binding>-<round>`,
+`relay-consult-local-<binding>-<round>-<consult-id>` and
+`relay-verify-local-<binding>-<round>-<consult-id>` (an owned remote binding
+uses its owner's id where `local` sits, exactly as for a round). `policy.json`'s
+top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
+`cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
+the gate's own CPU ceiling, and defaults to `cpu_quota`. `serve.scope` replaces
+that block entirely for served rounds, and `scope: {"enabled": false}` opts
+out. On a host without a usable systemd user manager relay logs one warning and
+runs builders unscoped, in `relay.service`'s cgroup, exactly as before.
 
 ### Progress labels
 

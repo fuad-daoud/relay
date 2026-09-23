@@ -135,6 +135,10 @@ func TestScopeFromPolicy(t *testing.T) {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%"},
 			want: &relay.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
 		},
+		"gate quota passes through": {
+			sc:   &policy.ScopePolicy{CPUQuota: "200%", GateCPUQuota: "300%"},
+			want: &relay.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
+		},
 		"slice and limits pass through": {
 			sc: &policy.ScopePolicy{
 				Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64,
@@ -147,6 +151,32 @@ func TestScopeFromPolicy(t *testing.T) {
 			got := scopeFromPolicy(c.sc)
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("scopeFromPolicy = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestScopeStatusText pins what the startup line says about the resolved
+// scope (#285, #295) and the gate quota suffix (#313).
+func TestScopeStatusText(t *testing.T) {
+	cases := map[string]struct {
+		sc   *relay.ScopeSpec
+		want string
+	}{
+		"nil is off":            {sc: nil, want: "off"},
+		"bare is on":            {sc: &relay.ScopeSpec{}, want: "on"},
+		"quota":                 {sc: &relay.ScopeSpec{CPUQuota: "200%"}, want: "on (200%)"},
+		"slice":                 {sc: &relay.ScopeSpec{Slice: "relay.slice"}, want: "on (slice relay.slice)"},
+		"slice and quota":       {sc: &relay.ScopeSpec{Slice: "relay.slice", CPUQuota: "200%"}, want: "on (slice relay.slice, 200%)"},
+		"gate only":             {sc: &relay.ScopeSpec{GateCPUQuota: "300%"}, want: "on (gate 300%)"},
+		"quota and gate":        {sc: &relay.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
+		"slice and gate":        {sc: &relay.ScopeSpec{Slice: "relay.slice", GateCPUQuota: "300%"}, want: "on (slice relay.slice, gate 300%)"},
+		"slice, quota and gate": {sc: &relay.ScopeSpec{Slice: "relay.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relay.slice, 200%, gate 300%)"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := scopeStatusText(c.sc); got != c.want {
+				t.Errorf("scopeStatusText = %q, want %q", got, c.want)
 			}
 		})
 	}

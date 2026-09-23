@@ -290,6 +290,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		Argv:       argv,
 		LogPath:    rt.Store.ConsultLogPath(b.Name, round, id),
 		StreamPath: streamPath,
+		Scope:      scopeFor(rt, scopeVerify, scopeUnitNameFor(scopeVerify, b.Owner, b.Name, round, id)),
 	})
 	if err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]

@@ -1003,6 +1003,47 @@ func TestScopeQuotaValidation(t *testing.T) {
 	}
 }
 
+// TestScopeGateQuotaValidation pins #313's gate_cpu_quota rule in both blocks:
+// a good quota is accepted, and a bad one is rejected with a message naming the
+// field and the block it came from (scope vs serve.scope).
+func TestScopeGateQuotaValidation(t *testing.T) {
+	blocks := []struct {
+		name   string
+		body   string // %q is the quota
+		prefix string // the exact path in the error, block-qualified
+	}{
+		{"scope", `{"scope":{"gate_cpu_quota":%q}}`, ": scope.gate_cpu_quota:"},
+		{"serve.scope", `{"serve":{"scope":{"gate_cpu_quota":%q}}}`, ": serve.scope.gate_cpu_quota:"},
+	}
+
+	for _, bc := range blocks {
+		for _, quota := range []string{"300%", "1%", "1000%"} {
+			t.Run(bc.name+"/good/"+quota, func(t *testing.T) {
+				if _, err := load(t, fmt.Sprintf(bc.body, quota)); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+			})
+		}
+		for _, quota := range []string{"300", "0%", "abc%"} {
+			t.Run(bc.name+"/bad/"+quota, func(t *testing.T) {
+				_, err := load(t, fmt.Sprintf(bc.body, quota))
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, ErrBadPolicy) {
+					t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+				}
+				if !strings.Contains(err.Error(), "gate_cpu_quota") {
+					t.Errorf("error %q does not mention gate_cpu_quota", err.Error())
+				}
+				if !strings.Contains(err.Error(), bc.prefix) {
+					t.Errorf("error %q does not name the %s block (%q)", err.Error(), bc.name, bc.prefix)
+				}
+			})
+		}
+	}
+}
+
 // TestScopeForWholeBlockOverride pins #295's resolution rule: serve.scope
 // replaces the top-level block entirely for a served round, with none of the
 // top-level fields leaking in; an absent serve.scope falls back to the

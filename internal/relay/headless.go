@@ -33,21 +33,67 @@ func handleOf(e store.Endpoint) ProcHandle {
 	return ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
 }
 
+// scopeKind is what a scoped spawn is: the word between "relay-" and the
+// owner in its unit name (#313).
+type scopeKind string
+
+const (
+	scopeRound   scopeKind = "round"
+	scopeGate    scopeKind = "gate"
+	scopeConsult scopeKind = "consult"
+	scopeVerify  scopeKind = "verify"
+)
+
+// scopeOwner8 is the owner component of a unit name: "local" for a binding
+// with no owner; the first 8 hex characters of the owning client's id when
+// Owner parses as a ClientID; "unknown" otherwise (which never happens for
+// what the server itself wrote, but must never block a spawn).
+func scopeOwner8(owner string) string {
+	if owner == "" {
+		return "local"
+	}
+	if dir, ok := remote.ClientID(owner).Dir(); ok {
+		return dir[:8]
+	}
+	return "unknown"
+}
+
+// scopeUnitNameFor is the systemd scope unit's base name (the runner appends
+// ".scope") for any scoped spawn (#244, #216, #313): "relay-<kind>-<owner8>-
+// <name>-<round>", followed by "-<id>" when id is non-empty. owner8 and the
+// sanitising are shared with the round path, so relay-round-* names are
+// byte-identical to before.
+func scopeUnitNameFor(kind scopeKind, owner, name string, round int, id string) string {
+	unit := "relay-" + string(kind) + "-" + scopeOwner8(owner) + "-" + safeUnitPart(name) + "-" + strconv.Itoa(round)
+	if id != "" {
+		unit += "-" + safeUnitPart(id)
+	}
+	return unit
+}
+
 // scopeUnitName is the per-round systemd scope unit's base name (the
 // runner appends ".scope"): "relay-round-<owner8>-<name>-<round>" (#244,
-// #216). owner8 is the first 8 hex characters of the owning client's id
-// ("local" for a binding with no owner; "unknown" for a non-empty Owner
-// that does not parse as a ClientID, which never happens for what the
-// server itself wrote, but must never block a round).
+// #216).
 func scopeUnitName(b store.Binding) string {
-	owner8 := "local"
-	if b.Owner != "" {
-		owner8 = "unknown"
-		if dir, ok := remote.ClientID(b.Owner).Dir(); ok {
-			owner8 = dir[:8]
-		}
+	return scopeUnitNameFor(scopeRound, b.Owner, b.Name, b.Round, "")
+}
+
+// scopeFor builds a spawn's ScopeSpec from the runtime's template (#313): nil
+// when the template is nil (scopes off), else a copy of the template with Unit
+// set and GateCPUQuota zeroed. When kind is scopeGate and the template sets
+// GateCPUQuota, the gate's spec uses it as CPUQuota; every other kind keeps
+// the template's CPUQuota. It never mutates rt.Scope.
+func scopeFor(rt Runtime, kind scopeKind, unit string) *ScopeSpec {
+	if rt.Scope == nil {
+		return nil
 	}
-	return "relay-round-" + owner8 + "-" + safeUnitPart(b.Name) + "-" + strconv.Itoa(b.Round)
+	s := *rt.Scope
+	s.Unit = unit
+	s.GateCPUQuota = ""
+	if kind == scopeGate && rt.Scope.GateCPUQuota != "" {
+		s.CPUQuota = rt.Scope.GateCPUQuota
+	}
+	return &s
 }
 
 // safeUnitPart replaces every rune outside [A-Za-z0-9:_.-] with '-', for a
@@ -165,16 +211,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		LogPath:    logPath,
 		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
 	}
-	if rt.Scope != nil {
-		spec.Scope = &ScopeSpec{
-			Unit:      scopeUnitName(b),
-			Slice:     rt.Scope.Slice,
-			CPUWeight: rt.Scope.CPUWeight,
-			MemoryMax: rt.Scope.MemoryMax,
-			CPUQuota:  rt.Scope.CPUQuota,
-			TasksMax:  rt.Scope.TasksMax,
-		}
-	}
+	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)

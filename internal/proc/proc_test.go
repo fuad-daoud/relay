@@ -310,6 +310,15 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 	}
 }
 
+// TestRusageTrailerPrefixMatchesProc pins #313's duplication: relay cannot
+// import internal/proc (proc imports relay), so relay keeps its own copy of
+// the rusage prefix and the two must stay equal.
+func TestRusageTrailerPrefixMatchesProc(t *testing.T) {
+	if relay.RusageTrailerPrefix != RusageTrailer {
+		t.Errorf("relay.RusageTrailerPrefix = %q, want proc.RusageTrailer %q", relay.RusageTrailerPrefix, RusageTrailer)
+	}
+}
+
 // TestSupervisorEmitsRusageWhenUnitMatches pins the guard's positive half:
 // when supervisorScript is told to want the unit its own cgroup is actually
 // running in, it does emit the rusage trailer (#216). It reads its own
