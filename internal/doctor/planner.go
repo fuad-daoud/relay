@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/planner"
+	"github.com/fuad-daoud/relay/internal/release"
 )
 
 // The relay Claude Code plugin's install facts (§4.8 rows 1-2). Both live
@@ -79,6 +80,9 @@ type PlannerCheckInput struct {
 	// Stale names the planner records seen more than seven days ago that no
 	// live binding names.
 	Stale []string
+	// Running is the relay binary's own version (buildVersion()), compared
+	// with the installed plugin's by the plugin version row. "" skips it.
+	Running string
 }
 
 // PlannerChecks reports §4.8's rows: the relay plugin enabled in Claude Code,
@@ -91,6 +95,7 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 	if in.Claude {
 		checks = append(checks, pluginEnabledCheck(in.Home, in.Repo))
 		checks = append(checks, pluginHookCheck(in.Home))
+		checks = append(checks, pluginVersionCheck(in.Home, in.Running))
 	}
 
 	if in.Detected {
@@ -208,6 +213,72 @@ func pluginHookCheck(home string) Check {
 		Severity: SevFail,
 		Detail:   "the installed relay plugin has no " + pluginHookEvent + " hook running relay " + pluginHookInitCommand,
 		Fix:      "reinstall the relay plugin so its " + claudeHooksRel + " ships the " + pluginHookEvent + " hook",
+	}
+}
+
+// pluginVersionCheck compares the installed relay@* plugin's version with
+// the running binary's release version. Advisory: the MCP server is the
+// binary on PATH, so a stale plugin serves current tools -- what it
+// carries stale is its manifest and hooks.json, whose concrete symptom
+// the plugin hook row already fails.
+//
+// Every fact relay cannot prove reads `not checked` (OK), never a warning:
+// a missing or unreadable file, no relay entry, and a version either side
+// of the comparison cannot parse all take that route.
+func pluginVersionCheck(home, running string) Check {
+	const name = "plugin version"
+
+	if running == "" {
+		return Check{Name: name, Severity: SevOK, Detail: "not checked"}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+	if err != nil {
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
+	}
+
+	// Claude Code's private shape:
+	// {"version":2,"plugins":{"relay@relay":[{"version":"0.8.0",...}]}}.
+	// A small struct, not installedPluginDirs: that scans every string for
+	// a path and cannot yield a version.
+	var state struct {
+		Plugins map[string][]struct {
+			Version string `json:"version"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
+	}
+
+	plugin, found := "", false
+	for key, entries := range state.Plugins {
+		at := strings.Index(key, "@")
+		if at <= 0 || key[:at] != "relay" || len(entries) == 0 {
+			continue
+		}
+		// Several entries for one key: the first is the one to report.
+		plugin, found = entries[0].Version, true
+		break
+	}
+	if !found {
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (relay plugin not installed)"}
+	}
+
+	pv, pok := release.ParseVersion(plugin)
+	rv, rok := release.ParseVersion(running)
+	if !pok || !rok {
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (relay is " + running + ")"}
+	}
+	// Major.Minor.Patch only: Suffix is ignored, so v0.8.0-15-gd664545
+	// matches 0.8.0.
+	if pv.Major == rv.Major && pv.Minor == rv.Minor && pv.Patch == rv.Patch {
+		return Check{Name: name, Severity: SevOK, Detail: "plugin " + plugin + " matches relay"}
+	}
+	return Check{
+		Name:     name,
+		Severity: SevWarn,
+		Detail:   "plugin " + plugin + ", relay " + running,
+		Fix:      "claude plugin update relay@relay",
 	}
 }
 
