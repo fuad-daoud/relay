@@ -91,7 +91,15 @@ type BindingStatus struct {
 	// because the daemon cannot see whether a background wait is running.
 	PlannerRouteLive bool   `json:"planner_route_live"`
 	BuilderKind      string `json:"builder_kind"`
-	BuilderStatus    string `json:"builder_status"`
+	// BuilderDefinition is the builder's resolved agent definition on this
+	// binding's builder kind, set only when it is custom (#374): a shipped
+	// definition leaves the field empty and omitted, so today's JSON is
+	// unchanged.
+	BuilderDefinition string `json:"builder_definition,omitempty"`
+	// BuilderDefinitionCustom is true exactly when BuilderDefinition is set,
+	// so a consumer can tell "custom" from "absent" without the string.
+	BuilderDefinitionCustom bool   `json:"builder_definition_custom,omitempty"`
+	BuilderStatus           string `json:"builder_status"`
 	// Headless is set for a headless builder (#99): its process state and
 	// log. BuilderStatus is one of idle, working, exited N, exited, unknown.
 	// Nil for a remote builder.
@@ -318,6 +326,18 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		PlannerID:        b.PlannerID,
 		BuilderKind:      b.Builder.Kind, BuilderStatus: agentUnknown,
 	}
+
+	// #374: a custom builder definition is named on the row -- and so in
+	// `status --json` -- while a shipped one leaves today's document alone.
+	if kind := b.Builder.Kind; kind != "" {
+		if role, ok := rt.RoleRegistry().Role("builder"); ok {
+			if d, ok := role.Definitions[kind]; ok && d.Custom {
+				row.BuilderDefinition = d.Agent
+				row.BuilderDefinitionCustom = true
+			}
+		}
+	}
+
 	row.PlannerRoute, row.PlannerRouteLive = plannerRoute(rt, b)
 
 	// PlannerName is the record's name, so `status --json` and a status row

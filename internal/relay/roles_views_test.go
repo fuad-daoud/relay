@@ -6,6 +6,8 @@ package relay
 // not. The legacy behaviour is pinned by the older tests, which stay unedited.
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/roles"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // rolesViewsCandidatesJSON is claude a on both roles, claude b and opencode m
@@ -307,5 +310,78 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 	}
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)
+	}
+}
+
+// statusRowForTest saves b and reads it back through statusRow, the function
+// `relay status` builds its rows with.
+func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) BindingStatus {
+	t.Helper()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save binding: %v", err)
+	}
+	row, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	return row
+}
+
+// customBuilderBinding is an ACTIVE binding whose builder kind is claude.
+func customBuilderBinding(name string) store.Binding {
+	return store.Binding{
+		Name:    name,
+		CWD:     "/repo",
+		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Builder: store.Endpoint{Kind: "claude", AgentName: name},
+		Round:   1,
+		State:   store.StateActive,
+	}
+}
+
+// TestRolesViewsStatusNamesCustomBuilderDefinition pins #374 §2.2: a binding
+// whose kind has a custom definition carries it on the row and in its JSON.
+func TestRolesViewsStatusNamesCustomBuilderDefinition(t *testing.T) {
+	rt := newRuntime(t)
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
+		"builder": {
+			Candidates:  []string{testClaudeRef},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "my-executor"}},
+		},
+	})
+
+	row := statusRowForTest(t, rt, customBuilderBinding("custom-builder"))
+
+	if row.BuilderDefinition != "my-executor" || !row.BuilderDefinitionCustom {
+		t.Errorf("BuilderDefinition/Custom = %q/%v, want my-executor/true",
+			row.BuilderDefinition, row.BuilderDefinitionCustom)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal row: %v", err)
+	}
+	if !strings.Contains(string(raw), `"builder_definition":"my-executor"`) {
+		t.Errorf("JSON = %s, want it to contain %q", raw, `"builder_definition":"my-executor"`)
+	}
+}
+
+// TestRolesViewsStatusOmitsShippedBuilderDefinition pins #374 §2.2's other
+// half: a shipped definition -- here the legacy registry's -- leaves the
+// fields out, so today's JSON is unchanged.
+func TestRolesViewsStatusOmitsShippedBuilderDefinition(t *testing.T) {
+	rt := newRuntime(t) // no roles.json: the legacy derivation
+
+	row := statusRowForTest(t, rt, customBuilderBinding("shipped-builder"))
+
+	if row.BuilderDefinition != "" || row.BuilderDefinitionCustom {
+		t.Errorf("BuilderDefinition/Custom = %q/%v, want empty/false",
+			row.BuilderDefinition, row.BuilderDefinitionCustom)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal row: %v", err)
+	}
+	if strings.Contains(string(raw), "builder_definition") {
+		t.Errorf("JSON = %s, want no builder_definition key", raw)
 	}
 }

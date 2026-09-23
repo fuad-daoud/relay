@@ -199,10 +199,31 @@ func TestDefaultNamePicksSmallestFree(t *testing.T) {
 	}
 }
 
+// wantHookJSON marshals context through the hook envelope's exact JSON shape,
+// written out literally here so this test keeps asserting the field names
+// hook.go encodes rather than trusting the package's own struct tags.
+func wantHookJSON(t *testing.T, context string) string {
+	t.Helper()
+	var env struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	env.HookSpecificOutput.HookEventName = "SessionStart"
+	env.HookSpecificOutput.AdditionalContext = context
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal want envelope: %v", err)
+	}
+	return string(raw) + "\n"
+}
+
 func TestHookOutputExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	want := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."}}` + "\n"
+	sentence := "You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
+	want := wantHookJSON(t, sentence+"\n\n"+handoffRules)
 	if got := string(HookOutput(rec)); got != want {
 		t.Errorf("HookOutput:\n got %s\nwant %s", got, want)
 	}
@@ -223,7 +244,8 @@ func TestHookOutputExactJSON(t *testing.T) {
 func TestHookOutputNoEnvExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	want := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner. RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process."}}` + "\n"
+	sentence := "You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
+	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+handoffRules)
 	if got := string(HookOutputNoEnv(rec)); got != want {
 		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)
 	}

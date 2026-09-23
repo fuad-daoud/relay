@@ -50,11 +50,14 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	}
 	b.WriteString("  tier " + tier + "  (" + reg.Source() + ")")
 
+	// #374 §2.3: file mode lists the row's tokens as written. Legacy mode
+	// lists the resolved Ranked list instead, so a role served only by
+	// candidates no order names still shows them, marked (unlisted).
 	b.WriteString("\n  candidates  ")
-	if len(role.Candidates) == 0 {
-		b.WriteString("(none)")
+	if reg.Source() == roles.SourceLegacy {
+		b.WriteString(legacyCandidates(role.Ranked))
 	} else {
-		b.WriteString(strings.Join(role.Candidates, ", "))
+		b.WriteString(fileCandidates(role.Candidates))
 	}
 
 	for _, kind := range sortedDefinitionKinds(role.Definitions) {
@@ -69,6 +72,32 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	}
 
 	return b.String()
+}
+
+// legacyCandidates renders a role's ranked list for the legacy candidates
+// line: bare tokens in order, a token whose Position is 0 -- listed by no
+// order entry -- suffixed " (unlisted)", and "(none)" when the list is empty.
+func legacyCandidates(ranked []roles.Ranked) string {
+	if len(ranked) == 0 {
+		return "(none)"
+	}
+	tokens := make([]string, 0, len(ranked))
+	for _, r := range ranked {
+		if r.Position == 0 {
+			tokens = append(tokens, r.Token+" (unlisted)")
+		} else {
+			tokens = append(tokens, r.Token)
+		}
+	}
+	return strings.Join(tokens, ", ")
+}
+
+// fileCandidates renders a role's candidates as written, or "(none)".
+func fileCandidates(candidates []string) string {
+	if len(candidates) == 0 {
+		return "(none)"
+	}
+	return strings.Join(candidates, ", ")
 }
 
 // sortedDefinitionKinds returns a role's resolved definition kinds, sorted, so

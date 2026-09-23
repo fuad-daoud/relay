@@ -346,6 +346,9 @@ process the `relay mcp` server shares with the session. Run
 - `relay policy` — show, per role, the candidates in the order relay would
   try them, which one it would pick right now, and any gap between
   `policy.json` and `candidates.json`.
+- `relay roles` — list every role's shape, candidates, tier and per-kind agent
+  definitions; `relay roles init` writes `roles.json` from `candidates.json`
+  and `policy.json` (`--dry-run`, `--force`).
 - `relay unavailable <harness/provider/model> [--for D] [--reason S]` — record
   that a candidate's provider is rate-limited; gates every candidate on that
   provider until `--for` elapses, or until `relay available` clears it.
@@ -1409,6 +1412,79 @@ edit the file. The rest of #61 -- scoring for unordered roles, peak
 windows, mid-round switching -- will add keys to this file as it
 lands.
 
+### Roles
+
+A **role** is what a job *is*: its shape (`writer` or `reader`), whether it is
+gated, and the agent definition it resolves per harness kind. A **candidate**
+is one way to fill a role -- a `harness/provider/model`. Each role picks its
+own candidates, in order, at its own tier. Three roles are built in: `builder`,
+`reviewer` and `researcher`.
+
+Roles live in `$XDG_CONFIG_HOME/relay/roles.json` (default
+`~/.config/relay/roles.json`), an object keyed by role name:
+
+```json
+{
+  "builder": {
+    "candidates": ["claude/anthropic/sonnet", "opencode/openrouter/z-ai/glm-5.3-flash"],
+    "tier": "edit",
+    "definitions": { "claude": { "agent": "plan-executor", "requires": ["researcher"] } }
+  },
+  "reviewer": {
+    "candidates": ["claude/anthropic/opus"]
+  },
+  "scout": {
+    "shape": "reader",
+    "candidates": ["claude/anthropic/haiku"],
+    "definitions": { "claude": { "agent": "my-scout" } }
+  }
+}
+```
+
+- `shape` -- `writer` or `reader`. The built-in rows have one already; a new
+  role must give it, and must be a `reader` for now: it runs with `relay ask
+  --role <name>`.
+- `gate` -- for a writer, whether its round closes on a gate.
+- `definitions.<kind>.agent` -- the definition relay launches for that harness
+  kind; `requires` names the definitions that agent dispatches to.
+- `candidates` -- the role's own candidate tokens, most preferred first.
+- `tier` -- the role's permission tier.
+
+The built-in rows (builder, reviewer, researcher) are defaults, and a row
+overrides them field by field. Unknown keys are warnings, not errors.
+
+**Custom definitions.** A definition is *custom* when its name -- or a name it
+requires -- is not one relay ships. relay never installs or refreshes a custom
+definition; each harness looks for it in its own place:
+
+- claude: `~/.claude/agents/<n>.md`
+- opencode: `~/.config/opencode/agents/<n>.md`
+- agy: `~/.gemini/config/agents/<n>.md`
+- codex: `~/.codex/<n>.config.toml`
+
+A missing custom definition gates its candidates for that role only, and
+`relay doctor` lists it.
+
+**Bring your own agent.** Everything relay's round protocol needs travels in
+the prompt relay sends: the working tree and its `git status` check, the plan
+path, the report path, the done marker and the closing `relay` block. A custom
+definition only shapes behaviour; `requires` names the definitions your agent
+dispatches to (the shipped builder requires `researcher`).
+
+**Migrating.** Without `roles.json`, relay keeps reading `candidates.json`'s
+`roles`/`tier` and `policy.json`'s `order`/`tier`, and nothing changes. `relay
+roles init` writes `roles.json` from them (`--dry-run`, `--force`). Once the
+file exists, those fields are ignored and `relay doctor` lists them -- so
+delete them only after every relay process on the machine is upgraded: an
+older relay does not know `roles.json`.
+
+**Seeing it.** `relay roles` lists each role's shape, candidates, tier and
+definitions; `relay policy` adds `(roles.json)` per role; `relay status --json`
+has `builder_definition` for a custom builder.
+
+**Remote builders.** A server resolves roles from its *own* config, not the
+client's.
+
 ### Availability
 
 relay keeps a ledger of when a candidate could not be used: spawn failures it
@@ -1942,6 +2018,10 @@ Then start the planner with the harness's own `--agent` flag, for example:
 claude   --agent architect --model opus
 opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
 ```
+
+The `relay planner init` SessionStart hook also injects the relay handoff
+rules, so a planner session running an agent other than `architect` still
+receives them.
 
 **Wait for the report after every send.** In Claude Code the planner starts
 `relay wait <name> --timeout <budget>; relay pull <name>` as a **background**

@@ -4,9 +4,11 @@ package relay
 // tier and definitions from the registry, in reg.Names() order.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/roles"
 )
@@ -64,5 +66,27 @@ func TestFormatRolesLegacy(t *testing.T) {
 	}
 	if !strings.Contains(got, "researcher  reader  tier -  (legacy)\n  candidates  (none)") {
 		t.Errorf("a role with no candidates must say (none):\n%s", got)
+	}
+}
+
+// TestFormatRolesLegacyCandidatesFromRanked pins #374 §2.3's fix over the
+// round-1 fixtures: researcher is served by claude/anthropic/haiku and no order
+// names it, so the legacy candidates line lists it, marked (unlisted), rather
+// than wrongly saying (none).
+func TestFormatRolesLegacyCandidatesFromRanked(t *testing.T) {
+	path := filepath.Join("..", "roles", "testdata", "legacy-candidates.json")
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load(%s): %v", path, err)
+	}
+	legacy, err := roles.Build(nil, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	got := FormatRoles(legacy)
+
+	if !strings.Contains(got, "researcher  reader  tier -  (legacy)\n  candidates  claude/anthropic/haiku (unlisted)") {
+		t.Errorf("researcher's legacy candidates line must list the unlisted candidate:\n%s", got)
 	}
 }
