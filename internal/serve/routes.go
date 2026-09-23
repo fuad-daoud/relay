@@ -89,7 +89,14 @@ func (s *Server) Handler() http.Handler {
 		authenticatedMux.ServeHTTP(rw, r)
 
 		owner := ownerLabel(s.clients, callerOf(r))
-		slog.Info("http request", "method", r.Method, "path", r.URL.Path, "owner", owner, "status", rw.status)
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "owner", owner, "status", rw.status}
+		// The client's buildVersion, when it sent one (#373): informational,
+		// so an absent header adds no attribute at all and the server never
+		// rejects a request on it.
+		if v := r.Header.Get(remote.HeaderClientVersion); v != "" {
+			attrs = append(attrs, "client_version", v)
+		}
+		slog.Info("http request", attrs...)
 	})
 }
 
@@ -103,7 +110,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Transports:    []string{"git-bundle"},
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor}
 		who.BuilderTier = string(relay.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

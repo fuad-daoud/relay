@@ -29,7 +29,9 @@ func (s *Server) Addr() net.Addr {
 
 // ListenAndServe starts the HTTP/HTTPS server and the daemon tick loop.
 // It requires a TLS certificate unless InsecureHTTP is set.
-// It runs until ctx is cancelled, then shuts down gracefully with a 5-second budget.
+// It runs until ctx is cancelled, then drains (#373 §4.1): it shuts the HTTP
+// server down with a 30-second budget so in-flight requests finish, waits for
+// Run to finish its in-flight tick, and only then returns.
 func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 	if lc.TLS == nil && !lc.InsecureHTTP {
 		return ErrNoTLS
@@ -72,18 +74,32 @@ func (s *Server) ListenAndServe(ctx context.Context, lc ListenConfig) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	runDone := make(chan struct{})
 	go func() {
+		defer close(runDone)
 		_ = s.Run(ctx)
 	}()
 
+	// The drain: on cancel, stop accepting and let in-flight requests finish
+	// within Shutdown's budget, then wait for Run's in-flight tick (#373
+	// §4.1). Shutdown's own error (the budget ran out) is a Warn; the wait for
+	// Run happens either way.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("graceful shutdown did not finish", "err", err)
+		}
+		<-runDone
 	}()
 
 	serveErr := srv.Serve(listener)
+	if ctx.Err() != nil {
+		<-drained
+	}
 	if errors.Is(serveErr, http.ErrServerClosed) {
 		return nil
 	}

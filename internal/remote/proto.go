@@ -16,6 +16,11 @@ const Version = 1
 // ContentTypeGitBundle is the MIME content type for git bundles.
 const ContentTypeGitBundle = "application/x-git-bundle"
 
+// HeaderClientVersion is the request header a client sets to its buildVersion
+// (#373). It is informational -- the server logs it and never rejects a
+// request on it, and it is never part of the signature.
+const HeaderClientVersion = "Relay-Client-Version"
+
 // RoundState represents the execution state of a round on the server.
 type RoundState string
 
@@ -227,6 +232,17 @@ const FeatureStop = "stop"
 // the binding's builder from that round on; absent or "" means keep the
 // binding's builder.
 const FeatureBuilder = "builder"
+
+// FeatureIdempotentSend is the WhoAmI.Features token a server that answers a
+// repeated identical start-round request for the open round with 200 and the
+// current view -- no re-Send, no QueuedAt reset, no new log entry -- advertises
+// (#373). The client round (R2) retries StartRound only when it sees this.
+const FeatureIdempotentSend = "idempotent_send"
+
+// FeatureAuthor is the WhoAmI.Features token a server that honours
+// CreateBindingRequest.Author advertises (#335, #373). A client whose server
+// lacks it logs a Warn once per server and continues.
+const FeatureAuthor = "author"
 
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {
