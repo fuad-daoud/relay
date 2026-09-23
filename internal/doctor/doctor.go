@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"runtime"
 	"strconv"
 	"strings"
@@ -363,6 +364,87 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
 }
 
+// roleInstallEnv adapts Env to harness.InstallEnv for the dry-run install the
+// role-staleness row runs (#371 §4.10). A dry run never writes, so MkdirAll,
+// WriteFile and SaveManifest are unreachable; they are no-ops rather than
+// silent fallbacks because doctor must never touch a user's files.
+type roleInstallEnv struct {
+	env      Env
+	manifest map[string]string
+}
+
+func (e roleInstallEnv) LookPath(binary string) (string, error) { return e.env.LookPath(binary) }
+func (e roleInstallEnv) HomePath(rel string) (string, error)    { return e.env.HomePath(rel) }
+func (e roleInstallEnv) MkdirAll(string) error                  { return nil }
+func (e roleInstallEnv) WriteFile(string, []byte) error         { return nil }
+
+// ReadFile reports fs.ErrNotExist for a path Stat says is absent, so the
+// dry-run decision table reads a missing definition as "would write" rather
+// than as an empty file that differs.
+func (e roleInstallEnv) ReadFile(path string) ([]byte, error) {
+	if err := e.env.Stat(path); err != nil {
+		return nil, fs.ErrNotExist
+	}
+	return e.env.ReadFile(path)
+}
+
+func (e roleInstallEnv) LoadManifest() (map[string]string, error) { return e.manifest, nil }
+func (e roleInstallEnv) SaveManifest(map[string]string) error     { return nil }
+
+// rolesCheck is §4.10's role-staleness row, one per harness whose binary is on
+// PATH: a dry-run install with the manifest says whether the daemon will
+// refresh anything on its next start, whether the user's own edits are being
+// kept, or whether every definition is already current.
+func rolesCheck(env Env, kind string) Check {
+	manifest, err := env.LoadManifest()
+	if err != nil {
+		// A manifest relay cannot read records nothing, which is exactly
+		// what the dry run decides from: an empty map.
+		manifest = nil
+	}
+
+	results, err := harness.Install(roleInstallEnv{env: env, manifest: manifest}, harness.InstallOptions{
+		Kind:   kind,
+		DryRun: true,
+	})
+	if err != nil {
+		return Check{
+			Group: kind, Name: "roles", Severity: SevOK,
+			Detail:      fmt.Sprintf("not checked -- %v", err),
+			ProbeFailed: true,
+		}
+	}
+
+	stale, edited := false, false
+	for _, r := range results {
+		switch r.Outcome {
+		case harness.OutcomeWouldWrite, harness.OutcomeWouldUpdate:
+			stale = true
+		case harness.OutcomeKeptDiffers:
+			edited = true
+		case harness.OutcomeError:
+			return Check{
+				Group: kind, Name: "roles", Severity: SevWarn,
+				Detail:      fmt.Sprintf("could not check the role definitions: %s", r.Err),
+				ProbeFailed: true,
+			}
+		}
+	}
+
+	switch {
+	case stale:
+		return Check{
+			Group: kind, Name: "roles", Severity: SevWarn,
+			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relay agent install",
+			Fix:    "relay agent install",
+		}
+	case edited:
+		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "edited by you (kept)"}
+	default:
+		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "up to date"}
+	}
+}
+
 // releaseCheck is the one row about relay itself (#293): which install this
 // is, and whether the daemon's cached check has seen a newer release.
 //
@@ -587,6 +669,14 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 
 		if !cfg.adopted {
+			// §4.10: for every harness whose binary is on PATH, a dry run
+			// with the manifest says whether the daemon will refresh
+			// anything on its next start. An unknown kind has no shipped
+			// definitions to dry-run, so it gets no row.
+			if known {
+				checks = append(checks, rolesCheck(env, kind))
+			}
+
 			// Role checks: one row per shipped role in scope (see WithDefinitions). Every known kind has rows (#85).
 			switch {
 			case !known:

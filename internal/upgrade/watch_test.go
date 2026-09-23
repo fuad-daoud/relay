@@ -139,6 +139,25 @@ func TestWatcherRefusedExposesIdentity(t *testing.T) {
 	}
 }
 
+// TestWatcherRollbackClearsRefusal pins §4.3 step 2's amendment: when the file
+// goes back to our own binary -- a rollback -- any refusal is dropped, so a
+// later reinstall of the refused build is tried again rather than silently
+// skipped.
+//
+// Mutation: drop `w.refused = nil` in Check and the fourth Check returns None
+// (the same identity is not tried again) instead of Wait.
+func TestWatcherRollbackClearsRefusal(t *testing.T) {
+	refused := id(2)
+	w := scriptedWatcher(t,
+		[]statResult{{id: refused}, {id: refused}, {id: id(1)}, {id: refused}},
+		[]error{errors.New("boom")},
+		[]Action{Wait, Refused, None, Wait},
+	)
+	if got := w.Refused(); got != nil {
+		t.Errorf("Refused() = %+v after a rollback, want nil", *got)
+	}
+}
+
 // TestWatcherPreflightGetsATimeoutDeadline pins that the preflight runs under
 // the package's own bounded context, not the daemon's whole lifetime.
 func TestWatcherPreflightGetsATimeoutDeadline(t *testing.T) {

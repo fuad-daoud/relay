@@ -512,6 +512,12 @@ func (s *stubDoctorEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return "", "", false, release.KindUnknown
 }
 
+// LoadManifest satisfies doctor.Env (#371 §4.10): these stubs record no
+// manifest, so the role-staleness row reads every definition as "would write".
+func (s *stubDoctorEnv) LoadManifest() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReadFile satisfies doctor.Env. These tests assert on severities and fix
 // commands, not on role-file contents, so every file reads as empty -- which
 // doctor must render as a role row with no model suffix.

@@ -2386,6 +2386,11 @@ func cmdDaemon(args []string) error {
 		slog.Info("re-exec'd", "from", info.ReexecFrom, "to", info.Version)
 	}
 
+	// Role definitions are refreshed once per image start, after the lock and
+	// daemon.json (#371 §4.10): an upgrade leaves the files relay wrote for
+	// each harness on disk, and one nobody edited is stale. Never fatal.
+	refreshRoles()
+
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
 		return err
@@ -2471,6 +2476,39 @@ func cmdDaemon(args []string) error {
 	// A clean shutdown removes the record; the re-exec path above must not.
 	_ = rt.Store.RemoveDaemonInfo()
 	return err
+}
+
+// refreshRoles lands relay's shipped role definitions once per image start
+// (#371 §4.10). The kinds are the ones `relay agent install` picks by default
+// -- harness.Install's own "every harness whose binary is on PATH" selection --
+// and the env is the same one that verb uses, so both read and write the one
+// manifest at <state root>/agents-manifest.json.
+//
+// It is never fatal: a definition that could not be written is one warning, a
+// manifest relay cannot read or save is one warning, and the daemon's own work
+// does not depend on either.
+func refreshRoles() {
+	env, err := agentInstallEnv()
+	if err != nil {
+		slog.Warn("role definitions not refreshed", "err", err)
+		return
+	}
+
+	results, err := harness.Install(env, harness.InstallOptions{})
+	if err != nil {
+		slog.Warn("role definitions not refreshed", "err", err)
+	}
+
+	for _, r := range results {
+		switch r.Outcome {
+		case harness.OutcomeWrote, harness.OutcomeUpdated:
+			slog.Info("role definition refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path)
+		case harness.OutcomeKeptDiffers:
+			slog.Info(fmt.Sprintf("%s was edited; relay agent install --force replaces it", r.Path))
+		case harness.OutcomeError:
+			slog.Warn("role definition not refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path, "err", r.Err)
+		}
+	}
 }
 
 // sameFileID reports whether two identity pointers name the same file. Both

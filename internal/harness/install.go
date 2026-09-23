@@ -25,6 +25,13 @@ type InstallEnv interface {
 	MkdirAll(dir string) error
 	// WriteFile writes whole file with permission 0644, truncating if it exists.
 	WriteFile(path string, data []byte) error
+	// LoadManifest reads the role manifest (#371 §4.10): a home-relative
+	// path (Role.Path) to the lowercase hex sha256 of what relay last wrote
+	// there. A missing manifest is an empty map, never an error.
+	LoadManifest() (map[string]string, error)
+	// SaveManifest writes the manifest. Install calls it once per Install,
+	// and only when the map changed and opts.DryRun is false.
+	SaveManifest(map[string]string) error
 }
 
 // InstallOptions controls the behavior of Install.
@@ -41,10 +48,12 @@ type InstallOutcome string
 const (
 	OutcomeWrote          InstallOutcome = "wrote"
 	OutcomeOverwrote      InstallOutcome = "overwrote"
+	OutcomeUpdated        InstallOutcome = "updated (unchanged since relay wrote it)"
 	OutcomeKeptIdentical  InstallOutcome = "kept (identical)"
 	OutcomeKeptDiffers    InstallOutcome = "kept (differs; --force to overwrite)"
 	OutcomeWouldWrite     InstallOutcome = "would write"
 	OutcomeWouldOverwrite InstallOutcome = "would overwrite"
+	OutcomeWouldUpdate    InstallOutcome = "would update"
 	OutcomeError          InstallOutcome = "error"
 )
 
@@ -71,7 +80,18 @@ func DocEqual(shipped, installed []byte) bool {
 // Install decides, per (kind, role), whether the shipped definition lands on disk, and lands it.
 // Results are ordered by harness.All() (sorted by kind), and roles by Harness.Roles table order.
 // Per-file failures are reported as error outcomes, never as returned errors.
+//
+// The role manifest (#371 §4.10) is loaded once, threaded through every
+// installOne decision, and saved once at the end -- only if it changed, and
+// never under DryRun. A manifest that cannot be read is reported once as the
+// returned error (with the results still returned) and treated as empty, so a
+// corrupt file never blocks a definition from landing.
 func Install(env InstallEnv, opts InstallOptions) ([]InstallResult, error) {
+	manifest, merr := env.LoadManifest()
+	if merr != nil || manifest == nil {
+		manifest = map[string]string{}
+	}
+
 	var kinds []Harness
 	if opts.Kind != "" {
 		h, ok := Lookup(opts.Kind)
@@ -116,22 +136,35 @@ func Install(env InstallEnv, opts InstallOptions) ([]InstallResult, error) {
 	}
 
 	var results []InstallResult
+	changed := false
 	for _, h := range kinds {
 		for _, r := range h.Roles {
 			if opts.Role != "" && r.Name != opts.Role {
 				continue
 			}
-			res, err := installOne(env, opts, h.Kind, r)
+			res, rchanged, err := installOne(env, opts, h.Kind, r, manifest)
 			if err != nil {
 				return nil, err
 			}
+			changed = changed || rchanged
 			results = append(results, res)
 		}
 	}
-	return results, nil
+
+	if changed && !opts.DryRun {
+		if serr := env.SaveManifest(manifest); serr != nil {
+			// The definitions landed; only the record of them did not. The
+			// caller reports this once and keeps the results.
+			return results, serr
+		}
+	}
+	return results, merr
 }
 
-func installOne(env InstallEnv, opts InstallOptions, kind string, r Role) (InstallResult, error) {
+// installOne applies §5's decision table to one (kind, role). Its bool reports
+// whether the manifest changed, so Install can save it once; a write that
+// failed records nothing.
+func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manifest map[string]string) (InstallResult, bool, error) {
 	shipped, err := AgentDoc(r.Name, kind)
 	if err != nil {
 		return InstallResult{
@@ -140,11 +173,11 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role) (Insta
 			Path:    r.Path,
 			Outcome: OutcomeError,
 			Err:     err.Error(),
-		}, nil
+		}, false, nil
 	}
 	full, err := env.HomePath(r.Path)
 	if err != nil {
-		return InstallResult{}, err
+		return InstallResult{}, false, err
 	}
 	res := InstallResult{
 		Kind: kind,
@@ -156,23 +189,54 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role) (Insta
 	case errors.Is(rerr, fs.ErrNotExist):
 		if opts.DryRun {
 			res.Outcome = OutcomeWouldWrite
-		} else {
-			res = writeDoc(env, full, shipped, res, OutcomeWrote)
+			return res, false, nil
 		}
+		res = writeDoc(env, full, shipped, res, OutcomeWrote)
+		if res.Outcome != OutcomeWrote {
+			return res, false, nil
+		}
+		return res, record(manifest, r.Path, docSHA(shipped)), nil
 	case rerr == nil && DocEqual(shipped, existing):
 		res.Outcome = OutcomeKeptIdentical
+		return res, record(manifest, r.Path, docSHA(existing)), nil
+	case rerr == nil && manifest[r.Path] == docSHA(existing):
+		// The bytes on disk are exactly what relay last wrote, so the
+		// difference from the shipped copy is relay's own older release,
+		// not the user's edit: safe to refresh (#371 §4.10).
+		if opts.DryRun {
+			res.Outcome = OutcomeWouldUpdate
+			return res, false, nil
+		}
+		res = writeDoc(env, full, shipped, res, OutcomeUpdated)
+		if res.Outcome != OutcomeUpdated {
+			return res, false, nil
+		}
+		return res, record(manifest, r.Path, docSHA(shipped)), nil
 	default:
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
-		} else {
-			if opts.DryRun {
-				res.Outcome = OutcomeWouldOverwrite
-			} else {
-				res = writeDoc(env, full, shipped, res, OutcomeOverwrote)
-			}
+			return res, false, nil
 		}
+		if opts.DryRun {
+			res.Outcome = OutcomeWouldOverwrite
+			return res, false, nil
+		}
+		res = writeDoc(env, full, shipped, res, OutcomeOverwrote)
+		if res.Outcome != OutcomeOverwrote {
+			return res, false, nil
+		}
+		return res, record(manifest, r.Path, docSHA(shipped)), nil
 	}
-	return res, nil
+}
+
+// record stores path's sha in the manifest and reports whether that changed the
+// map, so Install saves the file only when it actually did.
+func record(manifest map[string]string, path, sha string) bool {
+	if manifest[path] == sha {
+		return false
+	}
+	manifest[path] = sha
+	return true
 }
 
 func writeDoc(env InstallEnv, full string, data []byte, res InstallResult, success InstallOutcome) InstallResult {
@@ -200,11 +264,28 @@ func (r InstallResult) Line() string {
 	return fmt.Sprintf("%s  ~/%s", r.Outcome, r.Path)
 }
 
-type osInstallEnv struct{}
+type osInstallEnv struct {
+	// manifestPath is <state root>/agents-manifest.json. Only OSInstallEnvAt
+	// sets it; a caller that has no state root gets an env that reads as
+	// "nothing recorded" and refuses to save, rather than writing a manifest
+	// somewhere unintended (#371 §3).
+	manifestPath string
+}
 
-// OSInstallEnv returns an InstallEnv backed by the OS and exec packages.
+// OSInstallEnv returns an InstallEnv backed by the OS and exec packages,
+// without a role manifest: it is for the seams that only resolve paths and
+// read files (OSRoleChecker). Callers that install definitions and want the
+// manifest maintained use OSInstallEnvAt.
 func OSInstallEnv() InstallEnv {
 	return osInstallEnv{}
+}
+
+// OSInstallEnvAt is OSInstallEnv with the role manifest at
+// ManifestPath(stateRoot) (#371 §4.10). stateRoot is relay's state root, which
+// package main resolves through store.DefaultRoot and passes in, because this
+// package cannot import internal/store (harness <- usage <- store).
+func OSInstallEnvAt(stateRoot string) InstallEnv {
+	return osInstallEnv{manifestPath: ManifestPath(stateRoot)}
 }
 
 func (osInstallEnv) LookPath(binary string) (string, error) {
@@ -227,6 +308,22 @@ func (osInstallEnv) MkdirAll(dir string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+// WriteFile writes through a temp file in the same directory, then renames, so
+// a reader never sees a half-written definition (#371 §4.10).
 func (osInstallEnv) WriteFile(path string, data []byte) error {
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data, 0o644)
+}
+
+func (e osInstallEnv) LoadManifest() (map[string]string, error) {
+	if e.manifestPath == "" {
+		return map[string]string{}, nil
+	}
+	return ReadManifest(e.manifestPath)
+}
+
+func (e osInstallEnv) SaveManifest(m map[string]string) error {
+	if e.manifestPath == "" {
+		return errors.New("no role manifest path configured")
+	}
+	return WriteManifest(e.manifestPath, m)
 }

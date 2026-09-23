@@ -81,8 +81,11 @@ func (w *Watcher) Check(ctx context.Context) Decision {
 	}
 
 	if cur == w.Started {
-		// The binary is back to ours, as after a rollback.
+		// The binary is back to ours, as after a rollback. Both the pending
+		// identity and any refusal are cleared: the refused build is gone, so
+		// if it is installed again it may be tried again (#371 §4.3 step 2).
 		w.pending = nil
+		w.refused = nil
 		return Decision{Action: None}
 	}
 

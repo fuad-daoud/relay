@@ -95,6 +95,17 @@ func cmdMCP(args []string) error {
 		// told from its first turn which delivery it should expect (#303 §4.5).
 		Mode: mode,
 		Log:  os.Stderr,
+		// §4.10: this server runs for the session's whole life, so when the
+		// daemon has re-exec'd onto a newer relay it says so on every tool
+		// result and the planner reconnects (/mcp). The read is cached for
+		// 30 s and a read error is no notice at all.
+		Notice: cachedString(mcpNoticeTTL, time.Now, func() string {
+			info, ok, err := rt.Store.ReadDaemonInfo()
+			if err != nil {
+				return ""
+			}
+			return mcpNotice(version, info, ok)
+		}),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

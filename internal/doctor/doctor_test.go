@@ -53,6 +53,11 @@ type fakeEnv struct {
 	releaseLatest  string
 	releaseOK      bool
 	releaseKind    release.Kind
+
+	// manifest is what LoadManifest returns (#371 §4.10): a home-relative
+	// definition path to the sha relay last wrote there. nil reads as no
+	// manifest recorded.
+	manifest map[string]string
 }
 
 func (f *fakeEnv) DaemonRunning(ctx context.Context) (bool, error) {
@@ -126,6 +131,12 @@ func (f *fakeEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return f.releaseRunning, f.releaseLatest, f.releaseOK, f.releaseKind
 }
 
+// LoadManifest satisfies doctor.Env (#371 §4.10): the recorded manifest, or
+// nil for a machine that has none.
+func (f *fakeEnv) LoadManifest() (map[string]string, error) {
+	return f.manifest, nil
+}
+
 func findCheck(report Report, group, name string) *Check {
 	for i := range report.Checks {
 		if report.Checks[i].Group == group && report.Checks[i].Name == name {
@@ -185,6 +196,88 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	if report.Failures() != 0 {
 		t.Errorf("an unknown kind must not fail doctor, got %d failures", report.Failures())
 	}
+}
+
+// TestDoctorRolesRow covers §4.10's role-staleness row: stale when the daemon
+// would write or update a definition, OK with the "edited by you (kept)"
+// detail when the user's own edit is being kept, and OK when everything is
+// current. A harness whose binary is not on PATH gets no row, because it gets
+// no other per-harness row either.
+func TestDoctorRolesRow(t *testing.T) {
+	claudeRoles := []string{"plan-executor", "researcher", "reviewer", "architect"}
+	relPath := func(role string) string { return ".claude/agents/" + role + ".md" }
+
+	envFor := func(contents map[string]string) *fakeEnv {
+		existing := map[string]bool{}
+		files := map[string]string{}
+		for role, content := range contents {
+			p := "/fake/home/" + relPath(role)
+			existing[p] = true
+			files[p] = content
+		}
+		return &fakeEnv{
+			daemonRunning: true,
+			lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
+			homeDir:       "/fake/home",
+			existingFiles: existing,
+			fileContents:  files,
+		}
+	}
+
+	t.Run("stale", func(t *testing.T) {
+		rep := Run(context.Background(), envFor(nil), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("severity = %v, want SevWarn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "role definitions are stale") {
+			t.Errorf("detail = %q, want it to say the definitions are stale", c.Detail)
+		}
+		if c.Fix != "relay agent install" {
+			t.Errorf("fix = %q, want relay agent install", c.Fix)
+		}
+	})
+
+	t.Run("user edited is kept", func(t *testing.T) {
+		contents := map[string]string{}
+		for _, role := range claudeRoles {
+			contents[role] = "---\nmodel: haiku\n---\nmine\n"
+		}
+		rep := Run(context.Background(), envFor(contents), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevOK || c.Detail != "edited by you (kept)" {
+			t.Errorf("row = %+v, want OK with detail %q", *c, "edited by you (kept)")
+		}
+	})
+
+	t.Run("current", func(t *testing.T) {
+		contents := map[string]string{}
+		for _, role := range claudeRoles {
+			contents[role] = shippedDoc(t, role, "claude")
+		}
+		rep := Run(context.Background(), envFor(contents), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevOK || c.Detail != "up to date" {
+			t.Errorf("row = %+v, want OK and up to date", *c)
+		}
+	})
+
+	t.Run("binary off PATH has no row", func(t *testing.T) {
+		env := &fakeEnv{lookPaths: map[string]string{}}
+		rep := Run(context.Background(), env, []string{"claude"})
+		if c := findCheck(rep, "claude", "roles"); c != nil {
+			t.Errorf("roles row %+v, want none when the binary is off PATH", *c)
+		}
+	})
 }
 
 func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
