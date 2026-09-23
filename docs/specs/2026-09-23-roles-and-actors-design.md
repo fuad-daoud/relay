@@ -1,6 +1,6 @@
 # Roles × candidates, and actors
 
-Issue: #374 (slice S1). Slice S2 gets its own issue (the actor model).
+Issue: #374 (slice S1). Slice S2 is #382 (the actor model).
 Status: design approved 2026-09-23 as a direction; the user expects to rework
 S2 before it is planned.
 
