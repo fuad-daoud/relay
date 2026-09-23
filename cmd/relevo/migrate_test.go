@@ -8,10 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/migrate"
 )
 
 // TestCmdMigrateFlagPairRule checks that naming only one of --state-from and
@@ -51,8 +53,15 @@ func TestCmdMigrateDryRun(t *testing.T) {
 	mustWrite(t, filepath.Join(oldConfig, "candidates.json"), "{}")
 	// The old policy.json holds the pre-rename slice value the real run rewrites.
 	mustWrite(t, filepath.Join(oldConfig, "policy.json"), fmt.Sprintf(`{"slice": %q}`, legacy.Slice))
-	// The old client unit is installed, so stop/install/retire all report.
-	mustWrite(t, filepath.Join(configHome, "systemd", "user", legacy.ClientUnit), "[Unit]\n")
+	// The old client unit is installed, so stop/install/retire all report. The
+	// path comes from DefaultClientUnits, the function the CLI uses, so the old
+	// unit lands where the running platform's code looks it up (systemd on
+	// Linux, launchd on macOS) rather than at a platform-specific guess.
+	units := migrate.DefaultClientUnits(runtime.GOOS, configHome, home)
+	if units.Old.Path == "" {
+		t.Skipf("no client unit path for GOOS %q", runtime.GOOS)
+	}
+	mustWrite(t, units.Old.Path, "[Unit]\n")
 
 	before := snapshotTree(t, root)
 

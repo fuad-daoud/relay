@@ -5,8 +5,10 @@ package proc
 import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -1186,11 +1188,36 @@ func TestReapScopeTerminatesTheListedProcesses(t *testing.T) {
 // ignored disposition -- sh sets SIG_IGN, and an ignored signal survives
 // exec -- so one process, not a sh plus its child.
 func TestReapScopeKillsWhatIgnoresTERM(t *testing.T) {
-	stubborn := exec.Command("sh", "-c", "trap '' TERM; exec sleep 60")
+	stubborn := exec.Command("sh", "-c", "trap '' TERM; echo ready; exec sleep 60")
+	stdout, err := stubborn.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
 	if err := stubborn.Start(); err != nil {
 		t.Fatalf("start the TERM-ignoring process: %v", err)
 	}
 	t.Cleanup(func() { _ = stubborn.Process.Kill(); _ = stubborn.Wait() })
+
+	// Wait until sh has run `trap` before reaping. If the reap's TERM arrives
+	// first, sh dies of TERM and the test would see SIGTERM rather than the
+	// SIGKILL it pins. The ignored disposition survives exec, so once "ready"
+	// is read the sleep also ignores TERM.
+	ready := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdout).ReadString('\n')
+		if err == nil && strings.TrimSpace(line) != "ready" {
+			err = fmt.Errorf("first line = %q, want %q", line, "ready")
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("waiting for the trap: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the TERM-ignoring process did not report ready within 10s")
+	}
 
 	procs := filepath.Join(t.TempDir(), "cgroup.procs")
 	if err := os.WriteFile(procs, []byte(strconv.Itoa(stubborn.Process.Pid)+"\n"), 0o644); err != nil {
