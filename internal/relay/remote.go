@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -49,7 +50,20 @@ func is40Hex(s string) bool {
 	return true
 }
 
-func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResult, err error) {
+func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Record, haveRec bool) (result AddResult, err error) {
+	// The caller's planner is a hard precondition here exactly as it is on the
+	// local path: a remote binding records the client planner's id and
+	// session, so without a resolved record there is nothing to record and
+	// nothing may be created on the server.
+	if !haveRec {
+		return AddResult{}, ErrNoPlannerSession
+	}
+	opts.PlannerID = rec.ID
+	plannerEP := recordEndpoint(rec)
+	if plannerEP.TranscriptLocator == "" {
+		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
+	}
+
 	if opts.CWD != "" {
 		return AddResult{}, errors.New("remote builders are add-only: --cwd and --server cannot be combined")
 	}
@@ -260,8 +274,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 	//                                   AgentName: name},
 	//                 BuilderCandidate: view.Candidate, Round: 1, State: active, RoundCap/Timeout as Add}
 	// Save under lock; append the same pick log entry Add writes, with the candidate the server reported.
-	var planner store.Endpoint
-
 	builderKind := ""
 	var cand candidate.Candidate
 	if view.Candidate != "" {
@@ -280,7 +292,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		// ExistingBranch records that relay adopted a branch it did not
 		// create, so nothing here will ever delete it.
 		ExistingBranch: existingBranch,
-		Planner:        planner,
+		Planner:        plannerEP,
+		PlannerID:      opts.PlannerID,
 		Builder: store.Endpoint{
 			Mode:      store.ModeRemote,
 			Server:    opts.Server,
@@ -298,8 +311,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions) (result AddResu
 		RepoRef: captureRepo(ctx, rt, opts.Repo),
 		Feature: opts.Feature,
 	}
-	b.Planner.TranscriptLocator = plannerLocator(rt, planner.Kind, planner.SessionID)
-
 	res := Resolution{
 		Candidate: cand,
 		How:       HowExplicit,

@@ -194,9 +194,11 @@ type Binding struct {
 	// PlannerID names the relay planner record this binding belongs to
 	// (#303 §3.2, §5.3): the id in $XDG_STATE_HOME/relay/planners/<id>.json
 	// and in the db's planner table. Empty on every binding written before
-	// #303 step 1, and empty on a remote binding, which has no planner.
-	// bind/add/fork/ask set it from planner.Resolve, and the daemon
-	// back-fills it by planner session.
+	// #303 step 1. A remote binding carries the client planner's id too: the
+	// planner never goes over the wire, so the server-side binding is
+	// planner-less, but the client's record of it belongs to the client's
+	// planner exactly like a local binding's. bind/add/fork/ask set it from
+	// planner.Resolve, and the daemon back-fills it by planner session.
 	PlannerID string   `json:"planner_id,omitempty"`
 	Builder   Endpoint `json:"builder"`
 	// BuilderCandidate is the harness/provider/model token the builder was

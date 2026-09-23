@@ -103,12 +103,17 @@ type AddResult struct {
 //
 //	or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
-	if opts.Server != "" {
-		return addRemote(ctx, rt, opts)
-	}
+	// Resolve the caller's planner before the --server branch. A remote
+	// binding is the calling planner's, exactly like a local one: its id and
+	// session go into the client-side record addRemote writes. Only the
+	// server-side binding stays planner-less -- nothing about the planner
+	// crosses the wire (§4.4).
 	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
 	if err != nil {
 		return AddResult{}, err
+	}
+	if opts.Server != "" {
+		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
