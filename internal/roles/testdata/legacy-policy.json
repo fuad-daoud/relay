@@ -1,0 +1,16 @@
+{
+  "order": {
+    "builder": [
+      "opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high",
+      "codex/openai/gpt-5.6-terra:high",
+      "agy/antigravity/claude-sonnet-4-6",
+      "agy/google/gemini-3.8-flash-high",
+      "claude/anthropic/sonnet",
+      "opencode/openrouter/z-ai/glm-5.3-flash"
+    ],
+    "reviewer": ["claude/anthropic/sonnet", "codex/openai/gpt-5.6-terra:high"]
+  },
+  "max_switches": 2,
+  "tier": {"builder": "yolo"},
+  "max_tier": "yolo"
+}
