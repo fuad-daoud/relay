@@ -83,7 +83,7 @@ Commands:
   doctor    preflight check: plugin, daemon, harness binaries, roles
   candidates   list the configured harness/provider/model candidates
   policy       show, per role, which candidate relay would pick right now and why
-  planner      register this planner (or re-attach an existing one), and list, rename or forget records
+  planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit locally and on every server your bindings name: relay available <provider|token>
   agent     print or install embedded agent role definitions (e.g. relay agent install --kind claude)

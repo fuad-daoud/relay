@@ -279,3 +279,63 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 		t.Errorf("record file still there after forget: %v", err)
 	}
 }
+
+// TestListAlignsLongValues is the list polish: the old fixed-width format
+// shifted every later column when a 36-character session id or a long cwd
+// overflowed its cell. Under tabwriter every row -- header included -- starts
+// its `seen` column at the same byte offset.
+func TestListAlignsLongValues(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+
+	long := filepath.Join(t.TempDir(), strings.Repeat("long-cwd-segment-", 6))
+	longer := filepath.Join(t.TempDir(), strings.Repeat("an-even-longer-cwd-segment-", 6))
+	for _, rec := range []planner.Record{
+		{
+			ID: "pl_aaaaaaaaaaaa", Name: "alpha", HarnessKind: "claude",
+			SessionID: "f26cad68-8a43-4de9-80c6-7b13d88aafd0", // 36 characters
+			CWD:       long,
+		},
+		{
+			ID: "pl_bbbbbbbbbbbb", Name: "beta", HarnessKind: "claude",
+			SessionID: "f26cad68-8a43-4de9-80c6-7b13d88aafd1", // 36 characters
+			CWD:       longer,
+		},
+	} {
+		if _, err := reg.Create(rec); err != nil {
+			t.Fatalf("Create(%s): %v", rec.ID, err)
+		}
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	if err != nil {
+		t.Fatalf("planner list: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("planner list printed %d lines, want a header and two rows:\n%s", len(lines), stdout)
+	}
+
+	// seen is the last column, so its cell is the line's last space-separated
+	// token: the byte after the final space. Every line must agree on it.
+	want := -1
+	for i, line := range lines {
+		at := strings.LastIndex(line, " ") + 1
+		if at <= 0 {
+			t.Fatalf("line %d has no seen column:\n%s", i, line)
+		}
+		if want < 0 {
+			want = at
+			continue
+		}
+		if at != want {
+			t.Errorf("line %d's seen column starts at byte %d, want %d:\n%s", i, at, want, line)
+		}
+	}
+}
