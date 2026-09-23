@@ -1740,6 +1740,51 @@ func TestRepoFactsNotARepo(t *testing.T) {
 	}
 }
 
+// TestIdentityReadsConfig pins Identity's happy path (#335): a repo with its
+// own user.name/user.email resolves both, which is the identity a remote
+// builder then commits as.
+func TestIdentityReadsConfig(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir := initRepo(t) // repo-local user.name "Test", user.email "test@example.com"
+
+	name, email, err := client.Identity(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
+	if name != "Test" || email != "test@example.com" {
+		t.Errorf("Identity = (%q, %q), want (%q, %q)", name, email, "Test", "test@example.com")
+	}
+}
+
+// TestIdentityUnsetIsEmptyNotError pins Identity's other contract (#335): a
+// key `git config --get` cannot find exits 1 with no output, which is an
+// empty value, not a failure. HOME and XDG_CONFIG_HOME point at empty temp
+// dirs and the system config is off, so nothing can resolve a global
+// user.name/user.email from the machine this test runs on.
+func TestIdentityUnsetIsEmptyNotError(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	emptyHome := t.TempDir()
+	t.Setenv("HOME", emptyHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(emptyHome, "xdg"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+
+	name, email, err := client.Identity(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("Identity with nothing set: %v", err)
+	}
+	if name != "" || email != "" {
+		t.Errorf("Identity = (%q, %q), want (\"\", \"\")", name, email)
+	}
+}
+
 // TestCommitAllCommitsEverything pins CommitAll's contract: it stages and
 // commits the whole working tree (a new untracked file and a tracked
 // modification alike), reports the new HEAD, and answers a tree with nothing

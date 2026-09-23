@@ -70,6 +70,11 @@ type Git interface {
 	// (raw, unnormalised) and the main worktree's absolute .git directory --
 	// for the coming history database (#172; captureRepo is the caller).
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
+	// Identity reports dir's effective git identity -- the user.name and
+	// user.email `git config --get` resolves, global and system config
+	// included -- so a remote builder can commit as the client (#335). An
+	// unset key is ("", nil), not an error.
+	Identity(ctx context.Context, dir string) (name, email string, err error)
 	// CurrentBranch names the branch dir has checked out, or "" when HEAD
 	// is detached. add/fork record it as a binding's BaseRef, the branch
 	// `relay land` rebases onto (#136).

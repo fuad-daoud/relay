@@ -517,6 +517,13 @@ type ServeFacts struct {
 	DirtyCommit  string    `json:"dirty_commit,omitempty"`  // refs/relay/<name>/round-<ClosedRound>, "" if clean
 	AckedRound   int       `json:"acked_round,omitempty"`   // last round the owner acked; 0 none
 	LastSeen     time.Time `json:"last_seen,omitempty"`     // last signed request from the owner about this binding
+
+	// AuthorName and AuthorEmail are the client's git identity, carried on
+	// the create request so every builder relay starts for this binding
+	// commits as the client (#335). Both empty means no identity was
+	// carried: an old client, or a binding created before #335.
+	AuthorName  string `json:"author_name,omitempty"`
+	AuthorEmail string `json:"author_email,omitempty"`
 }
 
 // DefaultConsultCap bounds how many consults may be RUNNING on one binding at

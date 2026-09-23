@@ -29,6 +29,12 @@ import (
 // requested --tier has nowhere to land.
 var ErrServerPreTier = errors.New("server does not carry a permission tier")
 
+// ErrNoGitIdentity is the client-side refusal for an add --server whose repo
+// has no effective git identity (#335): a remote builder commits as the
+// client, so there is nobody to commit as. It is returned before anything
+// is created, on the server or locally.
+var ErrNoGitIdentity = errors.New("no git identity")
+
 // orText returns s, or fallback when s is empty.
 func orText(s, fallback string) string {
 	if s != "" {
@@ -162,6 +168,18 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		return AddResult{}, fmt.Errorf("repo id: %w", err)
 	}
 
+	// 3.5. name, email := rt.Git.Identity(opts.Repo): the identity the remote
+	// builder commits as (#335). Resolved here, before the candidate check
+	// and before anything that touches the server, so a missing identity
+	// refuses with no binding on the server, no local binding and no branch.
+	authorName, authorEmail, err := rt.Git.Identity(ctx, opts.Repo)
+	if err != nil {
+		return AddResult{}, fmt.Errorf("git identity for %s: %w", opts.Repo, err)
+	}
+	if authorName == "" || authorEmail == "" {
+		return AddResult{}, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, opts.Repo)
+	}
+
 	// 4. candidate := opts.Candidate; if non-empty, rt.Remote.Candidates(server) must list it (else error naming the
 	// server's tokens); if empty, leave "" and let the server pick.
 	candidateStr := opts.Candidate
@@ -215,6 +233,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		BaseCommit: base,
 		Candidate:  candidateStr,
 		Tier:       wireTier,
+		Author:     &remote.GitIdentity{Name: authorName, Email: authorEmail},
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
 	if err != nil {

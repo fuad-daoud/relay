@@ -47,6 +47,22 @@ func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding
 	return b, rt, nil
 }
 
+// validAuthor reports whether a wire author is storable (#335): a non-empty
+// name and email of at most 256 bytes each, with no newline, carriage
+// return, NUL, < or >. The server puts both values in a builder's
+// environment, so anything that could forge a line there is refused up
+// front.
+func validAuthor(a remote.GitIdentity) bool {
+	return validAuthorPart(a.Name) && validAuthorPart(a.Email)
+}
+
+func validAuthorPart(s string) bool {
+	if len(s) == 0 || len(s) > 256 {
+		return false
+	}
+	return !strings.ContainsAny(s, "\n\r\x00<>")
+}
+
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -67,6 +83,11 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.BaseCommit) != 40 || !isHex(req.BaseCommit) {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "base_commit must be 40 hex characters")
+		return
+	}
+	if req.Author != nil && !validAuthor(*req.Author) {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid,
+			"author: name and email must be 1-256 bytes with no newline, NUL, < or >")
 		return
 	}
 
@@ -113,6 +134,11 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authorName, authorEmail := "", ""
+	if req.Author != nil {
+		authorName, authorEmail = req.Author.Name, req.Author.Email
+	}
+
 	cwd := rt.Store.WorktreePath(req.Name)
 	b := store.Binding{
 		Name:             req.Name,
@@ -130,9 +156,11 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		RoundCap:         req.RoundCap,
 		RoundTimeoutMS:   req.RoundTimeoutMS,
 		Serve: &store.ServeFacts{
-			RepoID:   req.RepoID,
-			BareRepo: bare,
-			LastSeen: now,
+			RepoID:      req.RepoID,
+			BareRepo:    bare,
+			LastSeen:    now,
+			AuthorName:  authorName,
+			AuthorEmail: authorEmail,
 		},
 	}
 
