@@ -71,6 +71,12 @@ type Usage struct {
 	// Samples is how many records were folded; 0 under Unknown means
 	// nothing was found.
 	Samples int `json:"samples"`
+	// Step figures from the builder stream (#323, #324); zero when the
+	// harness's stream does not show them.
+	Steps            int   `json:"steps,omitempty"`
+	ToolCalls        int   `json:"tool_calls,omitempty"`
+	StepP50MS        int64 `json:"step_p50_ms,omitempty"`
+	FirstOutputP50MS int64 `json:"first_output_p50_ms,omitempty"`
 	// Note says why Unknown, or "n models" when more than one was seen.
 	Note string `json:"note,omitempty"`
 }

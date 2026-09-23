@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -146,6 +147,16 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 	}
 	if !src.Start.IsZero() && src.End.After(src.Start) {
 		u.DurationMS = src.End.Sub(src.Start).Milliseconds()
+	}
+	// The step figures come from the round's builder stream, read at close
+	// (#323, #324). A missing or unreadable stream leaves them zero; this
+	// is not part of the reader, so it happens with no reader too.
+	if src.StreamPath != "" {
+		if data, err := os.ReadFile(src.StreamPath); err == nil {
+			steps := usage.StreamSteps(src.Harness, data)
+			u.Steps, u.ToolCalls = steps.Steps, steps.ToolCalls
+			u.StepP50MS, u.FirstOutputP50MS = steps.StepP50MS, steps.FirstOutputP50MS
+		}
 	}
 	return &u
 }

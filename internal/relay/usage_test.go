@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,5 +148,35 @@ func TestRecordUsageFoldsWithRuntimePrices(t *testing.T) {
 	}
 	if u.DurationMS != 1000 || u.Harness != "claude" {
 		t.Errorf("duration/harness = %d/%q", u.DurationMS, u.Harness)
+	}
+}
+
+// TestRecordUsageAttachesStepStats pins that a round's step figures come
+// from its builder stream at close (#323, #324): the stream's step and
+// tool-call counts land on the Usage even when no reader is wired, and a
+// stream that cannot be read leaves them zero without failing the round.
+func TestRecordUsageAttachesStepStats(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "001-builder.jsonl")
+	lines := []string{
+		`{"type":"step_start","timestamp":1000}`,
+		`{"type":"text","timestamp":1200}`,
+		`{"type":"step_finish","timestamp":2000}`,
+		`{"type":"step_start","timestamp":3000}`,
+		`{"type":"tool_use","timestamp":3400}`,
+		`{"type":"step_finish","timestamp":5000}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{} // rt.Usage is nil: the step figures do not need a reader
+	u := recordUsage(context.Background(), rt, usage.Source{Harness: "opencode", StreamPath: path})
+	if u.Steps != 2 || u.ToolCalls != 1 {
+		t.Errorf("Steps/ToolCalls = %d/%d, want 2/1", u.Steps, u.ToolCalls)
+	}
+
+	missing := recordUsage(context.Background(), rt,
+		usage.Source{Harness: "opencode", StreamPath: filepath.Join(t.TempDir(), "nope.jsonl")})
+	if missing.Steps != 0 || missing.ToolCalls != 0 || missing.StepP50MS != 0 || missing.FirstOutputP50MS != 0 {
+		t.Errorf("a missing stream must leave the step fields zero: %+v", missing)
 	}
 }

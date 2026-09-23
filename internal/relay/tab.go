@@ -101,7 +101,9 @@ func TabRows(entries []TabEntry, by string, since time.Time) ([]TabRow, usage.Sp
 // RenderTab prints the table. Empty cells stay empty where a zero is
 // noise -- no "$0.00" for a group with nothing measured, no "0" for zero
 // plan or unknown rounds -- while the token cells print the split they
-// name, "0" included, so a reader learns the column exists (#234).
+// name, "0" included, so a reader learns the column exists (#234). The
+// step cells follow the token rule's other half (#323, #324): an empty
+// `steps` at 0 and an empty `calls/st` when the group recorded no steps.
 func RenderTab(r TabReport) string {
 	if len(r.Rows) == 0 {
 		return "no rounds with usage\n"
@@ -113,7 +115,7 @@ func RenderTab(r TabReport) string {
 		}
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%-*s  %6s  %7s  %7s  %7s  %7s  %9s  %9s  %4s  %7s\n", width, "group", "rounds", "in", "cache", "write", "out", "measured", "estimated", "plan", "unknown")
+	fmt.Fprintf(&sb, "%-*s  %6s  %6s  %8s  %7s  %7s  %7s  %7s  %9s  %9s  %4s  %7s\n", width, "group", "rounds", "steps", "calls/st", "in", "cache", "write", "out", "measured", "estimated", "plan", "unknown")
 	line := func(group string, s usage.Spend) {
 		rounds := strconv.Itoa(s.Rounds)
 		if s.Consults > 0 {
@@ -125,13 +127,17 @@ func RenderTab(r TabReport) string {
 			}
 			return strconv.Itoa(n)
 		}
+		callsPerStep := ""
+		if s.Steps > 0 {
+			callsPerStep = fmt.Sprintf("%.2f", float64(s.ToolCalls)/float64(s.Steps))
+		}
 		money := func(usd float64, basis usage.Basis) string {
 			if usd == 0 {
 				return ""
 			}
 			return usage.Money(usage.Cost{USD: usd, Basis: basis})
 		}
-		fmt.Fprintf(&sb, "%-*s  %6s  %7s  %7s  %7s  %7s  %9s  %9s  %4s  %7s\n", width, group, rounds,
+		fmt.Fprintf(&sb, "%-*s  %6s  %6s  %8s  %7s  %7s  %7s  %7s  %9s  %9s  %4s  %7s\n", width, group, rounds, cell(s.Steps), callsPerStep,
 			usage.ShortTokens(s.Tokens.In), usage.ShortTokens(s.Tokens.CacheRead),
 			usage.ShortTokens(s.Tokens.CacheWrite), usage.ShortTokens(s.Tokens.Out),
 			money(s.Measured, usage.Measured), money(s.Estimated, usage.Estimated), cell(s.Plan), cell(s.Unknown))

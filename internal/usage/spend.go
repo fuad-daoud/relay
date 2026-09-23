@@ -7,10 +7,13 @@ import (
 
 // Spend is a binding's, or a group's, total. Measured and Estimated are
 // separate sums so an estimate never hides inside a measurement; Plan and
-// Unknown are round counts, never dollars.
+// Unknown are round counts, never dollars. Steps and ToolCalls are the
+// model steps and tool calls the rounds' streams showed (#323, #324).
 type Spend struct {
 	Rounds    int     `json:"rounds"`
 	Consults  int     `json:"consults"`
+	Steps     int     `json:"steps"`
+	ToolCalls int     `json:"tool_calls"`
 	Measured  float64 `json:"measured"`
 	Estimated float64 `json:"estimated"`
 	Plan      int     `json:"plan"`
@@ -29,6 +32,8 @@ func Sum(us []Usage, isConsult []bool) Spend {
 		} else {
 			s.Rounds++
 		}
+		s.Steps += u.Steps
+		s.ToolCalls += u.ToolCalls
 		s.Tokens = s.Tokens.Add(u.Tokens)
 		switch {
 		case u.Cost.Plan:
@@ -48,6 +53,7 @@ func Sum(us []Usage, isConsult []bool) Spend {
 func (s Spend) Add(o Spend) Spend {
 	return Spend{
 		Rounds: s.Rounds + o.Rounds, Consults: s.Consults + o.Consults,
+		Steps: s.Steps + o.Steps, ToolCalls: s.ToolCalls + o.ToolCalls,
 		Measured: s.Measured + o.Measured, Estimated: s.Estimated + o.Estimated,
 		Plan: s.Plan + o.Plan, Unknown: s.Unknown + o.Unknown,
 		Tokens: s.Tokens.Add(o.Tokens),

@@ -52,6 +52,20 @@ func TestSpendAdd(t *testing.T) {
 	}
 }
 
+// TestSumStepsAndToolCalls pins that the step totals ride the same sums as
+// tokens (#323, #324): Sum over usages, and Add over spends, each add them
+// field-wise.
+func TestSumStepsAndToolCalls(t *testing.T) {
+	s := Sum([]Usage{{Steps: 3, ToolCalls: 4}, {Steps: 2, ToolCalls: 1, Cost: Cost{Basis: Unknown}}}, nil)
+	if s.Steps != 5 || s.ToolCalls != 5 {
+		t.Errorf("Sum Steps/ToolCalls = %d/%d, want 5/5", s.Steps, s.ToolCalls)
+	}
+	got := Spend{Steps: 1, ToolCalls: 2}.Add(Spend{Steps: 3, ToolCalls: 4})
+	if got.Steps != 4 || got.ToolCalls != 6 {
+		t.Errorf("Add Steps/ToolCalls = %d/%d, want 4/6", got.Steps, got.ToolCalls)
+	}
+}
+
 func TestSpendLine(t *testing.T) {
 	cases := []struct {
 		s    Spend
