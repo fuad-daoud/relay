@@ -66,6 +66,24 @@ func historyAxisNames() []string {
 	return names
 }
 
+// historyAxis resolves the axis a result regroups by: a valid --by wins
+// (validateHistoryBy has already rejected a bad one, so the fallback below is
+// unreachable from cmdHistory), and a parsed query that names no axis reads
+// as AxisNone. It is pure and defensive: Filter always names an axis now, but
+// a path that bypasses Filter must not resurrect the zero value "" that
+// cmdHistory once read as a regroup axis and printed "no rounds" for.
+func historyAxis(parsed histq.Query, by string) histq.Axis {
+	if by != "" {
+		if a, ok := histq.ParseAxis(by); ok {
+			return a
+		}
+	}
+	if parsed.By == "" {
+		return histq.AxisNone
+	}
+	return parsed.By
+}
+
 // groupJSON shapes the groups `--json --by` prints: their Rows are blanked
 // unless --rows asked for them. A nil list encodes as [], not null.
 func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
@@ -193,13 +211,7 @@ func cmdHistory(args []string) error {
 	parsed := opts.ParsedQuery()
 	rows = parsed.Apply(rows)
 
-	axis := parsed.By
-	if *by != "" {
-		a, ok := histq.ParseAxis(*by)
-		if ok {
-			axis = a
-		}
-	}
+	axis := historyAxis(parsed, *by)
 
 	if axis != histq.AxisNone {
 		groups := histq.Group(rows, axis, time.Local)
