@@ -334,6 +334,63 @@ func TestHistoryOptionsQueryError(t *testing.T) {
 	}
 }
 
+// TestHistoryOptionsFilterDefaultsAxisNone pins that a Filter with no -q
+// query still names an axis: the parsed query starts at AxisNone rather than
+// the zero value, so a caller reading ParsedQuery().By never sees "" (which
+// cmdHistory read as a regroup axis and turned into "no rounds").
+func TestHistoryOptionsFilterDefaultsAxisNone(t *testing.T) {
+	opts := HistoryOptions{}
+
+	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if got := opts.ParsedQuery().By; got != histq.AxisNone {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisNone)
+	}
+	if len(notes) != 0 {
+		t.Errorf("notes = %q, want none", notes)
+	}
+}
+
+// TestHistoryOptionsByAloneGivesNoNote pins the second symptom: --by with no
+// -q query has nothing to conflict with, so it must not print the spurious
+// `note: --by overrides by: from -q`.
+func TestHistoryOptionsByAloneGivesNoNote(t *testing.T) {
+	opts := HistoryOptions{By: "builder"}
+
+	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Errorf("notes = %q, want none: --by has no -q by: to override", notes)
+	}
+	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	}
+}
+
+// TestHistoryOptionsByOverridesQueryByNote pins that a real conflict is
+// kept: -q named by:binding and --by builder still notes the override.
+func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
+	opts := HistoryOptions{Query: "by:binding", By: "builder"}
+
+	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("notes = %q, want exactly one", notes)
+	}
+	if want := "note: --by overrides by:binding from -q"; notes[0] != want {
+		t.Errorf("note = %q, want %q", notes[0], want)
+	}
+	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	}
+}
+
 // TestFormatGroupsColumns pins the exact header and one group row, the axis
 // column padded to 40, tokens and cost in their short forms, and the empty
 // view.

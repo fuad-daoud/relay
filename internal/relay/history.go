@@ -135,7 +135,7 @@ func (o HistoryOptions) ParsedQuery() histq.Query { return o.parsed }
 // repository. Since/Until go through ParseSince. Newest is always true:
 // `relay history` prints newest first.
 func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) (db.Filter, []string, error) {
-	var q histq.Query
+	q := histq.Query{By: histq.AxisNone}
 	if strings.TrimSpace(o.Query) != "" {
 		parsed, err := histq.ParseAt(o.Query, now)
 		if err != nil {
