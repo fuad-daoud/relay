@@ -60,6 +60,7 @@ type fakeRemote struct {
 	startRoundTier      string
 	startRoundCandidate string
 	startRoundTags      []remote.TagRef
+	startRoundRetry     bool
 	roundFileResp       io.ReadCloser
 	roundFileErr        error
 	roundBundleResp     io.ReadCloser
@@ -106,11 +107,12 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
 	f.startRoundTier = tier
 	f.startRoundCandidate = candidate
 	f.startRoundTags = tags
+	f.startRoundRetry = retryOnUnreachable
 	return f.startRoundResp, f.startRoundErr
 }
 
@@ -737,10 +739,15 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 	}
 }
 
-// TestAddRemoteNoTierSkipsProbe pins the no-op path: omitting --tier never
-// probes WhoAmI and sends no Tier on the wire, so a pre-tier server is
-// unaffected by a plain `relay add --server` (#141 remote half).
-func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
+// TestAddRemoteNoTierSendsNoTier pins the no-op path: omitting --tier sends no
+// Tier on the wire, so a pre-tier server is unaffected by a plain `relay add
+// --server` (#141 remote half).
+//
+// #373 changed one thing this test used to pin: a plain add now probes WhoAmI
+// once, because §4.5's author warning needs the server's features. The probe is
+// counted here so the old rule's mechanism is still watched -- one WhoAmI, no
+// tier on the wire.
+func TestAddRemoteNoTierSendsNoTier(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -762,13 +769,60 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
+	probes := 0
 	for _, c := range fr.calls {
-		if strings.HasPrefix(c, "WhoAmI") {
-			t.Fatalf("calls = %v, want no WhoAmI", fr.calls)
+		if c == "WhoAmI:zen" {
+			probes++
 		}
+	}
+	if probes != 1 {
+		t.Fatalf("WhoAmI calls = %d (%v), want exactly 1 for #373's author probe", probes, fr.calls)
 	}
 	if fr.createBindingReq.Tier != "" {
 		t.Fatalf("CreateBindingRequest.Tier = %q, want empty", fr.createBindingReq.Tier)
+	}
+}
+
+// TestAddRemoteWarnsOnceWhenServerIgnoresAuthor pins #373 §4.5's author
+// warning: a server whose WhoAmI does not advertise FeatureAuthor gets one
+// Warn naming it, and a second add to the same server does not repeat it.
+func TestAddRemoteWarnsOnceWhenServerIgnoresAuthor(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+		identityName:  "Ada Lovelace",
+		identityEmail: "ada@example.com",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{Name: "api", Candidate: "claude/anthropic/haiku"},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+	// The once-per-(process, server) set is package state, so start clean.
+	authorWarned.Delete("zen")
+	t.Cleanup(func() { authorWarned.Delete("zen") })
+
+	handler := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	for _, name := range []string{"api", "web"} {
+		if _, err := Add(ctx, rt, AddOptions{Name: name, Server: "zen", Repo: "/fake/repo"}); err != nil {
+			t.Fatalf("Add %s: %v", name, err)
+		}
+	}
+
+	warns := 0
+	for _, r := range handler.snapshot() {
+		if strings.Contains(r.Message, "ignores the commit author (older relay serve)") {
+			warns++
+		}
+	}
+	if warns != 1 {
+		t.Fatalf("author warnings = %d, want exactly 1 for two adds to one server", warns)
 	}
 }
 
@@ -1497,6 +1551,68 @@ func TestSendRemoteTierPassedToStartRound(t *testing.T) {
 	}
 	if fr.startRoundTier != "edit" {
 		t.Fatalf("startRoundTier = %q, want edit", fr.startRoundTier)
+	}
+}
+
+// TestSendRemoteStartRoundRetryFollowsTheFeature pins #373 §4.5's flag: the
+// StartRound retry is asked for exactly when WhoAmI advertises
+// idempotent_send, and never otherwise.
+func TestSendRemoteStartRoundRetryFollowsTheFeature(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		features []string
+		want     bool
+	}{
+		{"idempotent_send advertised", []string{remote.FeatureIdempotentSend}, true},
+		{"feature absent", []string{remote.FeatureQueue}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := store.New(t.TempDir())
+			b := store.Binding{
+				Name:   "api",
+				CWD:    "/fake/repo",
+				Repo:   "/fake/repo",
+				Branch: "relay/api",
+				Round:  1,
+				State:  store.StateActive,
+				Builder: store.Endpoint{
+					Mode:        store.ModeRemote,
+					Server:      "zen",
+					LastShipped: "0000000000000000000000000000000000000000",
+				},
+			}
+			if err := st.Save(b); err != nil {
+				t.Fatal(err)
+			}
+
+			fg := &fakeGit{
+				refSHA: map[string]string{
+					"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+				},
+			}
+			fr := &fakeRemote{
+				whoAmIResp:     remote.WhoAmI{Features: tc.features},
+				startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+			}
+			ft := &fakeTransport{
+				snapshotResp: remote.Snapshot{
+					Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+				},
+			}
+			rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+			planFile := filepath.Join(t.TempDir(), "plan.md")
+			if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Send(ctx, rt, "api", planFile, SendOptions{}); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			if fr.startRoundRetry != tc.want {
+				t.Fatalf("StartRound retry = %v, want %v (features %v)", fr.startRoundRetry, tc.want, tc.features)
+			}
+		})
 	}
 }
 
@@ -2521,6 +2637,121 @@ func TestReconcileRemote401Halts(t *testing.T) {
 	}
 }
 
+// TestReconcileRemote401StaleIsTransientWithoutGrace pins #373 §4.6's client
+// half for a CLI one-shot: a stale 401 with no AuthGrace is shown in
+// RemoteStatus and never halts, because a one-shot has no clock to measure a
+// grace against.
+func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: remote.CodeStale, Message: "stale signature"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted on a transient 401 with no AuthGrace (%s)", got.Halt)
+	}
+	if got.Builder.RemoteStatus != "auth: stale" {
+		t.Fatalf("RemoteStatus = %q, want auth: stale", got.Builder.RemoteStatus)
+	}
+}
+
+// TestReconcileRemote401StaleHaltsAfterGrace pins the daemon's rule: the first
+// sight of a stale 401 does not halt, the same error 16 minutes later does,
+// and the halt names the code, how long it persisted and the clock hint.
+//
+// Mutation: make a non-revoked 401 halt immediately and this fails on the
+// first sight.
+func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: remote.CodeStale, Message: "stale signature"}}}
+	rt := Runtime{
+		Store: st, Remote: fr,
+		Now:       func() time.Time { return baseTime },
+		AuthGrace: NewAuthGrace(),
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted on the first sight of a stale 401 (%s)", got.Halt)
+	}
+	if got.Builder.RemoteStatus != "auth: stale" {
+		t.Fatalf("RemoteStatus = %q, want auth: stale", got.Builder.RemoteStatus)
+	}
+
+	got, err = reconcile(t, at(rt, 16*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you after 16m of stale auth", got.State)
+	}
+	if !strings.Contains(got.Halt, "stale for 16m") {
+		t.Fatalf("Halt = %q, want the code and how long it persisted", got.Halt)
+	}
+	if !strings.Contains(got.Halt, "check this machine's clock and relay servers") {
+		t.Fatalf("Halt = %q, want the clock and relay servers hint", got.Halt)
+	}
+}
+
+// TestReconcileRemote401GraceResetsOnSuccess pins the other half of the grace:
+// a poll that gets through forgets it, so a later transient 401 starts its own
+// 15 minutes rather than inheriting the old clock.
+func TestReconcileRemote401GraceResetsOnSuccess(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: remote.CodeStale, Message: "stale signature"}}}
+	rt := Runtime{
+		Store: st, Remote: fr,
+		Now:       func() time.Time { return baseTime },
+		AuthGrace: NewAuthGrace(),
+	}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile (stale): %v", err)
+	}
+
+	// A success 16m later would have been past the limit had the grace kept
+	// running; it clears instead, and the stale that follows is a fresh sight.
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundIdle}
+	got, err := reconcile(t, at(rt, 16*time.Minute), b)
+	if err != nil {
+		t.Fatalf("Reconcile (success): %v", err)
+	}
+
+	fr.getBindingErr = &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: remote.CodeStale, Message: "stale signature"}}
+	got, err = reconcile(t, at(rt, 17*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile (stale again): %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted on a stale 401 one minute after a success (%s)", got.Halt)
+	}
+	if got.Builder.RemoteStatus != "auth: stale" {
+		t.Fatalf("RemoteStatus = %q, want auth: stale", got.Builder.RemoteStatus)
+	}
+}
+
 func TestReconcileRemote404Halts(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -2939,6 +3170,94 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 	branchHead, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
 	if err != nil || !ok || branchHead != headSHA {
 		t.Fatalf("client branch after absorb: got (%q, %v, %v), want (%q, true, nil)", branchHead, ok, err, headSHA)
+	}
+}
+
+// TestObserveRemoteIdleCatchUpRecoversLostReport pins #373 §4.5's Idle
+// catch-up: the server says Idle with this round closed and the client holds
+// no report entry, so the round's report is collected and acked again -- the
+// recovery for an /ack reply that never reached the client.
+//
+// Mutation: drop the Idle catch-up and no report entry or Ack appears.
+func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundIdle, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	if !slices.Contains(fr.calls, "Ack:zen:api:1") {
+		t.Fatalf("Ack was not called after an Idle catch-up: %v", fr.calls)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("no round 1 report entry after the Idle catch-up: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round was caught up", got.Round)
+	}
+}
+
+// TestObserveRemoteIdleWithReportDoesNotCatchUp is the guard beside it: a
+// report entry already on disk means the ack (or the local bookkeeping) got
+// through, so an Idle view must not collect the round a second time.
+func TestObserveRemoteIdleWithReportDoesNotCatchUp(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("api", store.LogEntry{
+		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundIdle, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") || strings.HasPrefix(c, "RoundFile:") {
+			t.Fatalf("a round with a report entry was caught up again: %v", fr.calls)
+		}
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want 1: the round must not close twice", got.Round)
 	}
 }
 

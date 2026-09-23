@@ -361,7 +361,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 	defer snap.Body.Close()
 
-	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", nil)
+	startView, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Round 1 Plan\nImplement feature"), snap.Body, "", "", nil, false)
 	if err != nil {
 		t.Fatalf("StartRound: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		{Name: "v0", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 		{Name: "v1", SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 	}
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", tags); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", tags, false); err != nil {
 		t.Fatalf("StartRound with tags: %v", err)
 	}
 	want, err := json.Marshal(tags)
@@ -551,7 +551,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 		t.Fatalf("tags field = %q, want %q", got, string(want))
 	}
 
-	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", nil); err != nil {
+	if _, err := cl.StartRound(ctx, "zen", "api", 1, []byte("# Plan"), nil, "", "", nil, false); err != nil {
 		t.Fatalf("StartRound without tags: %v", err)
 	}
 	mu.Lock()

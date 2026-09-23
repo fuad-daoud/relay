@@ -134,6 +134,11 @@ var (
 )
 
 func main() {
+	// Every remote request carries this as Relay-Client-Version, so a server's
+	// journal shows which client build asked (#373 §4.4). Set before any
+	// command runs, and informational only: it is never signed.
+	client.Version = buildVersion()
+
 	err := run(os.Args[1:])
 	var ec exitCodeErr
 	switch {
@@ -2282,6 +2287,11 @@ func cmdDaemon(args []string) error {
 	// creates one; every CLI one-shot leaves Watched nil and keeps #244's
 	// rule exactly.
 	rt.Watched = relay.NewWatched()
+	// The daemon's per-binding auth grace (#373 §3): a transient 401 (clock
+	// skew after a reboot) is shown and warned about, and only halts a binding
+	// after 15 minutes. Every CLI one-shot leaves AuthGrace nil, so it never
+	// halts on one.
+	rt.AuthGrace = relay.NewAuthGrace()
 	// The scope template newRuntime filled is logged once here, in the same
 	// shape `relay serve` uses (#295). "off" is scope.enabled: false; the
 	// local daemon does not probe at startup, so there is no "unavailable"

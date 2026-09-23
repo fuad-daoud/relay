@@ -35,6 +35,11 @@ var (
 	ErrVersion       = errors.New("server rejected protocol version (426)")
 )
 
+// Version is this client's own build version, sent as remote.HeaderClientVersion
+// on every request (#373 §4.4). It is informational -- the server logs it and
+// never signs or rejects on it -- and cmd/relay sets it once at startup.
+var Version = ""
+
 // HTTPError represents an HTTP error response containing status and a remote.ErrorBody.
 type HTTPError struct {
 	Status int
@@ -135,6 +140,9 @@ func (c *Client) doRequest(ctx context.Context, server, method, pathWithQuery st
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	if Version != "" {
+		req.Header.Set(remote.HeaderClientVersion, Version)
+	}
 
 	nonce, err := remote.NewNonce()
 	if err != nil {
@@ -161,6 +169,18 @@ func (c *Client) doRequest(ctx context.Context, server, method, pathWithQuery st
 	if resp.StatusCode == http.StatusUpgradeRequired {
 		_ = resp.Body.Close()
 		return nil, ErrVersion
+	}
+
+	// A gateway status is a redeploy in progress, not an answer from relay's
+	// own handler (#373 §4.4): the 52x/530 pages are Cloudflare's HTML, so the
+	// body is dropped and the error is an ErrUnreachable a retry can act on.
+	if isGatewayStatus(resp.StatusCode) {
+		_ = resp.Body.Close()
+		text := http.StatusText(resp.StatusCode)
+		if text == "" {
+			text = "gateway error"
+		}
+		return nil, fmt.Errorf("%w: server returned %d %s", ErrUnreachable, resp.StatusCode, text)
 	}
 
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNoContent {
@@ -196,22 +216,112 @@ func (c *Client) do(ctx context.Context, server, method, pathWithQuery string, b
 	return c.doRequest(ctx, server, method, pathWithQuery, reader, length, bodySHA, contentType)
 }
 
+// isGatewayStatus reports whether status is one a CDN gateway answers with
+// while the relay server behind it is down (#373 §4.4): 502, 503, 504, the
+// Cloudflare 520-527 range and 530.
+func isGatewayStatus(status int) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	case 530:
+		return true
+	}
+	return status >= 520 && status <= 527
+}
+
+const (
+	// retryAttempts is how many times a retried call tries in total (#373 §4.4).
+	retryAttempts = 4
+	// retryBase is the first backoff; every further attempt doubles it, so the
+	// sleeps are 1s, 2s and 4s before the fourth and last attempt.
+	retryBase = time.Second
+)
+
+// sleep waits for d, or until ctx is done. It is a package variable so tests
+// replace it rather than waiting out retry's backoff (#373 §4.4).
+var sleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// retry calls f until it succeeds or until attempts are used up. It retries
+// only an error that wraps ErrUnreachable -- a gateway page, a dial failure, a
+// per-attempt timeout; every other error is returned at once. The backoff is
+// base<<i, and the last error is what the caller sees when the attempts run
+// out (#373 §4.4).
+func retry[T any](ctx context.Context, attempts int, base time.Duration, f func(context.Context) (T, error)) (T, error) {
+	var err error
+	for i := 0; i < attempts; i++ {
+		var out T
+		out, err = f(ctx)
+		if err == nil {
+			return out, nil
+		}
+		if !errors.Is(err, ErrUnreachable) || i == attempts-1 {
+			break
+		}
+		if serr := sleep(ctx, base<<uint(i)); serr != nil {
+			break
+		}
+	}
+	var zero T
+	return zero, err
+}
+
+// roundFileDeadline is the per-attempt deadline for the two downloads that
+// stream a body to the caller (#373 §4.4); the other calls keep their 30s. It
+// is a package variable so a test can shorten it.
+var roundFileDeadline = 2 * time.Minute
+
+// deadlineBody ties a download's cancel function to its response body, so the
+// per-attempt deadline stops its timer when the caller closes the body rather
+// than while the caller is still reading it.
+type deadlineBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (d *deadlineBody) Close() error {
+	err := d.ReadCloser.Close()
+	d.cancel()
+	return err
+}
+
+// startRoundDeadline is StartRound's per-attempt deadline. An upload carries
+// the plan and the whole bundle, so it gets the 30s every other call has plus
+// 1s per 256KiB of body, capped at 10 minutes (#373 §4.4).
+func startRoundDeadline(size int64) time.Duration {
+	d := 30*time.Second + time.Duration(size/(256*1024))*time.Second
+	if d > 10*time.Minute {
+		d = 10 * time.Minute
+	}
+	return d
+}
+
 // WhoAmI fetches caller identification from the server.
 func (c *Client) WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	resp, err := c.do(ctx, server, "GET", "/v1/whoami", nil, nil, "")
-	if err != nil {
-		return remote.WhoAmI{}, err
-	}
-	defer resp.Body.Close()
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.WhoAmI, error) {
+		resp, err := c.do(ctx, server, "GET", "/v1/whoami", nil, nil, "")
+		if err != nil {
+			return remote.WhoAmI{}, err
+		}
+		defer resp.Body.Close()
 
-	var w remote.WhoAmI
-	if err := json.NewDecoder(resp.Body).Decode(&w); err != nil {
-		return remote.WhoAmI{}, fmt.Errorf("decode whoami: %w", err)
-	}
-	return w, nil
+		var w remote.WhoAmI
+		if err := json.NewDecoder(resp.Body).Decode(&w); err != nil {
+			return remote.WhoAmI{}, fmt.Errorf("decode whoami: %w", err)
+		}
+		return w, nil
+	})
 }
 
 // Candidates lists available builder candidates on the server.
@@ -219,17 +329,19 @@ func (c *Client) Candidates(ctx context.Context, server string) (remote.Candidat
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	resp, err := c.do(ctx, server, "GET", "/v1/candidates", nil, nil, "")
-	if err != nil {
-		return remote.CandidatesResponse{}, err
-	}
-	defer resp.Body.Close()
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.CandidatesResponse, error) {
+		resp, err := c.do(ctx, server, "GET", "/v1/candidates", nil, nil, "")
+		if err != nil {
+			return remote.CandidatesResponse{}, err
+		}
+		defer resp.Body.Close()
 
-	var respBody remote.CandidatesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-		return remote.CandidatesResponse{}, fmt.Errorf("decode candidates: %w", err)
-	}
-	return respBody, nil
+		var respBody remote.CandidatesResponse
+		if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+			return remote.CandidatesResponse{}, fmt.Errorf("decode candidates: %w", err)
+		}
+		return respBody, nil
+	})
 }
 
 // CreateBinding requests the creation of a remote binding.
@@ -261,17 +373,19 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 	defer cancel()
 
 	path := fmt.Sprintf("/v1/bindings/%s", url.PathEscape(name))
-	resp, err := c.do(ctx, server, "GET", path, nil, nil, "")
-	if err != nil {
-		return remote.BindingView{}, err
-	}
-	defer resp.Body.Close()
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.BindingView, error) {
+		resp, err := c.do(ctx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			return remote.BindingView{}, err
+		}
+		defer resp.Body.Close()
 
-	var view remote.BindingView
-	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
-		return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
-	}
-	return view, nil
+		var view remote.BindingView
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+			return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
+		}
+		return view, nil
+	})
 }
 
 // StartRound begins a round on the server, spooling the multipart form (plan,
@@ -279,10 +393,13 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 // bundle (#242); nil or empty omits the field entirely. candidate is a
 // canonical candidate token for the round and every later one (#318); "" omits
 // the field, which leaves the binding's builder unchanged.
-func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef) (remote.BindingView, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
+//
+// retryOnUnreachable is the caller's answer to whether the server advertised
+// remote.FeatureIdempotentSend (#373 §4.4): only then is a repeated send safe,
+// and only then is a 502 retried. Every attempt re-reads the spooled temp file
+// from its start, so the retried request carries the same plan and bundle
+// bytes as the first.
+func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
 	tmp, err := os.CreateTemp("", "relay-start-round-*.tmp")
 	if err != nil {
 		return remote.BindingView{}, fmt.Errorf("create temp file: %w", err)
@@ -337,34 +454,53 @@ func (c *Client) StartRound(ctx context.Context, server, name string, round int,
 	if err != nil {
 		return remote.BindingView{}, fmt.Errorf("seek end: %w", err)
 	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return remote.BindingView{}, fmt.Errorf("seek start: %w", err)
-	}
 
 	bodySHA := hasher.Sum(nil)
 	path := fmt.Sprintf("/v1/bindings/%s/rounds", url.PathEscape(name))
 
-	resp, err := c.doRequest(ctx, server, "POST", path, tmp, size, bodySHA, mw.FormDataContentType())
-	if err != nil {
-		return remote.BindingView{}, err
-	}
-	defer resp.Body.Close()
+	attempt := func(ctx context.Context) (remote.BindingView, error) {
+		// The retry re-reads this attempt's body from the top of the spooled
+		// file; the file itself is removed once, by the defer above, after the
+		// last attempt.
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			return remote.BindingView{}, fmt.Errorf("seek start: %w", err)
+		}
+		actx, cancel := context.WithTimeout(ctx, startRoundDeadline(size))
+		defer cancel()
 
-	var view remote.BindingView
-	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
-		return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
+		// LimitReader rather than tmp itself: http closes a body that is an
+		// io.ReadCloser, and a retry needs the spooled file open.
+		resp, err := c.doRequest(actx, server, "POST", path, io.LimitReader(tmp, size), size, bodySHA, mw.FormDataContentType())
+		if err != nil {
+			return remote.BindingView{}, err
+		}
+		defer resp.Body.Close()
+
+		var view remote.BindingView
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+			return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
+		}
+		return view, nil
 	}
-	return view, nil
+
+	if retryOnUnreachable {
+		return retry(ctx, retryAttempts, retryBase, attempt)
+	}
+	return attempt(ctx)
 }
 
 // RoundFile streams a file (report, diff, log) for a given round.
 func (c *Client) RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/files/%s", url.PathEscape(name), round, url.PathEscape(kind))
-	resp, err := c.do(ctx, server, "GET", path, nil, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	return resp.Body, nil
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (io.ReadCloser, error) {
+		actx, cancel := context.WithTimeout(ctx, roundFileDeadline)
+		resp, err := c.do(actx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		return &deadlineBody{ReadCloser: resp.Body, cancel: cancel}, nil
+	})
 }
 
 // RoundBundle streams a git bundle for a given round. Returns (nil, nil) on 204 No Content.
@@ -373,15 +509,20 @@ func (c *Client) RoundBundle(ctx context.Context, server, name string, round int
 	if since != "" {
 		path += "?since=" + url.QueryEscape(since)
 	}
-	resp, err := c.do(ctx, server, "GET", path, nil, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusNoContent {
-		_ = resp.Body.Close()
-		return nil, nil
-	}
-	return resp.Body, nil
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (io.ReadCloser, error) {
+		actx, cancel := context.WithTimeout(ctx, roundFileDeadline)
+		resp, err := c.do(actx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNoContent {
+			_ = resp.Body.Close()
+			cancel()
+			return nil, nil
+		}
+		return &deadlineBody{ReadCloser: resp.Body, cancel: cancel}, nil
+	})
 }
 
 // Ack acknowledges receipt of a round's results.
@@ -390,17 +531,19 @@ func (c *Client) Ack(ctx context.Context, server, name string, round int) (remot
 	defer cancel()
 
 	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/ack", url.PathEscape(name), round)
-	resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
-	if err != nil {
-		return remote.BindingView{}, err
-	}
-	defer resp.Body.Close()
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.BindingView, error) {
+		resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
+		if err != nil {
+			return remote.BindingView{}, err
+		}
+		defer resp.Body.Close()
 
-	var view remote.BindingView
-	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
-		return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
-	}
-	return view, nil
+		var view remote.BindingView
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+			return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
+		}
+		return view, nil
+	})
 }
 
 // Unavailable reports builder unavailability.
@@ -412,17 +555,20 @@ func (c *Client) Unavailable(ctx context.Context, server, name, token, reason st
 	if name != "" {
 		path = fmt.Sprintf("/v1/bindings/%s/unavailable", url.PathEscape(name))
 	}
-	reqBody, err := json.Marshal(remote.UnavailableRequest{Token: token, Reason: reason})
-	if err != nil {
-		return fmt.Errorf("marshal unavailable request: %w", err)
-	}
-	sum := sha256.Sum256(reqBody)
-	resp, err := c.do(ctx, server, "POST", path, reqBody, sum[:], "application/json")
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-	return nil
+	_, err := retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (struct{}, error) {
+		reqBody, err := json.Marshal(remote.UnavailableRequest{Token: token, Reason: reason})
+		if err != nil {
+			return struct{}{}, fmt.Errorf("marshal unavailable request: %w", err)
+		}
+		sum := sha256.Sum256(reqBody)
+		resp, err := c.do(ctx, server, "POST", path, reqBody, sum[:], "application/json")
+		if err != nil {
+			return struct{}{}, err
+		}
+		_ = resp.Body.Close()
+		return struct{}{}, nil
+	})
+	return err
 }
 
 // Available lifts the rate-limit gate on subject's provider on the server's
@@ -433,22 +579,24 @@ func (c *Client) Available(ctx context.Context, server, subject string) (remote.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	reqBody, err := json.Marshal(remote.AvailableRequest{Subject: subject})
-	if err != nil {
-		return remote.AvailableResponse{}, fmt.Errorf("marshal available request: %w", err)
-	}
-	sum := sha256.Sum256(reqBody)
-	resp, err := c.do(ctx, server, "POST", "/v1/available", reqBody, sum[:], "application/json")
-	if err != nil {
-		return remote.AvailableResponse{}, err
-	}
-	defer resp.Body.Close()
+	return retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (remote.AvailableResponse, error) {
+		reqBody, err := json.Marshal(remote.AvailableRequest{Subject: subject})
+		if err != nil {
+			return remote.AvailableResponse{}, fmt.Errorf("marshal available request: %w", err)
+		}
+		sum := sha256.Sum256(reqBody)
+		resp, err := c.do(ctx, server, "POST", "/v1/available", reqBody, sum[:], "application/json")
+		if err != nil {
+			return remote.AvailableResponse{}, err
+		}
+		defer resp.Body.Close()
 
-	var respBody remote.AvailableResponse
-	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-		return remote.AvailableResponse{}, fmt.Errorf("decode available: %w", err)
-	}
-	return respBody, nil
+		var respBody remote.AvailableResponse
+		if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+			return remote.AvailableResponse{}, fmt.Errorf("decode available: %w", err)
+		}
+		return respBody, nil
+	})
 }
 
 // Done marks a binding as complete on the server.

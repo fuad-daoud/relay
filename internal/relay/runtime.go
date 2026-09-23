@@ -180,6 +180,12 @@ type Runtime struct {
 	// CLI one-shot keeps its old behaviour.
 	Watched *Watched
 
+	// AuthGrace is the daemon's in-memory record of when each binding's server
+	// first answered a transient auth error (#373 §3). Only `relay daemon`
+	// sets one (relay.NewAuthGrace); a nil *AuthGrace never expires, so every
+	// CLI one-shot keeps its old behaviour and never halts on a transient 401.
+	AuthGrace *AuthGrace
+
 	// Roles checks whether a harness kind's shipped role files are present
 	// on disk, so a candidate whose harness has none installed is gated
 	// before it is picked (#238). Nil means no check, so tests that do not
@@ -247,7 +253,10 @@ type RemoteClient interface {
 	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
 	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
 	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
-	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef) (remote.BindingView, error)
+	// StartRound's retryOnUnreachable is the caller's answer to whether the
+	// server advertised remote.FeatureIdempotentSend: only a server that
+	// dedupes a repeated send may be sent the same round twice (#373 §4.4).
+	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
