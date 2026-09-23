@@ -972,6 +972,71 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 	}
 }
 
+// TestHeadlessMarkerWrittenBetweenChecksClosesMarked pins the check-then-check
+// race (#328): the marker is absent when closeOnMarker reads it, then the
+// process writes it and exits before the liveness check observes the exit. The
+// re-check in the exited branch must close the round through the marker path,
+// so the report's note is the marked one (""), not "unmarked".
+func TestHeadlessMarkerWrittenBetweenChecksClosesMarked(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The race inside one tick: Alive creates the marker, then reports the
+	// process dead.
+	fr.onAlive = func() {
+		fr.onAlive = nil
+		if err := os.WriteFile(rt.Store.DonePath("webshop", 1), nil, 0o644); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+	}
+	fr.script(b.Builder.PID, false)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2 (the marker closed the round)", got.Round)
+	}
+	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	if perr != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+	}
+	if pending.Note != "" {
+		t.Errorf("note = %q, want empty (closed by marker, not unmarked)", pending.Note)
+	}
+}
+
+// TestHeadlessExitWithReportNoMarkerStillUnmarked pins that the fix leaves the
+// old path intact: an exited process with a report and still no marker is
+// closed "unmarked", exactly as before.
+func TestHeadlessExitWithReportNoMarkerStillUnmarked(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 1)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2", got.Round)
+	}
+	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	if perr != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
+	}
+}
+
 func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)

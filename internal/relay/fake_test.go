@@ -548,6 +548,11 @@ type fakeRunner struct {
 	// reservation to simulate a slow spawn.
 	onStart func()
 
+	// onAlive runs at the top of Alive, before the scripted answer is read.
+	// A test uses it to act in the window between closeOnMarker's read and
+	// the liveness observation, e.g. to write the marker file (#328).
+	onAlive func()
+
 	alive     map[int][]bool
 	exits     map[int]int
 	nextPID   int
@@ -593,6 +598,9 @@ func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error)
 }
 
 func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
+	if f.onAlive != nil {
+		f.onAlive()
+	}
 	if f.aliveErr != nil {
 		return false, f.aliveErr
 	}

@@ -409,54 +409,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// queueReport's reset block clears RoundVerify: read the round's verify
 	// flag before the close consumes it (#144), as the pane path does.
 	wantVerify := b.RoundVerify
-	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	next, closed, gating, err := markerClose(ctx, rt, tx, b, entries, markerNote, wantVerify)
 	if err != nil {
 		return b, err
 	}
-	if gating {
-		return next, nil
-	}
-	if closed {
-		closedRound := b.Round
-		if next.Owner != "" {
-			next = closeServedRound(ctx, rt, next)
-		}
-		next.Builder = clearProcess(next.Builder)
-		next.StalledSince = time.Time{}
-		// The gate result -> report queued -> verify consult started ->
-		// delivery (#144), exactly as the pane path orders it: the reviewer
-		// sees the gate's output, so it starts after the gate and before the
-		// planner is told.
-		if wantVerify {
-			gateLogPath := ""
-			if rec != nil {
-				gateLogPath = rec.LogPath
-			}
-			next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
-			if err != nil {
-				return next, err
-			}
-		}
-		// Edges evaluate right after the verify hook and before delivery
-		// (#37), exactly as the pane path orders it: see reconcile.go's
-		// matching comment for why the pendings return value is discarded.
-		next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
-		if err != nil {
-			return next, err
-		}
-		next, err = deliverAndSettle(ctx, rt, tx, next)
-		if err != nil {
-			return next, err
-		}
-		// The report is queued; a failing gate may now open round N+1, as a
-		// fresh process, exactly as Send would (#132 part 2). The failed
-		// round's own report, diff and gate=fail stand.
-		if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
-			next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
-			if err != nil {
-				return next, err
-			}
-		}
+	if gating || closed {
 		return next, nil
 	}
 
@@ -512,6 +469,23 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	codeText := "unknown"
 	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
 		codeText = strconv.Itoa(code)
+	}
+
+	// The marker can be written between the closeOnMarker read above and this
+	// liveness observation: a builder that writes its marker and exits inside
+	// one tick must close as marked, not as unmarked (#328). Re-check the
+	// marker now and close through the marker path if it is there.
+	if _, err := os.Stat(rt.Store.DonePath(b.Name, b.Round)); err == nil {
+		slog.Debug("marker appeared before exit was observed", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID)
+		markerNote := ""
+		if escapeCheck(ctx, rt, b, true) == EscapeNote {
+			markerNote = escapeNote
+		}
+		next, _, _, err := markerClose(ctx, rt, tx, b, entries, markerNote, wantVerify)
+		if err != nil {
+			return b, err
+		}
+		return next, nil
 	}
 
 	// Exited after writing a report but without the marker: an exited
@@ -651,6 +625,67 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// from the pick for the rest of this round.
 	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
+}
+
+// markerClose is the marker branch of reconcileHeadless: it calls
+// closeOnMarker and, when the marker is present and the gate is done, runs the
+// post-close sequence (served-round close, process clear, verify consult,
+// edges, delivery, repair round). The normal read and the re-check in the
+// exited branch share it, so a marker that appears inside one tick is handled
+// by one implementation instead of a copy of the post-close block.
+//
+// closed and gating are reported so the caller returns exactly what the marker
+// branch does; a marker-absent read comes back unchanged with both false.
+func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
+	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
+	if err != nil {
+		return b, false, false, err
+	}
+	if gating || !closed {
+		return next, closed, gating, nil
+	}
+
+	closedRound := b.Round
+	if next.Owner != "" {
+		next = closeServedRound(ctx, rt, next)
+	}
+	next.Builder = clearProcess(next.Builder)
+	next.StalledSince = time.Time{}
+	// The gate result -> report queued -> verify consult started ->
+	// delivery (#144), exactly as the pane path orders it: the reviewer
+	// sees the gate's output, so it starts after the gate and before the
+	// planner is told.
+	if wantVerify {
+		gateLogPath := ""
+		if rec != nil {
+			gateLogPath = rec.LogPath
+		}
+		next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
+		if err != nil {
+			return next, true, false, err
+		}
+	}
+	// Edges evaluate right after the verify hook and before delivery
+	// (#37), exactly as the pane path orders it: see reconcile.go's
+	// matching comment for why the pendings return value is discarded.
+	next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
+	if err != nil {
+		return next, true, false, err
+	}
+	next, err = deliverAndSettle(ctx, rt, tx, next)
+	if err != nil {
+		return next, true, false, err
+	}
+	// The report is queued; a failing gate may now open round N+1, as a
+	// fresh process, exactly as Send would (#132 part 2). The failed
+	// round's own report, diff and gate=fail stand.
+	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
+		next, err = startRepairRound(ctx, rt, tx, next, *rec, closedRound)
+		if err != nil {
+			return next, true, false, err
+		}
+	}
+	return next, true, false, nil
 }
 
 // appendUnique returns s with v appended, unless it is already present.
