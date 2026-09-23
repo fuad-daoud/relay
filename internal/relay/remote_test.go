@@ -46,36 +46,37 @@ func addRemotePlanner(t *testing.T) *planner.FileRegistry {
 type fakeRemote struct {
 	calls []string
 
-	whoAmIResp        remote.WhoAmI
-	whoAmIErr         error
-	candidatesResp    remote.CandidatesResponse
-	candidatesErr     error
-	createBindingResp remote.BindingView
-	createBindingErr  error
-	createBindingReq  remote.CreateBindingRequest
-	getBindingResp    remote.BindingView
-	getBindingErr     error
-	startRoundResp    remote.BindingView
-	startRoundErr     error
-	startRoundTier    string
-	startRoundTags    []remote.TagRef
-	roundFileResp     io.ReadCloser
-	roundFileErr      error
-	roundBundleResp   io.ReadCloser
-	roundBundleErr    error
-	roundFileFunc     func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
-	roundBundleFunc   func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
-	ackResp           remote.BindingView
-	ackErr            error
-	unavailableErr    error
-	availableResp     remote.AvailableResponse
-	availableErr      error
-	doneErr           error
-	unbindErr         error
-	resumeResp        remote.BindingView
-	resumeErr         error
-	stopResp          remote.BindingView
-	stopErr           error
+	whoAmIResp          remote.WhoAmI
+	whoAmIErr           error
+	candidatesResp      remote.CandidatesResponse
+	candidatesErr       error
+	createBindingResp   remote.BindingView
+	createBindingErr    error
+	createBindingReq    remote.CreateBindingRequest
+	getBindingResp      remote.BindingView
+	getBindingErr       error
+	startRoundResp      remote.BindingView
+	startRoundErr       error
+	startRoundTier      string
+	startRoundCandidate string
+	startRoundTags      []remote.TagRef
+	roundFileResp       io.ReadCloser
+	roundFileErr        error
+	roundBundleResp     io.ReadCloser
+	roundBundleErr      error
+	roundFileFunc       func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
+	roundBundleFunc     func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
+	ackResp             remote.BindingView
+	ackErr              error
+	unavailableErr      error
+	availableResp       remote.AvailableResponse
+	availableErr        error
+	doneErr             error
+	unbindErr           error
+	resumeResp          remote.BindingView
+	resumeErr           error
+	stopResp            remote.BindingView
+	stopErr             error
 
 	onCreateBinding func()
 	onUnbind        func()
@@ -105,9 +106,10 @@ func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remot
 	return f.getBindingResp, f.getBindingErr
 }
 
-func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error) {
+func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("StartRound:%s:%s:%d", server, name, round))
 	f.startRoundTier = tier
+	f.startRoundCandidate = candidate
 	f.startRoundTags = tags
 	return f.startRoundResp, f.startRoundErr
 }
@@ -3772,4 +3774,184 @@ func TestAskForkRefuseRemote(t *testing.T) {
 			t.Fatalf("Fork err = %v, want the cross-server refusal", err)
 		}
 	})
+}
+
+// remoteBuilderRT is the client runtime for the `send --builder` remote tests
+// (#318): an active remote binding on zen with a current candidate, a fake git
+// whose branch resolves, and a fake transport.
+func remoteBuilderRT(t *testing.T, fr *fakeRemote) (Runtime, *store.Store, *fakeTransport) {
+	t.Helper()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:             "api",
+		CWD:              "/fake/repo",
+		Repo:             "/fake/repo",
+		Branch:           "relay/api",
+		Round:            1,
+		State:            store.StateActive,
+		BuilderCandidate: "agy/test/m",
+		Builder: store.Endpoint{
+			Mode:   store.ModeRemote,
+			Server: "zen",
+			Kind:   "agy",
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fg := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": "1111111111111111111111111111111111111111",
+		},
+	}
+	ft := &fakeTransport{
+		snapshotResp: remote.Snapshot{
+			Heads: map[string]string{"refs/relay/api/out": "1111111111111111111111111111111111111111"},
+		},
+	}
+	return Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}, st, ft
+}
+
+// TestSendRemoteBuilderChangesCandidate pins §5.3 (a): the token reaches
+// StartRound, the client records the candidate the server canonicalised, a
+// pick entry lands under the sent round, and a following observeRemote with
+// the same view writes no spurious switch.
+func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
+	ctx := context.Background()
+	view := remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/test/m"}
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
+		startRoundResp: view,
+		getBindingResp: view,
+		roundFileResp:  io.NopCloser(strings.NewReader("")),
+	}
+	rt, st, _ := remoteBuilderRT(t, fr)
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Send(ctx, rt, "api", planFile, SendOptions{Builder: "opencode/test/m"})
+	if err != nil {
+		t.Fatalf("Send --builder: %v", err)
+	}
+	if fr.startRoundCandidate != "opencode/test/m" {
+		t.Errorf("fake saw candidate %q, want opencode/test/m", fr.startRoundCandidate)
+	}
+	if !strings.Contains(res.Pick, "picked opencode/test/m on zen: explicit") {
+		t.Errorf("res.Pick = %q, want the remote pick note", res.Pick)
+	}
+
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BuilderCandidate != "opencode/test/m" {
+		t.Errorf("BuilderCandidate = %q, want opencode/test/m", stored.BuilderCandidate)
+	}
+	if stored.Builder.Kind != "opencode" {
+		t.Errorf("Builder.Kind = %q, want opencode", stored.Builder.Kind)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planIdx := -1
+	for i, e := range entries {
+		if e.Round == 1 && e.Kind == store.KindPlan {
+			planIdx = i
+			break
+		}
+	}
+	if planIdx < 1 {
+		t.Fatalf("no plan entry after a pick entry: %+v", entries)
+	}
+	if e := entries[planIdx-1]; e.Kind != store.KindPick || e.Round != 1 || !strings.Contains(e.Note, "opencode/test/m") {
+		t.Errorf("entry before the plan = %+v, want a round 1 pick naming opencode/test/m", e)
+	}
+
+	if err := st.WithLock(func(tx *store.Tx) error {
+		_, _, err := observeRemote(ctx, rt, tx, stored)
+		return err
+	}); err != nil {
+		t.Fatalf("observeRemote: %v", err)
+	}
+	after, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range after {
+		if e.Kind == store.KindSwitch {
+			t.Errorf("observeRemote wrote a spurious switch: %+v", e)
+		}
+	}
+}
+
+// TestSendRemoteBuilderPreBuilderServerRefused pins §5.3 (b): a server
+// without the builder feature is refused before anything is shipped.
+func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier}},
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	rt, st, ft := remoteBuilderRT(t, fr)
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{Builder: "opencode/test/m"})
+	if err == nil {
+		t.Fatal("Send --builder against a pre-builder server must be refused")
+	}
+	if !strings.Contains(err.Error(), "cannot change a binding's builder") {
+		t.Errorf("err = %q, want the pre-builder refusal", err.Error())
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "StartRound:") {
+			t.Errorf("StartRound was called: %v", fr.calls)
+		}
+	}
+	if len(ft.snapshotCalls) != 0 {
+		t.Errorf("a snapshot was taken before the refusal: %+v", ft.snapshotCalls)
+	}
+	if _, statErr := os.Stat(st.PlanPath("api", 1)); !os.IsNotExist(statErr) {
+		t.Errorf("a plan was staged: %v", statErr)
+	}
+}
+
+// TestSendRemoteBuilderRefusedWhileRoundOpen pins §5.3 (c): the client's own
+// open round refuses before any server contact.
+func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRemote{
+		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
+		startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+	}
+	rt, st, _ := remoteBuilderRT(t, fr)
+	if err := st.AppendLog("api", store.LogEntry{
+		TS: time.Now().UTC(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Send(ctx, rt, "api", planFile, SendOptions{Builder: "opencode/test/m"})
+	if err == nil {
+		t.Fatal("Send --builder on an open round must be refused")
+	}
+	if !strings.Contains(err.Error(), "has round 1 open") || !strings.Contains(err.Error(), "relay stop api ends it") {
+		t.Errorf("err = %q, want the round-open refusal", err.Error())
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("the refusal contacted the server: %v", fr.calls)
+	}
 }

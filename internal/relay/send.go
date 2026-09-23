@@ -52,12 +52,21 @@ Reply here with only the report path.`
 type SendResult struct {
 	Round int    // the round the plan was filed under
 	Drift string // the drift line for stdout, or "" when there is nothing to say
+	// Pick is the pick line when SendOptions.Builder changed the builder (the
+	// KindPick note), or "" otherwise. For the CLI to print.
+	Pick string
 }
 
 // SendOptions is what a send may add to the plan file (#141).
 type SendOptions struct {
 	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
 	AllowYolo bool
+	// Builder is a candidate token that persists as the binding's builder from
+	// this round on, until another --builder or a mid-round switch changes it.
+	// "" means the binding's current builder. In contrast to Tier, it is not a
+	// one-round override: the issue's failure was a plain send silently going
+	// to the builder the binding was bound to (#318).
+	Builder string
 	// Regate sets the binding's repair-round budget (#132 part 2); nil leaves
 	// it unchanged.
 	Regate *int
@@ -83,6 +92,7 @@ type preflight struct {
 	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
 	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick *Resolution   // --builder's resolution to apply under the lock; nil when the builder does not change
 
 	planPath, reportPath, donePath string
 	prompt                         string // composePrompt(...) -- computed, never sent
@@ -123,6 +133,42 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if b.State == store.StatePaused {
 		return preflight{}, fmt.Errorf("binding %q is paused; relay bind --resume --name %s first", name, name)
 	}
+
+	// --builder resolves the new candidate read-only and substitutes it in
+	// memory, so every later precondition (the argv, the advisory gate note,
+	// the dry run) is computed against the builder this round will actually
+	// use. Nothing is saved here: Send re-applies the change under its lock.
+	// A remote binding's candidates decide on the server, so only the token's
+	// shape is checked here (§5.1).
+	var pick *Resolution
+	if opts.Builder != "" {
+		entries, err := rt.Store.ReadLog(name)
+		if err != nil {
+			return preflight{}, err
+		}
+		if roundOpenIn(entries, b.Round) {
+			return preflight{}, fmt.Errorf("binding %q has round %d open; relay stop %s ends it, then send again with --builder", name, b.Round, name)
+		}
+		if b.Builder.Remote() {
+			if _, err := candidate.ParseRef(opts.Builder); err != nil {
+				return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
+			}
+		} else {
+			p, err := ResolveSendBuilder(rt, b.BuilderCandidate, opts.Builder)
+			if err != nil {
+				return preflight{}, err
+			}
+			if p != nil {
+				b2, err := applyBuilder(b, *p, rt.Policy, opts.AllowYolo)
+				if err != nil {
+					return preflight{}, err
+				}
+				b = b2
+				pick = p
+			}
+		}
+	}
+
 	if tier == "" {
 		tier = effectiveTier(b)
 	}
@@ -135,7 +181,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	pf := preflight{
 		b: b, body: body, tier: tier,
 		planPath: planPath, reportPath: reportPath, donePath: donePath,
-		prompt: prompt,
+		prompt: prompt, pick: pick,
 	}
 
 	// A remote binding's read-only prefix: the client and transport must be
@@ -232,7 +278,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// A remote binding's preflight stops at the read-only checks; the round
 	// itself is still shipped by sendRemote, which contacts the server.
 	if pf.b.Builder.Remote() {
-		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier)
+		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, opts.Builder)
 	}
 
 	// The baseline snapshot adds git objects, so it stays out of the
@@ -242,6 +288,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 	var round int
 	var driftLineOut string
+	var pickLine string
 
 	// The whole round advance is one critical section: the daemon rewrites this
 	// same binding on every tick, and a lost update here would re-send a plan
@@ -277,6 +324,23 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			}
 		}
 
+		// --builder is re-applied under the lock, against the fresh binding:
+		// the preflight's resolution must not be trusted over a round that
+		// opened in between. The re-check writes nothing when it fires (§5.2).
+		if pf.pick != nil {
+			entries, err := tx.ReadLog(name)
+			if err != nil {
+				return err
+			}
+			if roundOpenIn(entries, b.Round) {
+				return fmt.Errorf("binding %q has round %d open; relay stop %s ends it, then send again with --builder", name, b.Round, name)
+			}
+			b, err = applyBuilder(b, *pf.pick, rt.Policy, opts.AllowYolo)
+			if err != nil {
+				return err
+			}
+		}
+
 		if opts.Tier != "" {
 			b.RoundTier = opts.Tier
 		}
@@ -294,6 +358,13 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// or relay.Admit) starts the builder later (#285).
 		deferred := opts.Defer
 
+		// The builder changed: say so in the new round's log before the
+		// process starts appending to it. A deferred round never spawns here,
+		// so it writes no marker.
+		if pf.pick != nil && !deferred {
+			appendLogMarker(rt.Store.BuilderLogPath(name, b.Round), rt.Now(), "builder changed to "+pf.pick.Token()+" (send --builder)")
+		}
+
 		late := false
 		if !deferred {
 			started, err := startRound(ctx, rt, b, text)
@@ -309,12 +380,31 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				b.State = store.StateNeedsYou
 				b.Halt = "builder spawn failed: " + err.Error()
 				b.HaltAt = rt.Now().UTC()
+				// The builder change is still recorded first, so the log
+				// explains why the round was sent to the new candidate.
+				if pf.pick != nil {
+					if appendErr := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); appendErr != nil {
+						return fmt.Errorf("%v; and appending the builder pick failed: %w", err, appendErr)
+					}
+				}
 				if saveErr := tx.Save(b); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
 				}
 				return err
 			}
 			b = started
+		}
+
+		// The pick entry is filed under the new round, before its plan entry,
+		// so builderForRound attributes the round to the new builder. It goes
+		// after startRound on purpose: an ErrTierUnsupported /
+		// ErrExtraArgsPermission early return saves nothing, so a builder
+		// change that did not happen must not be recorded.
+		if pf.pick != nil {
+			if err := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); err != nil {
+				return err
+			}
+			pickLine = ExplainResolution("builder", *pf.pick)
 		}
 
 		entry := store.LogEntry{
@@ -404,7 +494,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		return SendResult{}, err
 	}
 
-	return SendResult{Round: round, Drift: driftLineOut}, nil
+	return SendResult{Round: round, Drift: driftLineOut, Pick: pickLine}, nil
 }
 
 // DryRun is what SendDryRun found: the round Send would open, the builder it

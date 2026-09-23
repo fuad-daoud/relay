@@ -57,6 +57,11 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// candidate is --builder's token (#318): a canonical candidate that
+	// persists as the binding's builder from this round on. Absent or "" keeps
+	// the binding's builder.
+	candidate := r.FormValue("candidate")
+
 	var bundlePart io.Reader
 	file, _, fileErr := r.FormFile("bundle")
 	if fileErr == nil {
@@ -120,6 +125,17 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "missing bare repo facts")
 		return
+	}
+
+	// A requested builder change is validated before anything moves: a bad
+	// token refuses with nothing absorbed and no ref touched (#318 §5.4). Send
+	// re-resolves it under its own lock as a backstop.
+	if candidate != "" {
+		if _, err := relay.ResolveSendBuilder(rt, b.BuilderCandidate, candidate); err != nil {
+			s.mu.Unlock()
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+			return
+		}
 	}
 
 	bare := b.Serve.BareRepo
@@ -222,7 +238,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr, Defer: true})
+	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr, Builder: candidate, Defer: true})
 	if sendErr != nil {
 		if errors.Is(sendErr, relay.ErrRunnerUnavailable) {
 			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
@@ -234,6 +250,12 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(sendErr, relay.ErrTierAboveMax) {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
+			return
+		}
+		// Backstop: the token was validated before absorb, but the ledger or
+		// the candidates could have changed in between (#318).
+		if errors.Is(sendErr, relay.ErrBadBuilder) {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
 			return
 		}
 		if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {

@@ -340,7 +340,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 			return err
 		}
 		if view.Candidate != "" {
-			return tx.AppendLog(b.Name, remotePickEntry(rt.Now(), opts.Server, view.Candidate, opts.Candidate != ""))
+			return tx.AppendLog(b.Name, remotePickEntry(rt.Now(), opts.Server, view.Candidate, opts.Candidate != "", 1))
 		}
 		return nil
 	}); err != nil {
@@ -361,25 +361,27 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 	}, nil
 }
 
-// remotePickEntry is addRemote's pick log entry: the same shape pickEntry
-// writes (round 1, DirToPlanner, KindPick, Confirmed) but naming the server
-// and whether the token was named by the planner or picked by the server's
-// own policy -- ExplainResolution's "explicit, policy bypassed" wording
-// assumes a local resolveCandidate call that never ran here, so it would
-// misdescribe a token the server picked on its own.
-func remotePickEntry(now time.Time, server, token string, explicit bool) store.LogEntry {
+// remotePickEntry is addRemote's and sendRemote's pick log entry: the same
+// shape pickEntry writes (DirToPlanner, KindPick, Confirmed) but naming the
+// server and whether the token was named by the planner or picked by the
+// server's own policy -- ExplainResolution's "explicit, policy bypassed"
+// wording assumes a local resolveCandidate call that never ran here, so it
+// would misdescribe a token the server picked on its own. round is the round
+// the pick is filed under: 1 for a fresh binding, the sent round for a
+// `relay send --builder` (#318).
+func remotePickEntry(now time.Time, server, token string, explicit bool, round int) store.LogEntry {
 	how := "server's pick"
 	if explicit {
 		how = "explicit"
 	}
 	return store.LogEntry{
-		TS: now.UTC(), Round: 1, Direction: store.DirToPlanner,
+		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
 		Kind: store.KindPick, Confirmed: true,
 		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how),
 	}
 }
 
-func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier string) (SendResult, error) {
+func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier, builder string) (SendResult, error) {
 	if rt.Remote == nil {
 		return SendResult{}, ErrRemoteUnavailable
 	}
@@ -390,19 +392,24 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		return SendResult{}, errors.New("no remote transport configured")
 	}
 
-	// The cap check already ran in Send; do not repeat it here. Only the
-	// pre-tier-server probe is this function's job when a tier was asked for.
-	if tier != "" {
-		who, err := rt.Remote.WhoAmI(ctx, b.Builder.Server)
+	server := b.Builder.Server
+
+	// The cap check already ran in Send; do not repeat it here. The feature
+	// probes are this function's job when a tier or a builder was asked for:
+	// both need a server that advertises them, and they share one WhoAmI call.
+	if tier != "" || builder != "" {
+		who, err := rt.Remote.WhoAmI(ctx, server)
 		if err != nil {
 			return SendResult{}, err
 		}
-		if !slices.Contains(who.Features, remote.FeatureTier) {
-			return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, b.Builder.Server)
+		if tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
+			return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, server)
+		}
+		if builder != "" && !slices.Contains(who.Features, remote.FeatureBuilder) {
+			return SendResult{}, fmt.Errorf("server %s cannot change a binding's builder (no %q feature); upgrade it, or send without --builder", server, remote.FeatureBuilder)
 		}
 	}
 
-	server := b.Builder.Server
 	name := b.Name
 
 	// 1. rt.Git.UpdateRef(b.Repo, "refs/relay/"+b.Name+"/out", RefSHA("refs/heads/"+b.Branch), "")
@@ -457,8 +464,8 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	}
 	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
 
-	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier, tags)
-	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, tags)
+	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier, builder, tags)
+	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, tags)
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
@@ -498,6 +505,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// b.State = active; b.Halt = ""; b.Builder.LastShipped = snap.Heads["refs/relay/<name>/out"];
 	// b.Builder.RemoteStatus = string(view.RoundState); Save.
 	var sendRound int
+	var pickLine string
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Load(name)
 		if err != nil {
@@ -508,12 +516,32 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		}
 		sendRound = cur.Round
 
+		now := rt.Now()
+
+		// A --builder change is applied by the server (the served path's own
+		// §5.2 write). The client records the candidate the server
+		// canonicalised, so the next observeRemote sees view.Candidate ==
+		// b.BuilderCandidate and writes no spurious "switched on <server>".
+		// The pick entry is filed under the sent round, before its plan entry.
+		if builder != "" && view.Candidate != "" && view.Candidate != cur.BuilderCandidate {
+			pick := remotePickEntry(now, server, view.Candidate, true, cur.Round)
+			if err := tx.AppendLog(name, pick); err != nil {
+				return fmt.Errorf("append builder pick log: %w", err)
+			}
+			pickLine = pick.Note
+			cur.BuilderCandidate = view.Candidate
+			kind := ""
+			if ref, err := candidate.ParseRef(view.Candidate); err == nil {
+				kind = ref.Harness
+			}
+			cur.Builder.Kind = kind
+		}
+
 		planPath := rt.Store.PlanPath(name, cur.Round)
 		if err := os.WriteFile(planPath, planBody, 0o644); err != nil {
 			return fmt.Errorf("write plan %s: %w", planPath, err)
 		}
 
-		now := rt.Now()
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS:        now.UTC(),
 			Round:     cur.Round,
@@ -537,7 +565,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	if err != nil {
 		return SendResult{}, err
 	}
-	return SendResult{Round: sendRound}, nil
+	return SendResult{Round: sendRound, Pick: pickLine}, nil
 }
 
 const unreachableGrace = 30 * time.Minute

@@ -798,3 +798,269 @@ func TestVerifyPolicyDefault(t *testing.T) {
 		t.Errorf("RoundVerify = true after Send{Verify: false}, want false")
 	}
 }
+
+// switchSetup binds webshop on agy/test/m with a fake runner -- the setup
+// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --builder
+// tests. Every local builder is headless, so the runner drives the round.
+func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
+	t.Helper()
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name:      "webshop",
+		Candidate: testAgyRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Headless:  true,
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	return rt, fr
+}
+
+// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --builder starts
+// the round on the named candidate, files its pick entry before the plan
+// entry, and the change persists into the next plain send.
+//
+// Mutation check (required): drop the in-lock applyBuilder, leaving only the
+// preflight substitution, and this test fails on the persisted
+// BuilderCandidate assertion.
+func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
+	rt, fr := switchSetup(t)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef})
+	if err != nil {
+		t.Fatalf("Send --builder: %v", err)
+	}
+	if !strings.Contains(res.Pick, testClaudeRef) || !strings.Contains(res.Pick, "policy bypassed") {
+		t.Errorf("res.Pick = %q, want a pick line for %s with policy bypassed", res.Pick, testClaudeRef)
+	}
+
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.BuilderCandidate != testClaudeRef {
+		t.Fatalf("BuilderCandidate = %q, want %q", stored.BuilderCandidate, testClaudeRef)
+	}
+	if stored.Builder.Kind != "claude" {
+		t.Errorf("Builder.Kind = %q, want claude", stored.Builder.Kind)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	if fr.specs[0].Argv[0] != "claude" {
+		t.Errorf("argv[0] = %q, want the new candidate's binary claude", fr.specs[0].Argv[0])
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planIdx := -1
+	for i, e := range entries {
+		if e.Round == 1 && e.Kind == store.KindPlan {
+			planIdx = i
+			break
+		}
+	}
+	if planIdx < 1 {
+		t.Fatalf("plan entry not found after a bind pick: %+v", entries)
+	}
+	if prev := entries[planIdx-1]; prev.Kind != store.KindPick || prev.Direction != store.DirToPlanner || !strings.Contains(prev.Note, testClaudeRef) {
+		t.Errorf("entry before the plan = %+v, want a pick naming %s", prev, testClaudeRef)
+	}
+
+	endProcess(t, rt, stored)
+	res2, err := Send(context.Background(), rt, "webshop", writePlan(t, "# again"), SendOptions{})
+	if err != nil {
+		t.Fatalf("plain Send: %v", err)
+	}
+	if res2.Pick != "" {
+		t.Errorf("res2.Pick = %q, want empty for a plain send", res2.Pick)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2", len(fr.specs))
+	}
+	if fr.specs[1].Argv[0] != "claude" {
+		t.Errorf("second argv[0] = %q, want claude (the change must persist)", fr.specs[1].Argv[0])
+	}
+}
+
+// TestSendBuilderRefusedWhileRoundOpen pins §5.2 (b): an open round is
+// refused before anything is staged or spawned.
+func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planPath := rt.Store.PlanPath("webshop", 1)
+	beforePlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read staged plan: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{Builder: testClaudeRef})
+	if err == nil {
+		t.Fatal("Send --builder on an open round must be refused")
+	}
+	if !strings.Contains(err.Error(), "has round 1 open") || !strings.Contains(err.Error(), "relay stop webshop ends it") {
+		t.Errorf("err = %q, want the round-open refusal", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	afterPlan, err := os.ReadFile(planPath)
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("plan was restaged: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendBuilderUnknownTokenWritesNothing pins §5.2 (c): a token that does
+// not resolve is refused with ErrBadBuilder before any write.
+func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
+	rt, fr := switchSetup(t)
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# x"), SendOptions{Builder: "agy/test/nope"})
+	if err == nil {
+		t.Fatal("Send --builder with an unknown token must be refused")
+	}
+	if !errors.Is(err, ErrBadBuilder) {
+		t.Errorf("err = %v, want it to wrap ErrBadBuilder", err)
+	}
+	if !strings.Contains(err.Error(), "unknown candidate") {
+		t.Errorf("err = %q, want the unknown-candidate cause", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendBuilderGatedTokenProceeds pins §5.2 (d): an explicit pick of a
+// rate-limited candidate proceeds, and the pick line records the bypass and
+// names the live gate.
+func TestSendBuilderGatedTokenProceeds(t *testing.T) {
+	rt, _ := switchSetup(t)
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef})
+	if err != nil {
+		t.Fatalf("Send --builder with a gated token: %v", err)
+	}
+	if !strings.Contains(res.Pick, "policy bypassed") {
+		t.Errorf("res.Pick = %q, want policy bypassed", res.Pick)
+	}
+	if !strings.Contains(res.Pick, "gated: rate-limited") {
+		t.Errorf("res.Pick = %q, want the live gate named", res.Pick)
+	}
+	stored, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.BuilderCandidate != testClaudeRef {
+		t.Errorf("BuilderCandidate = %q, want %q", stored.BuilderCandidate, testClaudeRef)
+	}
+}
+
+// TestSendDryRunBuilderMakesNoWrites pins §5.2 (e): the dry run reports the
+// new candidate and its argv, and writes nothing.
+func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
+	rt, fr := switchSetup(t)
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+
+	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# dry"), SendOptions{Builder: testClaudeRef})
+	if err != nil {
+		t.Fatalf("SendDryRun --builder: %v", err)
+	}
+	if d.Candidate != testClaudeRef {
+		t.Errorf("Candidate = %q, want %q", d.Candidate, testClaudeRef)
+	}
+	if !strings.HasPrefix(d.Where, "claude") {
+		t.Errorf("Where = %q, want it to name the new candidate's binary", d.Where)
+	}
+
+	if len(fr.specs) != 0 {
+		t.Errorf("a dry run started a process: %d specs", len(fr.specs))
+	}
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a dry run writes nothing", len(before), len(after))
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Errorf("a dry run staged a plan: %v", err)
+	}
+}
+
+// TestSendBuilderSameCandidateIsPlainSend pins §5.2 (f): naming the binding's
+// own candidate is a no-op -- no pick entry, no tier change, and the send
+// proceeds exactly as a plain one.
+func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
+	rt, fr := switchSetup(t)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testAgyRef})
+	if err != nil {
+		t.Fatalf("Send --builder with the current token: %v", err)
+	}
+	if res.Pick != "" {
+		t.Errorf("res.Pick = %q, want empty for a no-op", res.Pick)
+	}
+	if len(fr.specs) != 1 || fr.specs[0].Argv[0] != "agy" {
+		t.Fatalf("specs = %+v, want exactly one agy round", fr.specs)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var picks int
+	var plan bool
+	for _, e := range entries {
+		if e.Round == 1 && e.Kind == store.KindPick {
+			picks++
+		}
+		if e.Round == 1 && e.Kind == store.KindPlan {
+			plan = true
+		}
+	}
+	if picks != 1 {
+		t.Errorf("round 1 pick entries = %d, want only the bind's", picks)
+	}
+	if !plan {
+		t.Error("no plan entry: the send did not proceed normally")
+	}
+}
