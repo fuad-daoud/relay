@@ -32,7 +32,7 @@ follows is what is specific to this machine and this repo.
 ## Verifying a builder's work
 
 Do not trust the report. Run `make check` yourself -- it is stricter than
-`go test ./...` alone, adding `gofmt -l .` over the whole tree, `go vet`, and a
+`go test ./...` alone, adding `gofmt` over every tracked `.go` file, `go vet`, and a
 `go mod tidy` check -- and compare `git diff --stat` against the plan's
 declared scope. `make e2e` additionally runs one headless round end to end with
 a fake harness binary; CI runs it, and it is not part of `make check`.

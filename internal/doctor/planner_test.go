@@ -239,3 +239,64 @@ func TestHasMCPChild(t *testing.T) {
 		}
 	}
 }
+
+// TestDoctorPluginVersionRow is the plan's required case for the third plugin
+// row: the installed plugin's version is compared with the running binary's,
+// advisory only. Every situation relay cannot prove -- no running version, no
+// readable file, no relay entry, an unparseable version -- reads "not checked"
+// (OK), never a warning.
+func TestDoctorPluginVersionRow(t *testing.T) {
+	state := func(version string) string {
+		return `{"version":2,"plugins":{"relay@relay":[{"version":"` + version + `","installPath":"/tmp/relay/0.8.0"}]}}`
+	}
+
+	cases := []struct {
+		name    string
+		body    string // ~/.claude/plugins/installed_plugins.json; "" writes nothing
+		running string
+		wantSev Severity
+		want    string
+	}{
+		{"no running version", state("0.8.0"), "", SevOK, "not checked"},
+		{"missing file", "", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
+		{"not json", "not json", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
+		{"no relay entry", `{"version":2,"plugins":{"other@relay":[{"version":"0.8.0"}]}}`, "v0.8.0", SevOK, "not checked (relay plugin not installed)"},
+		{"dev build matches the release", state("0.8.0"), "v0.8.0-15-gd664545", SevOK, "plugin 0.8.0 matches relay"},
+		{"exact match", state("0.8.0"), "v0.8.0", SevOK, "plugin 0.8.0 matches relay"},
+		{"older plugin warns", state("0.7.0"), "v0.8.0", SevWarn, "plugin 0.7.0, relay v0.8.0"},
+		{"running is (devel)", state("0.8.0"), "(devel)", SevOK, "not checked (relay is (devel))"},
+		{"plugin version does not parse", state("garbage"), "v0.8.0", SevOK, "not checked (relay is v0.8.0)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.body != "" {
+				writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), tc.body)
+			}
+			checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir(), Running: tc.running})
+			c := findCheck(Report{Checks: checks}, "", "plugin version")
+			if c == nil {
+				t.Fatal("the plugin version row must be present when a claude candidate exists")
+			}
+			if c.Severity != tc.wantSev {
+				t.Errorf("severity = %v (%s), want %v", c.Severity, c.Detail, tc.wantSev)
+			}
+			if c.Detail != tc.want {
+				t.Errorf("detail = %q, want %q", c.Detail, tc.want)
+			}
+			if tc.wantSev == SevWarn && c.Fix != "claude plugin update relay@relay" {
+				t.Errorf("fix = %q, want the update command", c.Fix)
+			}
+		})
+	}
+
+	t.Run("no claude candidate means no row", func(t *testing.T) {
+		home := t.TempDir()
+		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), state("0.8.0"))
+		checks := PlannerChecks(PlannerCheckInput{Claude: false, Home: home, Repo: t.TempDir(), Running: "v0.8.0"})
+		if c := findCheck(Report{Checks: checks}, "", "plugin version"); c != nil {
+			t.Errorf("no claude candidate must leave the plugin version row out, got %+v", c)
+		}
+	})
+}

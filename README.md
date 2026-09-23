@@ -2019,6 +2019,12 @@ planner name. Install it once per machine:
     /plugin marketplace add fuad-daoud/relay
     /plugin install relay@relay
 
+The plugin also carries three slash commands over relay's read verbs:
+
+- `/relay:status [--name <binding>] [--all]` -- the bindings, round and state.
+- `/relay:diff [<binding>] [--round N]` -- what a builder changed in a round.
+- `/relay:log <binding> [--round N]` -- a binding's append-only round log.
+
 Then launch Claude Code normally:
 
     claude --agent architect --model opus

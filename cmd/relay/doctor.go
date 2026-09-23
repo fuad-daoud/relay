@@ -490,7 +490,7 @@ const stalePlannerAge = 7 * 24 * time.Hour
 // than guessing. Home comes from $HOME so the row reads the same directory
 // cmd/relay's TestMain isolated.
 func plannerCheckInput(rt relay.Runtime, kinds []string) doctor.PlannerCheckInput {
-	in := doctor.PlannerCheckInput{Home: os.Getenv("HOME")}
+	in := doctor.PlannerCheckInput{Home: os.Getenv("HOME"), Running: buildVersion()}
 	if wd, err := os.Getwd(); err == nil {
 		in.Repo = wd
 	}
