@@ -166,7 +166,7 @@ func TestHeadlessE2E(t *testing.T) {
 		return ok && e.Route == "channel"
 	}, "the channel's confirm of %s round 1 (route=channel)", channelBinding)
 
-	payload, found, err := relay.Pull(ctx, rt, channelBinding)
+	payload, found, err := relay.Pull(ctx, rt, channelBinding, relay.PullOptions{})
 	if err != nil {
 		t.Fatalf("relay.Pull(%s): %v", channelBinding, err)
 	}
@@ -251,7 +251,7 @@ func TestHeadlessE2E(t *testing.T) {
 	if want := rt.Store.ReportPath(toolsBinding, 1); waited.res.Line != want {
 		t.Fatalf("relay wait printed %q, want the round's report path %s", waited.res.Line, want)
 	}
-	pulled, ok, err := relay.Pull(ctx, rt, toolsBinding)
+	pulled, ok, err := relay.Pull(ctx, rt, toolsBinding, relay.PullOptions{})
 	if err != nil {
 		t.Fatalf("relay pull --name %s: %v", toolsBinding, err)
 	}
@@ -259,11 +259,15 @@ func TestHeadlessE2E(t *testing.T) {
 		t.Fatalf("relay pull --name %s found nothing pending, want the round's report payload", toolsBinding)
 	}
 	output := waited.res.Line + "\n" + pulled
+	if !strings.Contains(pulled, fakeReportText) {
+		t.Fatalf("relay pull output does not carry the report's text; want %q in:\n%s", fakeReportText, pulled)
+	}
 
 	// 8.4: the output names the fake report -- relay pull prints the entry's
-	// payload, which is the report's path and the round it belongs to (§1.1's
-	// probe records exactly that shape) -- and the report's own text is on
-	// disk at that path.
+	// payload and the report's text (PushText), so the planner needs no
+	// second read; the payload names the report's path and the round it
+	// belongs to (§1.1's probe records exactly that shape) -- and the
+	// report's own text is on disk at that path.
 	reportPath := rt.Store.ReportPath(toolsBinding, 1)
 	if !strings.Contains(output, reportPath) {
 		t.Fatalf("the wait/pull output does not name the round's report %s:\n%s", reportPath, output)

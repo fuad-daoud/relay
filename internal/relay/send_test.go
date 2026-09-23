@@ -291,7 +291,7 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 		t.Fatal("expected drift to be detected")
 	}
 
-	payload, found, err := Pull(context.Background(), rt, "webshop")
+	payload, found, err := Pull(context.Background(), rt, "webshop", PullOptions{})
 	if err != nil || !found {
 		t.Fatalf("Pull: found=%v err=%v", found, err)
 	}

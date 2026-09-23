@@ -213,9 +213,11 @@ process the `relay mcp` server shares with the session. Run
     prompt    relay: round 5 · to builder "api-auth" · from the planner (not the human)
               Your working tree is: /home/me/.worktrees/api-auth
   ```
-- `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
-  mark it delivered. This is how a planner fetches a report directly, and what
-  the background wait's `relay pull` uses.
+- `relay pull [NAME|--name N] [--path-only]` — print the oldest pending
+  report's text to stdout (the report's pointer line, a blank line, then the
+  report itself, capped at 64 KiB) and mark it delivered. This is how a
+  planner fetches a report directly, and what the background wait's
+  `relay pull` uses. `--path-only` prints just the pointer line for scripts.
 - `relay diff [NAME|--name N] [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
