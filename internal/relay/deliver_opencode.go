@@ -243,8 +243,8 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) 
 }
 
 // opencodeConfirmQuery is the read-back that proves a session actually
-// took the turn (§3.4). ' is doubled in both interpolated values, the same
-// escaping usage.OpencodeQuery uses for a directory.
+// took the turn (§3.4). ' is doubled in both interpolated values, the
+// SQL string-literal escape.
 func opencodeConfirmQuery(sessionID, origin string) string {
 	sid := strings.ReplaceAll(sessionID, "'", "''")
 	org := strings.ReplaceAll(origin, "'", "''")
