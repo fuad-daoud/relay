@@ -22,10 +22,14 @@ func testNow() time.Time {
 func TestParseReset(t *testing.T) {
 	now := testNow()
 	loc := now.Location()
+	// datedNow is the fixed instant the absolute-date rows below are stated
+	// against: 2026-09-23 12:00 in the same location as every other row.
+	datedNow := time.Date(2026, 9, 23, 12, 0, 0, 0, loc)
 
 	cases := []struct {
 		name string
 		line string
+		now  time.Time // zero means the shared now above
 		want time.Time
 		ok   bool
 	}{
@@ -72,6 +76,62 @@ func TestParseReset(t *testing.T) {
 			ok:   true,
 		},
 		{
+			// The real codex weekly-limit sentence; the date form carries a
+			// year, so it earns the 31-day window.
+			name: "codex date form with a year and a time",
+			line: "You've hit your usage limit. … or try again at Oct 19th, 2026 7:14 PM.",
+			now:  datedNow,
+			want: time.Date(2026, 10, 19, 19, 14, 0, 0, loc),
+			ok:   true,
+		},
+		{
+			name: "date form with a full month name and no time",
+			line: "resets on October 3, 2026",
+			now:  datedNow,
+			want: time.Date(2026, 10, 3, 0, 0, 0, 0, loc),
+			ok:   true,
+		},
+		{
+			// No year: the date is read in now's year and keeps the 7-day
+			// window. A trailing "9am" is not an H:MM time, so the day reads
+			// as 00:00 -- the earliest reading, which never over-gates.
+			name: "date form with no year stays inside the short window",
+			line: "try again at Sept 30th 9am",
+			now:  datedNow,
+			want: time.Date(2026, 9, 30, 0, 0, 0, 0, loc),
+			ok:   true,
+		},
+		{
+			name: "date form with no year past the short window",
+			line: "try again at Nov 1st 9am",
+			now:  datedNow,
+			ok:   false,
+		},
+		{
+			name: "date form past the dated window",
+			line: "try again at Oct 19th, 2027 7:14 PM",
+			now:  datedNow,
+			ok:   false,
+		},
+		{
+			name: "date form in the past",
+			line: "try again at Sep 1st, 2026",
+			now:  datedNow,
+			ok:   false,
+		},
+		{
+			name: "date form on a day that does not exist",
+			line: "try again at Feb 30th, 2027",
+			now:  datedNow,
+			ok:   false,
+		},
+		{
+			name: "date form with pm on an hour past 12",
+			line: "try again at Oct 19th, 2026 13:14 PM",
+			now:  datedNow,
+			ok:   false,
+		},
+		{
 			name: "no reset time at all",
 			line: "You've hit your limit",
 			ok:   false,
@@ -90,7 +150,11 @@ func TestParseReset(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := parseReset(c.line, now)
+			n := c.now
+			if n.IsZero() {
+				n = now
+			}
+			got, ok := parseReset(c.line, n)
 			if ok != c.ok {
 				t.Fatalf("parseReset(%q) ok = %v, want %v", c.line, ok, c.ok)
 			}
@@ -112,6 +176,21 @@ func agyPatterns(t *testing.T) []*regexp.Regexp {
 	h, ok := harness.Lookup("agy")
 	if !ok {
 		t.Fatal(`harness.Lookup("agy") not found`)
+	}
+	patterns := make([]*regexp.Regexp, 0, len(h.LimitPatterns))
+	for _, p := range h.LimitPatterns {
+		patterns = append(patterns, regexp.MustCompile(p))
+	}
+	return patterns
+}
+
+// codexPatterns is the codex kind's shipped limit patterns, compiled the
+// same way agyPatterns builds agy's.
+func codexPatterns(t *testing.T) []*regexp.Regexp {
+	t.Helper()
+	h, ok := harness.Lookup("codex")
+	if !ok {
+		t.Fatal(`harness.Lookup("codex") not found`)
 	}
 	patterns := make([]*regexp.Regexp, 0, len(h.LimitPatterns))
 	for _, p := range h.LimitPatterns {
@@ -161,6 +240,22 @@ func TestMatchLimit(t *testing.T) {
 			t.Error("Parsed = true, want false")
 		}
 		want := now.Add(fallback)
+		if !got.Until.Equal(want) {
+			t.Errorf("Until = %v, want %v", got.Until, want)
+		}
+	})
+
+	t.Run("codex date form parses the reset", func(t *testing.T) {
+		now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.FixedZone("EEST", 3*3600))
+		text := "You've hit your usage limit. … or try again at Oct 19th, 2026 7:14 PM."
+		got, ok := matchLimit(text, codexPatterns(t), now, fallback)
+		if !ok {
+			t.Fatal("matchLimit ok = false, want true")
+		}
+		if !got.Parsed {
+			t.Error("Parsed = false, want true")
+		}
+		want := time.Date(2026, 10, 19, 19, 14, 0, 0, now.Location())
 		if !got.Until.Equal(want) {
 			t.Errorf("Until = %v, want %v", got.Until, want)
 		}
