@@ -38,8 +38,8 @@ last-write-wins with no conflict and no error.
   deliverable, and its existence is the only thing that tells relay you
   finished.
 - Cite file and line references, not summaries. "status.go:115 compares the
-  running count against the cap before the pane exists" is a finding; "the cap
-  logic looks off" is not.
+  running count against the cap before the builder starts" is a finding; "the
+  cap logic looks off" is not.
 - State plainly when the diff contains no problem, rather than manufacturing
   one. A reviewer that always finds something is pinning nothing, and a
   manufactured finding costs the planner a real round trip.

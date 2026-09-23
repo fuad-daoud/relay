@@ -22,7 +22,7 @@ follows is what is specific to this machine and this repo.
   clean up afterwards.
 - `relay done` releases a clean worktree (the branch survives) so you can
   `gh pr checkout` in the main repo without `gc`; a dirty tree or an open
-  pane round is kept and `gc` retries. `relay bind --resume` restores a
+  round is kept and `gc` retries. `relay bind --resume` restores a
   released worktree; rebind a DONE binding only after that restore.
 - A headless round's log is at `~/.local/state/relay/<name>/NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relay unavailable
