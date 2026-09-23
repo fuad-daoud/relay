@@ -1155,8 +1155,9 @@ func TestReapScopeKillsWhatIgnoresTERM(t *testing.T) {
 	if err == nil || !ok || !ws.Signaled() || ws.Signal() != syscall.SIGKILL {
 		t.Errorf("wait status = %v (%v); want SIGKILL, since TERM was ignored", stubborn.ProcessState, err)
 	}
-	if elapsed > 3*time.Second {
-		t.Errorf("reap took %s; want under about 3s (20 polls 0.1s apart)", elapsed)
+	// 15s is still far below the 60s sleep, so only the KILL fallback can explain it ending; the old 3s bound was too tight for macOS CI under -race, where forking a sleep per poll stretches 20 polls to about 3s.
+	if elapsed > 15*time.Second {
+		t.Errorf("reap took %s; want under about 15s (20 polls 0.1s apart)", elapsed)
 	}
 }
 
