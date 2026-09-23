@@ -454,8 +454,8 @@ func opencodeDBPath() string {
 
 // newDeliverers builds Runtime.Deliverers: an OpencodeDeliverer keyed by
 // "opencode" when sqlite3 is on PATH, nil otherwise (docs/specs/2026-09-22-opencode-delivery-design.md).
-// No sqlite3 means the deliverer could never confirm a delivery, so relay
-// falls back to today's pane injection for every opencode planner.
+// No sqlite3 means the deliverer could never confirm a delivery, so an
+// opencode planner's reports stay pending for relay pull.
 func newDeliverers() map[string]relay.PlannerDeliverer {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return nil
@@ -1992,7 +1992,7 @@ func cmdDone(args []string) error {
 	return nil
 }
 
-// cmdPause releases a binding's worktree and pane between rounds. It takes
+// cmdPause releases a binding's worktree between rounds. It takes
 // the binding from --name or a positional and never from the current
 // directory: pause is not undoable without a resume, so it must not guess.
 func cmdPause(args []string) error {
@@ -2006,7 +2006,7 @@ func cmdPause(args []string) error {
 	target, ok := explicitBinding(*name, fs.Args())
 	if !ok {
 		return fmt.Errorf("usage: relay pause <name> | --name <name>\n" +
-			"pause releases a binding's worktree and pane between rounds; it is not undoable without a resume, so it must not guess")
+			"pause releases a binding's worktree between rounds; it is not undoable without a resume, so it must not guess")
 	}
 
 	rt, err := newRuntime()

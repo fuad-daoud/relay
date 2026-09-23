@@ -185,15 +185,12 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("got %d findings entries, want 1", len(findings))
 	}
-	if strings.Contains(findings[0].Payload, "Pane ") {
-		t.Errorf("payload %q names a pane with 'Pane '", findings[0].Payload)
+	if strings.Contains(findings[0].Payload, "pane") {
+		t.Errorf("payload %q contains 'pane'", findings[0].Payload)
 	}
-	rest := strings.ReplaceAll(findings[0].Payload, "No pane was spawned.", "")
-	if strings.Contains(rest, "pane ") {
-		t.Errorf("payload rest %q contains 'pane '", rest)
-	}
-	if !strings.HasSuffix(findings[0].Payload, "No pane was spawned.") {
-		t.Errorf("payload %q does not end with 'No pane was spawned.'", findings[0].Payload)
+	want := "wrote no findings: " + b.Consults[0].Note + "."
+	if !strings.HasSuffix(findings[0].Payload, want) {
+		t.Errorf("payload %q does not end with %q", findings[0].Payload, want)
 	}
 }
 

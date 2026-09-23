@@ -171,8 +171,8 @@ func WithDefinitions(defs map[string][]string) RunOption {
 }
 
 // WithUsage enables the round-usage checks (#142): sqlite3 on PATH when an
-// opencode candidate is configured (its pane rounds read opencode.db
-// through it), and prices.json parsing and age.
+// opencode candidate is configured (relay confirms a push to an opencode
+// planner through it), and prices.json parsing and age.
 func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.usagePrices = pricesPath
@@ -584,11 +584,11 @@ func usageChecks(env Env, cfg runConfig) []Check {
 		if _, err := env.LookPath("sqlite3"); err != nil {
 			out = append(out, Check{
 				Name: "sqlite3", Severity: SevWarn,
-				Detail: "not on PATH; opencode pane rounds record usage as unknown",
+				Detail: "not on PATH; relay cannot confirm a push to an opencode planner, so its reports wait for relay pull",
 				Fix:    "install sqlite3 (the CLI), e.g. pacman -S sqlite / apt install sqlite3",
 			})
 		} else {
-			out = append(out, Check{Name: "sqlite3", Severity: SevOK, Detail: "on PATH; opencode pane usage readable"})
+			out = append(out, Check{Name: "sqlite3", Severity: SevOK, Detail: "on PATH; pushes to an opencode planner can be confirmed"})
 		}
 	}
 	if err := env.Stat(cfg.usagePrices); err != nil {

@@ -51,7 +51,7 @@ const (
 	KindExit     Kind = "exit"   // relay -> log only: a headless builder exited without a report (#99)
 	KindGate     Kind = "gate"   // relay -> log only: the gate started (#132)
 
-	KindPause  Kind = "pause"  // relay -> log only: paused after round N, worktree and pane released (#137)
+	KindPause  Kind = "pause"  // relay -> log only: paused after round N, worktree released (#137)
 	KindResume Kind = "resume" // relay -> log only: resumed from PAUSED (#137)
 
 	// KindStop is relay -> log only: a stop was requested (grace ...), or the

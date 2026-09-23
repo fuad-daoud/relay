@@ -142,9 +142,9 @@ func dryRunBuilderLine(d DryRun) string {
 func UnbindText(name string, res UnbindResult) string {
 	var lines []string
 	if res.ArchivedTo != "" {
-		lines = append(lines, fmt.Sprintf("archived %s to %s (panes left untouched)", name, res.ArchivedTo))
+		lines = append(lines, fmt.Sprintf("archived %s to %s", name, res.ArchivedTo))
 	} else {
-		lines = append(lines, fmt.Sprintf("unbound %s (panes left untouched)", name))
+		lines = append(lines, fmt.Sprintf("unbound %s", name))
 	}
 	switch {
 	case res.WorktreeRemoved != "":
