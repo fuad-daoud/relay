@@ -69,6 +69,13 @@ const (
 	// `relevo migrate` reports it and the server's deploy owns the new one
 	// (#292 §3 step 6); nothing this round reads it.
 	Slice = "relay.slice"
+
+	// KeyPEMType is the PEM block type of a client key written before the
+	// rename, where relevo writes "RELEVO ED25519 PRIVATE KEY". The key's
+	// bytes are unchanged and enrolment is by public key, so remote.
+	// ParsePrivate still accepts it; new keys are written as "RELEVO ED25519
+	// PRIVATE KEY".
+	KeyPEMType = "RELAY ED25519 PRIVATE KEY"
 )
 
 // Roots is the four roots a cutover touches: the relay-era state and config
