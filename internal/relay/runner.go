@@ -3,7 +3,11 @@ package relay
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/policy"
 )
 
 // ProcSpec is one process a headless builder round runs (#99, spec §3.4;
@@ -38,6 +42,61 @@ type ScopeSpec struct {
 	// local Runner (proc.ScopeArgv) never reads it, so a spec handed to Start
 	// must have it empty.
 	GateCPUQuota string
+}
+
+// GoMaxProcsFor reports the GOMAXPROCS a process launched under s should get:
+// the number of CPUs that scope may run on (#315). ok false means the scope
+// limits nothing, and the caller sets nothing.
+//
+// It counts AllowedCPUs with policy.ParseCPUList (a pinned round's pool is one
+// core) and CPUQuota as ceil(percent/100) with a minimum of 1; with both it is
+// the smaller of the two. It reads nothing else: GateCPUQuota is template-only
+// and is always zeroed on a launched spec. A malformed AllowedCPUs or CPUQuota
+// contributes nothing, as if it were unset -- impossible after policy.Load, but
+// the rule must not panic. Pure.
+//
+// The value is Go-only, and relay sets it even though Go already derives its
+// default GOMAXPROCS from the CPU affinity mask (sched_getaffinity): for a
+// pinned round that is redundant but harmless, and it is correct when the pin
+// was refused and the round floated. It matters for quota-only rounds, and for
+// every Go binary whose main module is below Go 1.25 -- only a 1.25+ main
+// module reads the cgroup CPU bandwidth limit (containermaxprocs), so such a
+// binary would otherwise size itself for the whole machine. The go command's
+// -p and `go test -parallel` defaults follow GOMAXPROCS.
+func GoMaxProcsFor(s ScopeSpec) (int, bool) {
+	var (
+		n    int
+		have bool
+	)
+	if s.AllowedCPUs != "" {
+		if cpus, err := policy.ParseCPUList(s.AllowedCPUs); err == nil && len(cpus) > 0 {
+			n, have = len(cpus), true
+		}
+	}
+	if s.CPUQuota != "" {
+		digits, hasPct := strings.CutSuffix(s.CPUQuota, "%")
+		percent, err := strconv.Atoi(digits)
+		valid := hasPct && digits != "" && err == nil
+		if valid {
+			for _, r := range digits {
+				if r < '0' || r > '9' {
+					valid = false
+					break
+				}
+			}
+		}
+		if valid {
+			q := (percent + 99) / 100
+			if q < 1 {
+				q = 1
+			}
+			if have && q > n {
+				q = n
+			}
+			n, have = q, true
+		}
+	}
+	return n, have
 }
 
 // RusageTrailerPrefix is the prefix of the rusage line the supervisor appends

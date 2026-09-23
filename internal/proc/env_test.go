@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/fuad-daoud/relay/internal/relay"
 )
 
 func TestChildEnv(t *testing.T) {
@@ -102,6 +104,55 @@ func TestChildEnv(t *testing.T) {
 			}
 			if !reflect.DeepEqual(tc.extra, extraCopy) {
 				t.Errorf("extra was mutated: got %v, want %v", tc.extra, extraCopy)
+			}
+		})
+	}
+}
+
+// TestGoMaxProcsEnv pins #315's entry rule: the one entry to add, or nil.
+// Precedence: a GOMAXPROCS already in the parent environment or in extra
+// wins, and the inputs are never mutated.
+func TestGoMaxProcsEnv(t *testing.T) {
+	pinned := &relay.ScopeSpec{AllowedCPUs: "2"}
+	quota := &relay.ScopeSpec{CPUQuota: "200%"}
+	cases := []struct {
+		name   string
+		parent []string
+		extra  []string
+		scope  *relay.ScopeSpec
+		want   []string
+	}{
+		{"nil scope", nil, nil, nil, nil},
+		{"no limits", nil, nil, &relay.ScopeSpec{}, nil},
+		{"single core", nil, nil, pinned, []string{"GOMAXPROCS=1"}},
+		{"quota only", nil, nil, quota, []string{"GOMAXPROCS=2"}},
+		{"parent GOMAXPROCS is overridden", []string{"GOMAXPROCS=8"}, nil, pinned, []string{"GOMAXPROCS=1"}},
+		{"extra GOMAXPROCS wins", nil, []string{"GOMAXPROCS=4"}, pinned, nil},
+		{"bare parent name is overridden", []string{"GOMAXPROCS"}, nil, pinned, []string{"GOMAXPROCS=1"}},
+		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &relay.ScopeSpec{}, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parentCopy := slices.Clone(tc.parent)
+			extraCopy := slices.Clone(tc.extra)
+			var scopeCopy, hadScope = relay.ScopeSpec{}, false
+			if tc.scope != nil {
+				scopeCopy, hadScope = *tc.scope, true
+			}
+
+			got := goMaxProcsEnv(tc.parent, tc.extra, tc.scope)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("goMaxProcsEnv() = %v, want %v", got, tc.want)
+			}
+			if !reflect.DeepEqual(tc.parent, parentCopy) {
+				t.Errorf("parent was mutated: got %v, want %v", tc.parent, parentCopy)
+			}
+			if !reflect.DeepEqual(tc.extra, extraCopy) {
+				t.Errorf("extra was mutated: got %v, want %v", tc.extra, extraCopy)
+			}
+			if hadScope && *tc.scope != scopeCopy {
+				t.Errorf("scope was mutated: got %+v, want %+v", *tc.scope, scopeCopy)
 			}
 		})
 	}
