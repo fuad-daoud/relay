@@ -265,6 +265,10 @@ process the `relay mcp` server shares with the session. Run
   one round's plan, report, diff, drift, log or transcript, from a live binding's files or, for anything not live, from the database. See "The database" below.
 - `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
   tokens and cost across bindings, archived ones included.
+- `relay stats [--since 7d] [--json]` —
+  rounds, outcomes, switches, gate results and consults across bindings,
+  archived ones included, read from the round logs; the last 30 days of
+  provider blocks come from the availability history. See "Usage stats" below.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
   until the round closes or the binding needs you, reading relay's own state only.
   Exit 0: closed on the marker, stdout is the report path. 2: closed
@@ -1789,6 +1793,50 @@ never share a column; `plan` and `unknown` are counts of rounds. `tab`
 is the second exception to the #114 verb freeze, taken because its
 sums exist regardless (they are on `status --json`) and a cross-binding
 view has no other home.
+
+### Usage stats
+
+```
+relay stats [--since 7d] [--json]
+```
+
+`relay stats` answers the questions `relay tab`'s money sums do not. It reads
+the same logs and archives as `relay tab`, live and archived, locally only:
+nothing leaves the machine. `--since` cuts on a round's start, so a round that
+started before the cut is not counted.
+
+Each counted round has one builder -- `harness/provider/model`, taken from the
+report's usage record when it has one, else from the round's pick, else
+`unknown` -- and one outcome:
+
+| outcome | meaning |
+|---|---|
+| `done` | the report's relay block said `done` |
+| `halted` | the report's block said `halted` |
+| `blocked` | the report's block said `blocked` |
+| `deferred` | the report's block said `deferred` |
+| `unstructured` | a report arrived without a usable block |
+| `noreport` | the report was noted `noreport` |
+| `stopped` | no report; the round was stopped |
+| `exited` | no report; the builder exited |
+| `open` | no report, no stop and no exit: the round is still open |
+
+`needs-you` and `stalled` are not outcomes because they are live state, not a
+property of a finished round: relay records neither in the round log, so there
+is nothing to count after the fact. They stay where they are visible, on
+`relay status` and in `relay ui`.
+
+`switches` counts the rounds that changed builder mid-round, attributes each to
+the provider it left with a reason (`rate-limited`, `exited`, `gated`, `remote`
+or `other`), and says how many of the rounds that was. `gate` counts pass, fail,
+timeout and error over the rounds that ran a gate. `consults` counts asks per
+role (`session` for `ask --round`) with the findings' models beside them, plus
+the verifies that were skipped.
+
+`blocked` comes from `availability.json`, which keeps 30 days: rate-limit and
+spawn-failure events in that window, and the gates a human cleared with
+`relay available`. Only a gate cleared by hand has a recorded length -- an
+expired gate keeps no expiry time, so it counts as an event with no duration.
 
 ### Consult candidates
 

@@ -68,6 +68,7 @@ Commands:
   history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
   show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--json]
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
+  stats     rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
@@ -320,6 +321,8 @@ func run(args []string) error {
 		return cmdShow(args[1:])
 	case "tab":
 		return cmdTab(args[1:])
+	case "stats":
+		return cmdStats(args[1:])
 	case "wait":
 		return cmdWait(args[1:])
 	case "ui":
