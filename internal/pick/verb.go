@@ -1,5 +1,5 @@
-// Package pick is the interactive mode behind `relay done --pick` and
-// `relay unbind --pick` (#15): a list of bindings, the verb run on the chosen
+// Package pick is the interactive mode behind `relevo done --pick` and
+// `relevo unbind --pick` (#15): a list of bindings, the verb run on the chosen
 // one, and the result held on screen until a key. It is built for a terminal
 // popup pane, which closes when the command exits.
 package pick
@@ -7,10 +7,10 @@ package pick
 import (
 	"errors"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// Verb is the relay command a picker runs on the chosen binding.
+// Verb is the relevo command a picker runs on the chosen binding.
 type Verb string
 
 const (
@@ -27,7 +27,7 @@ type Options struct {
 
 // The non-zero outcomes of Run. The picker has already shown the text for
 // each on screen, so the command maps all three to a silent exit 1: a
-// second "relay: ..." line would land in the plugin log, not in front of the
+// second "relevo: ..." line would land in the plugin log, not in front of the
 // human (spec §3).
 var (
 	ErrCancelled     = errors.New("cancelled")
@@ -40,10 +40,10 @@ var (
 
 // rowsFor is the spec §4 table: what each verb can act on. done cannot act
 // on a DONE binding; unbind clears DONE bindings, so it lists them.
-func rowsFor(verb Verb, rep relay.Report) []relay.BindingStatus {
+func rowsFor(verb Verb, rep relevo.Report) []relevo.BindingStatus {
 	switch verb {
 	case VerbDone:
-		return relay.HideDone(rep).Bindings
+		return relevo.HideDone(rep).Bindings
 	default:
 		return rep.Bindings
 	}
@@ -65,7 +65,7 @@ func emptyText(verb Verb) string {
 // common such key is Enter. The list showed the row's state; nobody had
 // read it yet. DONE rows under unbind are what gc clears anyway and run at
 // once.
-func needsConfirm(verb Verb, r relay.BindingStatus) bool {
+func needsConfirm(verb Verb, r relevo.BindingStatus) bool {
 	switch verb {
 	case VerbDone, VerbUnbind:
 		return r.Display != "DONE"

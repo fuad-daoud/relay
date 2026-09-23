@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/planner"
-	"github.com/fuad-daoud/relay/internal/policy"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/remote/client"
-	"github.com/fuad-daoud/relay/internal/serve"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func newRepo(t *testing.T) string {
@@ -148,7 +148,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	return srv, url, fp, enroll, srvStore, runner
 }
 
-func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Keypair) {
+func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Keypair) {
 	t.Helper()
 	cfgDir := t.TempDir()
 	privPath, pubPath := client.KeyPaths(cfgDir)
@@ -167,7 +167,7 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Key
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	st := store.New(t.TempDir())
 
-	// `relay add --server` resolves the caller's planner before it contacts
+	// `relevo add --server` resolves the caller's planner before it contacts
 	// the server and records it on the client binding. Export one the way a
 	// real planner session does, so the client runtime resolves a record
 	// instead of failing the add with ErrNoPlannerSession.
@@ -182,7 +182,7 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Key
 	if err != nil {
 		t.Fatalf("create planner record: %v", err)
 	}
-	t.Setenv("RELAY_PLANNER", prec.Name)
+	t.Setenv("RELEVO_PLANNER", prec.Name)
 
 	candDir := t.TempDir()
 	candPath := filepath.Join(candDir, "candidates.json")
@@ -195,7 +195,7 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Key
 		t.Fatalf("load candidates: %v", err)
 	}
 
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Git:              gitClient,
 		Store:            st,
 		Candidates:       cSet,
@@ -220,28 +220,28 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	})
 	if err != nil {
-		t.Fatalf("step 1: relay.Add: %v", err)
+		t.Fatalf("step 1: relevo.Add: %v", err)
 	}
 
-	// Assert: local branch relay/api exists at the repo's HEAD; server store for the owner has api.
+	// Assert: local branch relevo/api exists at the repo's HEAD; server store for the owner has api.
 	repoGit := git.NewClient("git", 10*time.Second, 0)
-	exists, err := repoGit.BranchExists(ctx, repo, "relay/api")
+	exists, err := repoGit.BranchExists(ctx, repo, "relevo/api")
 	if err != nil || !exists {
-		t.Fatalf("step 1: branch relay/api exists = %v, err = %v", exists, err)
+		t.Fatalf("step 1: branch relevo/api exists = %v, err = %v", exists, err)
 	}
 	headSHA, _, err := repoGit.RefSHA(ctx, repo, "HEAD")
 	if err != nil {
 		t.Fatalf("step 1: ref HEAD: %v", err)
 	}
-	branchSHA, _, err := repoGit.RefSHA(ctx, repo, "refs/heads/relay/api")
+	branchSHA, _, err := repoGit.RefSHA(ctx, repo, "refs/heads/relevo/api")
 	if err != nil {
-		t.Fatalf("step 1: ref relay/api: %v", err)
+		t.Fatalf("step 1: ref relevo/api: %v", err)
 	}
 	if branchSHA != headSHA {
 		t.Fatalf("step 1: branch SHA = %s, want HEAD %s", branchSHA, headSHA)
@@ -256,20 +256,20 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 		t.Fatalf("step 1: server store binding name = %q, want api", sb.Name)
 	}
 
-	// 2. relay.Send(ctx, rt, "api", planFile) with a one-line plan.
+	// 2. relevo.Send(ctx, rt, "api", planFile) with a one-line plan.
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("step 2: relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("step 2: relevo.Send: %v", err)
 	}
 
 	// Assert: runner.specs has one entry whose Dir is the server worktree; the worktree has README.md;
 	// client binding Builder.LastShipped == repo HEAD.
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relay.ProcSpec
+	var spec relevo.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
@@ -300,7 +300,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 
 	// 3. finishRound(...); srv.Tick; then tickUntil the client daemon's Tick leaves a KindReport entry for round 1.
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	serverRT := relay.Runtime{
+	serverRT := relevo.Runtime{
 		Store:  serverStore,
 		Git:    gitClient,
 		Runner: runner,
@@ -311,7 +311,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 		t.Fatalf("step 3: srv.Tick: %v", err)
 	}
 
-	clientDaemon := relay.NewDaemon(rt, time.Second)
+	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	tickUntil(t, 10*time.Second, func() bool {
 		_ = clientDaemon.Tick(ctx)
 		entries, err := rt.Store.ReadLog("api")
@@ -328,7 +328,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 
 	// Assert: the round's report waits as exactly one pending planner entry
 	// whose payload contains Report: and Diff: 1 file and 1 commit on
-	// relay/api; the client repo's relay/api is one commit ahead of init with
+	// relevo/api; the client repo's relevo/api is one commit ahead of init with
 	// hello.txt; the server view (via rt.Remote.GetBinding) has acked_round
 	// == 1 and round_state == idle; client Builder.RemoteStatus == "idle";
 	// BuilderCandidate equals the server's candidate token.
@@ -336,17 +336,17 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	if pending != 1 {
 		t.Fatalf("step 3: pending reports = %d, want 1", pending)
 	}
-	for _, substr := range []string{"Report:", "Diff: 1 file", "1 commit on relay/api"} {
+	for _, substr := range []string{"Report:", "Diff: 1 file", "1 commit on relevo/api"} {
 		if !strings.Contains(pText, substr) {
 			t.Fatalf("step 3: pending report payload missing %q; got:\n%s", substr, pText)
 		}
 	}
 
-	diffOut := runGit(t, repo, "diff", "HEAD..refs/heads/relay/api", "--name-only")
+	diffOut := runGit(t, repo, "diff", "HEAD..refs/heads/relevo/api", "--name-only")
 	if !strings.Contains(diffOut, "hello.txt") {
-		t.Fatalf("step 3: branch relay/api does not have hello.txt; diff:\n%s", diffOut)
+		t.Fatalf("step 3: branch relevo/api does not have hello.txt; diff:\n%s", diffOut)
 	}
-	revCount := strings.TrimSpace(runGit(t, repo, "rev-list", "--count", "HEAD..refs/heads/relay/api"))
+	revCount := strings.TrimSpace(runGit(t, repo, "rev-list", "--count", "HEAD..refs/heads/relevo/api"))
 	if revCount != "1" {
 		t.Fatalf("step 3: commits ahead = %s, want 1", revCount)
 	}
@@ -373,9 +373,9 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 		t.Fatalf("step 3: client BuilderCandidate = %q, want claude/anthropic/haiku", cb.BuilderCandidate)
 	}
 
-	// 4. relay.Done(ctx, rt, "api"). Assert: server view state done; client state done.
-	if _, err := relay.Done(ctx, rt, "api"); err != nil {
-		t.Fatalf("step 4: relay.Done: %v", err)
+	// 4. relevo.Done(ctx, rt, "api"). Assert: server view state done; client state done.
+	if _, err := relevo.Done(ctx, rt, "api"); err != nil {
+		t.Fatalf("step 4: relevo.Done: %v", err)
 	}
 	sv, err = rt.Remote.GetBinding(ctx, "zen", "api")
 	if err != nil {
@@ -402,26 +402,26 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	})
 	if err != nil {
-		t.Fatalf("step 1: relay.Add: %v", err)
+		t.Fatalf("step 1: relevo.Add: %v", err)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("step 2: relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("step 2: relevo.Send: %v", err)
 	}
 
 	serverStore := srvStore(owner)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	serverRT := relay.Runtime{
+	serverRT := relevo.Runtime{
 		Store:  serverStore,
 		Git:    gitClient,
 		Runner: runner,
@@ -448,7 +448,7 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	}
 
 	// Then client ticks:
-	clientDaemon := relay.NewDaemon(rt, time.Second)
+	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	tickUntil(t, 10*time.Second, func() bool {
 		_ = clientDaemon.Tick(ctx)
 		entries, err := rt.Store.ReadLog("api")
@@ -511,21 +511,21 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	_ = enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	})
 	if err != nil {
-		t.Fatalf("step 1: relay.Add: %v", err)
+		t.Fatalf("step 1: relevo.Add: %v", err)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("step 2: relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("step 2: relevo.Send: %v", err)
 	}
 
 	// cancel the server's context (listener down)
@@ -535,7 +535,7 @@ func TestRemoteServerUnreachableIsNotAHalt(t *testing.T) {
 	})
 
 	// client Tick
-	clientDaemon := relay.NewDaemon(rt, time.Second)
+	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 3: clientDaemon.Tick: %v", err)
 	}
@@ -568,26 +568,26 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	})
 	if err != nil {
-		t.Fatalf("step 1: relay.Add: %v", err)
+		t.Fatalf("step 1: relevo.Add: %v", err)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("step 2: write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("step 2: relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("step 2: relevo.Send: %v", err)
 	}
 
 	serverStore := srvStore(owner)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	serverRT := relay.Runtime{
+	serverRT := relevo.Runtime{
 		Store:  serverStore,
 		Git:    gitClient,
 		Runner: runner,
@@ -598,8 +598,8 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 		t.Fatalf("step 3: srv.Tick: %v", err)
 	}
 
-	// then relay.SyncRemote(ctx, rt) (no daemon tick)
-	if _, err := relay.SyncRemote(ctx, rt); err != nil {
+	// then relevo.SyncRemote(ctx, rt) (no daemon tick)
+	if _, err := relevo.SyncRemote(ctx, rt); err != nil {
 		t.Fatalf("step 3: SyncRemote: %v", err)
 	}
 
@@ -629,8 +629,8 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	}
 
 	// then one daemon Tick leaves it pending: this planner has no channel
-	// and no deliverer, so the entry waits for `relay pull` (route=pull).
-	clientDaemon := relay.NewDaemon(rt, time.Second)
+	// and no deliverer, so the entry waits for `relevo pull` (route=pull).
+	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 4: clientDaemon.Tick: %v", err)
 	}
@@ -666,21 +666,21 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	})
 	if err != nil {
-		t.Fatalf("relay.Add: %v", err)
+		t.Fatalf("relevo.Add: %v", err)
 	}
 
 	planFile := t.TempDir() + "/plan.md"
 	if err := os.WriteFile(planFile, []byte("# Plan\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send: %v", err)
 	}
 
 	// tick the server twice -- this is where the warning fired before the fix
@@ -718,8 +718,8 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 // -- the mailbox no route has taken yet (#303 §5.4) -- and returns the newest
 // one's payload. The pane prompt these tests used to assert on is gone: a
 // report now waits as a pending entry for the channel, a deliverer or
-// `relay pull`.
-func pendingReports(t *testing.T, rt relay.Runtime, name string) (int, string) {
+// `relevo pull`.
+func pendingReports(t *testing.T, rt relevo.Runtime, name string) (int, string) {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)
 	if err != nil {

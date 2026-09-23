@@ -32,7 +32,7 @@ type Prices struct {
 	Models map[string]ModelPrice `json:"models"`
 }
 
-// DefaultPrices is the embedded table shipped with relay.
+// DefaultPrices is the embedded table shipped with relevo.
 func DefaultPrices() Prices {
 	var p Prices
 	if err := json.Unmarshal(defaultPricesJSON, &p); err != nil {

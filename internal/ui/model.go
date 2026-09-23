@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
 type Model struct {
@@ -20,9 +20,9 @@ type Model struct {
 
 	screen screen
 
-	report relay.Report // newest GOOD snapshot; survives a failed refresh
-	err    error        // last refresh error, shown in the footer
-	notice string       // sticky note (e.g. "webshop is gone"), cleared on keypress
+	report relevo.Report // newest GOOD snapshot; survives a failed refresh
+	err    error         // last refresh error, shown in the footer
+	notice string        // sticky note (e.g. "webshop is gone"), cleared on keypress
 
 	// Two guards, not one. statusInFlight and tabInFlight are separate
 	// because a terminal read can block: a single shared
@@ -46,7 +46,7 @@ type Model struct {
 	dashSort  string
 
 	// statusLoaded is false until the first successful statusMsg. It separates
-	// "no bindings" -- a fact relay.Status returned -- from "not yet asked" and
+	// "no bindings" -- a fact relevo.Status returned -- from "not yet asked" and
 	// "could not ask", which are not the same fact and must not read as one.
 	statusLoaded bool
 
@@ -78,7 +78,7 @@ type Model struct {
 	// dbRows is the database's rows for scope all, fetched alongside the
 	// live report; nil in scope live, and nil (with a notice) when the
 	// database is unavailable.
-	dbRows []relay.HistoryBinding
+	dbRows []relevo.HistoryBinding
 }
 
 func newModel(ctx context.Context, src Source, opts Options) Model {
@@ -97,8 +97,8 @@ func newModel(ctx context.Context, src Source, opts Options) Model {
 // rows is the report's bindings in display order. Every index in the
 // model -- list.cursor, list.top -- indexes THIS slice, never
 // report.Bindings directly.
-func (m Model) rows() []relay.BindingStatus {
-	return relay.SortRows(m.report.Bindings, m.sort)
+func (m Model) rows() []relevo.BindingStatus {
+	return relevo.SortRows(m.report.Bindings, m.sort)
 }
 
 // empty reports whether the fleet has no rows to show. It is the one place
@@ -142,7 +142,7 @@ func (m Model) Init() tea.Cmd {
 // row finds a report row by key (BindingStatus.Key()): a planner row keys
 // by Name, a server row by owner/name, so two clients' same-named bindings
 // never collide.
-func row(rep relay.Report, key string) *relay.BindingStatus {
+func row(rep relevo.Report, key string) *relevo.BindingStatus {
 	for i := range rep.Bindings {
 		if rep.Bindings[i].Key() == key {
 			return &rep.Bindings[i]
@@ -230,7 +230,7 @@ func (m Model) pointDetailAt(key string) (Model, tea.Cmd) {
 // archivedAt from h, follow false (a hist row's terminal is transcript
 // rows, never tailed). Every cache cleared, the active tab kept, exactly
 // like pointDetailAt. A no-op when the pane already shows h.Name.
-func (m Model) pointDetailAtHist(h relay.HistoryBinding) (Model, tea.Cmd) {
+func (m Model) pointDetailAtHist(h relevo.HistoryBinding) (Model, tea.Cmd) {
 	if m.detail.name == h.Name {
 		return m, nil
 	}
@@ -550,7 +550,7 @@ func (m Model) View() string {
 // re-entry keeps what the screen already has.
 func (m Model) enterDash() (Model, tea.Cmd) {
 	if m.src.Base().DB == nil {
-		m.notice = fmt.Sprintf("no database: %v", relay.ErrNoDatabase)
+		m.notice = fmt.Sprintf("no database: %v", relevo.ErrNoDatabase)
 		return m, nil
 	}
 	m.screen = screenDash
@@ -622,7 +622,7 @@ func dashStyles() dash.Styles {
 // name in neither the fleet nor the database is a notice, no screen change.
 func (m Model) jumpFromDash(msg dash.JumpMsg) (tea.Model, tea.Cmd) {
 	live := row(m.report, msg.BindingName)
-	var hist *relay.HistoryBinding
+	var hist *relevo.HistoryBinding
 	for i := range m.dbRows {
 		if m.dbRows[i].Name == msg.BindingName {
 			hist = &m.dbRows[i]
@@ -721,7 +721,7 @@ func (m Model) splitView() string {
 
 // headerView is the reversed bar and the blank under it (headerRows).
 func (m Model) headerView() string {
-	left := lipgloss.NewStyle().Bold(true).Render(" relay ")
+	left := lipgloss.NewStyle().Bold(true).Render(" relevo ")
 	switch {
 	case !m.statusLoaded:
 		left += "  "
@@ -742,7 +742,7 @@ func (m Model) headerView() string {
 	}
 	var right []string
 	for _, g := range m.report.Gated {
-		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relay.GateUntilText(g.Until))))
+		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relevo.GateUntilText(g.Until))))
 	}
 	right = append(right, dimStyle.Render(m.now().Local().Format("15:04")+" "))
 	bar := headerBar.Render(fit(spread(left, strings.Join(right, "  ·  "), m.width), m.width))

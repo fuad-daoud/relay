@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // ownerEnv is a second (or third...) enrolled client with its own tiny git
@@ -99,7 +99,7 @@ func sendRoundAs(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoI
 		t.Fatalf("create binding %s status = %d, want 201; body: %s", name, resp.StatusCode, string(body))
 	}
 
-	outRef := "refs/relay/" + name + "/out"
+	outRef := "refs/relevo/" + name + "/out"
 	if err := env.gitClient.UpdateRef(ctx, clientDir, outRef, headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
@@ -119,10 +119,10 @@ func sendRoundAs(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoI
 
 // startedSpecs copies the runner's specs under its mutex, so a test can read
 // what a round started without racing the handler that started it.
-func startedSpecs(env *testEnv) []relay.ProcSpec {
+func startedSpecs(env *testEnv) []relevo.ProcSpec {
 	env.runner.mu.Lock()
 	defer env.runner.mu.Unlock()
-	return append([]relay.ProcSpec(nil), env.runner.specs...)
+	return append([]relevo.ProcSpec(nil), env.runner.specs...)
 }
 
 // TestRoundSpawnCarriesAuthorEnv pins #335's last hop: the round a binding's
@@ -247,9 +247,9 @@ func TestCreateBindingRejectsBadAuthor(t *testing.T) {
 // marks pid exited on runner without disturbing any other pid it is
 // tracking -- what a multi-owner test needs that the single-pid
 // runner.setAlive(false) used elsewhere cannot give it.
-func closeRound(t *testing.T, rt relay.Runtime, name string, pid int, runner *scriptRunner) {
+func closeRound(t *testing.T, rt relevo.Runtime, name string, pid int, runner *scriptRunner) {
 	t.Helper()
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	if err := os.WriteFile(rt.Store.ReportPath(name, 1), []byte(reportText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +372,8 @@ func TestAdmitAfterSlotFrees(t *testing.T) {
 		t.Fatalf("reload A: %v", err)
 	}
 	entriesA, _ := rtA2.Store.ReadLog("api")
-	if relay.RoundStateOf(bA2, entriesA) != remote.RoundClosed {
-		t.Errorf("A round_state = %v, want closed", relay.RoundStateOf(bA2, entriesA))
+	if relevo.RoundStateOf(bA2, entriesA) != remote.RoundClosed {
+		t.Errorf("A round_state = %v, want closed", relevo.RoundStateOf(bA2, entriesA))
 	}
 
 	rtB := testRuntime(t, env.srv, ownerB.id)
@@ -385,8 +385,8 @@ func TestAdmitAfterSlotFrees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog B: %v", err)
 	}
-	if relay.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state = %v, want running", relay.RoundStateOf(bB, entriesB))
+	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
+		t.Errorf("B round_state = %v, want running", relevo.RoundStateOf(bB, entriesB))
 	}
 
 	if len(env.runner.specs) != 2 {
@@ -465,8 +465,8 @@ func TestAdmitStrictFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	entriesB, _ := rtB.Store.ReadLog("api")
-	if relay.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state after tick 1 = %v, want running", relay.RoundStateOf(bB, entriesB))
+	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
+		t.Errorf("B round_state after tick 1 = %v, want running", relevo.RoundStateOf(bB, entriesB))
 	}
 
 	rtC := testRuntime(t, env.srv, ownerC.id)
@@ -475,8 +475,8 @@ func TestAdmitStrictFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	entriesC, _ := rtC.Store.ReadLog("api")
-	if relay.RoundStateOf(bC, entriesC) != remote.RoundQueued {
-		t.Errorf("C round_state after tick 1 = %v, want still queued", relay.RoundStateOf(bC, entriesC))
+	if relevo.RoundStateOf(bC, entriesC) != remote.RoundQueued {
+		t.Errorf("C round_state after tick 1 = %v, want still queued", relevo.RoundStateOf(bC, entriesC))
 	}
 	if pos := queuePosition(t, env, ownerC.id); pos != 1 {
 		t.Errorf("C position after tick 1 = %d, want 1", pos)
@@ -494,8 +494,8 @@ func TestAdmitStrictFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	entriesC2, _ := rtC2.Store.ReadLog("api")
-	if relay.RoundStateOf(bC2, entriesC2) != remote.RoundRunning {
-		t.Errorf("C round_state after tick 2 = %v, want running", relay.RoundStateOf(bC2, entriesC2))
+	if relevo.RoundStateOf(bC2, entriesC2) != remote.RoundRunning {
+		t.Errorf("C round_state after tick 2 = %v, want running", relevo.RoundStateOf(bC2, entriesC2))
 	}
 }
 
@@ -561,8 +561,8 @@ func TestAdmitFreeSlotButQueueNonEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	entriesB, _ := rtB.Store.ReadLog("api")
-	if relay.RoundStateOf(bB, entriesB) != remote.RoundRunning {
-		t.Errorf("B round_state after tick = %v, want running", relay.RoundStateOf(bB, entriesB))
+	if relevo.RoundStateOf(bB, entriesB) != remote.RoundRunning {
+		t.Errorf("B round_state after tick = %v, want running", relevo.RoundStateOf(bB, entriesB))
 	}
 	if pos := queuePosition(t, env, ownerC.id); pos != 1 {
 		t.Errorf("C position after tick = %d, want 1", pos)
@@ -577,7 +577,7 @@ func TestAdmitFreeSlotButQueueNonEmpty(t *testing.T) {
 // cap allows it.
 //
 // Mutation check: drop the `b.Owner != ""` branch in headless.go's lost
-// handling (added in the relay-package step of this plan) and this fails
+// handling (added in the relevo-package step of this plan) and this fails
 // on newRunner.specs staying empty.
 func TestRestartRequeuesDeadBuilder(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
@@ -754,7 +754,7 @@ func TestDoneRefusesQueuedRound(t *testing.T) {
 	if err := json.Unmarshal(body, &errBody); err != nil {
 		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
 	}
-	wantMsg := fmt.Sprintf("round %d is queued; relay stop to drop it from the queue, or unbind", 1)
+	wantMsg := fmt.Sprintf("round %d is queued; relevo stop to drop it from the queue, or unbind", 1)
 	if errBody.Message != wantMsg {
 		t.Errorf("error message = %q, want %q", errBody.Message, wantMsg)
 	}
@@ -838,7 +838,7 @@ func TestGetBindingQueuePosition(t *testing.T) {
 // owners) and B gets core 0: the distinct-core assertion fails.
 func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relay.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 
@@ -877,7 +877,7 @@ func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 // the owners that did list are still returned.
 func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relay.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")

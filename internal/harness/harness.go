@@ -19,7 +19,7 @@ const (
 	ShapeConsult RoleShape = "consult"
 )
 
-// RoleSpec describes one role relay can run.
+// RoleSpec describes one role relevo can run.
 type RoleSpec struct {
 	Name       string
 	Shape      RoleShape
@@ -32,8 +32,8 @@ type RoleSpec struct {
 	Definitions []string
 }
 
-// roleTable defines relay's built-in roles: a role is relay's name for a job
-// (builder, reviewer), with a shape relay's loop depends on and the harness
+// roleTable defines relevo's built-in roles: a role is relevo's name for a job
+// (builder, reviewer), with a shape relevo's loop depends on and the harness
 // agent definition that implements it. The candidate that runs it is a separate
 // choice (#80).
 var roleTable = []RoleSpec{
@@ -77,7 +77,7 @@ func RoleNames() []string {
 	return names
 }
 
-// Role is one agent definition relay ships for a harness.
+// Role is one agent definition relevo ships for a harness.
 type Role struct {
 	Name string // as the user types it: "plan-executor", "researcher"
 	Path string // home-relative install path
@@ -85,7 +85,7 @@ type Role struct {
 	// ExpectModel is the only model pin doctor accepts in an installed copy
 	// without warning; "" means any pin is fine. It is "inherit" on every
 	// agy row because agy's model key is a tier that would override the
-	// --model relay passes on the launch line (spec §7.2).
+	// --model relevo passes on the launch line (spec §7.2).
 	ExpectModel string
 }
 
@@ -96,13 +96,13 @@ type Role struct {
 type Harness struct {
 	Kind   string // harness kind, as passed to the harness's own agent selector
 	Binary string // executable name looked up on PATH
-	// Roles are the definitions relay ships for this kind, ordered with
-	// plan-executor first so doctor reports the role relay's loop depends on
-	// before the rest. Never empty for a known kind: every kind relay runs
+	// Roles are the definitions relevo ships for this kind, ordered with
+	// plan-executor first so doctor reports the role relevo's loop depends on
+	// before the rest. Never empty for a known kind: every kind relevo runs
 	// selects its role with --agent. Not every row backs a roleTable entry:
 	// architect is the planner's definition, shipped so the session that
-	// drives relay can be started with --agent architect, never launched
-	// by relay itself.
+	// drives relevo can be started with --agent architect, never launched
+	// by relevo itself.
 	Roles []Role
 	// MinVersion is the semver floor doctor holds the binary to; "" means
 	// unchecked. agy's floor is the release that added Markdown agent
@@ -305,7 +305,7 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		// client of the one `opencode serve --service` per user, and a
 		// process-group kill of the client (proc.Runner.Kill) leaves the
 		// agent session running inside the service, still editing the
-		// worktree relay has switched away from. --standalone starts a
+		// worktree relevo has switched away from. --standalone starts a
 		// private server instead, so a headless round's kill is a real kill
 		// again.
 		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--standalone"}
@@ -393,7 +393,7 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, state string
 	return out
 }
 
-// ErrBadModel reports a candidate model relay cannot render for its kind.
+// ErrBadModel reports a candidate model relevo cannot render for its kind.
 var ErrBadModel = errors.New("bad model")
 
 // SplitEffort splits a codex candidate model "<id>[:<effort>]" on its last
@@ -415,7 +415,7 @@ func SplitEffort(model string) (id, effort string, err error) {
 	return id, effort, nil
 }
 
-// Lookup returns the entry for a kind. ok is false for a kind relay was not
+// Lookup returns the entry for a kind. ok is false for a kind relevo was not
 // taught, which is not an error: callers degrade to what they can check.
 func Lookup(kind string) (Harness, bool) {
 	h, ok := knownHarnesses[kind]

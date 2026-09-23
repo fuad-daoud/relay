@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // webhookTimeout bounds one webhook POST: long enough for a normal endpoint,
@@ -87,14 +87,14 @@ func humanEvent(ev Event) string {
 }
 
 // text renders ev as the one-line notification text shared by every format,
-// e.g. "relay: api-auth NEEDS YOU round 4 (was active)" or
-// "relay: api-auth builder stalled round 3".
+// e.g. "relevo: api-auth NEEDS YOU round 4 (was active)" or
+// "relevo: api-auth builder stalled round 3".
 func text(ev Event) string {
 	stateSuffix := ""
 	if ev.Type == EventStateChanged && ev.OldState != "" {
 		stateSuffix = fmt.Sprintf(" (was %s)", ev.OldState)
 	}
-	return fmt.Sprintf("relay: %s %s round %d%s", ev.BindingID, humanEvent(ev), ev.Round, stateSuffix)
+	return fmt.Sprintf("relevo: %s %s round %d%s", ev.BindingID, humanEvent(ev), ev.Round, stateSuffix)
 }
 
 // payload renders ev as h.Format's POST body and its content type.

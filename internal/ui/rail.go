@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // railLine is one rendered rail row tagged with the binding it belongs
@@ -56,7 +56,7 @@ func ago(since, now time.Time) string {
 // whatAge is a card's second line: what the binding is on, and for how
 // long, from the fields Status has today (spec §3.3 table). #135's labels
 // and #137's PAUSED join here.
-func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
+func whatAge(b relevo.BindingStatus, now time.Time) (what, age string) {
 	switch b.Display {
 	case "NEEDS YOU":
 		if b.Waiting != nil {
@@ -98,7 +98,7 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 
 // facts is a card's optional third line: tree and round facts, in a fixed
 // order, only those that apply. #143's live +N −M goes first here.
-func facts(b relay.BindingStatus) []string {
+func facts(b relevo.BindingStatus) []string {
 	var out []string
 	// #143's live diff against the round's baseline is the reserved first
 	// fact, ahead of dirty: while a round is open it is the thing most
@@ -153,7 +153,7 @@ func unreadSlotText(unread bool) string {
 // is "the rail has focus": the gutter is lit accent only when the card is
 // both selected and the rail is focused, dim when selected but the pane
 // has focus instead, so a human can tell which side is listening.
-func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) []string {
+func cardLines(b relevo.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) []string {
 	gutter := " "
 	if selected && focused {
 		gutter = accentStyle.Render("▎")
@@ -219,7 +219,7 @@ func cardLines(b relay.BindingStatus, selected, showState bool, now time.Time, f
 // compactLine is a binding's one-line card (spec §6.0, amended round 6):
 // gutter, unread slot, name clipped to fit, then round. No what · age
 // qualifier -- that pair is cards-only.
-func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) string {
+func compactLine(b relevo.BindingStatus, selected, showState bool, now time.Time, focused bool, width int) string {
 	gutter := " "
 	if selected {
 		if focused {
@@ -250,9 +250,9 @@ func compactLine(b relay.BindingStatus, selected, showState bool, now time.Time,
 // histStateText is a hist row's state-slot text (in place of the state
 // word a live row shows): "archived <date>" when the binding is
 // archived, "done" otherwise -- a binding the database has recorded but
-// the live report no longer carries, never tarred (e.g. `relay done`
+// the live report no longer carries, never tarred (e.g. `relevo done`
 // released it without `gc` archiving it yet).
-func histStateText(h relay.HistoryBinding) string {
+func histStateText(h relevo.HistoryBinding) string {
 	if h.Archived {
 		return "archived " + h.ArchivedAt.Format("2006-01-02")
 	}
@@ -261,7 +261,7 @@ func histStateText(h relay.HistoryBinding) string {
 
 // histFacts is a hist row's facts line: round count, last-activity age,
 // and its feature label when one is set.
-func histFacts(h relay.HistoryBinding, now time.Time) string {
+func histFacts(h relevo.HistoryBinding, now time.Time) string {
 	parts := []string{fmt.Sprintf("r%d", h.Rounds), ago(h.LastActivity, now)}
 	if h.Feature != "" {
 		parts = append(parts, "feature "+h.Feature)
@@ -272,7 +272,7 @@ func histFacts(h relay.HistoryBinding, now time.Time) string {
 // histCardLines renders one hist row's card: name (archivedStyle, dim)
 // and its state-slot text on line 1, the facts line on line 2 -- never
 // attention-grouped, never re-ordered by attention (§5.8).
-func histCardLines(h relay.HistoryBinding, selected, focused bool, now time.Time, width int) []string {
+func histCardLines(h relevo.HistoryBinding, selected, focused bool, now time.Time, width int) []string {
 	gutter := " "
 	if selected && focused {
 		gutter = accentStyle.Render("▎")
@@ -298,7 +298,7 @@ func histCardLines(h relay.HistoryBinding, selected, focused bool, now time.Time
 }
 
 // histCompactLine is histCardLines' one-line form, mirroring compactLine.
-func histCompactLine(h relay.HistoryBinding, selected, focused bool, width int) string {
+func histCompactLine(h relevo.HistoryBinding, selected, focused bool, width int) string {
 	gutter := " "
 	if selected {
 		if focused {
@@ -410,7 +410,7 @@ var groupOrder = []string{"NEEDS YOU", "HELD", "ACTIVE", "PAUSED", "DONE"}
 // rail has focus" (m.screen == screenList), threaded through to cardLines
 // so the selected card's gutter dims when the pane has focus. compact
 // emits compactLine's single tagged line per binding instead.
-func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int, compact bool) []railLine {
+func railLines(rows []relevo.BindingStatus, cursor int, attention bool, now time.Time, focused bool, width int, compact bool) []railLine {
 	var out []railLine
 	card := func(i int) {
 		if compact {
@@ -484,7 +484,7 @@ func railLines(rows []relay.BindingStatus, cursor int, attention bool, now time.
 	}
 
 	for _, r := range runs {
-		header := " " + r.label + "  (" + faintStyle.Render(relay.ShortOwner(rows[r.lo].Owner)) + ")  " +
+		header := " " + r.label + "  (" + faintStyle.Render(relevo.ShortOwner(rows[r.lo].Owner)) + ")  " +
 			faintStyle.Render(strconv.Itoa(r.hi-r.lo))
 		out = append(out, railLine{text: fit(header, width), binding: -1})
 		cards(r.lo, r.hi)

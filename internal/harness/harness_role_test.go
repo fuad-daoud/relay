@@ -8,7 +8,7 @@ func TestRolesAreOrderedPlanExecutorFirst(t *testing.T) {
 			continue
 		}
 		if h.Roles[0].Name != "plan-executor" {
-			t.Errorf("%s: first role = %q, want plan-executor -- the role relay's loop depends on is reported first",
+			t.Errorf("%s: first role = %q, want plan-executor -- the role relevo's loop depends on is reported first",
 				h.Kind, h.Roles[0].Name)
 		}
 	}

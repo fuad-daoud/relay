@@ -1,4 +1,4 @@
-// Package candidate loads the harness/provider/model triples relay may start,
+// Package candidate loads the harness/provider/model triples relevo may start,
 // and nothing else: which one to start is the caller's choice (#80).
 package candidate
 
@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // ErrBadRef reports a candidate reference that is not a harness/provider/model triple.
@@ -56,7 +56,7 @@ type Candidate struct {
 	Tree          string   `json:"tree,omitempty"`
 	ExtraArgs     []string `json:"extra_args,omitempty"`
 	LimitPatterns []string `json:"limit_patterns,omitempty"`
-	// DialogPatterns is ignored since #303: pane dialogs and `relay answer`
+	// DialogPatterns is ignored since #303: pane dialogs and `relevo answer`
 	// were deleted. The field stays decodable so existing candidates.json
 	// files still load.
 	DialogPatterns []string `json:"dialog_patterns,omitempty"`
@@ -165,7 +165,7 @@ func (s *Set) Providers() []string {
 
 // Load reads and validates candidate definitions from a JSON file, discarding
 // the warnings LoadWithWarnings returns. A missing file is zero candidates and
-// not an error, because relay ships none (spec §1 point 3); a present file that
+// not an error, because relevo ships none (spec §1 point 3); a present file that
 // does not validate is an error at startup for every subcommand, because a
 // daemon running on config it cannot parse is worse than one that refuses to
 // start (spec §6).
@@ -175,9 +175,9 @@ func Load(path string) (*Set, error) {
 }
 
 // LoadWithWarnings reads and validates candidate definitions, returning a
-// warning for every candidate this relay drops because its harness or one of
-// its roles is unknown (#372 §4.4). A newer relay's candidate must not stop
-// this relay, and the drop surfaces in `relay doctor`.
+// warning for every candidate this relevo drops because its harness or one of
+// its roles is unknown (#372 §4.4). A newer relevo's candidate must not stop
+// this relevo, and the drop surfaces in `relevo doctor`.
 //
 // Only an unknown harness and an unknown role are skipped: duplicates, a bad
 // tree, tier or pattern, and every other validation failure still fail the load.

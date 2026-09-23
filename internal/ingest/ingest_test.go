@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 const fixtureDir = "testdata/binding-three-rounds"
 
 func openTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

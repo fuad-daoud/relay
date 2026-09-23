@@ -8,28 +8,28 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
+func paneModel(t *testing.T, b relevo.BindingStatus, active tab) Model {
 	t.Helper()
 	m := Model{width: 140, height: 40, ready: true, statusLoaded: true, sort: true,
 		now: func() time.Time { return railNow }}
-	m.report = relay.Report{Bindings: []relay.BindingStatus{b}}
+	m.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
 	m.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
 		vp: viewport.New(m.paneWidth(), m.viewportHeight())}
 	return m
 }
 
 func TestPaneHeadRows(t *testing.T) {
-	b := relay.BindingStatus{
+	b := relevo.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
-		Branch: "relay/webshop", Dirty: true,
-		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
-		Last:      &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
+		Branch: "relevo/webshop", Dirty: true,
+		LastClose: &relevo.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
+		Last:      &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 	}
 	m := paneModel(t, b, tabReport)
 	head := m.paneHead(&b)
@@ -40,7 +40,7 @@ func TestPaneHeadRows(t *testing.T) {
 		"webshop  round 4   NEEDS YOU ",
 		"planner  architect-1",
 		"builder  agy",
-		"tree     relay/webshop · dirty · last close r3: 2 commits, clean",
+		"tree     relevo/webshop · dirty · last close r3: 2 commits, clean",
 	}
 	for i, w := range want {
 		if got := stripANSI(head[i]); !strings.HasPrefix(got, w) {
@@ -57,9 +57,9 @@ func TestPaneHeadRows(t *testing.T) {
 		t.Errorf("title row lacks the last event: %q", stripANSI(head[0]))
 	}
 
-	oneCommit := relay.BindingStatus{
+	oneCommit := relevo.BindingStatus{
 		Name: "ledger", Round: 2, Display: "ACTIVE",
-		LastClose: &relay.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
+		LastClose: &relevo.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
 	}
 	if got := stripANSI(m.paneHead(&oneCommit)[3]); !strings.Contains(got, "last close r1: 1 commit, dirty") {
 		t.Errorf("one-commit tree row = %q", got)
@@ -67,10 +67,10 @@ func TestPaneHeadRows(t *testing.T) {
 }
 
 func TestPaneHeadHeadlessAndCwd(t *testing.T) {
-	b := relay.BindingStatus{
+	b := relevo.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", CWD: "/home/x/api",
 		BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
-		Headless: &relay.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
+		Headless: &relevo.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 	}
 	m := paneModel(t, b, tabReport)
 	head := m.paneHead(&b)
@@ -83,7 +83,7 @@ func TestPaneHeadHeadlessAndCwd(t *testing.T) {
 }
 
 func TestTabBarWordsAndUnderline(t *testing.T) {
-	m := paneModel(t, relay.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
+	m := paneModel(t, relevo.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
 	bar := m.tabBar()
 	if len(bar) != tabRows {
 		t.Fatalf("%d tab rows", len(bar))
@@ -142,7 +142,7 @@ func TestDiffStatAndColour(t *testing.T) {
 }
 
 func TestSourceLinePerTab(t *testing.T) {
-	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabReport)
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
 	if got := stripANSI(m.sourceLine()); got != "report r2 · 13:02" {
@@ -153,8 +153,8 @@ func TestSourceLinePerTab(t *testing.T) {
 	if got := stripANSI(m.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
-	b.Headless = &relay.HeadlessInfo{LogPath: "/x/002-builder.log"}
-	m.report = relay.Report{Bindings: []relay.BindingStatus{b}}
+	b.Headless = &relevo.HeadlessInfo{LogPath: "/x/002-builder.log"}
+	m.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
 	m.detail.headless = true
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
 		transcript: true, logName: "002-builder.log"}
@@ -192,11 +192,11 @@ func TestSourceLinePerTab(t *testing.T) {
 }
 
 func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
-	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
+	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo answer --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	line, ok := m.hintLine(&b)
-	if !ok || stripANSI(line) != "relay: relay answer --name webshop" {
+	if !ok || stripANSI(line) != "relevo: relevo answer --name webshop" {
 		t.Errorf("hint = %q ok=%v", stripANSI(line), ok)
 	}
 	m.detail.active = tabReport
@@ -215,8 +215,8 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 }
 
 func TestPaneViewRowsAndWidth(t *testing.T) {
-	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
+	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo answer --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
 	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal], false))
@@ -230,7 +230,7 @@ func TestPaneViewRowsAndWidth(t *testing.T) {
 			t.Errorf("row %d is %d wide, pane is %d: %q", i, w, m.paneWidth(), stripANSI(l))
 		}
 	}
-	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relay: relay answer") {
+	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relevo: relevo answer") {
 		t.Errorf("last pane row must be the hint, got %q", got)
 	}
 }
@@ -312,7 +312,7 @@ func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 }
 
 func TestViewportReachesBottomOfLongLines(t *testing.T) {
-	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabLog)
 	m.detail.vp.Width = 40
 	m.detail.vp.Height = 3

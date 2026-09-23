@@ -17,8 +17,8 @@ stage() {
 	v2=${2:-$1}
 	rm -rf "$work/repo"
 	mkdir -p "$work/repo/claude-plugin/.claude-plugin" "$work/repo/.claude-plugin"
-	printf '{"name": "relay", "version": "%s"}\n' "$1" > "$work/repo/claude-plugin/.claude-plugin/plugin.json"
-	printf '{"name": "relay", "plugins": [{"name": "relay", "version": "%s"}]}\n' "$v2" > "$work/repo/.claude-plugin/marketplace.json"
+	printf '{"name": "relevo", "version": "%s"}\n' "$1" > "$work/repo/claude-plugin/.claude-plugin/plugin.json"
+	printf '{"name": "relevo", "plugins": [{"name": "relevo", "version": "%s"}]}\n' "$v2" > "$work/repo/.claude-plugin/marketplace.json"
 	cp "$here/check-plugin-version.sh" "$work/repo/"
 }
 

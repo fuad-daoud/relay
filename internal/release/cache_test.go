@@ -51,7 +51,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	// Save must create the root: the daemon is the first writer on a fresh
 	// machine, and nothing has made the state directory yet.
-	nested := filepath.Join(root, "state", "relay")
+	nested := filepath.Join(root, "state", "relevo")
 	want := Cache{
 		Latest:    "v0.7.0",
 		CheckedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),

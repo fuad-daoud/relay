@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 type recordedRequest struct {
@@ -142,7 +142,7 @@ func TestWebhookFormats(t *testing.T) {
 				t.Errorf("json body missing key %q: %v", k, m)
 			}
 		}
-		if m["text"] != "relay: api-auth NEEDS YOU round 4 (was active)" {
+		if m["text"] != "relevo: api-auth NEEDS YOU round 4 (was active)" {
 			t.Errorf("text = %q", m["text"])
 		}
 	})
@@ -155,7 +155,7 @@ func TestWebhookFormats(t *testing.T) {
 		sink.Dispatch(context.Background(), ev)
 		call := srv.waitCall(t, 2*time.Second)
 
-		want := `{"text":"relay: api-auth NEEDS YOU round 4 (was active)"}`
+		want := `{"text":"relevo: api-auth NEEDS YOU round 4 (was active)"}`
 		if strings.TrimSpace(string(call.body)) != want {
 			t.Errorf("slack body = %s, want %s", call.body, want)
 		}
@@ -169,7 +169,7 @@ func TestWebhookFormats(t *testing.T) {
 		sink.Dispatch(context.Background(), ev)
 		call := srv.waitCall(t, 2*time.Second)
 
-		want := `{"content":"relay: api-auth NEEDS YOU round 4 (was active)"}`
+		want := `{"content":"relevo: api-auth NEEDS YOU round 4 (was active)"}`
 		if strings.TrimSpace(string(call.body)) != want {
 			t.Errorf("discord body = %s, want %s", call.body, want)
 		}

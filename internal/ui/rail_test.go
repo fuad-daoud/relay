@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/muesli/termenv"
 )
 
@@ -25,33 +25,33 @@ func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 func plain(s string) string { return strings.Join(strings.Fields(stripANSI(s)), " ") }
 
 func TestCardLinesShapes(t *testing.T) {
-	blocked := relay.BindingStatus{
+	blocked := relevo.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop", Dirty: true, Consults: 2,
-		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
+		BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relevo/webshop", Dirty: true, Consults: 2,
+		Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
 	}
-	headless := relay.BindingStatus{
+	headless := relevo.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working",
-		Branch: "relay/api", Headless: &relay.HeadlessInfo{PID: 48211},
+		Branch: "relevo/io", Headless: &relevo.HeadlessInfo{PID: 48211},
 	}
-	cwd := relay.BindingStatus{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy",
-		Last: &relay.LastEvent{TS: railNow.Add(-3 * time.Hour)}}
+	cwd := relevo.BindingStatus{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy",
+		Last: &relevo.LastEvent{TS: railNow.Add(-3 * time.Hour)}}
 
 	cases := []struct {
 		name string
-		b    relay.BindingStatus
+		b    relevo.BindingStatus
 		want []string // plain text, trailing spaces trimmed
 	}{
 		{"blocked", blocked, []string{
 			"▎ webshop r4",
 			"▎ question · 2m",
 			"▎ dirty · 2 consults",
-			"▎ agy · relay/webshop",
+			"▎ agy · relevo/webshop",
 		}},
 		{"headless", headless, []string{
 			"api r2",
 			"working",
-			"opencode · headless · relay/api",
+			"opencode · headless · relevo/io",
 		}},
 		{"cwd done", cwd, []string{
 			"docs r1",
@@ -76,7 +76,7 @@ func TestCardLinesShapes(t *testing.T) {
 }
 
 func TestCardLinesNameOrderShowsState(t *testing.T) {
-	b := relay.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}
+	b := relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}
 	got := plain(cardLines(b, false, true, railNow, true, railDefault)[1])
 	if !strings.HasPrefix(got, "ACTIVE · working") {
 		t.Errorf("line 2 = %q", got)
@@ -88,7 +88,7 @@ func TestCardLinesNameOrderShowsState(t *testing.T) {
 }
 
 func TestCardLinesTruncateLongName(t *testing.T) {
-	b := relay.BindingStatus{Name: strings.Repeat("x", 60), Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
+	b := relevo.BindingStatus{Name: strings.Repeat("x", 60), Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
 	for i, l := range cardLines(b, false, false, railNow, true, railDefault) {
 		if w := lipgloss.Width(l); w != railDefault {
 			t.Errorf("line %d width %d", i, w)
@@ -101,7 +101,7 @@ func TestCardLinesTruncateLongName(t *testing.T) {
 // the plan fixed, read at a rail width the line fits (at the default width
 // the existing truncation cuts it, live last).
 func TestFactsLiveAndSpend(t *testing.T) {
-	b := relay.BindingStatus{
+	b := relevo.BindingStatus{
 		Spend: &usage.Spend{Rounds: 1, Measured: 0.16, Tokens: usage.Tokens{In: 3_500_000}},
 		LiveUsage: &usage.Usage{Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
 			Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
@@ -117,19 +117,19 @@ func TestFactsLiveAndSpend(t *testing.T) {
 }
 
 func TestRailLinesGroupsAndTags(t *testing.T) {
-	rows := []relay.BindingStatus{
+	rows := []relevo.BindingStatus{
 		// #143: an unread report marks the card's name line with "●".
 		{Name: "n", Display: "NEEDS YOU", BuilderKind: "agy", Unread: true},
 		{Name: "a1", Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "a2", Display: "ACTIVE", BuilderKind: "agy"},
 		// #137: PAUSED groups between ACTIVE and DONE.
 		{Name: "p", Display: "PAUSED", BuilderKind: "agy",
-			Last: &relay.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
+			Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
 		// #143: a live diff fact adds a fourth line to d's card, tacked on
 		// last so it does not shift any of the indices this test already
 		// asserts on.
 		{Name: "d", Display: "DONE", BuilderKind: "agy",
-			Live: &relay.LiveDiff{Files: 3, Added: 5, Removed: 2}},
+			Live: &relevo.LiveDiff{Files: 3, Added: 5, Removed: 2}},
 	}
 	lines := railLines(rows, 1, true, railNow, true, railDefault, false)
 	// header, card n (3 lines), gap, header, card a1 (3), card a2 (3), gap,
@@ -181,7 +181,7 @@ func TestCardGutterDimsWhenRailUnfocused(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
-	b := relay.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
+	b := relevo.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"}
 	lit := cardLines(b, true, false, railNow, true, railDefault)[0]
 	dim := cardLines(b, true, false, railNow, false, railDefault)[0]
 	if !strings.Contains(lit, accentStyle.Render("▎")) {
@@ -213,8 +213,8 @@ func TestCompactLineShape(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
-	b := relay.BindingStatus{Name: "spaceapi-ingest", Round: 12, Display: "NEEDS YOU", BuilderKind: "agy",
-		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}}
+	b := relevo.BindingStatus{Name: "spaceapi-ingest", Round: 12, Display: "NEEDS YOU", BuilderKind: "agy",
+		Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}}
 	l := compactLine(b, true, false, railNow, true, railCompact)
 	if w := lipgloss.Width(l); w != railCompact {
 		t.Errorf("width %d, want %d", w, railCompact)
@@ -226,7 +226,7 @@ func TestCompactLineShape(t *testing.T) {
 	if strings.Contains(p, "question") || strings.Contains(p, "2m") {
 		t.Errorf("compact carries no qualifier: %q", p)
 	}
-	short := plain(compactLine(relay.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"}, false, false, railNow, true, railCompact))
+	short := plain(compactLine(relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"}, false, false, railNow, true, railCompact))
 	if short != "api r2" {
 		t.Errorf("short name = %q", short)
 	}
@@ -268,7 +268,7 @@ func TestRailWindowSpan(t *testing.T) {
 }
 
 func TestFactsSpend(t *testing.T) {
-	b := relay.BindingStatus{Name: "x", Spend: &usage.Spend{Rounds: 4, Measured: 1.23, Estimated: 0.40, Unknown: 2}}
+	b := relevo.BindingStatus{Name: "x", Spend: &usage.Spend{Rounds: 4, Measured: 1.23, Estimated: 0.40, Unknown: 2}}
 	joined := stripANSI(strings.Join(facts(b), " · "))
 	if !strings.Contains(joined, "$1.23 · ~$0.40 · 2 unknown") {
 		t.Errorf("facts = %q", joined)
@@ -287,7 +287,7 @@ func TestFactsSpend(t *testing.T) {
 // state slot reads "archived <date>", the facts line reads
 // "rN · age · feature X", and the name is styled archivedStyle.
 func TestRailArchivedRowFacts(t *testing.T) {
-	h := relay.HistoryBinding{
+	h := relevo.HistoryBinding{
 		Name: "old-feature", Rounds: 3, Feature: "auth",
 		LastActivity: railNow.Add(-2 * time.Hour),
 		Archived:     true, ArchivedAt: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
@@ -324,7 +324,7 @@ func TestRailArchivedRowFacts(t *testing.T) {
 // row the database recorded but never archived (ArchivedAt unset) reads
 // "done" in the state slot, not a zero-value date.
 func TestRailArchivedRowNotArchivedReadsDone(t *testing.T) {
-	h := relay.HistoryBinding{Name: "x", Rounds: 1}
+	h := relevo.HistoryBinding{Name: "x", Rounds: 1}
 	if got := histStateText(h); got != "done" {
 		t.Errorf("state = %q, want %q", got, "done")
 	}
@@ -333,10 +333,10 @@ func TestRailArchivedRowNotArchivedReadsDone(t *testing.T) {
 // TestCardLinesShowsStaleLabel pins #135's rail surface: a NEEDS YOU row
 // carries its stale age on the card's second line.
 func TestCardLinesShowsStaleLabel(t *testing.T) {
-	b := relay.BindingStatus{
+	b := relevo.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
 		Stale:   "stale 4h 0m",
-		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
+		Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
 	}
 	got := plain(cardLines(b, false, false, railNow, true, railDefault)[1])
 	if !strings.Contains(got, "· stale 4h 0m") {

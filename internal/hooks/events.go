@@ -13,7 +13,7 @@ const (
 	// EventBuilderStalled reports that a live headless builder's stream went
 	// quiet for policy.json's stall_after_ms (#252). It fires once per
 	// stall episode; clearing the stall emits nothing. It is an observation,
-	// never an action: relay never kills or switches on it.
+	// never an action: relevo never kills or switches on it.
 	EventBuilderStalled EventType = "builder_stalled"
 	// EventBindingStale reports that a NEEDS YOU or HELD binding sat unacted
 	// for policy.json's stale_after_ms (#135). It fires once per stale
@@ -39,6 +39,6 @@ type Event struct {
 
 // Config configures the hook dispatcher environment.
 type Config struct {
-	HooksDir string // Resolved to ~/.config/relay/hooks
-	LogPath  string // Resolved to ~/.local/state/relay/hooks.log
+	HooksDir string // Resolved to ~/.config/relevo/hooks
+	LogPath  string // Resolved to ~/.local/state/relevo/hooks.log
 }

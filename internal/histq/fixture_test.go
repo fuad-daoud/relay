@@ -3,7 +3,7 @@ package histq
 import (
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // The shared Task 3 fixture: ten literal rows across three bindings, two

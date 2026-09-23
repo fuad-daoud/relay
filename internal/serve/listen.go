@@ -11,7 +11,7 @@ import (
 )
 
 // ErrNoTLS is returned when ListenAndServe is called without a TLS certificate and without InsecureHTTP.
-var ErrNoTLS = errors.New("no certificate; run relay serve init or pass --insecure-http")
+var ErrNoTLS = errors.New("no certificate; run relevo serve init or pass --insecure-http")
 
 // ListenConfig configures the server's network listener.
 type ListenConfig struct {

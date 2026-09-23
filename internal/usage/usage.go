@@ -1,7 +1,7 @@
 // Package usage reads what a round consumed from each harness's own
 // record and folds it into one figure with its provenance (#142). It
 // knows harness record shapes and nothing else: no rounds, no bindings,
-// no store. Nothing in relay decides anything on what it returns.
+// no store. Nothing in relevo decides anything on what it returns.
 package usage
 
 import (
@@ -16,7 +16,7 @@ type Basis string
 const (
 	// Measured: the harness itself reported dollars.
 	Measured Basis = "measured"
-	// Estimated: relay multiplied harness-reported tokens by a price table.
+	// Estimated: relevo multiplied harness-reported tokens by a price table.
 	Estimated Basis = "estimated"
 	// Unknown: no record, no tokens, no price row, or no way to read.
 	Unknown Basis = "unknown"

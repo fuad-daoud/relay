@@ -12,7 +12,7 @@ import (
 var errFake = errors.New("fake failure")
 
 // seedNewerSchema creates path with a schema_version row above every embedded
-// migration, as a newer relay would have left it, and returns the table count
+// migration, as a newer relevo would have left it, and returns the table count
 // before this binary opens it.
 func seedNewerSchema(t *testing.T, path string) int {
 	t.Helper()
@@ -37,7 +37,7 @@ func seedNewerSchema(t *testing.T, path string) int {
 }
 
 func TestOpenCreatesAndMigrates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 
 	d, err := Open(path)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 }
 
 func TestOpenIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 
 	d1, err := Open(path)
 	if err != nil {
@@ -94,11 +94,11 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestOpenLeavesANewerSchemaAlone pins #372 §4.5: a schema above this relay's
+// TestOpenLeavesANewerSchemaAlone pins #372 §4.5: a schema above this relevo's
 // highest embedded migration is returned with Newer() == true and is not
 // migrated (the table count does not change).
 func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 	before := seedNewerSchema(t, path)
 
 	d, err := Open(path)
@@ -108,7 +108,7 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	defer d.Close()
 
 	if !d.Newer() {
-		t.Fatal("Newer() = false, want true for a schema above this relay's migrations")
+		t.Fatal("Newer() = false, want true for a schema above this relevo's migrations")
 	}
 	have, know := d.SchemaVersions()
 	if have != 99 || know != 1 {
@@ -124,11 +124,11 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	}
 }
 
-// TestCheckMigrateRefusesANewerSchema pins the function `relay db migrate`
+// TestCheckMigrateRefusesANewerSchema pins the function `relevo db migrate`
 // calls: it errors on a newer schema (wrapping ErrNewerSchema) and returns nil
-// on one this relay may migrate (#372 §4.5).
+// on one this relevo may migrate (#372 §4.5).
 func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
 
 	d, err := Open(path)
@@ -159,7 +159,7 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 // re-check is what makes this hold; remove it and this fails.
 func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	for i := 0; i < 20; i++ {
-		path := filepath.Join(t.TempDir(), "relay.db")
+		path := filepath.Join(t.TempDir(), "relevo.db")
 
 		var wg sync.WaitGroup
 		errs := make([]error, 2)
@@ -212,7 +212,7 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 }
 
 func TestTxRollsBackOnError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 
 	d, err := Open(path)
 	if err != nil {

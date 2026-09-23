@@ -71,11 +71,11 @@ func TestOpencodeServiceCheck(t *testing.T) {
 }
 
 // TestOpencodeAllowlistCheck pins the opencode config check (#236): a headless
-// opencode builder cannot read its plan under relay's state root unless
+// opencode builder cannot read its plan under relevo's state root unless
 // permission.external_directory allows that directory, and opencode's config
 // is JSONC -- comments and trailing commas are part of the file, not a fault.
 func TestOpencodeAllowlistCheck(t *testing.T) {
-	const stateRoot = "/fake/home/.local/state/relay"
+	const stateRoot = "/fake/home/.local/state/relevo"
 	const jsoncPath = "/fake/home/.config/opencode/opencode.jsonc"
 	const jsonPath = "/fake/home/.config/opencode/opencode.json"
 
@@ -96,7 +96,7 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
 	}
 
 	t.Run("an allow entry for the state root is ok", func(t *testing.T) {
-		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relay/**":"allow"}}}`)
+		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relevo/**":"allow"}}}`)
 		c := opencodeAllowlistCheck(env, stateRoot)
 		if c.Group != "opencode" || c.Name != "external_directory" {
 			t.Errorf("row = %+v, want the opencode external_directory row", c)
@@ -111,7 +111,7 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
   // opencode reads this file with comments in it
   "permission": {
     "external_directory": {
-      "/fake/home/.local/state/relay/**": "allow", /* relay stages plans here */
+      "/fake/home/.local/state/relevo/**": "allow", /* relevo stages plans here */
     },
   },
 }`)
@@ -132,7 +132,7 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
 	})
 
 	t.Run("an ask entry does not allow", func(t *testing.T) {
-		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relay/**":"ask"}}}`)
+		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relevo/**":"ask"}}}`)
 		if c := opencodeAllowlistCheck(env, stateRoot); c.Severity != SevWarn {
 			t.Errorf("severity = %v, want warn: only allow opens the directory", c.Severity)
 		}
@@ -146,7 +146,7 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
 	})
 
 	t.Run("the state root itself with allow is enough", func(t *testing.T) {
-		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relay":"allow"}}}`)
+		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relevo":"allow"}}}`)
 		if c := opencodeAllowlistCheck(env, stateRoot); c.Severity != SevOK {
 			t.Errorf("check = %+v, want SevOK from an exact state-root key", c)
 		}
@@ -161,14 +161,14 @@ func TestOpencodeAllowlistCheck(t *testing.T) {
 	})
 
 	t.Run("opencode.json without the c is read too", func(t *testing.T) {
-		env := newEnv(t, jsonPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relay/*":"allow"}}}`)
+		env := newEnv(t, jsonPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relevo/*":"allow"}}}`)
 		if c := opencodeAllowlistCheck(env, stateRoot); c.Severity != SevOK {
 			t.Errorf("check = %+v, want SevOK from opencode.json", c)
 		}
 	})
 
 	t.Run("the jsonc candidate wins over the json one", func(t *testing.T) {
-		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relay/**":"allow"}}}`)
+		env := newEnv(t, jsoncPath, `{"permission":{"external_directory":{"/fake/home/.local/state/relevo/**":"allow"}}}`)
 		env.existingFiles[jsonPath] = true
 		env.fileContents[jsonPath] = `{}`
 		c := opencodeAllowlistCheck(env, stateRoot)

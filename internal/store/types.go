@@ -1,4 +1,4 @@
-// Package store owns relay's on-disk state: the bindings and the append-only
+// Package store owns relevo's on-disk state: the bindings and the append-only
 // round log.
 package store
 
@@ -18,13 +18,13 @@ const (
 	StateBroken   State = "broken"    // the builder process is gone
 	StateDone     State = "done"      // planner declared the work verified
 	// StatePaused is the third lifecycle state between ACTIVE and DONE:
-	// worktree released by `relay pause`; branch and log kept;
-	// `relay bind --resume` restores it.
+	// worktree released by `relevo pause`; branch and log kept;
+	// `relevo bind --resume` restores it.
 	StatePaused State = "paused"
 )
 
-// Mode is the shape of a builder: a process relay runs itself (#99), or one
-// hosted on a remote relay server. "" is a pre-#303 pane binding, kept
+// Mode is the shape of a builder: a process relevo runs itself (#99), or one
+// hosted on a remote relevo server. "" is a pre-#303 pane binding, kept
 // loadable so an old bind.json still reads back unchanged.
 type Mode string
 
@@ -155,16 +155,16 @@ type QueueFacts struct {
 	Since    time.Time `json:"since"`
 }
 
-// Headless reports whether this endpoint is a process relay runs rather than
+// Headless reports whether this endpoint is a process relevo runs rather than
 // a pane it watches. "" is pane.
 func (e Endpoint) Headless() bool { return e.Mode == ModeHeadless }
 
-// Remote reports whether this endpoint is hosted on a remote relay server.
+// Remote reports whether this endpoint is hosted on a remote relevo server.
 func (e Endpoint) Remote() bool { return e.Mode == ModeRemote }
 
 // Progress is the current round's sampled progress clock (#135): the tree
 // fingerprint and the builder's output, each with the time it last changed.
-// It is the raw material for the stalled and exploring labels; relay never
+// It is the raw material for the stalled and exploring labels; relevo never
 // acts on it.
 type Progress struct {
 	// SampledAt is when the last sample was taken. The daemon samples at most
@@ -191,14 +191,14 @@ type Binding struct {
 	// Format is the on-disk format this record was written at (#372): 0 (a
 	// missing key) is format 1, today's shape, and from 2 on the number is
 	// written. save refuses to overwrite a Format it does not know, so a
-	// newer relay's fields survive an older binary's rewrite.
+	// newer relevo's fields survive an older binary's rewrite.
 	Format int `json:"format,omitempty"`
 
 	Name    string   `json:"name"`
 	CWD     string   `json:"cwd"`
 	Planner Endpoint `json:"planner"`
-	// PlannerID names the relay planner record this binding belongs to
-	// (#303 §3.2, §5.3): the id in $XDG_STATE_HOME/relay/planners/<id>.json
+	// PlannerID names the relevo planner record this binding belongs to
+	// (#303 §3.2, §5.3): the id in $XDG_STATE_HOME/relevo/planners/<id>.json
 	// and in the db's planner table. Empty on every binding written before
 	// #303 step 1. A remote binding carries the client planner's id too: the
 	// planner never goes over the wire, so the server-side binding is
@@ -224,10 +224,10 @@ type Binding struct {
 	// because core 0 is valid, and an old binding without the key decodes as
 	// nil. startRound sets it; queueReport clears it with RoundTier.
 	RoundCPU *int `json:"round_cpu,omitempty"`
-	// Gate is the acceptance command relay runs in the worktree when the
+	// Gate is the acceptance command relevo runs in the worktree when the
 	// round's completion marker appears (#132); "" means no gate. Run through
 	// `sh -c`, so it may be any shell line. Set at bind/add/fork; never changed
-	// by relay.
+	// by relevo.
 	Gate string `json:"gate,omitempty"`
 	// GateTimeoutMS bounds one gate run; 0 means policy.GateTimeout().
 	GateTimeoutMS int `json:"gate_timeout_ms,omitempty"`
@@ -246,7 +246,7 @@ type Binding struct {
 	// closed. Nil on a binding that never ran a verify consult.
 	LastVerdict *Verdict `json:"last_verdict,omitempty"`
 
-	// Regate is the maximum number of automatic repair rounds relay opens
+	// Regate is the maximum number of automatic repair rounds relevo opens
 	// after a failing gate (#132 part 2); 0 means off. Set at bind/add/fork
 	// (the policy.json gate.regate default, or an explicit --regate) or by
 	// send --regate. A human send or a passing gate resets RepairCount, not
@@ -267,7 +267,7 @@ type Binding struct {
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	RoundStartedAt time.Time `json:"round_started_at"`
 	// QueuedAt is non-zero while the current round is accepted on a server
-	// and waiting for a builder slot (#285). Zeroed by relay.Admit. Never set
+	// and waiting for a builder slot (#285). Zeroed by relevo.Admit. Never set
 	// off the server.
 	QueuedAt time.Time `json:"queued_at,omitempty"`
 	// HaltNotifiedRound is the round a halt notification has already been sent
@@ -285,7 +285,7 @@ type Binding struct {
 	FinishPending bool `json:"finish_pending,omitempty"`
 
 	// Halt is why the binding is NEEDS YOU when neither a blocked dialog nor a
-	// missing pane explains it, and HaltAt is when relay decided so. Halt is
+	// missing pane explains it, and HaltAt is when relevo decided so. Halt is
 	// the sentence haltBinding already composes for the toast, minus the
 	// leading "<name>: " prefix (the reader knows the name). Written by
 	// haltBinding and Send's headless spawn-failure branch; cleared at round
@@ -319,12 +319,12 @@ type Binding struct {
 	// daemon judged the live-but-quiet builder stalled (#252): zero means not
 	// stalled. Set/cleared only by reconcileHeadless (and copied from the
 	// server view for remote bindings); cleared by Send and round close.
-	// relay never acts on it -- killing stays the human's decision. Since
+	// relevo never acts on it -- killing stays the human's decision. Since
 	// #135 it is set by progressStep for every local builder mode, from the
 	// later of the tree's and the output's last change.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
-	// StopRequestedAt is when `relay stop` asked this round's builder to
+	// StopRequestedAt is when `relevo stop` asked this round's builder to
 	// wrap up, and StopGraceMS is what it was called with (#138). Both
 	// are zero on a binding that was never stopped; a stop is cleared by Send
 	// (a new round) and by the round close (queueReport), so a stale request
@@ -350,7 +350,7 @@ type Binding struct {
 	// Cleared by Send, resume/rebind and round close.
 	StaleSince time.Time `json:"stale_since,omitempty"`
 
-	// StaleNotifiedAt is when relay last raised the one stale notification for
+	// StaleNotifiedAt is when relevo last raised the one stale notification for
 	// the current episode (#135), so a stale binding notifies once and not once
 	// per tick. Reset with StaleSince.
 	StaleNotifiedAt time.Time `json:"stale_notified_at,omitempty"`
@@ -388,8 +388,8 @@ type Binding struct {
 	// preamble_pending (pre-#85) is ignored on load: the role is selected at
 	// launch now.
 
-	// Worktree is the git worktree RELAY created for this binding, and is therefore
-	// the only directory relay may ever remove. Empty for every binding relay did
+	// Worktree is the git worktree RELEVO created for this binding, and is therefore
+	// the only directory relevo may ever remove. Empty for every binding relevo did
 	// not create a tree for -- including a fork bound to a directory the human
 	// supplied. Never infer ownership from the path.
 	Worktree string `json:"worktree,omitempty"`
@@ -402,8 +402,8 @@ type Binding struct {
 	// ForkedAtRound is the source round this binding's history was copied through.
 	ForkedAtRound int `json:"forked_at_round,omitempty"`
 
-	// Branch is the branch relay created for this binding's worktree
-	// (relay/<name>), and Base the commit it was cut at. Written once by add
+	// Branch is the branch relevo created for this binding's worktree
+	// (relevo/<name>), and Base the commit it was cut at. Written once by add
 	// and fork; empty for a --cwd binding, an adopted bind, and every
 	// bind.json written before the fields existed. Display and provenance
 	// today; the branch-integration verbs key on them (#130).
@@ -412,20 +412,20 @@ type Binding struct {
 
 	// BaseRef is the branch name add/fork cut the worktree's branch from --
 	// the branch the source repository had checked out at cut time (e.g.
-	// "main") -- and is what `relay land` rebases onto when --onto is not
+	// "main") -- and is what `relevo land` rebases onto when --onto is not
 	// given (#136). "" for every binding written before the field existed,
 	// for a --cwd binding, for a --branch adoption, and for a detached HEAD
 	// in the source repo; land then requires an explicit --onto.
 	BaseRef string `json:"base_ref,omitempty"`
 
-	// LandedAt is when `relay land` last pushed this binding's branch, and
+	// LandedAt is when `relevo land` last pushed this binding's branch, and
 	// LandedPR is the PR URL when it created one with --pr (#136). Status
 	// reads "landed" until the next Send clears both: a new round moves the
 	// branch again, so the old land says nothing about it.
 	LandedAt time.Time `json:"landed_at,omitempty"`
 	LandedPR string    `json:"landed_pr,omitempty"`
 
-	// ExistingBranch is true when add --branch adopted a branch relay did not
+	// ExistingBranch is true when add --branch adopted a branch relevo did not
 	// create. Informational: every teardown path already leaves branches
 	// alone; this records that the branch predates the binding.
 	ExistingBranch bool `json:"existing_branch,omitempty"`
@@ -456,7 +456,7 @@ type Binding struct {
 	// json "forked_from") for the coming history database. Binding already
 	// has ForkedFrom (string, json "forked_from") and ForkedAtRound (int)
 	// above -- the existing free-text provenance pair that
-	// internal/relay/fork.go, internal/relay/status.go and
+	// internal/relevo/fork.go, internal/relevo/status.go and
 	// internal/ui/rail.go read -- so a second field of the same Go name and
 	// JSON tag cannot coexist with it; that is a compile error, not a style
 	// choice. None of those three files is in this round's declared file
@@ -473,12 +473,12 @@ type Binding struct {
 	ConsultCap int `json:"consult_cap,omitempty"`
 
 	// Edges are planner-declared handoffs to another binding, evaluated once
-	// at this binding's round close (#37): `relay edge add` declares them,
+	// at this binding's round close (#37): `relevo edge add` declares them,
 	// evaluateEdges resolves them. omitempty keeps bind.json byte-identical
 	// until the first edge.
 	Edges []Edge `json:"edges,omitempty"`
 
-	// Owner is the enrolled client id that created this binding on a relay
+	// Owner is the enrolled client id that created this binding on a relevo
 	// server (remote-builders spec §2.1). Empty on every local binding. When
 	// set, the binding has no planner: deliverAndSettle leaves payloads queued
 	// and the owner collects them over the wire.
@@ -512,7 +512,7 @@ type GateRun struct {
 }
 
 // Verdict is one reviewer's verdict on a closed round (#144): what a verify
-// consult's findings parsed to, recorded on the binding so `relay status` can
+// consult's findings parsed to, recorded on the binding so `relevo status` can
 // show the newest one until the round after next.
 type Verdict struct {
 	Round int `json:"round"`
@@ -530,13 +530,13 @@ type ServeFacts struct {
 	RepoID       string    `json:"repo_id"`                 // remote.RepoID of the client's repo
 	BareRepo     string    `json:"bare_repo"`               // absolute path of the bare repo
 	ClosedRound  int       `json:"closed_round,omitempty"`  // last round closed by the daemon; 0 none
-	ResultCommit string    `json:"result_commit,omitempty"` // refs/heads/relay/<name> at that close
-	DirtyCommit  string    `json:"dirty_commit,omitempty"`  // refs/relay/<name>/round-<ClosedRound>, "" if clean
+	ResultCommit string    `json:"result_commit,omitempty"` // refs/heads/relevo/<name> at that close
+	DirtyCommit  string    `json:"dirty_commit,omitempty"`  // refs/relevo/<name>/round-<ClosedRound>, "" if clean
 	AckedRound   int       `json:"acked_round,omitempty"`   // last round the owner acked; 0 none
 	LastSeen     time.Time `json:"last_seen,omitempty"`     // last signed request from the owner about this binding
 
 	// AuthorName and AuthorEmail are the client's git identity, carried on
-	// the create request so every builder relay starts for this binding
+	// the create request so every builder relevo starts for this binding
 	// commits as the client (#335). Both empty means no identity was
 	// carried: an old client, or a binding created before #335.
 	AuthorName  string `json:"author_name,omitempty"`
@@ -569,12 +569,12 @@ const (
 // modelling it as a Binding would leave every one of those fields dead while
 // forcing Status, gc, Fork, doctor and the UI to learn to filter it out.
 //
-// "Read-only" describes how the role is configured, not something relay
-// enforces: a consult's writes are not observable to relay, so the role is a
+// "Read-only" describes how the role is configured, not something relevo
+// enforces: a consult's writes are not observable to relevo, so the role is a
 // contract with the harness, not a sandbox.
 type Consult struct {
 	// ID is 8 lowercase hex characters, unique within one binding. It appears
-	// in the log, in both filenames, and in `relay reap`, so it is short enough
+	// in the log, in both filenames, and in `relevo reap`, so it is short enough
 	// to read aloud.
 	ID string `json:"id"`
 
@@ -597,7 +597,7 @@ type Consult struct {
 
 	SpawnedAt time.Time `json:"spawned_at"`
 
-	// NudgedAt is when relay sent this consult its single nudge; zero means it
+	// NudgedAt is when relevo sent this consult its single nudge; zero means it
 	// has not been nudged. A consult runs for a minute or two, so it does not
 	// inherit the builder's screen-fingerprint quiescence or scrape fallback.
 	// (no omitempty: encoding/json never omits a struct, so the option read as
@@ -611,14 +611,14 @@ type Consult struct {
 // Edge is a planner-declared handoff (#37): when the source binding's Round
 // round closes and When's artifact exists, Then delivers Prompt to Target --
 // queued in front of the planner by default, or fired unattended when Mode
-// is "fire". Declared by `relay edge add`, evaluated once at the source's
+// is "fire". Declared by `relevo edge add`, evaluated once at the source's
 // round close, and never touched again once Fired.
 type Edge struct {
 	// ID is 6 hex characters, unique within one binding.
 	ID string `json:"id"`
 
 	// Round is the source round whose close this edge watches. Defaults to
-	// the source's current round at `relay edge add` time; a closed round
+	// the source's current round at `relevo edge add` time; a closed round
 	// can never fire again, so it must be >= that round.
 	Round int `json:"round"`
 

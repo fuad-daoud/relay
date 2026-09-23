@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// HookInput is the Claude Code SessionStart payload relay reads from stdin
+// HookInput is the Claude Code SessionStart payload relevo reads from stdin
 // (§3.4). Unknown fields are ignored: the hook's payload is Claude Code's to
-// extend, and a field relay does not know must not fail a session.
+// extend, and a field relevo does not know must not fail a session.
 type HookInput struct {
 	HookEventName  string `json:"hook_event_name"`
 	Source         string `json:"source"`
@@ -70,12 +70,12 @@ const hookEventName = "SessionStart"
 // answers carry.
 func hookContext(r Record) string {
 	return fmt.Sprintf(
-		"You are relay planner %s (%s). RELAY_PLANNER is set in your shell; pass --planner %s only to act as another planner.",
+		"You are relevo planner %s (%s). RELEVO_PLANNER is set in your shell; pass --planner %s only to act as another planner.",
 		r.Name, r.ID, r.Name)
 }
 
-// noEnvNote is §3.4's note for a hook that could not export RELAY_PLANNER.
-const noEnvNote = "RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process."
+// noEnvNote is §3.4's note for a hook that could not export RELEVO_PLANNER.
+const noEnvNote = "RELEVO_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relevo resolves this session through its host process."
 
 // handoffRules is the "Handing off" section of the shipped architect
 // definition (#374), embedded verbatim so one source feeds both the planner
@@ -85,9 +85,9 @@ const noEnvNote = "RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unse
 //go:embed handoff.md
 var handoffRules string
 
-// HookOutput is what `relay planner init --hook claude` prints on success: the
+// HookOutput is what `relevo planner init --hook claude` prints on success: the
 // JSON envelope that tells the model which planner it is (§3.4), followed by
-// the relay handoff rules (#374), so a planner running any agent -- not only
+// the relevo handoff rules (#374), so a planner running any agent -- not only
 // one running the shipped `architect` -- receives them. The context text is
 // written verbatim from the spec, and the trailing newline because this is
 // stdout for a shell to read.
@@ -97,8 +97,8 @@ func HookOutput(r Record) []byte {
 
 // HookOutputNoEnv is HookOutput when $CLAUDE_ENV_FILE is unset (§3.4): the
 // same envelope and the same sentence, followed by one space and the note that
-// RELAY_PLANNER could not be exported -- so the model knows relay falls back
-// to resolving this session through its host process -- and then the relay
+// RELEVO_PLANNER could not be exported -- so the model knows relevo falls back
+// to resolving this session through its host process -- and then the relevo
 // handoff rules (#374), appended exactly as HookOutput appends them.
 func HookOutputNoEnv(r Record) []byte {
 	return encodeHookContext(hookContext(r) + " " + noEnvNote + "\n\n" + handoffRules)
@@ -124,8 +124,8 @@ func encodeHookContext(context string) []byte {
 }
 
 // EnvLine is the line `init --hook` appends to $CLAUDE_ENV_FILE: it is what
-// puts RELAY_PLANNER in every later Bash call of the session (§3.4).
-func EnvLine(id string) string { return "export RELAY_PLANNER=" + id + "\n" }
+// puts RELEVO_PLANNER in every later Bash call of the session (§3.4).
+func EnvLine(id string) string { return "export RELEVO_PLANNER=" + id + "\n" }
 
 // InitResult is which of §5.1's three outcomes happened.
 type InitResult string
@@ -141,7 +141,7 @@ const (
 	InitMoved InitResult = "moved"
 )
 
-// InitInput is everything `relay planner init` knows when it registers. Every
+// InitInput is everything `relevo planner init` knows when it registers. Every
 // field is an argument, so the rules are testable without a process, a
 // terminal or a database (§5.1).
 type InitInput struct {
@@ -162,7 +162,7 @@ type InitInput struct {
 	// Now stamps created_at and seen_at.
 	Now time.Time
 	// PriorID supplies §3.5's "reuse the db row's id": given a (kind,
-	// session), the id relay's database already has for it. Nil means none,
+	// session), the id relevo's database already has for it. Nil means none,
 	// and a false return mints a fresh id.
 	PriorID func(kind, session string) (string, bool)
 }
@@ -170,8 +170,8 @@ type InitInput struct {
 // Init implements §5.1: register, re-attach or move, and hand back the record
 // the caller should export.
 //
-// Every lookup and write happens under one registry lock, so `relay planner
-// init --hook` and a concurrently starting `relay mcp`, or two hook firings,
+// Every lookup and write happens under one registry lock, so `relevo planner
+// init --hook` and a concurrently starting `relevo mcp`, or two hook firings,
 // serialise: whichever runs second finds the first's record instead of
 // creating a second one for the same host or session.
 func Init(reg Registry, in InitInput) (Record, InitResult, error) {

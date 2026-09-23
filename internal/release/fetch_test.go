@@ -18,11 +18,11 @@ func TestHTTPFetcherParsesTag(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		gotAccept = r.Header.Get("Accept")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v0.7.0","name":"relay v0.7.0","draft":false}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v0.7.0","name":"relevo v0.7.0","draft":false}`))
 	}))
 	defer srv.Close()
 
-	tag, err := NewHTTPFetcher(srv.URL+"/repos/fuad-daoud/relay/releases/latest", 5*time.Second).
+	tag, err := NewHTTPFetcher(srv.URL+"/repos/fuad-daoud/relevo/releases/latest", 5*time.Second).
 		Latest(context.Background())
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
@@ -30,8 +30,8 @@ func TestHTTPFetcherParsesTag(t *testing.T) {
 	if tag != "v0.7.0" {
 		t.Errorf("Latest = %q, want %q", tag, "v0.7.0")
 	}
-	if gotPath != "/repos/fuad-daoud/relay/releases/latest" {
-		t.Errorf("path = %q, want /repos/fuad-daoud/relay/releases/latest", gotPath)
+	if gotPath != "/repos/fuad-daoud/relevo/releases/latest" {
+		t.Errorf("path = %q, want /repos/fuad-daoud/relevo/releases/latest", gotPath)
 	}
 	// No auth header: an unauthenticated read, so an air-gapped or
 	// rate-limited machine degrades to "not checked" rather than erroring.
@@ -43,21 +43,21 @@ func TestHTTPFetcherParsesTag(t *testing.T) {
 	}
 }
 
-// TestHTTPFetcherEndpointFromEnv pins the RELAY_RELEASE_API override, which is
+// TestHTTPFetcherEndpointFromEnv pins the RELEVO_RELEASE_API override, which is
 // what lets a test or an air-gapped install point the check elsewhere.
 func TestHTTPFetcherEndpointFromEnv(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
 	}))
 	defer srv.Close()
-	t.Setenv("RELAY_RELEASE_API", srv.URL)
+	t.Setenv("RELEVO_RELEASE_API", srv.URL)
 
 	tag, err := NewHTTPFetcher("", 5*time.Second).Latest(context.Background())
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
 	}
 	if tag != "v9.9.9" {
-		t.Errorf("Latest = %q, want v9.9.9 from RELAY_RELEASE_API", tag)
+		t.Errorf("Latest = %q, want v9.9.9 from RELEVO_RELEASE_API", tag)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestHTTPFetcherFailures(t *testing.T) {
 
 	t.Run("no tag_name", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(`{"name":"relay"}`))
+			_, _ = w.Write([]byte(`{"name":"relevo"}`))
 		}))
 		defer srv.Close()
 

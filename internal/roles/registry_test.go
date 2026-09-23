@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // setFromJSON writes body to a temporary candidates.json and loads it.
@@ -219,7 +219,7 @@ func TestLegacyDerivationMachineConfig(t *testing.T) {
 }
 
 // TestLegacyRankingEdge pins the two rules a mutation would break: an order
-// entry relay cannot use still consumes its position, and the unlisted
+// entry relevo cannot use still consumes its position, and the unlisted
 // candidates follow in ref order with position 0.
 func TestLegacyRankingEdge(t *testing.T) {
 	set := setFromJSON(t, `[

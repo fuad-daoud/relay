@@ -1,9 +1,9 @@
-# Relay — automated planner↔builder handoff across agent harnesses
+# Relevo — automated planner↔builder handoff across agent harnesses
 
 Superseded in part by `docs/specs/2026-09-22-drop-herdr-design.md` (#303).
 
 Date: 2026-09-04
-Status: **historical record.** This is the design as approved before relay was
+Status: **historical record.** This is the design as approved before relevo was
 built, kept because it explains *why* the pieces are shaped the way they are.
 It is not maintained against the code — where the two disagree, the code and
 the README are right.
@@ -19,7 +19,7 @@ the builder pane, wait, copy the report back, paste it into the planner, repeat 
 planner declares the work verified. Questions that need a human are answered by talking to
 the planner, which is the desired behaviour and must survive automation.
 
-The copy-paste is the only manual step, and it is pure mechanism. Relay automates exactly
+The copy-paste is the only manual step, and it is pure mechanism. Relevo automates exactly
 that and nothing else.
 
 ## Goals
@@ -35,10 +35,10 @@ that and nothing else.
 
 ## Non-goals
 
-- Relay makes no judgements. It never summarises, rewrites, or decides whether work is
+- Relevo makes no judgements. It never summarises, rewrites, or decides whether work is
   done. All judgement stays in the planner.
-- No headless execution. If it isn't in a pane, relay doesn't run it.
-- No modification of herdr. Relay is built beside it, against its socket API.
+- No headless execution. If it isn't in a pane, relevo doesn't run it.
+- No modification of herdr. Relevo is built beside it, against its socket API.
 - No auto-worktrees, no parallel builders on one tree, no scheduling.
 
 ## Context: what herdr already provides
@@ -66,7 +66,7 @@ Two herdr constraints shape the design:
 1. **Terminal reads are unreliable.** Agent TUIs run on the alternate screen; completed
    responses scroll out of reach of `agent read` regardless of `--lines`. herdr's own
    prescribed workaround is to have the agent write its response to a file and reply with
-   the path. Relay therefore uses **file handoffs**, not screen scraping.
+   the path. Relevo therefore uses **file handoffs**, not screen scraping.
 2. **`agent prompt` is rejected against a blocked agent** (`agent_blocked`). Answering a
    dialog must go through `send-keys`.
 
@@ -75,26 +75,26 @@ Two herdr constraints shape the design:
 Three pieces, deliberately thin.
 
 ```
-relay CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
+relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
                works whether the planner is claude, opencode or agy.
 
-                 relay bind --builder <candidate|pane> [--name <n>]
-                 relay bind --resume <name>
-                 relay send --file <path>
-                 relay answer (--keys <k> | --choice <n> | --text <s>)
-                 relay pull [<name>]
-                 relay done
-                 relay unbind [<name>]
-                 relay status [--json]
-                 relay log <name>
-                 relay ui
+                 relevo bind --builder <candidate|pane> [--name <n>]
+                 relevo bind --resume <name>
+                 relevo send --file <path>
+                 relevo answer (--keys <k> | --choice <n> | --text <s>)
+                 relevo pull [<name>]
+                 relevo done
+                 relevo unbind [<name>]
+                 relevo status [--json]
+                 relevo log <name>
+                 relevo ui
 
 relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
                  1. builder -> idle    : deliver its report to the planner
                  2. builder -> blocked : deliver the dialog question to the planner
                  3. round accounting, timeouts, runaway cap
 
-state          ~/.local/state/relay/<binding-name>/
+state          ~/.local/state/relevo/<binding-name>/
                  bind.json         the binding
                  log.jsonl         append-only round log
                  NNN-plan.md       planner -> builder
@@ -103,7 +103,7 @@ state          ~/.local/state/relay/<binding-name>/
 ```
 
 **Why the CLI and the daemon are separate.** The outbound leg (planner → builder) happens
-while the planner is mid-turn, so the planner can just call `relay send` synchronously. The
+while the planner is mid-turn, so the planner can just call `relevo send` synchronously. The
 inbound leg (builder → planner) happens *after* the planner's turn has ended, when no model
 is running to notice. That is the only reason a daemon exists.
 
@@ -132,7 +132,7 @@ is running to notice. That is the only reason a daemon exists.
 
 An endpoint is identified by its `session_id` when one is recorded (exact match, no
 fallback). When no session is recorded, identity falls back to `pane_id` plus agent
-`kind` (or bare pane ID if no kind was recorded). Relay treats endpoints as caches of
+`kind` (or bare pane ID if no kind was recorded). Relevo treats endpoints as caches of
 live agent identity rather than static records: whenever Reconcile locates an endpoint's
 agent among live herdr agents, it refreshes the endpoint's `pane_id` (so a session-
 identified endpoint survives a pane move) and backfills an empty `session_id` if the
@@ -158,7 +158,7 @@ session survives the move and `refreshEndpoint` updates the pane ID normally.
 
 ### Candidates (config)
 
-Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relay renders harness launch arguments per kind:
+Candidates are configured in `~/.config/relevo/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relevo renders harness launch arguments per kind:
 
 | kind | args |
 | --- | --- |
@@ -169,7 +169,7 @@ Candidates are configured in `~/.config/relay/candidates.json`; see [Candidates]
 then `extra_args` are appended.
 
 Which candidate an omitted token resolves to is decided by
-`~/.config/relay/policy.json` (`order[role]`) together with the
+`~/.config/relevo/policy.json` (`order[role]`) together with the
 availability ledger: the first ungated candidate in the order, refusing
 when nothing ungated serves the role or when several serve it and
 nothing is ordered. Each resolution is a `pick` entry in the binding's
@@ -180,17 +180,17 @@ nothing is ordered. Each resolution is a `pick` entry in the binding's
 `{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
    path, delivered_at, confirmed: bool, note }`
 
-A `pick` entry is relay -> log only: which candidate a spawn resolved to and why.
-A `switch` entry is relay -> log only: the builder was replaced mid-round, and why.
+A `pick` entry is relevo -> log only: which candidate a spawn resolved to and why.
+A `switch` entry is relevo -> log only: the builder was replaced mid-round, and why.
 
 ## Message protocol
 
 ### Planner → builder
 
 ```
-planner writes ./plan.md, then runs:  relay send --file ./plan.md
+planner writes ./plan.md, then runs:  relevo send --file ./plan.md
 
-relay: assign round N, copy to <state>/NNN-plan.md
+relevo: assign round N, copy to <state>/NNN-plan.md
        herdr agent prompt <builder> "
          Round N from the planner.
          Read:  <state>/NNN-plan.md
@@ -236,10 +236,10 @@ relayd observes builder -> blocked
   dialog = herdr agent read <builder> --source detection
   write <state>/NNN-question.md
   deliver("Builder is blocked at a dialog. Question: <path>.
-           Answer with: relay answer --keys <key> | --choice <n> | --text <s>")
+           Answer with: relevo answer --keys <key> | --choice <n> | --text <s>")
 
-planner reads the actual dialog, then:  relay answer --keys enter
-relay: herdr agent send-keys <builder> enter     # NOT agent prompt; that is rejected
+planner reads the actual dialog, then:  relevo answer --keys enter
+relevo: herdr agent send-keys <builder> enter     # NOT agent prompt; that is rejected
 ```
 
 ### Delivery rule (the anti-clobber rule)
@@ -258,7 +258,7 @@ deliver(payload):
                                        #   planner's input box reads empty (claude) -> inject at once
                                        #   screen unchanged for --held-grace -> inject anyway (appends
                                        #     to an abandoned draft, accepted on purpose)
-                                       #   human says "go" -> planner runs `relay pull`, which PRINTS
+                                       #   human says "go" -> planner runs `relevo pull`, which PRINTS
                                        #     the payload to stdout as tool output. No injection at all,
                                        #     so it cannot collide and cannot be rejected mid-turn.
     else:                              herdr agent prompt <planner> payload
@@ -267,13 +267,13 @@ deliver(payload):
 
 ### Termination
 
-The planner calls `relay done` once it has verified the work. `round_cap` (default 20) is a
-runaway guard only: on reaching it relay stops relaying, sets `needs_you`, and notifies.
+The planner calls `relevo done` once it has verified the work. `round_cap` (default 20) is a
+runaway guard only: on reaching it relevo stops relaying, sets `needs_you`, and notifies.
 
 ## Observability
 
 ```
-$ relay status
+$ relevo status
 relayd  running   pid 48213   herdr session default   up 2h14m
 
 webshop    /home/dev/projects/webshop     w2   round 3   ACTIVE
@@ -297,29 +297,29 @@ money   /home/dev/money/ai                      wF   round 7   HELD
 Three display states cover everything: **ACTIVE** (someone is working), **NEEDS YOU**
 (stalled on a human), **HELD** (ready, but the human is in the pane).
 
-- `relay pull [<name>]` — prints any held payload to stdout instead of injecting it. This is
+- `relevo pull [<name>]` — prints any held payload to stdout instead of injecting it. This is
   what the planner runs when the human says "go"; it is the only delivery path that works
   while the planner is mid-turn.
-- `relay log <name>` — every relayed message: round, direction, file, timestamp. The audit
+- `relevo log <name>` — every relayed message: round, direction, file, timestamp. The audit
   trail for "what did the planner actually tell the builder".
-- `relay ui` — interactive reader over the same: report, terminal, diff and log tabs.
-- `relay statusline` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes herdr (spec `docs/specs/2026-09-13-statusline-design.md`).
+- `relevo ui` — interactive reader over the same: report, terminal, diff and log tabs.
+- `relevo statusline` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes herdr (spec `docs/specs/2026-09-13-statusline-design.md`).
 
-All agent rows are derived live from herdr on each call. Relay holds no truth herdr already
+All agent rows are derived live from herdr on each call. Relevo holds no truth herdr already
 has, except bindings and the round log, so `status` cannot disagree with reality.
 
 ## Failure handling
 
 | Failure | Behaviour |
 | --- | --- |
-| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relay closes a pane only in `relay reap` (a consult pane it spawned) and in a mid-round builder switch (the replaced builder's pane). |
+| Builder pane closed/killed | Binding -> `broken`, relaying stops, pending plan kept. Rebinding resumes at the same round with a short context rebuild. Relevo closes a pane only in `relevo reap` (a consult pane it spawned) and in a mid-round builder switch (the replaced builder's pane). |
 | Builder wedged (`working` forever) | `round_timeout_ms` elapses -> `needs_you` + notification. Nothing killed. |
 | herdr reports `unknown` | Treated as "keep waiting", **never** as done (herdr documents that `unknown` does not prove completion). After a grace period -> `needs_you`. Most likely with `abuilder`; see prerequisites. |
 | `agent_prompt_stalled` | Retry once, then stop and flag. Never blind-refire — a double-submitted plan means two builders' worth of edits. |
-| Planner session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relay bind --resume <name>` adopts it into a new planner and hands over the round log. |
+| Planner session ends (`/clear`, compaction, pane closed) | Binding -> `orphaned`, reports queue on disk. `relevo bind --resume <name>` adopts it into a new planner and hands over the round log. |
 | relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
 | Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
-| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relay pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
+| Human camps in the planner pane | Delivery stays `held`; notification escalates. Human says "go" and the planner runs `relevo pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
 | Builder gone for 30s, or its provider gated mid-round | The daemon switches to the next ungated candidate in `policy.json` order, bounded by `max_switches`; see `docs/specs/2026-09-11-builder-switching-design.md`. |
 
 ## Decisions and rationale
@@ -333,29 +333,29 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | Builder selection | Human, in plain English to the planner | Preserves existing cost/model control; the token names exactly what starts, so the log and `status` show it without a lookup |
 | Concurrent loops on one tree | Refuse the second bind | The one failure mode that destroys work rather than stalling |
 
-relay enforces one writer per working tree only for bindings: `Bind` refuses a
-second binding on a tree another one drives. An agent relay did not start is
-outside that guarantee entirely, and relay cannot prevent one -- it does not
+relevo enforces one writer per working tree only for bindings: `Bind` refuses a
+second binding on a tree another one drives. An agent relevo did not start is
+outside that guarantee entirely, and relevo cannot prevent one -- it does not
 own the harness.
 
-What it can do is say so. `relay status` reports, per binding, every live agent
+What it can do is say so. `relevo status` reports, per binding, every live agent
 whose cwd is inside that binding's working tree and which no binding accounts
 for, as `foreign` rows. The rule is occupancy, not authorship: `herdr agent
 list` reports a kind, a status, a cwd and a title, and nothing about writes, so
 a sanctioned read-only researcher and a rogue implementer look identical from
-here. relay reports that something is there and shows its title; the reader
-draws the conclusion. Rows are never filtered by title, which would mean relay
+here. relevo reports that something is there and shows its title; the reader
+draws the conclusion. Rows are never filtered by title, which would mean relevo
 trusting a string any agent can set.
 
 How much that covers depends on the builder's harness: claude runs sub-agents
 in their own panes, which herdr lists; agy and opencode do not, and herdr
-lists nothing extra. For those bindings `relay status` prints a `coverage` row
+lists nothing extra. For those bindings `relevo status` prints a `coverage` row
 after the foreign rows saying that no foreign rows does not mean the tree is
 clear. The per-harness record is `harness.Harness.SubAgents`.
 
 An agent is foreign when no binding references it, not merely when it is not
 this binding's builder -- a second binding's planner may legitimately share a
-tree, and relay knows about it. Agents in subdirectories of the tree count;
+tree, and relevo knows about it. Agents in subdirectories of the tree count;
 agents in parent directories do not.
 
 Known limit: paths are compared literally. A tree reached through a symlink
@@ -371,19 +371,19 @@ The window between a report and the next send is now captured separately, as
 drift. A round diff is recorded when a round closes; drift is recorded when the
 next one opens, and is keyed to that opening round.
 
-**A commit is not drift.** relay snapshots working-tree *content* (`add -A` into
+**A commit is not drift.** relevo snapshots working-tree *content* (`add -A` into
 a temporary index), so a planner committing, amending, or rebasing the builder's
-work changes nothing relay can see. A merge that brings in new content, a
+work changes nothing relevo can see. A merge that brings in new content, a
 checkout, or a builder that kept editing after it reported all do register.
 
 This narrowness is a property to rely on, and a reader who does not know it will
 misread a quiet send.
 
-**relay reports drift; it does not attribute it.** Drift never changes a
-binding's state, never notifies, and never fires a hook. relay cannot observe
+**relevo reports drift; it does not attribute it.** Drift never changes a
+binding's state, never notifies, and never fires a hook. relevo cannot observe
 *who* wrote -- `herdr agent list` can say which agents were in the tree (that is
 the foreign-agent feature), and joining the two is the planner's judgement, not
-relay's.
+relevo's.
 
 One honest gap: a round that produced no baseline also records no drift origin,
 so the next send is silent. It self-heals after one round.
@@ -398,10 +398,10 @@ so the next send is silent. It self-heals after one round.
 ## Out of scope (YAGNI)
 
 - Auto-worktree creation for parallel loops.
-- Relay-side summarisation or context compaction.
+- Relevo-side summarisation or context compaction.
 - Any planner-side intelligence in the daemon.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
-- A TUI in the original scope: `relay status` / `relay watch` were enough. Superseded by
-  [`docs/specs/2026-09-08-relay-tui-design.md`](specs/2026-09-08-relay-tui-design.md), which
-  designs `relay ui` as a read-only reader. `relay watch` (status on a ticker) was dropped in
-  favour of `watch -n2 relay status` once `ui` existed (#114).
+- A TUI in the original scope: `relevo status` / `relevo watch` were enough. Superseded by
+  [`docs/specs/2026-09-08-relevo-tui-design.md`](specs/2026-09-08-relevo-tui-design.md), which
+  designs `relevo ui` as a read-only reader. `relevo watch` (status on a ticker) was dropped in
+  favour of `watch -n2 relevo status` once `ui` existed (#114).

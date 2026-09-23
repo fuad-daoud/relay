@@ -18,7 +18,7 @@ const ProtocolVersion = "2025-06-18"
 
 // ServerName is this MCP server's name, and the "source" attribute Claude
 // Code stamps on every pushed channel event.
-const ServerName = "relay"
+const ServerName = "relevo"
 
 // Mode is whether this process claims the pane and pushes events, or only
 // serves tools (spec §7: the delivery hole and its guard).
@@ -38,23 +38,23 @@ const maxLineBytes = 16 << 20
 // metaKeyPattern is what Claude Code accepts as a meta key: an identifier.
 var metaKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Server is relay mcp's JSON-RPC 2.0 loop over stdio. It implements
-// relay.Pusher via Push, so cmd/relay can hand it straight to relay.Drain.
+// Server is relevo mcp's JSON-RPC 2.0 loop over stdio. It implements
+// relevo.Pusher via Push, so cmd/relevo can hand it straight to relevo.Drain.
 type Server struct {
 	Verbs   Verbs
 	Version string // serverInfo.version
 	// Mode picks the instructions text when Instructions is empty (#303
 	// §4.5): channel mode hears events, tools mode gets reports from the
-	// background wait's `relay pull`.
+	// background wait's `relevo pull`.
 	Mode Mode
 	// Instructions overrides the mode's text when non-empty. Tests use it;
-	// cmd/relay leaves it empty so the mode decides.
+	// cmd/relevo leaves it empty so the mode decides.
 	Instructions string
 	Log          io.Writer // stderr; nil -> discard
 	// Notice, when non-nil and returning a non-empty string, is appended as
 	// one more text content block to every tools/call result (#371 §4.10):
-	// it is how a planner session's relay mcp says the daemon has moved on
-	// to a newer relay than this server. nil, or "", changes nothing.
+	// it is how a planner session's relevo mcp says the daemon has moved on
+	// to a newer relevo than this server. nil, or "", changes nothing.
 	Notice func() string
 	// OnInitialized is called once, after notifications/initialized. The
 	// command wires the poll loop start here so nothing is pushed before
@@ -77,7 +77,7 @@ func (s *Server) log() *log.Logger {
 		if w == nil {
 			w = io.Discard
 		}
-		s.logger = log.New(w, "relay mcp: ", log.LstdFlags)
+		s.logger = log.New(w, "relevo mcp: ", log.LstdFlags)
 	})
 	return s.logger
 }
@@ -327,7 +327,7 @@ func (s *Server) writeLine(raw []byte) {
 	}
 }
 
-// Push implements relay.Pusher: it writes a notifications/claude/channel
+// Push implements relevo.Pusher: it writes a notifications/claude/channel
 // line to the transport Serve is using, dropping any meta key that is not a
 // Claude-Code-legal identifier (with a log line -- Claude Code would drop it
 // silently otherwise). It is safe to call concurrently with Serve's own

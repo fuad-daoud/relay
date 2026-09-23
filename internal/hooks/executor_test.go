@@ -13,11 +13,11 @@ func TestOSExecutorExecute_EnvAndLogging(t *testing.T) {
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "test_env.sh")
 	scriptContent := `#!/bin/sh
-echo "EVENT=$RELAY_EVENT"
-echo "BINDING=$RELAY_BINDING"
-echo "STATE=$RELAY_STATE"
-echo "OLD_STATE=$RELAY_OLD_STATE"
-echo "ROUND=$RELAY_ROUND"
+echo "EVENT=$RELEVO_EVENT"
+echo "BINDING=$RELEVO_BINDING"
+echo "STATE=$RELEVO_STATE"
+echo "OLD_STATE=$RELEVO_OLD_STATE"
+echo "ROUND=$RELEVO_ROUND"
 `
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)

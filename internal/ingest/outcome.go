@@ -3,9 +3,9 @@ package ingest
 import (
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // deriveOutcome derives round n's outcome from its events, the binding's
@@ -169,7 +169,7 @@ func parsePickNote(note string) string {
 }
 
 // parseSwitchNote parses the token from a switch entry's note. When the
-// note carries the "picked <tok> ..." clause relay actually writes
+// note carries the "picked <tok> ..." clause relevo actually writes
 // ("switched builder (<reason>): picked <tok> for builder: ...") the pick
 // rule applies; otherwise it is the token after the last "->", trimmed of
 // a trailing ")" and whitespace.

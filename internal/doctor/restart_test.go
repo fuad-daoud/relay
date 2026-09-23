@@ -34,9 +34,9 @@ func TestParseUnifiedCgroup(t *testing.T) {
 		path    string
 		ok      bool
 	}{
-		{"v2", "0::/user.slice/user-1000.slice/user@1000.service/relay-round-local-x-1.scope\n", "/user.slice/user-1000.slice/user@1000.service/relay-round-local-x-1.scope", true},
-		{"v2 among v1 lines", "5:cpu:/relay.service\n0::/relay.service\n", "/relay.service", true},
-		{"v1 only", "11:cpu:/relay.service\n10:memory:/relay.service\n", "", false},
+		{"v2", "0::/user.slice/user-1000.slice/user@1000.service/relevo-round-local-x-1.scope\n", "/user.slice/user-1000.slice/user@1000.service/relevo-round-local-x-1.scope", true},
+		{"v2 among v1 lines", "5:cpu:/relevo.service\n0::/relevo.service\n", "/relevo.service", true},
+		{"v1 only", "11:cpu:/relevo.service\n10:memory:/relevo.service\n", "", false},
 		{"empty", "", "", false},
 	}
 	for _, c := range cases {
@@ -75,8 +75,8 @@ func TestRestartSafety(t *testing.T) {
 				{Binding: "web", Kind: "gate", PID: 12},
 			},
 			read: cgroupReader(map[int]string{
-				11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relay-round-local-web-1.scope"),
-				12: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relay-gate-web-1.scope"),
+				11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relevo-round-local-web-1.scope"),
+				12: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relevo-gate-web-1.scope"),
 			}, nil),
 			want: want{SevOK, "2 running, each in its own scope; a daemon restart leaves them running", "", 0},
 		},
@@ -86,12 +86,12 @@ func TestRestartSafety(t *testing.T) {
 				{Binding: "web", Kind: "builder", PID: 11},
 			},
 			read: cgroupReader(map[int]string{
-				11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relay.service"),
+				11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relevo.service"),
 			}, nil),
 			want: want{
 				SevWarn,
-				"1 of 1 running outside their own scope (web builder pid 11 in relay.service): a daemon restart may kill them",
-				"let them finish before restarting relay.service",
+				"1 of 1 running outside their own scope (web builder pid 11 in relevo.service): a daemon restart may kill them",
+				"let them finish before restarting relevo.service",
 				1,
 			},
 		},
@@ -106,17 +106,17 @@ func TestRestartSafety(t *testing.T) {
 				{Binding: "safe", Kind: "builder", PID: 16},
 			},
 			read: cgroupReader(map[int]string{
-				11: v2cgroup("/relay.service"),
-				12: v2cgroup("/relay.service"),
-				13: v2cgroup("/relay.service"),
-				14: v2cgroup("/relay.service"),
-				15: v2cgroup("/relay.service"),
-				16: v2cgroup("/relay-round-local-safe-1.scope"),
+				11: v2cgroup("/relevo.service"),
+				12: v2cgroup("/relevo.service"),
+				13: v2cgroup("/relevo.service"),
+				14: v2cgroup("/relevo.service"),
+				15: v2cgroup("/relevo.service"),
+				16: v2cgroup("/relevo-round-local-safe-1.scope"),
 			}, nil),
 			want: want{
 				SevWarn,
-				"5 of 6 running outside their own scope (web builder pid 11 in relay.service, web gate pid 12 in relay.service, api consult pid 13 in relay.service, and 2 more): a daemon restart may kill them",
-				"let them finish before restarting relay.service",
+				"5 of 6 running outside their own scope (web builder pid 11 in relevo.service, web gate pid 12 in relevo.service, api consult pid 13 in relevo.service, and 2 more): a daemon restart may kill them",
+				"let them finish before restarting relevo.service",
 				5,
 			},
 		},
@@ -127,7 +127,7 @@ func TestRestartSafety(t *testing.T) {
 				{Binding: "gone", Kind: "builder", PID: 99},
 			},
 			read: cgroupReader(
-				map[int]string{11: v2cgroup("/relay-round-local-web-1.scope")},
+				map[int]string{11: v2cgroup("/relevo-round-local-web-1.scope")},
 				map[int]error{99: fmt.Errorf("open /proc/99/cgroup: %w", fs.ErrNotExist)},
 			),
 			want: want{SevOK, "1 running, each in its own scope; a daemon restart leaves them running", "", 0},
@@ -181,7 +181,7 @@ func TestRestartSafetyReadsEveryProcess(t *testing.T) {
 		if pid != 7 {
 			return "", errors.New("unexpected pid")
 		}
-		return v2cgroup("/relay-round-local-x-1.scope"), nil
+		return v2cgroup("/relevo-round-local-x-1.scope"), nil
 	}
 	got := RestartSafety([]RunningProc{{Binding: "x", Kind: "builder", PID: 7}}, read)
 	if got.Detail != "1 running, each in its own scope; a daemon restart leaves them running" {

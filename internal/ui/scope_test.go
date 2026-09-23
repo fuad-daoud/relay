@@ -4,19 +4,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // TestScopeRowsUnionOrder pins the merge rule (§5.8): live rows first, in
 // the order given (the caller has already sorted them); then hist rows not
-// named in live, in the order given (relay.Bindings's own newest-first);
+// named in live, in the order given (relevo.Bindings's own newest-first);
 // a name in both appears exactly once, as live.
 func TestScopeRowsUnionOrder(t *testing.T) {
-	live := []relay.BindingStatus{
+	live := []relevo.BindingStatus{
 		{Name: "b"},
 		{Name: "a"},
 	}
-	hist := []relay.HistoryBinding{
+	hist := []relevo.HistoryBinding{
 		{Name: "a", LastActivity: time.Now()},                      // also live: must not duplicate
 		{Name: "z", LastActivity: time.Now()},                      // newest
 		{Name: "y", LastActivity: time.Now().Add(-24 * time.Hour)}, // older

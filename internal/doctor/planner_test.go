@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/planner"
 )
 
 func writeDoctorFile(t *testing.T, path, body string) {
@@ -20,11 +20,11 @@ func writeDoctorFile(t *testing.T, path, body string) {
 }
 
 // TestDoctorPluginRow is the plan's required case for §4.8's first row: the
-// relay plugin enabled in the user's or the project's settings reads OK, an
+// relevo plugin enabled in the user's or the project's settings reads OK, an
 // existing claude candidate with neither reads FAIL, and no claude candidate
 // at all leaves the row out entirely.
 func TestDoctorPluginRow(t *testing.T) {
-	enabled := `{"enabledPlugins":{"relay@relay":true}}`
+	enabled := `{"enabledPlugins":{"relevo@relevo":true}}`
 
 	t.Run("user settings enable it", func(t *testing.T) {
 		home := t.TempDir()
@@ -65,10 +65,10 @@ func TestDoctorPluginRow(t *testing.T) {
 
 	t.Run("disabled is not enabled", func(t *testing.T) {
 		home := t.TempDir()
-		writeDoctorFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"relay@relay":false}}`)
+		writeDoctorFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"relevo@relevo":false}}`)
 		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevFail {
-			t.Fatalf("plugin row = %+v, want FAIL for relay@relay: false", c)
+			t.Fatalf("plugin row = %+v, want FAIL for relevo@relevo: false", c)
 		}
 	})
 
@@ -85,7 +85,7 @@ func TestDoctorPluginRow(t *testing.T) {
 
 // TestDoctorPlannerRow is the plan's required case for §4.8's third row: it
 // exists only inside a Claude Code session, and fails on a resolve miss or a
-// session with no relay mcp child process.
+// session with no relevo mcp child process.
 func TestDoctorPlannerRow(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
@@ -140,7 +140,7 @@ func TestDoctorPlannerRow(t *testing.T) {
 }
 
 // TestDoctorPluginHookRow pins the "not checked, never FAIL" rule: an install
-// relay cannot find is a fact relay could not establish, not a broken one.
+// relevo cannot find is a fact relevo could not establish, not a broken one.
 func TestDoctorPluginHookRow(t *testing.T) {
 	t.Run("no installed_plugins.json", func(t *testing.T) {
 		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
@@ -152,11 +152,11 @@ func TestDoctorPluginHookRow(t *testing.T) {
 
 	t.Run("hook present", func(t *testing.T) {
 		home := t.TempDir()
-		dir := filepath.Join(home, ".claude", "plugins", "cache", "relay", "relay", "0.1.0")
+		dir := filepath.Join(home, ".claude", "plugins", "cache", "relevo", "relevo", "0.1.0")
 		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
-			`{"plugins":{"relay@relay":[{"installPath":"`+dir+`"}]}}`)
+			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
 		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
-			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relay planner init --hook claude"}]}]}}`)
+			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relevo planner init --hook claude"}]}]}}`)
 		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin hook")
 		if c == nil || c.Severity != SevOK {
@@ -166,11 +166,11 @@ func TestDoctorPluginHookRow(t *testing.T) {
 
 	t.Run("hook missing", func(t *testing.T) {
 		home := t.TempDir()
-		dir := filepath.Join(home, ".claude", "plugins", "cache", "relay", "relay", "0.1.0")
+		dir := filepath.Join(home, ".claude", "plugins", "cache", "relevo", "relevo", "0.1.0")
 		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
-			`{"plugins":{"relay@relay":[{"installPath":"`+dir+`"}]}}`)
+			`{"plugins":{"relevo@relevo":[{"installPath":"`+dir+`"}]}}`)
 		writeDoctorFile(t, filepath.Join(dir, "hooks", "hooks.json"),
-			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relay doctor"}]}]}}`)
+			`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"relevo doctor"}]}]}}`)
 		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin hook")
 		if c == nil || c.Severity != SevFail {
@@ -193,7 +193,7 @@ func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
 	if c.Severity != SevInfo {
 		t.Fatalf("planner row = %v (%s), want INFO", c.Severity, c.Detail)
 	}
-	for _, want := range []string{"background wait", "dangerously-load-development-channels plugin:relay@relay", "allowedChannelPlugins"} {
+	for _, want := range []string{"background wait", "dangerously-load-development-channels plugin:relevo@relevo", "allowedChannelPlugins"} {
 		if !strings.Contains(c.Detail, want) {
 			t.Errorf("planner row detail %q must name %q", c.Detail, want)
 		}
@@ -201,7 +201,7 @@ func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
 }
 
 // TestDoctorPlannerRowNoMCPChildFails pins §4.8: from a Claude Code session,
-// no relay mcp process among the planner host's children is a FAIL, because
+// no relevo mcp process among the planner host's children is a FAIL, because
 // nothing would ever reach the planner.
 func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
@@ -212,7 +212,7 @@ func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
 		t.Fatal("the planner row is missing")
 	}
 	if c.Severity != SevFail {
-		t.Fatalf("planner row = %v (%s), want FAIL with no relay mcp child", c.Severity, c.Detail)
+		t.Fatalf("planner row = %v (%s), want FAIL with no relevo mcp child", c.Severity, c.Detail)
 	}
 	if c.Fix == "" {
 		t.Error("the failing planner row must carry the fix")
@@ -227,10 +227,10 @@ func TestHasMCPChild(t *testing.T) {
 		children []ChildProcess
 		want     bool
 	}{
-		{"relay mcp child", []ChildProcess{{PID: 2, Args: []string{"/usr/local/bin/relay", "mcp"}}}, true},
-		{"relay mcp with flags", []ChildProcess{{PID: 2, Args: []string{"relay", "--planner", "x", "mcp"}}}, true},
-		{"another binary", []ChildProcess{{PID: 2, Args: []string{"relay-wrapper", "mcp"}}}, false},
-		{"relay another verb", []ChildProcess{{PID: 2, Args: []string{"relay", "status"}}}, false},
+		{"relevo mcp child", []ChildProcess{{PID: 2, Args: []string{"/usr/local/bin/relevo", "mcp"}}}, true},
+		{"relevo mcp with flags", []ChildProcess{{PID: 2, Args: []string{"relevo", "--planner", "x", "mcp"}}}, true},
+		{"another binary", []ChildProcess{{PID: 2, Args: []string{"relevo-wrapper", "mcp"}}}, false},
+		{"relevo another verb", []ChildProcess{{PID: 2, Args: []string{"relevo", "status"}}}, false},
 		{"no children", nil, false},
 	}
 	for _, tc := range cases {
@@ -242,12 +242,12 @@ func TestHasMCPChild(t *testing.T) {
 
 // TestDoctorPluginVersionRow is the plan's required case for the third plugin
 // row: the installed plugin's version is compared with the running binary's,
-// advisory only. Every situation relay cannot prove -- no running version, no
-// readable file, no relay entry, an unparseable version -- reads "not checked"
+// advisory only. Every situation relevo cannot prove -- no running version, no
+// readable file, no relevo entry, an unparseable version -- reads "not checked"
 // (OK), never a warning.
 func TestDoctorPluginVersionRow(t *testing.T) {
 	state := func(version string) string {
-		return `{"version":2,"plugins":{"relay@relay":[{"version":"` + version + `","installPath":"/tmp/relay/0.8.0"}]}}`
+		return `{"version":2,"plugins":{"relevo@relevo":[{"version":"` + version + `","installPath":"/tmp/relevo/0.8.0"}]}}`
 	}
 
 	cases := []struct {
@@ -260,12 +260,12 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 		{"no running version", state("0.8.0"), "", SevOK, "not checked"},
 		{"missing file", "", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
 		{"not json", "not json", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
-		{"no relay entry", `{"version":2,"plugins":{"other@relay":[{"version":"0.8.0"}]}}`, "v0.8.0", SevOK, "not checked (relay plugin not installed)"},
-		{"dev build matches the release", state("0.8.0"), "v0.8.0-15-gd664545", SevOK, "plugin 0.8.0 matches relay"},
-		{"exact match", state("0.8.0"), "v0.8.0", SevOK, "plugin 0.8.0 matches relay"},
-		{"older plugin warns", state("0.7.0"), "v0.8.0", SevWarn, "plugin 0.7.0, relay v0.8.0"},
-		{"running is (devel)", state("0.8.0"), "(devel)", SevOK, "not checked (relay is (devel))"},
-		{"plugin version does not parse", state("garbage"), "v0.8.0", SevOK, "not checked (relay is v0.8.0)"},
+		{"no relevo entry", `{"version":2,"plugins":{"other@relevo":[{"version":"0.8.0"}]}}`, "v0.8.0", SevOK, "not checked (relevo plugin not installed)"},
+		{"dev build matches the release", state("0.8.0"), "v0.8.0-15-gd664545", SevOK, "plugin 0.8.0 matches relevo"},
+		{"exact match", state("0.8.0"), "v0.8.0", SevOK, "plugin 0.8.0 matches relevo"},
+		{"older plugin warns", state("0.7.0"), "v0.8.0", SevWarn, "plugin 0.7.0, relevo v0.8.0"},
+		{"running is (devel)", state("0.8.0"), "(devel)", SevOK, "not checked (relevo is (devel))"},
+		{"plugin version does not parse", state("garbage"), "v0.8.0", SevOK, "not checked (relevo is v0.8.0)"},
 	}
 
 	for _, tc := range cases {
@@ -285,7 +285,7 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 			if c.Detail != tc.want {
 				t.Errorf("detail = %q, want %q", c.Detail, tc.want)
 			}
-			if tc.wantSev == SevWarn && c.Fix != "claude plugin update relay@relay" {
+			if tc.wantSev == SevWarn && c.Fix != "claude plugin update relevo@relevo" {
 				t.Errorf("fix = %q, want the update command", c.Fix)
 			}
 		})

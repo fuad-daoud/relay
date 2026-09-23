@@ -13,7 +13,7 @@ import (
 // identity; a second stat of the same file must not.
 func TestExeIdentityChangesOnRename(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "relay")
+	path := filepath.Join(dir, "relevo")
 	if err := os.WriteFile(path, []byte("one"), 0o755); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestExeIdentityChangesOnRename(t *testing.T) {
 		t.Errorf("identity changed with no write: %+v -> %+v", first, again)
 	}
 
-	tmp := filepath.Join(dir, "relay.new")
+	tmp := filepath.Join(dir, "relevo.new")
 	if err := os.WriteFile(tmp, []byte("two"), 0o755); err != nil {
 		t.Fatalf("write replacement: %v", err)
 	}

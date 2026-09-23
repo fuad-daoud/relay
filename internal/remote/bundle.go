@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relevo/internal/git"
 )
 
 var _ TreeTransport = (*BundleTransport)(nil)
@@ -49,7 +49,7 @@ func (f *fileRemover) Close() error {
 
 // Snapshot packages every ref in refs relative to since into a git bundle.
 func (t *BundleTransport) Snapshot(ctx context.Context, repo string, refs []string, since string) (Snapshot, error) {
-	f, err := os.CreateTemp(t.tmp, "relay-bundle-*.bundle")
+	f, err := os.CreateTemp(t.tmp, "relevo-bundle-*.bundle")
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -94,7 +94,7 @@ func (t *BundleTransport) Absorb(ctx context.Context, repo, contentType string, 
 		return nil, ErrUnsupportedType
 	}
 
-	tmpFile, err := os.CreateTemp(t.tmp, "relay-bundle-*.bundle")
+	tmpFile, err := os.CreateTemp(t.tmp, "relevo-bundle-*.bundle")
 	if err != nil {
 		return nil, err
 	}

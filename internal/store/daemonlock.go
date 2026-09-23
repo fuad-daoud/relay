@@ -8,7 +8,7 @@ import (
 )
 
 // ErrDaemonRunning reports that another process already holds the daemon lock.
-var ErrDaemonRunning = errors.New("relay daemon already running")
+var ErrDaemonRunning = errors.New("relevo daemon already running")
 
 // DaemonLock is a held daemon lock. Closing it releases the lock; so does the
 // process exiting, because flock is owned by the kernel and dropped when the

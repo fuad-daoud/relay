@@ -18,30 +18,30 @@ func TestDetectTable(t *testing.T) {
 		},
 		{
 			name: "local build: (devel) from a checkout",
-			in:   Inputs{Version: "(devel)", ExeDir: "/worktrees/relay-update"},
+			in:   Inputs{Version: "(devel)", ExeDir: "/worktrees/relevo-update"},
 			want: KindLocalBuild,
 		},
 		{
 			name: "local build: describe suffix",
-			in:   Inputs{Version: "v0.6.0-2-gddf3d4f", ExeDir: "/worktrees/relay-update"},
+			in:   Inputs{Version: "v0.6.0-2-gddf3d4f", ExeDir: "/worktrees/relevo-update"},
 			want: KindLocalBuild,
 		},
 		{
 			// This worktree's own `git describe --tags --dirty`.
 			name: "local build: this worktree",
-			in:   Inputs{Version: "v0.7.0-8-gbd8aed0", ExeDir: "/worktrees/relay-update"},
+			in:   Inputs{Version: "v0.7.0-8-gbd8aed0", ExeDir: "/worktrees/relevo-update"},
 			want: KindLocalBuild,
 		},
 		{
 			name: "local build: dirty describe",
-			in:   Inputs{Version: "v0.6.0-2-gddf3d4f-dirty", ExeDir: "/worktrees/relay-update"},
+			in:   Inputs{Version: "v0.6.0-2-gddf3d4f-dirty", ExeDir: "/worktrees/relevo-update"},
 			want: KindLocalBuild,
 		},
 		{
-			// An old plugin install left ./relay beside a manifest; with the
+			// An old plugin install left ./relevo beside a manifest; with the
 			// manifest input gone nothing distinguishes it, so it claims nothing.
 			name: "old plugin install: a clean tag claims nothing",
-			in:   Inputs{Version: "v0.7.0", ExeDir: "/plugins/relay"},
+			in:   Inputs{Version: "v0.7.0", ExeDir: "/plugins/relevo"},
 			want: KindUnknown,
 		},
 		{
@@ -64,12 +64,12 @@ func TestDetectTable(t *testing.T) {
 			// A stamp on a build inside a checkout is not a release; it is a
 			// local build by the unchanged rule 3.
 			name: "release stamp with a describe suffix is a local build",
-			in:   Inputs{Version: "v0.9.0-3-gabc1234", ExeDir: "/worktrees/relay", Distribution: "release"},
+			in:   Inputs{Version: "v0.9.0-3-gabc1234", ExeDir: "/worktrees/relevo", Distribution: "release"},
 			want: KindLocalBuild,
 		},
 		{
 			name: "release stamp on (devel) is a local build",
-			in:   Inputs{Version: "(devel)", ExeDir: "/worktrees/relay", Distribution: "release"},
+			in:   Inputs{Version: "(devel)", ExeDir: "/worktrees/relevo", Distribution: "release"},
 			want: KindLocalBuild,
 		},
 		{

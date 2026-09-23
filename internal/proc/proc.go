@@ -1,7 +1,7 @@
 //go:build unix
 
-// Package proc is relay's local process Runner (#99): it starts a headless
-// builder detached from relay, tells later whether that exact process is
+// Package proc is relevo's local process Runner (#99): it starts a headless
+// builder detached from relevo, tells later whether that exact process is
 // still running, reads the exit code its supervisor left in the log, and
 // stops it. It knows nothing about rounds or harnesses.
 package proc
@@ -20,13 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // ExitTrailer prefixes the one line the supervisor appends to the stream when
-// the builder exits: "relay-exit:<code>". It is the only thing relay ever
+// the builder exits: "relevo-exit:<code>". It is the only thing relevo ever
 // reads out of a builder stream.
-const ExitTrailer = "relay-exit:"
+const ExitTrailer = "relevo-exit:"
 
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
 const DefaultKillGrace = 5 * time.Second
@@ -35,7 +36,7 @@ const DefaultKillGrace = 5 * time.Second
 // so supervisorScript can embed it and a test can source exactly the text
 // production runs. It is a POSIX sh function:
 //
-//	relay_reap_scope <procs_file> <self_pid>
+//	relevo_reap_scope <procs_file> <self_pid>
 //
 // It terminates every other process still in the supervisor's scope cgroup
 // once the harness has exited, so the scope empties and --collect removes it
@@ -51,7 +52,7 @@ const DefaultKillGrace = 5 * time.Second
 // silenced too. Every command's errors are discarded and it always returns
 // 0: a scope that will not empty must never cost the builder its exit
 // trailer.
-const ReapFragment = `relay_reap_scope() {
+const ReapFragment = `relevo_reap_scope() {
   procs=$1
   self=$2
   while read -r pid; do
@@ -80,15 +81,15 @@ const ReapFragment = `relay_reap_scope() {
 //
 // Before the builder starts, the supervisor raises its own oom_score_adj;
 // the builder inherits it. Under memory pressure the kernel then prefers a
-// builder over `relay daemon` (#120). The write fails silently where there
+// builder over `relevo daemon` (#120). The write fails silently where there
 // is no /proc (macOS) or it is refused, and the builder runs as before.
 // The redirection sits inside a group so the shell's own "No such file"
 // for a missing /proc is silenced too, not only echo's stderr: sh applies
 // redirections left to right, and the open fails before 2>/dev/null.
 // The builder stays a child of this sh (no exec) so an OOM kill of the
 // builder still leaves a trailer. A group kill from Kill takes the sh with
-// it and leaves none; relay writes its own marker line for every process it
-// stops (relay.appendLogMarker).
+// it and leaves none; relevo writes its own marker line for every process it
+// stops (relevo.appendLogMarker).
 // The trailer is printed with a leading newline so a builder that died
 // mid-line leaves it on a line of its own; the blank line before it is
 // rendered as nothing (transcript rule 1). It goes to stdout -- the stream
@@ -96,9 +97,9 @@ const ReapFragment = `relay_reap_scope() {
 //
 // When Start wrapped this script in a systemd scope (#244, #216), the
 // supervisor also reads its own cgroup's cpu.stat and memory.peak after the
-// builder exits and prints a relay-rusage: line before the exit trailer.
+// builder exits and prints a relevo-rusage: line before the exit trailer.
 //
-// After that line, the same branch reaps the scope (#378): relay_reap_scope
+// After that line, the same branch reaps the scope (#378): relevo_reap_scope
 // TERMs, then KILLs, every other process still in the cgroup, so a harness
 // that left one running cannot keep the scope alive forever. Only a spawn
 // that was told the scope it should be in reaps; a plain spawn (empty want)
@@ -115,11 +116,11 @@ const ReapFragment = `relay_reap_scope() {
 // itself), so the pid is the supervisor's own. An unreadable /proc leaves
 // the guard's test false: no self, no reap, exactly today's behaviour.
 //
-// want is buildArgv's first argument after "relay-supervisor": the scope
+// want is buildArgv's first argument after "relevo-supervisor": the scope
 // unit file name Start expects this process to be running in, or "" for a
 // plain spawn. The guard is on want, not merely on the inherited cgroup
-// matching a relay-round-*.scope shape (#216): a process spawned inside a
-// round's own scope -- relay's test suite, run on a scoped server, is
+// matching a relevo-round-*.scope shape (#216): a process spawned inside a
+// round's own scope -- relevo's test suite, run on a scoped server, is
 // exactly this case -- inherits that cgroup too, so matching the shape
 // alone would make a plain spawn started from inside a round wrongly emit
 // a rusage line for the round's cgroup, not its own.
@@ -132,13 +133,13 @@ if [ -n "$want" ]; then
   case "$cg" in */"$want")
     u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
     m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
-    printf '\nrelay-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
+    printf '\nrelevo-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
     read -r self _ </proc/self/stat
-    [ -n "$self" ] && relay_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"
+    [ -n "$self" ] && relevo_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"
     ;;
   esac
 fi
-printf '\nrelay-exit:%s\n' "$rc"`
+printf '\nrelevo-exit:%s\n' "$rc"`
 
 // probeState is the scope probe's verdict (#295, #370 §4.7).
 type probeState int
@@ -155,7 +156,7 @@ const (
 // whole life.
 const ScopeReprobeAfter = 5 * time.Minute
 
-// Runner is the local relay.Runner.
+// Runner is the local relevo.Runner.
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
@@ -186,7 +187,7 @@ type Runner struct {
 	pinOK bool
 }
 
-var _ relay.Runner = (*Runner)(nil)
+var _ relevo.Runner = (*Runner)(nil)
 
 // New returns a Runner with the default grace.
 func New() *Runner { return &Runner{} }
@@ -242,12 +243,12 @@ func (r *Runner) nowTime() time.Time {
 // supervisor's first argument is the scope unit file name Start expects to
 // be running in (or "" for a plain spawn), so it can tell its own round's
 // scope from one it merely inherited (#216).
-func buildArgv(spec relay.ProcSpec, bin string) []string {
+func buildArgv(spec relevo.ProcSpec, bin string) []string {
 	var want string
 	if spec.Scope != nil {
 		want = ScopeUnitFileName(spec.Scope.Unit)
 	}
-	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", want, bin}, spec.Argv[1:]...)
+	inner := append([]string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", want, bin}, spec.Argv[1:]...)
 	if spec.Scope != nil {
 		return ScopeArgv(*spec.Scope, inner)
 	}
@@ -256,42 +257,42 @@ func buildArgv(spec relay.ProcSpec, bin string) []string {
 
 // Start launches spec under a detached supervisor and returns its handle
 // without waiting. exec.Command, not CommandContext: the caller's context
-// ending (a CLI exiting) must not kill a builder relay meant to leave
+// ending (a CLI exiting) must not kill a builder relevo meant to leave
 // running. Setsid puts the supervisor in its own session and process group,
-// so it neither dies with relay's terminal nor shares a group Kill could
+// so it neither dies with relevo's terminal nor shares a group Kill could
 // hit by accident. Checks that can fail run before either file is created, so a
 // refused Start leaves nothing behind.
-func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
+func (r *Runner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
 	if len(spec.Argv) == 0 {
-		return relay.ProcHandle{}, errors.New("proc: empty argv")
+		return relevo.ProcHandle{}, errors.New("proc: empty argv")
 	}
 	if spec.StreamPath == "" {
-		return relay.ProcHandle{}, errors.New("proc: empty stream path")
+		return relevo.ProcHandle{}, errors.New("proc: empty stream path")
 	}
 	info, err := os.Stat(spec.Dir)
 	if err != nil {
-		return relay.ProcHandle{}, fmt.Errorf("proc: dir: %w", err)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: dir: %w", err)
 	}
 	if !info.IsDir() {
-		return relay.ProcHandle{}, fmt.Errorf("proc: %s is not a directory", spec.Dir)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: %s is not a directory", spec.Dir)
 	}
 	bin, err := exec.LookPath(spec.Argv[0])
 	if err != nil {
-		return relay.ProcHandle{}, fmt.Errorf("proc: %w", err)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: %w", err)
 	}
 	logf, err := os.OpenFile(spec.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return relay.ProcHandle{}, fmt.Errorf("proc: log: %w", err)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: log: %w", err)
 	}
 	defer logf.Close()
 	streamf, err := os.OpenFile(spec.StreamPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return relay.ProcHandle{}, fmt.Errorf("proc: stream: %w", err)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: stream: %w", err)
 	}
 	defer streamf.Close()
 
 	// The scope probe is lazy and re-runnable (#295, #370 §4.7): a local CLI
-	// verb has no eager startup probe (cmd/relay/serve.go's served path keeps
+	// verb has no eager startup probe (cmd/relevo/serve.go's served path keeps
 	// its own), so the verdict is taken here on the first scoped Start. A
 	// failed probe is retried on the first scoped Start at least
 	// ScopeReprobeAfter later, so one transient failure no longer costs the
@@ -362,7 +363,7 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return relay.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
+		return relevo.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
 	}
 	pid := cmd.Process.Pid
 	// Reap the supervisor when it exits, if this process is still around
@@ -377,13 +378,13 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 		// one-second tolerance of a process started a moment ago.
 		started = time.Now()
 	}
-	return relay.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}, nil
+	return relevo.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}, nil
 }
 
 // Alive reports whether the handle's process exists, is not a zombie, and
 // started when the handle says it did (within one second). A missing pid is
 // (false, nil); only ps itself failing to run is an error.
-func (r *Runner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
+func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 	if h.PID <= 0 {
 		return false, nil
 	}
@@ -405,13 +406,22 @@ func (r *Runner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
 }
 
 // ExitCode reads the trailer the supervisor appended, if it is the stream's
-// last line. The handle is unused: the stream is the record.
-func (r *Runner) ExitCode(_ context.Context, _ relay.ProcHandle, logPath string) (int, bool) {
+// last line. A stream written before the rename ends in legacy.ExitTrailer
+// instead, and reads the same way (#292 §1). The handle is unused: the stream
+// is the record.
+func (r *Runner) ExitCode(_ context.Context, _ relevo.ProcHandle, logPath string) (int, bool) {
 	line, ok := lastLine(logPath)
-	if !ok || !strings.HasPrefix(line, ExitTrailer) {
+	if !ok {
 		return 0, false
 	}
-	code, err := strconv.Atoi(strings.TrimPrefix(line, ExitTrailer))
+	prefix := ExitTrailer
+	if !strings.HasPrefix(line, prefix) {
+		prefix = legacy.ExitTrailer
+		if !strings.HasPrefix(line, prefix) {
+			return 0, false
+		}
+	}
+	code, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
 	if err != nil {
 		return 0, false
 	}
@@ -422,7 +432,7 @@ func (r *Runner) ExitCode(_ context.Context, _ relay.ProcHandle, logPath string)
 // the builder under it -- waits up to the grace for Alive to turn false,
 // then SIGKILLs the group. Alive's start-time check runs first, so a reused
 // pid is never signalled. Not alive is nil.
-func (r *Runner) Kill(ctx context.Context, h relay.ProcHandle) error {
+func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
 		return err
@@ -451,30 +461,31 @@ func (r *Runner) Kill(ctx context.Context, h relay.ProcHandle) error {
 }
 
 // Rusage scans the last few lines of streamPath, from last to first, for the
-// relay-rusage: trailer; ok is false when none of those lines match (plain
+// relevo-rusage: trailer, or the relay-rusage: one a pre-rename stream // name-guard: legacy
+// carries (#292 §1); ok is false when none of those lines match (plain
 // spawn, killed supervisor, still running). The scan -- rather than assuming
 // a fixed offset -- is needed because supervisorScript's printf leaves a
 // blank line between the rusage and exit trailers, so the trailer is not
 // reliably the second-to-last line. The handle is unused: the stream is the
 // record, as for ExitCode.
-func (r *Runner) Rusage(_ context.Context, _ relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
+func (r *Runner) Rusage(_ context.Context, _ relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
 	lines, ok := lastLines(streamPath, 6)
 	if !ok {
-		return relay.ProcRusage{}, false
+		return relevo.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], RusageTrailer) {
+		if strings.HasPrefix(lines[i], RusageTrailer) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}
-	return relay.ProcRusage{}, false
+	return relevo.ProcRusage{}, false
 }
 
 var errNoProcess = errors.New("proc: no such process")
 
 // StartTime reports when a process started, in the OS's own resolution, via the
 // same `ps -o lstart=` read psInfo uses (and Endpoint.StartedAt records). It is
-// exported for `relay planner init`, which needs the harness process's start
+// exported for `relevo planner init`, which needs the harness process's start
 // time to defend a planner record against pid reuse exactly as a binding's
 // endpoint does (#303 §3.1). A missing pid is an error, not the zero time: the
 // caller decides what a host it cannot measure means.

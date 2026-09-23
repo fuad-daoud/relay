@@ -3,9 +3,9 @@ package ingest
 import (
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestOutcomeReportedBeatsDone pins §5.3's rule order: a report entry wins

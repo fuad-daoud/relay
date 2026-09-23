@@ -1,6 +1,6 @@
 package roles
 
-import "github.com/fuad-daoud/relay/internal/harness"
+import "github.com/fuad-daoud/relevo/internal/harness"
 
 // builtins derives one Role per built-in role name from harness.RoleByName:
 // the table in internal/harness stays the single source, so a change to

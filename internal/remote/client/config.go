@@ -9,11 +9,11 @@ import (
 	"os/user"
 	"path/filepath"
 
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 var (
-	ErrNoKey     = errors.New("no client key; run relay client init")
+	ErrNoKey     = errors.New("no client key; run relevo client init")
 	ErrKeyExists = errors.New("client key already exists")
 )
 
@@ -117,12 +117,12 @@ func ValidateEntry(e ServerEntry) error {
 
 // KeyPaths returns the private and public key paths for a given configDir.
 func KeyPaths(configDir string) (priv, pub string) {
-	return filepath.Join(configDir, "relay", "client.key"), filepath.Join(configDir, "relay", "client.pub")
+	return filepath.Join(configDir, "relevo", "client.key"), filepath.Join(configDir, "relevo", "client.pub")
 }
 
 // ServersPath returns the servers.json path for a given configDir.
 func ServersPath(configDir string) string {
-	return filepath.Join(configDir, "relay", "servers.json")
+	return filepath.Join(configDir, "relevo", "servers.json")
 }
 
 // LoadKey loads the ed25519 private key from privPath. Returns ErrNoKey when absent.

@@ -30,7 +30,7 @@ func RenderRecord(kind string, line []byte) []string {
 // renderClaudeRecord is RenderRecord's table for kind "claude": an
 // assistant record, and a user record carrying a tool_result block, render
 // exactly as the stream renders them; a user record that is a typed prompt
-// (relay's or the human's) renders as "> " plus its first line; anything
+// (relevo's or the human's) renders as "> " plus its first line; anything
 // else -- the ~18 housekeeping record types a session file carries that the
 // stream never has (attachment, permission-mode, mode, last-prompt,
 // atis-latch, agent-setting, queue-operation, file-history-snapshot,

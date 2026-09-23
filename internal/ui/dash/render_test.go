@@ -12,8 +12,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")

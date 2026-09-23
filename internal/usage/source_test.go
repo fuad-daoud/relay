@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func copyFixture(t *testing.T, src, dst string) {
@@ -50,7 +52,7 @@ func TestReadHeadlessNotes(t *testing.T) {
 	if _, note := r.Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: "/nonexistent"}); note != "no stream" {
 		t.Errorf("missing stream: note = %q", note)
 	}
-	_, empty := mustTemp(t, "relay-exit:0\n")
+	_, empty := mustTemp(t, "relevo-exit:0\n")
 	if _, note := r.Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: empty}); note != "no usage events" {
 		t.Errorf("no events: note = %q", note)
 	}
@@ -64,11 +66,11 @@ func TestStreamClosed(t *testing.T) {
 	if streamClosed(open) {
 		t.Error("no trailer: must be open")
 	}
-	_, closed := mustTemp(t, "{\"type\":\"result\"}\n\nrelay-exit:0\n")
+	_, closed := mustTemp(t, "{\"type\":\"result\"}\n\nrelevo-exit:0\n")
 	if !streamClosed(closed) {
 		t.Error("trailer as last line: must be closed")
 	}
-	_, mid := mustTemp(t, "relay-exit:0\n{\"type\":\"assistant\"}\n")
+	_, mid := mustTemp(t, "relevo-exit:0\n{\"type\":\"assistant\"}\n")
 	if streamClosed(mid) {
 		t.Error("trailer not last: must be open")
 	}
@@ -108,7 +110,7 @@ func TestReadHeadlessWaitsForTrailer(t *testing.T) {
 func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
 	raw, _ := os.ReadFile("testdata/claude-stream-killed.jsonl")
 	// The killed fixture ends in a trailer; strip it to make an open stream.
-	body := strings.TrimSuffix(strings.TrimRight(string(raw), "\n"), "relay-exit:137")
+	body := strings.TrimSuffix(strings.TrimRight(string(raw), "\n"), "relevo-exit:137")
 	_, path := mustTemp(t, body)
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
@@ -159,5 +161,34 @@ func TestPeekMissingStream(t *testing.T) {
 	got, note := New().Peek(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: "/nonexistent"})
 	if got != nil || note != "no stream" {
 		t.Errorf("Peek on a missing stream = %d samples, note %q", len(got), note)
+	}
+}
+
+// TestStreamClosedLegacyTrailer pins #292 §1: a stream whose last line is the
+// old relay-exit: marker counts as closed, so a pre-rename round's cost is // name-guard: legacy
+// read with its measured figures instead of "stream still open".
+func TestStreamClosedLegacyTrailer(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]struct {
+		body string
+		want bool
+	}{
+		"legacy trailer":       {"hello\n" + legacy.ExitTrailer + "3\n", true},
+		"legacy no newline":    {legacy.ExitTrailer + "0", true},
+		"legacy not last":      {legacy.ExitTrailer + "3\nmore output\n", false},
+		"new trailer":          {"hello\nrelevo-exit:3\n", true},
+		"no trailer":           {"hello\n", false},
+		"empty last line only": {"\n", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".jsonl")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := streamClosed(p); got != c.want {
+				t.Errorf("streamClosed() = %v, want %v for %q", got, c.want, c.body)
+			}
+		})
 	}
 }

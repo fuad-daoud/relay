@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
 // dashHeaderRows is the screen's fixed furniture: the identity line, the
@@ -261,7 +261,7 @@ func (m Model) headerLine() string {
 	if axis == "" {
 		axis = string(histq.AxisNone)
 	}
-	left := " relay · dashboard   "
+	left := " relevo · dashboard   "
 	right := "/ filter  b regroup  s sort  d fleet  r refresh"
 
 	avail := m.width - lipgloss.Width(left) - lipgloss.Width("   by:"+axis)

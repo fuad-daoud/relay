@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // maxLogEntries is a corruption guard, not a rotation policy: a log growing
@@ -46,15 +46,15 @@ const (
 	KindDiff     Kind = "diff"
 	KindDrift    Kind = "drift"
 	KindFork     Kind = "fork"
-	KindPick     Kind = "pick"   // relay -> log only: which candidate a spawn resolved to and why (#61 step 2)
-	KindSwitch   Kind = "switch" // relay -> log only: the builder was replaced mid-round, and why (#61 step 6)
-	KindExit     Kind = "exit"   // relay -> log only: a headless builder exited without a report (#99)
-	KindGate     Kind = "gate"   // relay -> log only: the gate started (#132)
+	KindPick     Kind = "pick"   // relevo -> log only: which candidate a spawn resolved to and why (#61 step 2)
+	KindSwitch   Kind = "switch" // relevo -> log only: the builder was replaced mid-round, and why (#61 step 6)
+	KindExit     Kind = "exit"   // relevo -> log only: a headless builder exited without a report (#99)
+	KindGate     Kind = "gate"   // relevo -> log only: the gate started (#132)
 
-	KindPause  Kind = "pause"  // relay -> log only: paused after round N, worktree released (#137)
-	KindResume Kind = "resume" // relay -> log only: resumed from PAUSED (#137)
+	KindPause  Kind = "pause"  // relevo -> log only: paused after round N, worktree released (#137)
+	KindResume Kind = "resume" // relevo -> log only: resumed from PAUSED (#137)
 
-	// KindStop is relay -> log only: a stop was requested (grace ...), or the
+	// KindStop is relevo -> log only: a stop was requested (grace ...), or the
 	// round closed because of one (stopped/graceful, stopped/killed,
 	// stopped/abandoned) (#138).
 	KindStop Kind = "stop"
@@ -62,30 +62,30 @@ const (
 	KindAsk      Kind = "ask"      // planner -> consult, the staged question
 	KindFindings Kind = "findings" // consult -> planner, the findings path
 
-	// KindLand is relay -> log only: `relay land` rebased the binding's
+	// KindLand is relevo -> log only: `relevo land` rebased the binding's
 	// branch onto its base, ran the gate and pushed (#136). The note names
 	// the branch, the base and the PR URL when one was created.
 	KindLand Kind = "land"
 
 	// KindEdge is a planner-declared handoff between bindings (#37): a
 	// queued entry (DirToPlanner, a real payload) when an edge's Mode is
-	// "queue" and its artifact is ready, or relay -> log only when the edge
+	// "queue" and its artifact is ready, or relevo -> log only when the edge
 	// is declared, fires, is skipped for a missing artifact, or its fire
 	// fails.
 	KindEdge Kind = "edge"
 
-	// KindQueue is relay -> log only: a served round was queued, admitted or
+	// KindQueue is relevo -> log only: a served round was queued, admitted or
 	// re-queued (#285).
 	KindQueue Kind = "queue"
 
-	// KindRetired is relay -> log only: a legacy pane binding was closed at
+	// KindRetired is relevo -> log only: a legacy pane binding was closed at
 	// upgrade because pane builders were removed (#303, §5.6). The binding's
 	// state becomes DONE and its worktree is left exactly as it is.
 	KindRetired Kind = "retired"
 )
 
 // LogEntry is one relayed message. An unconfirmed DirToPlanner entry is also
-// relay's pending-delivery record, which is what makes a crash mid-delivery
+// relevo's pending-delivery record, which is what makes a crash mid-delivery
 // recoverable without a second file to keep in sync.
 type LogEntry struct {
 	// Seq is the 1-based position of the entry in its binding's log; assigned
@@ -134,7 +134,7 @@ type LogEntry struct {
 	Rusage *Rusage `json:"rusage,omitempty"`
 
 	// Outcome, HaltedAt, ChangedPaths, CommandsRun, and NotDone are parsed
-	// from the builder's trailing relay block, on report entries only (#133).
+	// from the builder's trailing relevo block, on report entries only (#133).
 	// Outcome is one of "done", "halted", "blocked", "deferred", or "unstructured";
 	// an empty Outcome means the entry predates the field (readers treat "" like
 	// "unstructured"). HaltedAt, ChangedPaths, CommandsRun, and NotDone are zero
@@ -416,7 +416,7 @@ func decodeLog(r io.Reader) ([]LogEntry, error) {
 // pendingForPlanner returns the OLDEST undelivered payload bound for the
 // planner and its index in the log.
 //
-// Oldest-first because arrival order is the only order relay can defend
+// Oldest-first because arrival order is the only order relevo can defend
 // without judging content. Under the newest-first scan this replaced, a round
 // report queued before two consult findings was delivered after both of them.
 func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
@@ -440,7 +440,7 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 // It decodes only the line it rewrites into map[string]json.RawMessage, sets
 // "confirmed", "delivered_at" and (when route is non-empty) "route", and
 // writes the map back. Every other line keeps its exact bytes, so a key a
-// newer relay wrote on any line survives this binary (spec §4.3). Seq stays a
+// newer relevo wrote on any line survives this binary (spec §4.3). Seq stays a
 // newline count: an unchanged line is never re-encoded at all.
 //
 // It takes an index rather than re-deriving "the entry we must have meant"

@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 type listModel struct {
@@ -32,7 +32,7 @@ func (m Model) errorRows() int {
 
 // resolveSticky re-points cursor at the row keyed by sticky after the
 // list has changed, clamping and re-pointing sticky if it is gone.
-func (l *listModel) resolveSticky(rep relay.Report) {
+func (l *listModel) resolveSticky(rep relevo.Report) {
 	if len(rep.Bindings) == 0 {
 		l.cursor = 0
 		l.sticky = ""

@@ -21,14 +21,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/ledger"
-	"github.com/fuad-daoud/relay/internal/policy"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 func signedRequest(t *testing.T, kp remote.Keypair, method, target string, body []byte) *http.Request {
@@ -296,7 +296,7 @@ func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 	return s, root
 }
 
-func testRuntime(t *testing.T, s *Server, id remote.ClientID) relay.Runtime {
+func testRuntime(t *testing.T, s *Server, id remote.ClientID) relevo.Runtime {
 	t.Helper()
 	rt, err := s.runtime(id)
 	if err != nil {
@@ -515,7 +515,7 @@ func TestWhoAmI(t *testing.T) {
 	scoped, err := New(Config{
 		Root:  t.TempDir(),
 		Now:   time.Now,
-		Scope: &relay.ScopeSpec{Slice: "relay.slice", CPUQuota: "200%"},
+		Scope: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
 	})
 	if err != nil {
 		t.Fatalf("New scoped server: %v", err)
@@ -535,8 +535,8 @@ func TestWhoAmI(t *testing.T) {
 	if scopedWho.Builders == nil || scopedWho.Builders.Quota != "200%" {
 		t.Fatalf("scoped Builders = %+v, want Quota 200%%", scopedWho.Builders)
 	}
-	if scopedWho.Builders.Slice != "relay.slice" {
-		t.Fatalf("scoped Builders.Slice = %q, want relay.slice", scopedWho.Builders.Slice)
+	if scopedWho.Builders.Slice != "relevo.slice" {
+		t.Fatalf("scoped Builders.Slice = %q, want relevo.slice", scopedWho.Builders.Slice)
 	}
 }
 
@@ -1220,8 +1220,8 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 
 // TestAvailableRefusesUnknownProvider is #301 over the wire: the pre-check
 // handleAvailable used to carry only ever refused unknown *tokens* and let
-// any bare provider through, so `relay available anthropc` forwarded to a
-// server read as a no-op. relay.Available now refuses a typo itself, and the
+// any bare provider through, so `relevo available anthropc` forwarded to a
+// server read as a no-op. relevo.Available now refuses a typo itself, and the
 // 422 carries the local verb's words.
 func TestAvailableRefusesUnknownProvider(t *testing.T) {
 	root := t.TempDir()
@@ -1297,7 +1297,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// scriptRunner is a fake relay.Runner. Liveness is tracked per pid (#285):
+// scriptRunner is a fake relevo.Runner. Liveness is tracked per pid (#285):
 // two bindings' processes must be tellable apart, which a single shared
 // flag cannot do. setAlive(a) flips every pid this runner has ever started
 // to a -- the shape every pre-#285 test wants, since each of them tracks
@@ -1306,8 +1306,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 // binding in flight at once.
 type scriptRunner struct {
 	mu           sync.Mutex
-	specs        []relay.ProcSpec
-	aliveHandles []relay.ProcHandle
+	specs        []relevo.ProcSpec
+	aliveHandles []relevo.ProcHandle
 	alive        map[int]bool
 	nextPID      int
 	// startErr, when set, is returned by Start instead of starting anything
@@ -1319,11 +1319,11 @@ func newScriptRunner() *scriptRunner {
 	return &scriptRunner{alive: map[int]bool{}, nextPID: 4242}
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.startErr != nil {
-		return relay.ProcHandle{}, r.startErr
+		return relevo.ProcHandle{}, r.startErr
 	}
 	pid := r.nextPID
 	r.nextPID++
@@ -1332,24 +1332,24 @@ func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.Pr
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return relay.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
+	return relevo.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aliveHandles = append(r.aliveHandles, h)
 	return r.alive[h.PID], nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (code int, ok bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (code int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	alive, tracked := r.alive[h.PID]
 	if !tracked {
 		// A pid this runner never started (a fresh runner standing in for a
 		// daemon restart, #285) has no exit trailer to report: "unknown",
-		// the same as a real relay-exit: trailer that was never written
+		// the same as a real relevo-exit: trailer that was never written
 		// because the supervisor died with the process. This is what tells
 		// "confirmed dead, code 0" (tracked, not alive) apart from "lost,
 		// no idea" (never tracked) -- headless.go's restart-requeue check
@@ -1359,15 +1359,15 @@ func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath
 	return 0, !alive
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive[h.PID] = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
-	return relay.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
+	return relevo.ProcRusage{}, false
 }
 
 // setAlive flips every pid this runner has started to a. Kept for every
@@ -1562,7 +1562,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	}
 }
 
-func (env *testEnv) runtime(t *testing.T) relay.Runtime {
+func (env *testEnv) runtime(t *testing.T) relevo.Runtime {
 	t.Helper()
 	return testRuntime(t, env.srv, env.id)
 }
@@ -1581,7 +1581,7 @@ func TestRoundStartAbsorbsAndChecksOut(t *testing.T) {
 		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
 	}
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
@@ -1649,7 +1649,7 @@ func TestRoundStartSetsShippedTags(t *testing.T) {
 	runGit(t, env.clientDir, "-c", "tag.gpgsign=false", "tag", "v1.2.3", env.headSHA)
 	missingSHA := strings.Repeat("f", 40)
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
@@ -1779,7 +1779,7 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 		t.Fatalf("binding stored at Tier = %q, want harness", before.Tier)
 	}
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -1821,7 +1821,7 @@ func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -1847,8 +1847,8 @@ func TestRoundStartTierAboveMaxIs422(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if relay.RoundStateOf(b, entries) != remote.RoundIdle {
-		t.Fatalf("round state = %v, want idle", relay.RoundStateOf(b, entries))
+	if relevo.RoundStateOf(b, entries) != remote.RoundIdle {
+		t.Fatalf("round state = %v, want idle", relevo.RoundStateOf(b, entries))
 	}
 
 	env.runner.mu.Lock()
@@ -1870,7 +1870,7 @@ func TestRoundStartWhileRunningIs409(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -1912,7 +1912,7 @@ func TestRoundStartRunningSamePlanIs200(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -1972,7 +1972,7 @@ func TestRoundStartRunningDifferentPlanIs409(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2025,7 +2025,7 @@ func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 		t.Fatalf("ReadLog B: %v", err)
 	}
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	snap, err := env.transport.Snapshot(context.Background(), ownerB.clientDir, []string{outRef}, "")
 	if err != nil {
 		t.Fatalf("snapshot B: %v", err)
@@ -2056,8 +2056,8 @@ func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
 	if len(entriesAfter) != len(entriesBefore) {
 		t.Errorf("log entries = %d, want %d (an identical retry appends nothing)", len(entriesAfter), len(entriesBefore))
 	}
-	if relay.RoundStateOf(after, entriesAfter) != remote.RoundQueued {
-		t.Errorf("round_state = %q, want queued", relay.RoundStateOf(after, entriesAfter))
+	if relevo.RoundStateOf(after, entriesAfter) != remote.RoundQueued {
+		t.Errorf("round_state = %q, want queued", relevo.RoundStateOf(after, entriesAfter))
 	}
 	if after.Builder.PID != 0 {
 		t.Errorf("PID = %d, want 0 (an identical retry starts no builder)", after.Builder.PID)
@@ -2075,7 +2075,7 @@ func TestRoundResendSamePlanIs200(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2088,7 +2088,7 @@ func TestRoundResendSamePlanIs200(t *testing.T) {
 	}
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
 	env.runner.setAlive(false)
@@ -2132,7 +2132,7 @@ func TestRoundStartWithABrokenRunnerAcceptsThenHaltsAsync(t *testing.T) {
 		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
 	}
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
@@ -2205,7 +2205,7 @@ func TestRoundResendDifferentPlanIs409(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2218,7 +2218,7 @@ func TestRoundResendDifferentPlanIs409(t *testing.T) {
 	}
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
 	env.runner.setAlive(false)
@@ -2249,7 +2249,7 @@ func TestRoundStartNotFastForward(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2268,7 +2268,7 @@ func TestRoundStartNotFastForward(t *testing.T) {
 	}
 	runGit(t, b.Worktree, "commit", "--allow-empty", "-m", "server commit")
 
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
 	env.runner.setAlive(false)
@@ -2318,7 +2318,7 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2343,7 +2343,7 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	runGit(t, b.Worktree, "add", "result.txt")
 	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
 
-	reportText := "# Report 1\nCompleted work.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nCompleted work.\n\n```relevo\nstatus: done\n```\n"
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2375,7 +2375,7 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 	if view.ClosedRound != 1 {
 		t.Fatalf("closed_round = %d, want 1", view.ClosedRound)
 	}
-	bareBranchSHA, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/relay/api")
+	bareBranchSHA, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, "refs/heads/relevo/api")
 	if err != nil || !ok {
 		t.Fatalf("bare branch sha: %v, ok=%v", err, ok)
 	}
@@ -2414,14 +2414,14 @@ func TestRoundCloseServesFilesBundleAck(t *testing.T) {
 		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), []string{"refs/heads/relay/api"})
+	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), []string{"refs/heads/relevo/api"})
 	if err != nil {
 		t.Fatalf("client Absorb: %v", err)
 	}
-	if moved["refs/heads/relay/api"] != view.ResultCommit {
-		t.Fatalf("client moved branch = %q, want %q", moved["refs/heads/relay/api"], view.ResultCommit)
+	if moved["refs/heads/relevo/api"] != view.ResultCommit {
+		t.Fatalf("client moved branch = %q, want %q", moved["refs/heads/relevo/api"], view.ResultCommit)
 	}
-	clientHeadSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relay/api")
+	clientHeadSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relevo/api")
 	if err != nil || !ok || clientHeadSHA != view.ResultCommit {
 		t.Fatalf("client branch sha = %q, want %q", clientHeadSHA, view.ResultCommit)
 	}
@@ -2495,7 +2495,7 @@ func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2520,7 +2520,7 @@ func TestRoundCloseRecordsStreamUsage(t *testing.T) {
 	runGit(t, b.Worktree, "add", "result.txt")
 	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
 
-	reportText := "# Report 1\nCompleted work.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nCompleted work.\n\n```relevo\nstatus: done\n```\n"
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2588,7 +2588,7 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2610,7 +2610,7 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2638,21 +2638,21 @@ func TestRoundCloseDirtyShipsSideRef(t *testing.T) {
 		t.Fatalf("get bundle status = %d, want 200; body: %s", resp.StatusCode, string(body))
 	}
 
-	inboundRefs := []string{"refs/heads/relay/api", "refs/relay/api/round-1"}
+	inboundRefs := []string{"refs/heads/relevo/api", "refs/relevo/api/round-1"}
 	moved, err := env.transport.Absorb(ctx, env.clientDir, remote.ContentTypeGitBundle, bytes.NewReader(body), inboundRefs)
 	if err != nil {
 		t.Fatalf("Absorb: %v", err)
 	}
-	if _, movedBranch := moved["refs/heads/relay/api"]; movedBranch {
+	if _, movedBranch := moved["refs/heads/relevo/api"]; movedBranch {
 		t.Fatal("branch was unexpectedly moved in absorb")
 	}
 
-	clientBranchSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relay/api")
+	clientBranchSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/heads/relevo/api")
 	if ok && clientBranchSHA != env.headSHA {
 		t.Fatalf("client branch sha = %q, want %q", clientBranchSHA, env.headSHA)
 	}
 
-	sideSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/relay/api/round-1")
+	sideSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "refs/relevo/api/round-1")
 	if err != nil || !ok || sideSHA != view.DirtyCommit {
 		t.Fatalf("side ref sha = (%q, %v, %v), want %q", sideSHA, ok, err, view.DirtyCommit)
 	}
@@ -2753,7 +2753,7 @@ func TestFilesBeforeCloseIs404(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2784,7 +2784,7 @@ func TestBundleWrongRoundIs404(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2797,7 +2797,7 @@ func TestBundleWrongRoundIs404(t *testing.T) {
 	}
 
 	rt := env.runtime(t)
-	reportText := "# Report 1\nDone.\n\n```relay\nstatus: done\n```\n"
+	reportText := "# Report 1\nDone.\n\n```relevo\nstatus: done\n```\n"
 	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte(reportText), 0o644)
 	_ = os.WriteFile(rt.Store.DonePath("api", 1), []byte(""), 0o644)
 	env.runner.setAlive(false)
@@ -2820,7 +2820,7 @@ func TestAckUnclosedIs409(t *testing.T) {
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
 	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
 	bundleBytes, _ := io.ReadAll(snap.Body)
@@ -2893,9 +2893,9 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		BaseCommit: headA,
 	})
 	doSigned(t, ts, kpA, "POST", "/v1/bindings", createBodyA, "application/json")
-	_ = gitClient.UpdateRef(ctx, clientDirA, "refs/relay/binding-a/out", headA, "")
+	_ = gitClient.UpdateRef(ctx, clientDirA, "refs/relevo/binding-a/out", headA, "")
 	transA := remote.NewBundleTransport(gitClient, t.TempDir())
-	snapA, _ := transA.Snapshot(ctx, clientDirA, []string{"refs/relay/binding-a/out"}, "")
+	snapA, _ := transA.Snapshot(ctx, clientDirA, []string{"refs/relevo/binding-a/out"}, "")
 	bytesA, _ := io.ReadAll(snapA.Body)
 	_ = snapA.Body.Close()
 	formA, ctA := makeRoundForm(t, 1, "# Plan A", bytesA)
@@ -2923,9 +2923,9 @@ func TestTickWalksEveryOwner(t *testing.T) {
 		BaseCommit: headB,
 	})
 	doSigned(t, ts, kpB, "POST", "/v1/bindings", createBodyB, "application/json")
-	_ = gitClient.UpdateRef(ctx, clientDirB, "refs/relay/binding-b/out", headB, "")
+	_ = gitClient.UpdateRef(ctx, clientDirB, "refs/relevo/binding-b/out", headB, "")
 	transB := remote.NewBundleTransport(gitClient, t.TempDir())
-	snapB, _ := transB.Snapshot(ctx, clientDirB, []string{"refs/relay/binding-b/out"}, "")
+	snapB, _ := transB.Snapshot(ctx, clientDirB, []string{"refs/relevo/binding-b/out"}, "")
 	bytesB, _ := io.ReadAll(snapB.Body)
 	_ = snapB.Body.Close()
 	formB, ctB := makeRoundForm(t, 1, "# Plan B", bytesB)
@@ -3022,7 +3022,7 @@ func TestCandidatesView(t *testing.T) {
 			{
 				Kind:    ledger.SpawnFailed,
 				Subject: "claude/anthropic/haiku",
-				Source:  "relay",
+				Source:  "relevo",
 				At:      now,
 				Until:   now.Add(time.Hour),
 				Note:    "test failure",
@@ -3160,7 +3160,7 @@ func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
 	}
 
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
 		t.Fatalf("updateRef out: %v", err)
 	}
@@ -3237,7 +3237,7 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	outRef := "refs/relay/api/out"
+	outRef := "refs/relevo/api/out"
 
 	// A new client commit, so an absorb during the request would move the ref.
 	if err := os.WriteFile(filepath.Join(env.clientDir, "file.txt"), []byte("second\n"), 0o644); err != nil {
@@ -3339,7 +3339,7 @@ func TestSweepTmp(t *testing.T) {
 }
 
 // TestRequestLogClientVersion pins #373 §3's client-version logging: the
-// request log line carries client_version when Relay-Client-Version is
+// request log line carries client_version when Relevo-Client-Version is
 // present, and omits the attribute when it is not. The request logger is the
 // inline slog.Info in Handler and has no seam of its own, so this captures the
 // default slog logger.

@@ -1,9 +1,9 @@
 package ui
 
-import "github.com/fuad-daoud/relay/internal/relay"
+import "github.com/fuad-daoud/relevo/internal/relevo"
 
 // scope is the rail's breadth: live (today's bindings only) or all (every
-// binding relay's database has ever recorded, docs/specs/2026-09-20-persistence-design.md
+// binding relevo's database has ever recorded, docs/specs/2026-09-20-persistence-design.md
 // §5.8).
 type scope int
 
@@ -16,8 +16,8 @@ const (
 // non-nil. A name present in both the live report and the database is
 // always the live one -- the running binding is the newer, truer picture.
 type railRow struct {
-	live *relay.BindingStatus
-	hist *relay.HistoryBinding
+	live *relevo.BindingStatus
+	hist *relevo.HistoryBinding
 }
 
 // name is the row's key: Key() for a live row, the bare binding name for
@@ -35,11 +35,11 @@ func (r railRow) name() string {
 
 // scopeRows merges live's rows, in the order given (the caller has already
 // sorted them, attention or name), with hist's rows not named in live.
-// hist is expected newest LastActivity first -- relay.Bindings's own
+// hist is expected newest LastActivity first -- relevo.Bindings's own
 // order -- and scopeRows preserves that order rather than re-sorting it: a
 // hist row is never attention-sorted, and the union never re-orders what
 // each half already decided.
-func scopeRows(live []relay.BindingStatus, hist []relay.HistoryBinding) []railRow {
+func scopeRows(live []relevo.BindingStatus, hist []relevo.HistoryBinding) []railRow {
 	rows := make([]railRow, 0, len(live)+len(hist))
 	liveNames := make(map[string]bool, len(live))
 	for i := range live {

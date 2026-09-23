@@ -3,7 +3,7 @@ package e2e
 // TestHeadlessE2E is #303 step 5: the headless end-to-end round CI runs
 // (docs/specs/2026-09-22-drop-herdr-design.md §6.4). No build tag, so plain
 // `go test ./...` runs it. No network, no real harness, no herdr: a fake
-// `claude` on PATH, this process as the Claude Code session, and `relay mcp`
+// `claude` on PATH, this process as the Claude Code session, and `relevo mcp`
 // served in-process over a pipe pair.
 //
 // The scenario, in the plan's order:
@@ -13,13 +13,13 @@ package e2e
 //	2  isolated state under t.TempDir(), a throwaway repo, and a
 //	   candidates.json and policy.json naming the fake harness;
 //	3  the plugin's SessionStart hook registers the planner and exports
-//	   RELAY_PLANNER into $CLAUDE_ENV_FILE;
-//	4  a channel-mode relay mcp claims that planner over a pipe pair;
+//	   RELEVO_PLANNER into $CLAUDE_ENV_FILE;
+//	4  a channel-mode relevo mcp claims that planner over a pipe pair;
 //	5  add, send, the daemon closes the round, and the report arrives as a
 //	   kind="report" channel notification;
 //	6  pull and done;
 //	7  the hook fires again for /clear: same planner id, moved session;
-//	8  a tools-mode relay mcp sends round two, and its result carries the
+//	8  a tools-mode relevo mcp sends round two, and its result carries the
 //	   background wait the planner runs for its report.
 //
 // Every wait is bounded and fails with the thing it was waiting for named, so
@@ -39,19 +39,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/mcp"
-	"github.com/fuad-daoud/relay/internal/planner"
-	"github.com/fuad-daoud/relay/internal/policy"
-	"github.com/fuad-daoud/relay/internal/proc"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/mcp"
+	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/proc"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 const (
 	// fakeReportText is the sentence the fake harness writes into its report.
-	// A channel push expands the report file (relay.PushText), so this exact
+	// A channel push expands the report file (relevo.PushText), so this exact
 	// sentence is what arrives as the notification's body.
 	fakeReportText = "fake-harness-report: this round was handled by the fake claude on PATH"
 
@@ -88,16 +88,16 @@ func TestHeadlessE2E(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-	// The hook, relay mcp and every planner verb detect a Claude Code session
+	// The hook, relevo mcp and every planner verb detect a Claude Code session
 	// from the environment (§1.1); this process plays that session.
 	t.Setenv("CLAUDECODE", "1")
 
 	// -- 1. A fake `claude` first on PATH -----------------------------------
 	t.Setenv("PATH", writeFakeHarness(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	configDir := filepath.Join(home, ".config", "relay")
+	configDir := filepath.Join(home, ".config", "relevo")
 	writeCandidatesAndPolicy(t, configDir)
-	root := filepath.Join(home, ".local", "state", "relay")
+	root := filepath.Join(home, ".local", "state", "relevo")
 	rt, reg := newHeadlessRuntime(t, root, configDir)
 	repo := newRepo(t)
 
@@ -106,17 +106,17 @@ func TestHeadlessE2E(t *testing.T) {
 	envFile := filepath.Join(home, "claude-env.sh")
 	t.Setenv("CLAUDE_ENV_FILE", envFile)
 	first := runPlannerHook(t, reg, rt.Now, hookPayload(t, planner.SourceStartup, sessionStartup, repo))
-	if got := readFile(t, envFile); !strings.Contains(got, "export RELAY_PLANNER="+first.ID) {
-		t.Fatalf("$CLAUDE_ENV_FILE after the startup hook = %q, want it to carry %q", got, "export RELAY_PLANNER="+first.ID)
+	if got := readFile(t, envFile); !strings.Contains(got, "export RELEVO_PLANNER="+first.ID) {
+		t.Fatalf("$CLAUDE_ENV_FILE after the startup hook = %q, want it to carry %q", got, "export RELEVO_PLANNER="+first.ID)
 	}
 	// §3.4: that export is how every later verb in the session finds its
 	// planner, so the rest of the scenario runs with it set.
-	t.Setenv("RELAY_PLANNER", first.ID)
+	t.Setenv("RELEVO_PLANNER", first.ID)
 
 	// -- 4. The channel -----------------------------------------------------
 	channel := startChannel(t, ctx, rt, first.ID, 50*time.Millisecond)
 	if _, err := os.Stat(claimPath(rt, first.ID)); err != nil {
-		t.Fatalf("relay mcp wrote no channel claim for planner %s: %v", first.ID, err)
+		t.Fatalf("relevo mcp wrote no channel claim for planner %s: %v", first.ID, err)
 	}
 
 	// The channel's poll loop and any builder a failing step left behind are
@@ -127,17 +127,17 @@ func TestHeadlessE2E(t *testing.T) {
 	})
 
 	// -- 5. Round one -------------------------------------------------------
-	if _, err := relay.Add(ctx, rt, relay.AddOptions{Name: channelBinding, Repo: repo}); err != nil {
-		t.Fatalf("relay.Add(%s): %v", channelBinding, err)
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: channelBinding, Repo: repo}); err != nil {
+		t.Fatalf("relevo.Add(%s): %v", channelBinding, err)
 	}
 	channelPlan := writePlan(t, "channel.md", "# Round\n\nOne line of work.\n")
-	if _, err := relay.Send(ctx, rt, channelBinding, channelPlan, relay.SendOptions{}); err != nil {
-		t.Fatalf("relay.Send(%s): %v", channelBinding, err)
+	if _, err := relevo.Send(ctx, rt, channelBinding, channelPlan, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send(%s): %v", channelBinding, err)
 	}
 
 	// 5.3: the daemon tick, bounded. A round that never closes fails here,
 	// naming the binding, its state and its builder.
-	daemon := relay.NewDaemon(rt, 200*time.Millisecond)
+	daemon := relevo.NewDaemon(rt, 200*time.Millisecond)
 	tickUntilRoundCloses(t, ctx, daemon, rt, channelBinding)
 
 	// The round closed on the fake harness's own report and marker: a close
@@ -156,9 +156,9 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 
 	// -- 6. pull / done -----------------------------------------------------
-	// relay mcp's own drain confirms the entry it pushed (route=channel), so
+	// relevo mcp's own drain confirms the entry it pushed (route=channel), so
 	// pull has nothing left to take: the documented "nothing pending" answer
-	// (internal/relay/pull.go). Wait for that confirm first, so this is not a
+	// (internal/relevo/pull.go). Wait for that confirm first, so this is not a
 	// race with the poll loop, then assert pull reports nothing pending and
 	// that the report itself is on disk where the notification named it.
 	waitFor(t, notifyDeadline, func() bool {
@@ -166,20 +166,20 @@ func TestHeadlessE2E(t *testing.T) {
 		return ok && e.Route == "channel"
 	}, "the channel's confirm of %s round 1 (route=channel)", channelBinding)
 
-	payload, found, err := relay.Pull(ctx, rt, channelBinding, relay.PullOptions{})
+	payload, found, err := relevo.Pull(ctx, rt, channelBinding, relevo.PullOptions{})
 	if err != nil {
-		t.Fatalf("relay.Pull(%s): %v", channelBinding, err)
+		t.Fatalf("relevo.Pull(%s): %v", channelBinding, err)
 	}
 	if found {
-		t.Fatalf("relay.Pull(%s) returned %q; the channel already took the report (route=channel), so pull must have nothing pending", channelBinding, payload)
+		t.Fatalf("relevo.Pull(%s) returned %q; the channel already took the report (route=channel), so pull must have nothing pending", channelBinding, payload)
 	}
 	channelReport := rt.Store.ReportPath(channelBinding, 1)
 	if got := readFile(t, channelReport); !strings.Contains(got, fakeReportText) {
 		t.Fatalf("report %s = %q, want it to carry the fake report text", channelReport, got)
 	}
 
-	if _, err := relay.Done(ctx, rt, channelBinding); err != nil {
-		t.Fatalf("relay.Done(%s): %v", channelBinding, err)
+	if _, err := relevo.Done(ctx, rt, channelBinding); err != nil {
+		t.Fatalf("relevo.Done(%s): %v", channelBinding, err)
 	}
 	if b := loadBinding(t, rt, channelBinding); b.State != store.StateDone {
 		t.Fatalf("binding %s state after done = %q, want %q", channelBinding, b.State, store.StateDone)
@@ -199,11 +199,11 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 
 	// -- 8. Tools mode (revised D6) -----------------------------------------
-	// A second relay mcp, in tools mode, for a second planner session -- what
-	// a second `relay mcp` in a second session is. The channel-mode server for
+	// A second relevo mcp, in tools mode, for a second planner session -- what
+	// a second `relevo mcp` in a second session is. The channel-mode server for
 	// the first planner stays live, which is what makes 8.4's "nothing was
 	// written to a channel mailbox for that binding" a real check: a channel
-	// drains only its own planner's bindings (relay.Drain), so the tools-mode
+	// drains only its own planner's bindings (relevo.Drain), so the tools-mode
 	// binding's report can only reach the planner through pull.
 	second, _, err := planner.Init(reg, planner.InitInput{
 		Kind: "claude", SessionID: sessionTools, CWD: repo, Now: rt.Now(),
@@ -216,8 +216,8 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 	tools := startMCP(t, ctx, rt, mcp.ModeTools, second.ID)
 
-	if _, err := relay.Add(ctx, rt, relay.AddOptions{Name: toolsBinding, Repo: repo, PlannerID: second.ID}); err != nil {
-		t.Fatalf("relay.Add(%s): %v", toolsBinding, err)
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: toolsBinding, Repo: repo, PlannerID: second.ID}); err != nil {
+		t.Fatalf("relevo.Add(%s): %v", toolsBinding, err)
 	}
 	toolsPlan := writePlan(t, "tools.md", "# Round two\n\nOne line of work.\n")
 
@@ -225,45 +225,45 @@ func TestHeadlessE2E(t *testing.T) {
 	// binding's name and budget.
 	text := tools.callSend(t, toolsBinding, toolsPlan)
 	budget := (time.Duration(loadBinding(t, rt, toolsBinding).RoundTimeoutMS) * time.Millisecond).String()
-	wantCommand := "relay wait --name " + toolsBinding + " --timeout " + budget + "; relay pull --name " + toolsBinding
+	wantCommand := "relevo wait --name " + toolsBinding + " --timeout " + budget + "; relevo pull --name " + toolsBinding
 	if !strings.HasSuffix(text, wantCommand) {
 		t.Fatalf("the tools-mode send result does not end with the background-wait command for %s (budget %s):\n%s",
 			toolsBinding, budget, text)
 	}
 
 	// 8.3: the daemon closes round two, then the test runs the command the
-	// result named -- through the in-process equivalents of relay wait and
-	// relay pull, with the name and budget parsed out of the result itself.
+	// result named -- through the in-process equivalents of relevo wait and
+	// relevo pull, with the name and budget parsed out of the result itself.
 	tickUntilRoundCloses(t, ctx, daemon, rt, toolsBinding)
 
 	waitName, waitBudget := parseWaitCommand(t, text)
 	timeout, err := time.ParseDuration(waitBudget)
 	if err != nil {
-		t.Fatalf("the send result's budget %q is not a duration relay wait accepts: %v", waitBudget, err)
+		t.Fatalf("the send result's budget %q is not a duration relevo wait accepts: %v", waitBudget, err)
 	}
 	waited := runWait(t, ctx, rt, waitName, timeout)
 	if waited.err != nil {
-		t.Fatalf("relay wait --name %s --timeout %s: %v", waitName, waitBudget, waited.err)
+		t.Fatalf("relevo wait --name %s --timeout %s: %v", waitName, waitBudget, waited.err)
 	}
-	if waited.res.Code == relay.WaitTimeout || !waited.res.Done {
-		t.Fatalf("relay wait --name %s --timeout %s = %+v, want the closed round (a timeout means round 1 never closed)", waitName, waitBudget, waited.res)
+	if waited.res.Code == relevo.WaitTimeout || !waited.res.Done {
+		t.Fatalf("relevo wait --name %s --timeout %s = %+v, want the closed round (a timeout means round 1 never closed)", waitName, waitBudget, waited.res)
 	}
 	if want := rt.Store.ReportPath(toolsBinding, 1); waited.res.Line != want {
-		t.Fatalf("relay wait printed %q, want the round's report path %s", waited.res.Line, want)
+		t.Fatalf("relevo wait printed %q, want the round's report path %s", waited.res.Line, want)
 	}
-	pulled, ok, err := relay.Pull(ctx, rt, toolsBinding, relay.PullOptions{})
+	pulled, ok, err := relevo.Pull(ctx, rt, toolsBinding, relevo.PullOptions{})
 	if err != nil {
-		t.Fatalf("relay pull --name %s: %v", toolsBinding, err)
+		t.Fatalf("relevo pull --name %s: %v", toolsBinding, err)
 	}
 	if !ok {
-		t.Fatalf("relay pull --name %s found nothing pending, want the round's report payload", toolsBinding)
+		t.Fatalf("relevo pull --name %s found nothing pending, want the round's report payload", toolsBinding)
 	}
 	output := waited.res.Line + "\n" + pulled
 	if !strings.Contains(pulled, fakeReportText) {
-		t.Fatalf("relay pull output does not carry the report's text; want %q in:\n%s", fakeReportText, pulled)
+		t.Fatalf("relevo pull output does not carry the report's text; want %q in:\n%s", fakeReportText, pulled)
 	}
 
-	// 8.4: the output names the fake report -- relay pull prints the entry's
+	// 8.4: the output names the fake report -- relevo pull prints the entry's
 	// payload and the report's text (PushText), so the planner needs no
 	// second read; the payload names the report's path and the round it
 	// belongs to (§1.1's probe records exactly that shape) -- and the
@@ -300,7 +300,7 @@ func TestHeadlessE2E(t *testing.T) {
 
 // writeFakeHarness writes an executable named `claude` -- a kind the candidate
 // table knows -- into a temp dir and returns that dir, so the caller can put it
-// first on PATH. relay resolves the binary with exec.LookPath when it starts a
+// first on PATH. relevo resolves the binary with exec.LookPath when it starts a
 // round (internal/proc), so PATH is the whole wiring.
 func writeFakeHarness(t *testing.T) string {
 	t.Helper()
@@ -312,11 +312,11 @@ func writeFakeHarness(t *testing.T) string {
 }
 
 // fakeReportBody is the body the fake harness writes to the report path: the
-// sentence the channel assertion looks for, plus a well-formed relay tail so
-// the round closes on a marked report (relay.ParseReportTail).
+// sentence the channel assertion looks for, plus a well-formed relevo tail so
+// the round closes on a marked report (relevo.ParseReportTail).
 const fakeReportBody = "# Round Report\n\n" +
 	fakeReportText + "\n\n" +
-	"```relay\n" +
+	"```relevo\n" +
 	"status: done\n" +
 	"halted_at: \"\"\n" +
 	"changed_paths: [fake-round.txt]\n" +
@@ -324,10 +324,10 @@ const fakeReportBody = "# Round Report\n\n" +
 	"not_done: []\n" +
 	"```\n"
 
-// fakeHarnessScript is the fake `claude` relay launches for a round. Its argv
+// fakeHarnessScript is the fake `claude` relevo launches for a round. Its argv
 // is the real claude Print form -- `claude -p <prompt> --model M --agent
 // plan-executor --output-format stream-json --verbose` (internal/harness) -- so
-// it finds relay's handoff prompt in its arguments and reads the plan, report
+// it finds relevo's handoff prompt in its arguments and reads the plan, report
 // and marker paths out of that prompt, the way the launch form passes them.
 //
 // It does the four things a fake harness must: writes the report, makes one
@@ -345,7 +345,7 @@ for arg in "$@"; do
 	esac
 done
 if [ -z "$prompt" ]; then
-	echo "fake-claude: relay's handoff prompt is not in argv: $*" >&2
+	echo "fake-claude: relevo's handoff prompt is not in argv: $*" >&2
 	exit 2
 fi
 
@@ -367,8 +367,8 @@ fi
 {
 	printf 'plan read by the fake harness: %s\n' "$plan"
 	printf 'working tree: %s\n\n' "$worktree"
-	cat <<'RELAY_FAKE_REPORT'
-` + fakeReportBody + `RELAY_FAKE_REPORT
+	cat <<'RELEVO_FAKE_REPORT'
+` + fakeReportBody + `RELEVO_FAKE_REPORT
 } > "$report"
 
 printf 'one round of fake work\n' > "$worktree/fake-round.txt"
@@ -408,10 +408,10 @@ func writeCandidatesAndPolicy(t *testing.T, configDir string) {
 }
 
 // newHeadlessRuntime assembles the production runtime's wiring for a test:
-// the same store root, config resolution and claim store cmd/relay's
+// the same store root, config resolution and claim store cmd/relevo's
 // newRuntime builds, with a real process Runner (the fake harness is a real
 // executable on PATH) and no remote client, database or release fetcher.
-func newHeadlessRuntime(t *testing.T, root, configDir string) (relay.Runtime, *planner.FileRegistry) {
+func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *planner.FileRegistry) {
 	t.Helper()
 
 	candidates, err := candidate.Load(filepath.Join(configDir, "candidates.json"))
@@ -427,7 +427,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relay.Runtime, *p
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	reg := &planner.FileRegistry{Root: st.PlannersDir(), Now: time.Now}
 
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Git:              gitClient,
 		Runner:           proc.New(),
 		Store:            st,
@@ -436,7 +436,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relay.Runtime, *p
 		AvailabilityPath: filepath.Join(root, "availability.json"),
 		Policy:           pol,
 		Now:              time.Now,
-		Channels:         &relay.FileClaims{Root: st.ChannelsDir()},
+		Channels:         &relevo.FileClaims{Root: st.ChannelsDir()},
 		Planners:         reg,
 		ProcStart:        procStartUnix,
 	}
@@ -444,7 +444,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relay.Runtime, *p
 }
 
 // procStartUnix reads a process's start time in Unix seconds, the pid-reuse
-// defence planner.Resolve's host step needs -- cmd/relay's own wiring.
+// defence planner.Resolve's host step needs -- cmd/relevo's own wiring.
 func procStartUnix(pid int) (int64, error) {
 	started, err := proc.StartTime(context.Background(), pid)
 	if err != nil {
@@ -472,7 +472,7 @@ func hookPayload(t *testing.T, source, session, cwd string) string {
 // runPlannerHook runs the hook's work in-process: it parses the SessionStart
 // payload, calls planner.Init with this process as the host (the hook's parent
 // IS the Claude Code process, §1.1), and appends the export line to
-// $CLAUDE_ENV_FILE exactly as cmd/relay's plannerInitHook does. cmd/relay's
+// $CLAUDE_ENV_FILE exactly as cmd/relevo's plannerInitHook does. cmd/relevo's
 // command function itself is package main and cannot be called from here; this
 // is the same sequence through the same planner package.
 func runPlannerHook(t *testing.T, reg *planner.FileRegistry, now func() time.Time, raw string) planner.Record {
@@ -496,7 +496,7 @@ func runPlannerHook(t *testing.T, reg *planner.FileRegistry, now func() time.Tim
 
 	envFile := os.Getenv("CLAUDE_ENV_FILE")
 	if envFile == "" {
-		t.Fatal("$CLAUDE_ENV_FILE is not set: the hook has nowhere to export RELAY_PLANNER")
+		t.Fatal("$CLAUDE_ENV_FILE is not set: the hook has nowhere to export RELEVO_PLANNER")
 	}
 	f, err := os.OpenFile(envFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -517,7 +517,7 @@ type channelNote struct {
 	meta    map[string]string
 }
 
-// mcpClient is the test's end of a `relay mcp` stdio session: it writes
+// mcpClient is the test's end of a `relevo mcp` stdio session: it writes
 // JSON-RPC requests to the server and reads every line the server writes,
 // keeping responses by id and every channel push.
 type mcpClient struct {
@@ -531,15 +531,15 @@ type mcpClient struct {
 	notes   []channelNote
 }
 
-// startMCP starts one relay mcp server in-process over a pipe pair and runs the
+// startMCP starts one relevo mcp server in-process over a pipe pair and runs the
 // stdio handshake with it: initialize, then notifications/initialized.
-func startMCP(t *testing.T, ctx context.Context, rt relay.Runtime, mode mcp.Mode, plannerID string) *mcpClient {
+func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mode, plannerID string) *mcpClient {
 	t.Helper()
 
 	srvIn, clientWrite := io.Pipe() // the test writes; the server reads
 	clientRead, srvOut := io.Pipe() // the server writes; the test reads
 	srv := &mcp.Server{
-		Verbs:   &mcp.RelayVerbs{RT: rt, Planner: plannerID},
+		Verbs:   &mcp.RelevoVerbs{RT: rt, Planner: plannerID},
 		Version: "e2e-test",
 		Mode:    mode,
 		Log:     io.Discard,
@@ -557,23 +557,23 @@ func startMCP(t *testing.T, ctx context.Context, rt relay.Runtime, mode mcp.Mode
 	})
 
 	if resp := c.call(ctx, "initialize", map[string]any{"protocolVersion": mcp.ProtocolVersion}); resp["error"] != nil {
-		t.Fatalf("relay mcp initialize: %v", resp["error"])
+		t.Fatalf("relevo mcp initialize: %v", resp["error"])
 	}
 	c.notify("notifications/initialized")
 	return c
 }
 
-// startChannel starts a channel-mode relay mcp and, in cmd/relay's order, makes
+// startChannel starts a channel-mode relevo mcp and, in cmd/relevo's order, makes
 // the two moves the command wires from the server's OnInitialized callback: it
 // writes the claim, then polls -- re-reading, refreshing the claim and draining
-// the planner's mailbox every interval (cmd/relay's pollMCPChannel).
-func startChannel(t *testing.T, ctx context.Context, rt relay.Runtime, plannerID string, interval time.Duration) *mcpClient {
+// the planner's mailbox every interval (cmd/relevo's pollMCPChannel).
+func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerID string, interval time.Duration) *mcpClient {
 	t.Helper()
 
 	c := startMCP(t, ctx, rt, mcp.ModeChannel, plannerID)
 
 	now := rt.Now()
-	claim := relay.Claim{
+	claim := relevo.Claim{
 		Planner:   plannerID,
 		PID:       os.Getpid(),
 		HostPID:   os.Getpid(),
@@ -585,7 +585,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relay.Runtime, plannerID
 		t.Fatalf("write channel claim for planner %s: %v", plannerID, err)
 	}
 
-	st := &relay.DrainState{Planner: plannerID}
+	st := &relevo.DrainState{Planner: plannerID}
 	pollCtx, stopPoll := context.WithCancel(ctx)
 	stopped := make(chan struct{})
 	go func() {
@@ -601,7 +601,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relay.Runtime, plannerID
 				if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
 					return
 				}
-				if _, err := relay.Drain(pollCtx, rt, st, c.srv); err != nil {
+				if _, err := relevo.Drain(pollCtx, rt, st, c.srv); err != nil {
 					return
 				}
 			}
@@ -678,16 +678,16 @@ func (c *mcpClient) call(ctx context.Context, method string, params any) map[str
 		c.t.Fatalf("encode %s request: %v", method, err)
 	}
 	if _, err := c.in.Write(append(raw, '\n')); err != nil {
-		c.t.Fatalf("relay mcp %s: write: %v", method, err)
+		c.t.Fatalf("relevo mcp %s: write: %v", method, err)
 	}
 
 	select {
 	case resp := <-ch:
 		return resp
 	case <-time.After(mcpDeadline):
-		c.t.Fatalf("relay mcp answered no %s within %s", method, mcpDeadline)
+		c.t.Fatalf("relevo mcp answered no %s within %s", method, mcpDeadline)
 	case <-ctx.Done():
-		c.t.Fatalf("relay mcp %s: test context ended: %v", method, ctx.Err())
+		c.t.Fatalf("relevo mcp %s: test context ended: %v", method, ctx.Err())
 	}
 	return nil
 }
@@ -699,7 +699,7 @@ func (c *mcpClient) notify(method string) {
 		c.t.Fatalf("encode %s notification: %v", method, err)
 	}
 	if _, err := c.in.Write(append(raw, '\n')); err != nil {
-		c.t.Fatalf("relay mcp %s: write: %v", method, err)
+		c.t.Fatalf("relevo mcp %s: write: %v", method, err)
 	}
 }
 
@@ -784,8 +784,8 @@ func (c *mcpClient) noteSummary() string {
 // --- small assertions -------------------------------------------------------
 
 // waitCommandRE pulls the two halves of the background wait out of a send
-// result: relay wait --name <n> --timeout <budget>; relay pull --name <n>.
-var waitCommandRE = regexp.MustCompile(`relay wait --name (\S+) --timeout (\S+); relay pull --name (\S+)`)
+// result: relevo wait --name <n> --timeout <budget>; relevo pull --name <n>.
+var waitCommandRE = regexp.MustCompile(`relevo wait --name (\S+) --timeout (\S+); relevo pull --name (\S+)`)
 
 // parseWaitCommand reads the wait command's name and budget out of a send
 // result, so the test runs exactly what the result told the model to run.
@@ -801,24 +801,24 @@ func parseWaitCommand(t *testing.T, text string) (name, budget string) {
 	return m[1], m[2]
 }
 
-// waitOutcome is one relay.Wait call's result, carried out of its goroutine.
+// waitOutcome is one relevo.Wait call's result, carried out of its goroutine.
 type waitOutcome struct {
 	name string
-	res  relay.WaitResult
+	res  relevo.WaitResult
 	err  error
 }
 
-// runWait runs relay.Wait -- what `relay wait --name n --timeout t` calls --
+// runWait runs relevo.Wait -- what `relevo wait --name n --timeout t` calls --
 // under a test-side deadline, so a round that never closes fails the test
 // rather than blocking the run.
-func runWait(t *testing.T, ctx context.Context, rt relay.Runtime, name string, timeout time.Duration) waitOutcome {
+func runWait(t *testing.T, ctx context.Context, rt relevo.Runtime, name string, timeout time.Duration) waitOutcome {
 	t.Helper()
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
 
 	done := make(chan waitOutcome, 1)
 	go func() {
-		n, res, err := relay.Wait(waitCtx, rt, relay.WaitOptions{
+		n, res, err := relevo.Wait(waitCtx, rt, relevo.WaitOptions{
 			Names: []string{name}, Timeout: timeout, Interval: 50 * time.Millisecond,
 		})
 		done <- waitOutcome{name: n, res: res, err: err}
@@ -828,7 +828,7 @@ func runWait(t *testing.T, ctx context.Context, rt relay.Runtime, name string, t
 	case out := <-done:
 		return out
 	case <-time.After(roundDeadline):
-		t.Fatalf("relay wait --name %s --timeout %s did not return within %s (the round never closed)", name, timeout, roundDeadline)
+		t.Fatalf("relevo wait --name %s --timeout %s did not return within %s (the round never closed)", name, timeout, roundDeadline)
 	}
 	return waitOutcome{}
 }
@@ -837,7 +837,7 @@ func runWait(t *testing.T, ctx context.Context, rt relay.Runtime, name string, t
 // closed, bounded by roundDeadline. A round that never closes fails with the
 // binding's own state in the message, so a fake harness that never wrote its
 // report and marker is visible rather than a bare timeout.
-func tickUntilRoundCloses(t *testing.T, ctx context.Context, daemon *relay.Daemon, rt relay.Runtime, name string) {
+func tickUntilRoundCloses(t *testing.T, ctx context.Context, daemon *relevo.Daemon, rt relevo.Runtime, name string) {
 	t.Helper()
 	deadline := time.Now().Add(roundDeadline)
 	for {
@@ -861,16 +861,16 @@ func tickUntilRoundCloses(t *testing.T, ctx context.Context, daemon *relay.Daemo
 
 // stopRecordedBuilders is the plan's "clean up child processes with
 // t.Cleanup": the fake harness exits on its own, but a round that broke may
-// have left a process behind, and relay's handle for one is its pid plus the
+// have left a process behind, and relevo's handle for one is its pid plus the
 // start time that defends against pid reuse.
-func stopRecordedBuilders(t *testing.T, rt relay.Runtime, names ...string) {
+func stopRecordedBuilders(t *testing.T, rt relevo.Runtime, names ...string) {
 	t.Helper()
 	for _, name := range names {
 		b, err := rt.Store.Load(name)
 		if err != nil || b.Builder.PID == 0 {
 			continue
 		}
-		h := relay.ProcHandle{PID: b.Builder.PID, StartedAt: time.Unix(b.Builder.StartedAt, 0)}
+		h := relevo.ProcHandle{PID: b.Builder.PID, StartedAt: time.Unix(b.Builder.StartedAt, 0)}
 		if err := rt.Runner.Kill(context.Background(), h); err != nil {
 			t.Logf("cleanup: killing %s's builder pid %d: %v", name, b.Builder.PID, err)
 		}
@@ -879,7 +879,7 @@ func stopRecordedBuilders(t *testing.T, rt relay.Runtime, names ...string) {
 
 // builderLogTail is the last lines of one round's builder log, for a failure
 // message that needs to show what the fake harness actually did.
-func builderLogTail(rt relay.Runtime, name string, round int) string {
+func builderLogTail(rt relevo.Runtime, name string, round int) string {
 	raw, err := os.ReadFile(rt.Store.BuilderLogPath(name, round))
 	if err != nil {
 		return "(no builder log: " + err.Error() + ")"
@@ -907,7 +907,7 @@ func waitFor(t *testing.T, timeout time.Duration, pred func() bool, format strin
 }
 
 // reportEntry returns the newest to_planner report entry for one binding round.
-func reportEntry(t *testing.T, rt relay.Runtime, name string, round int) (store.LogEntry, bool) {
+func reportEntry(t *testing.T, rt relevo.Runtime, name string, round int) (store.LogEntry, bool) {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)
 	if err != nil {
@@ -924,14 +924,14 @@ func reportEntry(t *testing.T, rt relay.Runtime, name string, round int) (store.
 }
 
 // hasReportEntry reports whether one binding round has closed.
-func hasReportEntry(t *testing.T, rt relay.Runtime, name string, round int) bool {
+func hasReportEntry(t *testing.T, rt relevo.Runtime, name string, round int) bool {
 	t.Helper()
 	_, ok := reportEntry(t, rt, name, round)
 	return ok
 }
 
 // loadBinding loads one binding, failing the test when it cannot.
-func loadBinding(t *testing.T, rt relay.Runtime, name string) store.Binding {
+func loadBinding(t *testing.T, rt relevo.Runtime, name string) store.Binding {
 	t.Helper()
 	b, err := rt.Store.Load(name)
 	if err != nil {
@@ -960,9 +960,9 @@ func hasSession(rec planner.Record, session string) bool {
 	return false
 }
 
-// claimPath is where relay mcp's claim for one planner lives.
-func claimPath(rt relay.Runtime, plannerID string) string {
-	return filepath.Join(rt.Store.ChannelsDir(), relay.ClaimFileName(plannerID))
+// claimPath is where relevo mcp's claim for one planner lives.
+func claimPath(rt relevo.Runtime, plannerID string) string {
+	return filepath.Join(rt.Store.ChannelsDir(), relevo.ClaimFileName(plannerID))
 }
 
 // writePlan writes a plan file into a temp dir and returns its path.

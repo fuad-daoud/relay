@@ -34,13 +34,13 @@ type detailModel struct {
 	// through fetchShow instead of live files (#172, §5.8).
 	live bool
 	// bindingID is the database row's id, set only when !live -- fetchShow
-	// does not need it (it re-resolves by name), but relay.Show's ShowResult
+	// does not need it (it re-resolves by name), but relevo.Show's ShowResult
 	// does not carry it either, so it is here for the header and any future
 	// db-keyed lookup Task 5's goldens exercise.
 	bindingID string
 	// archivedAt is set only when !live and the binding was archived
 	// (tarred by `gc`); zero for a hist row the database recorded but the
-	// live store never released as an archive (e.g. `relay done`).
+	// live store never released as an archive (e.g. `relevo done`).
 	archivedAt time.Time
 }
 

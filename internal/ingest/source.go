@@ -1,5 +1,5 @@
 // Package ingest reads a binding's directory -- live under
-// ~/.local/state/relay/<name>/, or a gc tarball under .archive/ -- and
+// ~/.local/state/relevo/<name>/, or a gc tarball under .archive/ -- and
 // upserts every fact it holds into internal/db
 // (docs/specs/2026-09-20-persistence-design.md §5.2).
 package ingest
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // Source is one binding directory, live or archived: it decodes bind.json,

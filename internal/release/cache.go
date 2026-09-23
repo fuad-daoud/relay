@@ -15,7 +15,7 @@ const TTL = 24 * time.Hour
 // cacheFile is the name Load and Save use under the state root.
 const cacheFile = "release-check.json"
 
-// Cache is the last answer relay got from the release endpoint. It lives at
+// Cache is the last answer relevo got from the release endpoint. It lives at
 // <state>/release-check.json, where <state> is the root store.DefaultRoot()
 // returns: Load and Save take that root, so nothing here builds an XDG path
 // of its own (#42).

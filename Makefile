@@ -1,10 +1,10 @@
-BIN     := $(HOME)/.local/bin/relay
-UNIT    := $(HOME)/.config/systemd/user/relay.service
-LABEL   := com.github.fuad-daoud.relay
+BIN     := $(HOME)/.local/bin/relevo
+UNIT    := $(HOME)/.config/systemd/user/relevo.service
+LABEL   := com.github.fuad-daoud.relevo
 PLIST   := $(HOME)/Library/LaunchAgents/$(LABEL).plist
 UNAME_S := $(shell uname -s)
 
-# Stamp the binary so `relay version` means something in a build made from a
+# Stamp the binary so `relevo version` means something in a build made from a
 # clone. A `go install`ed binary gets its version from the module proxy
 # instead, so this is only needed here.
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
@@ -24,6 +24,7 @@ check:
 	fi; \
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
+	sh scripts/check-name.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck scripts/*.sh; \
 	else \
@@ -31,21 +32,21 @@ check:
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
 
-# e2e runs one headless relay round end to end (internal/e2e/headless_test.go).
+# e2e runs one headless relevo round end to end (internal/e2e/headless_test.go).
 # CI runs it; it needs no session manager on PATH and is not part of check.
 e2e:
 	go test ./internal/e2e/ -run TestHeadlessE2E -count=1
 
 # jev runs the classifier fixtures against the real TypeSafe endpoint
 # (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs
-# TYPESAFE_API_KEY or ~/.config/relay/typesafe.key and skips otherwise.
+# TYPESAFE_API_KEY or ~/.config/relevo/typesafe.key and skips otherwise.
 # Not part of check.
 jev:
 	go vet -tags jev ./internal/classify
 	go test -tags jev -count=1 -run TestJevInjectionFixtures ./internal/classify -v
 
 build: check
-	go build -ldflags "$(LDFLAGS)" -o relay ./cmd/relay
+	go build -ldflags "$(LDFLAGS)" -o relevo ./cmd/relevo
 
 release:
 	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release VERSION=0.1.0)" >&2; exit 1; }
@@ -66,7 +67,7 @@ release:
 # can pick the new one up (#371).
 install: build
 	mkdir -p $(dir $(BIN))
-	install -m755 relay $(BIN).new
+	install -m755 relevo $(BIN).new
 	mv -f $(BIN).new $(BIN)
 
 ifeq ($(UNAME_S),Darwin)
@@ -84,13 +85,13 @@ uninstall:
 else
 
 service: install
-	install -Dm644 dist/relay.service $(UNIT)
+	install -Dm644 dist/relevo.service $(UNIT)
 	systemctl --user daemon-reload
-	systemctl --user enable relay.service
-	systemctl --user restart relay.service
+	systemctl --user enable relevo.service
+	systemctl --user restart relevo.service
 
 uninstall:
-	systemctl --user disable --now relay.service || true
+	systemctl --user disable --now relevo.service || true
 	rm -f $(BIN) $(UNIT)
 	systemctl --user daemon-reload
 

@@ -6,8 +6,8 @@
 //
 //	go test -tags scopeaccept -count=1 -run TestScopeAcceptReapsItsScope -v ./internal/proc
 //
-// It creates its own relay-accept-* scope and touches nothing else: no
-// relay.service, no scope this test did not create.
+// It creates its own relevo-accept-* scope and touches nothing else: no
+// relevo.service, no scope this test did not create.
 package proc
 
 import (
@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // TestScopeAcceptReapsItsScope runs one harness in a scope of its own, the
@@ -41,7 +41,7 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 	if _, err := rand.Read(suffix); err != nil {
 		t.Fatal(err)
 	}
-	unit := "relay-accept-" + hex.EncodeToString(suffix)
+	unit := "relevo-accept-" + hex.EncodeToString(suffix)
 
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "harness.jsonl")
@@ -62,10 +62,10 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 
 	started := time.Now()
 	r := New()
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", script},
 		LogPath: filepath.Join(dir, "harness.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: unit, CPUWeight: 100},
+		Scope: &relevo.ScopeSpec{Unit: unit, CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -80,7 +80,7 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 		}
 	})
 
-	// 1. The stream ends with relay-exit:0 within 5 s.
+	// 1. The stream ends with relevo-exit:0 within 5 s.
 	code, ok := -1, false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		if code, ok = r.ExitCode(context.Background(), h, stream); ok {

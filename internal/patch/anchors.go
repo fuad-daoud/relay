@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Annotate renders b the way `relay diff --anchors` prints it: each hunk's
+// Annotate renders b the way `relevo diff --anchors` prints it: each hunk's
 // header gets a "<path>:<line>" gutter naming its post-image start, and
 // each ' '/'+' line gets a gutter naming its own post-image line number so
 // a reviewer can quote "path:line: comment" straight off the printed diff.

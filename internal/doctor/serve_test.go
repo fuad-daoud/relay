@@ -23,7 +23,7 @@ func makeTestCertPEM(t *testing.T, notBefore, notAfter time.Time) string {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName: "relay serve",
+			CommonName: "relevo serve",
 		},
 		NotBefore: notBefore,
 		NotAfter:  notAfter,

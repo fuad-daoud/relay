@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // Mode is how the builder ran.
@@ -23,7 +24,7 @@ const (
 )
 
 // Source is everything a reader needs to find one round's record. It is
-// built by internal/relay from a binding; this package never sees one.
+// built by internal/relevo from a binding; this package never sees one.
 type Source struct {
 	Harness    string // "claude" | "agy" | "opencode" | "codex"
 	Mode       Mode
@@ -77,15 +78,26 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// exitTrailer is proc.ExitTrailer: the last line relay's supervisor
+// exitTrailer is proc.ExitTrailer: the last line relevo's supervisor
 // writes to a headless stream, after the harness has exited. Copied, not
-// imported, so this package stays free of relay's process model;
-// TestExitTrailerMatchesProc in internal/relay pins the two equal.
-const exitTrailer = "relay-exit:"
+// imported, so this package stays free of relevo's process model;
+// TestExitTrailerMatchesProc in internal/relevo pins the two equal.
+const exitTrailer = "relevo-exit:"
 
-// ExitTrailerForTest exposes exitTrailer so internal/relay can pin it to
+// legacyExitTrailer is legacy.ExitTrailer: the same line a stream written
+// before the rename ends in (#292 §1). Taken from legacy rather than copied,
+// so the old name lives in one place; TestExitTrailerMatchesUsage in
+// internal/proc still pins it, and legacy is a stdlib-only leaf, so this
+// package keeps its independence from relevo's process model.
+const legacyExitTrailer = legacy.ExitTrailer
+
+// ExitTrailerForTest exposes exitTrailer so internal/relevo can pin it to
 // proc.ExitTrailer; nothing else calls it.
 func ExitTrailerForTest() string { return exitTrailer }
+
+// LegacyExitTrailerForTest exposes legacyExitTrailer so internal/proc can
+// pin it to legacy.ExitTrailer; nothing else calls it.
+func LegacyExitTrailerForTest() string { return legacyExitTrailer }
 
 // trailerPoll is how often a still-open stream is re-checked.
 const trailerPoll = 200 * time.Millisecond
@@ -94,7 +106,9 @@ const trailerPoll = 200 * time.Millisecond
 const tailProbe = 256
 
 // streamClosed reports whether path's last non-empty line is the exit
-// trailer -- the harness has exited and its final event is on disk.
+// trailer -- the harness has exited and its final event is on disk. A stream
+// written before the rename ends in the relay-exit: form instead, which // name-guard: legacy
+// closes the same way (#292 §1).
 func streamClosed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -116,7 +130,7 @@ func streamClosed(path string) bool {
 	}
 	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 	last := lines[len(lines)-1]
-	return strings.HasPrefix(last, exitTrailer)
+	return strings.HasPrefix(last, exitTrailer) || strings.HasPrefix(last, legacyExitTrailer)
 }
 
 // waitClosed blocks until the stream is closed or ctx is done, and

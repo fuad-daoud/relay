@@ -1,12 +1,12 @@
-// Package planner owns relay's planner identity (#303 step 1a): the records
+// Package planner owns relevo's planner identity (#303 step 1a): the records
 // that say which harness process and session a planner is, the rules that
 // mint and validate their ids and names, and the lookups every other verb
 // resolves a planner through. Nothing here launches a process, and planner.go
 // does no I/O at all: a Record is a value, and the rules over it are pure.
 //
 // The design is #303 §3.1, §3.4, §3.5
-// and §4.1–§4.4. Records live under $XDG_STATE_HOME/relay/planners, one JSON
-// file per record (registry.go), and are ingested into relay's sqlite
+// and §4.1–§4.4. Records live under $XDG_STATE_HOME/relevo/planners, one JSON
+// file per record (registry.go), and are ingested into relevo's sqlite
 // `planner` table by id.
 package planner
 
@@ -21,7 +21,7 @@ import (
 )
 
 // The sentinel errors every caller switches on (§6.1). ErrNoPlanner carries
-// the fix in its text: it is the message a planner sees when the relay plugin
+// the fix in its text: it is the message a planner sees when the relevo plugin
 // is missing, and "no planner" alone would not say what to do about it.
 var (
 	// ErrNotFound reports that no record matched a lookup.
@@ -40,10 +40,10 @@ var (
 	ErrInvalid = errors.New("invalid planner")
 	// ErrNoPlanner is what resolving without a match returns. Its text is the
 	// fix (§4.3).
-	ErrNoPlanner = errors.New("no relay planner for this session: is the relay plugin enabled (`relay doctor`)? Or run `relay planner init`")
+	ErrNoPlanner = errors.New("no relevo planner for this session: is the relevo plugin enabled (`relevo doctor`)? Or run `relevo planner init`")
 )
 
-// ErrUnknownPlanner reports a --planner or $RELAY_PLANNER value that matches
+// ErrUnknownPlanner reports a --planner or $RELEVO_PLANNER value that matches
 // no record at all, which is a different failure from resolving nothing.
 type ErrUnknownPlanner struct {
 	// Ref is the flag or environment value that matched nothing.
@@ -63,14 +63,14 @@ type SessionRef struct {
 	To        time.Time `json:"to"`
 }
 
-// Record is one relay planner: the identity every binding, claim and db row
+// Record is one relevo planner: the identity every binding, claim and db row
 // keys on (§3.1). Its JSON names are the file's field names and the db's
 // source.
 type Record struct {
 	// Format is the on-disk format this record was written at (#372): 0 (a
 	// missing key) is format 1, today's shape, and from 2 on the number is
 	// written. write refuses to overwrite a Format it does not know, so a
-	// newer relay's fields survive an older binary's rewrite.
+	// newer relevo's fields survive an older binary's rewrite.
 	Format int `json:"format,omitempty"`
 
 	ID                string       `json:"id"`
@@ -99,7 +99,7 @@ var (
 	// RFC 4648 base32 characters.
 	idRe = regexp.MustCompile(`^pl_[a-z2-7]{12}$`)
 	// legacyIDRe is the shape of every planner id that already exists in a
-	// real relay.db: a 26-character Crockford base32 ULID minted by
+	// real relevo.db: a 26-character Crockford base32 ULID minted by
 	// internal/db/ulid.go (alphabet 0123456789ABCDEFGHJKMNPQRSTVWXYZ, so no
 	// I, L, O or U). §3.5 requires reusing those ids, so ValidID accepts
 	// this shape too.
@@ -138,7 +138,7 @@ func NewID(rand io.Reader) (string, error) {
 // ValidID reports whether id names a planner record: §3.1's `pl_` plus 12
 // lowercase base32 characters, or the 26-character Crockford base32 ULID
 // internal/db/ulid.go mints. The second shape is §3.5's upgrade path -- every
-// id already in relay.db is a ULID, and a record reusing one is
+// id already in relevo.db is a ULID, and a record reusing one is
 // `<ULID>.json` on disk. Both shapes are path-safe (no separator, no dot), so
 // an id can never become a path.
 func ValidID(id string) error {

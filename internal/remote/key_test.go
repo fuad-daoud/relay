@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func TestKeyRoundTrip(t *testing.T) {
@@ -81,20 +83,61 @@ func TestParsePublicRejects(t *testing.T) {
 	}
 }
 
+func TestParsePrivateAcceptsLegacyType(t *testing.T) {
+	kp, err := Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	pemBytes, err := MarshalPrivate(kp)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+
+	// A client key written before the rename says "RELAY ED25519 PRIVATE KEY" // name-guard: legacy
+	// on both the BEGIN and the END line; only the block type differs, the
+	// bytes are the same.
+	legacyPEM := bytes.ReplaceAll(pemBytes, []byte("RELEVO ED25519 PRIVATE KEY"), []byte(legacy.KeyPEMType))
+	if bytes.Equal(legacyPEM, pemBytes) {
+		t.Fatal("legacy PEM is unchanged: MarshalPrivate no longer writes the RELEVO type?")
+	}
+
+	parsed, err := ParsePrivate(legacyPEM)
+	if err != nil {
+		t.Fatalf("ParsePrivate(legacy type): %v", err)
+	}
+	if !bytes.Equal(kp.Private, parsed.Private) {
+		t.Fatal("parsed private key does not match original")
+	}
+	if !bytes.Equal(kp.Public, parsed.Public) {
+		t.Fatal("parsed public key does not match original")
+	}
+}
+
 func TestParsePrivateRejectsWrongType(t *testing.T) {
-	block := pem.EncodeToMemory(&pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: make([]byte, 64),
-	})
-	_, err := ParsePrivate(block)
-	if !errors.Is(err, ErrKeyType) {
-		t.Fatalf("ParsePrivate(wrong type): got %v, want ErrKeyType", err)
+	cases := []struct {
+		name string
+		typ  string
+	}{
+		{"PRIVATE KEY", "PRIVATE KEY"},
+		{"EC PRIVATE KEY", "EC PRIVATE KEY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block := pem.EncodeToMemory(&pem.Block{
+				Type:  tc.typ,
+				Bytes: make([]byte, 64),
+			})
+			_, err := ParsePrivate(block)
+			if !errors.Is(err, ErrKeyType) {
+				t.Fatalf("ParsePrivate(%q): got %v, want ErrKeyType", tc.typ, err)
+			}
+		})
 	}
 }
 
 func TestParsePrivateRejectsWrongLength(t *testing.T) {
 	block := pem.EncodeToMemory(&pem.Block{
-		Type:  "RELAY ED25519 PRIVATE KEY",
+		Type:  "RELEVO ED25519 PRIVATE KEY",
 		Bytes: make([]byte, 32),
 	})
 	_, err := ParsePrivate(block)
@@ -123,8 +166,8 @@ func TestMarshalPrivateType(t *testing.T) {
 	if block == nil {
 		t.Fatal("pem.Decode returned nil block")
 	}
-	if block.Type != "RELAY ED25519 PRIVATE KEY" {
-		t.Fatalf("block.Type = %q, want %q", block.Type, "RELAY ED25519 PRIVATE KEY")
+	if block.Type != "RELEVO ED25519 PRIVATE KEY" {
+		t.Fatalf("block.Type = %q, want %q", block.Type, "RELEVO ED25519 PRIVATE KEY")
 	}
 	if !bytes.Equal(block.Bytes, kp.Private) {
 		t.Fatalf("block.Bytes mismatch: got %x, want %x", block.Bytes, kp.Private)

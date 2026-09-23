@@ -9,7 +9,7 @@ import (
 )
 
 // psVerdict is what a failed ps says (#370): the process is really gone, or
-// the failure was relay's own (the caller's context ended, or something
+// the failure was relevo's own (the caller's context ended, or something
 // killed ps) and must not be read as a dead process.
 type psVerdict int
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 func TestResolve(t *testing.T) {
@@ -52,13 +52,13 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("file key (t.TempDir as configDir, relay/typesafe.key with trailing newline) -> KeySource file, key trimmed", func(t *testing.T) {
+	t.Run("file key (t.TempDir as configDir, relevo/typesafe.key with trailing newline) -> KeySource file, key trimmed", func(t *testing.T) {
 		cfgDir := t.TempDir()
-		relayDir := filepath.Join(cfgDir, "relay")
-		if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		relevoDir := filepath.Join(cfgDir, "relevo")
+		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		keyPath := filepath.Join(relayDir, "typesafe.key")
+		keyPath := filepath.Join(relevoDir, "typesafe.key")
 		if err := os.WriteFile(keyPath, []byte("  file-secret-key  \n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -90,11 +90,11 @@ func TestResolve(t *testing.T) {
 
 	t.Run("env wins over file when both", func(t *testing.T) {
 		cfgDir := t.TempDir()
-		relayDir := filepath.Join(cfgDir, "relay")
-		if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		relevoDir := filepath.Join(cfgDir, "relevo")
+		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		keyPath := filepath.Join(relayDir, "typesafe.key")
+		keyPath := filepath.Join(relevoDir, "typesafe.key")
 		if err := os.WriteFile(keyPath, []byte("file-secret-key\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("neither -> Unavailable, KeySource empty, KeyPath ends in relay/typesafe.key, Judge returns ErrUnavailable", func(t *testing.T) {
+	t.Run("neither -> Unavailable, KeySource empty, KeyPath ends in relevo/typesafe.key, Judge returns ErrUnavailable", func(t *testing.T) {
 		cfgDir := t.TempDir()
 		cfg := &policy.Classify{Provider: "jev"}
 		getenv := func(string) string { return "" }
@@ -132,8 +132,8 @@ func TestResolve(t *testing.T) {
 		if st.KeySource != "" {
 			t.Errorf("KeySource = %q, want empty", st.KeySource)
 		}
-		if !strings.HasSuffix(st.KeyPath, filepath.Join("relay", "typesafe.key")) {
-			t.Errorf("KeyPath %q does not end with relay/typesafe.key", st.KeyPath)
+		if !strings.HasSuffix(st.KeyPath, filepath.Join("relevo", "typesafe.key")) {
+			t.Errorf("KeyPath %q does not end with relevo/typesafe.key", st.KeyPath)
 		}
 
 		unavail, ok := cls.(Unavailable)
@@ -148,11 +148,11 @@ func TestResolve(t *testing.T) {
 
 	t.Run("empty file -> treated as no key", func(t *testing.T) {
 		cfgDir := t.TempDir()
-		relayDir := filepath.Join(cfgDir, "relay")
-		if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		relevoDir := filepath.Join(cfgDir, "relevo")
+		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		keyPath := filepath.Join(relayDir, "typesafe.key")
+		keyPath := filepath.Join(relevoDir, "typesafe.key")
 		if err := os.WriteFile(keyPath, []byte("   \n\t  \n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -171,11 +171,11 @@ func TestResolve(t *testing.T) {
 
 	t.Run("0644 key file -> Unavailable, KeySource empty, KeyFileLoose true, reason names mode; 0600 -> file key", func(t *testing.T) {
 		cfgDir := t.TempDir()
-		relayDir := filepath.Join(cfgDir, "relay")
-		if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		relevoDir := filepath.Join(cfgDir, "relevo")
+		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		keyPath := filepath.Join(relayDir, "typesafe.key")
+		keyPath := filepath.Join(relevoDir, "typesafe.key")
 		if err := os.WriteFile(keyPath, []byte("file-secret-key\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func newTestBinding(name string) store.Binding {
@@ -37,7 +37,7 @@ func TestTabOrderStartsWithPlan(t *testing.T) {
 
 func TestFetchPlanLive(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -74,7 +74,7 @@ func TestFetchPlanLive(t *testing.T) {
 
 func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Store: st,
 	}
 
@@ -94,7 +94,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 
 func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -137,7 +137,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 
 func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "emptybinding"
 
 	b := newTestBinding(name)
@@ -165,7 +165,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 // round must show that round's report, not a later round's.
 func TestFetchReportTakesRound(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -202,7 +202,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 // a log for reads as prose, not as an error, and must never reach a pane.
 func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	cmd := fetchDiff(context.Background(), plannerSource{rt}, "webshop", 0)
 	msg := cmd()
@@ -221,7 +221,7 @@ func TestFetchDiffRoundZero(t *testing.T) {
 
 func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -246,7 +246,7 @@ func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 
 func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -300,7 +300,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 // than dumping the whole binding log.
 func TestFetchLogFiltersRound(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -332,7 +332,7 @@ func TestFetchLogFiltersRound(t *testing.T) {
 
 func TestFetchForRouting(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -361,7 +361,7 @@ func TestFetchForRouting(t *testing.T) {
 // address that agent, not replay a name that may no longer resolve.
 func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	logPath := filepath.Join(t.TempDir(), "002-builder.log")
 	if err := os.WriteFile(logPath, []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
@@ -391,7 +391,7 @@ func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 
 func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	logPath := filepath.Join(t.TempDir(), "002-builder.log")
@@ -430,7 +430,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 
 func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
 	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless}
@@ -455,7 +455,7 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 
 func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
 	b.Round = 3 // round 2 closed; nothing sent yet
@@ -469,7 +469,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(logPath, []byte("Bash go test ./...\n  -> ok: ok\nrelay-exit:0\n"), 0o644); err != nil {
+	if err := os.WriteFile(logPath, []byte("Bash go test ./...\n  -> ok: ok\nrelevo-exit:0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -477,17 +477,17 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	if tMsg.content.empty != "" || tMsg.content.err != nil {
 		t.Fatalf("between rounds the last log must show: %+v", tMsg.content)
 	}
-	if tMsg.content.body != "Bash go test ./...\n  -> ok: ok\nrelay-exit:0" {
+	if tMsg.content.body != "Bash go test ./...\n  -> ok: ok\nrelevo-exit:0" {
 		t.Errorf("body = %q", tMsg.content.body)
 	}
 }
 
 // TestFetchTerminalRemoteBuilder pins the #303 remote branch: a remote
-// builder shows the round's local builder log when relay has one, and
+// builder shows the round's local builder log when relevo has one, and
 // otherwise a single line naming the server.
 func TestFetchTerminalRemoteBuilder(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	logPath := st.BuilderLogPath("webshop", 2)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -515,7 +515,7 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 
 	// No local log for the round: the single line naming the server.
 	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 1, 24)().(tabMsg)
-	if want := "remote builder on contabo: relay log webshop"; msg.content.empty != want {
+	if want := "remote builder on contabo: relevo log webshop"; msg.content.empty != want {
 		t.Errorf("empty = %q, want %q", msg.content.empty, want)
 	}
 }

@@ -12,7 +12,7 @@ import (
 // fsmonitor--daemon never leaves one behind, reparented to the user manager,
 // to keep its round's scope alive after the builder has gone.
 //
-// n continues the count the child would otherwise have: extra (relay's own
+// n continues the count the child would otherwise have: extra (relevo's own
 // spec.Env) if it sets GIT_CONFIG_COUNT, else parent, else 0, so the entries
 // git already had stay valid and this one lands after them and wins. A
 // non-numeric count is treated as 0 and replaced. The caller must make the

@@ -111,7 +111,7 @@ func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 // is null in the db and set on p.
 //
 // When p.ID is set the record's own id wins instead (#303
-// §3.5): relay's planner records are keyed by the id `relay planner init`
+// §3.5): relevo's planner records are keyed by the id `relevo planner init`
 // minted, so ingest upserts by id and the natural key stays as the uniqueness
 // guard. A (harness_kind, session_id) another id already holds is refused with
 // ErrInvalid rather than silently merging two identities.

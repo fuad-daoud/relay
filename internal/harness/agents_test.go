@@ -54,7 +54,7 @@ func TestAgentDocRejectsPathTraversal(t *testing.T) {
 
 func TestPlanExecutorDefinitionsForbidWritingSubAgents(t *testing.T) {
 	// The load-bearing sentence. Deleting it from either shipped definition
-	// must fail this test: relay ships the role its own loop depends on, and
+	// must fail this test: relevo ships the role its own loop depends on, and
 	// a second writer in one tree destroys work rather than stalling.
 	const oneWriter = "Exactly one agent writes to this working tree, and it is you."
 
@@ -206,7 +206,7 @@ func TestAgyDefinitionsFrontmatter(t *testing.T) {
 				}
 			}
 			// #191: plan-executor never dispatches a sub-agent of any kind on
-			// agy, since an idle root agent there is an exit relay treats as a
+			// agy, since an idle root agent there is an exit relevo treats as a
 			// failed builder.
 			for _, name := range []string{"invoke_subagent", "manage_subagents"} {
 				m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)

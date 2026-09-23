@@ -4,9 +4,9 @@ import (
 	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/histq"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // fetchFunc is one refresh: the db half through query.Filter, the in-Go
@@ -19,7 +19,7 @@ type fetchFunc func(ctx context.Context, q histq.Query) ([]db.RoundRow, error)
 func (m Model) fetchDB() fetchFunc {
 	return func(ctx context.Context, q histq.Query) ([]db.RoundRow, error) {
 		if m.db == nil {
-			return nil, relay.ErrNoDatabase
+			return nil, relevo.ErrNoDatabase
 		}
 		rows, err := m.db.Query(q.Filter)
 		if err != nil {

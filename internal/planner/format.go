@@ -6,7 +6,7 @@ package planner
 // to one written before the field existed; from format 2 on the number is
 // written.
 //
-// Bump it whenever Record's JSON shape changes. An older relay that meets a
+// Bump it whenever Record's JSON shape changes. An older relevo that meets a
 // newer format refuses to write, because its rewrite would erase every field
 // it does not know (#372).
 const PlannerFormat = 1

@@ -11,8 +11,8 @@ import (
 // pure function of the stream and the kind, "" when the stream carries none.
 //
 // A headless consult asks the model for its findings as its final message
-// rather than a file (`relay ask --headless`), because a read-tier process
-// may not be able to write one; relay extracts that message here. Rules per
+// rather than a file (`relevo ask --headless`), because a read-tier process
+// may not be able to write one; relevo extracts that message here. Rules per
 // kind:
 //
 //	claude:   the last assistant event's concatenated text blocks; if the
@@ -24,7 +24,7 @@ import (
 //	codex:    the last item.completed whose item.type is agent_message,
 //	          item.text.
 //
-// The relay-exit trailer and any line that is not a JSON object are ignored,
+// The relevo-exit trailer and any line that is not a JSON object are ignored,
 // and the result is trimmed. An unknown kind yields "".
 func FinalText(kind string, stream []byte) string {
 	var last, fallback string

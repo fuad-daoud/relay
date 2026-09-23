@@ -1,5 +1,5 @@
-// Package db is relay's system of record: a pure-Go sqlite file at
-// <state root>/relay.db, behind this package alone -- it is the only place
+// Package db is relevo's system of record: a pure-Go sqlite file at
+// <state root>/relevo.db, behind this package alone -- it is the only place
 // a driver is imported, so the move to Turso later is a driver swap here,
 // not a migration anywhere else (docs/specs/2026-09-20-persistence-design.md).
 package db
@@ -10,7 +10,7 @@ import "time"
 // Every time is time.Time in Go and RFC3339 UTC with millisecond precision
 // in the db. Nullable columns are pointers on the Go side.
 
-// Repo is a git repository relay has seen, identified by its normalised
+// Repo is a git repository relevo has seen, identified by its normalised
 // origin URL, its git common dir, or both.
 type Repo struct {
 	ID        string
@@ -19,7 +19,7 @@ type Repo struct {
 	FirstSeen time.Time
 }
 
-// Planner is one (harness kind, session id) relay has observed at bind.
+// Planner is one (harness kind, session id) relevo has observed at bind.
 type Planner struct {
 	ID                string
 	HarnessKind       string
@@ -29,7 +29,7 @@ type Planner struct {
 	LastSeen          time.Time
 }
 
-// Binding is one relay binding, live or archived.
+// Binding is one relevo binding, live or archived.
 type Binding struct {
 	ID                  string
 	Name                string
@@ -148,7 +148,7 @@ type Filter struct {
 	Newest                                               bool
 }
 
-// RoundRow is the denormalised line `relay history` prints.
+// RoundRow is the denormalised line `relevo history` prints.
 type RoundRow struct {
 	BindingID, BindingName                                          string
 	Repo, Feature                                                   *string
@@ -180,7 +180,7 @@ type BindingRow struct {
 	LastActivity              time.Time
 }
 
-// Stats summarises the database for `relay db stats`.
+// Stats summarises the database for `relevo db stats`.
 type Stats struct {
 	Version     int
 	SizeBytes   int64

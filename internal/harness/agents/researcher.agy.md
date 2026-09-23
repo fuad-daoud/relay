@@ -54,8 +54,8 @@ internal/, cmd/, or docs/".
 
 `model: inherit` above is not an example, it is required. On agy the
 `model` key is a tier (`inherit`, `flash`, `pro`) and a tier pinned here
-overrides the `--model` relay passes on the launch line -- so a pin other
-than `inherit` would run a model `relay status` does not show. `relay
+overrides the `--model` relevo passes on the launch line -- so a pin other
+than `inherit` would run a model `relevo status` does not show. `relevo
 doctor` warns when an installed copy pins anything else.
 
 # Why the tools list is short

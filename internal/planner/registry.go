@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // lockFileName is the registry's lock, held for every read-modify-write. It
@@ -49,12 +49,12 @@ type Registry interface {
 	Forget(id string, inUse func(id string) bool) error
 }
 
-// FileRegistry is relay's on-disk registry: one JSON record per file at
+// FileRegistry is relevo's on-disk registry: one JSON record per file at
 // <Root>/<id>.json, written as a temp file plus rename, so a reader never sees
 // a half-written record (§3.1, §4.1).
 //
 // Every mutating method holds an exclusive flock on <Root>/.lock across its
-// whole read-modify-write, so `relay planner init` and a concurrent `relay mcp`
+// whole read-modify-write, so `relevo planner init` and a concurrent `relevo mcp`
 // serialise and whichever runs second sees the first's record (§4.1). The lock
 // is flock-based and build-tag guarded exactly as store's is, so the kernel
 // drops it if a holder dies and there is no stale file to reap.
@@ -345,7 +345,7 @@ func (r *FileRegistry) moveSession(id, sessionID, transcript string, now time.Ti
 	}
 	// The hook's transcript_path for the new session replaces the old one when
 	// it carries one; an empty path leaves the stored locator alone rather
-	// than blanking a value that is still the best relay has.
+	// than blanking a value that is still the best relevo has.
 	if transcript != "" {
 		rec.TranscriptLocator = transcript
 	}
@@ -470,7 +470,7 @@ func (r *FileRegistry) touch(id string, now time.Time) error {
 }
 
 // touchForced stamps seen_at with no throttle and returns the updated record.
-// `relay planner init` always writes -- its postcondition is "its seen_at is
+// `relevo planner init` always writes -- its postcondition is "its seen_at is
 // now" (§4.4) -- so it cannot ride the once-a-minute rule Touch applies to
 // resolving calls.
 func (r *FileRegistry) touchForced(id string, now time.Time) (Record, error) {
@@ -511,8 +511,8 @@ func (r *FileRegistry) forget(id string, inUse func(id string) bool) error {
 // write puts one record on disk: a temp file in the registry root, then a
 // rename, so a crash never leaves a truncated record.
 func (r *FileRegistry) write(rec Record) error {
-	// A record written by a newer relay is read-only for this binary: its
-	// rewrite would erase every field this relay does not know (#372). The
+	// A record written by a newer relevo is read-only for this binary: its
+	// rewrite would erase every field this relevo does not know (#372). The
 	// check comes first, so a refusal writes nothing at all.
 	if rec.Format > PlannerFormat {
 		return &store.ErrNewerFormat{Kind: "planner record", Name: rec.Name, Have: rec.Format, Know: PlannerFormat}

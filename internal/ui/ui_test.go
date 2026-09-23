@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 type fakeCharDevice struct {
@@ -29,8 +29,8 @@ func TestRunRefusesNonCharacterDevice(t *testing.T) {
 	}
 	defer func() { stdoutStat = origStat }()
 
-	err := Run(context.Background(), relay.Runtime{}, Options{})
-	want := "relay ui needs a terminal; use `relay status` or `relay watch` when piping"
+	err := Run(context.Background(), relevo.Runtime{}, Options{})
+	want := "relevo ui needs a terminal; use `relevo status` or `relevo watch` when piping"
 	if err == nil || err.Error() != want {
 		t.Fatalf("expected error %q, got %v", want, err)
 	}

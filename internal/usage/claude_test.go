@@ -36,7 +36,7 @@ func mustTemp(t *testing.T, body string) (*os.File, string) {
 
 func TestProjectSlug(t *testing.T) {
 	cases := map[string]string{
-		"/home/fuad/projects/relay":        "-home-fuad-projects-relay",
+		"/home/fuad/projects/relevo":       "-home-fuad-projects-relevo",
 		"/home/fuad/.claude/projects":      "-home-fuad--claude-projects",
 		"/home/fuad":                       "-home-fuad",
 		"/home/fuad/apps/google-cloud-sdk": "-home-fuad-apps-google-cloud-sdk",
@@ -84,7 +84,7 @@ func TestClaudeStreamKilledFallsBackToAssistantEvents(t *testing.T) {
 }
 
 func TestClaudeStreamEmpty(t *testing.T) {
-	f, _ := mustTemp(t, "relay-exit:0\n")
+	f, _ := mustTemp(t, "relevo-exit:0\n")
 	if got := claudeStream(f, "anthropic"); len(got) != 0 {
 		t.Errorf("empty stream = %d samples, want 0", len(got))
 	}

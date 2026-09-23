@@ -23,7 +23,7 @@ jobs:
       - name: check plugin manifest versions
         run: scripts/check-plugin-version.sh "${{ github.ref_name }}"
 
-      # Only the platforms relay actually supports. Everything is stdlib and
+      # Only the platforms relevo actually supports. Everything is stdlib and
       # CGO-free, so plain cross-compilation is enough -- no build matrix, no
       # third-party release tooling.
       - name: build release archives
@@ -38,13 +38,13 @@ jobs:
             echo "==> $goos/$goarch"
             GOOS="$goos" GOARCH="$goarch" go build \
               -ldflags "-s -w -X main.version=${version} -X main.distribution=release" \
-              -o "dist/relay" ./cmd/relay
-            tar -czf "dist/relay_${version}_${goos}_${goarch}.tar.gz" \
-              -C dist relay \
+              -o "dist/relevo" ./cmd/relevo
+            tar -czf "dist/relevo_${version}_${goos}_${goarch}.tar.gz" \
+              -C dist relevo \
               -C .. README.md LICENSE
-            rm dist/relay
+            rm dist/relevo
           done
-          (cd dist && sha256sum relay_*.tar.gz > checksums.txt)
+          (cd dist && sha256sum relevo_*.tar.gz > checksums.txt)
           ls -l dist
 
       - name: publish
@@ -54,4 +54,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            dist/relay_*.tar.gz dist/checksums.txt
+            dist/relevo_*.tar.gz dist/checksums.txt

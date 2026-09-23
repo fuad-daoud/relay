@@ -14,22 +14,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// GitFacts is the slice of git identity relay's ingest needs, matching
-// relay.Git.RepoFacts structurally so a *relay.Runtime's Git can be passed
-// through IngestDeps with no import of internal/relay here (that package
+// GitFacts is the slice of git identity relevo's ingest needs, matching
+// relevo.Git.RepoFacts structurally so a *relevo.Runtime's Git can be passed
+// through IngestDeps with no import of internal/relevo here (that package
 // is ingest's caller; the two must not import each other).
 type GitFacts interface {
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 }
 
-// SessionLocator mirrors relay.SessionLocator's signature for the same
-// reason GitFacts mirrors relay.Git: internal/relay is ingest's caller.
-// relay.IngestDeps converts a relay.SessionLocator to this type at the
+// SessionLocator mirrors relevo.SessionLocator's signature for the same
+// reason GitFacts mirrors relevo.Git: internal/relevo is ingest's caller.
+// relevo.IngestDeps converts a relevo.SessionLocator to this type at the
 // boundary.
 type SessionLocator func(kind, sessionID string) (path string, ok bool)
 
@@ -230,7 +230,7 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		var plannerID *string
 		if b.Planner.SessionID != "" {
 			id, perr := tx.UpsertPlanner(db.Planner{
-				// b.PlannerID is the relay planner record's own id
+				// b.PlannerID is the relevo planner record's own id
 				// (#303 §3.5). Nothing
 				// writes the field yet -- step 1b sets it at bind/add/fork --
 				// so today this is always "" and the natural-key path below

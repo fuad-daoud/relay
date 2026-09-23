@@ -9,30 +9,30 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/ledger"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/muesli/termenv"
 )
 
-func splitModel(t *testing.T, width, height int, rows ...relay.BindingStatus) Model {
+func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
 	return res.(Model)
 }
 
-func threeRows() []relay.BindingStatus {
-	return []relay.BindingStatus{
-		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relay.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
-		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &relay.LastEvent{TS: railNow.Add(-time.Hour)}},
-		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &relay.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
+func threeRows() []relevo.BindingStatus {
+	return []relevo.BindingStatus{
+		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
+		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour)}},
+		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
 	}
 }
 
@@ -40,13 +40,13 @@ func threeRows() []relay.BindingStatus {
 // second client's same-named binding appearing above must not steal the
 // cursor -- it stays on the key it was on.
 func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
-	m := splitModel(t, 140, 40, relay.BindingStatus{
+	m := splitModel(t, 140, 40, relevo.BindingStatus{
 		Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy",
 	})
 	if m.rows()[m.list.cursor].Key() != "b/persist" {
 		t.Fatalf("cursor on %q", m.rows()[m.list.cursor].Key())
 	}
-	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: []relay.BindingStatus{
+	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
 		{Name: "persist", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 	}}})
@@ -62,7 +62,7 @@ func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
 // every label empty the output is exactly today's.
 func TestRailLinesGroupsByOwner(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
-	rows := []relay.BindingStatus{
+	rows := []relevo.BindingStatus{
 		{Name: "api", Owner: id, OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "docs", Owner: id, OwnerLabel: "a", Round: 2, Display: "DONE", BuilderKind: "agy"},
 		{Name: "webshop", Owner: "SHA256:abcdefghijklmnop", OwnerLabel: "b", Round: 3, Display: "ACTIVE", BuilderKind: "agy"},
@@ -107,7 +107,7 @@ func TestRailLinesGroupsByOwner(t *testing.T) {
 
 	// All labels empty: no untagged lines beyond today's -- identical to
 	// today's output for the same rows.
-	plainRows := []relay.BindingStatus{
+	plainRows := []relevo.BindingStatus{
 		{Name: "api", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "docs", Round: 2, Display: "DONE", BuilderKind: "agy"},
 		{Name: "webshop", Round: 3, Display: "ACTIVE", BuilderKind: "agy"},
@@ -134,7 +134,7 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
 	m := splitModel(t, 140, 40, threeRows()...)
 
-	client := relay.BindingStatus{
+	client := relevo.BindingStatus{
 		Name: "webshop", Owner: id, OwnerLabel: "zen", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 	}
@@ -146,7 +146,7 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 		t.Errorf("the planner line must be replaced:\n%s", head)
 	}
 
-	planner := relay.BindingStatus{
+	planner := relevo.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
@@ -173,7 +173,7 @@ func TestSplitViewShape(t *testing.T) {
 		}
 	}
 	p := plain(view)
-	if !strings.Contains(p, "relay 3 bindings · 1 needs you") {
+	if !strings.Contains(p, "relevo 3 bindings · 1 needs you") {
 		t.Errorf("header missing counts:\n%s", p)
 	}
 	// Attention order: webshop first and selected, pane shows it.
@@ -321,7 +321,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	rows := threeRows()
-	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
+	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
 	m := splitModel(t, 140, 40, rows...)
 	// Attention order puts webshop (NEEDS YOU) first; make api the one under
 	// test by moving to it, then to the terminal tab.
@@ -473,7 +473,7 @@ func TestCompactIgnoresResize(t *testing.T) {
 }
 
 func TestHeaderGatesAndClock(t *testing.T) {
-	t.Cleanup(relay.SetGateClock(func() time.Time { return railNow }))
+	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView())
@@ -488,7 +488,7 @@ func TestHeaderGatesAndClock(t *testing.T) {
 func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	rows := threeRows()
 	m := splitModel(t, 140, 40, rows...)
-	var b relay.BindingStatus
+	var b relevo.BindingStatus
 	for _, r := range rows {
 		if r.Name == m.detail.name {
 			b = r
@@ -524,7 +524,7 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 func TestPaneHeadLiveUsageRow(t *testing.T) {
 	rows := threeRows()
 	m := splitModel(t, 140, 40, rows...)
-	var b relay.BindingStatus
+	var b relevo.BindingStatus
 	for _, r := range rows {
 		if r.Name == m.detail.name {
 			b = r

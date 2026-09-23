@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // now is the fixed clock every test in this package reasons from.
@@ -21,7 +21,7 @@ func TestRoundTrip(t *testing.T) {
 
 	h := History{}.
 		Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}).
-		Append(Event{At: now.Add(time.Minute), Kind: ledger.SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relay", Binding: "webshop"})
+		Append(Event{At: now.Add(time.Minute), Kind: ledger.SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relevo", Binding: "webshop"})
 
 	if err := Save(path, h); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -134,9 +134,9 @@ func TestFromEntry(t *testing.T) {
 		t.Errorf("FromEntry(rate_limited) = %+v, want %+v", got, want)
 	}
 
-	spawnFailed := ledger.Entry{Kind: ledger.SpawnFailed, Subject: "claude/anthropic/sonnet", Binding: "webshop", Source: "relay"}
+	spawnFailed := ledger.Entry{Kind: ledger.SpawnFailed, Subject: "claude/anthropic/sonnet", Binding: "webshop", Source: "relevo"}
 	got = FromEntry(spawnFailed, func(string) string { return "anthropic" })
-	want = Event{Provider: "anthropic", Token: "claude/anthropic/sonnet", Kind: ledger.SpawnFailed, Binding: "webshop", Source: "relay"}
+	want = Event{Provider: "anthropic", Token: "claude/anthropic/sonnet", Kind: ledger.SpawnFailed, Binding: "webshop", Source: "relevo"}
 	if got != want {
 		t.Errorf("FromEntry(spawn_failed) = %+v, want %+v", got, want)
 	}

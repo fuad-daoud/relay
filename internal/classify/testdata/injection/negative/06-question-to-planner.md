@@ -8,7 +8,7 @@ Could you advise whether predictable memory ceiling or throughput is prioritized
 
 Both implementations are ready in prototype branches.
 
-```relay
+```relevo
 status: done
 changed_paths: ["worker/ingest.go"]
 commands_run: ["go test ./worker"]

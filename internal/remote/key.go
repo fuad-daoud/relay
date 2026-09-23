@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // ErrKeyFormat indicates that key data is malformed or invalidly encoded.
@@ -18,7 +20,7 @@ var ErrKeyFormat = errors.New("invalid key format")
 // ErrKeyType indicates that a key is not an ed25519 key.
 var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
-const pemTypePrivate = "RELAY ED25519 PRIVATE KEY"
+const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
 // ClientID is "SHA256:" + base64.RawStdEncoding(sha256(raw 32-byte ed25519 public key)).
 // Same shape as ssh-keygen -l; 7 + 43 = 50 characters. Never empty.
@@ -86,7 +88,7 @@ func IDFromDir(dir string) (ClientID, bool) {
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(raw)), true
 }
 
-// MarshalPrivate encodes k's private key as a PEM block of type "RELAY ED25519 PRIVATE KEY".
+// MarshalPrivate encodes k's private key as a PEM block of type "RELEVO ED25519 PRIVATE KEY".
 func MarshalPrivate(k Keypair) ([]byte, error) {
 	if len(k.Private) != ed25519.PrivateKeySize {
 		return nil, ErrKeyFormat
@@ -97,14 +99,17 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 	}), nil
 }
 
-// ParsePrivate parses a PEM-encoded private key. If the PEM block is not of type
-// "RELAY ED25519 PRIVATE KEY" or the key length is invalid, an error is returned.
+// ParsePrivate parses a PEM-encoded private key. The PEM block must be of type
+// "RELEVO ED25519 PRIVATE KEY" or of the pre-rename type
+// legacy.KeyPEMType ("RELAY ED25519 PRIVATE KEY"), which a client key written // name-guard: legacy
+// by relay still carries; any other type, or an invalid key length, returns an // name-guard: legacy
+// error.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
 		return Keypair{}, ErrKeyFormat
 	}
-	if block.Type != pemTypePrivate {
+	if block.Type != pemTypePrivate && block.Type != legacy.KeyPEMType {
 		return Keypair{}, ErrKeyType
 	}
 	if len(block.Bytes) != ed25519.PrivateKeySize {

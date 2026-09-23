@@ -182,7 +182,7 @@ func TestEndpointHeadless(t *testing.T) {
 }
 
 func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
-	// A pane endpoint written by today's relay carries none of the new keys.
+	// A pane endpoint written by today's relevo carries none of the new keys.
 	pane := Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"}
 	data, err := json.Marshal(pane)
 	if err != nil {
@@ -238,7 +238,7 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 // Planner.TranscriptLocator. It deliberately excludes ForkedFrom: the plan
 // for this round asked for a `Binding.ForkedFrom *ForkRef` field, but
 // Binding already has a same-named `ForkedFrom string` field (plus
-// ForkedAtRound int) that internal/relay/fork.go, internal/relay/status.go
+// ForkedAtRound int) that internal/relevo/fork.go, internal/relevo/status.go
 // and internal/ui/rail.go read -- a second Go field of the same name is a
 // compile error, not a style question, and none of those three files is in
 // this round's declared scope. See the round 3 report.
@@ -324,7 +324,7 @@ func TestBindingCommitFactFieldsRoundTripAndAreOmittedWhenEmpty(t *testing.T) {
 	})
 
 	t.Run("set values round-trip", func(t *testing.T) {
-		in := Binding{Branch: "relay/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"}
+		in := Binding{Branch: "relevo/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"}
 		data, err := json.Marshal(in)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
@@ -340,7 +340,7 @@ func TestBindingCommitFactFieldsRoundTripAndAreOmittedWhenEmpty(t *testing.T) {
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			t.Fatalf("Unmarshal: %v", err)
 		}
-		if decoded["branch"] != "relay/api-auth" || decoded["base"] != "c0ffee" || decoded["round_baseline_head"] != "beef" {
+		if decoded["branch"] != "relevo/api-auth" || decoded["base"] != "c0ffee" || decoded["round_baseline_head"] != "beef" {
 			t.Errorf("JSON keys: %s", data)
 		}
 	})

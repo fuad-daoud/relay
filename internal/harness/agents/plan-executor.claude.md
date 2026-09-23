@@ -183,9 +183,9 @@ Your final report must include:
 - Files created/modified, mapped to the steps that produced them.
 - Git surgery on your branch: every rebase, reset, amend, cherry-pick, merge, force-push or branch switch you ran, each with its command and why -- or "none". Report it even when the plan asked for it.
 
-End every report with the `relay` block relay's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
+End every report with the `relevo` block relevo's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
 
-```relay
+```relevo
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed

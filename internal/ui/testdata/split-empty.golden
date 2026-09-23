@@ -1,10 +1,10 @@
- relay   no bindings                                                                                                                  14:02 
+ relevo   no bindings                                                                                                                 14:02 
 
 no bindings                       │ no bindings                                                                                             
                                   │                                                                                                         
-                                  │   relay bind                   put a builder on this tree                                               
-                                  │   relay add --name <name>      put a builder on its own worktree                                        
-                                  │   relay candidates             list what can be bound                                                   
+                                  │   relevo bind                   put a builder on this tree                                              
+                                  │   relevo add --name <name>      put a builder on its own worktree                                       
+                                  │   relevo candidates             list what can be bound                                                  
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         

@@ -1,33 +1,33 @@
-# relay
+# relevo
 
-relay automates the plan/report handoff between two AI coding agents: a planner
-hands work to a builder, and relay moves the files between them. Builders are
-headless or remote processes; relay no longer integrates with herdr.
+relevo automates the plan/report handoff between two AI coding agents: a planner
+hands work to a builder, and relevo moves the files between them. Builders are
+headless or remote processes; relevo no longer integrates with herdr.
 
 ## Working with builders
 
-The dispatch protocol -- `relay send` not in-session subagents, headless by
-default, one harness many worktrees, `relay unavailable` on a usage limit,
+The dispatch protocol -- `relevo send` not in-session subagents, headless by
+default, one harness many worktrees, `relevo unavailable` on a usage limit,
 stop rather than improvise -- is in the shipped `architect` definition
 (`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
 follows is what is specific to this machine and this repo.
 
-- Candidates are in `~/.config/relay/candidates.json` (`relay candidates`
+- Candidates are in `~/.config/relevo/candidates.json` (`relevo candidates`
   lists them); the builder order is `order.builder` in
-  `~/.config/relay/policy.json`. `relay policy` shows the current pick.
-- relay stops a builder *process* in exactly four places: `relay done` and
-  `relay unbind` on a binding whose round is running, a mid-round switch of a
-  builder whose provider you gated with `relay unavailable`, and `relay stop`.
-  A binding's builder is a process relay started, so there is no terminal to
+  `~/.config/relevo/policy.json`. `relevo policy` shows the current pick.
+- relevo stops a builder *process* in exactly four places: `relevo done` and
+  `relevo unbind` on a binding whose round is running, a mid-round switch of a
+  builder whose provider you gated with `relevo unavailable`, and `relevo stop`.
+  A binding's builder is a process relevo started, so there is no terminal to
   clean up afterwards.
-- `relay done` releases a clean worktree (the branch survives) so you can
+- `relevo done` releases a clean worktree (the branch survives) so you can
   `gh pr checkout` in the main repo without `gc`; a dirty tree or an open
-  round is kept and `gc` retries. `relay bind --resume` restores a
+  round is kept and `gc` retries. `relevo bind --resume` restores a
   released worktree; rebind a DONE binding only after that restore.
-- A headless round's log is at `~/.local/state/relay/<name>/NNN-builder.log`.
-- When a builder reports a usage limit mid-round, `relay unavailable
+- A headless round's log is at `~/.local/state/relevo/<name>/NNN-builder.log`.
+- When a builder reports a usage limit mid-round, `relevo unavailable
   <token>` is enough: the daemon switches and resends. Do not rebind by
-  hand unless `relay status` says `NEEDS YOU`.
+  hand unless `relevo status` says `NEEDS YOU`.
 
 ## Verifying a builder's work
 
@@ -46,9 +46,9 @@ without the logic is not pinning anything.
 - Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
   plans live in `docs/plans/YYYY-MM-DD-<name>.md`, a directory introduced by
   #45 -- follow it or drop it, it has no history behind it yet.
-- State lives in `$XDG_STATE_HOME/relay` (default `~/.local/state/relay`);
+- State lives in `$XDG_STATE_HOME/relevo` (default `~/.local/state/relevo`);
   config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
-  Compose relay config paths through `userConfigRoot()` (`cmd/relay/main.go`),
+  Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
   never by hand -- see #42 for what hand-rolling one costs.
 
 ## Merging and CI
@@ -58,7 +58,7 @@ without the logic is not pinning anything.
   behind an unconditional check, merged #68 with four jobs pending and broke
   `main` (#70 fixed it).
 - CI runners have neither a harness binary nor network access. A test in
-  `cmd/relay` must not execute a subcommand that spawns a harness or reaches
-  the network; test the rule as a pure function in `internal/relay` instead.
+  `cmd/relevo` must not execute a subcommand that spawns a harness or reaches
+  the network; test the rule as a pure function in `internal/relevo` instead.
   Say so in any plan step that adds a CLI test.
-- A cmd/relay test never reads the user's real config or state: the package's TestMain points HOME, XDG_CONFIG_HOME and XDG_STATE_HOME at a temp root. A test that needs its own config writes it under a t.TempDir() it sets as XDG_CONFIG_HOME (#235).
+- A cmd/relevo test never reads the user's real config or state: the package's TestMain points HOME, XDG_CONFIG_HOME and XDG_STATE_HOME at a temp root. A test that needs its own config writes it under a t.TempDir() it sets as XDG_CONFIG_HOME (#235).

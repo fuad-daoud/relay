@@ -6,14 +6,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // Options configures the reader. Interval is the only knob: the ReadAgent line
 // count is always the viewport height, so it is not one.
 type Options struct {
 	// Interval is the list poll period. Floored at minInterval, default 2s to
-	// match the daemon tick and `relay watch`.
+	// match the daemon tick and `relevo watch`.
 	Interval time.Duration
 
 	// PrefsPath is the ui's own preference file (spec §6.0); "" keeps the
@@ -21,7 +21,7 @@ type Options struct {
 	PrefsPath string
 
 	// Here is the cwd scope all resolves into a repo filter for
-	// relay.Bindings, exactly as `relay history --here` does; "" means
+	// relevo.Bindings, exactly as `relevo history --here` does; "" means
 	// every binding (docs/specs/2026-09-20-persistence-design.md §5.8).
 	Here string
 
@@ -33,11 +33,11 @@ type Options struct {
 
 	// PipeHint is the full refusal line RunSource prints when stdout is
 	// not a terminal -- not a suffix. "" keeps the planner's own text,
-	// which names `relay status` and `relay watch`.
+	// which names `relevo status` and `relevo watch`.
 	PipeHint string
 
 	// Dashboard starts the reader on the dashboard screen instead of the
-	// fleet (`relay ui --dashboard`), once the first statusMsg has given
+	// fleet (`relevo ui --dashboard`), once the first statusMsg has given
 	// the rail rows to jump to
 	// (docs/specs/2026-09-21-dashboard-design.md §6).
 	Dashboard bool
@@ -50,13 +50,13 @@ const defaultInterval = 2 * time.Second
 // tested without a terminal.
 var stdoutStat = os.Stdout.Stat
 
-// Run renders relay's state until the user quits or ctx is cancelled.
+// Run renders relevo's state until the user quits or ctx is cancelled.
 // It never mutates state.
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
 // Errors:         startup failures only. Refresh failures never escape.
-func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
+func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 	if notTTY() {
 		return pipeRefusal(opts.PipeHint)
 	}

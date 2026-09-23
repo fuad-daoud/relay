@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // Resolve builds the runtime's classifier from the policy block. nil block ->
 // (nil, Status{Configured:false}). Key lookup: getenv("TYPESAFE_API_KEY")
-// trimmed; else the trimmed contents of filepath.Join(configDir, "relay",
+// trimmed; else the trimmed contents of filepath.Join(configDir, "relevo",
 // "typesafe.key"); a readable but empty file counts as no key. No key ->
 // (Unavailable{Reason}, Status{Configured:true, KeySource:""}). Otherwise a
 // *Client with the block's model. Never returns an error: a bad key is found
@@ -22,7 +22,7 @@ func Resolve(cfg *policy.Classify, configDir string, getenv func(string) string)
 		return nil, Status{Configured: false}
 	}
 
-	keyPath := filepath.Join(configDir, "relay", "typesafe.key")
+	keyPath := filepath.Join(configDir, "relevo", "typesafe.key")
 	st := Status{
 		Configured: true,
 		Provider:   cfg.Provider,

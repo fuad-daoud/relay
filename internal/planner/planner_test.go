@@ -43,7 +43,7 @@ func record(id, name, kind, session string, host int) Record {
 		SessionID:     session,
 		HostPID:       host,
 		HostStartedAt: int64(host) * 10,
-		CWD:           "/tmp/relay-planner-test",
+		CWD:           "/tmp/relevo-planner-test",
 		CreatedAt:     testNow,
 		SeenAt:        testNow,
 	}
@@ -136,7 +136,7 @@ func TestValidName(t *testing.T) {
 
 // TestValidIDAcceptsLegacyULID pins both id shapes §3.5 needs: the `pl_` ids
 // NewID mints, and the 26-character Crockford base32 ULID every planner id
-// already in a real relay.db has (internal/db/ulid.go's alphabet). A ULID is
+// already in a real relevo.db has (internal/db/ulid.go's alphabet). A ULID is
 // uppercase, so it can never collide with a name.
 func TestValidIDAcceptsLegacyULID(t *testing.T) {
 	valid := []string{
@@ -222,7 +222,7 @@ func wantHookJSON(t *testing.T, context string) string {
 func TestHookOutputExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	sentence := "You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
+	sentence := "You are relevo planner architect-1 (pl_aaaaaaaaaaaa). RELEVO_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
 	want := wantHookJSON(t, sentence+"\n\n"+handoffRules)
 	if got := string(HookOutput(rec)); got != want {
 		t.Errorf("HookOutput:\n got %s\nwant %s", got, want)
@@ -233,18 +233,18 @@ func TestHookOutputExactJSON(t *testing.T) {
 		t.Errorf("HookNote:\n got %s\nwant %s", got, wantNote)
 	}
 
-	if got := EnvLine("pl_aaaaaaaaaaaa"); got != "export RELAY_PLANNER=pl_aaaaaaaaaaaa\n" {
+	if got := EnvLine("pl_aaaaaaaaaaaa"); got != "export RELEVO_PLANNER=pl_aaaaaaaaaaaa\n" {
 		t.Errorf("EnvLine = %q", got)
 	}
 }
 
 // TestHookOutputNoEnvExactJSON is §3.4's unset-$CLAUDE_ENV_FILE golden: the
 // same envelope and sentence as HookOutput, followed by one space and the note
-// that RELAY_PLANNER could not be exported.
+// that RELEVO_PLANNER could not be exported.
 func TestHookOutputNoEnvExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
-	sentence := "You are relay planner architect-1 (pl_aaaaaaaaaaaa). RELAY_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
+	sentence := "You are relevo planner architect-1 (pl_aaaaaaaaaaaa). RELEVO_PLANNER is set in your shell; pass --planner architect-1 only to act as another planner."
 	want := wantHookJSON(t, sentence+" "+noEnvNote+"\n\n"+handoffRules)
 	if got := string(HookOutputNoEnv(rec)); got != want {
 		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)

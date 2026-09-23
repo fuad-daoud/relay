@@ -2,7 +2,7 @@
 
 Fixture report text for round 1.
 
-```relay
+```relevo
 status: done
 halted_at: ""
 changed_paths: ["auth.go"]

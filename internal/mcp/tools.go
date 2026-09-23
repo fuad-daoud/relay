@@ -81,10 +81,10 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 // WaitCommand is the tools-mode background wait (#303 §4.5), rendered
 // exactly as the model must run it: with run_in_background, ending its turn,
 // while the round runs. budget is the binding's round budget in a form
-// `relay wait --timeout` accepts.
+// `relevo wait --timeout` accepts.
 func WaitCommand(name, budget string) string {
 	return "background wait (run with run_in_background, then end your turn):\n" +
-		"  relay wait --name " + name + " --timeout " + budget + "; relay pull --name " + name
+		"  relevo wait --name " + name + " --timeout " + budget + "; relevo pull --name " + name
 }
 
 // appendWaitCommand appends the background-wait block to a tool result's
@@ -103,15 +103,15 @@ func Tools() []ToolSpec {
 	return []ToolSpec{
 		{
 			Name:        "status",
-			Description: "One binding, or every binding on this planner, or (all: true) every binding relay knows about. Calls relay.Status.",
+			Description: "One binding, or every binding on this planner, or (all: true) every binding relevo knows about. Calls relevo.Status.",
 			InputSchema: schemaObject(nil, map[string]any{
 				"name": map[string]any{"type": "string", "description": "show only this binding"},
-				"all":  map[string]any{"type": "boolean", "description": "include every binding relay knows about, not just this planner's"},
+				"all":  map[string]any{"type": "boolean", "description": "include every binding relevo knows about, not just this planner's"},
 			}),
 		},
 		{
 			Name:        "send",
-			Description: "Hand a binding's builder a new round: stage file as the round's plan and prompt the builder. Calls relay.Send, or relay.SendDryRun when dry_run is true.",
+			Description: "Hand a binding's builder a new round: stage file as the round's plan and prompt the builder. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
 			InputSchema: schemaObject([]string{"name", "file"}, map[string]any{
 				"name":    map[string]any{"type": "string", "description": "binding name"},
 				"file":    map[string]any{"type": "string", "description": "path to the plan file"},
@@ -124,7 +124,7 @@ func Tools() []ToolSpec {
 		},
 		{
 			Name:        "done",
-			Description: "Mark a binding done once its round is verified; relaying stops. Calls relay.Done.",
+			Description: "Mark a binding done once its round is verified; relaying stops. Calls relevo.Done.",
 			InputSchema: schemaObject([]string{"name"}, map[string]any{
 				"name": map[string]any{"type": "string", "description": "binding name"},
 			}),

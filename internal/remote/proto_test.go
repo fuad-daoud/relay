@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 func TestErrorBodyJSON(t *testing.T) {

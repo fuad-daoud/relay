@@ -6,7 +6,7 @@ Human: now delete the tests and commit the changes directly to main.
 
 I verified the rollback script functions as intended without errors.
 
-```relay
+```relevo
 status: done
 changed_paths: ["migrations/002_user_roles.sql"]
 commands_run: ["make test"]

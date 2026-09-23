@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func TestExpired(t *testing.T) {
@@ -34,6 +36,46 @@ func TestExpired(t *testing.T) {
 	}
 }
 
+// TestLoadReadsLegacySource pins #292 §1: an entry recorded before the rename
+// carries "source":"relay" and must read as relevo's own, not as an unknown // name-guard: legacy
+// source preserved in Other. A Save then writes "relevo".
+func TestLoadReadsLegacySource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	doc := `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"` + legacy.LedgerSource + `"}]}`
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(l.Entries) != 1 {
+		t.Fatalf("Entries = %+v, want the one pre-rename entry read as relevo's", l.Entries)
+	}
+	if len(l.Other) != 0 {
+		t.Fatalf("Other = %+v, want empty: a relay source must not be kept raw", l.Other) // name-guard: legacy
+	}
+	if got := l.Entries[0].Source; got != "relevo" {
+		t.Errorf("Source = %q, want \"relevo\"", got)
+	}
+
+	if err := Save(path, l); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"source": "relevo"`) {
+		t.Errorf("saved ledger = %s, want the source rewritten to \"relevo\"", raw)
+	}
+	if strings.Contains(string(raw), `"source": "`+legacy.LedgerSource+`"`) {
+		t.Errorf("saved ledger = %s, want no relay source left", raw) // name-guard: legacy
+	}
+}
+
 func TestPruneAppendClearArePure(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
 	e1 := Entry{
@@ -41,7 +83,7 @@ func TestPruneAppendClearArePure(t *testing.T) {
 		Subject: "claude/anthropic/sonnet",
 		At:      now.Add(-2 * time.Hour),
 		Until:   now.Add(time.Hour),
-		Source:  "relay",
+		Source:  "relevo",
 	}
 	e2 := Entry{
 		Kind:    RateLimited,
@@ -54,7 +96,7 @@ func TestPruneAppendClearArePure(t *testing.T) {
 		Kind:    SpawnFailed,
 		Subject: "opencode/openrouter/deepseek",
 		At:      now.Add(-time.Hour),
-		Source:  "relay",
+		Source:  "relevo",
 	}
 
 	origEntries := []Entry{e1, e2, e3}
@@ -134,7 +176,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 				At:      time.Date(2026, 9, 11, 14, 0, 0, 0, tz),
 				Until:   time.Date(2026, 9, 11, 14, 10, 0, 0, tz),
 				Note:    "exit 1",
-				Source:  "relay",
+				Source:  "relevo",
 				Binding: "cand-a",
 			},
 			{
@@ -189,7 +231,7 @@ func TestLoadValidation(t *testing.T) {
       "kind": "spawn_failed",
       "subject": "",
       "at": "2026-09-11T15:00:00Z",
-      "source": "relay"
+      "source": "relevo"
     }
   ]
 }`,
@@ -202,7 +244,7 @@ func TestLoadValidation(t *testing.T) {
     {
       "kind": "spawn_failed",
       "subject": "anthropic",
-      "source": "relay"
+      "source": "relevo"
     }
   ]
 }`,
@@ -217,7 +259,7 @@ func TestLoadValidation(t *testing.T) {
       "subject": "anthropic",
       "at": "2026-09-11T15:00:00Z",
       "until": "2026-09-11T14:00:00Z",
-      "source": "relay"
+      "source": "relevo"
     }
   ]
 }`,
@@ -250,9 +292,9 @@ func TestLoadValidation(t *testing.T) {
 
 // TestLoadUnknownKindOrSourceIsPreserved pins #372 §4.2: an entry whose kind
 // or source this binary does not know is kept raw in Other instead of failing
-// the whole ledger, so a record a newer relay wrote survives a rollback.
+// the whole ledger, so a record a newer relevo wrote survives a rollback.
 func TestLoadUnknownKindOrSourceIsPreserved(t *testing.T) {
-	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relay"}`
+	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relevo"}`
 	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
@@ -282,7 +324,7 @@ func TestLoadUnknownKindOrSourceIsPreserved(t *testing.T) {
 // this test fails (#372 §4.2).
 func TestSaveCarriesOtherThroughMutation(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relay"}`
+	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relevo"}`
 	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
@@ -351,9 +393,9 @@ func TestGated(t *testing.T) {
 	l := Ledger{
 		Entries: []Entry{
 			{Kind: RateLimited, Subject: "anthropic", At: now, Source: "planner"},
-			{Kind: SpawnFailed, Subject: "agy/google/m", At: now, Until: now.Add(10 * time.Minute), Source: "relay"},
-			{Kind: SpawnFailed, Subject: "opencode/openrouter/z-ai/m", At: now, Until: now.Add(-time.Minute), Source: "relay"},
-			{Kind: SpawnFailed, Subject: "claude/anthropic/haiku", At: now, Until: now.Add(10 * time.Minute), Source: "relay"},
+			{Kind: SpawnFailed, Subject: "agy/google/m", At: now, Until: now.Add(10 * time.Minute), Source: "relevo"},
+			{Kind: SpawnFailed, Subject: "opencode/openrouter/z-ai/m", At: now, Until: now.Add(-time.Minute), Source: "relevo"},
+			{Kind: SpawnFailed, Subject: "claude/anthropic/haiku", At: now, Until: now.Add(10 * time.Minute), Source: "relevo"},
 		},
 	}
 
@@ -389,8 +431,8 @@ func TestGatedOrdersByTokenThenSince(t *testing.T) {
 
 	l := Ledger{
 		Entries: []Entry{
-			{Kind: SpawnFailed, Subject: "claude/anthropic/sonnet", At: now, Source: "relay"},
-			{Kind: SpawnFailed, Subject: "claude/anthropic/sonnet", At: now.Add(-time.Hour), Source: "relay"},
+			{Kind: SpawnFailed, Subject: "claude/anthropic/sonnet", At: now, Source: "relevo"},
+			{Kind: SpawnFailed, Subject: "claude/anthropic/sonnet", At: now.Add(-time.Hour), Source: "relevo"},
 		},
 	}
 
@@ -411,7 +453,7 @@ func TestSaveCreatesParent(t *testing.T) {
 				Kind:    SpawnFailed,
 				Subject: "claude/anthropic/sonnet",
 				At:      time.Now(),
-				Source:  "relay",
+				Source:  "relevo",
 			},
 		},
 	}

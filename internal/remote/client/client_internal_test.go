@@ -1,7 +1,7 @@
 // This file is package client (not client_test) on purpose: the retry backoff
 // and the download deadline are the package-level knobs #373 §4.4 names, and
 // the existing external test file cannot replace an unexported variable. It
-// imports nothing from internal/relay, so it adds no import cycle.
+// imports nothing from internal/relevo, so it adds no import cycle.
 package client
 
 import (
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 // testClient is a client pointed at ts, with no TLS pinning: an httptest

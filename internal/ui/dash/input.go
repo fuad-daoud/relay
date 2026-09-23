@@ -2,7 +2,7 @@ package dash
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
 // updateEditing is the `/` editor's key map (§4): enter applies the parsed

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func opener(path string) func() (io.ReadCloser, error) {

@@ -82,7 +82,7 @@ func InitTLS(dir string, hosts []string, now time.Time) (string, error) {
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			CommonName: "relay serve",
+			CommonName: "relevo serve",
 		},
 		NotBefore:             now,
 		NotAfter:              now.AddDate(10, 0, 0),

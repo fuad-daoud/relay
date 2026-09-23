@@ -3,9 +3,9 @@ package serve
 import (
 	"net/http"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
@@ -16,13 +16,13 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gates := relay.Gates(rt)
+	gates := relevo.Gates(rt)
 	gatedMap := make(map[string]bool, len(gates))
 	for _, g := range gates {
 		gatedMap[g.Token] = true
 	}
 
-	pickedToken, _ := relay.PickServedCandidate(rt, "")
+	pickedToken, _ := relevo.PickServedCandidate(rt, "")
 
 	var views []remote.CandidateView
 	if s.cfg.Candidates != nil {

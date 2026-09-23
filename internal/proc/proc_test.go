@@ -3,10 +3,12 @@
 package proc
 
 import (
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/usage"
 
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -19,11 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // waitGone polls Alive until it is false or the deadline passes.
-func waitGone(t *testing.T, r *Runner, h relay.ProcHandle, within time.Duration) {
+func waitGone(t *testing.T, r *Runner, h relevo.ProcHandle, within time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
@@ -39,12 +42,12 @@ func waitGone(t *testing.T, r *Runner, h relay.ProcHandle, within time.Duration)
 	t.Fatalf("pid %d still alive after %s", h.PID, within)
 }
 
-func start(t *testing.T, r *Runner, argv ...string) (relay.ProcHandle, string, string) {
+func start(t *testing.T, r *Runner, argv ...string) (relevo.ProcHandle, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{Dir: dir, Argv: argv, LogPath: log, StreamPath: stream})
+	h, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: argv, LogPath: log, StreamPath: stream})
 	if err != nil {
 		t.Fatalf("Start(%v): %v", argv, err)
 	}
@@ -103,8 +106,8 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
-		Dir: dir, Argv: []string{"sh", "-c", "pwd; echo $RELAY_T3"}, Env: []string{"RELAY_T3=yes"}, LogPath: log, StreamPath: stream,
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "pwd; echo $RELEVO_T3"}, Env: []string{"RELEVO_T3=yes"}, LogPath: log, StreamPath: stream,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -131,7 +134,7 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 
 // The supervisor raises its own oom_score_adj before running the builder,
 // and the builder inherits it, so under memory pressure the kernel takes a
-// builder before `relay daemon` (spec 2026-09-13-headless-recovery §4.2).
+// builder before `relevo daemon` (spec 2026-09-13-headless-recovery §4.2).
 func TestStartedProcessInheritsRaisedOOMScore(t *testing.T) {
 	if _, err := os.Stat("/proc/self/oom_score_adj"); err != nil {
 		t.Skip("no /proc/self/oom_score_adj on this platform")
@@ -193,7 +196,7 @@ func TestStartedProcessIsInItsOwnGroupAndKillReturnsWithinGrace(t *testing.T) {
 func TestAliveIsFalseForAReusedPid(t *testing.T) {
 	r := New()
 	// Our own pid certainly exists; a start time that is not ours must not match.
-	h := relay.ProcHandle{PID: os.Getpid(), StartedAt: time.Unix(1_000_000, 0)}
+	h := relevo.ProcHandle{PID: os.Getpid(), StartedAt: time.Unix(1_000_000, 0)}
 	alive, err := r.Alive(context.Background(), h)
 	if err != nil || alive {
 		t.Errorf("Alive(reused pid) = %v, %v; want false, nil", alive, err)
@@ -210,7 +213,7 @@ func TestAliveIsFalseNotAnErrorForAMissingPid(t *testing.T) {
 	if err != nil || alive {
 		t.Errorf("Alive(exited) = %v, %v; want false, nil", alive, err)
 	}
-	alive, err = r.Alive(context.Background(), relay.ProcHandle{})
+	alive, err = r.Alive(context.Background(), relevo.ProcHandle{})
 	if err != nil || alive {
 		t.Errorf("Alive(zero handle) = %v, %v; want false, nil", alive, err)
 	}
@@ -230,26 +233,26 @@ func TestStartRefusesAMissingBinaryBeforeTouchingTheLog(t *testing.T) {
 			t.Error("a refused Start must not create the stream")
 		}
 	}
-	_, err := r.Start(context.Background(), relay.ProcSpec{Dir: dir, Argv: []string{"relay-no-such-binary-t3"}, LogPath: log, StreamPath: stream})
+	_, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: []string{"relevo-no-such-binary-t3"}, LogPath: log, StreamPath: stream})
 	if err == nil {
 		t.Fatal("Start with a missing binary must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relay.ProcSpec{Dir: dir, LogPath: log, StreamPath: stream}); err == nil {
+	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, LogPath: log, StreamPath: stream}); err == nil {
 		t.Error("Start with empty Argv must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relay.ProcSpec{Dir: filepath.Join(dir, "missing"), Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream}); err == nil {
+	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: filepath.Join(dir, "missing"), Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream}); err == nil {
 		t.Error("Start with a missing Dir must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relay.ProcSpec{Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log}); err == nil {
+	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log}); err == nil {
 		t.Error("Start with empty StreamPath must fail")
 	}
 	assertNeither()
 }
 
-func TestExitCodeReadsOnlyATrailingRelayExitLine(t *testing.T) {
+func TestExitCodeReadsOnlyATrailingRelevoExitLine(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	cases := map[string]struct {
@@ -270,32 +273,66 @@ func TestExitCodeReadsOnlyATrailingRelayExitLine(t *testing.T) {
 			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			code, ok := r.ExitCode(context.Background(), relay.ProcHandle{}, p)
+			code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, p)
 			if code != c.code || ok != c.ok {
 				t.Errorf("ExitCode = %d, %v; want %d, %v", code, ok, c.code, c.ok)
 			}
 		})
 	}
-	if _, ok := r.ExitCode(context.Background(), relay.ProcHandle{}, filepath.Join(dir, "absent.log")); ok {
+	if _, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, filepath.Join(dir, "absent.log")); ok {
 		t.Error("ExitCode on a missing file must be ok=false")
+	}
+}
+
+// TestExitCodeReadsLegacyTrailer pins #292 §1: a log a pre-rename supervisor
+// wrote ends in relay-exit:<n> and reads exactly like the new form. // name-guard: legacy
+func TestExitCodeReadsLegacyTrailer(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	cases := map[string]struct {
+		body string
+		code int
+		ok   bool
+	}{
+		"legacy trailer":            {"noise\n" + legacy.ExitTrailer + "3\n", 3, true},
+		"legacy trailer no newline": {legacy.ExitTrailer + "0", 0, true},
+		"legacy trailer not last":   {legacy.ExitTrailer + "1\nmore output\n", 0, false},
+		"legacy garbage code":       {legacy.ExitTrailer + "x\n", 0, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".log")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, p)
+			if code != c.code || ok != c.ok {
+				t.Errorf("ExitCode = %d, %v; want %d, %v", code, ok, c.code, c.ok)
+			}
+		})
 	}
 }
 
 // The usage reader waits for the exit trailer before reading a headless
 // stream (#142) and carries its own copy of the prefix so internal/usage
 // stays free of the process model. This is the only place that pins the
-// two equal: proc imports relay, so the pin cannot live in relay's tests.
+// two equal: proc imports relevo, so the pin cannot live in relevo's tests.
+// #292 §1 adds the relay-era copy, pinned to legacy.ExitTrailer here too. // name-guard: legacy
 func TestExitTrailerMatchesUsage(t *testing.T) {
 	if usage.ExitTrailerForTest() != ExitTrailer {
 		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
 			usage.ExitTrailerForTest(), ExitTrailer)
 	}
+	if usage.LegacyExitTrailerForTest() != legacy.ExitTrailer {
+		t.Fatalf("usage.legacyExitTrailer %q != legacy.ExitTrailer %q: a pre-rename stream would still read as open",
+			usage.LegacyExitTrailerForTest(), legacy.ExitTrailer)
+	}
 }
 
 // TestSupervisorEmitsRusageOnlyInScope pins the guard's negative half:
 // /proc/self/cgroup cannot be faked in a test, so a plain spawn (this
-// test's own process tree, never under a relay-round-*.scope) must print
-// no relay-rusage: line. The positive half is verified on the box (§8 of
+// test's own process tree, never under a relevo-round-*.scope) must print
+// no relevo-rusage: line. The positive half is verified on the box (§8 of
 // the plan).
 func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 	r := New()
@@ -306,19 +343,41 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 		t.Fatalf("read stream: %v", err)
 	}
 	if strings.Contains(string(data), RusageTrailer) {
-		t.Errorf("stream = %q; a plain spawn outside a relay-round-*.scope must print no rusage line", data)
+		t.Errorf("stream = %q; a plain spawn outside a relevo-round-*.scope must print no rusage line", data)
 	}
 	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
 		t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
 	}
 }
 
-// TestRusageTrailerPrefixMatchesProc pins #313's duplication: relay cannot
-// import internal/proc (proc imports relay), so relay keeps its own copy of
+// TestRusageTrailerPrefixMatchesProc pins #313's duplication: relevo cannot
+// import internal/proc (proc imports relevo), so relevo keeps its own copy of
 // the rusage prefix and the two must stay equal.
 func TestRusageTrailerPrefixMatchesProc(t *testing.T) {
-	if relay.RusageTrailerPrefix != RusageTrailer {
-		t.Errorf("relay.RusageTrailerPrefix = %q, want proc.RusageTrailer %q", relay.RusageTrailerPrefix, RusageTrailer)
+	if relevo.RusageTrailerPrefix != RusageTrailer {
+		t.Errorf("relevo.RusageTrailerPrefix = %q, want proc.RusageTrailer %q", relevo.RusageTrailerPrefix, RusageTrailer)
+	}
+}
+
+// TestRusageReadsLegacyTrailer pins #292 §1: a pre-rename stream's
+// relay-rusage: line is found by the backward scan and parsed the same way. // name-guard: legacy
+func TestRusageReadsLegacyTrailer(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.jsonl")
+	body := "builder output\n\n" + legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576\n\n" + legacy.ExitTrailer + "3\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := r.Rusage(context.Background(), relevo.ProcHandle{}, path)
+	if !ok {
+		t.Fatal("Rusage on a legacy stream: want ok=true")
+	}
+	if want := (relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}); got != want {
+		t.Errorf("Rusage = %+v, want %+v", got, want)
+	}
+	if code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, path); !ok || code != 3 {
+		t.Errorf("ExitCode = %d, %v; want 3, true", code, ok)
 	}
 }
 
@@ -355,7 +414,7 @@ func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
 	if script == supervisorScript {
 		t.Fatalf("supervisorScript no longer contains %q; this test would run the real reap against the test's own cgroup", reapBlock)
 	}
-	out, err := exec.Command("/bin/sh", "-c", script, "relay-supervisor", unit, "/bin/echo", "hi").Output()
+	out, err := exec.Command("/bin/sh", "-c", script, "relevo-supervisor", unit, "/bin/echo", "hi").Output()
 	if err != nil {
 		t.Fatalf("run supervisorScript: %v", err)
 	}
@@ -371,12 +430,12 @@ func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
 // TestStartWrapsArgvWithScope exercises buildArgv, the argv builder Start
 // uses, rather than executing systemd-run.
 func TestStartWrapsArgvWithScope(t *testing.T) {
-	spec := relay.ProcSpec{
+	spec := relevo.ProcSpec{
 		Argv:  []string{"echo", "hi"},
-		Scope: &relay.ScopeSpec{Unit: "relay-round-abc12345-foo-3", Slice: "relay.slice", CPUWeight: 100},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-3", Slice: "relevo.slice", CPUWeight: 100},
 	}
 	got := buildArgv(spec, "/usr/bin/echo")
-	inner := []string{"/bin/sh", "-c", supervisorScript, "relay-supervisor", ScopeUnitFileName(spec.Scope.Unit), "/usr/bin/echo", "hi"}
+	inner := []string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", ScopeUnitFileName(spec.Scope.Unit), "/usr/bin/echo", "hi"}
 	want := ScopeArgv(*spec.Scope, inner)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildArgv = %v, want %v", got, want)
@@ -390,31 +449,31 @@ func TestStartWrapsArgvWithScope(t *testing.T) {
 // on whatever cgroup it happens to have inherited.
 func TestBuildArgvPassesTheWantedUnit(t *testing.T) {
 	t.Run("scoped", func(t *testing.T) {
-		spec := relay.ProcSpec{
+		spec := relevo.ProcSpec{
 			Argv:  []string{"echo", "hi"},
-			Scope: &relay.ScopeSpec{Unit: "relay-round-abc-x-1", CPUWeight: 100},
+			Scope: &relevo.ScopeSpec{Unit: "relevo-round-abc-x-1", CPUWeight: 100},
 		}
 		got := buildArgv(spec, "/usr/bin/echo")
-		idx := indexOf(got, "relay-supervisor")
+		idx := indexOf(got, "relevo-supervisor")
 		if idx < 0 || idx+1 >= len(got) {
-			t.Fatalf("buildArgv = %v; want a \"relay-supervisor\" element followed by the wanted unit", got)
+			t.Fatalf("buildArgv = %v; want a \"relevo-supervisor\" element followed by the wanted unit", got)
 		}
-		if want := "relay-round-abc-x-1.scope"; got[idx+1] != want {
-			t.Errorf("buildArgv[after relay-supervisor] = %q, want %q", got[idx+1], want)
+		if want := "relevo-round-abc-x-1.scope"; got[idx+1] != want {
+			t.Errorf("buildArgv[after relevo-supervisor] = %q, want %q", got[idx+1], want)
 		}
-		if unitFlag := "--unit=relay-round-abc-x-1.scope"; indexOf(got, unitFlag) < 0 {
+		if unitFlag := "--unit=relevo-round-abc-x-1.scope"; indexOf(got, unitFlag) < 0 {
 			t.Errorf("buildArgv = %v; want it to contain %q", got, unitFlag)
 		}
 	})
 	t.Run("unscoped", func(t *testing.T) {
-		spec := relay.ProcSpec{Argv: []string{"echo", "hi"}}
+		spec := relevo.ProcSpec{Argv: []string{"echo", "hi"}}
 		got := buildArgv(spec, "/usr/bin/echo")
-		idx := indexOf(got, "relay-supervisor")
+		idx := indexOf(got, "relevo-supervisor")
 		if idx < 0 || idx+1 >= len(got) {
-			t.Fatalf("buildArgv = %v; want a \"relay-supervisor\" element followed by the wanted unit slot", got)
+			t.Fatalf("buildArgv = %v; want a \"relevo-supervisor\" element followed by the wanted unit slot", got)
 		}
 		if got[idx+1] != "" {
-			t.Errorf("buildArgv[after relay-supervisor] = %q, want \"\" for an unscoped spec", got[idx+1])
+			t.Errorf("buildArgv[after relevo-supervisor] = %q, want \"\" for an unscoped spec", got[idx+1])
 		}
 		for _, a := range got {
 			if strings.Contains(a, "systemd-run") {
@@ -435,13 +494,13 @@ func indexOf(argv []string, s string) int {
 
 func TestStartStripsDeniedEnv(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "leak")
-	t.Setenv("RELAY_T4", "keep")
+	t.Setenv("RELEVO_T4", "keep")
 	r := New()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
-		Dir: dir, Argv: []string{"sh", "-c", `echo "k=${TYPESAFE_API_KEY-unset}"; echo "r=$RELAY_T4"`}, LogPath: log, StreamPath: stream,
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", `echo "k=${TYPESAFE_API_KEY-unset}"; echo "r=$RELEVO_T4"`}, LogPath: log, StreamPath: stream,
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -474,10 +533,10 @@ func TestStartFallsBackWhenScopeProbeFails(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "sleep 1; echo ran-unscoped"},
 		LogPath: log, StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -519,10 +578,10 @@ func TestStartProbesOnlyOnce(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := New()
-	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100}
+	scope := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100}
 	for i := 0; i < 2; i++ {
 		dir := t.TempDir()
-		h, err := r.Start(context.Background(), relay.ProcSpec{
+		h, err := r.Start(context.Background(), relevo.ProcSpec{
 			Dir: dir, Argv: []string{"sh", "-c", "true"},
 			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 			Scope: scope,
@@ -552,7 +611,7 @@ func TestStartWithoutScopeNeverProbes(t *testing.T) {
 	r := New()
 	for i := 0; i < 2; i++ {
 		dir := t.TempDir()
-		h, err := r.Start(context.Background(), relay.ProcSpec{
+		h, err := r.Start(context.Background(), relevo.ProcSpec{
 			Dir: dir, Argv: []string{"sh", "-c", "true"},
 			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 		})
@@ -594,10 +653,10 @@ func TestStartDropsPinningWhenRefused(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "echo ran-unpinned-fallback"},
 		LogPath: log, StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -618,15 +677,15 @@ func TestStartDropsPinningWhenRefused(t *testing.T) {
 }
 
 // probeUnitStub is a systemd-run that records every *probe* invocation: one
-// carrying an AllowedCPUs= argument under a relay-probe-cpus- unit. It never
-// records a real round spawn (unit relay-round-*), so the count is exactly the
+// carrying an AllowedCPUs= argument under a relevo-probe-cpus- unit. It never
+// records a real round spawn (unit relevo-round-*), so the count is exactly the
 // number of pin probes. Everything is exec'd, so the spawns run for real.
 func probeUnitStub(calls string) string {
 	return `#!/bin/sh
 pin=0
 for a in "$@"; do
   case "$a" in
-    --unit=relay-probe-cpus-*) pin=1;;
+    --unit=relevo-probe-cpus-*) pin=1;;
   esac
 done
 [ "$pin" = 1 ] && echo pin >> "` + calls + `"
@@ -645,10 +704,10 @@ func TestStartPinsOnlyOnce(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := New()
-	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	scope := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
 	for i := 0; i < 2; i++ {
 		dir := t.TempDir()
-		h, err := r.Start(context.Background(), relay.ProcSpec{
+		h, err := r.Start(context.Background(), relevo.ProcSpec{
 			Dir: dir, Argv: []string{"sh", "-c", "true"},
 			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 			Scope: scope,
@@ -677,10 +736,10 @@ func TestStartWithoutAllowedCPUsNeverProbes(t *testing.T) {
 
 	r := New()
 	dir := t.TempDir()
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "true"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -700,11 +759,11 @@ func TestStartDoesNotMutateCallerScope(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := New()
-	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	scope := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
 	before := *scope
 
 	dir := t.TempDir()
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "true"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 		Scope: scope,
@@ -787,10 +846,10 @@ func TestStartSetsGoMaxProcsFromThePin(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -815,11 +874,11 @@ func TestStartGoMaxProcsFollowsThePinFallback(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{
-			Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100,
+		Scope: &relevo.ScopeSpec{
+			Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100,
 			AllowedCPUs: "1", CPUQuota: "200%",
 		},
 	})
@@ -846,10 +905,10 @@ func TestStartNoGoMaxProcsWithoutScopes(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, CPUQuota: "200%"},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, CPUQuota: "200%"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -876,10 +935,10 @@ func TestStartScopeGoMaxProcsOverridesParent(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -907,10 +966,10 @@ func TestStartParentGoMaxProcsPassesThroughWithoutLimits(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -933,23 +992,23 @@ func TestStartDoesNotMutateCallerEnv(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	caller := make([]string, 1, 4)
-	caller[0] = "RELAY_T5=keep"
+	caller[0] = "RELEVO_T5=keep"
 	before := slices.Clone(caller[:cap(caller)])
 
 	r := New()
 	dir := t.TempDir()
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"true"},
 		Env:     caller,
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
-		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "1"},
+		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	waitGone(t, r, h, 5*time.Second)
 
-	if want := []string{"RELAY_T5=keep"}; !reflect.DeepEqual(caller, want) {
+	if want := []string{"RELEVO_T5=keep"}; !reflect.DeepEqual(caller, want) {
 		t.Errorf("caller's Env = %v, want %v", caller, want)
 	}
 	if full := caller[:cap(caller)]; !reflect.DeepEqual(full, before) {
@@ -985,7 +1044,7 @@ func TestScopesUsableRetriesAfterAFailure(t *testing.T) {
 	fail := true
 	r, calls, now := fakeProbeRunner(&fail)
 	ctx := context.Background()
-	const slice = "relay.slice"
+	const slice = "relevo.slice"
 
 	if r.scopesUsable(ctx, slice) {
 		t.Fatal("a failed probe must leave scopes unusable")
@@ -1032,7 +1091,7 @@ func TestScopesUsableProbesOncePerFailure(t *testing.T) {
 	fail := true
 	r, calls, now := fakeProbeRunner(&fail)
 	ctx := context.Background()
-	const slice = "relay.slice"
+	const slice = "relevo.slice"
 
 	// One failure, then ten Starts inside the window: one probe, one warning.
 	r.scopesUsable(ctx, slice)
@@ -1056,7 +1115,7 @@ func TestScopesUsableProbesOncePerFailure(t *testing.T) {
 // reapCall is the exact text supervisorScript's matching branch uses to reap
 // its scope (#378): the scope's own cgroup.procs, excluding the supervisor's
 // own pid. The pid is the supervisor's own $self, never $$: see reapBlock.
-const reapCall = `relay_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"`
+const reapCall = `relevo_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"`
 
 // reapBlock is the whole two-step reap that branch runs: it reads the
 // supervisor's own pid with the builtin read of /proc/self/stat, then calls
@@ -1076,7 +1135,7 @@ const selfPID = 42424242
 // cgroup file: the pids such a file lists are this test's own.
 func runReap(t *testing.T, procs string, self int) (string, error) {
 	t.Helper()
-	out, err := exec.Command("/bin/sh", "-c", ReapFragment+"relay_reap_scope '"+procs+"' "+strconv.Itoa(self)+"\n").CombinedOutput()
+	out, err := exec.Command("/bin/sh", "-c", ReapFragment+"relevo_reap_scope '"+procs+"' "+strconv.Itoa(self)+"\n").CombinedOutput()
 	return string(out), err
 }
 
@@ -1129,11 +1188,36 @@ func TestReapScopeTerminatesTheListedProcesses(t *testing.T) {
 // ignored disposition -- sh sets SIG_IGN, and an ignored signal survives
 // exec -- so one process, not a sh plus its child.
 func TestReapScopeKillsWhatIgnoresTERM(t *testing.T) {
-	stubborn := exec.Command("sh", "-c", "trap '' TERM; exec sleep 60")
+	stubborn := exec.Command("sh", "-c", "trap '' TERM; echo ready; exec sleep 60")
+	stdout, err := stubborn.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
 	if err := stubborn.Start(); err != nil {
 		t.Fatalf("start the TERM-ignoring process: %v", err)
 	}
 	t.Cleanup(func() { _ = stubborn.Process.Kill(); _ = stubborn.Wait() })
+
+	// Wait until sh has run `trap` before reaping. If the reap's TERM arrives
+	// first, sh dies of TERM and the test would see SIGTERM rather than the
+	// SIGKILL it pins. The ignored disposition survives exec, so once "ready"
+	// is read the sleep also ignores TERM.
+	ready := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdout).ReadString('\n')
+		if err == nil && strings.TrimSpace(line) != "ready" {
+			err = fmt.Errorf("first line = %q, want %q", line, "ready")
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("waiting for the trap: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the TERM-ignoring process did not report ready within 10s")
+	}
 
 	procs := filepath.Join(t.TempDir(), "cgroup.procs")
 	if err := os.WriteFile(procs, []byte(strconv.Itoa(stubborn.Process.Pid)+"\n"), 0o644); err != nil {
@@ -1192,7 +1276,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	if !strings.HasPrefix(supervisorScript, ReapFragment) {
 		t.Error("supervisorScript does not start with ReapFragment: the fragment must be defined before the script calls it")
 	}
-	const trailer = `printf '\nrelay-exit:%s\n' "$rc"`
+	const trailer = `printf '\nrelevo-exit:%s\n' "$rc"`
 	if !strings.HasSuffix(supervisorScript, trailer) {
 		t.Errorf("supervisorScript does not end with %q: the trailer must stay the stream's last line", trailer)
 	}
@@ -1201,7 +1285,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	}
 
 	caseAt := strings.Index(supervisorScript, `case "$cg" in */"$want")`)
-	rusageAt := strings.Index(supervisorScript, `printf '\nrelay-rusage:`)
+	rusageAt := strings.Index(supervisorScript, `printf '\nrelevo-rusage:`)
 	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
 	reapAt := strings.Index(supervisorScript, reapCall)
 	esacAt := strings.Index(supervisorScript, "esac")
@@ -1223,7 +1307,7 @@ func TestStartDisablesFsmonitor(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 	})
@@ -1245,7 +1329,7 @@ func TestStartDisablesFsmonitor(t *testing.T) {
 
 // TestStartDisablesFsmonitorForGit runs the real git under the environment
 // Start builds: git reads the GIT_CONFIG_* entry as config and reports
-// core.fsmonitor as false, the value relay set -- the daemon a builder's git
+// core.fsmonitor as false, the value relevo set -- the daemon a builder's git
 // commands would otherwise start is what kept a scope alive (#378).
 func TestStartDisablesFsmonitorForGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -1259,7 +1343,7 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relay.ProcSpec{
+	h, err := r.Start(context.Background(), relevo.ProcSpec{
 		Dir: dir, Argv: []string{"git", "-C", repo, "config", "--get", "core.fsmonitor"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 	})
@@ -1279,6 +1363,6 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(printed, []string{"false"}) {
-		t.Errorf("git config --get core.fsmonitor printed %v; want [false]: relay disables the fsmonitor through GIT_CONFIG_*", printed)
+		t.Errorf("git config --get core.fsmonitor printed %v; want [false]: relevo disables the fsmonitor through GIT_CONFIG_*", printed)
 	}
 }

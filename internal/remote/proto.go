@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // Version is the remote protocol version.
@@ -19,7 +19,7 @@ const ContentTypeGitBundle = "application/x-git-bundle"
 // HeaderClientVersion is the request header a client sets to its buildVersion
 // (#373). It is informational -- the server logs it and never rejects a
 // request on it, and it is never part of the signature.
-const HeaderClientVersion = "Relay-Client-Version"
+const HeaderClientVersion = "Relevo-Client-Version"
 
 // RoundState represents the execution state of a round on the server.
 type RoundState string
@@ -97,7 +97,7 @@ type BindingView struct {
 	Halt          string     `json:"halt,omitempty"`
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
-	ReportOutcome string     `json:"report_outcome,omitempty"` // relay.ReportTail.Status or "unstructured"
+	ReportOutcome string     `json:"report_outcome,omitempty"` // relevo.ReportTail.Status or "unstructured"
 	// Stopped is how the closed round (ClosedRound) was stopped: "killed"
 	// or "dequeued". It is "" when that round closed any other way, on a
 	// pre-stop server, or when ClosedRound is 0.
@@ -164,7 +164,7 @@ type UnavailableRequest struct {
 }
 
 // AvailableRequest lifts recorded unavailability: subject is a provider name
-// or a candidate token, as relay.Available takes.
+// or a candidate token, as relevo.Available takes.
 type AvailableRequest struct {
 	Subject string `json:"subject"`
 }

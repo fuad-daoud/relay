@@ -1,7 +1,7 @@
 package harness
 
 // IsShipped reports whether name is one of the agent definitions kind ships.
-// It is the question a resolved definition's Custom flag asks: a name relay
+// It is the question a resolved definition's Custom flag asks: a name relevo
 // does not ship resolves to the kind's path convention instead (#374 §5).
 //
 // An unknown kind gives false.
@@ -19,8 +19,8 @@ func IsShipped(kind, name string) bool {
 //
 // A shipped name returns that row's Path exactly (for example
 // ".claude/agents/plan-executor.md"), because the shipped file is the one
-// relay installs and refreshes (#371). Any other name follows the per-kind
-// convention route: a custom definition relay never writes, but a caller must
+// relevo installs and refreshes (#371). Any other name follows the per-kind
+// convention route: a custom definition relevo never writes, but a caller must
 // still know where its file lives.
 //
 //	name already passed the roles name rule; this function does not

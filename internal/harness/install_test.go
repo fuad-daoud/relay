@@ -630,7 +630,7 @@ func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 }
 
 // TestInstallKeepsAnArbitraryEdit is §7 step 3's second row: bytes that are no
-// version relay ever shipped are the user's own, and stay.
+// version relevo ever shipped are the user's own, and stay.
 func TestInstallKeepsAnArbitraryEdit(t *testing.T) {
 	const full = "/home/u/.claude/agents/architect.md"
 	env := freshEnv()
@@ -657,8 +657,8 @@ func TestInstallManifestDecisions(t *testing.T) {
 	}
 	const path = ".claude/agents/researcher.md"
 	const full = "/home/u/.claude/agents/researcher.md"
-	// An older relay release wrote these bytes and recorded their sha.
-	older := []byte("---\nmodel: haiku\n---\nan older relay copy\n")
+	// An older relevo release wrote these bytes and recorded their sha.
+	older := []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
 	// The user's own edit: never in the manifest under this sha.
 	edited := []byte("---\nmodel: sonnet\n---\nthe user's own copy\n")
 	// Identical under DocEqual's trailing-whitespace rule, not byte-identical.
@@ -693,7 +693,7 @@ func TestInstallManifestDecisions(t *testing.T) {
 			wantManifest: map[string]string{path: docSHA(identical)},
 		},
 		{
-			name:         "differing but unchanged since relay wrote it is updated",
+			name:         "differing but unchanged since relevo wrote it is updated",
 			existing:     older,
 			manifest:     map[string]string{path: docSHA(older)},
 			wantOutcome:  OutcomeUpdated,
@@ -701,7 +701,7 @@ func TestInstallManifestDecisions(t *testing.T) {
 			wantWrote:    true,
 		},
 		{
-			name:         "differing but unchanged since relay wrote it under DryRun only reports",
+			name:         "differing but unchanged since relevo wrote it under DryRun only reports",
 			existing:     older,
 			manifest:     map[string]string{path: docSHA(older)},
 			dryRun:       true,
@@ -782,20 +782,20 @@ func TestInstallManifestDecisions(t *testing.T) {
 	}
 }
 
-// TestInstallUpdatesDefinitionUnchangedSinceRelayWroteIt is §5's third row on
-// its own: the bytes on disk are exactly what relay last wrote, so a newer
+// TestInstallUpdatesDefinitionUnchangedSinceRelevoWroteIt is §5's third row on
+// its own: the bytes on disk are exactly what relevo last wrote, so a newer
 // shipped definition refreshes them and records the new sha.
 //
 // Mutation: make the `manifest[path] == docSHA(existing)` row always false and
 // this test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
-func TestInstallUpdatesDefinitionUnchangedSinceRelayWroteIt(t *testing.T) {
+func TestInstallUpdatesDefinitionUnchangedSinceRelevoWroteIt(t *testing.T) {
 	shipped, err := AgentDoc("researcher", "claude")
 	if err != nil {
 		t.Fatalf("AgentDoc: %v", err)
 	}
 	const path = ".claude/agents/researcher.md"
 	const full = "/home/u/.claude/agents/researcher.md"
-	older := []byte("---\nmodel: haiku\n---\nan older relay copy\n")
+	older := []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
 
 	env := freshEnv()
 	env.files[full] = older
@@ -1045,7 +1045,7 @@ func TestInstallResultLine(t *testing.T) {
 		},
 		{
 			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeUpdated},
-			want: "updated (unchanged since relay wrote it)  ~/.claude/agents/researcher.md",
+			want: "updated (unchanged since relevo wrote it)  ~/.claude/agents/researcher.md",
 		},
 		{
 			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeWouldUpdate},
@@ -1105,7 +1105,7 @@ func TestOSInstallEnvRoundTrip(t *testing.T) {
 		t.Errorf("mode perm = %o, want 0644", info.Mode().Perm())
 	}
 
-	if _, err := env.LookPath("definitely-not-a-binary-relay-test"); err == nil {
+	if _, err := env.LookPath("definitely-not-a-binary-relevo-test"); err == nil {
 		t.Error("expected error for non-existent binary, got nil")
 	}
 }

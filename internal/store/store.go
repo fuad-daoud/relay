@@ -27,7 +27,7 @@ var ErrCWDTaken = errors.New("working tree already bound")
 const (
 	// MaxAgentNameLen is the cap ValidName enforces. 32 is the
 	// agent-name limit the pre-#303 integration imposed (#303 §2). It is
-	// named for what it counts, not for that integration: no name relay
+	// named for what it counts, not for that integration: no name relevo
 	// already wrote becomes invalid.
 	MaxAgentNameLen = 32
 	bindingFileMode = 0o644
@@ -37,11 +37,11 @@ const (
 	// stage of a plan runs for hours, so a short budget flags healthy work as
 	// needing a human and trains the reader to ignore the one state that means
 	// act. This is a runaway guard, not a progress estimate; per-binding
-	// overrides come from `relay bind --timeout`.
+	// overrides come from `relevo bind --timeout`.
 	defaultRoundMSecs = 86400000
 	archiveDirName    = ".archive"
 
-	// maxArchiveFileBytes bounds a single file going into an archive. Relay's
+	// maxArchiveFileBytes bounds a single file going into an archive. Relevo's
 	// own state files are small; anything past this means something has gone
 	// wrong, and a runaway file should fail the archive rather than balloon it.
 	maxArchiveFileBytes = 64 << 20
@@ -87,10 +87,10 @@ func New(root string) *Store {
 	return &Store{root: root}
 }
 
-// DefaultRoot resolves $XDG_STATE_HOME/relay, falling back to ~/.local/state/relay.
+// DefaultRoot resolves $XDG_STATE_HOME/relevo, falling back to ~/.local/state/relevo.
 func DefaultRoot() (string, error) {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "relay"), nil
+		return filepath.Join(xdg, "relevo"), nil
 	}
 
 	home, err := os.UserHomeDir()
@@ -98,10 +98,10 @@ func DefaultRoot() (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	return filepath.Join(home, ".local", "state", "relay"), nil
+	return filepath.Join(home, ".local", "state", "relevo"), nil
 }
 
-// ValidName enforces relay's binding-name rule: lowercase letter first, then
+// ValidName enforces relevo's binding-name rule: lowercase letter first, then
 // up to 31 more of [a-z0-9_-].
 func ValidName(name string) error {
 	if name == "" {
@@ -147,7 +147,7 @@ func (s *Store) ReportPath(name string, round int) string {
 }
 
 // DonePath is the builder's completion marker for a round: an empty file it
-// creates as its last action (spec 2026-09-12-completion-marker §1). relay
+// creates as its last action (spec 2026-09-12-completion-marker §1). relevo
 // only ever stats it.
 func (s *Store) DonePath(name string, round int) string {
 	return s.roundFile(name, round, "done", "")
@@ -163,9 +163,9 @@ func (s *Store) BuilderLogPath(name string, round int) string {
 
 // BuilderStreamPath is where a headless builder's raw stdout for a round --
 // the harness's streamed JSON, one event per line -- and the supervisor's
-// relay-exit trailer are appended (#168). A round file like the log, so
-// fork copies it and gc archives it. relay renders it into the log for
-// humans (relay.drainStream) and never reads it for meaning.
+// relevo-exit trailer are appended (#168). A round file like the log, so
+// fork copies it and gc archives it. relevo renders it into the log for
+// humans (relevo.drainStream) and never reads it for meaning.
 // Layout: <binding dir>/NNN-builder.jsonl
 func (s *Store) BuilderStreamPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".jsonl")
@@ -198,7 +198,7 @@ func (s *Store) DriftPath(name string, round int) string {
 
 // ViewedPath is the sidecar stamped when a human last looked at a binding's
 // live diff, log or show output (#143): its mtime is the "viewed" instant.
-// `relay diff`/`log`/`show` write it after a successful print; `relay ui`
+// `relevo diff`/`log`/`show` write it after a successful print; `relevo ui`
 // never writes it directly (it stamps through the same MarkViewed call), so
 // it stays read-only of everything else in the binding's directory.
 // Layout: <binding dir>/.viewed
@@ -255,7 +255,7 @@ func (s *Store) FindingsPath(name string, round int, id string) string {
 
 // ConsultStreamPath is where a headless consult's raw stdout -- the
 // harness's streamed JSON, one event per line, and the supervisor's
-// relay-exit trailer -- is appended. A headless consult carries its own
+// relevo-exit trailer -- is appended. A headless consult carries its own
 // stream, exactly as a headless builder round does (#99, #168).
 // Layout: <binding dir>/NNN-<id>-consult.jsonl
 func (s *Store) ConsultStreamPath(name string, round int, id string) string {
@@ -336,7 +336,7 @@ func (s *Store) Delete(name string) error {
 //
 // A remote binding is never returned: its CWD is the repo the branch is cut
 // from and results are fetched into, not a working tree it drives, so the
-// cwd-addressed verbs (`relay send` with no --name, `relay status` for "this
+// cwd-addressed verbs (`relevo send` with no --name, `relevo status` for "this
 // tree") resolve to the tree's local binding or to nothing. Remote bindings
 // are always addressed by --name.
 func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
@@ -351,7 +351,7 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 			if binding.Builder.Remote() {
 				continue
 			}
-			// A done binding no longer drives its tree: resolving `relay send`
+			// A done binding no longer drives its tree: resolving `relevo send`
 			// onto one would hand a plan to a finished session. assertCWDFree
 			// scans separately, so this does not relax the two-builders-in-one
 			// -tree refusal.
@@ -397,8 +397,8 @@ func (t *Tx) Archive(name string) (string, error) {
 // Unexported methods implement the actual logic, assuming lock is held via Tx.
 
 func (s *Store) save(b Binding) error {
-	// A binding written by a newer relay is read-only for this binary: its
-	// rewrite would erase every field this relay does not know (#372). The
+	// A binding written by a newer relevo is read-only for this binary: its
+	// rewrite would erase every field this relevo does not know (#372). The
 	// check comes first, so a refusal leaves not even a directory or a temp
 	// file behind.
 	if b.Format > BindingFormat {
@@ -610,15 +610,15 @@ func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availa
 // a policy -- nothing in the pick order reads it.
 func (s *Store) LatencyPath() string { return filepath.Join(s.root, "latency.json") }
 
-// DBPath is relay's sqlite database file (docs/specs/2026-09-20-persistence-design.md
+// DBPath is relevo's sqlite database file (docs/specs/2026-09-20-persistence-design.md
 // §4), beside ledger.json and availability.json.
-func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }
+func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 
-// ChannelsDir is where relay mcp's claim files live, one per planner
+// ChannelsDir is where relevo mcp's claim files live, one per planner
 // (docs/specs/2026-09-21-planner-channel-design.md §3.2).
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
-// PlannersDir is where relay's planner records live: one JSON file per record,
+// PlannersDir is where relevo's planner records live: one JSON file per record,
 // named <id>.json (#303 §3.1). Created mode 0700 by the first write.
 func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
 
@@ -629,7 +629,7 @@ func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") 
 // directories and dot-prefixed names -- never reads it as a record.
 func (s *Store) AgyCredsDir() string { return filepath.Join(s.PlannersDir(), ".agy") }
 
-// WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
+// WorktreeDir is where relevo keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.
 func (s *Store) WorktreeDir() string {
@@ -647,14 +647,14 @@ func (s *Store) WorktreePath(name string) string {
 // It lives under its own dot-prefixed subdirectory so a human can see at a
 // glance which trees are leftovers from a crashed verify -- `git worktree
 // remove` takes them away -- and so nothing mistakes one for a binding's
-// worktree (Store.WorktreePath is the only path relay ever removes).
+// worktree (Store.WorktreePath is the only path relevo ever removes).
 func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
 // archive packs a binding's directory into a gzipped tarball and removes the
 // directory, so the name frees for a fresh bind while log.jsonl and every
-// round file survive. Relay's state is small text, which gzips well enough
+// round file survive. Relevo's state is small text, which gzips well enough
 // that a long history of archived bindings stays negligible on disk.
 //
 // It returns the path of the tarball it wrote.

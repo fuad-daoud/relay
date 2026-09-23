@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 func TestChildEnv(t *testing.T) {
@@ -113,30 +113,30 @@ func TestChildEnv(t *testing.T) {
 // Precedence: a GOMAXPROCS already in the parent environment or in extra
 // wins, and the inputs are never mutated.
 func TestGoMaxProcsEnv(t *testing.T) {
-	pinned := &relay.ScopeSpec{AllowedCPUs: "2"}
-	quota := &relay.ScopeSpec{CPUQuota: "200%"}
+	pinned := &relevo.ScopeSpec{AllowedCPUs: "2"}
+	quota := &relevo.ScopeSpec{CPUQuota: "200%"}
 	cases := []struct {
 		name   string
 		parent []string
 		extra  []string
-		scope  *relay.ScopeSpec
+		scope  *relevo.ScopeSpec
 		want   []string
 	}{
 		{"nil scope", nil, nil, nil, nil},
-		{"no limits", nil, nil, &relay.ScopeSpec{}, nil},
+		{"no limits", nil, nil, &relevo.ScopeSpec{}, nil},
 		{"single core", nil, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"quota only", nil, nil, quota, []string{"GOMAXPROCS=2"}},
 		{"parent GOMAXPROCS is overridden", []string{"GOMAXPROCS=8"}, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"extra GOMAXPROCS wins", nil, []string{"GOMAXPROCS=4"}, pinned, nil},
 		{"bare parent name is overridden", []string{"GOMAXPROCS"}, nil, pinned, []string{"GOMAXPROCS=1"}},
-		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &relay.ScopeSpec{}, nil},
+		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &relevo.ScopeSpec{}, nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			parentCopy := slices.Clone(tc.parent)
 			extraCopy := slices.Clone(tc.extra)
-			var scopeCopy, hadScope = relay.ScopeSpec{}, false
+			var scopeCopy, hadScope = relevo.ScopeSpec{}, false
 			if tc.scope != nil {
 				scopeCopy, hadScope = *tc.scope, true
 			}

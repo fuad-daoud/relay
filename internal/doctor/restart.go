@@ -18,7 +18,7 @@ type RunningProc struct {
 
 // ParseUnifiedCgroup returns the cgroup path of the `0::<path>` line of
 // /proc/<pid>/cgroup -- the unified hierarchy on a cgroup v2 host. A file with
-// no such line (a cgroup v1 host, or a format relay does not know) reports ok
+// no such line (a cgroup v1 host, or a format relevo does not know) reports ok
 // false, which RestartSafety reads as "cannot tell".
 func ParseUnifiedCgroup(content string) (string, bool) {
 	for _, line := range strings.Split(content, "\n") {
@@ -29,18 +29,18 @@ func ParseUnifiedCgroup(content string) (string, bool) {
 	return "", false
 }
 
-// inOwnScope reports whether a cgroup path's last element is a relay scope: the
-// process is in its own `relay-*.scope` and survives a daemon restart (#370
+// inOwnScope reports whether a cgroup path's last element is a relevo scope: the
+// process is in its own `relevo-*.scope` and survives a daemon restart (#370
 // §4.8). Only the last element is read, so any slice above it is irrelevant.
 func inOwnScope(cgroupPath string) bool {
 	base := path.Base(cgroupPath)
-	return strings.HasPrefix(base, "relay-") && strings.HasSuffix(base, ".scope")
+	return strings.HasPrefix(base, "relevo-") && strings.HasSuffix(base, ".scope")
 }
 
 // RestartSafety is the doctor row that says whether a daemon restart right now
 // would kill anything (#370 §4.8). Name "restart". It never fails the report:
 // a process whose cgroup read says not-exist has exited and is skipped, and a
-// host relay cannot read -- any other read error, or a file with no `0::`
+// host relevo cannot read -- any other read error, or a file with no `0::`
 // line, which is what macOS and a cgroup v1 host give -- degrades to
 // `cannot tell on this host`.
 //
@@ -73,7 +73,7 @@ func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)
 	}
 
 	// Every gathered process read as not-exist. On Linux they simply exited;
-	// on a host with no /proc (macOS) that is every process, and relay cannot
+	// on a host with no /proc (macOS) that is every process, and relevo cannot
 	// tell the two apart -- which is why this is the "cannot tell" answer
 	// rather than a quiet OK.
 	if running == 0 {
@@ -85,7 +85,7 @@ func RestartSafety(procs []RunningProc, readCgroup func(pid int) (string, error)
 	c.Severity = SevWarn
 	c.Detail = fmt.Sprintf("%d of %d running outside their own scope (%s): a daemon restart may kill them",
 		len(offenders), running, offendersText(offenders))
-	c.Fix = "let them finish before restarting relay.service"
+	c.Fix = "let them finish before restarting relevo.service"
 	c.Unsafe = len(offenders)
 	return c
 }
@@ -97,7 +97,7 @@ func restartOK(c Check, detail string) Check {
 	return c
 }
 
-// restartCannotTell is the "cannot tell on this host" row: relay could not
+// restartCannotTell is the "cannot tell on this host" row: relevo could not
 // establish the fact, and nothing is wrong that it can act on.
 func restartCannotTell(c Check) Check {
 	c.Severity = SevOK

@@ -7,13 +7,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // ErrAmbiguousTier reports candidates of one role carrying different tiers, so
-// no single tier can be written for the role (#374 §3.1). It stops `relay roles
+// no single tier can be written for the role (#374 §3.1). It stops `relevo roles
 // init` before anything is written.
 var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers")
 
@@ -47,10 +47,10 @@ func FromLegacy(set *candidate.Set, pol policy.Policy) (*File, []string, error) 
 		rows[name] = Row{Candidates: tokens, Tier: tier}
 
 		if !role.Ordered && len(tokens) > 1 {
-			notes = append(notes, fmt.Sprintf("%s: %d candidates had no order (relay refused to choose); written in ref order -- reorder roles.json %s.candidates", name, len(tokens), name))
+			notes = append(notes, fmt.Sprintf("%s: %d candidates had no order (relevo refused to choose); written in ref order -- reorder roles.json %s.candidates", name, len(tokens), name))
 		}
 		if k := unlistedCount(role.Ranked); k > 0 && role.Ordered {
-			notes = append(notes, fmt.Sprintf("%s: %d candidate(s) not in order.%s appended after it, as relay ranked them", name, k, name))
+			notes = append(notes, fmt.Sprintf("%s: %d candidate(s) not in order.%s appended after it, as relevo ranked them", name, k, name))
 		}
 	}
 

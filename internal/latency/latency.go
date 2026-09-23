@@ -1,7 +1,7 @@
 // Package latency keeps, for 30 days, how long each candidate took to
 // produce its first model output, so a listing can show what a candidate
-// costs to start before relay moves a provider or a region (#324 part 1).
-// It is a record, not a policy: nothing here decides which candidate relay
+// costs to start before relevo moves a provider or a region (#324 part 1).
+// It is a record, not a policy: nothing here decides which candidate relevo
 // runs, and nothing loads it on a spawn path.
 package latency
 

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 func waitForAddr(s *Server) (net.Addr, error) {

@@ -64,10 +64,10 @@ jobs:
         with:
           go-version: stable
 
-      # relay is supported on Linux and macOS only, but the tree must keep
+      # relevo is supported on Linux and macOS only, but the tree must keep
       # compiling elsewhere: this is what catches a platform-specific syscall
       # sneaking back in outside a build-tagged file.
-      # CGO_ENABLED=0 because relay is pure Go: without it a same-GOOS
+      # CGO_ENABLED=0 because relevo is pure Go: without it a same-GOOS
       # cross-compile (linux/arm64 from linux/amd64) keeps cgo on and reaches
       # for the host's gcc, which cannot target arm64.
       - name: build for every target

@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 type contextKey string

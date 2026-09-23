@@ -17,14 +17,14 @@ import (
 // next tick.
 var ErrOffline = errors.New("release check: offline")
 
-// DefaultEndpoint is the GitHub releases API for relay's newest release.
-const DefaultEndpoint = "https://api.github.com/repos/fuad-daoud/relay/releases/latest"
+// DefaultEndpoint is the GitHub releases API for relevo's newest release.
+const DefaultEndpoint = "https://api.github.com/repos/fuad-daoud/relevo/releases/latest"
 
 // defaultTimeout is the whole budget for one check: the daemon ticks every
 // two seconds and must never be held up by a slow endpoint.
 const defaultTimeout = 5 * time.Second
 
-// maxBody bounds what a response may make relay allocate.
+// maxBody bounds what a response may make relevo allocate.
 const maxBody = 1 << 20
 
 // Fetcher returns the latest published release tag.
@@ -37,19 +37,19 @@ type httpFetcher struct {
 	client   *http.Client
 }
 
-// Source is the endpoint a fetch reads: RELAY_RELEASE_API when it is set,
+// Source is the endpoint a fetch reads: RELEVO_RELEASE_API when it is set,
 // else DefaultEndpoint. NewHTTPFetcher resolves through it, and the daemon
 // records it in the cache as the URL its answer came from -- the Fetcher
 // interface returns only a tag, so that is where the URL is knowable.
 func Source() string {
-	if endpoint := os.Getenv("RELAY_RELEASE_API"); endpoint != "" {
+	if endpoint := os.Getenv("RELEVO_RELEASE_API"); endpoint != "" {
 		return endpoint
 	}
 	return DefaultEndpoint
 }
 
 // NewHTTPFetcher reads the GitHub releases API. The endpoint is overridable
-// with RELAY_RELEASE_API, so tests and air-gapped installs can point it
+// with RELEVO_RELEASE_API, so tests and air-gapped installs can point it
 // elsewhere.
 func NewHTTPFetcher(endpoint string, timeout time.Duration) Fetcher {
 	if endpoint == "" {

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // The picker's own styles. internal/ui has near-identical ones; they are
@@ -64,7 +64,7 @@ func styleDisplay(display string) string {
 // renderRow is one binding line (spec §4):
 //
 //	> webshop        NEEDS YOU  r3  builder agy blocked
-func renderRow(b relay.BindingStatus, selected bool) string {
+func renderRow(b relevo.BindingStatus, selected bool) string {
 	cursor := " "
 	if selected {
 		cursor = cursorStyle.Render(">")
@@ -89,7 +89,7 @@ func (m Model) listRows() int {
 
 func (m Model) listView() string {
 	var sb strings.Builder
-	sb.WriteString(titleStyle.Render(fmt.Sprintf("relay %s -- pick a binding", m.opts.Verb)))
+	sb.WriteString(titleStyle.Render(fmt.Sprintf("relevo %s -- pick a binding", m.opts.Verb)))
 	sb.WriteString("\n\n")
 	if !m.loaded {
 		sb.WriteString(hintStyle.Render("loading…"))

@@ -103,7 +103,7 @@ func TestNewerRefusesUnparseable(t *testing.T) {
 
 	for _, tc := range tests {
 		if NewerStrings(tc.running, tc.latest) {
-			t.Errorf("NewerStrings(%q, %q) = true, want false: relay never claims staleness it cannot prove",
+			t.Errorf("NewerStrings(%q, %q) = true, want false: relevo never claims staleness it cannot prove",
 				tc.running, tc.latest)
 		}
 	}

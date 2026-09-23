@@ -15,16 +15,16 @@ import (
 
 const (
 	// HeaderClient names the HTTP header carrying the ClientID fingerprint.
-	HeaderClient = "Relay-Client"
+	HeaderClient = "Relevo-Client"
 
 	// HeaderTimestamp names the HTTP header carrying the decimal unix epoch seconds.
-	HeaderTimestamp = "Relay-Timestamp"
+	HeaderTimestamp = "Relevo-Timestamp"
 
 	// HeaderNonce names the HTTP header carrying base64-encoded random bytes.
-	HeaderNonce = "Relay-Nonce"
+	HeaderNonce = "Relevo-Nonce"
 
 	// HeaderSignature names the HTTP header carrying the base64-encoded ed25519 signature.
-	HeaderSignature = "Relay-Signature"
+	HeaderSignature = "Relevo-Signature"
 )
 
 // MaxClockSkew defines the maximum allowed difference between request timestamp and server time.

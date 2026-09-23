@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	// modernc.org/sqlite is the one driver import in relay: this package is
+	// modernc.org/sqlite is the one driver import in relevo: this package is
 	// the only place that knows it is sqlite today and Turso tomorrow.
 	"modernc.org/sqlite"
 )
@@ -30,7 +30,7 @@ func parseTime(s string) (time.Time, error) {
 // sqliteBusy is SQLITE_BUSY, sqlite's result code for "database is locked".
 const sqliteBusy = 5
 
-// DB is a connection to relay's sqlite database. The zero value is not
+// DB is a connection to relevo's sqlite database. The zero value is not
 // usable; construct one with Open.
 type DB struct {
 	sqlDB *sql.DB
@@ -48,7 +48,7 @@ type DB struct {
 //
 // A database whose schema is newer than this binary's embedded migrations is
 // left untouched -- never migrated, never written -- and returned with
-// Newer() == true, so an older relay can read it without downgrading it
+// Newer() == true, so an older relevo can read it without downgrading it
 // (#372 §4.5).
 func Open(path string) (*DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
@@ -91,22 +91,22 @@ func Open(path string) (*DB, error) {
 	return &DB{sqlDB: sqlDB, have: have, know: know}, nil
 }
 
-// Newer reports whether the database's schema is newer than this relay's
+// Newer reports whether the database's schema is newer than this relevo's
 // embedded migrations. Such a database is never migrated or written.
 func (d *DB) Newer() bool { return d.newer }
 
 // SchemaVersions returns the schema version on disk and the highest version
-// this relay knows, for the newer-schema warning text.
+// this relevo knows, for the newer-schema warning text.
 func (d *DB) SchemaVersions() (have, know int) { return d.have, d.know }
 
 // CheckMigrate returns an error when the database's schema is newer than this
-// relay, so `relay db migrate` refuses rather than touching it. A nil result
-// means the schema is this relay's to migrate.
+// relevo, so `relevo db migrate` refuses rather than touching it. A nil result
+// means the schema is this relevo's to migrate.
 func (d *DB) CheckMigrate() error {
 	if !d.newer {
 		return nil
 	}
-	return fmt.Errorf("schema version %d is newer than this relay (knows %d): upgrade relay: %w", d.have, d.know, ErrNewerSchema)
+	return fmt.Errorf("schema version %d is newer than this relevo (knows %d): upgrade relevo: %w", d.have, d.know, ErrNewerSchema)
 }
 
 // ping establishes the first connection, retrying while sqlite reports the

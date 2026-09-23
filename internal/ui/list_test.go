@@ -11,8 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/muesli/termenv"
 )
 
@@ -39,7 +39,7 @@ func TestListWindow(t *testing.T) {
 
 func TestListRowsBudget(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
@@ -71,22 +71,22 @@ func TestListRowsBudget(t *testing.T) {
 func tenBindings(t *testing.T, height int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = height
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	m = res.(Model)
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(10)}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(10)}})
 	return res.(Model)
 }
 
 // bindingStatuses builds Display:"ACTIVE" bindings named b00..b{count-1}.
-func bindingStatuses(count int) []relay.BindingStatus {
-	bs := make([]relay.BindingStatus, count)
+func bindingStatuses(count int) []relevo.BindingStatus {
+	bs := make([]relevo.BindingStatus, count)
 	for i := range bs {
-		bs[i] = relay.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
+		bs[i] = relevo.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
 	}
 	return bs
 }
@@ -107,7 +107,7 @@ func assertCursorVisible(t *testing.T, m Model, name string) {
 	if !strings.Contains(plain(view), "▎ "+name) {
 		t.Errorf("view must show the cursor card for %s, got:\n%s", name, view)
 	}
-	if !strings.Contains(plain(view), "relay") {
+	if !strings.Contains(plain(view), "relevo") {
 		t.Errorf("view must contain the header, got:\n%s", view)
 	}
 	if !strings.Contains(view, "open") {
@@ -167,7 +167,7 @@ func TestListViewRewindowsWhenBindingRemoved(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
-	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(5)}})
+	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(5)}})
 	m = res.(Model)
 	if m.list.cursor != 4 {
 		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", m.list.cursor)
@@ -180,12 +180,12 @@ func TestListViewUnlimitedBeforeResize(t *testing.T) {
 	// height stays 0 and listRows reads as no limit — every row must render,
 	// exactly as before windowing existed.
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 0
-	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: bindingStatuses(10)}})
+	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(10)}})
 	m = res.(Model)
 
 	view := m.View()
@@ -198,11 +198,11 @@ func TestListViewUnlimitedBeforeResize(t *testing.T) {
 
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
-	initialReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	initialReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "bravo"},
 			{Name: "charlie"},
 		},
@@ -214,8 +214,8 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	}
 
 	// Insert "alpha" before "bravo"
-	updatedReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	updatedReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "alpha"},
 			{Name: "bravo"},
 			{Name: "charlie"},
@@ -234,11 +234,11 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 
 func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
-	initialReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	initialReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "alpha"},
 			{Name: "bravo"},
 		},
@@ -254,8 +254,8 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	}
 
 	// "bravo" is removed
-	updatedReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	updatedReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "alpha"},
 		},
 	}
@@ -272,13 +272,13 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 
 func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
 	m.height = 24
 
-	res, _ := m.Update(statusMsg{report: relay.Report{Bindings: nil}})
+	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
 	m = res.(Model)
 
 	view := m.View()
@@ -299,7 +299,7 @@ func TestEmptyBindingsList(t *testing.T) {
 
 func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -341,7 +341,7 @@ func TestStateStylesDistinguishable(t *testing.T) {
 
 func TestListScreenThreeStates(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	// 1. Fresh model with no message renders "loading…"
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
@@ -368,7 +368,7 @@ func TestListScreenThreeStates(t *testing.T) {
 	}
 
 	// 3. Model given a successful empty report renders "no bindings"
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: nil}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
 	m = res.(Model)
 	view = m.View()
 	if !strings.Contains(view, "no bindings") {
@@ -376,8 +376,8 @@ func TestListScreenThreeStates(t *testing.T) {
 	}
 
 	// 4. A later failing poll after a successful one keeps showing the last good list rather than reverting
-	b := relay.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: []relay.BindingStatus{b}}})
+	b := relevo.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
 	m = res.(Model)
 	view = m.View()
 	if !strings.Contains(view, "webshop") {
@@ -401,7 +401,7 @@ func TestListScreenThreeStates(t *testing.T) {
 
 func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	// 1. A three-line error renders as three lines with no line exceeding width
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")
@@ -432,7 +432,7 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	multiLineMsg := "client protocol 22 is newer than server protocol 20; restart the daemon\n" +
 		"before using this command. Stop the old process to use the new version.\n" +
 		"Stopping exits running processes.\n" +
-		"Run `relay daemon --stop`, then restart relay with the\n" +
+		"Run `relevo daemon --stop`, then restart relevo with the\n" +
 		"same socket override."
 	m.err = errors.New(multiLineMsg)
 	view = m.View()

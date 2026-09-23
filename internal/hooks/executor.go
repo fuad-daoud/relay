@@ -33,11 +33,11 @@ func (e *OSExecutor) Execute(ctx context.Context, scriptPath string, event Event
 
 	cmd := exec.CommandContext(ctx, scriptPath)
 	cmd.Env = append(os.Environ(),
-		"RELAY_EVENT="+string(event.Type),
-		"RELAY_BINDING="+event.BindingID,
-		"RELAY_STATE="+event.State,
-		"RELAY_OLD_STATE="+event.OldState,
-		"RELAY_ROUND="+strconv.Itoa(event.Round),
+		"RELEVO_EVENT="+string(event.Type),
+		"RELEVO_BINDING="+event.BindingID,
+		"RELEVO_STATE="+event.State,
+		"RELEVO_OLD_STATE="+event.OldState,
+		"RELEVO_ROUND="+strconv.Itoa(event.Round),
 	)
 
 	var f *os.File

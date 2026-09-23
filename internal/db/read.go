@@ -465,7 +465,7 @@ func getBinding(ctx context.Context, q queryer, name string) (BindingRow, bool, 
 }
 
 // PlannerBySession returns the planner row for one (harness_kind, session_id),
-// false when there is none. It is what `relay planner init` reads to reuse an
+// false when there is none. It is what `relevo planner init` reads to reuse an
 // existing db row's id instead of minting one (#303
 // §3.5) -- an error here is not a missing planner, so the two outcomes are
 // reported separately.

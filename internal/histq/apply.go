@@ -3,7 +3,7 @@ package histq
 import (
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // Apply is the in-Go half of a query: the conditions db.Query cannot

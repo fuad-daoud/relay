@@ -5,7 +5,7 @@ package upgrade
 import (
 	"errors"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // ExeIdentity has no implementation off unix: there is no dev/ino to read, and

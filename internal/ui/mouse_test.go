@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 func TestTabSpansMatchTheDrawnRow(t *testing.T) {
@@ -150,7 +150,7 @@ func TestWheelOverPaneScrollsWithoutMovingTheCursor(t *testing.T) {
 
 func TestWheelOverPaneKeepsTheTerminalFollowRule(t *testing.T) {
 	rows := threeRows()
-	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/001-builder.log"}
+	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/001-builder.log"}
 	m := splitModel(t, 140, 40, rows...)
 	m.tabInFlight = false
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})

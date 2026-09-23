@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // mcpTestPlannerA and mcpTestPlannerB are valid planner ids (pl_ plus 12
@@ -19,22 +19,22 @@ const (
 	mcpTestPlannerB = "pl_ccccccccdddd"
 )
 
-// stubRunner implements relay.Runner with no-op stubs, for a headless
+// stubRunner implements relevo.Runner with no-op stubs, for a headless
 // binding whose PID is 0 (Alive is never actually called on that path, but
 // Runtime.Runner must be non-nil or sendPreflight refuses before it gets
 // that far).
 type stubRunner struct{}
 
-func (stubRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
-	return relay.ProcHandle{}, nil
+func (stubRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
+	return relevo.ProcHandle{}, nil
 }
-func (stubRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) { return false, nil }
-func (stubRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (int, bool) {
+func (stubRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) { return false, nil }
+func (stubRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (int, bool) {
 	return 0, false
 }
-func (stubRunner) Kill(ctx context.Context, h relay.ProcHandle) error { return nil }
-func (stubRunner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
-	return relay.ProcRusage{}, false
+func (stubRunner) Kill(ctx context.Context, h relevo.ProcHandle) error { return nil }
+func (stubRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.ProcRusage, bool) {
+	return relevo.ProcRusage{}, false
 }
 
 func writeCandidates(t *testing.T, body string) *candidate.Set {
@@ -66,13 +66,13 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 	}
 }
 
-// TestRelayVerbsStatusFiltersByPlannerThenName is the one status.go RelayVerbs
+// TestRelevoVerbsStatusFiltersByPlannerThenName is the one status.go RelevoVerbs
 // behaviour the plan calls out as needing a real test: bindings are scoped to
 // this planner id unless All is set, narrowed further by Name, with the same
 // DONE-hiding the CLI applies by default.
-func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
+func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
@@ -81,15 +81,15 @@ func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	saveVerbBinding(t, s, store.Binding{Name: "mine-done", CWD: "/repo/mine-done", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateDone})
 	saveVerbBinding(t, s, store.Binding{Name: "other", CWD: "/repo/other", Planner: store.Endpoint{PaneID: "w9:p9"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
 
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 
 	res, err := v.Status(context.Background(), StatusArgs{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rep, ok := res.(relay.Report)
+	rep, ok := res.(relevo.Report)
 	if !ok {
-		t.Fatalf("result = %#v, want relay.Report", res)
+		t.Fatalf("result = %#v, want relevo.Report", res)
 	}
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-a" {
 		t.Fatalf("default status = %+v, want only mine-a (this planner, DONE hidden)", rep.Bindings)
@@ -99,7 +99,7 @@ func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status all: %v", err)
 	}
-	rep = res.(relay.Report)
+	rep = res.(relevo.Report)
 	if len(rep.Bindings) != 3 {
 		t.Fatalf("all status = %d bindings, want 3", len(rep.Bindings))
 	}
@@ -108,7 +108,7 @@ func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status by name: %v", err)
 	}
-	rep = res.(relay.Report)
+	rep = res.(relevo.Report)
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-done" {
 		t.Fatalf("status by name = %+v, want only mine-done (DONE included when named)", rep.Bindings)
 	}
@@ -123,7 +123,7 @@ func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 // only the id can tell them apart.
 func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
@@ -131,12 +131,12 @@ func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	saveVerbBinding(t, s, store.Binding{Name: "mine", CWD: "/repo/mine", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerA, Round: 1, State: store.StateActive})
 	saveVerbBinding(t, s, store.Binding{Name: "cousin", CWD: "/repo/cousin", Planner: store.Endpoint{PaneID: "w2:p3"}, PlannerID: mcpTestPlannerB, Round: 1, State: store.StateActive})
 
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 	res, err := v.Status(context.Background(), StatusArgs{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rep := res.(relay.Report)
+	rep := res.(relevo.Report)
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
 		t.Fatalf("status = %+v, want only mine (the same pane's cousin is another planner)", rep.Bindings)
 	}
@@ -145,14 +145,14 @@ func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	}
 }
 
-// TestRelayVerbsSendDryRunHeadless exercises Send's real forwarding into
-// relay.SendDryRun: a headless binding needs no harness at all (only
+// TestRelevoVerbsSendDryRunHeadless exercises Send's real forwarding into
+// relevo.SendDryRun: a headless binding needs no harness at all (only
 // Store, Candidates and Runner), so this runs against the real function,
 // not a seam.
-func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
+func TestRelevoVerbsSendDryRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
@@ -167,16 +167,16 @@ func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 	plan := writeTempPlan(t, "# do the thing")
 
 	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
 	if err != nil {
 		t.Fatalf("Send dry-run: %v", err)
 	}
-	d, ok := res.(relay.DryRun)
+	d, ok := res.(relevo.DryRun)
 	if !ok {
-		t.Fatalf("result = %#v, want relay.DryRun", res)
+		t.Fatalf("result = %#v, want relevo.DryRun", res)
 	}
 	if d.Mode != "headless" {
 		t.Errorf("Mode = %q, want headless", d.Mode)
@@ -186,13 +186,13 @@ func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
 	}
 }
 
-// TestRelayVerbsSendRealRunHeadless proves DryRun false takes the real
-// relay.Send path, not SendDryRun: for a headless binding this needs no
+// TestRelevoVerbsSendRealRunHeadless proves DryRun false takes the real
+// relevo.Send path, not SendDryRun: for a headless binding this needs no
 // live pane either, so it runs to completion against stubRunner.
-func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
+func TestRelevoVerbsSendRealRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
-	rt := relay.Runtime{
+	rt := relevo.Runtime{
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
@@ -207,7 +207,7 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 		Round:            1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 	plan := writeTempPlan(t, "# do the thing")
 
 	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan})
@@ -229,12 +229,12 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 	}
 }
 
-// TestRelayVerbsDoneForwardsAndReportsText proves Done calls relay.Done
-// (which flips the binding's stored State to done) and reports relay.DoneText
+// TestRelevoVerbsDoneForwardsAndReportsText proves Done calls relevo.Done
+// (which flips the binding's stored State to done) and reports relevo.DoneText
 // alongside the structured DoneResult.
-func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
+func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
 		Planner: store.Endpoint{PaneID: "w2:p3"},
@@ -242,7 +242,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 		Round:   1, State: store.StateActive,
 	})
 
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 	res, err := v.Done(context.Background(), DoneArgs{Name: "webshop"})
 	if err != nil {
 		t.Fatalf("Done: %v", err)
@@ -252,7 +252,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 		t.Fatalf("result = %#v, want doneResult", res)
 	}
 	if dr.Text == "" {
-		t.Error("Text must be set from relay.DoneText")
+		t.Error("Text must be set from relevo.DoneText")
 	}
 
 	updated, err := s.Load("webshop")
@@ -264,10 +264,10 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 	}
 }
 
-func TestRelayVerbsDoneErrorPropagates(t *testing.T) {
+func TestRelevoVerbsDoneErrorPropagates(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
-	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
+	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
 
 	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {
 		t.Fatal("Done on a binding that does not exist must error")

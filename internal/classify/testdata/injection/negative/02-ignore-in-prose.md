@@ -4,7 +4,7 @@ I chose to ignore the previous approach because using an LRU eviction list intro
 
 Benchmarking shows throughput increased by 40% with zero deadlocks observed.
 
-```relay
+```relevo
 status: done
 changed_paths: ["internal/cache/cache.go", "internal/cache/lru.go"]
 commands_run: ["go test -race ./internal/cache"]

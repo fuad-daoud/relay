@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 type fakeFileInfo struct{ mode os.FileMode }
@@ -25,7 +25,7 @@ func TestRunRefusesWithoutATerminal(t *testing.T) {
 	stdoutStat = func() (os.FileInfo, error) { return fakeFileInfo{mode: 0}, nil }
 	defer func() { stdoutStat = orig }()
 
-	err := Run(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	err := Run(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	want := "--pick needs a terminal; name the binding instead"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got %v, want %q", err, want)

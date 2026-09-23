@@ -10,9 +10,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // queuedRound is one queued round the census found, enough to start it: the
@@ -115,12 +115,12 @@ func (s *Server) admit(ctx context.Context) error {
 		if running >= limit {
 			break
 		}
-		err := relay.Admit(ctx, s.runtimeAt(q.OwnerRoot), q.Name)
+		err := relevo.Admit(ctx, s.runtimeAt(q.OwnerRoot), q.Name)
 		switch {
 		case err == nil:
 			running++
 			slog.Info(fmt.Sprintf("admitted owner=%s binding=%s running=%d/%d", q.Owner, q.Name, running, limit))
-		case errors.Is(err, relay.ErrNotQueued):
+		case errors.Is(err, relevo.ErrNotQueued):
 			continue
 		default:
 			slog.Warn(fmt.Sprintf("admit owner=%s binding=%s: %v", q.Owner, q.Name, err))
@@ -132,7 +132,7 @@ func (s *Server) admit(ctx context.Context) error {
 
 // queuePositionView fills a queued round's place in the queue, for
 // handleGetBinding and the 201 of handleStartRound (#285): view.RoundState
-// has already been computed by relay.ServedView. Not found in a fresh
+// has already been computed by relevo.ServedView. Not found in a fresh
 // census (raced -- admitted or unbound between the view and this call)
 // leaves the result nil, matching BindingView.Queue's contract.
 func (s *Server) queuePositionView(b store.Binding, view remote.BindingView, caller remote.ClientID) *remote.QueueView {

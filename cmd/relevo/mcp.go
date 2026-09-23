@@ -1,0 +1,259 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/mcp"
+	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+)
+
+// minMCPInterval floors --interval, the same guard the daemon's --interval
+// gets, so a misconfigured poll cannot spin the claim file or the store lock.
+const minMCPInterval = 200 * time.Millisecond
+
+// relevo mcp starts beside the plugin's SessionStart hook (§5.2), which may
+// still be running when the server comes up, so ErrNoPlanner is retried for
+// up to mcpResolveTimeout before the server falls back to tools-only.
+const (
+	mcpResolveTimeout = 10 * time.Second
+	mcpResolveRetry   = 500 * time.Millisecond
+)
+
+// cmdMCP runs relevo mcp: an MCP server over stdio a Claude Code planner
+// spawns from its plugin manifest (docs/specs/2026-09-21-planner-channel-design.md,
+// #303 §4.5). In channel mode it also
+// claims its planner and drains its mailbox; in tools mode it only serves
+// the verbs as tools.
+func cmdMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	plannerFlag := fs.String("planner", "", "planner id or name (default: $RELEVO_PLANNER, else this session's host)")
+	modeFlag := fs.String("mode", "auto", "channel|tools|auto (default: detected from the parent process's argv)")
+	interval := fs.Duration("interval", time.Second, "poll interval in channel mode (floored at 200ms)")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	if *interval < minMCPInterval {
+		*interval = minMCPInterval
+	}
+
+	mode, err := resolveMCPMode(*modeFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
+		return exitCodeErr{code: 2}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	// §4.5: resolve this planner, retrying while the hook may still be
+	// running. A bad --planner value is not a race: it is reported at once.
+	var (
+		rec     planner.Record
+		haveRec bool
+	)
+	deadline := time.Now().Add(mcpResolveTimeout)
+	for {
+		r, _, rerr := resolveMCPPlanner(rt, *plannerFlag)
+		if rerr == nil {
+			rec, haveRec = r, true
+			break
+		}
+		if !errors.Is(rerr, planner.ErrNoPlanner) {
+			fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", rerr)
+			return exitCodeErr{code: 2}
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(mcpResolveRetry)
+	}
+
+	version := buildVersion()
+	if haveRec {
+		fmt.Fprintf(os.Stderr, "relevo mcp: planner %s (%s) mode %s\n", rec.Name, rec.ID, mcpModeWord(mode))
+	} else {
+		// No registration and no host match: the verbs still serve, so a
+		// planner whose hook never ran can still use the tools.
+		fmt.Fprintln(os.Stderr, `relevo mcp: no relevo planner for this session; tools-only (run "relevo planner init")`)
+	}
+
+	srv := &mcp.Server{
+		Verbs:   &mcp.RelevoVerbs{RT: rt, Planner: rec.ID},
+		Version: version,
+		// The mode is known before initialize is answered, so the model is
+		// told from its first turn which delivery it should expect (#303 §4.5).
+		Mode: mode,
+		Log:  os.Stderr,
+		// §4.10: this server runs for the session's whole life, so when the
+		// daemon has re-exec'd onto a newer relevo it says so on every tool
+		// result and the planner reconnects (/mcp). The read is cached for
+		// 30 s and a read error is no notice at all.
+		Notice: cachedString(mcpNoticeTTL, time.Now, func() string {
+			info, ok, err := rt.Store.ReadDaemonInfo()
+			if err != nil {
+				return ""
+			}
+			return mcpNotice(version, info, ok)
+		}),
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if mode == mcp.ModeChannel && haveRec {
+		srv.OnInitialized = func() {
+			startMCPChannel(ctx, rt, rec, version, srv, *interval)
+		}
+	}
+
+	serveErr := srv.Serve(ctx, os.Stdin, os.Stdout)
+
+	if mode == mcp.ModeChannel && haveRec && rt.Channels != nil {
+		_ = rt.Channels.Remove(rec.ID, os.Getpid())
+	}
+
+	if serveErr != nil && !errors.Is(serveErr, context.Canceled) {
+		return serveErr
+	}
+	return nil
+}
+
+// resolveMCPPlanner is planner.Resolve as relevo mcp calls it: --planner,
+// $RELEVO_PLANNER, the parent Claude process, then the session (§4.5).
+func resolveMCPPlanner(rt relevo.Runtime, flagVal string) (planner.Record, planner.Resolution, error) {
+	var now time.Time
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	return planner.Resolve(rt.Planners, planner.ResolveInput{
+		Flag:      flagVal,
+		Env:       os.Getenv,
+		PPID:      os.Getppid(),
+		ProcStart: rt.ProcStart,
+		Now:       now,
+	})
+}
+
+// resolveMCPMode turns --mode into an mcp.Mode: "channel" and "tools" are
+// literal, "auto" reads the parent process's argv and falls back to
+// ModeTools (with a reason) when it cannot (spec §7).
+func resolveMCPMode(flagVal string) (mcp.Mode, error) {
+	switch flagVal {
+	case "channel":
+		return mcp.ModeChannel, nil
+	case "tools":
+		return mcp.ModeTools, nil
+	case "auto":
+		argv, err := mcp.ParentArgv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo mcp: cannot read parent argv (%v); tools-only mode\n", err)
+			return mcp.ModeTools, nil
+		}
+		return mcp.DetectMode(argv), nil
+	default:
+		return mcp.ModeTools, fmt.Errorf("--mode must be channel, tools, or auto, got %q", flagVal)
+	}
+}
+
+func mcpModeWord(m mcp.Mode) string {
+	if m == mcp.ModeChannel {
+		return "channel"
+	}
+	return "tools"
+}
+
+// startMCPChannel reaps the pre-#303 pane-keyed claims, writes this process's
+// initial claim and, on success, starts the poll loop. A refused claim
+// (ErrClaimHeld) exits the process: Claude Code shows the server as failed and
+// the planner keeps pane delivery, exactly as if relevo mcp had never started
+// (spec §3.2, §6).
+func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record, version string, p relevo.Pusher, interval time.Duration) {
+	if rt.Channels == nil {
+		fmt.Fprintln(os.Stderr, "relevo mcp: no claim store configured; running tools-only")
+		return
+	}
+
+	// §3.3: a claim file left by a pre-#303 relevo mcp is reaped here, and
+	// only once its writer is dead. Another planner session may still be
+	// running an older relevo mcp during the upgrade.
+	rt.Channels.SweepPaneKeyed()
+
+	now := rt.Now()
+	cwd, _ := os.Getwd()
+	host := os.Getppid()
+	claim := relevo.Claim{
+		Planner:       rec.ID,
+		PID:           os.Getpid(),
+		HostPID:       host,
+		HostStartedAt: plannerHostStart(host),
+		StartedAt:     now,
+		SeenAt:        now,
+		CWD:           cwd,
+		Version:       version,
+	}
+	if err := rt.Channels.Write(claim, now); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
+		if errors.Is(err, relevo.ErrClaimHeld) {
+			os.Exit(1)
+		}
+		return
+	}
+
+	go pollMCPChannel(ctx, rt, rec.ID, claim, p, interval)
+}
+
+// pollMCPChannel is relevo mcp's channel-mode poll loop: re-read the planner
+// record, refresh the claim, then drain that planner's mailbox (spec §3.4,
+// #303 §4.5). It never exits on a drain error -- only a stolen claim
+// (ErrClaimHeld on refresh) or a forgotten record stops it, leaving the
+// tools still serving.
+func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, claim relevo.Claim, p relevo.Pusher, interval time.Duration) {
+	st := &relevo.DrainState{Planner: plannerID}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// §4.5: the record is re-read by id every poll, so a rename or a
+			// session move a later `relevo planner init --hook` makes (after
+			// /clear) is picked up without a restart. A record that is gone
+			// ends the channel; the tools keep serving.
+			if _, err := rt.Planners.Get(plannerID); err != nil {
+				fmt.Fprintf(os.Stderr, "relevo mcp: planner %s is gone; channel stopped\n", plannerID)
+				return
+			}
+
+			claim.SeenAt = rt.Now()
+			if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
+				fmt.Fprintf(os.Stderr, "relevo mcp: refresh claim: %v\n", err)
+				if errors.Is(err, relevo.ErrClaimHeld) {
+					return
+				}
+				continue
+			}
+
+			res, err := relevo.Drain(ctx, rt, st, p)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "relevo mcp: drain: %v\n", err)
+				continue
+			}
+			if res.Pushed > 0 || res.States > 0 || len(res.Failed) > 0 {
+				fmt.Fprintf(os.Stderr, "relevo mcp: drain pushed=%d states=%d failed=%v\n", res.Pushed, res.States, res.Failed)
+			}
+		}
+	}
+}

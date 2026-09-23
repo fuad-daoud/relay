@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/jsonshape"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // update rewrites the golden file, but only when PlannerFormat was bumped:
@@ -30,7 +30,7 @@ const recordGoldenPath = "testdata/record-shape.golden"
 // internal/store's TestBindingShapeMatchesFormat.
 const (
 	recordShapeMsg   = "planner.Record's JSON shape changed: bump planner.PlannerFormat, then run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
-	recordRefusalMsg = "bump planner.PlannerFormat first; an older relay would erase the new fields"
+	recordRefusalMsg = "bump planner.PlannerFormat first; an older relevo would erase the new fields"
 	recordStaleMsg   = "planner.Record's golden format line is stale; run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
 )
 
@@ -176,7 +176,7 @@ func TestStoredFormat(t *testing.T) {
 }
 
 // TestRegistryWriteRefusesANewerFormat pins the planner half of §4.1: a record
-// written by a newer relay loads, and writing it back is refused with
+// written by a newer relevo loads, and writing it back is refused with
 // ErrNewerFormat, leaving the file byte-for-byte as it was.
 func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	reg := testRegistry(t)
@@ -214,7 +214,7 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "planner record" || newer.Name != rec.Name || newer.Have != PlannerFormat+1 || newer.Know != PlannerFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `planner record "alpha" was written by a newer relay (format 2; this relay knows 1): upgrade relay; a planner session reconnects relay mcp with /mcp`
+	wantText := `planner record "alpha" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a planner session reconnects relevo mcp with /mcp`
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

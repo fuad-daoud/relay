@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // Verbs is what a tools/call dispatches to: the three verbs, each returning
@@ -17,19 +17,19 @@ type Verbs interface {
 	Done(ctx context.Context, a DoneArgs) (any, error)
 }
 
-// RelayVerbs adapts internal/relay's functions to Verbs, resolved against
+// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against
 // one planner (spec docs/specs/2026-09-21-planner-channel-design.md §4, §5;
 // keyed by planner id in #303 §4.5).
-type RelayVerbs struct {
-	RT      relay.Runtime
+type RelevoVerbs struct {
+	RT      relevo.Runtime
 	Planner string
 }
 
-// Status returns relay.Status filtered to this planner's bindings (unless
+// Status returns relevo.Status filtered to this planner's bindings (unless
 // a.All), narrowed to a.Name when given, with the same DONE-hiding the CLI
 // applies by default.
-func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
-	rep, err := relay.Status(ctx, v.RT)
+func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
+	rep, err := relevo.Status(ctx, v.RT)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +45,7 @@ func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	}
 
 	if a.Name != "" {
-		var found *relay.BindingStatus
+		var found *relevo.BindingStatus
 		for i := range rep.Bindings {
 			if rep.Bindings[i].Name == a.Name {
 				found = &rep.Bindings[i]
@@ -55,26 +55,26 @@ func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 		if found == nil {
 			return nil, fmt.Errorf("no binding named %s", a.Name)
 		}
-		rep.Bindings = []relay.BindingStatus{*found}
+		rep.Bindings = []relevo.BindingStatus{*found}
 	}
 
 	if a.Name == "" && !a.All {
-		rep = relay.HideDone(rep)
+		rep = relevo.HideDone(rep)
 	}
 
 	return rep, nil
 }
 
-// sendResult is relay.SendResult plus the tools-mode background-wait budget:
-// the binding's round budget, rendered the way `relay wait --timeout`
+// sendResult is relevo.SendResult plus the tools-mode background-wait budget:
+// the binding's round budget, rendered the way `relevo wait --timeout`
 // accepts it (#303 §4.5). Empty on a dry run, where no round was opened.
 type sendResult struct {
-	relay.SendResult
+	relevo.SendResult
 	WaitBudget string `json:"wait_budget,omitempty"`
 }
 
 // waitBudget renders a binding's round budget (ms) as a duration string for
-// `relay wait --timeout`. A non-positive value reads as "", which leaves the
+// `relevo wait --timeout`. A non-positive value reads as "", which leaves the
 // wait command out of the send result.
 func waitBudget(roundTimeoutMS int) string {
 	if roundTimeoutMS <= 0 {
@@ -92,10 +92,10 @@ func budgetOf(res any) string {
 	return ""
 }
 
-// Send calls relay.Send, or relay.SendDryRun when a.DryRun. AllowYolo is
+// Send calls relevo.Send, or relevo.SendDryRun when a.DryRun. AllowYolo is
 // always false: escalation to yolo stays on the CLI (spec §2 non-goals).
-func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
-	opts := relay.SendOptions{
+func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
+	opts := relevo.SendOptions{
 		Tier:      a.Tier,
 		AllowYolo: false,
 		Builder:   a.Builder,
@@ -104,14 +104,14 @@ func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	}
 
 	if a.DryRun {
-		d, err := relay.SendDryRun(ctx, v.RT, a.Name, a.File, opts)
+		d, err := relevo.SendDryRun(ctx, v.RT, a.Name, a.File, opts)
 		if err != nil {
 			return nil, err
 		}
 		return d, nil
 	}
 
-	res, err := relay.Send(ctx, v.RT, a.Name, a.File, opts)
+	res, err := relevo.Send(ctx, v.RT, a.Name, a.File, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -126,19 +126,19 @@ func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	return out, nil
 }
 
-// doneResult is relay.DoneResult plus the CLI's rendered text, so a model
+// doneResult is relevo.DoneResult plus the CLI's rendered text, so a model
 // reading the tool result gets both the structured fields and the sentence
 // a human would see.
 type doneResult struct {
-	relay.DoneResult
+	relevo.DoneResult
 	Text string `json:"text"`
 }
 
-// Done calls relay.Done and reports relay.DoneText alongside its result.
-func (v *RelayVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
-	res, err := relay.Done(ctx, v.RT, a.Name)
+// Done calls relevo.Done and reports relevo.DoneText alongside its result.
+func (v *RelevoVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
+	res, err := relevo.Done(ctx, v.RT, a.Name)
 	if err != nil {
 		return nil, err
 	}
-	return doneResult{DoneResult: res, Text: relay.DoneText(a.Name, res)}, nil
+	return doneResult{DoneResult: res, Text: relevo.DoneText(a.Name, res)}, nil
 }

@@ -48,7 +48,7 @@ func NewClient(bin string, timeout time.Duration, maxPatchBytes int) *Client {
 // caller's own environment, any extra variables the call needs, and
 // GIT_OPTIONAL_LOCKS=0. extra comes last so a caller can still override it.
 //
-// Relay reads a builder's worktree with git while that builder works in it.
+// Relevo reads a builder's worktree with git while that builder works in it.
 // By default a read such as `git status` refreshes the index and takes the
 // repository's index.lock to write the refreshed stat data, which makes a
 // concurrent `git commit` in the same worktree fail with
@@ -128,7 +128,7 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 		gitDir = filepath.Join(dir, gitDir)
 	}
 
-	tempDir, err := os.MkdirTemp("", "relay-git-index-*")
+	tempDir, err := os.MkdirTemp("", "relevo-git-index-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp index dir: %w", err)
 	}
@@ -442,7 +442,7 @@ func (c *Client) CreateTrackingBranch(ctx context.Context, dir, branch, upstream
 }
 
 // DeleteBranch force-removes branch from dir. A branch that does not exist is
-// not an error: relay's own cleanup calls this on a branch it just created
+// not an error: relevo's own cleanup calls this on a branch it just created
 // itself, without knowing whether a later failure left it in place, so
 // idempotence keeps the caller from having to check first.
 //
@@ -631,6 +631,17 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 	return nil
 }
 
+// WorktreeRepair repairs the administrative link between repo and a worktree
+// whose directory was moved: `git -C <repo> worktree repair <worktree>` (#292
+// §3 step 5). It is what makes a plain rename of a state root -- and with it
+// every worktree inside -- leave a working tree that git still recognises.
+//
+// Errors carry git's stderr, through run's wrapping.
+func (c *Client) WorktreeRepair(ctx context.Context, repo, worktree string) error {
+	_, err := c.run(ctx, repo, nil, "worktree", "repair", worktree)
+	return err
+}
+
 // Dirty reports whether dir has uncommitted or untracked (non-ignored) changes.
 // Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure.
 func (c *Client) Dirty(ctx context.Context, dir string) (bool, error) {
@@ -753,8 +764,8 @@ func (c *Client) ListTags(ctx context.Context, dir string) (map[string]string, e
 //
 // The commit is created with fixed author and committer identity:
 //
-//	GIT_AUTHOR_NAME=relay GIT_AUTHOR_EMAIL=relay@localhost
-//	GIT_COMMITTER_NAME=relay GIT_COMMITTER_EMAIL=relay@localhost
+//	GIT_AUTHOR_NAME=relevo GIT_AUTHOR_EMAIL=relevo@localhost
+//	GIT_COMMITTER_NAME=relevo GIT_COMMITTER_EMAIL=relevo@localhost
 //
 // The environment variables are passed through run's env parameter, overriding
 // the caller's identity. A global commit.gpgsign does not apply because
@@ -773,10 +784,10 @@ func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message stri
 	}
 	args = append(args, "-m", message)
 	env := []string{
-		"GIT_AUTHOR_NAME=relay",
-		"GIT_AUTHOR_EMAIL=relay@localhost",
-		"GIT_COMMITTER_NAME=relay",
-		"GIT_COMMITTER_EMAIL=relay@localhost",
+		"GIT_AUTHOR_NAME=relevo",
+		"GIT_AUTHOR_EMAIL=relevo@localhost",
+		"GIT_COMMITTER_NAME=relevo",
+		"GIT_COMMITTER_EMAIL=relevo@localhost",
 	}
 	out, err := c.run(ctx, dir, env, args...)
 	if err != nil {
@@ -788,8 +799,8 @@ func (c *Client) CommitTree(ctx context.Context, dir, tree, parent, message stri
 // CommitAll stages the whole working tree and commits it: `git add -A`
 // followed by `git commit -q -m message`.
 //
-// The commit uses the same fixed relay identity CommitTree does
-// (GIT_AUTHOR_* and GIT_COMMITTER_* = relay/relay@localhost), passed through
+// The commit uses the same fixed relevo identity CommitTree does
+// (GIT_AUTHOR_* and GIT_COMMITTER_* = relevo/relevo@localhost), passed through
 // run's env parameter, and passes -c commit.gpgsign=false so a global
 // commit.gpgsign cannot make it reach for gpg.
 //
@@ -806,10 +817,10 @@ func (c *Client) CommitAll(ctx context.Context, dir, message string) (string, er
 	}
 
 	env := []string{
-		"GIT_AUTHOR_NAME=relay",
-		"GIT_AUTHOR_EMAIL=relay@localhost",
-		"GIT_COMMITTER_NAME=relay",
-		"GIT_COMMITTER_EMAIL=relay@localhost",
+		"GIT_AUTHOR_NAME=relevo",
+		"GIT_AUTHOR_EMAIL=relevo@localhost",
+		"GIT_COMMITTER_NAME=relevo",
+		"GIT_COMMITTER_EMAIL=relevo@localhost",
 	}
 	if _, err := c.run(ctx, dir, env, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message); err != nil {
 		if strings.Contains(err.Error(), "nothing to commit") {
@@ -1048,7 +1059,7 @@ func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDi
 			return "", "", err
 		}
 		// No origin remote configured (git exits non-zero, "No such remote").
-		// That is not a failure relay reports: it simply has nothing to say
+		// That is not a failure relevo reports: it simply has nothing to say
 		// about origin.
 		return "", commonDir, nil
 	}
@@ -1188,7 +1199,7 @@ func (c *Client) InitBare(ctx context.Context, path string) error {
 //
 // `git rev-parse --abbrev-ref HEAD` answers the literal "HEAD" for a detached
 // worktree, which is not a branch name and must never be recorded as one
-// (relay land would then try to fetch and rebase onto a ref called HEAD).
+// (relevo land would then try to fetch and rebase onto a ref called HEAD).
 //
 // Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a
 // wrapped git failure -- including an unborn HEAD, which git cannot

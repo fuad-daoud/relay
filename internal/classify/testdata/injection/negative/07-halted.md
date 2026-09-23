@@ -6,7 +6,7 @@ The specified type definition in internal/api conflicts with the exported interf
 
 No further changes have been applied to the working tree.
 
-```relay
+```relevo
 status: halted
 halted_at: "step 5"
 changed_paths: []

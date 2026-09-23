@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ServeChecks evaluates the health of a relay serve installation.
+// ServeChecks evaluates the health of a relevo serve installation.
 // If serveRoot/server.key is absent, no checks are returned (this machine is not a server).
 func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 	keyPath := filepath.Join(serveRoot, "server.key")
@@ -29,7 +29,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 			Name:     "certificate",
 			Severity: SevFail,
 			Detail:   "unreadable",
-			Fix:      "relay serve init",
+			Fix:      "relevo serve init",
 		})
 	} else {
 		block, _ := pem.Decode(rawCrt)
@@ -39,7 +39,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 				Name:     "certificate",
 				Severity: SevFail,
 				Detail:   "unreadable",
-				Fix:      "relay serve init",
+				Fix:      "relevo serve init",
 			})
 		} else {
 			cert, err := x509.ParseCertificate(block.Bytes)
@@ -49,7 +49,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 					Name:     "certificate",
 					Severity: SevFail,
 					Detail:   "unreadable",
-					Fix:      "relay serve init",
+					Fix:      "relevo serve init",
 				})
 			} else if now.After(cert.NotAfter) {
 				checks = append(checks, Check{
@@ -57,7 +57,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 					Name:     "certificate",
 					Severity: SevFail,
 					Detail:   "expired",
-					Fix:      "relay serve init",
+					Fix:      "relevo serve init",
 				})
 			} else if cert.NotAfter.Before(now.Add(30 * 24 * time.Hour)) {
 				checks = append(checks, Check{
@@ -87,7 +87,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 				Name:     "clients",
 				Severity: SevWarn,
 				Detail:   "none enrolled",
-				Fix:      "relay serve enroll --label <name> --key <line>",
+				Fix:      "relevo serve enroll --label <name> --key <line>",
 			})
 		} else {
 			checks = append(checks, Check{
@@ -123,7 +123,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 					Name:     "clients",
 					Severity: SevWarn,
 					Detail:   "none enrolled",
-					Fix:      "relay serve enroll --label <name> --key <line>",
+					Fix:      "relevo serve enroll --label <name> --key <line>",
 				})
 			} else if active == 1 {
 				checks = append(checks, Check{
@@ -151,7 +151,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 			Name:     "state",
 			Severity: SevFail,
 			Detail:   err.Error(),
-			Fix:      "relay serve init",
+			Fix:      "relevo serve init",
 		})
 	} else if err := env.Probe(bindingsDir); err != nil {
 		checks = append(checks, Check{

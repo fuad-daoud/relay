@@ -24,10 +24,10 @@ func (m Model) resultView() string {
 	var sb strings.Builder
 	switch {
 	case m.result.pending:
-		sb.WriteString(hintStyle.Render(fmt.Sprintf("running relay %s…", m.opts.Verb)))
+		sb.WriteString(hintStyle.Render(fmt.Sprintf("running relevo %s…", m.opts.Verb)))
 		return sb.String()
 	case m.result.err != nil:
-		sb.WriteString(errorStyle.Render("relay: ") + renderError(m.result.err, m.width))
+		sb.WriteString(errorStyle.Render("relevo: ") + renderError(m.result.err, m.width))
 	default:
 		sb.WriteString(m.result.text)
 	}

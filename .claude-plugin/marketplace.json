@@ -1,7 +1,7 @@
 {
-  "name": "relay",
+  "name": "relevo",
   "owner": {"name": "Fuad Daoud"},
   "plugins": [
-    {"name": "relay", "source": "./claude-plugin", "description": "Planner/builder handoff: builder reports and NEEDS YOU pushed into this session; status/send/answer/done as tools", "version": "0.11.0"}
+    {"name": "relevo", "source": "./claude-plugin", "description": "Planner/builder handoff: builder reports and NEEDS YOU pushed into this session; status/send/answer/done as tools", "version": "0.12.0"}
   ]
 }
