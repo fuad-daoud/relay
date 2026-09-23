@@ -220,14 +220,21 @@ and `pol.TierFor` directly.
 
 ## 6. Visibility (S1)
 
-- `relay policy` prints, per role: its source, its candidate order, its tier,
-  and its definition per kind, with `(custom)` marked.
-- `relay status` (text and JSON) adds the builder's resolved definition, as
-  `builder_definition` in JSON, with `(custom)` marked in text.
-- The round's pick/send log entry records `definition` and
-  `definition_custom`, and `relay show` / `relay history` print them. The
-  rendered `NNN-builder.log` is left alone, because the limit scan reads its
-  tail.
+As shipped (amended in round 6):
+
+- **`relay roles`** prints each role's shape, gate, tier, source,
+  candidates, and definition per kind, with `(custom)` marked.
+- **`relay policy`** prints `(roles.json)` per role in file mode.
+- **`relay candidates`** lists the roles each candidate serves, and merges
+  role-scoped gates into one entry, e.g. `roles missing (builder, reviewer)
+  until cleared`.
+- **`relay status --json`** adds `builder_definition` (and
+  `builder_definition_custom`) only when the builder's definition is custom,
+  so existing documents are unchanged.
+- **Deferred:** recording the definition in the round's pick log entry, and
+  in `relay show` / `relay history`. It would change `store.LogEntry` text,
+  which #372's format guard pins. It follows with S2 (#382), which reworks
+  the round log anyway.
 
 ## 7. Planner handoff rules (S1)
 
