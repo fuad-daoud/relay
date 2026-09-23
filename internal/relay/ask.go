@@ -129,11 +129,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return AskResult{}, fmt.Errorf("read question %s: %w", opts.File, err)
 	}
 
-	role, ok := harness.RoleByName(opts.Role)
+	reg := rt.RoleRegistry()
+	info, ok := reg.Role(opts.Role)
 	if !ok {
-		return AskResult{}, fmt.Errorf("unknown role %q (known: %v): %w", opts.Role, harness.RoleNames(), ErrUnknownRole)
+		return AskResult{}, fmt.Errorf("unknown role %q (known: %v): %w", opts.Role, reg.Names(), ErrUnknownRole)
 	}
-	if role.Shape != harness.ShapeConsult {
+	if info.Shape != harness.ShapeConsult {
 		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)
 	}
 	if rt.Runner == nil {
@@ -141,7 +142,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		// runtime with no Runner refuses before anything is reserved.
 		return AskResult{}, ErrRunnerUnavailable
 	}
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, opts.Role)
+	res, err := resolveRole(reg, rt.Candidates, Gates(rt), opts.Candidate, opts.Role)
 	if err != nil {
 		return AskResult{}, err
 	}
@@ -149,8 +150,12 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if c.Tree == "none" {
 		return AskResult{}, fmt.Errorf("candidate %q declares tree \"none\": %w", c.Ref().String(), ErrTreelessUnsupported)
 	}
+	role, err := reg.Spec(opts.Role, c.Harness)
+	if err != nil {
+		return AskResult{}, fmt.Errorf("%q on %s: %v: %w", opts.Role, c.Ref().String(), err, ErrRoleNotServed)
+	}
 	h, _ := harness.Lookup(c.Harness)
-	tier := resolveTier("", c, rt.Policy, opts.Role)
+	tier := resolveRoleTier("", c, reg, opts.Role)
 	if err := checkTierCap(tier, rt.Policy, false); err != nil {
 		return AskResult{}, err
 	}

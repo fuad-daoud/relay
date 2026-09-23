@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -39,6 +40,10 @@ type Config struct {
 	// Roles checks candidate harness role-file coverage (#238); nil means
 	// no check.
 	Roles harness.RoleChecker
+	// Registry is relay's roles registry (#374): roles.json merged over the
+	// built-ins, or the legacy derivation. Nil means the runtime derives it
+	// from Candidates and Policy on demand.
+	Registry *roles.Registry
 	// MaxBuilders caps headless builders running at once across all owners
 	// (#285); 0 means cfg.Policy.MaxBuildersOrDefault().
 	MaxBuilders int
@@ -191,6 +196,7 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		Now:              s.cfg.Now,
 		StartedAt:        s.cfg.StartedAt,
 		Roles:            s.cfg.Roles,
+		Registry:         s.cfg.Registry,
 		Hooks:            s.cfg.Hooks,
 		Scope:            s.cfg.Scope,
 		HeldCPUs:         func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },

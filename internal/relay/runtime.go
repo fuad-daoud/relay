@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -131,6 +132,12 @@ type Runtime struct {
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
 
+	// Registry is the roles registry: roles.json merged over the built-ins,
+	// or the legacy derivation. nil means "derive the legacy registry from
+	// Candidates and Policy on demand" (#374), which is what every existing
+	// test gets, since tests don't set it.
+	Registry *roles.Registry
+
 	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
 	// the last config load produced (candidates.json then policy.json). They
 	// never fail a command: `relay doctor` renders them in a `config` row and
@@ -235,6 +242,25 @@ type Runtime struct {
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relay pull`.
 	Deliverers map[string]PlannerDeliverer
+}
+
+// legacyRegistry is the registry derived from candidates.json and
+// policy.json, the behaviour every runtime path had before roles.json (#374).
+// It is roles.Build with no file, and that never errors in legacy mode, so
+// the error is discarded.
+func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
+	reg, _ := roles.Build(nil, set, pol)
+	return reg
+}
+
+// RoleRegistry returns the runtime's roles registry: the one loaded from
+// roles.json when it was set, else the legacy derivation of Candidates and
+// Policy, built on demand (#374). It never returns nil.
+func (rt Runtime) RoleRegistry() *roles.Registry {
+	if rt.Registry != nil {
+		return rt.Registry
+	}
+	return legacyRegistry(rt.Candidates, rt.Policy)
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

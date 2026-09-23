@@ -36,6 +36,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -92,6 +93,7 @@ Commands:
   doctor    preflight check: plugin, daemon, harness binaries, roles
   candidates   list the configured harness/provider/model candidates [--probe]
   policy       show, per role, which candidate relay would pick right now and why
+  roles        list each role's shape, candidates, tier and definitions; roles init writes roles.json
   planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit locally and on every server your bindings name: relay available <provider|token>
@@ -359,6 +361,8 @@ func run(args []string) error {
 		return cmdCandidates(args[1:])
 	case "policy":
 		return cmdPolicy(args[1:])
+	case "roles":
+		return cmdRoles(args[1:])
 	case "planner":
 		return cmdPlanner(args[1:])
 	case "unavailable":
@@ -540,10 +544,19 @@ func newRuntime() (relay.Runtime, error) {
 		return relay.Runtime{}, err
 	}
 
+	rolesFile, roleWarnings, err := roles.LoadWithWarnings(filepath.Join(configDir, "relay", "roles.json"))
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+	reg, err := roles.Build(rolesFile, candidates, pol)
+	if err != nil {
+		return relay.Runtime{}, err
+	}
+
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
 	// so printing here would be noise (#372 §4.4). `relay doctor` renders them
 	// and the daemon logs each once.
-	configWarnings := append(append([]string(nil), candWarnings...), polWarnings...)
+	configWarnings := append(append(append([]string(nil), candWarnings...), polWarnings...), roleWarnings...)
 
 	cls, _ := classify.Resolve(pol.Classify, configDir, os.Getenv)
 
@@ -573,6 +586,7 @@ func newRuntime() (relay.Runtime, error) {
 		AvailabilityPath: st.AvailabilityPath(),
 		LatencyPath:      st.LatencyPath(),
 		Policy:           pol,
+		Registry:         reg,
 		ConfigWarnings:   configWarnings,
 		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
@@ -640,8 +654,8 @@ func newRemoteClient(configDir string, gitClient *git.Client) (relay.RemoteClien
 // for -- so a later `relay ask` failing on the derived name is not a surprise
 // a day later. It is a note, not an error: a binding that can build is still
 // useful, and refusing would let the alias table dictate binding names.
-func noteConsultRolesTooLong(name string) {
-	roles := relay.ConsultRolesTooLong(name)
+func noteConsultRolesTooLong(reg *roles.Registry, name string) {
+	roles := relay.ConsultRolesTooLongFor(reg, name)
 	if len(roles) == 0 {
 		return
 	}
@@ -785,7 +799,7 @@ func cmdCandidates(args []string) error {
 		lat[ref] = h.Summary(ref)
 	}
 
-	fmt.Print(relay.FormatCandidatesLatency(rt.Candidates, relay.Gates(rt), lat))
+	fmt.Print(relay.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relay.Gates(rt), lat))
 	return nil
 }
 
@@ -812,7 +826,7 @@ func cmdPolicy(args []string) error {
 		return err
 	}
 
-	fmt.Print(relay.FormatPolicy(rt.Candidates, rt.Policy, relay.Gates(rt), loadHistory(rt), rt.Now(), time.Local))
+	fmt.Print(relay.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relay.Gates(rt), loadHistory(rt), rt.Now(), time.Local))
 	return nil
 }
 
@@ -1005,7 +1019,15 @@ func cmdBind(args []string) error {
 	// failure is dropped rather than printed. See bindPreflight.
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
-		for _, line := range bindPreflight(context.Background(), env, kind, adopted) {
+		// The builder's definitions for this kind come from the registry, so a
+		// roles.json that names a custom builder executor preflights that file
+		// (#374 §3.4). A Spec error is data: defs stays nil and the preflight
+		// falls back to the shipped builder definitions.
+		var defs []string
+		if spec, err := rt.RoleRegistry().Spec("builder", kind); err == nil {
+			defs = spec.Definitions
+		}
+		for _, line := range bindPreflightDefs(context.Background(), env, kind, adopted, defs) {
 			fmt.Fprintln(os.Stderr, line)
 		}
 	}
@@ -1047,7 +1069,7 @@ func cmdBind(args []string) error {
 	// relay chose, so the note would warn about a name the human did not pick
 	// here.
 	if !adopted {
-		noteConsultRolesTooLong(b.Name)
+		noteConsultRolesTooLong(rt.RoleRegistry(), b.Name)
 	}
 	warnWaitingOnYou(rt, b.Name)
 	return nil
@@ -1133,7 +1155,7 @@ func cmdFork(args []string) error {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick("builder", res.Resolution)
-	noteConsultRolesTooLong(res.Binding.Name)
+	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
@@ -1250,7 +1272,7 @@ func cmdAdd(args []string) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relay send --name %s --file <plan.md>\n", res.Binding.Name)
-	noteConsultRolesTooLong(res.Binding.Name)
+	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil
@@ -2336,6 +2358,7 @@ func cmdDaemon(args []string) error {
 	watcher := relay.NewConfigWatcher(relay.ConfigPaths{
 		Candidates: filepath.Join(configDir, "relay", "candidates.json"),
 		Policy:     filepath.Join(configDir, "relay", "policy.json"),
+		Roles:      filepath.Join(configDir, "relay", "roles.json"),
 		ConfigDir:  configDir,
 		Getenv:     os.Getenv,
 	})

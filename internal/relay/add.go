@@ -131,13 +131,13 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), opts.Candidate, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
 	if err != nil {
 		return AddResult{}, err
 	}
 	c := res.Candidate
 
-	tier := resolveTier(opts.Tier, c, rt.Policy, "builder")
+	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), "builder")
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return AddResult{}, err
 	}

@@ -2,6 +2,7 @@ package planner
 
 import (
 	"crypto/rand"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,20 +77,31 @@ func hookContext(r Record) string {
 // noEnvNote is §3.4's note for a hook that could not export RELAY_PLANNER.
 const noEnvNote = "RELAY_PLANNER could not be exported ($CLAUDE_ENV_FILE is unset); relay resolves this session through its host process."
 
+// handoffRules is the "Handing off" section of the shipped architect
+// definition (#374), embedded verbatim so one source feeds both the planner
+// hook and the architect's own copies. handoff_test.go pins every shipped
+// copy to these bytes.
+//
+//go:embed handoff.md
+var handoffRules string
+
 // HookOutput is what `relay planner init --hook claude` prints on success: the
-// JSON envelope that tells the model which planner it is (§3.4). The context
-// text is written verbatim from the spec, and the trailing newline because
-// this is stdout for a shell to read.
+// JSON envelope that tells the model which planner it is (§3.4), followed by
+// the relay handoff rules (#374), so a planner running any agent -- not only
+// one running the shipped `architect` -- receives them. The context text is
+// written verbatim from the spec, and the trailing newline because this is
+// stdout for a shell to read.
 func HookOutput(r Record) []byte {
-	return encodeHookContext(hookContext(r))
+	return encodeHookContext(hookContext(r) + "\n\n" + handoffRules)
 }
 
 // HookOutputNoEnv is HookOutput when $CLAUDE_ENV_FILE is unset (§3.4): the
 // same envelope and the same sentence, followed by one space and the note that
 // RELAY_PLANNER could not be exported -- so the model knows relay falls back
-// to resolving this session through its host process.
+// to resolving this session through its host process -- and then the relay
+// handoff rules (#374), appended exactly as HookOutput appends them.
 func HookOutputNoEnv(r Record) []byte {
-	return encodeHookContext(hookContext(r) + " " + noEnvNote)
+	return encodeHookContext(hookContext(r) + " " + noEnvNote + "\n\n" + handoffRules)
 }
 
 // HookNote is the same envelope carrying a failure note. A hook must never

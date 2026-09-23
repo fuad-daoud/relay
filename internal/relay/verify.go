@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -125,8 +126,10 @@ func parseVerdict(findings []byte) (verdict string, reasons []string) {
 	}
 }
 
-// verifyTier is the reviewer's permission tier (#144): policy.json
-// tier.reviewer when set, else the candidate's own tier, else yolo.
+// verifyTier is the reviewer's permission tier (#144): in file mode, the
+// reviewer row's tier when roles.json set one, else yolo; otherwise
+// policy.json tier.reviewer when set, else the candidate's own tier, else
+// yolo.
 //
 // yolo is deliberate and it is why verify is not an ordinary `relay ask`:
 // the consult runs in a throwaway worktree at the builder's HEAD that relay
@@ -138,6 +141,15 @@ func parseVerdict(findings []byte) (verdict string, reasons []string) {
 // It is deliberately not capped by max_tier: this consult only, in this
 // tree only.
 func verifyTier(rt Runtime, c candidate.Candidate) harness.Tier {
+	reg := rt.RoleRegistry()
+	if reg.Source() == roles.SourceFile {
+		// roles.json is the only place a file-mode role's tier comes from,
+		// so the candidate's own tier is ignored here (#374 §4.6).
+		if t, ok := reg.TierFor("reviewer", c); ok {
+			return t
+		}
+		return harness.TierYolo
+	}
 	if t, ok := rt.Policy.TierFor("reviewer"); ok {
 		return t
 	}
@@ -216,19 +228,26 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		return skip("worktree: " + err.Error())
 	}
 
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "reviewer")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), "", "reviewer")
 	if err != nil {
 		return fail(err.Error())
 	}
 	c := res.Candidate
 
+	// The harness role that runs the consult is `reviewer`; the record's Role
+	// is verifyRole so finishConsult knows to parse a verdict (#144). In file
+	// mode the spec comes from roles.json, so a reviewer row whose definition
+	// is missing for this kind skips the consult, like any other launch
+	// refusal here.
+	role, err := rt.RoleRegistry().Spec("reviewer", c.Harness)
+	if err != nil {
+		return fail(err.Error())
+	}
+
 	if rt.Runner == nil {
 		return fail("no runner")
 	}
 
-	// The harness role that runs the consult is `reviewer`; the record's Role
-	// is verifyRole so finishConsult knows to parse a verdict (#144).
-	role, _ := harness.RoleByName("reviewer")
 	tier := verifyTier(rt, c)
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {

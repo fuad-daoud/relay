@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -233,20 +234,24 @@ func Gates(rt Runtime) []ledger.Gate {
 }
 
 // rolesMissingGates synthesises an in-memory ledger.RolesMissing gate for
-// every candidate whose harness kind is missing role files, per rt.Roles
-// (#238), the same way ledger.ExitedNoReport is synthesised from
-// Binding.RoundExcluded rather than read from the ledger file. nil when
-// rt.Roles is nil: no checker configured (every test that does not set one,
-// and every caller before cmd/relay wires harness.OSRoleChecker()).
+// every (candidate, role) pair whose role's resolved definitions are not all
+// on disk, per rt.Roles (#238), the same way ledger.ExitedNoReport is
+// synthesised from Binding.RoundExcluded rather than read from the ledger
+// file. Each gate carries the role it belongs to, so resolveRole can ignore
+// the gates of every other role. nil when rt.Roles is nil: no checker
+// configured (every test that does not set one, and every caller before
+// cmd/relay wires harness.OSRoleChecker()).
 func rolesMissingGates(rt Runtime) []ledger.Gate {
 	if rt.Roles == nil || rt.Candidates == nil {
 		return nil
 	}
 
-	// Missing is called once per distinct harness kind, not once per
-	// candidate: several candidates commonly share a kind.
-	missingByKind := map[string][]string{}
-	checked := map[string]bool{}
+	reg := rt.RoleRegistry()
+
+	// Missing is called once per distinct (kind, definition list), not once
+	// per candidate or role: several candidates commonly share a kind, and a
+	// role's definition list is usually the shipped one.
+	cache := map[string][]string{}
 
 	var out []ledger.Gate
 	for _, ref := range rt.Candidates.Refs() {
@@ -255,23 +260,72 @@ func rolesMissingGates(rt Runtime) []ledger.Gate {
 			continue
 		}
 		kind := r.Harness
-		if !checked[kind] {
-			missingByKind[kind] = rt.Roles.Missing(kind)
-			checked[kind] = true
+		for _, role := range reg.Names() {
+			if !reg.Serves(role, r) {
+				continue
+			}
+			spec, err := reg.Spec(role, kind)
+			if err != nil {
+				continue
+			}
+			key := kind + "\x00" + strings.Join(spec.Definitions, ",")
+			paths, ok := cache[key]
+			if !ok {
+				paths = rt.Roles.Missing(kind, spec.Definitions)
+				cache[key] = paths
+			}
+			if len(paths) == 0 {
+				continue
+			}
+			out = append(out, ledger.Gate{
+				Token:  ref,
+				Kind:   ledger.RolesMissing,
+				Role:   role,
+				Since:  rt.Now(),
+				Note:   rolesMissingNote(role, kind, spec.Definitions, paths),
+				Source: "relay",
+			})
 		}
-		paths := missingByKind[kind]
-		if len(paths) == 0 {
-			continue
-		}
-		out = append(out, ledger.Gate{
-			Token:  ref,
-			Kind:   ledger.RolesMissing,
-			Since:  rt.Now(),
-			Note:   "roles missing: " + strings.Join(paths, ", ") + "; run relay agent install --kind " + kind,
-			Source: "relay",
-		})
 	}
 	return out
+}
+
+// rolesMissingNote is one roles-missing gate's note: which of role's
+// definitions are missing on kind, and how to fix each class of them. A
+// shipped path is installed by `relay agent install`; a custom one relay never
+// writes, so its fix says to install it by hand.
+func rolesMissingNote(role, kind string, defs, paths []string) string {
+	var shipped, custom []string
+	for _, path := range paths {
+		if definitionIsShipped(kind, defs, path) {
+			shipped = append(shipped, path)
+			continue
+		}
+		custom = append(custom, path)
+	}
+
+	var fixes []string
+	if len(shipped) > 0 {
+		fixes = append(fixes, "run relay agent install --kind "+kind)
+	}
+	if len(custom) > 0 {
+		fixes = append(fixes, "install "+strings.Join(custom, ", ")+" yourself; relay never installs a custom definition")
+	}
+	return "roles missing for " + role + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
+}
+
+// definitionIsShipped reports whether path is one of defs' shipped paths for
+// kind: it resolves every name through DefinitionPath and asks IsShipped about
+// the one that lands on path.
+func definitionIsShipped(kind string, defs []string, path string) bool {
+	for _, name := range defs {
+		p, ok := harness.DefinitionPath(kind, name)
+		if !ok || p != path {
+			continue
+		}
+		return harness.IsShipped(kind, name)
+	}
+	return false
 }
 
 // GateKindText is the human wording for a gate kind in status, candidates

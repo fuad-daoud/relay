@@ -109,7 +109,7 @@ func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
 		Candidate: candidate.Candidate{Harness: "claude", Provider: "test", Model: "m", Tier: "edit"},
 	}
 
-	got, err := applyBuilder(b, res, policy.Policy{}, false)
+	got, err := applyBuilder(b, res, legacyRegistry(nil, policy.Policy{}), policy.Policy{}, false)
 	if err != nil {
 		t.Fatalf("applyBuilder: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 		Candidate: candidate.Candidate{Harness: "claude", Provider: "test", Model: "m", Tier: "yolo"},
 	}
 
-	got, err := applyBuilder(b, res, policy.Policy{}, false)
+	got, err := applyBuilder(b, res, legacyRegistry(nil, policy.Policy{}), policy.Policy{}, false)
 	if err == nil {
 		t.Fatal("applyBuilder accepted a tier above max_tier with no allowYolo")
 	}

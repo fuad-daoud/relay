@@ -165,16 +165,6 @@ func TestLoadValidation(t *testing.T) {
 			wantSubstring: "provider must be a single segment",
 		},
 		{
-			name:          "empty roles array",
-			body:          `[{"harness":"claude","provider":"p","model":"m","roles":[]}]`,
-			wantSubstring: "roles must not be empty",
-		},
-		{
-			name:          "omitted roles",
-			body:          `[{"harness":"claude","provider":"p","model":"m"}]`,
-			wantSubstring: "roles must not be empty",
-		},
-		{
 			name:          "invalid tree value",
 			body:          `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tree":"sideways"}]`,
 			wantSubstring: `tree must be "binding" or "none"`,
@@ -223,6 +213,47 @@ func TestLoadValidation(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantSubstring) {
 				t.Errorf("Load() error = %q, want substring %q", err.Error(), tt.wantSubstring)
+			}
+		})
+	}
+}
+
+// TestLoadAcceptsEmptyRoles is the port of the two "roles must not be empty"
+// cases TestLoadValidation used to carry (#374 §4.4): a candidate with an empty
+// roles array, or none at all, is valid. It serves nothing in legacy mode, and
+// in roles.json mode its roles are ignored anyway.
+func TestLoadAcceptsEmptyRoles(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty roles array", body: `[{"harness":"claude","provider":"p","model":"m","roles":[]}]`},
+		{name: "omitted roles", body: `[{"harness":"claude","provider":"p","model":"m"}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "candidates.json")
+			if err := os.WriteFile(path, []byte(tt.body), 0644); err != nil {
+				t.Fatal(err)
+			}
+			set, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() unexpected err: %v", err)
+			}
+			if set.Len() != 1 {
+				t.Fatalf("Len() = %d, want 1", set.Len())
+			}
+			ref, err := ParseRef("claude/p/m")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := set.Lookup(ref)
+			if err != nil {
+				t.Fatalf("Lookup: %v", err)
+			}
+			if c.Serves("builder") {
+				t.Error(`Serves("builder") = true, want false: the candidate lists no roles`)
 			}
 		})
 	}

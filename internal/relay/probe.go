@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/latency"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/transcript"
 )
@@ -74,12 +75,34 @@ func probeTier(kind string) (harness.Tier, error) {
 func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Candidate, host string) ProbeResult {
 	ref := c.Ref().String()
 
+	reg := rt.RoleRegistry()
+
 	var role harness.RoleSpec
 	known := false
-	for _, name := range c.Roles {
-		if r, ok := harness.RoleByName(name); ok {
-			role, known = r, true
-			break
+	if reg.Source() == roles.SourceFile {
+		// File mode: the role is whichever role's candidate list names this
+		// candidate, in registry order (#374 §5).
+		for _, name := range reg.Names() {
+			if !reg.Serves(name, c.Ref()) {
+				continue
+			}
+			if spec, err := reg.Spec(name, c.Harness); err == nil {
+				role, known = spec, true
+				break
+			}
+		}
+	} else {
+		// Legacy mode: today's loop over the candidate's own Roles, in its
+		// order. It never consults the set: the candidate as passed is what
+		// decides.
+		for _, name := range c.Roles {
+			if _, ok := reg.Role(name); !ok {
+				continue
+			}
+			if spec, err := reg.Spec(name, c.Harness); err == nil {
+				role, known = spec, true
+				break
+			}
 		}
 	}
 	if !known {

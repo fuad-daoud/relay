@@ -1,0 +1,9 @@
+[
+  {"harness": "agy", "provider": "google", "model": "gemini-3.8-flash-high", "roles": ["builder"], "tier": "yolo"},
+  {"harness": "agy", "provider": "antigravity", "model": "claude-sonnet-4-6", "roles": ["builder"], "tier": "yolo"},
+  {"harness": "claude", "provider": "anthropic", "model": "sonnet", "roles": ["builder", "reviewer"], "tier": "yolo"},
+  {"harness": "claude", "provider": "anthropic", "model": "haiku", "roles": ["researcher"]},
+  {"harness": "opencode", "provider": "openrouter", "model": "z-ai/glm-5.3-flash", "roles": ["builder"], "tier": "yolo"},
+  {"harness": "opencode", "provider": "cline-pass", "model": "cline-pass/deepseek-v4.1-flash#high", "roles": ["builder"], "tier": "yolo"},
+  {"harness": "codex", "provider": "openai", "model": "gpt-5.6-terra:high", "roles": ["builder", "reviewer"], "tier": "yolo"}
+]

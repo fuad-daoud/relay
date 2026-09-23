@@ -488,10 +488,11 @@ func TestCandidateKind(t *testing.T) {
 }
 
 // fakeRoleChecker is a harness.RoleChecker test double: Missing(kind) looks
-// up kind in the map, returning nil (present) for any kind not listed.
+// up kind in the map, returning nil (present) for any kind not listed. It
+// answers the same way whatever definitions are asked for.
 type fakeRoleChecker map[string][]string
 
-func (f fakeRoleChecker) Missing(kind string) []string { return f[kind] }
+func (f fakeRoleChecker) Missing(kind string, _ []string) []string { return f[kind] }
 
 // TestRolesMissingSkipsInOrder pins #238's ranked-walk half: a candidate
 // whose harness kind is missing role files is gated like any other and

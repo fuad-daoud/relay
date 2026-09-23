@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote/client"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -77,11 +78,20 @@ func builderDefinitions() []string {
 	return append([]string(nil), spec.Definitions...)
 }
 
-// assembleDefinitions is doctor's per-kind role scope: the definitions
-// some candidate on that harness would load, given its roles. A kind in
-// kinds that no candidate names reached doctor through a binding, and a
-// binding is always a builder.
-func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string {
+// legacyRegistryFor is the roles registry derived from set and policy: what
+// every caller meant before roles.json existed (#374 §3.5). Legacy mode never
+// errors, so the error is discarded.
+func legacyRegistryFor(set *candidate.Set) *roles.Registry {
+	reg, _ := roles.Build(nil, set, policy.Policy{})
+	return reg
+}
+
+// assembleRoleDefinitions is doctor's per-kind role scope read from the
+// registry (#374 §3.5): the definitions some candidate on that harness would
+// load, given the roles the registry says serve it. A kind in kinds that no
+// candidate names reached doctor through a binding, and a binding is always a
+// builder, so it gets the builder's definitions for that kind.
+func assembleRoleDefinitions(reg *roles.Registry, set *candidate.Set, kinds []string) map[string][]string {
 	seen := make(map[string]map[string]bool)
 	add := func(kind string, defs []string) {
 		if seen[kind] == nil {
@@ -98,8 +108,13 @@ func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string
 			if err != nil {
 				continue
 			}
-			for _, role := range c.Roles {
-				if spec, ok := harness.RoleByName(role); ok {
+			for _, role := range reg.Names() {
+				if !reg.Serves(role, c.Ref()) {
+					continue
+				}
+				// A Spec error is data, not a failure: the kind is skipped
+				// (#374 §4).
+				if spec, err := reg.Spec(role, c.Harness); err == nil {
 					add(c.Harness, spec.Definitions)
 				}
 			}
@@ -107,7 +122,9 @@ func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string
 	}
 	for _, kind := range kinds {
 		if seen[kind] == nil {
-			add(kind, builderDefinitions())
+			if spec, err := reg.Spec("builder", kind); err == nil {
+				add(kind, spec.Definitions)
+			}
 		}
 	}
 	out := make(map[string][]string, len(seen))
@@ -120,6 +137,12 @@ func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string
 		out[kind] = list
 	}
 	return out
+}
+
+// assembleDefinitions is assembleRoleDefinitions over the legacy registry: the
+// behaviour every pre-roles.json caller had.
+func assembleDefinitions(set *candidate.Set, kinds []string) map[string][]string {
+	return assembleRoleDefinitions(legacyRegistryFor(set), set, kinds)
 }
 
 func renderReport(w io.Writer, rep doctor.Report) {
@@ -192,6 +215,27 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 }
 
+// roleSourceChecks is the one global row saying where the roles came from,
+// plus one warning row per legacy field roles.json makes irrelevant (#374
+// §3.5). In legacy mode there is nothing stale to warn about, so only the OK
+// row is printed.
+func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
+	detail := "legacy: candidates.json roles, policy.json order and tier"
+	if reg.Source() == roles.SourceFile {
+		detail = "roles.json"
+	}
+	out := []doctor.Check{{Name: "role source", Severity: doctor.SevOK, Detail: detail}}
+	for _, w := range relay.LegacyRoleFieldWarnings(reg, set, pol) {
+		out = append(out, doctor.Check{
+			Name:     "role source",
+			Severity: doctor.SevWarn,
+			Detail:   w,
+			Fix:      "delete it; roles.json is the source",
+		})
+	}
+	return out
+}
+
 func cmdDoctor(args []string) error {
 	fs := flag.NewFlagSet("relay doctor", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {
@@ -241,7 +285,7 @@ func cmdDoctor(args []string) error {
 	stateRoot, _ := store.DefaultRoot()
 
 	rep := doctor.Run(context.Background(), env, kinds,
-		doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)),
+		doctor.WithDefinitions(assembleRoleDefinitions(rt.RoleRegistry(), rt.Candidates, kinds)),
 		doctor.WithUsage(pricesPath, opencodeConfigured),
 		doctor.WithConfigWarnings(rt.ConfigWarnings),
 		doctor.WithExtraChecks(extraChecks),
@@ -306,10 +350,11 @@ func cmdDoctor(args []string) error {
 	rep.Checks = append(rep.Checks, doctor.ScopeChecks(env, scopeBlocks, doctor.UserManagerControllersPath(os.Getuid()), runtime.NumCPU())...)
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
-	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
+	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
+	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
 	_, st := classify.Resolve(rt.Policy.Classify, configDir, os.Getenv)
 	rep.Checks = append(rep.Checks, doctor.ClassifyCheck(st))
-	refusals := relay.RoleRefusals(rt.Candidates, rt.Policy, relay.Gates(rt))
+	refusals := relay.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relay.Gates(rt))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
 	for _, r := range refusals {
 		if r.Role == "builder" {
@@ -677,14 +722,25 @@ func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
 	return append(out, checks[last:]...)
 }
 
-// bindPreflight runs the bind-time preflight for one kind and renders its
-// warning lines. The timeout lives here, not at the call site, so it cannot be
-// dropped by accident; adopted is passed through to doctor.Run, which owns what
-// an adopted pane is and is not checked for.
-func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
+// bindPreflightDefs runs the bind-time preflight for one kind and renders its
+// warning lines, checking the definitions the caller resolved for the kind --
+// the registry's builder definitions when roles.json is loaded, the shipped
+// ones otherwise (#374 §3.5). The timeout lives here, not at the call site, so
+// it cannot be dropped by accident; adopted is passed through to doctor.Run,
+// which owns what an adopted pane is and is not checked for.
+func bindPreflightDefs(ctx context.Context, env doctor.Env, kind string, adopted bool, defs []string) []string {
+	if defs == nil {
+		defs = builderDefinitions()
+	}
 	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
 	defer cancel()
-	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: builderDefinitions()})))
+	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: defs})))
+}
+
+// bindPreflight is bindPreflightDefs with the builder's shipped definitions:
+// the behaviour every pre-roles.json caller had.
+func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
+	return bindPreflightDefs(ctx, env, kind, adopted, builderDefinitions())
 }
 
 func bindWarningLines(rep doctor.Report) []string {

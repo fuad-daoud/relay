@@ -212,9 +212,6 @@ func LoadWithWarnings(path string) (*Set, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("%s: %s: unknown harness %q (skipped)", base, c.Ref().String(), c.Harness))
 			continue
 		}
-		if len(c.Roles) == 0 {
-			return nil, nil, fmt.Errorf("candidates %s: candidate %d: roles must not be empty", path, i)
-		}
 		unknownRole := ""
 		for _, r := range c.Roles {
 			if _, ok := harness.RoleByName(r); !ok {

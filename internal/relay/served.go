@@ -192,7 +192,7 @@ func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error)
 			return "", err
 		}
 	}
-	tier := resolveTier(explicit, c, rt.Policy, "builder")
+	tier := resolveRoleTier(explicit, c, rt.RoleRegistry(), "builder")
 	if err := checkTierCap(tier, rt.Policy, false); err != nil {
 		return tier, err
 	}
@@ -216,7 +216,7 @@ func PickServedCandidate(rt Runtime, token string) (string, string) {
 	if rt.Candidates == nil {
 		return token, ""
 	}
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), token, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
 	if err == nil {
 		return res.Candidate.Ref().String(), res.Candidate.Harness
 	}

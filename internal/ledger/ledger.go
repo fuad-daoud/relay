@@ -226,6 +226,11 @@ type Gate struct {
 	Note    string
 	Source  string
 	Binding string // Entry.Binding; "" for planner entries
+	// Role scopes this gate to one role (#374 §5): non-empty means it applies
+	// only to that role, "" means every role -- which covers every gate read
+	// from the ledger file and every gate Gated produces. Only
+	// rolesMissingGates sets it.
+	Role string `json:"Role,omitempty"`
 }
 
 // Gated is the one view every renderer uses: for each live entry, which

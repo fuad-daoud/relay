@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/proc"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
@@ -257,20 +258,29 @@ func serveAdminConfig(root string) serve.Config {
 	}
 }
 
-// loadCandidatesAndPolicy reads the machine's candidates.json and
-// policy.json, the pair every candidate-aware command needs. It is the one
-// copy of that loading: cmdServeRun starts a daemon with it, and the gate
-// verbs require it.
-func loadCandidatesAndPolicy(configDir string) (*candidate.Set, policy.Policy, error) {
+// loadCandidatesAndPolicy reads the machine's candidates.json, policy.json and
+// roles.json, the set every candidate-aware command needs. It is the one copy
+// of that loading: cmdServeRun starts a daemon with it, and the gate verbs
+// require it. roles.json is optional: absent, the registry is the legacy
+// derivation of the other two.
+func loadCandidatesAndPolicy(configDir string) (*candidate.Set, policy.Policy, *roles.Registry, error) {
 	candidates, err := candidate.Load(filepath.Join(configDir, "relay", "candidates.json"))
 	if err != nil {
-		return nil, policy.Policy{}, err
+		return nil, policy.Policy{}, nil, err
 	}
 	pol, err := policy.Load(filepath.Join(configDir, "relay", "policy.json"))
 	if err != nil {
-		return nil, policy.Policy{}, err
+		return nil, policy.Policy{}, nil, err
 	}
-	return candidates, pol, nil
+	rolesFile, err := roles.Load(filepath.Join(configDir, "relay", "roles.json"))
+	if err != nil {
+		return nil, policy.Policy{}, nil, err
+	}
+	reg, err := roles.Build(rolesFile, candidates, pol)
+	if err != nil {
+		return nil, policy.Policy{}, nil, err
+	}
+	return candidates, pol, reg, nil
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfig plus the configured
@@ -291,7 +301,7 @@ func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
 	if _, err := os.Stat(candPath); err != nil {
 		return serve.Config{}, fmt.Errorf("no candidates at %s", candPath)
 	}
-	candidates, pol, err := loadCandidatesAndPolicy(configDir)
+	candidates, pol, reg, err := loadCandidatesAndPolicy(configDir)
 	if err != nil {
 		return serve.Config{}, err
 	}
@@ -299,6 +309,7 @@ func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
 	cfg := serveAdminConfig(root)
 	cfg.Candidates = candidates
 	cfg.Policy = pol
+	cfg.Registry = reg
 	return cfg, nil
 }
 
@@ -318,7 +329,7 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	candidates, pol, err := loadCandidatesAndPolicy(configDir)
+	candidates, pol, reg, err := loadCandidatesAndPolicy(configDir)
 	if err != nil {
 		return err
 	}
@@ -341,7 +352,13 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		seenKinds[r.Harness] = true
-		if missing := roles.Missing(r.Harness); len(missing) > 0 {
+		// The gate checks the builder's resolved definitions: in roles.json
+		// mode a custom name may be what the row launches (#374 §5).
+		spec, err := reg.Spec("builder", r.Harness)
+		if err != nil {
+			continue
+		}
+		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
 			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relay agent install --kind "+r.Harness)
 		} else {
 			slog.Info("roles present", "harness", r.Harness)
@@ -384,6 +401,7 @@ func cmdServeRun(args []string) error {
 		Prices:         prices,
 		StartedAt:      time.Now(),
 		Roles:          roles,
+		Registry:       reg,
 		MaxBuilders:    sf.maxBuilders,
 		Hooks:          dispatcher,
 		Scope:          scope,

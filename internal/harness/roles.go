@@ -1,38 +1,39 @@
 package harness
 
-// RoleChecker reports which of a harness kind's shipped role definitions are
-// missing from disk, so a candidate can be gated before it is picked rather
-// than spawned and left to die within seconds (#238).
+// RoleChecker reports which of the given role definitions are missing from
+// disk, so a candidate can be gated before it is picked rather than spawned
+// and left to die within seconds (#238).
 type RoleChecker interface {
-	// Missing returns the home-relative paths (harness.Role.Path) of the
-	// definitions the builder role needs for this harness kind that are not
-	// readable on disk. nil means every definition is present.
-	Missing(kind string) []string
+	// Missing returns the home-relative paths of the given definitions that
+	// are not readable on disk for this harness kind. nil means every
+	// definition is present.
+	Missing(kind string, definitions []string) []string
 }
 
 // MissingDefinitions checks each of definitions -- role names such as
-// "plan-executor", "researcher" -- against kind's shipped role files on
-// disk through env, returning the home-relative path of every one that is
-// not readable. An unknown kind returns nil: the candidate loader already
-// refuses it, so there is nothing new to gate here.
+// "plan-executor" and "researcher", or a custom name a roles.json row names --
+// against kind's definitions on disk through env, returning the home-relative
+// path of every one that is not readable. Each name resolves through
+// DefinitionPath, so a shipped name keeps its table path and a custom name
+// follows its kind's path convention. An unknown kind returns nil: the
+// candidate loader already refuses it, so there is nothing new to gate here.
 func MissingDefinitions(env InstallEnv, kind string, definitions []string) []string {
-	h, ok := Lookup(kind)
-	if !ok {
+	if _, ok := Lookup(kind); !ok {
 		return nil
 	}
 	var missing []string
 	for _, def := range definitions {
-		r, ok := h.Role(def)
+		rel, ok := DefinitionPath(kind, def)
 		if !ok {
 			continue
 		}
-		path, err := env.HomePath(r.Path)
+		path, err := env.HomePath(rel)
 		if err != nil {
-			missing = append(missing, r.Path)
+			missing = append(missing, rel)
 			continue
 		}
 		if _, err := env.ReadFile(path); err != nil {
-			missing = append(missing, r.Path)
+			missing = append(missing, rel)
 		}
 	}
 	return missing
@@ -47,13 +48,9 @@ func OSRoleChecker() RoleChecker {
 	return osRoleChecker{OSInstallEnv()}
 }
 
-// Missing checks kind against the builder role's definitions -- what
-// resolveCandidate cares about, since the builder is the only role relay
-// picks a candidate for through the gated pick path.
-func (c osRoleChecker) Missing(kind string) []string {
-	role, ok := RoleByName("builder")
-	if !ok {
-		return nil
-	}
-	return MissingDefinitions(c.env, kind, role.Definitions)
+// Missing checks the given definitions for kind against disk, whatever role
+// they were resolved for. The caller passes the definitions of the role it is
+// gating, so a custom definition a roles.json row names is checked here too.
+func (c osRoleChecker) Missing(kind string, definitions []string) []string {
+	return MissingDefinitions(c.env, kind, definitions)
 }

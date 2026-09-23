@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -391,6 +392,31 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	return Check{Group: kind, Name: r.Name, Severity: SevOK, Detail: detail}
 }
 
+// customRoleCheck probes one custom role definition on disk (#374 §3.6). A
+// custom definition is the user's own file: relay never installs it, so
+// there is no model-pin check, no drift check and no manifest entry, and a
+// missing file's fix is by hand rather than `relay agent install`.
+func customRoleCheck(env Env, kind, name string) Check {
+	path, _ := harness.DefinitionPath(kind, name)
+	homeRel := "~/" + path
+	fullPath, err := env.HomePath(path)
+	if err != nil {
+		return Check{
+			Group: kind, Name: name, Severity: SevWarn,
+			Detail:      fmt.Sprintf("could not resolve home directory: %v", err),
+			ProbeFailed: true,
+		}
+	}
+	if env.Stat(fullPath) != nil {
+		return Check{
+			Group: kind, Name: name, Severity: SevWarn,
+			Detail: "missing: " + homeRel + " (custom)",
+			Fix:    "install your agent definition at " + homeRel + "; relay never installs a custom definition",
+		}
+	}
+	return Check{Group: kind, Name: name, Severity: SevOK, Detail: homeRel + " (custom)"}
+}
+
 // roleInstallEnv adapts Env to harness.InstallEnv for the dry-run install the
 // role-staleness row runs (#371 §4.10). A dry run never writes, so MkdirAll,
 // WriteFile and SaveManifest are unreachable; they are no-ops rather than
@@ -724,6 +750,18 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 						continue
 					}
 					checks = append(checks, roleCheck(env, kind, r))
+				}
+				// A definition in scope that relay does not ship is the user's
+				// own file: one row per custom name, after the shipped rows
+				// (#374 §3.6). Legacy mode has no custom names, so its output
+				// is unchanged.
+				custom := append([]string(nil), cfg.definitions[kind]...)
+				sort.Strings(custom)
+				for _, name := range custom {
+					if harness.IsShipped(kind, name) {
+						continue
+					}
+					checks = append(checks, customRoleCheck(env, kind, name))
 				}
 			}
 
