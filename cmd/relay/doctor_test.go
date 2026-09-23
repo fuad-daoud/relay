@@ -14,9 +14,11 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relay/internal/roles"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -690,5 +692,34 @@ func TestBindWarningDaemonDownRealRun(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "daemon not running") {
 		t.Errorf("expected daemon warning when daemon is down, got: %s", joined)
+	}
+}
+
+// TestAssembleRoleDefinitionsFileMode pins §3.5: in file mode the per-kind
+// definitions come from what the registry resolves for the roles serving each
+// candidate, a kind reachable only through a binding gets the builder's
+// definitions for that kind, and each list is sorted. Pure: no harness runs.
+func TestAssembleRoleDefinitionsFileMode(t *testing.T) {
+	set := testSet(t, `[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`)
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"builder": {
+			Candidates:  []string{"claude/t/m"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "my-executor", Requires: []string{"my-scout"}}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	got := assembleRoleDefinitions(reg, set, []string{"claude", "opencode"})
+	want := map[string][]string{
+		// The file's builder executor and what it dispatches to.
+		"claude": {"my-executor", "my-scout"},
+		// A binding-only kind, which no candidate names: the builder's shipped
+		// definitions for that kind.
+		"opencode": {"plan-executor", "researcher"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("assembleRoleDefinitions = %v, want %v", got, want)
 	}
 }

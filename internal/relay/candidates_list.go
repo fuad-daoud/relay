@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/latency"
 	"github.com/fuad-daoud/relay/internal/ledger"
+	"github.com/fuad-daoud/relay/internal/roles"
 )
 
 // FormatCandidates renders the configured candidates without latency: the
@@ -24,6 +25,39 @@ func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
 // is a listing, not a check -- zero candidates prints the same sentence the
 // bind refusal uses, so the planner learns the file name once.
 func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
+	return formatCandidatesLatency(set, gates, lat, func(c candidate.Candidate) string {
+		return strings.Join(c.Roles, ", ")
+	}, true)
+}
+
+// FormatCandidatesLatencyFor is FormatCandidatesLatency with the roles column
+// read from reg (#374 §3.2). Legacy mode delegates, so the output stays
+// byte-identical to today's; in file mode the column lists the registry roles
+// that serve the candidate -- "(no role)" when none does -- and the tier
+// segment is omitted, because in file mode the tier belongs to the role, not
+// the candidate.
+func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
+	if reg.Source() == roles.SourceLegacy {
+		return FormatCandidatesLatency(set, gates, lat)
+	}
+	return formatCandidatesLatency(set, gates, lat, func(c candidate.Candidate) string {
+		var served []string
+		for _, name := range reg.Names() {
+			if reg.Serves(name, c.Ref()) {
+				served = append(served, name)
+			}
+		}
+		if len(served) == 0 {
+			return "(no role)"
+		}
+		return strings.Join(served, ", ")
+	}, false)
+}
+
+// formatCandidatesLatency is the one line renderer behind both forms: rolesFor
+// renders the roles column, and withTier prints the candidate's own tier
+// segment, which only legacy mode does (#374 §3.2).
+func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; write ~/.config/relay/candidates.json (see README \"Candidates\")\n"
 	}
@@ -47,8 +81,8 @@ func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 		if err != nil {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("%-*s  %s", width, ref, strings.Join(c.Roles, ", ")))
-		if c.Tier != "" {
+		sb.WriteString(fmt.Sprintf("%-*s  %s", width, ref, rolesFor(c)))
+		if withTier && c.Tier != "" {
 			sb.WriteString("   tier: " + c.Tier)
 		}
 		if len(c.ExtraArgs) > 0 {

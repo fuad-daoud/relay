@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relay/internal/roles"
 )
 
 // PolicyWarning is one inconsistency between order[role] and the configured
@@ -118,7 +119,9 @@ func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []
 			continue
 		}
 		_, err := resolveCandidate(set, pol, gates, "", role)
-		if r, ok := refusalFromErr(role, serving, gates, err); ok {
+		// A roles-missing gate scoped to another role must not make this
+		// role's refusal name a provider it never uses (#374 §3.1).
+		if r, ok := refusalFromErr(role, serving, gatesForRole(gates, role), err); ok {
 			out = append(out, r)
 		}
 	}
@@ -158,6 +161,93 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []ledger.G
 	return RoleRefusal{}, false
 }
 
+// refWidth is the widest configured candidate reference: the token column
+// width every policy row pads to.
+func refWidth(set *candidate.Set) int {
+	width := 0
+	for _, ref := range set.Refs() {
+		if len(ref) > width {
+			width = len(ref)
+		}
+	}
+	return width
+}
+
+// policyRoleView is one role's rendering inputs for formatPolicyRole. The two
+// callers differ only in how they fill it in -- FormatPolicy from
+// candidates.json and policy.json, FormatPolicyFor from the registry -- so a
+// row can never render one way in one view and another way in the other
+// (#374 §3.1).
+type policyRoleView struct {
+	role    string
+	header  string
+	rows    []rankedEntry
+	serving []candidate.Candidate
+	// sole forces the "sole" tag on the single row. FormatPolicy means "one
+	// serving candidate"; FormatPolicyFor means "one row".
+	sole bool
+	// noRows is the line printed when there are no rows at all.
+	noRows string
+	res    Resolution
+	err    error
+}
+
+// formatPolicyRole renders one role's block: the header, one row per ranked
+// entry with the shared tail (peak cue, gate texts, "<- would pick"), and the
+// refusal line. It is the single row renderer both FormatPolicy and
+// FormatPolicyFor call, so the two can never drift. The gates are filtered to
+// the role here, so a gate scoped to another role never shows on this role's
+// rows or in its refusal.
+func formatPolicyRole(sb *strings.Builder, v policyRoleView, width int, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) {
+	sb.WriteString(v.header + "\n")
+	if len(v.rows) == 0 {
+		if v.noRows != "" {
+			sb.WriteString(v.noRows + "\n")
+		}
+		return
+	}
+
+	roleGates := gatesForRole(gates, v.role)
+	byToken := make(map[string][]ledger.Gate)
+	for _, g := range roleGates {
+		byToken[g.Token] = append(byToken[g.Token], g)
+	}
+
+	for i, r := range v.rows {
+		tag := string(r.How)
+		if v.sole {
+			tag = "sole"
+		}
+		tok := r.Candidate.Ref().String()
+
+		var tailParts []string
+		if pt := peakText(hist, r.Candidate.Ref().Provider, now, loc); pt != "" {
+			tailParts = append(tailParts, pt)
+		}
+		var gateTexts []string
+		for _, g := range byToken[tok] {
+			gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+		}
+		tailParts = append(tailParts, uniqStrings(gateTexts)...)
+		tail := strings.Join(tailParts, "; ")
+
+		// This combination cannot occur: a gated row is never picked.
+		if v.err == nil && tok == v.res.Token() {
+			if tail != "" {
+				tail += "  "
+			}
+			tail += "<- would pick"
+		}
+
+		row := fmt.Sprintf("  %d  %-*s  %-8s  %s", i+1, width, tok, tag, tail)
+		sb.WriteString(strings.TrimRight(row, " ") + "\n")
+	}
+
+	if r, ok := refusalFromErr(v.role, v.serving, roleGates, v.err); ok {
+		sb.WriteString("  would refuse: " + r.Text + "\n")
+	}
+}
+
 // FormatPolicy renders, per role, what resolveCandidate would do right now
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks (spec §4.7). It is a listing, not a check:
@@ -167,18 +257,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 		return "no candidates configured; write ~/.config/relay/candidates.json (see README \"Candidates\")\n"
 	}
 
-	byToken := make(map[string][]ledger.Gate)
-	for _, g := range gates {
-		byToken[g.Token] = append(byToken[g.Token], g)
-	}
-
-	refs := set.Refs()
-	width := 0
-	for _, ref := range refs {
-		if len(ref) > width {
-			width = len(ref)
-		}
-	}
+	width := refWidth(set)
 
 	var sb strings.Builder
 	for _, role := range harness.RoleNames() {
@@ -191,57 +270,25 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 		} else {
 			header += "  (no order set)"
 		}
-		sb.WriteString(header + "\n")
 
-		if len(serving) == 0 {
-			sb.WriteString("  no candidate serves this role\n")
-			continue
+		v := policyRoleView{
+			role:    role,
+			header:  header,
+			serving: serving,
+			sole:    len(serving) == 1,
+			noRows:  "  no candidate serves this role",
 		}
-
-		var rows []rankedEntry
-		if ordered {
-			rows = rankedList(set, pol, role)
-		} else {
-			for _, c := range serving {
-				rows = append(rows, rankedEntry{Candidate: c})
-			}
-		}
-
-		res, err := resolveCandidate(set, pol, gates, "", role)
-
-		for i, r := range rows {
-			tag := string(r.How)
-			if len(serving) == 1 {
-				tag = "sole"
-			}
-			tok := r.Candidate.Ref().String()
-
-			var tailParts []string
-			if pt := peakText(hist, r.Candidate.Ref().Provider, now, loc); pt != "" {
-				tailParts = append(tailParts, pt)
-			}
-			var gateTexts []string
-			for _, g := range byToken[tok] {
-				gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
-			}
-			tailParts = append(tailParts, uniqStrings(gateTexts)...)
-			tail := strings.Join(tailParts, "; ")
-
-			// This combination cannot occur: a gated row is never picked.
-			if err == nil && tok == res.Token() {
-				if tail != "" {
-					tail += "  "
+		if len(serving) > 0 {
+			if ordered {
+				v.rows = rankedList(set, pol, role)
+			} else {
+				for _, c := range serving {
+					v.rows = append(v.rows, rankedEntry{Candidate: c})
 				}
-				tail += "<- would pick"
 			}
-
-			row := fmt.Sprintf("  %d  %-*s  %-8s  %s", i+1, width, tok, tag, tail)
-			sb.WriteString(strings.TrimRight(row, " ") + "\n")
+			v.res, v.err = resolveCandidate(set, pol, gates, "", role)
 		}
-
-		if r, ok := refusalFromErr(role, serving, gates, err); ok {
-			sb.WriteString("  would refuse: " + r.Text + "\n")
-		}
+		formatPolicyRole(&sb, v, width, gates, hist, now, loc)
 	}
 
 	if warnings := PolicyWarnings(set, pol); len(warnings) > 0 {
@@ -260,6 +307,180 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 	}
 
 	return sb.String()
+}
+
+// FormatPolicyFor is FormatPolicy with the roles read from reg (#374 §3.1). In
+// legacy mode it returns FormatPolicy's bytes exactly; in file mode the roles,
+// their candidate lists and their refusal come from roles.json, the header
+// names the file, a role with nothing to rank says so, and the "no policy
+// configured" line never prints -- roles.json is the policy.
+func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
+	if reg.Source() == roles.SourceLegacy {
+		return FormatPolicy(set, pol, gates, hist, now, loc)
+	}
+	if set == nil || set.Len() == 0 {
+		return "no candidates configured; write ~/.config/relay/candidates.json (see README \"Candidates\")\n"
+	}
+
+	width := refWidth(set)
+
+	var sb strings.Builder
+	for _, role := range reg.Names() {
+		rows := rankedRole(reg, set, role)
+		serving := make([]candidate.Candidate, 0, len(rows))
+		for _, r := range rows {
+			serving = append(serving, r.Candidate)
+		}
+
+		v := policyRoleView{
+			role:    role,
+			header:  role + "  (roles.json)",
+			rows:    rows,
+			serving: serving,
+			sole:    len(rows) == 1,
+			noRows:  fmt.Sprintf("  no candidate listed in roles.json %s.candidates", role),
+		}
+		if len(rows) > 0 {
+			v.res, v.err = resolveRole(reg, set, gates, "", role)
+		}
+		formatPolicyRole(&sb, v, width, gates, hist, now, loc)
+	}
+
+	if warnings := PolicyWarningsFor(reg, set, pol); len(warnings) > 0 {
+		sb.WriteString("\nwarnings\n")
+		for _, w := range warnings {
+			sb.WriteString("  " + w.Text + "\n")
+		}
+	}
+
+	if s := formatHistory(hist, loc); s != "" {
+		sb.WriteString("\n" + s)
+	}
+
+	return sb.String()
+}
+
+// PolicyWarningsFor is PolicyWarnings with the role assignments read from reg
+// (#374 §3.1). In legacy mode it delegates, so the findings are unchanged; in
+// file mode the candidates list is the assignment, so there is no
+// "serves but not listed" finding -- a token that is not configured, or whose
+// kind has no definition for the role, is the whole story.
+func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []PolicyWarning {
+	if reg.Source() == roles.SourceLegacy {
+		return PolicyWarnings(set, pol)
+	}
+	if set == nil {
+		// No candidates.json: nothing is configured, so every listed token
+		// gets its warning rather than a panic.
+		set = &candidate.Set{}
+	}
+
+	var out []PolicyWarning
+	for _, role := range reg.Names() {
+		info, _ := reg.Role(role)
+		for i, tok := range info.Candidates {
+			ref, err := candidate.ParseRef(tok)
+			if err != nil {
+				out = append(out, PolicyWarning{
+					Role:  role,
+					Index: i,
+					Token: tok,
+					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q is not a configured candidate", role, i, tok),
+				})
+				continue
+			}
+			if _, err := set.Lookup(ref); err != nil {
+				out = append(out, PolicyWarning{
+					Role:  role,
+					Index: i,
+					Token: tok,
+					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q is not a configured candidate", role, i, tok),
+				})
+				continue
+			}
+			if _, err := reg.Spec(role, ref.Harness); err != nil {
+				out = append(out, PolicyWarning{
+					Role:  role,
+					Index: i,
+					Token: tok,
+					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q: %s has no definition for %s", role, i, tok, role, ref.Harness),
+				})
+			}
+		}
+	}
+	return out
+}
+
+// RoleRefusalsFor is RoleRefusals with the roles, their candidates and their
+// gating read from reg (#374 §3.1). In legacy mode it delegates, so the rows
+// are unchanged; in file mode it walks reg.Names() and each role's ranked
+// candidates.
+func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []RoleRefusal {
+	if reg.Source() == roles.SourceLegacy {
+		return RoleRefusals(set, pol, gates)
+	}
+	if set == nil || set.Len() == 0 {
+		return nil
+	}
+
+	var out []RoleRefusal
+	for _, role := range reg.Names() {
+		ranked := rankedRole(reg, set, role)
+		if len(ranked) == 0 {
+			continue
+		}
+		serving := make([]candidate.Candidate, 0, len(ranked))
+		for _, r := range ranked {
+			serving = append(serving, r.Candidate)
+		}
+		_, err := resolveRole(reg, set, gates, "", role)
+		if r, ok := refusalFromErr(role, serving, gatesForRole(gates, role), err); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// LegacyRoleFieldWarnings names every legacy field roles.json makes
+// irrelevant, one string per finding, in role order (#374 §3.1). It is pure,
+// and nil in legacy mode: without a roles.json those fields are the source,
+// not stale copies of it.
+func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []string {
+	if reg.Source() == roles.SourceLegacy {
+		return nil
+	}
+	if set == nil {
+		set = &candidate.Set{}
+	}
+
+	var out []string
+	for _, ref := range set.Refs() {
+		parsed, _ := candidate.ParseRef(ref)
+		c, err := set.Lookup(parsed)
+		if err != nil {
+			continue
+		}
+		if len(c.Roles) > 0 {
+			out = append(out, fmt.Sprintf("candidates.json: %s: roles is ignored; roles.json assigns candidates to roles", ref))
+		}
+	}
+	for _, ref := range set.Refs() {
+		parsed, _ := candidate.ParseRef(ref)
+		c, err := set.Lookup(parsed)
+		if err != nil {
+			continue
+		}
+		if c.Tier != "" {
+			out = append(out, fmt.Sprintf("candidates.json: %s: tier is ignored; set the role's tier in roles.json", ref))
+		}
+	}
+	if len(pol.Order) > 0 {
+		out = append(out, "policy.json: order is ignored; roles.json <role>.candidates orders them")
+	}
+	if len(pol.Tier) > 0 {
+		out = append(out, "policy.json: tier is ignored; set the role's tier in roles.json")
+	}
+	return out
 }
 
 // peakText is a candidate row's cue that its provider was recently

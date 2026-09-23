@@ -1384,3 +1384,62 @@ func TestDoctorDaemonRowsUnchanged(t *testing.T) {
 		t.Errorf("probe error row = %+v, want Warn / probe error: nope / relay daemon / ProbeFailed", *failed)
 	}
 }
+
+// TestCustomRoleRow pins §3.6: a definition in scope that relay does not ship
+// gets a row of its own -- SevWarn with the by-hand fix when the file is
+// missing, SevOK with "(custom)" when it is there -- while a shipped
+// definition beside it keeps its own row and its own `relay agent install`
+// fix.
+func TestCustomRoleRow(t *testing.T) {
+	const customPath = "/fake/home/.claude/agents/my-executor.md"
+
+	t.Run("missing", func(t *testing.T) {
+		env := newFakeEnvForKind(t, "claude")
+		env.existingFiles = map[string]bool{}
+
+		rep := Run(context.Background(), env, []string{"claude"},
+			WithDefinitions(map[string][]string{"claude": {"my-executor", "plan-executor"}}))
+
+		c := findCheck(rep, "claude", "my-executor")
+		if c == nil {
+			t.Fatal("a custom definition in scope needs a row")
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("missing custom row severity = %v, want SevWarn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "(custom)") {
+			t.Errorf("detail = %q, want it marked custom", c.Detail)
+		}
+		wantFix := "install your agent definition at ~/.claude/agents/my-executor.md; relay never installs a custom definition"
+		if c.Fix != wantFix {
+			t.Errorf("fix = %q, want %q", c.Fix, wantFix)
+		}
+
+		shipped := findCheck(rep, "claude", "plan-executor")
+		if shipped == nil || shipped.Severity != SevWarn {
+			t.Fatalf("shipped plan-executor row = %+v, want a missing-file warn", shipped)
+		}
+		if shipped.Fix != "relay agent install --kind claude --role plan-executor" {
+			t.Errorf("shipped fix = %q, want relay agent install", shipped.Fix)
+		}
+		if strings.Contains(shipped.Detail, "(custom)") {
+			t.Errorf("shipped detail = %q, want no custom marker", shipped.Detail)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		env := newFakeEnvForKind(t, "claude")
+		env.existingFiles = map[string]bool{customPath: true}
+
+		rep := Run(context.Background(), env, []string{"claude"},
+			WithDefinitions(map[string][]string{"claude": {"my-executor", "plan-executor"}}))
+
+		c := findCheck(rep, "claude", "my-executor")
+		if c == nil {
+			t.Fatal("a custom definition in scope needs a row")
+		}
+		if c.Severity != SevOK || c.Detail != "~/.claude/agents/my-executor.md (custom)" {
+			t.Errorf("row = %+v, want SevOK and the custom detail", *c)
+		}
+	})
+}
