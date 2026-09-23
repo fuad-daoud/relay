@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/planner"
+	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -281,6 +283,22 @@ func cmdDoctor(args []string) error {
 		serveRoot := filepath.Join(stateRoot, "serve")
 		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveRoot, time.Now())...)
 	}
+
+	// #314: when a scope block asks for cpu pinning, doctor confirms the user
+	// manager has cpuset delegated (a silently ignored AllowedCPUs shows no
+	// exit code anywhere else) and that the pool names only this host's cores.
+	// A block whose scope is off is skipped, the same rule scopeFromPolicy
+	// applies.
+	var scopeBlocks []doctor.ScopeBlock
+	if sc := enabledScope(rt.Policy.Scope); sc != nil {
+		scopeBlocks = append(scopeBlocks, scopeBlock("scope.allowed_cpus", sc))
+	}
+	if rt.Policy.Serve != nil {
+		if sc := enabledScope(rt.Policy.Serve.Scope); sc != nil {
+			scopeBlocks = append(scopeBlocks, scopeBlock("serve.scope.allowed_cpus", sc))
+		}
+	}
+	rep.Checks = append(rep.Checks, doctor.ScopeChecks(env, scopeBlocks, doctor.UserManagerControllersPath(os.Getuid()), runtime.NumCPU())...)
 
 	rep.Checks = append(rep.Checks, ledgerChecks(relay.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relay.PolicyWarnings(rt.Candidates, rt.Policy))...)
@@ -721,4 +739,24 @@ func wrapText(text string, maxLen int) []string {
 	}
 	lines = append(lines, curr)
 	return lines
+}
+
+// enabledScope is a scope block that will actually run: nil for a nil block or
+// one whose Enabled is explicitly false, the same rule scopeFromPolicy applies.
+func enabledScope(sc *policy.ScopePolicy) *policy.ScopePolicy {
+	if sc == nil || (sc.Enabled != nil && !*sc.Enabled) {
+		return nil
+	}
+	return sc
+}
+
+// scopeBlock is one doctor.ScopeBlock for a policy scope that sets allowed_cpus
+// (#314). MaxCPU is the highest core the pool names, computed with
+// policy.ParseCPUList so internal/doctor never imports policy.
+func scopeBlock(key string, sc *policy.ScopePolicy) doctor.ScopeBlock {
+	b := doctor.ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs}
+	if cpus, err := policy.ParseCPUList(sc.AllowedCPUs); err == nil && len(cpus) > 0 {
+		b.MaxCPU = cpus[len(cpus)-1]
+	}
+	return b
 }

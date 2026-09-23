@@ -27,6 +27,10 @@ type ScopeSpec struct {
 	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
 	TasksMax  int    // 0 = omit
 
+	// AllowedCPUs is a real launch field (#314): "" omits it, and otherwise it
+	// is a systemd cpu-list ("2" or "0-2") pinning the process to those cores.
+	AllowedCPUs string
+
 	// GateCPUQuota is the gate's own CPU ceiling (#313), template only. It is
 	// set on Runtime.Scope from policy, and read only by scopeFor when it
 	// builds a gate's spec: scopeFor copies the template, moves this value

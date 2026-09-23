@@ -1095,6 +1095,83 @@ func TestScopeForWholeBlockOverride(t *testing.T) {
 	})
 }
 
+// TestParseCPUList pins #314's cpu-list grammar: the pool of cores relay hands
+// out, one per round. Numbers and ranges are comma-separated with no spaces;
+// the result is sorted and de-duplicated; a backwards range and any core above
+// 1023 are errors.
+func TestParseCPUList(t *testing.T) {
+	good := []struct {
+		in   string
+		want []int
+	}{
+		{"0", []int{0}},
+		{"0-2", []int{0, 1, 2}},
+		{"1,3,5-7", []int{1, 3, 5, 6, 7}},
+		{"3,1-3", []int{1, 2, 3}},
+	}
+	for _, c := range good {
+		t.Run("good/"+c.in, func(t *testing.T) {
+			got, err := ParseCPUList(c.in)
+			if err != nil {
+				t.Fatalf("ParseCPUList(%q): %v", c.in, err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("ParseCPUList(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+
+	for _, in := range []string{"", "0-", "a", "1 ,2", "3-1", "0-1024"} {
+		t.Run("bad/"+in, func(t *testing.T) {
+			if _, err := ParseCPUList(in); err == nil {
+				t.Fatalf("ParseCPUList(%q): got nil error, want one", in)
+			}
+		})
+	}
+}
+
+// TestScopeAllowedCPUsValidation pins #314's allowed_cpus rule in both blocks:
+// a good cpu-list loads and reaches the block, and a backwards range is
+// refused with ErrBadPolicy, naming the field, the block and the reason.
+func TestScopeAllowedCPUsValidation(t *testing.T) {
+	blocks := []struct {
+		name   string
+		served bool
+		body   string // %q is the cpu-list
+		prefix string // the exact path in the error, block-qualified
+	}{
+		{"scope", false, `{"scope":{"allowed_cpus":%q}}`, ": scope.allowed_cpus:"},
+		{"serve.scope", true, `{"serve":{"scope":{"allowed_cpus":%q}}}`, ": serve.scope.allowed_cpus:"},
+	}
+
+	for _, bc := range blocks {
+		t.Run(bc.name+"/good", func(t *testing.T) {
+			p, err := load(t, fmt.Sprintf(bc.body, "0-2"))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			sc := p.ScopeFor(bc.served)
+			if sc == nil || sc.AllowedCPUs != "0-2" {
+				t.Fatalf("AllowedCPUs = %+v, want the loaded pool", sc)
+			}
+		})
+		t.Run(bc.name+"/bad", func(t *testing.T) {
+			_, err := load(t, fmt.Sprintf(bc.body, "3-1"))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrBadPolicy) {
+				t.Fatalf("error %v does not wrap ErrBadPolicy", err)
+			}
+			for _, want := range []string{bc.prefix, "runs backwards"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestServeUnknownKeyRejected(t *testing.T) {
 	for _, body := range []string{`{"serve":{"frobnicate":true}}`, `{"scope":{"frobnicate":true}}`} {
 		_, err := load(t, body)

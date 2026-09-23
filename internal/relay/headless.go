@@ -78,18 +78,22 @@ func scopeUnitName(b store.Binding) string {
 	return scopeUnitNameFor(scopeRound, b.Owner, b.Name, b.Round, "")
 }
 
-// scopeFor builds a spawn's ScopeSpec from the runtime's template (#313): nil
-// when the template is nil (scopes off), else a copy of the template with Unit
-// set and GateCPUQuota zeroed. When kind is scopeGate and the template sets
-// GateCPUQuota, the gate's spec uses it as CPUQuota; every other kind keeps
-// the template's CPUQuota. It never mutates rt.Scope.
-func scopeFor(rt Runtime, kind scopeKind, unit string) *ScopeSpec {
+// scopeFor builds a spawn's ScopeSpec from the runtime's template (#313, #314):
+// nil when the template is nil (scopes off), else a copy of the template with
+// Unit set, GateCPUQuota zeroed, and AllowedCPUs set to cpus when cpus is
+// non-empty. When kind is scopeGate and the template sets GateCPUQuota, the
+// gate's spec uses it as CPUQuota; every other kind keeps the template's
+// CPUQuota. It never mutates rt.Scope.
+func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *ScopeSpec {
 	if rt.Scope == nil {
 		return nil
 	}
 	s := *rt.Scope
 	s.Unit = unit
 	s.GateCPUQuota = ""
+	if cpus != "" {
+		s.AllowedCPUs = cpus
+	}
 	if kind == scopeGate && rt.Scope.GateCPUQuota != "" {
 		s.CPUQuota = rt.Scope.GateCPUQuota
 	}
@@ -179,10 +183,11 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 // round), PID 0, and the candidate's spawn_failed is in the ledger -- the same
 // record a pane spawn failure leaves, because it is the same failure: the
 // candidate could not be launched. The caller decides the binding's state.
-func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string) (store.Binding, error) {
+func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
 		return b, ErrRunnerUnavailable
 	}
+	b = assignRoundCPU(rt, tx, b)
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
@@ -211,7 +216,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 		LogPath:    logPath,
 		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
 	}
-	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b))
+	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
@@ -638,7 +643,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 
 		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
-		relaunched, err := startRound(ctx, rt, b, text)
+		relaunched, err := startRound(ctx, rt, tx, b, text)
 		if err != nil {
 			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}

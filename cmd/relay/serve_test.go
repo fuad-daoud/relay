@@ -179,6 +179,10 @@ func TestScopeFromPolicy(t *testing.T) {
 			},
 			want: &relay.ScopeSpec{Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
 		},
+		"allowed cpus passes through": {
+			sc:   &policy.ScopePolicy{CPUQuota: "200%", AllowedCPUs: "0-2"},
+			want: &relay.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -206,6 +210,7 @@ func TestScopeStatusText(t *testing.T) {
 		"quota and gate":        {sc: &relay.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
 		"slice and gate":        {sc: &relay.ScopeSpec{Slice: "relay.slice", GateCPUQuota: "300%"}, want: "on (slice relay.slice, gate 300%)"},
 		"slice, quota and gate": {sc: &relay.ScopeSpec{Slice: "relay.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relay.slice, 200%, gate 300%)"},
+		"cpus":                  {sc: &relay.ScopeSpec{AllowedCPUs: "0-2"}, want: "on (cpus 0-2, one per round)"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

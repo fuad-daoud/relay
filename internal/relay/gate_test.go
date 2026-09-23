@@ -169,6 +169,29 @@ func TestGateStepScopesTheGate(t *testing.T) {
 			t.Errorf("Scope = %+v, want nil when rt.Scope is nil", fr.specs[0].Scope)
 		}
 	})
+
+	// The gate runs on its round's core while the round is still open (#314).
+	t.Run("template pool and a pinned round", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
+		two := 2
+		b.RoundCPU = &two
+		b.Gate = "make check"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		runGate(t, rt, b)
+
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		if got := fr.specs[0].Scope.AllowedCPUs; got != "2" {
+			t.Errorf("gate Scope.AllowedCPUs = %q, want the round's core 2", got)
+		}
+	})
 }
 
 func TestGateTimeoutFor(t *testing.T) {

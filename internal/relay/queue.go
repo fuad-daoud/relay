@@ -42,7 +42,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 			switched = true
 			b, startErr = switchBuilder(ctx, rt, tx, b, "gated while queued", false /*closeOld*/, false /*counted*/)
 		} else {
-			b, startErr = startRound(ctx, rt, b, prompt)
+			b, startErr = startRound(ctx, rt, tx, b, prompt)
 		}
 
 		if startErr != nil {

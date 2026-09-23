@@ -214,6 +214,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relay.ScopeSpec {
 		spec.MemoryMax = sc.MemoryMax
 		spec.CPUQuota = sc.CPUQuota
 		spec.GateCPUQuota = sc.GateCPUQuota
+		spec.AllowedCPUs = sc.AllowedCPUs
 		spec.TasksMax = sc.TasksMax
 	}
 	return spec
@@ -223,7 +224,8 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relay.ScopeSpec {
 // "on (slice relay.slice, 200%)", "on (200%)", "on (slice relay.slice)",
 // "on", or "off" for nil (#285, #295). A spec carrying a gate quota (#313)
 // gains ", gate <quota>" inside the parentheses: "on (slice relay.slice,
-// 200%, gate 300%)".
+// 200%, gate 300%)". A spec carrying an allowed_cpus pool (#314) gains
+// ", cpus <pool>, one per round": "on (cpus 0-2, one per round)".
 func scopeStatusText(sc *relay.ScopeSpec) string {
 	if sc == nil {
 		return "off"
@@ -237,6 +239,9 @@ func scopeStatusText(sc *relay.ScopeSpec) string {
 	}
 	if sc.GateCPUQuota != "" {
 		parts = append(parts, "gate "+sc.GateCPUQuota)
+	}
+	if sc.AllowedCPUs != "" {
+		parts = append(parts, "cpus "+sc.AllowedCPUs+", one per round")
 	}
 	if len(parts) == 0 {
 		return "on"

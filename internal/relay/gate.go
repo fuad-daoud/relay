@@ -46,7 +46,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 			Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
 			LogPath:    log,
 			StreamPath: log,
-			Scope:      scopeFor(rt, scopeGate, scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, "")),
+			Scope:      scopeFor(rt, scopeGate, scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""), cpuPinText(b)),
 		})
 		if err != nil {
 			return b, true, &store.GateRecord{Command: b.Gate, Result: "error", Note: err.Error(), LogPath: log}, nil

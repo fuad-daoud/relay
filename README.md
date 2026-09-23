@@ -572,8 +572,16 @@ top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
 `cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
 the gate's own CPU ceiling, and defaults to `cpu_quota`. `serve.scope` replaces
 that block entirely for served rounds, and `scope: {"enabled": false}` opts
-out. On a host without a usable systemd user manager relay logs one warning and
-runs builders unscoped, in `relay.service`'s cgroup, exactly as before.
+out. `allowed_cpus` is a pool of cores (`"0-2"`), and each round is pinned to
+one core from it: the gate runs on its round's core, while a consult and the
+verify reviewer run on the whole pool. When every core is taken, a round runs
+on the whole pool instead. Pinning needs `cpuset` delegated to your user
+manager through a root drop-in on `user@.service`, and `relay doctor` checks
+this; if systemd refuses it, relay logs one warning and runs unpinned. #314
+measured a CPU-bound job pinned to one core using 10–18% less CPU time than the
+same job left to float. On a host without a usable systemd user manager relay
+logs one warning and runs builders unscoped, in `relay.service`'s cgroup,
+exactly as before.
 
 ### Progress labels
 

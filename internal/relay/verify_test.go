@@ -118,7 +118,7 @@ func TestVerifyConsultScope(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
 	rt.NewID = func() string { return verifyConsultID }
-	rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+	rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 
 	b.RoundVerify = true
 	if err := rt.Store.Save(b); err != nil {
@@ -165,5 +165,8 @@ func TestVerifyConsultScope(t *testing.T) {
 	}
 	if spec.Scope.GateCPUQuota != "" {
 		t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)
+	}
+	if spec.Scope.AllowedCPUs != "0-3" {
+		t.Errorf("Scope.AllowedCPUs = %q, want the whole pool 0-3: verify starts after the core is released", spec.Scope.AllowedCPUs)
 	}
 }
