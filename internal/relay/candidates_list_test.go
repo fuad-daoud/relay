@@ -1,9 +1,11 @@
 package relay
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relay/internal/latency"
 	"github.com/fuad-daoud/relay/internal/ledger"
 )
 
@@ -52,5 +54,33 @@ func TestFormatCandidatesTier(t *testing.T) {
 		"claude/test/m  builder   tier: yolo\n"
 	if got != want {
 		t.Errorf("FormatCandidates() =\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestFormatCandidatesLatencySuffix(t *testing.T) {
+	const twoCandidates = `[
+  {"harness":"claude","provider":"test","model":"m","roles":["builder"]},
+  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
+]`
+	set := candidateSet(t, twoCandidates)
+	lat := map[string]latency.Summary{"claude/test/m": {N: 3, TTFTP50MS: 640}}
+
+	got := FormatCandidatesLatency(set, nil, lat)
+	want := "claude/test/m    builder   ttft p50 640ms (n=3, 30d)\n" +
+		"opencode/test/m  builder\n"
+	if got != want {
+		t.Errorf("FormatCandidatesLatency() =\n%q\nwant:\n%q", got, want)
+	}
+
+	// The token with no samples renders exactly as the plain listing does.
+	other := got[strings.Index(got, "\n")+1:]
+	single := candidateSet(t, `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"]}]`)
+	if plain := FormatCandidates(single, nil); other != plain {
+		t.Errorf("unprobed line = %q, want FormatCandidates's %q", other, plain)
+	}
+
+	// With no history at all, the two render identically.
+	if a, b := FormatCandidatesLatency(set, nil, nil), FormatCandidates(set, nil); a != b {
+		t.Errorf("FormatCandidatesLatency(no history) = %q, want %q", a, b)
 	}
 }

@@ -112,6 +112,13 @@ type Runtime struct {
 	// availability.json by #172 q6).
 	AvailabilityPath string
 
+	// LatencyPath is the per-candidate latency history file (#324 part 1):
+	// time to first output per candidate, recorded by `relay candidates
+	// --probe` and read back for the p50 on a plain listing. "" means no
+	// store is configured, so nothing is recorded (tests, and any caller
+	// that never set one).
+	LatencyPath string
+
 	// DB is relay's sqlite database (docs/specs/2026-09-20-persistence-design.md).
 	// Nil means no database: this round opens it only in `relay db *`, never
 	// in the shared runtime constructor, so nothing else reads it yet and
