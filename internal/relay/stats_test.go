@@ -141,6 +141,24 @@ func TestBuilderTokenFromNote(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "remote pick by the server",
+			note: "picked opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high on contabo: server's pick",
+			want: "opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high",
+			ok:   true,
+		},
+		{
+			name: "remote pick named explicitly",
+			note: "picked claude/anthropic/sonnet on contabo: explicit",
+			want: "claude/anthropic/sonnet",
+			ok:   true,
+		},
+		{
+			name: "remote pick with no how clause is not a token",
+			note: "picked claude/anthropic/sonnet on",
+			want: "",
+			ok:   false,
+		},
+		{
 			name: "unrelated note",
 			note: "started after 2m0s queued",
 			want: "",
@@ -321,6 +339,109 @@ func TestBuildStatsBuilderKey(t *testing.T) {
 	}
 	if got := statsBuilderCount(rep, "unknown"); got != 1 {
 		t.Errorf("unknown = %d, want 1", got)
+	}
+}
+
+// TestBuildStatsRemotePickBuilderKey pins that a remote pick names the builder:
+// a segment whose only builder evidence is a remote pick, with a report that
+// carries no usage, attributes its round to the picked token's key, not
+// "unknown".
+func TestBuildStatsRemotePickBuilderKey(t *testing.T) {
+	ts := statsNow.Add(-time.Hour)
+	entries := []TabEntry{
+		statsPlan("r", 1, 1, ts),
+		statsNote("r", 2, 1, ts, store.KindPick, "picked opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high on contabo: server's pick"),
+		statsReportDone("r", 3, 1, ts),
+	}
+
+	rep := BuildStats(entries, history.History{}, time.Time{}, statsNow)
+	if got := statsBuilderCount(rep, "opencode/cline-pass/cline-pass/deepseek-v4.1-flash"); got != 1 {
+		t.Errorf("remote pick builder = %d, want 1", got)
+	}
+	if got := statsBuilderCount(rep, "unknown"); got != -1 {
+		t.Errorf("unknown = %d, want no unknown row for a remote pick", got)
+	}
+}
+
+// TestStatsUsageKey pins the normalisation: the model's "#" effort suffix is
+// cut as refKey cuts it, a ":effort" suffix is kept, and empty parts are
+// dropped.
+func TestStatsUsageKey(t *testing.T) {
+	cases := []struct {
+		name string
+		u    *usage.Usage
+		want string
+	}{
+		{
+			name: "hash effort is cut",
+			u:    &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "cline-pass/deepseek-v4.1-flash#high"},
+			want: "opencode/cline-pass/cline-pass/deepseek-v4.1-flash",
+		},
+		{
+			name: "colon effort is kept",
+			u:    &usage.Usage{Harness: "codex", Provider: "openai", Model: "gpt-5.6-terra:high"},
+			want: "codex/openai/gpt-5.6-terra:high",
+		},
+		{
+			name: "empty provider is dropped",
+			u:    &usage.Usage{Harness: "claude", Model: "sonnet"},
+			want: "claude/sonnet",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statsUsageKey(tc.u); got != tc.want {
+				t.Errorf("statsUsageKey(%+v) = %q, want %q", tc.u, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildStatsOneKeyPerModel pins that a round with usage and a round without
+// it, both after the same pick, land on one builder key: the usage path cuts
+// the model's "#" effort suffix as the pick path does.
+func TestBuildStatsOneKeyPerModel(t *testing.T) {
+	ts := statsNow.Add(-time.Hour)
+	withUsage := store.LogEntry{Seq: 3, TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Confirmed: true, Outcome: "done",
+		Usage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "cline-pass/deepseek-v4.1-flash#high"}}
+	noUsage := store.LogEntry{Seq: 5, TS: ts, Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Confirmed: true, Outcome: "done"}
+	entries := []TabEntry{
+		statsPlan("one", 1, 1, ts),
+		statsNote("one", 2, 1, ts, store.KindPick, "picked opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high for builder: order #1"),
+		{Binding: "one", Entry: withUsage},
+		statsPlan("one", 4, 2, ts),
+		{Binding: "one", Entry: noUsage},
+	}
+
+	rep := BuildStats(entries, history.History{}, time.Time{}, statsNow)
+	if rep.Rounds != 2 {
+		t.Fatalf("Rounds = %d, want 2", rep.Rounds)
+	}
+	if len(rep.Builders) != 1 {
+		t.Fatalf("Builders = %+v, want exactly one key", rep.Builders)
+	}
+	if rep.Builders[0].Key != "opencode/cline-pass/cline-pass/deepseek-v4.1-flash" || rep.Builders[0].Count != 2 {
+		t.Errorf("Builders = %+v, want the cut key with count 2", rep.Builders)
+	}
+}
+
+// TestBuildStatsConsultModelsEffort pins that a findings entry's model is cut
+// at its "#" effort suffix on the ConsultModels key too.
+func TestBuildStatsConsultModelsEffort(t *testing.T) {
+	inWindow := statsNow.Add(-time.Hour)
+	entries := []TabEntry{
+		{Entry: store.LogEntry{TS: inWindow, Direction: store.DirToPlanner, Kind: store.KindFindings,
+			Usage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "cline-pass/deepseek-v4.1-flash#high"}}},
+	}
+
+	rep := BuildStats(entries, history.History{}, time.Time{}, statsNow)
+	if got := statsConsultModelCount(rep, "opencode/cline-pass/cline-pass/deepseek-v4.1-flash"); got != 1 {
+		t.Errorf("consult model = %d, want the cut key", got)
+	}
+	if len(rep.ConsultModels) != 1 {
+		t.Errorf("ConsultModels = %+v, want one cut key", rep.ConsultModels)
 	}
 }
 

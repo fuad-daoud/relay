@@ -356,10 +356,15 @@ func statsOutcome(R *store.LogEntry, stop, exit bool) string {
 }
 
 // statsUsageKey is a usage record's harness/provider/model key with empty parts
-// dropped.
+// dropped and the model cut at its first "#", the effort suffix, exactly as
+// refKey cuts a candidate token. Both paths therefore agree on one builder key.
 func statsUsageKey(u *usage.Usage) string {
+	model := u.Model
+	if i := strings.IndexByte(model, '#'); i >= 0 {
+		model = model[:i]
+	}
 	parts := make([]string, 0, 3)
-	for _, p := range []string{u.Harness, u.Provider, u.Model} {
+	for _, p := range []string{u.Harness, u.Provider, model} {
 		if p != "" {
 			parts = append(parts, p)
 		}
@@ -544,8 +549,10 @@ func statsPct(a, b int) int {
 //
 // A remote switch note names the new token after its last " -> ". Otherwise
 // the note is a pick: the token is the text after "picked " up to the next
-// space, and it counts only when the text right after it is " for builder:".
-// A pick for reviewer, verify or any other role is not a builder token.
+// space, and it counts when the text right after it is " for builder:" or a
+// remote pick's " on <server>: <how>". A remote binding has only a builder, so
+// its pick names a builder token. A pick for reviewer, verify or any other
+// role is not a builder token.
 func builderTokenFromNote(note string) (string, bool) {
 	if strings.HasPrefix(note, "switched on ") {
 		if i := strings.LastIndex(note, " -> "); i >= 0 {
@@ -563,10 +570,15 @@ func builderTokenFromNote(note string) (string, bool) {
 	if sp < 0 {
 		return "", false
 	}
-	if !strings.HasPrefix(rest[sp:], " for builder:") {
-		return "", false
+	if strings.HasPrefix(rest[sp:], " for builder:") {
+		return rest[:sp], true
 	}
-	return rest[:sp], true
+	// A remote pick reads "picked <tok> on <server>: <how>": the token is
+	// followed by the server and then the how clause.
+	if strings.HasPrefix(rest[sp:], " on ") && strings.Contains(rest[sp:], ": ") {
+		return rest[:sp], true
+	}
+	return "", false
 }
 
 // remoteSwitchFrom returns the previous candidate in a remote switch note,
