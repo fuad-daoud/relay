@@ -268,7 +268,7 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 // time, both easy to misread -- to (now, now+7d].
 const limitWindowShort = 7 * 24 * time.Hour
 
-// limitWindowDated bounds a reset that names a day, or a day and a year: a
+// limitWindowDated bounds a reset that names a full date with a year: a
 // full calendar date is hard to misread, so it earns the longer window.
 const limitWindowDated = 31 * 24 * time.Hour
 
