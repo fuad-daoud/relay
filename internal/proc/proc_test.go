@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -343,7 +344,18 @@ func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
 		t.Skip("cpu.stat not readable for this cgroup (CI runner or macOS)")
 	}
 
-	out, err := exec.Command("/bin/sh", "-c", supervisorScript, "relay-supervisor", unit, "/bin/echo", "hi").Output()
+	// #378: the matching branch now also reaps the scope, reading
+	// /sys/fs/cgroup$cg/cgroup.procs and TERMing every pid but the
+	// supervisor's own. Executing that here would point the fragment at this
+	// test's own cgroup -- the same one the test binary runs in -- and kill
+	// it. The whole two-step reap is replaced by a no-op instead: the same
+	// fragment, the same branch, the same order, no live process list. The
+	// fragment's own tests below run it against fake procs files.
+	script := strings.Replace(supervisorScript, reapBlock, ":", 1)
+	if script == supervisorScript {
+		t.Fatalf("supervisorScript no longer contains %q; this test would run the real reap against the test's own cgroup", reapBlock)
+	}
+	out, err := exec.Command("/bin/sh", "-c", script, "relay-supervisor", unit, "/bin/echo", "hi").Output()
 	if err != nil {
 		t.Fatalf("run supervisorScript: %v", err)
 	}
@@ -1038,5 +1050,235 @@ func TestScopesUsableProbesOncePerFailure(t *testing.T) {
 	r.scopesUsable(ctx, slice)
 	if *calls != 2 {
 		t.Fatalf("probe calls after a second failure and one Start = %d, want 2 (one warning per failure)", *calls)
+	}
+}
+
+// reapCall is the exact text supervisorScript's matching branch uses to reap
+// its scope (#378): the scope's own cgroup.procs, excluding the supervisor's
+// own pid. The pid is the supervisor's own $self, never $$: see reapBlock.
+const reapCall = `relay_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"`
+
+// reapBlock is the whole two-step reap that branch runs: it reads the
+// supervisor's own pid with the builtin read of /proc/self/stat, then calls
+// the fragment with it. The read is not decoration: a scoped spawn reaches
+// the script through systemd-run, whose unit syntax rewrites a literal $$ to
+// a single $, so $$ would arrive as the one-character string "$".
+const reapBlock = `read -r self _ </proc/self/stat
+    [ -n "$self" ] && ` + reapCall
+
+// selfPID is the "self" pid these tests hand the fragment: a value no kernel
+// will ever assign, so the pid the fragment skips is never a live one.
+const selfPID = 42424242
+
+// runReap runs ReapFragment exactly as production runs it -- sourced from the
+// same const text by the same sh -- against procs, a fake cgroup.procs file.
+// It returns the command's combined output and error. It never reads a real
+// cgroup file: the pids such a file lists are this test's own.
+func runReap(t *testing.T, procs string, self int) (string, error) {
+	t.Helper()
+	out, err := exec.Command("/bin/sh", "-c", ReapFragment+"relay_reap_scope '"+procs+"' "+strconv.Itoa(self)+"\n").CombinedOutput()
+	return string(out), err
+}
+
+// TestReapScopeTerminatesTheListedProcesses pins #378's fragment against a
+// fake procs file: every pid in the file but self gets SIGTERM, and a pid
+// absent from the file is never touched. Dropping the TERM loop makes this
+// test fail -- A then dies of SIGKILL at the end instead.
+func TestReapScopeTerminatesTheListedProcesses(t *testing.T) {
+	a := exec.Command("sleep", "60")
+	if err := a.Start(); err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Process.Kill(); _ = a.Wait() })
+
+	b := exec.Command("sleep", "60")
+	if err := b.Start(); err != nil {
+		t.Fatalf("start B: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Process.Kill(); _ = b.Wait() })
+
+	procs := filepath.Join(t.TempDir(), "cgroup.procs")
+	if err := os.WriteFile(procs, []byte(strconv.Itoa(a.Process.Pid)+"\n"), 0o644); err != nil {
+		t.Fatalf("write procs file: %v", err)
+	}
+
+	out, err := runReap(t, procs, selfPID)
+	if err != nil {
+		t.Fatalf("reap: %v (output %q)", err, out)
+	}
+	if out != "" {
+		t.Errorf("reap output = %q, want empty: the fragment prints nothing", out)
+	}
+
+	// A was listed, so it got SIGTERM; sleep has no handler and dies of it.
+	err = a.Wait()
+	ws, ok := a.ProcessState.Sys().(syscall.WaitStatus)
+	if err == nil || !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Errorf("A's wait status = %v (%v); want it killed by SIGTERM", a.ProcessState, err)
+	}
+
+	// B was not listed: the fragment signals only what its file lists.
+	if err := b.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("B is gone (%v); want it untouched: it was not in the procs file", err)
+	}
+}
+
+// TestReapScopeKillsWhatIgnoresTERM pins the KILL half and its bound: a
+// process that ignores SIGTERM is gone after the call, and the whole call
+// stays well inside the grace the supervisor owes the round. exec keeps the
+// ignored disposition -- sh sets SIG_IGN, and an ignored signal survives
+// exec -- so one process, not a sh plus its child.
+func TestReapScopeKillsWhatIgnoresTERM(t *testing.T) {
+	stubborn := exec.Command("sh", "-c", "trap '' TERM; exec sleep 60")
+	if err := stubborn.Start(); err != nil {
+		t.Fatalf("start the TERM-ignoring process: %v", err)
+	}
+	t.Cleanup(func() { _ = stubborn.Process.Kill(); _ = stubborn.Wait() })
+
+	procs := filepath.Join(t.TempDir(), "cgroup.procs")
+	if err := os.WriteFile(procs, []byte(strconv.Itoa(stubborn.Process.Pid)+"\n"), 0o644); err != nil {
+		t.Fatalf("write procs file: %v", err)
+	}
+
+	start := time.Now()
+	out, err := runReap(t, procs, selfPID)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("reap: %v (output %q)", err, out)
+	}
+	if out != "" {
+		t.Errorf("reap output = %q, want empty: the fragment prints nothing", out)
+	}
+
+	err = stubborn.Wait()
+	ws, ok := stubborn.ProcessState.Sys().(syscall.WaitStatus)
+	if err == nil || !ok || !ws.Signaled() || ws.Signal() != syscall.SIGKILL {
+		t.Errorf("wait status = %v (%v); want SIGKILL, since TERM was ignored", stubborn.ProcessState, err)
+	}
+	// 15s is still far below the 60s sleep, so only the KILL fallback can explain it ending; the old 3s bound was too tight for macOS CI under -race, where forking a sleep per poll stretches 20 polls to about 3s.
+	if elapsed > 15*time.Second {
+		t.Errorf("reap took %s; want under about 15s (20 polls 0.1s apart)", elapsed)
+	}
+}
+
+// TestReapScopeIsSilentAndZeroOnAMissingFile pins #378's error rule: the reap
+// can never fail the supervisor, so a missing procs file is exit 0 with
+// nothing on either stream -- sh's own "No such file" included, which is why
+// the stderr redirect precedes the file open.
+func TestReapScopeIsSilentAndZeroOnAMissingFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "no-such-cgroup.procs")
+	out, err := runReap(t, missing, selfPID)
+	if err != nil {
+		t.Errorf("reap of a missing file = %v; want exit 0", err)
+	}
+	if out != "" {
+		t.Errorf("reap output = %q, want empty", out)
+	}
+}
+
+// TestSupervisorScriptReapsInsideTheWantBranch pins #378's placement with
+// string checks on the const: the fragment comes first, the reap sits after
+// the rusage line and inside the */"$want" case branch, and the exit trailer
+// is still the last thing the script prints. Moving the reap outside the
+// case makes the position check fail.
+//
+// It also pins the pid source. A scoped spawn reaches this script through
+// systemd-run, which parses argv with systemd's unit syntax: a literal $$
+// there means one literal $, so the supervisor would receive the
+// one-character string "$" as its own pid, TERM itself along with the scope
+// and never print the exit trailer. The script must therefore contain no $$
+// at all and must read its pid from /proc/self/stat.
+func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
+	if !strings.HasPrefix(supervisorScript, ReapFragment) {
+		t.Error("supervisorScript does not start with ReapFragment: the fragment must be defined before the script calls it")
+	}
+	const trailer = `printf '\nrelay-exit:%s\n' "$rc"`
+	if !strings.HasSuffix(supervisorScript, trailer) {
+		t.Errorf("supervisorScript does not end with %q: the trailer must stay the stream's last line", trailer)
+	}
+	if strings.Contains(supervisorScript, "$$") {
+		t.Error(`supervisorScript contains $$: systemd-run's unit syntax rewrites it to a single $, so a scoped supervisor would reap itself and lose the exit trailer`)
+	}
+
+	caseAt := strings.Index(supervisorScript, `case "$cg" in */"$want")`)
+	rusageAt := strings.Index(supervisorScript, `printf '\nrelay-rusage:`)
+	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
+	reapAt := strings.Index(supervisorScript, reapCall)
+	esacAt := strings.Index(supervisorScript, "esac")
+	if caseAt < 0 || rusageAt < 0 || readAt < 0 || reapAt < 0 || esacAt < 0 {
+		t.Fatalf("supervisorScript lacks one of the branch, the rusage line, the self-pid read, the reap call or its esac: %q", supervisorScript)
+	}
+	if !(caseAt < rusageAt && rusageAt < readAt && readAt < reapAt && reapAt < esacAt) {
+		t.Errorf("the read at %d and the reap at %d must sit inside the branch [%d,%d), after the rusage line at %d", readAt, reapAt, caseAt, esacAt, rusageAt)
+	}
+}
+
+// TestStartDisablesFsmonitor pins #378's belt and braces through Start: a
+// spawned env shows exactly one GIT_CONFIG_COUNT -- the one Start added, the
+// parent's denied -- and the fsmonitor entry that count makes git read. The
+// parent's count of 2 puts the new entry at index 2.
+func TestStartDisablesFsmonitor(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	if counts := childEnvValues(t, stream, "GIT_CONFIG_COUNT"); !reflect.DeepEqual(counts, []string{"3"}) {
+		t.Errorf("child GIT_CONFIG_COUNT entries = %v, want exactly [3]", counts)
+	}
+	if got, ok := childEnvValue(t, stream, "GIT_CONFIG_KEY_2"); !ok || got != "core.fsmonitor" {
+		t.Errorf("child GIT_CONFIG_KEY_2 = %q, %v; want core.fsmonitor, true", got, ok)
+	}
+	if got, ok := childEnvValue(t, stream, "GIT_CONFIG_VALUE_2"); !ok || got != "false" {
+		t.Errorf("child GIT_CONFIG_VALUE_2 = %q, %v; want false, true", got, ok)
+	}
+}
+
+// TestStartDisablesFsmonitorForGit runs the real git under the environment
+// Start builds: git reads the GIT_CONFIG_* entry as config and reports
+// core.fsmonitor as false, the value relay set -- the daemon a builder's git
+// commands would otherwise start is what kept a scope alive (#378).
+func TestStartDisablesFsmonitorForGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"git", "-C", repo, "config", "--get", "core.fsmonitor"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	var printed []string
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line != "" && !strings.HasPrefix(line, ExitTrailer) {
+			printed = append(printed, line)
+		}
+	}
+	if !reflect.DeepEqual(printed, []string{"false"}) {
+		t.Errorf("git config --get core.fsmonitor printed %v; want [false]: relay disables the fsmonitor through GIT_CONFIG_*", printed)
 	}
 }

@@ -31,6 +31,49 @@ const ExitTrailer = "relay-exit:"
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
 const DefaultKillGrace = 5 * time.Second
 
+// ReapFragment is the supervisor's scope reap (#378), kept as its own const
+// so supervisorScript can embed it and a test can source exactly the text
+// production runs. It is a POSIX sh function:
+//
+//	relay_reap_scope <procs_file> <self_pid>
+//
+// It terminates every other process still in the supervisor's scope cgroup
+// once the harness has exited, so the scope empties and --collect removes it
+// even when the harness left a straggler behind -- a git fsmonitor--daemon
+// reparented to the user manager, say, which would otherwise keep the scope
+// alive indefinitely. It signals exactly the pids the cgroup lists: TERM
+// first, then a short grace, then KILL for whatever is left.
+//
+// The file is read with the builtin read, never cat: a cat subprocess would
+// itself be in the cgroup being reaped. The redirect order is deliberate --
+// stderr to /dev/null before the file open -- because sh applies
+// redirections left to right, so a missing file's own "No such file" is
+// silenced too. Every command's errors are discarded and it always returns
+// 0: a scope that will not empty must never cost the builder its exit
+// trailer.
+const ReapFragment = `relay_reap_scope() {
+  procs=$1
+  self=$2
+  while read -r pid; do
+    [ "$pid" = "$self" ] || kill -TERM "$pid" 2>/dev/null
+  done 2>/dev/null <"$procs"
+  i=0
+  while [ "$i" -lt 20 ]; do
+    left=0
+    while read -r pid; do
+      [ "$pid" = "$self" ] || left=1
+    done 2>/dev/null <"$procs"
+    [ "$left" = 0 ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  while read -r pid; do
+    [ "$pid" = "$self" ] || kill -KILL "$pid" 2>/dev/null
+  done 2>/dev/null <"$procs"
+  return 0
+}
+`
+
 // supervisorScript runs the builder with stdin closed and, whatever happens
 // to it, appends the trailer. Plain sh: no bash-isms. "$@" is the argv the
 // runner passes after the script name.
@@ -54,6 +97,24 @@ const DefaultKillGrace = 5 * time.Second
 // When Start wrapped this script in a systemd scope (#244, #216), the
 // supervisor also reads its own cgroup's cpu.stat and memory.peak after the
 // builder exits and prints a relay-rusage: line before the exit trailer.
+//
+// After that line, the same branch reaps the scope (#378): relay_reap_scope
+// TERMs, then KILLs, every other process still in the cgroup, so a harness
+// that left one running cannot keep the scope alive forever. Only a spawn
+// that was told the scope it should be in reaps; a plain spawn (empty want)
+// or a mismatched cgroup never does. The reap runs before the trailer, so
+// the trailer stays the stream's last line.
+//
+// The reap's self pid comes from /proc/self/stat through the builtin read,
+// never from $$. A scoped spawn reaches this script through systemd-run,
+// whose unit syntax rewrites a literal $$ to a single $, so "$$" would
+// arrive as the one-character string "$" and the reap would kill the
+// supervisor too -- the scope would empty, but the exit trailer would never
+// be written and ExitCode would lose the round's code. read resolves
+// /proc/self against the shell itself (a child such as readlink would name
+// itself), so the pid is the supervisor's own. An unreadable /proc leaves
+// the guard's test false: no self, no reap, exactly today's behaviour.
+//
 // want is buildArgv's first argument after "relay-supervisor": the scope
 // unit file name Start expects this process to be running in, or "" for a
 // plain spawn. The guard is on want, not merely on the inherited cgroup
@@ -62,7 +123,7 @@ const DefaultKillGrace = 5 * time.Second
 // exactly this case -- inherits that cgroup too, so matching the shape
 // alone would make a plain spawn started from inside a round wrongly emit
 // a rusage line for the round's cgroup, not its own.
-const supervisorScript = `want=$1
+const supervisorScript = ReapFragment + `want=$1
 shift
 { echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
 "$@" </dev/null; rc=$?
@@ -72,6 +133,8 @@ if [ -n "$want" ]; then
     u=$(awk '/^usage_usec/{print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)
     m=$(cat "/sys/fs/cgroup$cg/memory.peak" 2>/dev/null)
     printf '\nrelay-rusage:%s%s\n' "${u:+cpu_usec=$u}" "${m:+ mem_peak=$m}"
+    read -r self _ </proc/self/stat
+    [ -n "$self" ] && relay_reap_scope "/sys/fs/cgroup$cg/cgroup.procs" "$self"
     ;;
   esac
 fi
@@ -271,12 +334,23 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	add := goMaxProcsEnv(os.Environ(), spec.Env, spec.Scope)
 	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], add...)
 
+	// Every spawn also runs with git's fsmonitor disabled (#378), belt and
+	// braces beside the supervisor's reap: a builder that never starts
+	// fsmonitor--daemon never leaves one behind to keep its scope alive. The
+	// entries are appended with the same full-slice expression, so the
+	// caller's spec.Env backing array is never written.
+	gitEnv := gitNoFsmonitorEnv(os.Environ(), spec.Env)
+	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], gitEnv...)
+
 	// deny carries GOMAXPROCS only when an entry was added: the scope's value
-	// must replace the inherited one, not sit beside it. The full-slice
-	// expression copies, so the package var is never appended in place.
-	deny := DeniedEnv
+	// must replace the inherited one, not sit beside it. GIT_CONFIG_COUNT is
+	// always denied: gitNoFsmonitorEnv always appends its own, and the child
+	// must see exactly one, pointing past every entry the parent set. The
+	// full-slice expression copies, so the package var is never appended in
+	// place.
+	deny := append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GIT_CONFIG_COUNT")
 	if len(add) > 0 {
-		deny = append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GOMAXPROCS")
+		deny = append(deny[:len(deny):len(deny)], "GOMAXPROCS")
 	}
 
 	argv := buildArgv(spec, bin)
