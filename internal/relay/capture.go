@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/fuad-daoud/relay/internal/git"
@@ -311,6 +313,35 @@ func DiffLineFromNote(note string, commits int, tree, branch string) string {
 		line += " -- " + clause
 	}
 	return line
+}
+
+// pathsClauseRe matches the KindDiff note's changed_paths mismatch clause,
+// "paths: report N, diff M" (#216). The clause can sit anywhere in the note,
+// because joinNotes appends it after the commit clause.
+var pathsClauseRe = regexp.MustCompile(`paths: report (\d+), diff (\d+)`)
+
+// PathsLine renders the report-payload line for a changed_paths mismatch
+// (#216), so the planner reading the payload sees the same counts the
+// KindDiff note's clause carries. report is the number of paths the report
+// listed, diff the number of files the diff touched. Pure.
+func PathsLine(report, diff int) string {
+	return fmt.Sprintf("Paths: the report's changed_paths lists %d, the diff has %s -- check the diff, not the list",
+		report, formatFiles(diff))
+}
+
+// PathsLineFromNote renders PathsLine from a KindDiff note -- the shape a
+// remote binding's catchUp holds, since the wire carries the server's note
+// and never a patch -- or "" when the note carries no "paths: report N, diff
+// M" clause. It searches the whole note, so the clause is found wherever
+// joinNotes placed it. Pure.
+func PathsLineFromNote(note string) string {
+	m := pathsClauseRe.FindStringSubmatch(note)
+	if m == nil {
+		return ""
+	}
+	report, _ := strconv.Atoi(m[1])
+	diff, _ := strconv.Atoi(m[2])
+	return PathsLine(report, diff)
 }
 
 // ReadDiff returns the stored patch for one round, and whether one exists.

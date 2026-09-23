@@ -865,8 +865,107 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				diff = e
 			}
 		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
 		if !strings.HasSuffix(diff.Note, "paths: report 2, diff 3") {
 			t.Errorf("diff.Note = %q, want suffix 'paths: report 2, diff 3'", diff.Note)
+		}
+		if want := PathsLine(2, 3); !strings.Contains(report.Payload, want) {
+			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
+		}
+	})
+
+	t.Run("changed_paths empty list mismatches the diff", func(t *testing.T) {
+		rt, b := sentBinding(t)
+		rt.Git = &fakeGit{
+			snapshotTreeID: "tree-end",
+			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 3, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
+			headCommitID:   "head-start",
+		}
+		b.RoundBaselineTree = "tree-start"
+		b.RoundBaselineHead = "head-start"
+		b.Branch = "relay/webshop"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		reportContent := "report\n\n```relay\nstatus: done\nchanged_paths: []\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		if _, err := reconcile(t, rt, b); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diff, report store.LogEntry
+		for _, e := range entries {
+			if e.Round != 1 {
+				continue
+			}
+			switch e.Kind {
+			case store.KindDiff:
+				diff = e
+			case store.KindReport:
+				report = e
+			}
+		}
+		if !strings.HasSuffix(diff.Note, "paths: report 0, diff 3") {
+			t.Errorf("diff.Note = %q, want suffix 'paths: report 0, diff 3'", diff.Note)
+		}
+		if want := PathsLine(0, 3); !strings.Contains(report.Payload, want) {
+			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
+		}
+	})
+
+	t.Run("no changed_paths key has no paths line", func(t *testing.T) {
+		rt, b := sentBinding(t)
+		rt.Git = &fakeGit{
+			snapshotTreeID: "tree-end",
+			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 3, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
+			headCommitID:   "head-start",
+		}
+		b.RoundBaselineTree = "tree-start"
+		b.RoundBaselineHead = "head-start"
+		b.Branch = "relay/webshop"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		reportContent := "report\n\n```relay\nstatus: done\n```\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		if _, err := reconcile(t, rt, b); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diff, report store.LogEntry
+		for _, e := range entries {
+			if e.Round != 1 {
+				continue
+			}
+			switch e.Kind {
+			case store.KindDiff:
+				diff = e
+			case store.KindReport:
+				report = e
+			}
+		}
+		if strings.Contains(diff.Note, "paths:") {
+			t.Errorf("diff.Note = %q should not contain 'paths:'", diff.Note)
+		}
+		if strings.Contains(report.Payload, "Paths:") {
+			t.Errorf("payload = %q should not contain a Paths: line", report.Payload)
 		}
 	})
 
@@ -901,8 +1000,17 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				diff = e
 			}
 		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
 		if strings.Contains(diff.Note, "paths:") {
 			t.Errorf("diff.Note = %q should not contain 'paths:'", diff.Note)
+		}
+		if strings.Contains(report.Payload, "Paths:") {
+			t.Errorf("payload = %q should not contain a Paths: line", report.Payload)
 		}
 	})
 

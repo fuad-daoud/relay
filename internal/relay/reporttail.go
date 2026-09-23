@@ -17,11 +17,13 @@ const (
 
 // ReportTail is the structured metadata decoded from the builder's trailing relay block (#133).
 type ReportTail struct {
-	Status       string
-	HaltedAt     string
-	ChangedPaths []string
-	CommandsRun  []string
-	NotDone      []string
+	Status   string
+	HaltedAt string
+	// the changed_paths key was present, even with an empty list (#216)
+	ChangedPathsSet bool
+	ChangedPaths    []string
+	CommandsRun     []string
+	NotDone         []string
 }
 
 // ParseReportTail finds and decodes the builder's trailing relay block.
@@ -89,6 +91,9 @@ func parseReportTail(report []byte) (ReportTail, bool, string) {
 		case "halted_at":
 			haltedAtRaw = val
 		case "changed_paths", "commands_run", "not_done":
+			if key == "changed_paths" {
+				tail.ChangedPathsSet = true
+			}
 			if val == "" {
 				setList(&tail, key, nil)
 				openList = key

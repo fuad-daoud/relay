@@ -404,7 +404,12 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		facts := CommitFacts(ctx, rt, b)
 		closed = result.EndTree
 		diffNote := DiffSummary(result, facts)
-		if result.Available && ok && tail.ChangedPaths != nil && len(tail.ChangedPaths) != result.Stat.FilesChanged {
+		// The key's presence, not the list's, is what makes the counts
+		// comparable (#216): changed_paths: [] is a real list of zero paths
+		// and must be checked against the diff, while a report with no key
+		// at all is never compared.
+		pathsMismatch := result.Available && ok && tail.ChangedPathsSet && len(tail.ChangedPaths) != result.Stat.FilesChanged
+		if pathsMismatch {
 			diffNote = joinNotes(diffNote, fmt.Sprintf("paths: report %d, diff %d", len(tail.ChangedPaths), result.Stat.FilesChanged))
 		}
 		diffEntry := store.LogEntry{
@@ -428,6 +433,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 		if line := DiffLine(result, facts, b.Branch); line != "" {
 			payload = payload + "\n" + line
+		}
+		if pathsMismatch {
+			payload = payload + "\n" + PathsLine(len(tail.ChangedPaths), result.Stat.FilesChanged)
 		}
 	}
 
