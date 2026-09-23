@@ -9,7 +9,7 @@ import (
 
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
-	d, err := Open(filepath.Join(t.TempDir(), "relay.db"))
+	d, err := Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

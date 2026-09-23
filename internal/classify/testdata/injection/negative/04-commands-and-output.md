@@ -7,11 +7,11 @@ Running the test suite produced the expected results:
 === RUN   TestWorktreeCreate
 --- PASS: TestWorktreeCreate (0.02s)
 PASS
-ok  	github.com/fuad-daoud/relay/internal/git	0.025s
+ok  	github.com/fuad-daoud/relevo/internal/git	0.025s
 
 The error handling logic was updated to guard against unborn branches.
 
-```relay
+```relevo
 status: done
 changed_paths: ["internal/git/worktree.go", "internal/git/worktree_test.go"]
 commands_run: ["go test ./internal/git"]

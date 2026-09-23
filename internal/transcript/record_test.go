@@ -54,7 +54,7 @@ func TestRenderRecord(t *testing.T) {
 			"claude", []byte(`{"type":"summary"}`), nil,
 		},
 		"non-JSON line is nothing, unlike Render": {
-			"claude", []byte("relay-exit: 0"), nil,
+			"claude", []byte("relevo-exit: 0"), nil,
 		},
 		"a non-claude kind renders nothing": {
 			"opencode", assistantLine, nil,

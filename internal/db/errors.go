@@ -19,6 +19,6 @@ var ErrNotFound = errors.New("not found")
 var ErrInvalid = errors.New("invalid")
 
 // ErrNewerSchema reports that the database's schema is newer than the
-// migrations this relay embeds. Open leaves such a database untouched and
-// reports it through DB.Newer; `relay db migrate` refuses with this error.
-var ErrNewerSchema = errors.New("schema is newer than this relay")
+// migrations this relevo embeds. Open leaves such a database untouched and
+// reports it through DB.Newer; `relevo db migrate` refuses with this error.
+var ErrNewerSchema = errors.New("schema is newer than this relevo")

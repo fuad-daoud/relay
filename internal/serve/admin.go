@@ -9,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/ledger"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type OwnerStatus struct {
 	Owner  remote.ClientID
-	Label  string       // Clients.LabelOf
-	Report relay.Report // relay.Status over that owner's runtime
+	Label  string        // Clients.LabelOf
+	Report relevo.Report // relevo.Status over that owner's runtime
 }
 
 // AdminStatus returns the status of every owner who has a bindings
@@ -61,7 +61,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
 		rt := s.runtimeAt(ownerPath)
-		rep, err := relay.Status(ctx, rt)
+		rep, err := relevo.Status(ctx, rt)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
@@ -73,7 +73,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 			}
 			q := c.Queued[i]
 			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
-			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", relay.AgeText(now.Sub(q.QueuedAt)), i)
+			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", relevo.AgeText(now.Sub(q.QueuedAt)), i)
 		}
 		label := s.clients.LabelOf(id)
 		owners = append(owners, OwnerStatus{
@@ -97,17 +97,17 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 // ledger projects identically into every owner's report -- and is nil when
 // there are no owners. DoneHidden is 0: nothing is filtered out of a
 // flattened fleet.
-func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
+func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
 	owners, _, err := AdminStatus(ctx, s)
 	if err != nil {
-		return relay.Report{}, err
+		return relevo.Report{}, err
 	}
 
-	rows := make([]relay.BindingStatus, 0)
+	rows := make([]relevo.BindingStatus, 0)
 	for _, o := range owners {
 		label := o.Label
 		if label == "" {
-			label = relay.ShortOwner(string(o.Owner))
+			label = relevo.ShortOwner(string(o.Owner))
 		}
 		for _, row := range o.Report.Bindings {
 			row.Owner = string(o.Owner)
@@ -116,7 +116,7 @@ func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
 		}
 	}
 
-	out := relay.Report{Bindings: rows}
+	out := relevo.Report{Bindings: rows}
 	if len(owners) > 0 {
 		out.Gated = owners[0].Report.Gated
 	}
@@ -126,7 +126,7 @@ func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
 // RenderAdminStatus formats the admin status for all owners. The first line
 // is the server's builder census (#285): "builders <running>/<cap>, queued
 // <n>". Then, for each owner: a header line "<label>  (<id>)" then
-// relay.RenderStatus(report) indented two spaces; owners with no bindings
+// relevo.RenderStatus(report) indented two spaces; owners with no bindings
 // print "<label>  no bindings". "no owners\n" follows the census line when
 // there are none.
 func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) string {
@@ -144,7 +144,7 @@ func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) strin
 			continue
 		}
 		fmt.Fprintf(&sb, "%s  (%s)\n", o.Label, string(o.Owner))
-		rendered := relay.RenderStatus(o.Report)
+		rendered := relevo.RenderStatus(o.Report)
 		trimmed := strings.TrimRight(rendered, "\n")
 		for _, line := range strings.Split(trimmed, "\n") {
 			if line == "" {
@@ -157,7 +157,7 @@ func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) strin
 	return sb.String()
 }
 
-// RenderClients formats `relay serve clients`: one line per client,
+// RenderClients formats `relevo serve clients`: one line per client,
 //
 //	"<id>  <label>  enrolled YYYY-MM-DD[  revoked YYYY-MM-DD]\n"
 //
@@ -228,14 +228,14 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 			}
 
 			logEntries, _ := rt.Store.ReadLog(b.Name)
-			switch relay.RoundStateOf(b, logEntries) {
+			switch relevo.RoundStateOf(b, logEntries) {
 			case remote.RoundRunning, remote.RoundQueued:
 				continue
 			}
 
 			archivePath := ""
 			if !dryRun {
-				res, err := relay.Unbind(ctx, rt, b.Name, true)
+				res, err := relevo.Unbind(ctx, rt, b.Name, true)
 				if err != nil {
 					return nil, err
 				}
@@ -270,34 +270,34 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 // round is refused unless force is set: this is the admin's guard against
 // clearing a live client's work by mistake; the owning client's own unbind
 // (the wire verb) needs no force. Archiving (not deleting) keeps log.jsonl
-// and every round file, same as relay unbind --archive.
-func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relay.UnbindResult, error) {
+// and every round file, same as relevo unbind --archive.
+func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relevo.UnbindResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	id, err := s.resolveOwner(owner)
 	if err != nil {
-		return relay.UnbindResult{}, err
+		return relevo.UnbindResult{}, err
 	}
 
 	rt, err := s.runtime(id)
 	if err != nil {
-		return relay.UnbindResult{}, err
+		return relevo.UnbindResult{}, err
 	}
 
 	b, err := rt.Store.Load(name)
 	if err != nil {
-		return relay.UnbindResult{}, err
+		return relevo.UnbindResult{}, err
 	}
 
 	if !force {
 		logEntries, _ := rt.Store.ReadLog(b.Name)
-		if relay.RoundStateOf(b, logEntries) == remote.RoundRunning {
-			return relay.UnbindResult{}, fmt.Errorf("round %d is running; wait, or --force", b.Round)
+		if relevo.RoundStateOf(b, logEntries) == remote.RoundRunning {
+			return relevo.UnbindResult{}, fmt.Errorf("round %d is running; wait, or --force", b.Round)
 		}
 	}
 
-	return relay.Unbind(ctx, rt, name, true)
+	return relevo.Unbind(ctx, rt, name, true)
 }
 
 // AdminOwnerRuntime resolves owner -- an exact client label or exact client
@@ -309,47 +309,47 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 // fresh empty store: Store.WithLock runs MkdirAll on the root, so the check
 // has to come first (#216: the verbs are strictly read-only, and nothing may
 // be created for an owner that has never bound anything).
-func AdminOwnerRuntime(s *Server, owner string) (relay.Runtime, string, error) {
+func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	id, err := s.resolveOwner(owner)
 	if err != nil {
-		return relay.Runtime{}, "", err
+		return relevo.Runtime{}, "", err
 	}
 
 	root, err := s.ownerRoot(id)
 	if err != nil {
-		return relay.Runtime{}, "", err
+		return relevo.Runtime{}, "", err
 	}
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
-			return relay.Runtime{}, "", store.ErrNotFound
+			return relevo.Runtime{}, "", store.ErrNotFound
 		}
-		return relay.Runtime{}, "", err
+		return relevo.Runtime{}, "", err
 	}
 
 	rt, err := s.OwnerRuntime(id)
 	if err != nil {
-		return relay.Runtime{}, "", err
+		return relevo.Runtime{}, "", err
 	}
 	return rt, s.clients.LabelOf(id), nil
 }
 
-// AdminTabEntries gathers every TabEntry `relay serve tab` sums. With an
+// AdminTabEntries gathers every TabEntry `relevo serve tab` sums. With an
 // owner it is that owner's entries, Owner set to the label and Binding left
 // as the bare name; without one it walks every owner directory the way
 // AdminStatus does, grouping them as "label/name" under Owner = label so two
 // owners' same-named bindings stay apart. Read-only: each owner directory
 // already exists (that is how it is found), so WithLock's MkdirAll is a
 // no-op and no store is created.
-func AdminTabEntries(s *Server, owner string, cut time.Time, warn func(string)) ([]relay.TabEntry, error) {
+func AdminTabEntries(s *Server, owner string, cut time.Time, warn func(string)) ([]relevo.TabEntry, error) {
 	if owner != "" {
 		rt, label, err := AdminOwnerRuntime(s, owner)
 		if err != nil {
 			return nil, err
 		}
-		entries, err := relay.TabEntries(rt, cut, warn)
+		entries, err := relevo.TabEntries(rt, cut, warn)
 		if err != nil {
 			return nil, err
 		}
@@ -371,14 +371,14 @@ func AdminTabEntries(s *Server, owner string, cut time.Time, warn func(string)) 
 		return nil, err
 	}
 
-	var out []relay.TabEntry
+	var out []relevo.TabEntry
 	for _, entry := range dirs {
 		id, ok := remote.IDFromDir(entry.Name())
 		if !entry.IsDir() || !ok {
 			continue
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
-		entries, err := relay.TabEntries(s.runtimeAt(ownerPath), cut, warn)
+		entries, err := relevo.TabEntries(s.runtimeAt(ownerPath), cut, warn)
 		if err != nil {
 			return nil, err
 		}
@@ -426,15 +426,15 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 
 // ledgerRuntime is the runtime the server-side gate verbs run on: the one
 // server-wide ledger at <root>/ledger.json, not any owner's. Its store is
-// over the serve root only because relay's ledger mutation takes its lock
+// over the serve root only because relevo's ledger mutation takes its lock
 // through rt.Store; these verbs never list bindings from it.
 //
 // store.New creates nothing on its own -- the root and its .lock file appear
 // only once WithLock runs -- and neither is one of Initialised's markers
 // (clients.json, server.key, bindings), so locking through this store cannot
 // make an uninitialised root report as initialised.
-func ledgerRuntime(s *Server) relay.Runtime {
-	return relay.Runtime{
+func ledgerRuntime(s *Server) relevo.Runtime {
+	return relevo.Runtime{
 		Candidates:       s.cfg.Candidates,
 		Policy:           s.cfg.Policy,
 		Store:            store.New(s.cfg.Root),
@@ -446,24 +446,24 @@ func ledgerRuntime(s *Server) relay.Runtime {
 
 // AdminGates lists the server-wide ledger's live gates, projected onto the
 // configured candidates. Nil candidates means there is nothing to project
-// onto, which relay.Gates already answers as nil.
+// onto, which relevo.Gates already answers as nil.
 func AdminGates(s *Server) []ledger.Gate {
-	return relay.Gates(ledgerRuntime(s))
+	return relevo.Gates(ledgerRuntime(s))
 }
 
 // AdminAvailable clears every rate-limit gate on subject's provider in the
 // server-wide ledger.
 func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
-	return relay.Available(ledgerRuntime(s), subject, relay.ClearedByServer)
+	return relevo.Available(ledgerRuntime(s), subject, relevo.ClearedByServer)
 }
 
 // AdminUnavailable records a rate-limit gate on token's provider in the
 // server-wide ledger.
 func AdminUnavailable(s *Server, token string, until time.Time, reason string) (provider string, err error) {
-	return relay.Unavailable(ledgerRuntime(s), token, until, reason)
+	return relevo.Unavailable(ledgerRuntime(s), token, until, reason)
 }
 
-// RenderGates formats `relay serve gates`: one line per gate,
+// RenderGates formats `relevo serve gates`: one line per gate,
 //
 //	"<token>  <kind>  <until>  <note>\n"
 //
@@ -477,7 +477,7 @@ func RenderGates(gates []ledger.Gate, now time.Time) string {
 
 	var sb strings.Builder
 	for _, g := range gates {
-		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", g.Token, relay.GateKindText(g.Kind), relay.GateUntilText(g.Until), g.Note)
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", g.Token, relevo.GateKindText(g.Kind), relevo.GateUntilText(g.Until), g.Note)
 	}
 	return sb.String()
 }

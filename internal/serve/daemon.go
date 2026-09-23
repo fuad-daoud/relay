@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 // Tick advances every binding across all client owners.
@@ -34,7 +34,7 @@ func (s *Server) Tick(ctx context.Context) error {
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
 		rt := s.runtimeAt(ownerPath)
-		d := relay.NewDaemon(rt, s.cfg.Interval)
+		d := relevo.NewDaemon(rt, s.cfg.Interval)
 		if err := d.Tick(ctx); err != nil {
 			slog.Error("tick owner failed", "owner", id, "err", err)
 		}

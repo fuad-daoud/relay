@@ -1,4 +1,4 @@
-// Package setup builds the starter candidates.json and policy.json relay init
+// Package setup builds the starter candidates.json and policy.json relevo init
 // writes, and lands them under the user's config directory.
 package setup
 
@@ -9,16 +9,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// Default is the provider and model relay init seeds a harness with.
+// Default is the provider and model relevo init seeds a harness with.
 type Default struct{ Provider, Model string }
 
 // Defaults is the README's documented example, one per harness kind. The values
-// are relay's real defaults: they are the placeholders a clean machine edits,
+// are relevo's real defaults: they are the placeholders a clean machine edits,
 // and they pass candidate.Load as written.
 var Defaults = map[string]Default{
 	"claude":   {"anthropic", "sonnet"},
@@ -41,7 +41,7 @@ type WriteResult struct {
 }
 
 // Plan builds starter candidates and a policy for every harness binary on PATH,
-// in harness.All() order. It is an error when none is found: relay init has
+// in harness.All() order. It is an error when none is found: relevo init has
 // nothing to seed.
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string
@@ -90,11 +90,11 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON}, nil
 }
 
-// Write lands f under configDir/relay. Both files are decided before either is
+// Write lands f under configDir/relevo. Both files are decided before either is
 // written, so a refused pair is never half-written: when force is false and
 // either file exists, neither is written and both Wrote flags stay false.
 func Write(configDir string, f Files, force bool) (WriteResult, error) {
-	dir := filepath.Join(configDir, "relay")
+	dir := filepath.Join(configDir, "relevo")
 	res := WriteResult{
 		CandidatesPath: filepath.Join(dir, "candidates.json"),
 		PolicyPath:     filepath.Join(dir, "policy.json"),

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type screen int
@@ -66,12 +66,12 @@ const headlessLogLines = 5000
 type tickMsg time.Time
 
 type statusMsg struct {
-	report relay.Report
+	report relevo.Report
 	err    error
 	// dbRows and dbErr are scope all's addition: dbRows is nil (no error)
 	// in scope live, dbErr is the database's failure to answer when
 	// scope is all (§6 ErrNoDatabase or any other Bindings error).
-	dbRows []relay.HistoryBinding
+	dbRows []relevo.HistoryBinding
 	dbErr  error
 }
 
@@ -93,7 +93,7 @@ func unresolvedKey(key string) error {
 }
 
 // fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. In
-// scope all it also calls relay.Bindings(ctx, src.Base(), here), carrying
+// scope all it also calls relevo.Bindings(ctx, src.Base(), here), carrying
 // its rows or its error alongside the (always live) report -- a database
 // failure never blocks the live report from refreshing. It never returns a
 // partial report alongside a report-level error.
@@ -105,7 +105,7 @@ func fetchStatus(ctx context.Context, src Source, sc scope, here string) tea.Cmd
 		}
 		msg := statusMsg{report: rep}
 		if sc == scopeAll {
-			rows, berr := relay.Bindings(ctx, src.Base(), here)
+			rows, berr := relevo.Bindings(ctx, src.Base(), here)
 			if berr != nil {
 				msg.dbErr = berr
 			} else {
@@ -117,7 +117,7 @@ func fetchStatus(ctx context.Context, src Source, sc scope, here string) tea.Cmd
 }
 
 // fetchPlan reads round's plan file. It is small enough not to need
-// relay.ReadDiff's stored-patch indirection: the file is either there or it
+// relevo.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
 func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
@@ -315,7 +315,7 @@ func logTab(key, name, logPath string) (tabMsg, bool) {
 }
 
 // fetchTerminal resolves the binding's builder log for the terminal tab: for
-// a headless builder, or a remote builder relay has a local log for, the tail
+// a headless builder, or a remote builder relevo has a local log for, the tail
 // of its round log; otherwise a prose line saying where the builder runs.
 // round is the round being viewed; only the binding's current round (b.Round)
 // has a live process, so a headless builder's non-current round with no round
@@ -412,7 +412,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 		}
 
 		// A remote builder (#100) runs on someone else's server: show the
-		// round's local builder log when relay has one, otherwise the single
+		// round's local builder log when relevo has one, otherwise the single
 		// line naming where the builder runs.
 		if b.Builder.Remote() {
 			if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
@@ -426,13 +426,13 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  fmt.Sprintf("remote builder on %s: relay log %s", b.Builder.Server, name),
+					empty:  fmt.Sprintf("remote builder on %s: relevo log %s", b.Builder.Server, name),
 				},
 			}
 		}
 
 		// A local builder is always headless since #303; anything else has no
-		// relay-readable terminal.
+		// relevo-readable terminal.
 		return tabMsg{
 			name:  key,
 			round: round,
@@ -440,7 +440,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			content: tabContent{
 				loaded: true,
 				at:     time.Now(),
-				empty:  "no relay-readable terminal for this builder",
+				empty:  "no relevo-readable terminal for this builder",
 			},
 		}
 	}
@@ -479,7 +479,7 @@ func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				},
 			}
 		}
-		patch, ok, err := relay.ReadDiff(rt, name, round)
+		patch, ok, err := relevo.ReadDiff(rt, name, round)
 		if err != nil {
 			return tabMsg{
 				name:  key,
@@ -563,7 +563,7 @@ func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 			if e.Round != round {
 				continue
 			}
-			b.WriteString(relay.LogLine(e))
+			b.WriteString(relevo.LogLine(e))
 			b.WriteByte('\n')
 			n++
 		}
@@ -598,53 +598,53 @@ func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	}
 }
 
-// sectionForTab maps a ui tab to the relay.ShowSection fetchShow reads for
+// sectionForTab maps a ui tab to the relevo.ShowSection fetchShow reads for
 // it -- terminal -> transcript, everything else its own name (§5.8).
-func sectionForTab(t tab) relay.ShowSection {
+func sectionForTab(t tab) relevo.ShowSection {
 	switch t {
 	case tabPlan:
-		return relay.ShowPlan
+		return relevo.ShowPlan
 	case tabReport:
-		return relay.ShowReport
+		return relevo.ShowReport
 	case tabTerminal:
-		return relay.ShowTranscript
+		return relevo.ShowTranscript
 	case tabDiff:
-		return relay.ShowDiff
+		return relevo.ShowDiff
 	case tabLog:
-		return relay.ShowLog
+		return relevo.ShowLog
 	default:
-		return relay.ShowPlan
+		return relevo.ShowPlan
 	}
 }
 
 // tabForSection is sectionForTab's inverse, so fetchShow's tabMsg carries
-// the ui tab a reply routes to rather than the relay.ShowSection it read.
-func tabForSection(s relay.ShowSection) tab {
+// the ui tab a reply routes to rather than the relevo.ShowSection it read.
+func tabForSection(s relevo.ShowSection) tab {
 	switch s {
-	case relay.ShowPlan:
+	case relevo.ShowPlan:
 		return tabPlan
-	case relay.ShowReport:
+	case relevo.ShowReport:
 		return tabReport
-	case relay.ShowTranscript:
+	case relevo.ShowTranscript:
 		return tabTerminal
-	case relay.ShowDiff:
+	case relevo.ShowDiff:
 		return tabDiff
-	case relay.ShowLog:
+	case relevo.ShowLog:
 		return tabLog
 	default:
 		return tabPlan
 	}
 }
 
-// fetchShow wraps relay.Show for a non-live (hist) binding's detail tabs:
+// fetchShow wraps relevo.Show for a non-live (hist) binding's detail tabs:
 // every tab of an archived or otherwise not-live binding reads the
 // database through it. Missing renders as tabContent.empty prose ("no
 // <section> for round N"), never as an error; a Show error renders as
 // tabContent.err exactly like a failed file read (§6).
-func fetchShow(ctx context.Context, rt relay.Runtime, name string, round int, section relay.ShowSection) tea.Cmd {
+func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, section relevo.ShowSection) tea.Cmd {
 	t := tabForSection(section)
 	return func() tea.Msg {
-		res, err := relay.Show(ctx, rt, relay.ShowOptions{Name: name, Round: round, Section: section})
+		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{Name: name, Round: round, Section: section})
 		if err != nil {
 			return tabMsg{
 				name:  name,
@@ -661,20 +661,20 @@ func fetchShow(ctx context.Context, rt relay.Runtime, name string, round int, se
 
 		content := tabContent{loaded: true, at: time.Now(), round: round}
 		switch {
-		case section == relay.ShowLog:
+		case section == relevo.ShowLog:
 			if len(res.Events) == 0 {
 				content.empty = fmt.Sprintf("no %s for round %d", section, round)
 				break
 			}
 			var b strings.Builder
 			for _, e := range res.Events {
-				b.WriteString(relay.LogLine(e))
+				b.WriteString(relevo.LogLine(e))
 				b.WriteByte('\n')
 			}
 			content.body = b.String()
 		case res.Missing:
 			content.empty = fmt.Sprintf("no %s for round %d", section, round)
-		case section == relay.ShowTranscript:
+		case section == relevo.ShowTranscript:
 			content.body = res.Text
 			content.transcript = true
 		default:

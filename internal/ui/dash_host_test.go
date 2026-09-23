@@ -8,10 +8,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
 // keyD is the `d` key, which enters and leaves the dashboard screen.
@@ -20,22 +20,22 @@ func keyD() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'
 // dashHostModel is splitModel with a database behind the source, so `d` and
 // --dashboard can open the dashboard screen. The db is empty: what these
 // tests read is the host's wiring, not the rows.
-func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relay.BindingStatus) Model {
+func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relevo.BindingStatus) Model {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st, DB: d}
+	rt := relevo.Runtime{Store: st, DB: d}
 	opts.Interval = time.Second
 	m := newModel(context.Background(), plannerSource{rt}, opts)
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
 	return res.(Model)
 }
 
@@ -119,14 +119,14 @@ func TestKeyDWithoutDBNotices(t *testing.T) {
 }
 
 func TestJumpFromDashPointsDetail(t *testing.T) {
-	rows := []relay.BindingStatus{
+	rows := []relevo.BindingStatus{
 		{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
 	}
 	m := dashHostModel(t, 140, 40, Options{}, rows...)
 	// The rail is in scope all, as it must be for a hist-only binding to be
 	// visible at all: oldapi is in the database, not the live report.
 	m.scope = scopeAll
-	m.dbRows = []relay.HistoryBinding{
+	m.dbRows = []relevo.HistoryBinding{
 		{Name: "oldapi", ID: "h1", Rounds: 4, LastActivity: railNow.Add(-48 * time.Hour)},
 	}
 
@@ -173,14 +173,14 @@ func TestJumpFromDashPointsDetail(t *testing.T) {
 // TestJumpFromDashTurnsScopeAll proves the live-scope half: a hist-only
 // binding jumps only if scope all is turned on first, exactly as `a` does.
 func TestJumpFromDashTurnsScopeAll(t *testing.T) {
-	rows := []relay.BindingStatus{
+	rows := []relevo.BindingStatus{
 		{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
 	}
 	m := dashHostModel(t, 140, 40, Options{}, rows...)
 	if m.scope != scopeLive {
 		t.Fatalf("setup: scope = %v, want live", m.scope)
 	}
-	m.dbRows = []relay.HistoryBinding{
+	m.dbRows = []relevo.HistoryBinding{
 		{Name: "oldapi", ID: "h1", Rounds: 4, LastActivity: railNow.Add(-48 * time.Hour)},
 	}
 
@@ -211,12 +211,12 @@ func TestOptionsDashboardStartsOnDash(t *testing.T) {
 // same refusal `d` shows, and the fleet screen stays.
 func TestOptionsDashboardWithoutDBNotices(t *testing.T) {
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second, Dashboard: true})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Dashboard: true})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relay.Report{Bindings: threeRows()}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: threeRows()}})
 	m = res.(Model)
 	if m.screen != screenList {
 		t.Errorf("--dashboard with no database: screen = %v, want the fleet screen", m.screen)

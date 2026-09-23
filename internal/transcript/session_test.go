@@ -38,7 +38,7 @@ func TestSessionID(t *testing.T) {
 		{"agy step_update without a nested conversation_id", "agy", `{"event":"step_update","step_update":{"step_index":0}}`, ""},
 		{"codex thread.started line", "codex", streamFixture(t, "codex-stream.jsonl", 1), "01a0bb3b-6da3-79d1-a85d-9ea76187d710"},
 		{"codex turn.started line", "codex", streamFixture(t, "codex-stream.jsonl", 2), ""},
-		{"relay-exit trailer", "claude", "relay-exit:0", ""},
+		{"relevo-exit trailer", "claude", "relevo-exit:0", ""},
 		{"unknown kind", "mystery", streamFixture(t, "claude-stream.jsonl", 1), ""},
 		{"empty line", "claude", "", ""},
 	}

@@ -13,9 +13,9 @@ func TestIsFence(t *testing.T) {
 	}{
 		{"```", true},
 		{"````", true},
-		{"```relay", true},
+		{"```relevo", true},
 		{"```go   ", true},
-		{"``` relay block", true},
+		{"``` relevo block", true},
 		{"``", false},
 		{"`", false},
 		{"", false},
@@ -117,7 +117,7 @@ func TestSplit(t *testing.T) {
 	})
 
 	t.Run("fence with an info string", func(t *testing.T) {
-		text := []byte("```relay\nstatus: done\n```")
+		text := []byte("```relevo\nstatus: done\n```")
 		got := Split(text)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 paragraph, got %d", len(got))

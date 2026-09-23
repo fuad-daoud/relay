@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -27,7 +27,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.save()}
 		if m.scope == scopeAll && m.src.Base().DB == nil {
 			m.scope = scopeLive
-			m.notice = fmt.Sprintf("no database: %v", relay.ErrNoDatabase)
+			m.notice = fmt.Sprintf("no database: %v", relevo.ErrNoDatabase)
 			return m, tea.Batch(cmds...)
 		}
 		m.statusInFlight = true

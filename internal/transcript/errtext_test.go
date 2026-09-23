@@ -32,10 +32,10 @@ func TestErrorText(t *testing.T) {
 		{"agy result success", "agy", `{"event":"result","result":{"status":"SUCCESS","response":"ok"}}`, "", false},
 
 		// a non-JSON line is false for every kind, and so is an unknown kind.
-		{"non-JSON claude", "claude", `relay-exit:1`, "", false},
-		{"non-JSON opencode", "opencode", `relay-exit:1`, "", false},
-		{"non-JSON agy", "agy", `relay-exit:1`, "", false},
-		{"non-JSON codex", "codex", `relay-exit:1`, "", false},
+		{"non-JSON claude", "claude", `relevo-exit:1`, "", false},
+		{"non-JSON opencode", "opencode", `relevo-exit:1`, "", false},
+		{"non-JSON agy", "agy", `relevo-exit:1`, "", false},
+		{"non-JSON codex", "codex", `relevo-exit:1`, "", false},
 		{"unknown kind", "nope", `{"type":"error","message":"boom"}`, "", false},
 	}
 

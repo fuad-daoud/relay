@@ -1,4 +1,4 @@
-module github.com/fuad-daoud/relay
+module github.com/fuad-daoud/relevo
 
 go 1.25.0
 

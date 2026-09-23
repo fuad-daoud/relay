@@ -94,7 +94,7 @@ func TestParsePrivateRejectsWrongType(t *testing.T) {
 
 func TestParsePrivateRejectsWrongLength(t *testing.T) {
 	block := pem.EncodeToMemory(&pem.Block{
-		Type:  "RELAY ED25519 PRIVATE KEY",
+		Type:  "RELEVO ED25519 PRIVATE KEY",
 		Bytes: make([]byte, 32),
 	})
 	_, err := ParsePrivate(block)
@@ -123,8 +123,8 @@ func TestMarshalPrivateType(t *testing.T) {
 	if block == nil {
 		t.Fatal("pem.Decode returned nil block")
 	}
-	if block.Type != "RELAY ED25519 PRIVATE KEY" {
-		t.Fatalf("block.Type = %q, want %q", block.Type, "RELAY ED25519 PRIVATE KEY")
+	if block.Type != "RELEVO ED25519 PRIVATE KEY" {
+		t.Fatalf("block.Type = %q, want %q", block.Type, "RELEVO ED25519 PRIVATE KEY")
 	}
 	if !bytes.Equal(block.Bytes, kp.Private) {
 		t.Fatalf("block.Bytes mismatch: got %x, want %x", block.Bytes, kp.Private)

@@ -4,14 +4,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // ErrNoDefinition reports a role with no definition for a harness kind, or a
 // name no role has. It is recoverable: a caller turns it into a gate or
-// relay.ErrRoleNotServed.
+// relevo.ErrRoleNotServed.
 var ErrNoDefinition = errors.New("role has no definition for this harness kind")
 
 // Source constants name where a Registry was built from.
@@ -29,7 +29,7 @@ type Definition struct {
 	// Requires is every definition the agent dispatches to, beside itself.
 	Requires []string
 	// Custom is false exactly when Agent and every Requires name are shipped
-	// names for that kind (harness.IsShipped). A false Custom means relay
+	// names for that kind (harness.IsShipped). A false Custom means relevo
 	// installs and refreshes the file; a true one means it never touches it.
 	Custom bool
 }
@@ -51,7 +51,7 @@ type Role struct {
 	Shape harness.RoleShape
 	// Gate marks a writer role whose round closes on a gate.
 	Gate bool
-	// Builtin is true for a role relay's own table defines.
+	// Builtin is true for a role relevo's own table defines.
 	Builtin bool
 	// Candidates is the role's tokens as written: order[R] in legacy mode
 	// (nil when absent), the row's candidates in file mode.
@@ -101,7 +101,7 @@ func Build(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
 }
 
 // buildLegacy derives the roles from policy.json's order and candidates.json's
-// roles, reproducing relay's rankedList and tier chain exactly (#374 §5.2).
+// roles, reproducing relevo's rankedList and tier chain exactly (#374 §5.2).
 func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 	byName := builtins()
 	names := harness.RoleNames()
@@ -211,7 +211,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 				continue
 			}
 			if _, err := set.Lookup(ref); err != nil {
-				// Tolerated here; round 3's `relay policy` warns about it.
+				// Tolerated here; round 3's `relevo policy` warns about it.
 				continue
 			}
 			if _, ok := role.Definitions[ref.Harness]; !ok {

@@ -4,7 +4,7 @@ The documentation notes that the config says you must set X before Y; I set it a
 
 The integration tests verified valid handshakes across all supported clients.
 
-```relay
+```relevo
 status: done
 changed_paths: ["internal/server/tls.go", "internal/server/tls_test.go"]
 commands_run: ["go test ./internal/server"]

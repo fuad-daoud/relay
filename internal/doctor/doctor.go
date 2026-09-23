@@ -11,18 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/classify"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/release"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/release"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 type Severity int
 
 const (
 	SevOK   Severity = iota // nothing to do; also used for "not checked"
-	SevWarn                 // wrong, but relay can still run
-	SevFail                 // relay cannot run
+	SevWarn                 // wrong, but relevo can still run
+	SevFail                 // relevo cannot run
 	// SevInfo is an observation the human may want to act on: neither a
 	// warning nor a failure, and counted as neither (§4.8 row 5).
 	SevInfo
@@ -51,13 +51,13 @@ type Check struct {
 	Severity Severity
 	Detail   string // what was actually found
 	Fix      string // the command that fixes it
-	// ProbeFailed marks a row where relay could not establish the fact at all
+	// ProbeFailed marks a row where relevo could not establish the fact at all
 	// (the probe errored, timed out, or returned nothing for this target) as
 	// opposed to establishing that something is wrong. The bind-time preflight
 	// skips these, because there is nothing the user can act on.
 	ProbeFailed bool
 	// Unsafe is how many running processes sit outside their own scope, set
-	// only on the restart row (#370 §4.8). It exists so `relay status` can
+	// only on the restart row (#370 §4.8). It exists so `relevo status` can
 	// print the count without parsing Detail.
 	Unsafe int
 }
@@ -160,7 +160,7 @@ type runConfig struct {
 }
 
 // WithAdopted scopes the per-kind checks to an adopted builder: the user
-// launched that agent themselves, so its binary and role are none of relay's
+// launched that agent themselves, so its binary and role are none of relevo's
 // business. Global rows are unaffected.
 func WithAdopted(adopted bool) RunOption {
 	return func(cfg *runConfig) {
@@ -179,7 +179,7 @@ func WithDefinitions(defs map[string][]string) RunOption {
 }
 
 // WithUsage enables the round-usage checks (#142): sqlite3 on PATH when an
-// opencode candidate is configured (relay confirms a push to an opencode
+// opencode candidate is configured (relevo confirms a push to an opencode
 // planner through it), and prices.json parsing and age.
 func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
 	return func(cfg *runConfig) {
@@ -191,7 +191,7 @@ func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
 // WithExtraChecks appends checks verbatim at the end of the report, after
 // every check Run itself builds (including the usage checks WithUsage
 // enables). It exists so a caller can fold in checks built from data Run
-// never sees -- remote server probes, assembled in cmd/relay from
+// never sees -- remote server probes, assembled in cmd/relevo from
 // servers.json and the network -- without Run knowing anything about
 // either. It never changes the verdict except through the severities the
 // checks themselves carry.
@@ -202,7 +202,7 @@ func WithExtraChecks(checks []Check) RunOption {
 }
 
 // WithStateRoot lets the opencode branch check opencode's own
-// permission.external_directory allowlist against relay's state root, where
+// permission.external_directory allowlist against relevo's state root, where
 // plans and reports are staged (#236). Empty disables the check, which is
 // what a caller without a store wants.
 func WithStateRoot(root string) RunOption {
@@ -233,7 +233,7 @@ func ConfigCheck(warnings []string) Check {
 	}
 	c.Severity = SevWarn
 	c.Detail = strings.Join(warnings, "; ")
-	c.Fix = "remove the unknown keys, or upgrade relay to the version that reads them"
+	c.Fix = "remove the unknown keys, or upgrade relevo to the version that reads them"
 	return c
 }
 
@@ -340,11 +340,11 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	if env.Stat(fullPath) != nil {
 		// The fix must work on a machine that has never run this harness
 		// as a sub-agent host: none of the agents/ directories exist yet
-		// (#166 §1); relay agent install creates the directory.
+		// (#166 §1); relevo agent install creates the directory.
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix:    fmt.Sprintf("relay agent install --kind %s --role %s", kind, r.Name),
+			Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s", kind, r.Name),
 		}
 	}
 
@@ -359,8 +359,8 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 				if h, ok := harness.Lookup(kind); ok && h.DocExt == "toml" {
 					return Check{
 						Group: kind, Name: r.Name, Severity: SevWarn,
-						Detail: fmt.Sprintf("%s -- pins %s; relay ships %s", detail, model, r.ExpectModel),
-						Fix:    fmt.Sprintf("relay agent install --kind %s --role %s --force", kind, r.Name),
+						Detail: fmt.Sprintf("%s -- pins %s; relevo ships %s", detail, model, r.ExpectModel),
+						Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s --force", kind, r.Name),
 					}
 				}
 				return Check{
@@ -371,7 +371,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 			}
 		}
 		// Drift from the shipped bytes is only a finding on a kind whose
-		// definition relay owns outright (ExpectModel set: the pin must be
+		// definition relevo owns outright (ExpectModel set: the pin must be
 		// inherit, so any edit is already wrong). Elsewhere the README invites
 		// the user to repin model:, and a warning whose fix overwrites that
 		// edit would be worse than silence. #91 is the case this catches:
@@ -382,8 +382,8 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 				if !harness.DocEqual(shipped, raw) {
 					return Check{
 						Group: kind, Name: r.Name, Severity: SevWarn,
-						Detail: fmt.Sprintf("%s -- differs from the definition this relay ships", detail),
-						Fix:    fmt.Sprintf("relay agent install --kind %s --role %s --force", kind, r.Name),
+						Detail: fmt.Sprintf("%s -- differs from the definition this relevo ships", detail),
+						Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s --force", kind, r.Name),
 					}
 				}
 			}
@@ -393,9 +393,9 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 }
 
 // customRoleCheck probes one custom role definition on disk (#374 §3.6). A
-// custom definition is the user's own file: relay never installs it, so
+// custom definition is the user's own file: relevo never installs it, so
 // there is no model-pin check, no drift check and no manifest entry, and a
-// missing file's fix is by hand rather than `relay agent install`.
+// missing file's fix is by hand rather than `relevo agent install`.
 func customRoleCheck(env Env, kind, name string) Check {
 	path, _ := harness.DefinitionPath(kind, name)
 	homeRel := "~/" + path
@@ -411,7 +411,7 @@ func customRoleCheck(env Env, kind, name string) Check {
 		return Check{
 			Group: kind, Name: name, Severity: SevWarn,
 			Detail: "missing: " + homeRel + " (custom)",
-			Fix:    "install your agent definition at " + homeRel + "; relay never installs a custom definition",
+			Fix:    "install your agent definition at " + homeRel + "; relevo never installs a custom definition",
 		}
 	}
 	return Check{Group: kind, Name: name, Severity: SevOK, Detail: homeRel + " (custom)"}
@@ -451,7 +451,7 @@ func (e roleInstallEnv) SaveManifest(map[string]string) error     { return nil }
 func rolesCheck(env Env, kind string) Check {
 	manifest, err := env.LoadManifest()
 	if err != nil {
-		// A manifest relay cannot read records nothing, which is exactly
+		// A manifest relevo cannot read records nothing, which is exactly
 		// what the dry run decides from: an empty map.
 		manifest = nil
 	}
@@ -488,20 +488,20 @@ func rolesCheck(env Env, kind string) Check {
 	case stale:
 		return Check{
 			Group: kind, Name: "roles", Severity: SevWarn,
-			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relay agent install",
-			Fix:    "relay agent install",
+			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relevo agent install",
+			Fix:    "relevo agent install",
 		}
 	case edited:
-		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "differs from every copy relay has shipped (kept as your edit)"}
+		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "differs from every copy relevo has shipped (kept as your edit)"}
 	default:
 		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "up to date"}
 	}
 }
 
-// releaseCheck is the one row about relay itself (#293): which install this
+// releaseCheck is the one row about relevo itself (#293): which install this
 // is, and whether the daemon's cached check has seen a newer release.
 //
-// It is never SevFail -- a stale relay runs fine -- and SevOK whenever relay
+// It is never SevFail -- a stale relevo runs fine -- and SevOK whenever relevo
 // cannot prove anything, so an unrefreshed cache, an offline machine, an
 // unclassifiable install and a (devel) build all read as "not checked".
 func releaseCheck(env Env) Check {
@@ -546,10 +546,10 @@ func releaseCheck(env Env) Check {
 func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 	switch kind {
 	case release.KindGoInstall:
-		return "go install github.com/fuad-daoud/relay/cmd/relay@latest"
+		return "go install github.com/fuad-daoud/relevo/cmd/relevo@latest"
 	case release.KindRelease:
 		archive, checksums := release.AssetURLs(latest, goos, goarch)
-		return fmt.Sprintf("download %s, check it against %s, and replace this relay binary with the one inside", archive, checksums)
+		return fmt.Sprintf("download %s, check it against %s, and replace this relevo binary with the one inside", archive, checksums)
 	}
 	return ""
 }
@@ -575,15 +575,15 @@ func daemonCheck(env Env) Check {
 			Group:    "",
 			Name:     "daemon",
 			Severity: SevWarn,
-			Detail:   "running, but started before relay recorded its version: it will not follow upgrades until restarted once",
-			Fix:      "systemctl --user restart relay.service, or make service",
+			Detail:   "running, but started before relevo recorded its version: it will not follow upgrades until restarted once",
+			Fix:      "systemctl --user restart relevo.service, or make service",
 		}
 	case info.ReexecFailed != nil:
 		return Check{
 			Group:    "",
 			Name:     "daemon",
 			Severity: SevWarn,
-			Detail: fmt.Sprintf("runs %s; the relay binary at %s failed preflight (%s) and was not loaded",
+			Detail: fmt.Sprintf("runs %s; the relevo binary at %s failed preflight (%s) and was not loaded",
 				info.Version, info.Exe, info.ReexecFailed.Reason),
 			Fix: "fix the error above; the daemon retries when the file changes",
 		}
@@ -615,7 +615,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 
 	var checks []Check
 
-	// 1. Relay's own install and release state (#293): unconditional. There
+	// 1. Relevo's own install and release state (#293): unconditional. There
 	// is nothing to opt into -- it reads one small file and never touches the
 	// network.
 	checks = append(checks, releaseCheck(env))
@@ -628,7 +628,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			Name:        "daemon",
 			Severity:    SevWarn,
 			Detail:      fmt.Sprintf("probe error: %v", dErr),
-			Fix:         "relay daemon",
+			Fix:         "relevo daemon",
 			ProbeFailed: true,
 		})
 	} else if !daemonRunning {
@@ -637,13 +637,13 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			Name:     "daemon",
 			Severity: SevWarn,
 			Detail:   "not running",
-			Fix:      "relay daemon",
+			Fix:      "relevo daemon",
 		})
 	} else {
 		checks = append(checks, daemonCheck(env))
 	}
 
-	// #372 §4.4: one global row for the config keys this relay could not use,
+	// #372 §4.4: one global row for the config keys this relevo could not use,
 	// from candidates.json and policy.json.
 	checks = append(checks, ConfigCheck(cfg.configWarnings))
 
@@ -741,7 +741,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					Group:    kind,
 					Name:     "plan-executor",
 					Severity: SevOK,
-					Detail:   fmt.Sprintf("not checked -- relay has no role path for kind %q", kind),
+					Detail:   fmt.Sprintf("not checked -- relevo has no role path for kind %q", kind),
 					Fix:      "",
 				})
 			default:
@@ -751,7 +751,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 					}
 					checks = append(checks, roleCheck(env, kind, r))
 				}
-				// A definition in scope that relay does not ship is the user's
+				// A definition in scope that relevo does not ship is the user's
 				// own file: one row per custom name, after the shipped rows
 				// (#374 §3.6). Legacy mode has no custom names, so its output
 				// is unchanged.
@@ -766,7 +766,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			}
 
 			// #236: opencode's own config decides whether a headless builder
-			// can read its plan under relay's state root. Adopted panes are
+			// can read its plan under relevo's state root. Adopted panes are
 			// the user's own agent, so that path stays quiet.
 			if kind == "opencode" && cfg.stateRoot != "" {
 				checks = append(checks, opencodeAllowlistCheck(env, cfg.stateRoot))
@@ -795,7 +795,7 @@ func usageChecks(env Env, cfg runConfig) []Check {
 		if _, err := env.LookPath("sqlite3"); err != nil {
 			out = append(out, Check{
 				Name: "sqlite3", Severity: SevWarn,
-				Detail: "not on PATH; relay cannot confirm a push to an opencode planner, so its reports wait for relay pull",
+				Detail: "not on PATH; relevo cannot confirm a push to an opencode planner, so its reports wait for relevo pull",
 				Fix:    "install sqlite3 (the CLI), e.g. pacman -S sqlite / apt install sqlite3",
 			})
 		} else {

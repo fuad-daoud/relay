@@ -1,5 +1,5 @@
-# relay plan-executor role for codex (docs/specs/2026-09-19-codex-harness-design.md §5).
-# Installed by `relay agent install --kind codex`; relay selects it with
+# relevo plan-executor role for codex (docs/specs/2026-09-19-codex-harness-design.md §5).
+# Installed by `relevo agent install --kind codex`; relevo selects it with
 # `codex -p plan-executor`. The `agents.researcher` table at the end is the
 # sub-agent role this builder spawns for read-only research; that role's
 # own profile pins its model.
@@ -114,9 +114,9 @@ Your final report must include:
 - Files created/modified, mapped to the steps that produced them.
 - Git surgery on your branch: every rebase, reset, amend, cherry-pick, merge, force-push or branch switch you ran, each with its command and why -- or "none". Report it even when the plan asked for it.
 
-End every report with the `relay` block relay's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
+End every report with the `relevo` block relevo's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
 
-```relay
+```relevo
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed

@@ -1,27 +1,27 @@
-# relay
+# relevo
 
-[![ci](https://github.com/fuad-daoud/relay/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relay/actions/workflows/ci.yml)
+[![ci](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Site: [relay-site.fuad-daoud.com](https://relay-site.fuad-daoud.com) (source in [fuad-daoud/relay-site](https://github.com/fuad-daoud/relay-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
+Site: [relay-site.fuad-daoud.com](https://relay-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
-`relay` automates the plan/report handoff between two AI coding agents. A
+`relevo` automates the plan/report handoff between two AI coding agents. A
 human talks to a **planner** agent; the planner hands work to a **builder**
-agent; relay moves the files between them so the human never copy-pastes a
+agent; relevo moves the files between them so the human never copy-pastes a
 plan or a report by hand. Builders are headless or remote processes, and
-relay no longer integrates with herdr.
+relevo no longer integrates with herdr.
 
-Relay makes no judgements. It moves files, starts builders, and reports what
+Relevo makes no judgements. It moves files, starts builders, and reports what
 each round did — whether a report is good, whether a question needs a human,
 whether the work is done, is a decision that stays with the planner (or the
 human) at every step.
 
 ## Requirements
 
-- **Two agent harnesses** — one for the planner, one for the builder. relay
+- **Two agent harnesses** — one for the planner, one for the builder. relevo
   knows how to start `opencode`, `claude`, `agy` and `codex`; you tell it
   which models in [Candidates](#candidates).
-- **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relay works normally but rounds produce no diffs.
+- **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relevo works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
 - **Go 1.22+**, to build from source. Not needed if you install a release
   binary.
@@ -29,30 +29,30 @@ human) at every step.
 ## Install
 
 Prebuilt binaries for Linux and macOS (amd64 and arm64) are attached to every
-[release](https://github.com/fuad-daoud/relay/releases); unpack one and put
-`relay` on your `PATH`.
+[release](https://github.com/fuad-daoud/relevo/releases); unpack one and put
+`relevo` on your `PATH`.
 
 With a Go toolchain:
 
 ```
-go install github.com/fuad-daoud/relay/cmd/relay@latest
+go install github.com/fuad-daoud/relevo/cmd/relevo@latest
 ```
 
-That drops `relay` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
+That drops `relevo` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
 
-A release binary and a `go install` both know how they were installed. `relay
+A release binary and a `go install` both know how they were installed. `relevo
 doctor` warns when a newer release exists and prints the update step for that
 install: the archive and `checksums.txt` to download, or the `go install`
-command. `relay status` shows one line when a newer release exists. A local
+command. `relevo status` shows one line when a newer release exists. A local
 build is never called stale.
 
 Or from a clone, which also stamps the binary with the current tag so
-`relay version` is meaningful:
+`relevo version` is meaningful:
 
 ```
-git clone https://github.com/fuad-daoud/relay
-cd relay
-make install        # builds and installs ~/.local/bin/relay
+git clone https://github.com/fuad-daoud/relevo
+cd relevo
+make install        # builds and installs ~/.local/bin/relevo
 ```
 
 To install the built binary by hand, use the same two commands `make install`
@@ -60,8 +60,8 @@ does. The rename is atomic within the directory, so a running daemon never sees
 a half-written file:
 
 ```
-install -m755 relay ~/.local/bin/relay.new
-mv -f ~/.local/bin/relay.new ~/.local/bin/relay
+install -m755 relevo ~/.local/bin/relevo.new
+mv -f ~/.local/bin/relevo.new ~/.local/bin/relevo
 ```
 
 `make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
@@ -79,118 +79,118 @@ A running daemon moves onto a newly installed binary by itself within a few
 seconds, and a round in flight is not interrupted: builders, gates and consults
 run in their own systemd scopes and survive the restart. A daemon started
 before this release needs one manual restart to start following upgrades —
-`make service`, or `systemctl --user restart relay.service`. `relay doctor`
+`make service`, or `systemctl --user restart relevo.service`. `relevo doctor`
 shows what the daemon is running. The daemon also refreshes the role
-definitions relay wrote for each harness on every start, and leaves a file you
-edited alone; a planner session's `relay mcp` notices the upgrade too -- it
+definitions relevo wrote for each harness on every start, and leaves a file you
+edited alone; a planner session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
 ### The Claude Code plugin
 
-A Claude Code planner installs relay as a plugin. The plugin provides the
-`relay mcp` MCP server and a `SessionStart` hook that runs
-`relay planner init`, so relay knows which planner session is calling:
+A Claude Code planner installs relevo as a plugin. The plugin provides the
+`relevo mcp` MCP server and a `SessionStart` hook that runs
+`relevo planner init`, so relevo knows which planner session is calling:
 
-    /plugin marketplace add fuad-daoud/relay
-    /plugin install relay@relay
+    /plugin marketplace add fuad-daoud/relevo
+    /plugin install relevo@relevo
 
-The plugin ships with relay's releases. Claude Code caches an installed plugin
-by version, so after upgrading relay, update the plugin to match (`relay
+The plugin ships with relevo's releases. Claude Code caches an installed plugin
+by version, so after upgrading relevo, update the plugin to match (`relevo
 doctor` warns when they differ):
 
-    claude plugin marketplace update relay && claude plugin update relay@relay
+    claude plugin marketplace update relevo && claude plugin update relevo@relevo
 
 A change under `claude-plugin/` that is not released yet never reaches an
 installed plugin this way -- `update` sees the same version and skips it. To
-try one, reinstall: `claude plugin uninstall relay@relay && claude plugin
-install relay@relay`.
+try one, reinstall: `claude plugin uninstall relevo@relevo && claude plugin
+install relevo@relevo`.
 
 See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
 the planner.
 
 ## First run on a clean machine
 
-On a clean machine, set up prerequisites and preflight with `relay init` and
-`relay doctor`:
+On a clean machine, set up prerequisites and preflight with `relevo init` and
+`relevo doctor`:
 
-1. Install relay (see [Install](#install)).
-2. Run `relay init` to write a starter configuration from the harnesses on
+1. Install relevo (see [Install](#install)).
+2. Run `relevo init` to write a starter configuration from the harnesses on
    `PATH`:
    ```
-   relay init
+   relevo init
    ```
    It finds the harness binaries on `PATH`, writes one builder candidate per
-   harness to `~/.config/relay/candidates.json`, writes
-   `~/.config/relay/policy.json` ordering them, and installs the role
+   harness to `~/.config/relevo/candidates.json`, writes
+   `~/.config/relevo/policy.json` ordering them, and installs the role
    definitions into each of those harnesses. It refuses to overwrite either
    config file without `--force`, and `--no-roles` skips the definitions. It
    says what it wrote and the command to run next, e.g.:
    ```
-   wrote ~/.config/relay/candidates.json (2 candidates: claude, opencode)
-   wrote ~/.config/relay/policy.json (order.builder: claude/anthropic/sonnet, opencode/openrouter/z-ai/glm-5.3-flash)
+   wrote ~/.config/relevo/candidates.json (2 candidates: claude, opencode)
+   wrote ~/.config/relevo/policy.json (order.builder: claude/anthropic/sonnet, opencode/openrouter/z-ai/glm-5.3-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
-   next: edit the model names in ~/.config/relay/candidates.json, then run: relay doctor
+   next: edit the model names in ~/.config/relevo/candidates.json, then run: relevo doctor
    ```
 
    **Edit the model names it wrote** to the models your accounts may run (see
-   [Candidates](#candidates)); `relay candidates` prints what you configured.
-   When more than one candidate serves `builder`, `relay policy` shows the
-   order relay would pick them in and says `would refuse` until the file's
+   [Candidates](#candidates)); `relevo candidates` prints what you configured.
+   When more than one candidate serves `builder`, `relevo policy` shows the
+   order relevo would pick them in and says `would refuse` until the file's
    order suits you (see [Policy](#policy)).
-3. Run `relay doctor` to check your environment:
+3. Run `relevo doctor` to check your environment:
    ```
-   relay doctor
+   relevo doctor
    ```
-   Doctor inspects the background daemon, each harness binary on `PATH`, the relay plugin and its hook in Claude Code, and the builder role files.
-4. Run the literal fix commands `relay doctor` prints for any missing items.
-5. Re-run `relay doctor` to confirm `0 failures`.
-6. Start the daemon (e.g. `relay daemon &` or `make service`).
+   Doctor inspects the background daemon, each harness binary on `PATH`, the relevo plugin and its hook in Claude Code, and the builder role files.
+4. Run the literal fix commands `relevo doctor` prints for any missing items.
+5. Re-run `relevo doctor` to confirm `0 failures`.
+6. Start the daemon (e.g. `relevo daemon &` or `make service`).
 7. Bind your first agent from the planner session:
    ```
-   relay bind --builder claude/anthropic/sonnet
+   relevo bind --builder claude/anthropic/sonnet
    ```
-   (or, with one candidate, `relay bind`).
+   (or, with one candidate, `relevo bind`).
 
 To write these files by hand instead, install the role definitions into each
 harness on `PATH` — the daemon refreshes unmodified definitions on every start
-and upgrade, a file you edited is kept, and `relay agent install --force`
+and upgrade, a file you edited is kept, and `relevo agent install --force`
 replaces it:
 ```
-relay agent install
+relevo agent install
 ```
-One line per file says `wrote`, `updated (unchanged since relay wrote it)`,
+One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--role` for one definition,
 `--dry-run` to look first.
 This writes `plan-executor`, `researcher`, `reviewer` and `architect`
-for every kind; `relay agent print --kind <k> --role <r>` still emits
+for every kind; `relevo agent print --kind <k> --role <r>` still emits
 one to stdout.
 
 `researcher` is the read-only role the builder's own sub-agents run as. It
 exists because exactly one agent may write to a working tree: research can fan
 out safely, implementation cannot. The claude and opencode definitions pin a
 `model:` in their front matter as a worked example, chosen so neither needs a
-provider the rest of relay does not already assume; that line is the first
-thing to change for your own setup, and a plain `relay agent install`
+provider the rest of relevo does not already assume; that line is the first
+thing to change for your own setup, and a plain `relevo agent install`
 keeps your edit. The agy definitions pin `model: inherit`
 and that is not an example: on agy the key is a tier (`inherit`, `flash`,
-`pro`) that would override the `--model` relay passes at launch. `relay
+`pro`) that would override the `--model` relevo passes at launch. `relevo
 doctor` reports the pin each installed definition carries, warns when an
-agy copy pins a tier or differs from what relay ships, and names the
-`relay agent install ... --force` that restores it.
+agy copy pins a tier or differs from what relevo ships, and names the
+`relevo agent install ... --force` that restores it.
 
 codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
 with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
-every codex builder's research sub-agents and `relay doctor` warns when
+every codex builder's research sub-agents and `relevo doctor` warns when
 that pin drifts.
 
-Then write `~/.config/relay/candidates.json` (see [Candidates](#candidates))
-and check it with `relay candidates`. If more than one candidate serves
-`builder`, write `~/.config/relay/policy.json` with the order to try them in
-(see [Policy](#policy)); `relay policy` shows what relay would pick and says
-`would refuse` until you do. `relay doctor` warns about this too and prints a
+Then write `~/.config/relevo/candidates.json` (see [Candidates](#candidates))
+and check it with `relevo candidates`. If more than one candidate serves
+`builder`, write `~/.config/relevo/policy.json` with the order to try them in
+(see [Policy](#policy)); `relevo policy` shows what relevo would pick and says
+`would refuse` until you do. `relevo doctor` warns about this too and prints a
 starter file built from your candidates.
 
 ## Quick start
@@ -199,49 +199,49 @@ On a clean machine, seed your configuration first (see
 [First run on a clean machine](#first-run-on-a-clean-machine)):
 
 ```
-relay init                        # write candidates.json and policy.json, install the role definitions
+relevo init                        # write candidates.json and policy.json, install the role definitions
 ```
 
 From the planner session, in the repository you want worked on:
 
 ```
-relay bind --builder claude/anthropic/sonnet     # start a builder on this tree
-relay send --file plan.md         # hand it the plan; the builder starts working
-relay status                      # watch the round
-relay wait                        # block until the round closes or needs you
-relay pull                        # print the report the builder wrote back
-relay done <name>                 # stop relaying when you are satisfied
+relevo bind --builder claude/anthropic/sonnet     # start a builder on this tree
+relevo send --file plan.md         # hand it the plan; the builder starts working
+relevo status                      # watch the round
+relevo wait                        # block until the round closes or needs you
+relevo pull                        # print the report the builder wrote back
+relevo done <name>                 # stop relaying when you are satisfied
 ```
 
 The builder writes `NNN-report.md` when it has finished and then creates an
-empty `NNN-done` as its last action; relay closes the round on that marker.
-A builder that exits without the marker still closes the round, and relay
+empty `NNN-done` as its last action; relevo closes the round on that marker.
+A builder that exits without the marker still closes the round, and relevo
 delivers its report flagged `unmarked`.
 
-`relay bind` identifies the calling planner through `RELAY_PLANNER`, which
-the relay plugin's `SessionStart` hook exports, or through the harness
-process the `relay mcp` server shares with the session. Run
-`relay planner list` to see the planners relay knows.
+`relevo bind` identifies the calling planner through `RELEVO_PLANNER`, which
+the relevo plugin's `SessionStart` hook exports, or through the harness
+process the `relevo mcp` server shares with the session. Run
+`relevo planner list` to see the planners relevo knows.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
+- `relevo bind [--name N] [--builder CANDIDATE] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
   — start a binding between the calling planner and a builder. `--builder` is
   a candidate token. A name that already exists is refused rather than reused:
   only `bind.json` would be rewritten, so a fresh round 1 would collide with
   the previous session's round log. `--resume --name N` re-points that
   existing binding's planner side at the calling planner without touching the
-  builder; `relay unbind N` is the other way out. `--headless` is accepted and
+  builder; `relevo unbind N` is the other way out. `--headless` is accepted and
   ignored with a one-line stderr note: headless is the only local mode (see
   "Headless builders" below).
-- `relay send [NAME|--name N] --file PATH [--dry-run]` — stage the file as the current round's
+- `relevo send [NAME|--name N] --file PATH [--dry-run]` — stage the file as the current round's
   plan and hand it to the builder as the prompt of a fresh process started in
   the binding's tree.
   A headless binding whose previous round's process is still running refuses
-  the send; wait for its report or `relay done` it.
+  the send; wait for its report or `relevo done` it.
   `--dry-run` checks every precondition a send would and prints what it would
   do, writing nothing: no plan staged, no log entry, no prompt, no process
-  started. A precondition that fails is the same error `relay send` gives, exit
+  started. A precondition that fails is the same error `relevo send` gives, exit
   1, with nothing written. A local binding names the exact command line it
   would run, and a remote one the server and branch without contacting it:
   ```
@@ -249,29 +249,29 @@ process the `relay mcp` server shares with the session. Run
     builder   headless agy/google/gemini-3.8-flash-high
     where     /usr/bin/agy -p
     tier      yolo
-    plan      /home/me/.local/state/relay/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
-    report    /home/me/.local/state/relay/api-auth/005-report.md
-    marker    /home/me/.local/state/relay/api-auth/005-done
-    prompt    relay: round 5 · to builder "api-auth" · from the planner (not the human)
+    plan      /home/me/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
+    report    /home/me/.local/state/relevo/api-auth/005-report.md
+    marker    /home/me/.local/state/relevo/api-auth/005-done
+    prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
               Your working tree is: /home/me/.worktrees/api-auth
   ```
-- `relay pull [NAME|--name N] [--path-only]` — print the oldest pending
+- `relevo pull [NAME|--name N] [--path-only]` — print the oldest pending
   report's text to stdout (the report's pointer line, a blank line, then the
   report itself, capped at 64 KiB) and mark it delivered. This is how a
   planner fetches a report directly, and what the background wait's
-  `relay pull` uses. `--path-only` prints just the pointer line for scripts.
-- `relay diff [NAME|--name N] [--round R] [--stat] [--drift] [--anchors]` — print a round's
+  `relevo pull` uses. `--path-only` prints just the pointer line for scripts.
+- `relevo diff [NAME|--name N] [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
   with `--stat` and `--round`, and defaults to the currently open round where plain
-  `relay diff` defaults to the newest completed one. Pass `--anchors` to prefix
+  `relevo diff` defaults to the newest completed one. Pass `--anchors` to prefix
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
   review comments file (see "Reviewing a round" below).
-- `relay review [NAME|--name N] --file comments.md [--round R] [--out PATH] [--send]` —
+- `relevo review [NAME|--name N] --file comments.md [--round R] [--out PATH] [--send]` —
   turn a `path:line: comment` comments file into a follow-up plan, one task per
   anchored comment quoting its hunk from the round's diff. Not destructive, so
   it falls back to the CWD's binding like `diff`. See "Reviewing a round" below.
-- `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relay ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+- `relevo status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the planner's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (see `.viewed` below).
   `--json` also carries fields the prose above does not spell out:
   ```
@@ -284,24 +284,24 @@ process the `relay mcp` server shares with the session. Run
   unread      true when the binding's newest report is newer than its .viewed stamp
               (or there is no stamp and a report exists)
   ```
-- `relay log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten.
+- `relevo log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten.
   A hook or script that has already seen up to a known `seq` asks only for the rest:
   ```bash
-  last_seq=$(relay status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
-  relay log NAME --after $(last_seq) --json
+  last_seq=$(relevo status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
+  relevo log NAME --after $(last_seq) --json
   ```
-- `relay history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
-  one line per round across every binding relay has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
-- `relay show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]` —
+- `relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
+  one line per round across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
+- `relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]` —
   one round's plan, report, diff, drift, log or transcript, from a live binding's files or, for anything not live, from the database. See "The database" below.
-- `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
+- `relevo tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
   tokens and cost across bindings, archived ones included.
-- `relay stats [--since 7d] [--json]` —
+- `relevo stats [--since 7d] [--json]` —
   rounds, outcomes, switches, gate results and consults across bindings,
   archived ones included, read from the round logs; the last 30 days of
   provider blocks come from the availability history. See "Usage stats" below.
-- `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
-  until the round closes or the binding needs you, reading relay's own state only.
+- `relevo wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
+  until the round closes or the binding needs you, reading relevo's own state only.
   Exit 0: closed on the marker, stdout is the report path. 2: closed
   without it (`unmarked`, `noreport` — verify before trusting), report
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
@@ -309,96 +309,96 @@ process the `relay mcp` server shares with the session. Run
   halted or blocked -- read it before sending again; stdout is the report path.
   6: the round has no plan entry -- it was never sent, so nothing is in flight;
   stdout says so. 124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
-  winner's name first. A Claude Code planner runs `relay wait N; relay pull N` as a
+  winner's name first. A Claude Code planner runs `relevo wait N; relevo pull N` as a
   background command and ends its turn: Claude Code wakes the session when the
   command exits (see [Claude Code plugin](#claude-code-plugin)).
-- `relay ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
+- `relevo ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
   flow. `--dashboard` opens on the dashboard screen (`d` reaches it from the
   fleet).
-- `relay add --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` — attach an
+- `relevo add --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--headless` is accepted and ignored, as for `bind`.
-  `relay add --name N --server S [--base REF]` runs that builder on a
+  `relevo add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
-  `relay add --branch B` checks an existing branch out into relay's own
-  worktree instead of cutting `relay/<name>`: a local `B` is used first, and
+  `relevo add --branch B` checks an existing branch out into relevo's own
+  worktree instead of cutting `relevo/<name>`: a local `B` is used first, and
   `origin/B` is made a local tracking branch only when no local `B` exists
   (a branch on neither is refused). A branch already checked out in another
   worktree is refused; free it first. `--name` is optional with `--branch`
   and defaults to the branch's last path segment, lowercased and reduced to
   the characters a binding name accepts. The binding records
-  `existing_branch: true`, and relay never deletes a branch it did not
+  `existing_branch: true`, and relevo never deletes a branch it did not
   create. Works with `--server`; not with `--cwd`.
-  For a `--server` binding the server's own `refs/heads/relay/<name>` ref is
+  For a `--server` binding the server's own `refs/heads/relevo/<name>` ref is
   kept in the repository beside the adopted branch: every closed round
-  absorbs it and fast-forwards `B` to it, and relay deletes neither.
-  `relay fork --branch` is not available yet.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
+  absorbs it and fast-forwards `B` to it, and relevo deletes neither.
+  `relevo fork --branch` is not available yet.
+- `relevo fork <source> --round R --new-name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
   binding's own.
-- `relay candidates` — list the configured candidates and the roles each serves.
-- `relay policy` — show, per role, the candidates in the order relay would
+- `relevo candidates` — list the configured candidates and the roles each serves.
+- `relevo policy` — show, per role, the candidates in the order relevo would
   try them, which one it would pick right now, and any gap between
   `policy.json` and `candidates.json`.
-- `relay roles` — list every role's shape, candidates, tier and per-kind agent
-  definitions; `relay roles init` writes `roles.json` from `candidates.json`
+- `relevo roles` — list every role's shape, candidates, tier and per-kind agent
+  definitions; `relevo roles init` writes `roles.json` from `candidates.json`
   and `policy.json` (`--dry-run`, `--force`).
-- `relay unavailable <harness/provider/model> [--for D] [--reason S]` — record
+- `relevo unavailable <harness/provider/model> [--for D] [--reason S]` — record
   that a candidate's provider is rate-limited; gates every candidate on that
-  provider until `--for` elapses, or until `relay available` clears it.
-- `relay available <provider|harness/provider/model>` — clear a recorded rate
+  provider until `--for` elapses, or until `relevo available` clears it.
+- `relevo available <provider|harness/provider/model>` — clear a recorded rate
   limit on a provider.
-- `relay done NAME|--name N|--pick` — mark a binding done; relaying stops.
+- `relevo done NAME|--name N|--pick` — mark a binding done; relaying stops.
   `--pick` chooses from a list in the terminal.
-- `relay unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
+- `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
   packing it into `.archive/` first. `--pick` chooses from a list in the terminal.
 
-- `relay gc [--dry-run] [--delete]` — clear every binding the planner marked
-  `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relay gc --archive` is accepted as a no-op).
-- `relay daemon [--interval D]` — the long-running reconciler; this is what the
+- `relevo gc [--dry-run] [--delete]` — clear every binding the planner marked
+  `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relevo gc --archive` is accepted as a no-op).
+- `relevo daemon [--interval D]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the planner
   and syncs remote bindings.
-- `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
-- `relay serve init|enroll|clients|revoke|fingerprint|status|gates|available|unavailable|gc|unbind` — server administration, on the server host.
-- `relay serve gates [--state DIR]` — list the gates on the server's own ledger.
-- `relay serve available <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
-- `relay serve unavailable <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
-- `relay client init` — generate this machine's remote-builder identity (an
+- `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
+- `relevo serve init|enroll|clients|revoke|fingerprint|status|gates|available|unavailable|gc|unbind` — server administration, on the server host.
+- `relevo serve gates [--state DIR]` — list the gates on the server's own ledger.
+- `relevo serve available <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
+- `relevo serve unavailable <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
+- `relevo client init` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
-  `relay serve enroll --key "<line>"` with.
-- `relay client add-server NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
+  `relevo serve enroll --key "<line>"` with.
+- `relevo client add-server NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
   record a remote server in `servers.json`; with `--fingerprint`, checks
   enrollment once.
-- `relay client rm-server NAME` — forget a configured server; refused while
+- `relevo client rm-server NAME` — forget a configured server; refused while
   any binding still names it.
-- `relay servers` — one row per configured server: name, url, and this
+- `relevo servers` — one row per configured server: name, url, and this
   client's enrollment on it.
-- `relay help` — the command list. `relay <command> -h` prints that command's
+- `relevo help` — the command list. `relevo <command> -h` prints that command's
   flags.
-- `relay version` — the build's version.
+- `relevo version` — the build's version.
 
 Every binding-scoped command takes its binding either positionally or as
 `--name`; naming it both ways at once is refused. `send`, `pull`, `diff` and
 `review` fall back to whichever binding owns the current working directory,
-and a bare `relay status` lists them all. Naming one is **required** for
+and a bare `relevo status` lists them all. Naming one is **required** for
 `answer`, `done` and `unbind`: those act on a specific loop — `answer` types
 into a live dialog, the other two end one — and they refuse to guess (see
 below).
 
 ### Reviewing a round
 
-`relay diff --anchors` prints a round's patch with a `path:line` gutter on
+`relevo diff --anchors` prints a round's patch with a `path:line` gutter on
 every hunk header and every `' '`/`'+'` line, so a comment can quote a line
 straight off the printed diff instead of counting by hand:
 
 ```
-$ relay diff --name api-auth --anchors
+$ relevo diff --name api-auth --anchors
 diff --git a/auth.go b/auth.go
 --- a/auth.go
 +++ b/auth.go
@@ -417,7 +417,7 @@ auth.go:43: this brace can go too, see the hunk above
 wire the new error into the CLI's exit code table
 ```
 
-`relay review NAME --file comments.md [--round R] [--out PATH] [--send]`
+`relevo review NAME --file comments.md [--round R] [--out PATH] [--send]`
 validates every anchor against that round's diff — an anchor the diff does
 not have is refused before anything is written — and renders a plan with one
 task per anchored comment, quoting the anchored hunk (three lines of context
@@ -425,14 +425,14 @@ either side) and the comment verbatim, plus a "General comments" section for
 the unanchored lines. It writes the plan to `--out`, or by default
 `<binding dir>/NNN-review-plan.md` (`NNN` the reviewed round), and prints the
 path. `--send` hands that plan to the builder as the next round, the same as
-`relay send --file`. The rendered plan opens with "Fix ONLY what these
+`relevo send --file`. The rendered plan opens with "Fix ONLY what these
 comments ask" — delete that line if the round should be broader.
 
 ### The report block
 
-The builder ends its report with a fenced `relay` block:
+The builder ends its report with a fenced `relevo` block:
 
-```relay
+```relevo
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
@@ -440,18 +440,18 @@ commands_run: []        # commands you ran, e.g. ["make check"]
 not_done: []            # adjacent work you deliberately left
 ```
 
-The four valid statuses are `done`, `halted`, `blocked`, and `deferred`. A missing or malformed block closes the round as `unstructured` without error or refusal. When `changed_paths` does not match git's count of changed files, relay notes the discrepancy as `paths: report N, diff M` on the diff entry.
+The four valid statuses are `done`, `halted`, `blocked`, and `deferred`. A missing or malformed block closes the round as `unstructured` without error or refusal. When `changed_paths` does not match git's count of changed files, relevo notes the discrepancy as `paths: report N, diff M` on the diff entry.
 
-### Interactive reader: relay ui
+### Interactive reader: relevo ui
 
-`relay ui` is a full-screen terminal reader for live bindings. `relay status`
-remains the tool for shell pipes and scripts (`watch -n2 relay status` for a
-ticker); `relay ui` is the interactive sibling that lets you inspect substance
+`relevo ui` is a full-screen terminal reader for live bindings. `relevo status`
+remains the tool for shell pipes and scripts (`watch -n2 relevo status` for a
+ticker); `relevo ui` is the interactive sibling that lets you inspect substance
 instead of just state.
 
 It is strictly **read-only**: it never mutates state and never appends to
 round logs. It holds the state lock only for the duration of a read, exactly
-as `relay status` does.
+as `relevo status` does.
 
 At 110 columns or more, a rail of bindings grouped by state sits beside a
 pane showing the selected binding's plan, report, terminal, diff or log
@@ -471,12 +471,12 @@ when it closes", "diff is captured when round N closes") rather than
 showing stale content.
 
 
-### `relay ui`'s dashboard: every round, filtered and regrouped
+### `relevo ui`'s dashboard: every round, filtered and regrouped
 
-`d` opens a second screen: every round relay's database has recorded, live or
-archived, as a grid. It is the same data `relay history` reads, with the query
+`d` opens a second screen: every round relevo's database has recorded, live or
+archived, as a grid. It is the same data `relevo history` reads, with the query
 language as a filter line and the sums of `--by` above the rows. `d` or `esc`
-returns to the fleet with the query intact; `relay ui --dashboard` opens here
+returns to the fleet with the query intact; `relevo ui --dashboard` opens here
 directly.
 
 The first line is the applied query and the regroup axis; under it a tiles
@@ -490,7 +490,7 @@ started           binding       rnd  builder                               outco
 
 `/` opens the query line, prefilled with the current query; `enter` applies it,
 `esc` cancels, and a parse error is shown under the input with the previous
-query kept. The grammar is exactly `relay history -q`'s:
+query kept. The grammar is exactly `relevo history -q`'s:
 
 ```
 / harness:agy outcome:halted since:30d
@@ -512,13 +512,13 @@ column are remembered in `ui.json`.
 Below 140 columns the grid drops `gate`, below 120 `tree` and `commits`, below
 100 `tokens`; `cost` always stays. A round's cost reads `unknown` as `?`, a
 round with no usage at all as `-`; archived rounds are dim; the same filter
-grammar is documented in full under `relay history`.
+grammar is documented in full under `relevo history`.
 
-### `relay ui`'s `all` scope: every binding, not just today's
+### `relevo ui`'s `all` scope: every binding, not just today's
 
 `a` toggles the rail between `live` (today's bindings, the default) and
 `all` -- every binding the database has ever recorded (#172), read through
-the same `relay.Bindings` query `relay history --here` uses: inside a git
+the same `relevo.Bindings` query `relevo history --here` uses: inside a git
 repo, only that repo's bindings; otherwise every one. `all` is persisted in
 `ui.json`, so the ui reopens in whichever scope you left it.
 
@@ -530,27 +530,27 @@ archived), and a second line `rN · <age> · feature <label>` (the feature
 clause only when one is set). Selecting an archived row opens the same
 five tabs, reading the database instead of files -- `terminal` renders the
 round's stored transcript rows and does not follow a tail, since nothing
-about an archived round is still moving. A database relay cannot open
+about an archived round is still moving. A database relevo cannot open
 shows `no database: <err>` in the rail and the scope stays on `live`;
-`relay ui` never exits over it.
+`relevo ui` never exits over it.
 
 ### Headless builders
 
-A builder is a process relay runs, one fresh process per round; each
-`relay send` starts the harness's non-interactive form -- `agy -p …`,
+A builder is a process relevo runs, one fresh process per round; each
+`relevo send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the round's
 prompt, writes the harness's streamed JSON events to
-`~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
+`~/.local/state/relevo/<name>/NNN-builder.jsonl` and its stderr to
 `NNN-builder.log`, both beside the round's plan and report, and returns.
 The daemon renders the stream into the `.log` as it grows -- one line per
 tool call (`● Bash go test ./...`), its result with the first line of what it printed (`  ⎿ ok: ok  github.com/… 0.4s`, `  ⎿ error: …`),
 the builder's text, any denied permission, and the final answer -- so
-`relay ui`'s terminal tab, `relay status` and `tail -f` on the `.log` show
+`relevo ui`'s terminal tab, `relevo status` and `tail -f` on the `.log` show
 the round live, about two seconds behind. Between rounds the tab keeps
 the last round's log. The `.jsonl` is the raw record;
-relay never reads it for meaning. When relay itself stops or replaces that process -- a
-mid-round switch, `relay done`, `relay unbind` -- it appends one line to the
-same log saying so (`--- relay 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
+relevo never reads it for meaning. When relevo itself stops or replaces that process -- a
+mid-round switch, `relevo done`, `relevo unbind` -- it appends one line to the
+same log saying so (`--- relevo 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
 so two builders' output in one round is never ambiguous. The process exits when
 it has written the report, or when
 it fails; between rounds a headless binding has no process and is idle, not
@@ -564,47 +564,47 @@ What this means in practice:
 - **No dialogs.** The process runs with stdin closed. If a harness needs
   permission prompts answered, put its `--dangerously-skip-permissions`/`--auto`
   extra arg in `candidates.json`.
-- **No memory across rounds.** Every round is a fresh process. relay plans
+- **No memory across rounds.** Every round is a fresh process. relevo plans
   already carry their own context (worktree table, conventions, "stop rather
   than improvise"); headless makes that a hard requirement.
-- **`relay status`** shows `builder  headless  <kind>  <idle|working|exited N>
+- **`relevo status`** shows `builder  headless  <kind>  <idle|working|exited N>
   pid P since HH:MM` and the log's last three lines as `log` rows.
-  `relay ui`'s terminal tab shows the log file.
+  `relevo ui`'s terminal tab shows the log file.
 - **Exit without a report** is logged as an `exit` entry (exit code and the
   log's last 20 lines) and the daemon switches builders, up to `max_switches`
   (a switch caused by a rate-limit gate is not counted); then
   `NEEDS YOU`. The one exception is a builder whose
   supervisor died with the daemon itself (a systemd restart, `kill -9` of
-  the process tree): relay tells that apart from a real builder death and
+  the process tree): relevo tells that apart from a real builder death and
   relaunches the same candidate on the same round instead, uncounted.
 - **`done` and `unbind` stop the process** if a round is running. A stop that
   fails is reported, and the binding is still done or unbound. The round budget
   never kills anything: it flags `NEEDS YOU` and leaves the process alone.
-- **`relay unavailable`** on the provider mid-round kills the running process
+- **`relevo unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 - **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
   each headless round gets its own private server instead of the one
   `opencode serve --service` shared by every `opencode run` on that machine,
-  so a kill, `relay done`/`unbind`, a `relay stop`, or a mid-round switch
+  so a kill, `relevo done`/`unbind`, a `relevo stop`, or a mid-round switch
   stops the agent for real -- before the fix, the client process died but the
   agent session kept running inside the shared service, still editing the
-  worktree relay had already switched away from. `relay doctor` notes the shared
+  worktree relevo had already switched away from. `relevo doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
   `~/.config/opencode/service.json` exists.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
-named `relay-round-local-<binding>-<round>` (an owned remote binding uses its
-owner's id where `local` sits). It is a *sibling* of `relay.service`, not a
-child: `systemctl --user restart relay` -- what `make service` does -- leaves a
+named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its
+owner's id where `local` sits). It is a *sibling* of `relevo.service`, not a
+child: `systemctl --user restart relevo` -- what `make service` does -- leaves a
 running round alone instead of killing it, so a restart no longer looks to
-relay like a builder that "exited without a report". With no `scope` block
+relevo like a builder that "exited without a report". With no `scope` block
 configured this is the whole change: a local headless builder moves out of
-`relay.service`'s cgroup into its own scope, with no quota and no memory cap --
+`relevo.service`'s cgroup into its own scope, with no quota and no memory cap --
 only its location, and with it restart survival. The gate, a consult and the
 verify reviewer each get a scope from the same template too, with a unit name
-that says what it is: `relay-gate-local-<binding>-<round>`,
-`relay-consult-local-<binding>-<round>-<consult-id>` and
-`relay-verify-local-<binding>-<round>-<consult-id>` (an owned remote binding
+that says what it is: `relevo-gate-local-<binding>-<round>`,
+`relevo-consult-local-<binding>-<round>-<consult-id>` and
+`relevo-verify-local-<binding>-<round>-<consult-id>` (an owned remote binding
 uses its owner's id where `local` sits, exactly as for a round). `policy.json`'s
 top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
 `cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
@@ -614,24 +614,24 @@ out. `allowed_cpus` is a pool of cores (`"0-2"`), and each round is pinned to
 one core from it: the gate runs on its round's core, while a consult and the
 verify reviewer run on the whole pool. When every core is taken, a round runs
 on the whole pool instead. Pinning needs `cpuset` delegated to your user
-manager through a root drop-in on `user@.service`, and `relay doctor` checks
-this; if systemd refuses it, relay logs one warning and runs unpinned. #314
+manager through a root drop-in on `user@.service`, and `relevo doctor` checks
+this; if systemd refuses it, relevo logs one warning and runs unpinned. #314
 measured a CPU-bound job pinned to one core using 10–18% less CPU time than the
 same job left to float. Every scoped builder, gate, consult and verify reviewer
 also gets `GOMAXPROCS` set to the CPUs its scope allows -- 1 for a pinned round,
 `ceil(quota)` otherwise -- replacing any `GOMAXPROCS` the daemon inherited, such
 as a shell-wide export; this affects Go processes only, and Go's `-p` and
 `-parallel` follow it. On a host without a
-usable systemd user manager relay logs one warning and runs builders unscoped,
-in `relay.service`'s cgroup, exactly as before.
+usable systemd user manager relevo logs one warning and runs builders unscoped,
+in `relevo.service`'s cgroup, exactly as before.
 
 ### Progress labels
 
-relay keeps a progress clock on every local binding with an open round and
-labels what it sees. The labels are observations, never actions: relay never
+relevo keeps a progress clock on every local binding with an open round and
+labels what it sees. The labels are observations, never actions: relevo never
 kills, nudges, switches or halts on them, and the round budget stays the only
-automatic halt. Killing a stalled builder stays the human's decision -- `relay
-done`, `relay unbind`, or `relay stop`.
+automatic halt. Killing a stalled builder stays the human's decision -- `relevo
+done`, `relevo unbind`, or `relevo stop`.
 
 The signals are the working tree (its fingerprint is `HEAD` plus `git status
 --porcelain`, hashed -- no diff, no snapshot) and the builder's output: the
@@ -640,8 +640,8 @@ most once every `progress_interval_ms` (default thirty seconds).
 
 - **`stalled <age>`** -- no signal has moved for `stall_after_ms` (default
   fifteen minutes) while the round is open and the builder is not blocked. The
-  label replaces `working` in `relay status` and `relay ui`; a stalled binding
-  is still `ACTIVE` with `relay wait` still waiting. The label clears when a
+  label replaces `working` in `relevo status` and `relevo ui`; a stalled binding
+  is still `ACTIVE` with `relevo wait` still waiting. The label clears when a
   signal moves again or the process exits, and the daemon fires one
   `builder_stalled` hook event per episode and none when it clears.
 - **`exploring <age>`** -- the output or screen is changing but the tree has
@@ -650,182 +650,182 @@ most once every `progress_interval_ms` (default thirty seconds).
 - **`stale <age>`** -- a `NEEDS YOU` binding has sat unacted for
   `stale_after_ms` (default four hours). The age is measured from the halt, or
   from the newest log entry when the binding has none. The word follows the
-  state word in `relay status`, joins the card in `relay ui`, and puts the row
+  state word in `relevo status`, joins the card in `relevo ui`, and puts the row
   first inside its attention group; the daemon fires one `binding_stale` hook
   event per episode.
 
 A binding with no readable signal at all -- no git and no stream -- is never
 labelled.
 
-When a round stops -- exit without the marker or the round budget -- relay
+When a round stops -- exit without the marker or the round budget -- relevo
 scans the builder's last output for the harness's
-rate-limit text and records a `rate_limited` gate (`source relay`, the
+rate-limit text and records a `rate_limited` gate (`source relevo`, the
 matched line) on a match, parsing the line's own reset time when it names
 one (`Resets in 2h48m52s`, `resets 7pm`) or using `limit_gate_default_ms`
-otherwise, then switches uncounted toward `max_switches`. `relay
-unavailable` still overrides; `relay available` undoes a false positive.
+otherwise, then switches uncounted toward `max_switches`. `relevo
+unavailable` still overrides; `relevo available` undoes a false positive.
 
 ### Remote builders: the server
 
-`relay serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI.
+`relevo serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI.
 
 On a fresh server host, the first run looks like:
-1. `relay serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
+1. `relevo serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
 2. Copy the fingerprint to share with clients.
-3. Enrol each client's public key: `relay serve enroll --label <client-label> --key "<public key line>"`.
-4. Copy the service unit to `~/.config/systemd/user/relay-serve.service` and enable it:
+3. Enrol each client's public key: `relevo serve enroll --label <client-label> --key "<public key line>"`.
+4. Copy the service unit to `~/.config/systemd/user/relevo-serve.service` and enable it:
    ```
-   cp dist/relay-serve.service ~/.config/systemd/user/
+   cp dist/relevo-serve.service ~/.config/systemd/user/
    systemctl --user daemon-reload
-   systemctl --user enable --now relay-serve
+   systemctl --user enable --now relevo-serve
    ```
 
 On the server machine, the admin can inspect enrolled clients and all owners' active bindings:
-- `relay serve status` displays active bindings across all owners, sorted by owner label.
-- `relay serve log --owner <label|id> <name>` prints that owner's binding log, with `relay log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
-- `relay serve show --owner <label|id> <name>` prints one round's plan, report, diff, drift, log or transcript, with `relay show`'s flags. Read-only, and it reads live bindings only: it never opens the database, so a non-live binding reads as "binding not found".
-- `relay serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and without it for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.
-- `relay serve clients` lists enrolled clients and their revocation status.
-- `relay serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
+- `relevo serve status` displays active bindings across all owners, sorted by owner label.
+- `relevo serve log --owner <label|id> <name>` prints that owner's binding log, with `relevo log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
+- `relevo serve show --owner <label|id> <name>` prints one round's plan, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: it never opens the database, so a non-live binding reads as "binding not found".
+- `relevo serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and without it for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.
+- `relevo serve clients` lists enrolled clients and their revocation status.
+- `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 
-What `relay serve` does not do: it runs no planner and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+What `relevo serve` does not do: it runs no planner and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
 
 ### Remote builders: the client
 
 A remote binding is an ordinary binding whose builder runs on someone else's
 machine, over a signed, pinned HTTPS connection instead of a local process.
-It has no worktree of its own: `relay send` ships a bundle of your branch's
+It has no worktree of its own: `relevo send` ships a bundle of your branch's
 history alongside the plan, and the daemon polls the server for the round's
 state the same way it polls a local builder.
 
 Set up once per machine:
-1. `relay client init` generates this client's ed25519 keypair (in
-   `~/.config/relay/client.key` / `.pub`) and prints two lines: the client's
+1. `relevo client init` generates this client's ed25519 keypair (in
+   `~/.config/relevo/client.key` / `.pub`) and prints two lines: the client's
    id, and an enrollment line (`ed25519 <base64> <user>@<host>`) to hand the
    server admin.
-2. The admin runs `relay serve enroll --label <you> --key "<enrollment
+2. The admin runs `relevo serve enroll --label <you> --key "<enrollment
    line>"` on the server, and shares back that server's certificate
-   fingerprint (printed by `relay serve init` there).
-3. `relay client add-server <name> <url> --fingerprint sha256:<hex>` records
-   the server in `~/.config/relay/servers.json` and, having a fingerprint to
+   fingerprint (printed by `relevo serve init` there).
+3. `relevo client add-server <name> <url> --fingerprint sha256:<hex>` records
+   the server in `~/.config/relevo/servers.json` and, having a fingerprint to
    pin the connection with, checks enrollment immediately: "enrolled as
    `<label>`", or "not enrolled on `<name>`: give the admin: `<enrollment
    line>`" if step 2 has not happened yet. `--ca system` trusts the system CA
    pool instead of pinning a fingerprint; `--insecure` allows plain HTTP, for
    a server reachable only over an already-trusted tunnel.
-4. `relay servers` lists every configured server and this client's
+4. `relevo servers` lists every configured server and this client's
    enrollment on each: `enrolled as <label>`, `not enrolled`, `unreachable`,
    or `cert changed` (the pinned fingerprint no longer matches -- a hard
    refusal the client never overrides silently).
 
 Then, from any repository:
 ```
-relay add --name api --server zen         # creates the server binding and
-                                           # the local branch relay/api, no worktree
-relay send --name api --file plan.md      # ships plan.md and a bundle of relay/api
-relay status                              # round state comes from the server, polled
+relevo add --name api --server zen         # creates the server binding and
+                                           # the local branch relevo/api, no worktree
+relevo send --name api --file plan.md      # ships plan.md and a bundle of relevo/api
+relevo status                              # round state comes from the server, polled
 ```
 
-What comes back as `relay/<name>`: the result of a closed round is fetched
-into your repository's own `refs/heads/relay/<name>` branch -- fast-forward
+What comes back as `relevo/<name>`: the result of a closed round is fetched
+into your repository's own `refs/heads/relevo/<name>` branch -- fast-forward
 only, exactly like a local builder's worktree branch. If the round closed with
 uncommitted changes on the server, they land on a side ref,
-`refs/relay/<name>/round-<N>`, whose parent is that round's commit on
-`relay/<name>`; the report names it. If that fast-forward collides with a
-branch you have checked out locally, relay retries quietly next tick --
-check out something else, then `relay pull`.
+`refs/relevo/<name>/round-<N>`, whose parent is that round's commit on
+`relevo/<name>`; the report names it. If that fast-forward collides with a
+branch you have checked out locally, relevo retries quietly next tick --
+check out something else, then `relevo pull`.
 
-`relay send` also ships your repository's tags as data beside the bundle, and
+`relevo send` also ships your repository's tags as data beside the bundle, and
 the server sets each one whose commit it already has, so a tagged server
 worktree can `git describe --tags`. Catch-up fetches the builder's own stream
 file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
 round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
-is add-only, never bound to an existing directory); `relay ask`
-("consults are local-only"); `relay fork` from a remote source ("fork across
-servers is not supported"); and `relay bind --resume --rebind` (or
+is add-only, never bound to an existing directory); `relevo ask`
+("consults are local-only"); `relevo fork` from a remote source ("fork across
+servers is not supported"); and `relevo bind --resume --rebind` (or
 `--builder`) against a remote binding ("cannot change a remote
 builder; unbind and add" -- a binding's mode is fixed at creation, the same
-rule a headless binding follows). `relay done` and `relay unbind` tell the
+rule a headless binding follows). `relevo done` and `relevo unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
 the server is treated as already gone, and proceeds).
 
-What `status` and `doctor` show: `relay status` and `relay ui` name a
+What `status` and `doctor` show: `relevo status` and `relevo ui` name a
 remote binding's builder by its server (`zen`), with the
 last round state the daemon observed there (`running`, `idle`, `closed`,
 `needs_you`, `unreachable`, `cert`) in the status column -- read from the
-store, never over the network, so it costs nothing extra. `relay status`,
-`relay pull` and each `relay wait` poll additionally sync every remote
+store, never over the network, so it costs nothing extra. `relevo status`,
+`relevo pull` and each `relevo wait` poll additionally sync every remote
 binding first, so a round the server closed while your daemon was not
 running (or was never started) is collected without it -- a laptop closed
-overnight still shows the finished round on the next `relay status`.
-`relay doctor` adds one row per configured server: reachable and enrolled
+overnight still shows the finished round on the next `relevo status`.
+`relevo doctor` adds one row per configured server: reachable and enrolled
 (`enrolled as <label>`), not yet enrolled (with the line to give the
 admin), unreachable, or a certificate that no longer matches the pinned
 fingerprint.
 
 ### Round budget
 
-Each round carries a budget; past it, relay flags the binding `NEEDS YOU` and
+Each round carries a budget; past it, relevo flags the binding `NEEDS YOU` and
 notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
-The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
+The default is 24 hours; `relevo bind --timeout 2h` sets it per binding.
 
 A headless builder that exits without writing its report file still closes the
-round, and relay delivers its report flagged `unmarked`. Nothing is scraped and
+round, and relevo delivers its report flagged `unmarked`. Nothing is scraped and
 nothing is guessed.
 
 ### Running several builders at once
 
-`relay bind` gives the planner one builder over the current tree. `relay add`
+`relevo bind` gives the planner one builder over the current tree. `relevo add`
 attaches more, each on its own git worktree, so they never contend for files:
 
 ```
-relay bind --builder claude/anthropic/sonnet --name api
-relay add  --name frontend --builder claude/anthropic/sonnet
-relay add  --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
+relevo bind --builder claude/anthropic/sonnet --name api
+relevo add  --name frontend --builder claude/anthropic/sonnet
+relevo add  --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
 
-relay send --name frontend --file ui_plan.md
-relay send --name backend  --file api_plan.md
+relevo send --name frontend --file ui_plan.md
+relevo send --name backend  --file api_plan.md
 ```
 
 Each peer is an ordinary binding: its own round counter, round log, captured
-diffs and budget. `relay status` lists them all, and every verb that acts on a
+diffs and budget. `relevo status` lists them all, and every verb that acts on a
 binding takes `--name`.
 
 Every mutating verb (`bind`, `add`, `fork`, `send`, `done`, `unbind`) ends by
 listing, on stderr, every *other* binding that is waiting on a human — a halt,
 a dead builder, a lost planner — with how long and the verb that resolves it,
-e.g. `waiting on you: api round 4 halted 23m -- relay status --name api`. The
+e.g. `waiting on you: api round 4 halted 23m -- relevo status --name api`. The
 exit code is unchanged; it is a reminder, not a refusal.
 
-Relay does not sequence them and does not merge their trees. The planner
+Relevo does not sequence them and does not merge their trees. The planner
 decides how many builders it needs, which run in parallel and which wait, and
-integrates the results — relay only carries plans out and reports back.
+integrates the results — relevo only carries plans out and reports back.
 
-**`relay add` is not `relay fork`.** A fork continues a timeline: it copies
+**`relevo add` is not `relevo fork`.** A fork continues a timeline: it copies
 round history through a chosen round and starts at the round after it. A peer
 starts at round 1 with an empty log, because it is not a continuation of
 anything.
 
 Headless builders are the cheap way to run several: no terminal per builder,
-no idle harness holding memory. `relay add --name api` gives a peer its own
+no idle harness holding memory. `relevo add --name api` gives a peer its own
 worktree and a fresh process per round.
 
 ### Edges (triggers)
 
 When a plan splits work across two bindings -- one writes the contract,
 another builds against it -- the planner otherwise sits in the middle of
-every handoff: wait for the report, read it, `relay send --name other --file
+every handoff: wait for the report, read it, `relevo send --name other --file
 …`. An **edge** declares that handoff up front:
 
 ```
-relay edge add api --when report --then send --target client --prompt ./client-plan.md
+relevo edge add api --when report --then send --target client --prompt ./client-plan.md
 ```
 
 This says: when `api`'s current round closes and its report exists, hand
-`client-plan.md` to `client` as its next round. Relay never inspects the
+`client-plan.md` to `client` as its next round. Relevo never inspects the
 artifact; it checks existence -- the same fact `queueReport` checks for the
 report itself -- and delivers a prompt the planner wrote ahead of time.
 `--when` names the artifact: `report`, `diff`, `done` or `gate`. `--then`
@@ -841,43 +841,43 @@ still sees the handoff. Either way the edge fires exactly once, on its own
 round's close -- an edge missing its artifact at close is marked skipped and
 never reconsidered, since a round's artifacts are final once it closes.
 
-`relay edge list <source>` prints one line per declared edge, Fired and
-Result included; `relay edge rm <source> <id>` drops one -- removing a fired
+`relevo edge list <source>` prints one line per declared edge, Fired and
+Result included; `relevo edge rm <source> <id>` drops one -- removing a fired
 edge is fine. Builders never declare edges; the CLI is the planner's.
 
 ### Forking a binding
 
-`relay fork` branches a new binding from an earlier round of an existing binding:
+`relevo fork` branches a new binding from an earlier round of an existing binding:
 
 ```
-relay fork webshop --round 2 --new-name webshop-alt
+relevo fork webshop --round 2 --new-name webshop-alt
 ```
 
 - **What is copied:** Round history up through `--round`: `log.jsonl` entries (marked confirmed with no pending delivery) and all round artifacts (`NNN-plan.md`, `NNN-report.md`, `NNN-question.md`, `NNN-diff.patch`).
-- **What is not copied:** Working tree code state is not rewound. By default, relay creates a fresh git worktree at `~/.local/state/relay/.worktrees/<new-name>` on a new branch `relay/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
-- **State layout:** Relay keeps worktrees it creates under `.worktrees/` directly beside `.archive/` in the state root (`~/.local/state/relay/.worktrees/`).
-- **Teardown rule:** Relay removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relay unbind` and `relay gc` leave the worktree untouched and report the exact command to inspect or remove it manually.
+- **What is not copied:** Working tree code state is not rewound. By default, relevo creates a fresh git worktree at `~/.local/state/relevo/.worktrees/<new-name>` on a new branch `relevo/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
+- **State layout:** Relevo keeps worktrees it creates under `.worktrees/` directly beside `.archive/` in the state root (`~/.local/state/relevo/.worktrees/`).
+- **Teardown rule:** Relevo removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relevo unbind` and `relevo gc` leave the worktree untouched and report the exact command to inspect or remove it manually.
 
 
 ### Pausing a binding
 
-`relay pause` is the third lifecycle state between ACTIVE and DONE. It
+`relevo pause` is the third lifecycle state between ACTIVE and DONE. It
 releases what an idle binding is holding — its worktree on disk and its
 builder process — while keeping the branch and the round log.
-`relay bind --resume --name <n>` brings it back at the same path on the same
+`relevo bind --resume --name <n>` brings it back at the same path on the same
 branch.
 
 ```
-relay pause webshop            # release the worktree
-relay pause webshop --commit   # commit everything on the binding branch first, then release
-relay bind --resume --name webshop   # restore the worktree and spawn a fresh builder
+relevo pause webshop            # release the worktree
+relevo pause webshop --commit   # commit everything on the binding branch first, then release
+relevo bind --resume --name webshop   # restore the worktree and spawn a fresh builder
 ```
 
-- **Refused while a round is open**: wait for it, or `relay done`. There is a
+- **Refused while a round is open**: wait for it, or `relevo done`. There is a
   builder that may still be writing.
 - **A dirty tree is refused** unless `--commit`. With `--commit`, everything in
   the tree is committed on the binding's branch (message
-  `[relay] <name>: paused after round N`) before the worktree is removed. relay
+  `[relevo] <name>: paused after round N`) before the worktree is removed. relevo
   prints the commit's short sha.
 - **The branch is never removed** and neither is the log; pausing keeps the
   record and the commits, exactly as `done` does.
@@ -888,19 +888,19 @@ relay bind --resume --name webshop   # restore the worktree and spawn a fresh bu
   order (or a fresh headless endpoint). The round number is unchanged and the
   log records `resumed`.
 - **Remote and `--cwd` bindings are refused**: a remote binding has no local
-  worktree (`relay done` ends it), and a `--cwd` binding drives a tree
-  relay did not create, so there is nothing to release.
-- **`gc` leaves PAUSED alone** — it sweeps only `DONE`. `relay unbind` works on
+  worktree (`relevo done` ends it), and a `--cwd` binding drives a tree
+  relevo did not create, so there is nothing to release.
+- **`gc` leaves PAUSED alone** — it sweeps only `DONE`. `relevo unbind` works on
   a paused binding when you want it gone; use `--archive` to keep the log.
 
 ### Stopping a round
 
-`relay stop` ends an open round on purpose. The builder runs with no stdin, so
-there is nothing to ask it: `relay stop` kills the process and closes the round
+`relevo stop` ends an open round on purpose. The builder runs with no stdin, so
+there is nothing to ask it: `relevo stop` kills the process and closes the round
 without a report (`noreport stopped`).
 
 ```
-relay stop webshop               # end the round now
+relevo stop webshop               # end the round now
 ```
 
 - **A stop is not a failure**, so it never charges a switch and never excludes
@@ -914,22 +914,22 @@ relay stop webshop               # end the round now
 A remote binding's round is stopped on its server, and the binding stays: on
 both sides only the round ends. A round still queued on the server is dropped
 from the queue instead, since there is no process to kill. A server that
-predates this refuses the request with a pointer to `relay unbind webshop`,
+predates this refuses the request with a pointer to `relevo unbind webshop`,
 which stops the round and drops the binding.
 
 ### Landing a branch
 
-`relay land <name>` is the mechanical version of the sequence a planner
+`relevo land <name>` is the mechanical version of the sequence a planner
 types by hand after a green round. It runs, in order, and stops at the first
 failure with **nothing pushed** except where noted:
 
 ```
-relay land webshop            # fetch, rebase onto origin/main, gate, push, print the PR command
-relay land webshop --pr       # ... and run `gh pr create --head relay/webshop --base main --fill`
-relay land webshop --merge    # merge origin/main in instead of rebasing (no rewrite, no force)
-relay land webshop --onto trunk   # for a binding that recorded no base branch
-relay land webshop --force    # land while a round is still open
-relay land webshop --no-gate  # skip the gate for this land (the result says "skipped")
+relevo land webshop            # fetch, rebase onto origin/main, gate, push, print the PR command
+relevo land webshop --pr       # ... and run `gh pr create --head relevo/webshop --base main --fill`
+relevo land webshop --merge    # merge origin/main in instead of rebasing (no rewrite, no force)
+relevo land webshop --onto trunk   # for a binding that recorded no base branch
+relevo land webshop --force    # land while a round is still open
+relevo land webshop --no-gate  # skip the gate for this land (the result says "skipped")
 ```
 
 1. **Preconditions.** The binding must be a local binding with a worktree of
@@ -941,17 +941,17 @@ relay land webshop --no-gate  # skip the gate for this land (the result says "sk
    `git rebase origin/<base>`. A conflict aborts the rebase, lists the
    conflicting paths, changes nothing and exits **3**.
 3. **Gate.** The binding's gate runs on the rebased tree (`sh -c "<gate>
-   2>&1"`), with its output in `~/.local/state/relay/<name>/land-gate.log`. A
+   2>&1"`), with its output in `~/.local/state/relevo/<name>/land-gate.log`. A
    failing gate pushes nothing and exits **2**.
 4. **Push.** `git push -u origin <branch>`, with `--force-with-lease` when the
    branch already exists on the remote -- the rebase rewrote it.
 5. **PR.** With `--pr` and `gh` on PATH, `gh pr create --head <branch> --base
    <base> --fill` runs and its URL is recorded. Otherwise the exact command is
-   printed for you to run. If `gh` fails *after* the push, relay says so: the
+   printed for you to run. If `gh` fails *after* the push, relevo says so: the
    branch is on origin, and only the PR is missing.
 6. **Log.** `landed <branch> -> <base> [pr <url>]`, with the time recorded on
-   the binding. `relay status` then shows `landed` on the round line until the
-   next `relay send` clears it.
+   the binding. `relevo status` then shows `landed` on the round line until the
+   next `relevo send` clears it.
 
 The base *branch* is recorded at `add`/`fork` time: the branch the source
 checkout had checked out (e.g. `main`). An older binding, a `--cwd` binding,
@@ -969,48 +969,48 @@ to forget).
 
 ### Cleaning up finished bindings
 
-A binding leaves `$XDG_STATE_HOME/relay/<name>/` behind (defaulting to
-`~/.local/state/relay/<name>/`): `bind.json`, `log.jsonl`, and every round's
+A binding leaves `$XDG_STATE_HOME/relevo/<name>/` behind (defaulting to
+`~/.local/state/relevo/<name>/`): `bind.json`, `log.jsonl`, and every round's
 plan, report, patch (`NNN-diff.patch`) and captured dialog. It also holds a
-`.viewed` sidecar (#143): `relay diff`, `relay log` and `relay show` each
+`.viewed` sidecar (#143): `relevo diff`, `relevo log` and `relevo show` each
 stamp its mtime after a successful print of a live binding, and `status`'s
 `unread`/`●new` compares the binding's newest report against that stamp.
-`relay ui` never writes it directly -- it stamps through the same call `diff`/
+`relevo ui` never writes it directly -- it stamps through the same call `diff`/
 `log`/`show` use, keeping `ui` itself read-only of `bind.json` and everything
-else in the directory. `relay done` stops relaying and, when the binding's worktree is clean and
+else in the directory. `relevo done` stops relaying and, when the binding's worktree is clean and
 no round is open, removes the worktree so its branch can be checked out
-in the main repo (`removed worktree ... (branch relay/x is free to check
-out)`); a dirty tree or an open round is kept and `relay gc` retries
+in the main repo (`removed worktree ... (branch relevo/x is free to check
+out)`); a dirty tree or an open round is kept and `relevo gc` retries
 when it is clean. The binding directory itself is never removed by `done`
 — the log is the record of what the planner actually told the builder.
-`relay bind --resume <name>` puts a removed worktree back on the same
+`relevo bind --resume <name>` puts a removed worktree back on the same
 branch at the same path; a DONE binding may then be rebound with
 `--rebind`, since the old builder cannot work in the recreated directory.
 
-relay deletes a branch in **zero** places: not at `unbind`, `gc`, `done`, nor
-on an add rollback. The one exception is a `relay/<name>` branch `add --server`
+relevo deletes a branch in **zero** places: not at `unbind`, `gc`, `done`, nor
+on an add rollback. The one exception is a `relevo/<name>` branch `add --server`
 created seconds earlier and must undo because the server refused the binding.
 
 ```
-relay unbind ai              # delete the binding and its whole directory
-relay unbind ai --archive    # pack it into .archive/ai-<date>.tar.gz, keeping the log
-relay gc                     # archive every DONE binding into .archive/
-relay gc --delete            # remove them instead
+relevo unbind ai              # delete the binding and its whole directory
+relevo unbind ai --archive    # pack it into .archive/ai-<date>.tar.gz, keeping the log
+relevo gc                     # archive every DONE binding into .archive/
+relevo gc --delete            # remove them instead
 ```
 
-Archives are gzipped tarballs under `~/.local/state/relay/.archive/`. Archiving is the default because every other destruction decision in relay keeps by default. A typical
+Archives are gzipped tarballs under `~/.local/state/relevo/.archive/`. Archiving is the default because every other destruction decision in relevo keeps by default. A typical
 eight-round binding compresses about 60x — a thousand of them is under 2 MB — so
 archiving is effectively free. To read one back:
 
 ```
-tar -xzf ~/.local/state/relay/.archive/ai-20260905-121500.tar.gz -O ai/log.jsonl
+tar -xzf ~/.local/state/relevo/.archive/ai-20260905-121500.tar.gz -O ai/log.jsonl
 ```
 
 `gc` only touches bindings the planner marked `DONE`. A `PAUSED`, a `BROKEN`
 or an `ORPHANED` one is left alone: the broken/orphaned pair still needs a
 human, and clearing it would throw away the state that explains why it stopped,
-while a paused binding is released but alive — `relay bind --resume` brings it
-back, and `relay unbind` is how to clear it.
+while a paused binding is released but alive — `relevo bind --resume` brings it
+back, and `relevo unbind` is how to clear it.
 
 Snapshot tree objects created during round diff capture are written directly to
 git's object database unreferenced. They never alter repository refs, branches,
@@ -1024,34 +1024,34 @@ directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
 other bindings (a fork inherits its source's unless you pass your own), which
 binding and round it was forked from, and the planner's own harness
-transcript file path, when relay can locate one at bind time. None of this
+transcript file path, when relevo can locate one at bind time. None of this
 changes what you see day to day; it exists for the coming history database
 below.
 
 ### The database
 
-relay keeps a pure-Go sqlite database at `~/.local/state/relay/relay.db`,
+relevo keeps a pure-Go sqlite database at `~/.local/state/relevo/relevo.db`,
 beside `ledger.json` and `availability.json`. Files stay the write side --
-`bind.json`, `log.jsonl` and every round file are still what relay itself
+`bind.json`, `log.jsonl` and every round file are still what relevo itself
 reads and writes day to day -- but an ingester reads a binding's directory,
 live or archived, and upserts everything it holds (the repo, the planner,
 the binding, every round with its outcome and builder, every log event,
 every plan/report/diff/drift/gate-log/question/answer/consult artifact, and
 every transcript record) into the database. The daemon runs it over every
 live binding at the end of each tick, with per-file cursors so an idle tick
-writes nothing; `relay db backfill` runs it once over every archived
+writes nothing; `relevo db backfill` runs it once over every archived
 tarball and live directory on a machine, and is safe to re-run -- the same
 cursors make a second pass a no-op.
 
 ```
-relay db path                                          print the database path
-relay db migrate                                       open the database (creating and migrating it if needed) and print its schema version
-relay db stats                                          row counts per table, on-disk size, schema version, and the newest round
-relay db backfill [--dry-run] [--archive-only|--live-only]
+relevo db path                                          print the database path
+relevo db migrate                                       open the database (creating and migrating it if needed) and print its schema version
+relevo db stats                                          row counts per table, on-disk size, schema version, and the newest round
+relevo db backfill [--dry-run] [--archive-only|--live-only]
                                                          ingest every archived tarball (oldest first) and every live binding once
 ```
 
-`relay db backfill` prints one line per source -- `<name>  <stamp>  rounds N
+`relevo db backfill` prints one line per source -- `<name>  <stamp>  rounds N
 events N artifacts N transcript N`, or `<name>  FAILED: <err>` for a source
 it could not read -- and exits 1 if any source failed, after finishing the
 rest. `--dry-run` opens every source and ingests into a scratch database
@@ -1059,17 +1059,17 @@ instead of the real one, so the printed counts (prefixed `would`) are real
 without writing anything the machine keeps; `--archive-only` and
 `--live-only` narrow it to one half of the state directory. A database built
 before events were linked to their rounds has every `event.round_id` null;
-delete `relay.db` and run `relay db backfill` again to rebuild it with the
-links so `relay show --log` and a past binding's `log` tab scope correctly.
+delete `relevo.db` and run `relevo db backfill` again to rebuild it with the
+links so `relevo show --log` and a past binding's `log` tab scope correctly.
 
-### relay history
+### relevo history
 
-`relay history` reads the database, not the filesystem: one line per round
-across every binding relay has ever recorded -- live or archived -- newest
+`relevo history` reads the database, not the filesystem: one line per round
+across every binding relevo has ever recorded -- live or archived -- newest
 first.
 
 ```
-relay history [--here|--repo <url|dir>]   filter to a repo: --here resolves the current directory's
+relevo history [--here|--repo <url|dir>]   filter to a repo: --here resolves the current directory's
                                            origin url (or its git common dir with no remote);
                                            --repo takes either form directly
               [--feature LABEL]           filter to a --feature label
@@ -1134,21 +1134,21 @@ tokens, cost and the last round's date. A flag overrides the same key in
 An unknown key, a bad enum value or a bad number is a usage error (exit 2).
 
 ```
-$ relay history -q "harness:agy outcome:halted since:30d"
-$ relay history -q "auth cost>1" --by builder
-$ relay history --by day --since 14d
+$ relevo history -q "harness:agy outcome:halted since:30d"
+$ relevo history -q "auth cost>1" --by builder
+$ relevo history --by day --since 14d
 ```
 
-### relay show
+### relevo show
 
-`relay show` prints one round's plan, report, diff, drift, log or
+`relevo show` prints one round's plan, report, diff, drift, log or
 transcript. A live binding is read straight from its files, exactly as
 today; anything not live -- an archived binding, or one this machine's
 database otherwise knows about -- is read from the database instead, so a
 round from months ago renders the same way a live one does.
 
 ```
-relay show <name> [--round N]                      the round to read; default: the newest completed one
+relevo show <name> [--round N]                      the round to read; default: the newest completed one
                    [--plan|--report|--diff|--drift|--log|--transcript]
                                                      which section; default: --plan; only one may be given
                    [--json]                         the ShowResult as JSON (Events included for --log)
@@ -1159,22 +1159,22 @@ with `· archived <date>` appended for a non-live binding -- so stdout is
 always just the section itself and safe to pipe. A round with no such
 section (an open round with no diff yet, say) prints `no <section> for
 round N` and exits 0 rather than erroring. `--log` prints the round's
-events exactly as `relay log` does; `--transcript` prints the builder's
+events exactly as `relevo log` does; `--transcript` prints the builder's
 rendered stream. Reading `--round N` outside the binding's round count, or
 naming a binding neither live nor in the database, exits 1:
 
 ```
-$ relay show api-auth --report
+$ relevo show api-auth --report
 api-auth round 3 of 4 · report
 report text here
 ```
 
 ### done and unbind are the destructive verbs
 
-`relay done` and `relay unbind` both require a binding name (`relay done ai`, or
+`relevo done` and `relevo unbind` both require a binding name (`relevo done ai`, or
 `--name ai`) or `--pick`, which lists the bindings and runs the verb on the one
-you choose. Neither resolves the current directory for you: a bare `relay done` once ended a live
-loop by accident, and the recovery is `relay bind --resume --name <name>`.
+you choose. Neither resolves the current directory for you: a bare `relevo done` once ended a live
+loop by accident, and the recovery is `relevo bind --resume --name <name>`.
 `--pick` is explicit for the same reason -- a bare verb never opens a picker,
 so a planner agent can never fall into one.
 And because a popup takes focus the instant it opens, `Enter` on a binding
@@ -1183,37 +1183,37 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 ## Status line
 
-`relay statusline` shows this planner's live bindings, one row each, under
+`relevo statusline` shows this planner's live bindings, one row each, under
 the Claude Code prompt; it shows nothing on error and never probes a builder.
 
 Add this to `~/.claude/settings.json`:
 
 ```json
-"statusLine": { "type": "command", "command": "relay statusline", "refreshInterval": 1 }
+"statusLine": { "type": "command", "command": "relevo statusline", "refreshInterval": 1 }
 ```
 
-One precondition: `relay` must be on the `PATH` of the Claude Code process.
-The planner session is identified by `RELAY_PLANNER`, which the relay plugin's
+One precondition: `relevo` must be on the `PATH` of the Claude Code process.
+The planner session is identified by `RELEVO_PLANNER`, which the relevo plugin's
 hook exports.
 
-Claude Code renders a few cells less than `COLUMNS`; relay subtracts 4 by
+Claude Code renders a few cells less than `COLUMNS`; relevo subtracts 4 by
 default (measured on the fullscreen TUI). If the right-hand `age · STATE`
 cell is clipped or sits short of the edge, measure yours and set
-`RELAY_STATUSLINE_MARGIN` in the environment Claude Code starts from. To
+`RELEVO_STATUSLINE_MARGIN` in the environment Claude Code starts from. To
 measure, put this in `statusLine.command` for one refresh and count the
 cells before Claude Code's `…`:
 
     sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
 
-Each row is `○ name  rN · builder · what relay is waiting on  …  age · STATE`,
+Each row is `○ name  rN · builder · what relevo is waiting on  …  age · STATE`,
 where `builder` is the harness segment of the candidate token, and `age` is
 time since the last plan, report or question crossed.
 
 ## Candidates
 
-A candidate is one way to fill a role, named by the token `harness/provider/model`. `harness` and `provider` are single segments; `model` is the rest, so `opencode/openrouter/z-ai/glm-5.3-flash` is one token. **relay ships no candidates**: which model you are entitled to run is a fact about your accounts, not about relay.
+A candidate is one way to fill a role, named by the token `harness/provider/model`. `harness` and `provider` are single segments; `model` is the rest, so `opencode/openrouter/z-ai/glm-5.3-flash` is one token. **relevo ships no candidates**: which model you are entitled to run is a fact about your accounts, not about relevo.
 
-Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `~/.config/relay/candidates.json`), a JSON array:
+Candidates are configured in `$XDG_CONFIG_HOME/relevo/candidates.json` (default `~/.config/relevo/candidates.json`), a JSON array:
 
 ```json
 [
@@ -1240,18 +1240,18 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 ]
 ```
 
-- `harness` — a kind relay knows: `agy`, `claude`, `opencode`, `codex`. Required.
+- `harness` — a kind relevo knows: `agy`, `claude`, `opencode`, `codex`. Required.
 - `provider` — who enforces the quota; free text. Required.
 - `model` — passed to the harness as-is. Required.
 - `roles` — non-empty list of roles from `builder`, `reviewer`, `researcher`. Required.
-- `tree` — `binding` (the default) or `none` (which `relay ask` refuses today).
-- `extra_args` — appended verbatim after what relay renders.
+- `tree` — `binding` (the default) or `none` (which `relevo ask` refuses today).
+- `extra_args` — appended verbatim after what relevo renders.
 - `tier` — default permission tier for this candidate: `harness`, `read`, `edit`, `yolo`. Optional; defaults to role default in policy, else `harness`.
 - `denial_patterns` — regexes that replace the harness default denial patterns for this candidate when detecting permission-blocked exits. Optional.
 - `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
 - `dialog_patterns` — extra regexes appended to the harness defaults, matched against a runner's output to detect a blocking dialog; a match refuses `send` as blocked; extend-only.
 
-A file that does not validate stops every relay command with a message naming the entry; a missing file is zero candidates.
+A file that does not validate stops every relevo command with a message naming the entry; a missing file is zero candidates.
 
 | Name | Shape | Definition |
 | --- | --- | --- |
@@ -1259,9 +1259,9 @@ A file that does not validate stops every relay command with a message naming th
 | `reviewer` | consult | `reviewer` |
 | `researcher` | consult | `researcher` |
 
-A role is relay's name for a job; the harness definition it selects is what `relay agent print` emits.
+A role is relevo's name for a job; the harness definition it selects is what `relevo agent print` emits.
 
-### How relay launches one
+### How relevo launches one
 
 | kind | args |
 | --- | --- |
@@ -1272,46 +1272,46 @@ A role is relay's name for a job; the harness definition it selects is what `rel
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
-Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relay adds only its own state directory.
+Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
 
-Any `extra_args` are appended verbatim after what relay renders. Because relay renders the argv, the token in `relay status` is exactly what was started.
+Any `extra_args` are appended verbatim after what relevo renders. Because relevo renders the argv, the token in `relevo status` is exactly what was started.
 
-> **Note on `--dangerously-skip-permissions`:** it lets the builder act without approval prompts, which makes an unattended relay loop work, but it is a real grant of trust. It is an `extra_args` entry you add once you have watched a few rounds and trust the loop with that tree; relay never adds it.
+> **Note on `--dangerously-skip-permissions`:** it lets the builder act without approval prompts, which makes an unattended relevo loop work, but it is a real grant of trust. It is an `extra_args` entry you add once you have watched a few rounds and trust the loop with that tree; relevo never adds it.
 
 ### Choosing a candidate
 
-Pass the token to `relay bind --builder claude/anthropic/sonnet` and relay
+Pass the token to `relevo bind --builder claude/anthropic/sonnet` and relevo
 starts exactly that, gated or not (with a `note:` on stderr if it is).
 
-With `--builder` omitted, relay decides, by one rule:
+With `--builder` omitted, relevo decides, by one rule:
 
 - exactly one configured candidate serves the role → that one, unless it
   is gated;
 - several serve it and `policy.json` orders them (see [Policy](#policy))
   → the first in that order that is not gated, then any serving
   candidate the order does not list, in token order;
-- several serve it and nothing is ordered → relay refuses and lists
+- several serve it and nothing is ordered → relevo refuses and lists
   them. Name one, or write the order.
 
-When every candidate serving the role is gated, relay refuses and says
+When every candidate serving the role is gated, relevo refuses and says
 why each one is; an explicit `--builder` still bypasses that. The same
-rule applies to `relay add`, `relay fork` (which first inherits the
-source's candidate -- an inherited token counts as explicit) and `relay
+rule applies to `relevo add`, `relevo fork` (which first inherits the
+source's candidate -- an inherited token counts as explicit) and `relevo
 ask --candidate`.
 
 Every choice is written down. `bind`, `add`, `fork` and `ask` print one
 line saying what was picked and why, and the same line lands in the
-binding's log as a `pick` entry, so `relay log` shows it later:
+binding's log as a `pick` entry, so `relevo log` shows it later:
 
 ```
 picked claude/anthropic/sonnet for builder: order #2; skipped agy/google/gemini-3.8-flash-high (rate-limited until 20:28)
 ```
 
-`relay candidates` prints the configured tokens with their roles.
+`relevo candidates` prints the configured tokens with their roles.
 
 ### Policy
 
-`~/.config/relay/policy.json` is where you tell relay the order to try
+`~/.config/relevo/policy.json` is where you tell relevo the order to try
 candidates in, per role:
 
 ```json
@@ -1344,7 +1344,7 @@ you add to `candidates.json` without adding it here is tried last, after
 everything listed. An entry here that names a candidate that is not
 configured, or one that does not serve the role, is skipped -- never an
 error, because removing a candidate must not stop every command -- and
-`relay policy` and `relay doctor` warn about it. Both also say when several
+`relevo policy` and `relevo doctor` warn about it. Both also say when several
 candidates serve a role and no order is set, since an omitted `--builder`
 refuses in that state. `tier` specifies default permission tiers per role
 (`builder`, `reviewer`, `researcher`), defaulting to `harness`. `max_tier`
@@ -1353,21 +1353,21 @@ defaulting to `edit`; commands requesting a tier above `max_tier` require
 `--allow-yolo` or raising `max_tier`. `max_switches` bounds
 how many times the daemon may replace a builder mid-round before the
 binding goes `NEEDS YOU`; absent defaults to 2, `0` turns switching off.
-`limit_gate_default_ms` is how long a rate limit relay detects itself
+`limit_gate_default_ms` is how long a rate limit relevo detects itself
 gates the provider when the matched line names no reset time; absent
 defaults to one hour. `stall_after_ms` is how long a live headless
-builder's stream may go without an event before `relay status` and
-`relay ui` label it `stalled`; absent defaults to fifteen minutes, and
+builder's stream may go without an event before `relevo status` and
+`relevo ui` label it `stalled`; absent defaults to fifteen minutes, and
 must be `> 0` when present. `progress_interval_ms` is how often the
 daemon samples a binding's progress signals while its round is open;
 absent defaults to thirty seconds, and must be `> 0` when present.
 `explore_after_ms` is how long a builder's output or screen may keep
-moving while its tree has not before relay labels it `exploring`; absent
+moving while its tree has not before relevo labels it `exploring`; absent
 defaults to twenty minutes, and must be `> 0` when present.
 `stale_after_ms` is how long a `NEEDS YOU` or `HELD` binding may sit
-unacted before relay labels it `stale`; absent defaults to four hours,
+unacted before relevo labels it `stale`; absent defaults to four hours,
 and must be `> 0` when present. `scan_patterns` is an optional list of extra
-regular expressions appended to relay's built-in instruction-shaped scan list;
+regular expressions appended to relevo's built-in instruction-shaped scan list;
 each pattern must compile. `gate` configures the default acceptance command
 (see [Gate](#gate) below): `default` is the command a binding gets when it
 does not set `--gate` or `--no-gate` itself, absent or `""` meaning no gate;
@@ -1378,16 +1378,16 @@ rounds](#repair-rounds) below), absent or `0` meaning none, and must be
 `>= 0` when present.
 
 `classify` configures an optional classifier (TypeSafe's Jev model) to run
-beside the regex scan. When absent, relay scans with regexes only. The block
+beside the regex scan. When absent, relevo scans with regexes only. The block
 requires `"provider": "jev"`; `model` defaults to `"jev-latest"`,
 `injection_threshold` defaults to `0.7`, and `timeout_ms` defaults to `4000`.
 The API key is read from the `TYPESAFE_API_KEY` environment variable or from
-`~/.config/relay/typesafe.key`. The key is stripped from every builder's
-environment so that agents running arbitrary plans never inherit relay's own secrets.
+`~/.config/relevo/typesafe.key`. The key is stripped from every builder's
+environment so that agents running arbitrary plans never inherit relevo's own secrets.
 The key file exists because the daemon runs as a systemd user unit that inherits no login
 environment (`systemctl --user set-environment TYPESAFE_API_KEY=...` also works). The key
-file must be mode 0600 and is ignored otherwise, with `relay doctor` naming it. `relay doctor`
-reports which key source was found or warns if neither is set. In `relay log`, an entry like
+file must be mode 0600 and is ignored otherwise, with `relevo doctor` naming it. `relevo doctor`
+reports which key source was found or warns if neither is set. In `relevo log`, an entry like
 `flagged=3 by=both p=0.94` records the de-duplicated union of regex-hit lines
 and classifier paragraphs at or above the threshold, which judge flagged the
 content (`regex`, `jev`, or `both`), and the maximum probability seen across
@@ -1395,10 +1395,10 @@ all paragraphs. The 0.7 threshold is provisional pending `make jev`. Model
 output is never altered and delivery is never held: a high probability flags the
 entry for the planner to see, but never halts delivery.
 
-`relay policy` shows what relay would do right now:
+`relevo policy` shows what relevo would do right now:
 
 ```
-builder  (order set in ~/.config/relay/policy.json)
+builder  (order set in ~/.config/relevo/policy.json)
   1  agy/google/gemini-3.8-flash-high        order     rate-limited until 20:28
   2  claude/anthropic/sonnet                 order     <- would pick
   3  opencode/openrouter/z-ai/glm-5.3-flash  unlisted  limited 2x around 14:00 (30d)
@@ -1407,7 +1407,7 @@ reviewer  (no order set)
 ```
 
 The marker is computed by the same code `bind` runs, so it cannot
-disagree with what `bind` does next. There is no `relay policy set`:
+disagree with what `bind` does next. There is no `relevo policy set`:
 edit the file. The rest of #61 -- scoring for unordered roles, peak
 windows, mid-round switching -- will add keys to this file as it
 lands.
@@ -1420,8 +1420,8 @@ is one way to fill a role -- a `harness/provider/model`. Each role picks its
 own candidates, in order, at its own tier. Three roles are built in: `builder`,
 `reviewer` and `researcher`.
 
-Roles live in `$XDG_CONFIG_HOME/relay/roles.json` (default
-`~/.config/relay/roles.json`), an object keyed by role name:
+Roles live in `$XDG_CONFIG_HOME/relevo/roles.json` (default
+`~/.config/relevo/roles.json`), an object keyed by role name:
 
 ```json
 {
@@ -1442,10 +1442,10 @@ Roles live in `$XDG_CONFIG_HOME/relay/roles.json` (default
 ```
 
 - `shape` -- `writer` or `reader`. The built-in rows have one already; a new
-  role must give it, and must be a `reader` for now: it runs with `relay ask
+  role must give it, and must be a `reader` for now: it runs with `relevo ask
   --role <name>`.
 - `gate` -- for a writer, whether its round closes on a gate.
-- `definitions.<kind>.agent` -- the definition relay launches for that harness
+- `definitions.<kind>.agent` -- the definition relevo launches for that harness
   kind; `requires` names the definitions that agent dispatches to.
 - `candidates` -- the role's own candidate tokens, most preferred first.
 - `tier` -- the role's permission tier.
@@ -1454,7 +1454,7 @@ The built-in rows (builder, reviewer, researcher) are defaults, and a row
 overrides them field by field. Unknown keys are warnings, not errors.
 
 **Custom definitions.** A definition is *custom* when its name -- or a name it
-requires -- is not one relay ships. relay never installs or refreshes a custom
+requires -- is not one relevo ships. relevo never installs or refreshes a custom
 definition; each harness looks for it in its own place:
 
 - claude: `~/.claude/agents/<n>.md`
@@ -1463,23 +1463,23 @@ definition; each harness looks for it in its own place:
 - codex: `~/.codex/<n>.config.toml`
 
 A missing custom definition gates its candidates for that role only, and
-`relay doctor` lists it.
+`relevo doctor` lists it.
 
-**Bring your own agent.** Everything relay's round protocol needs travels in
-the prompt relay sends: the working tree and its `git status` check, the plan
-path, the report path, the done marker and the closing `relay` block. A custom
+**Bring your own agent.** Everything relevo's round protocol needs travels in
+the prompt relevo sends: the working tree and its `git status` check, the plan
+path, the report path, the done marker and the closing `relevo` block. A custom
 definition only shapes behaviour; `requires` names the definitions your agent
 dispatches to (the shipped builder requires `researcher`).
 
-**Migrating.** Without `roles.json`, relay keeps reading `candidates.json`'s
-`roles`/`tier` and `policy.json`'s `order`/`tier`, and nothing changes. `relay
+**Migrating.** Without `roles.json`, relevo keeps reading `candidates.json`'s
+`roles`/`tier` and `policy.json`'s `order`/`tier`, and nothing changes. `relevo
 roles init` writes `roles.json` from them (`--dry-run`, `--force`). Once the
-file exists, those fields are ignored and `relay doctor` lists them -- so
-delete them only after every relay process on the machine is upgraded: an
-older relay does not know `roles.json`.
+file exists, those fields are ignored and `relevo doctor` lists them -- so
+delete them only after every relevo process on the machine is upgraded: an
+older relevo does not know `roles.json`.
 
-**Seeing it.** `relay roles` lists each role's shape, candidates, tier and
-definitions; `relay policy` adds `(roles.json)` per role; `relay status --json`
+**Seeing it.** `relevo roles` lists each role's shape, candidates, tier and
+definitions; `relevo policy` adds `(roles.json)` per role; `relevo status --json`
 has `builder_definition` for a custom builder.
 
 **Remote builders.** A server resolves roles from its *own* config, not the
@@ -1487,56 +1487,56 @@ client's.
 
 ### Availability
 
-relay keeps a ledger of when a candidate could not be used: spawn failures it
+relevo keeps a ledger of when a candidate could not be used: spawn failures it
 observed itself, rate limits you report. It shows the ledger, and an omitted
 `--builder` skips what the ledger gates (see [Choosing a
 candidate](#choosing-a-candidate)). The file is
-`~/.local/state/relay/ledger.json`.
+`~/.local/state/relevo/ledger.json`.
 
 Report a limit with:
 
 ```
-relay unavailable claude/anthropic/sonnet --reason "5-hour window"
-relay unavailable claude/anthropic/sonnet --for 2h
-relay available anthropic
+relevo unavailable claude/anthropic/sonnet --reason "5-hour window"
+relevo unavailable claude/anthropic/sonnet --for 2h
+relevo available anthropic
 ```
 
 A limit gates the **provider** (every candidate with `provider: anthropic`),
 because that is who enforces the quota, not the model. Without `--for` it
-stays gated until you run `relay available`, because relay does not know
+stays gated until you run `relevo available`, because relevo does not know
 your provider's reset schedule.
 
-`relay available` also clears the gate on every server your bindings name and
-prints each server's answer; on a box running `relay serve`, use `relay serve
+`relevo available` also clears the gate on every server your bindings name and
+prints each server's answer; on a box running `relevo serve`, use `relevo serve
 available`.
 
-Spawn failures need no command: relay records one itself when starting an
+Spawn failures need no command: relevo records one itself when starting an
 agent fails, gating that one candidate for ten minutes, and it expires on
 its own.
 
-Where it shows: `relay status` gains a `candidates` block only while
-something is gated; `relay candidates` marks gated rows `unavailable:`;
-`relay doctor` warns per gated candidate with the command that clears it.
+Where it shows: `relevo status` gains a `candidates` block only while
+something is gated; `relevo candidates` marks gated rows `unavailable:`;
+`relevo doctor` warns per gated candidate with the command that clears it.
 `bind`/`add`/`fork`/`ask` with an explicit token print a `note:` on
 stderr when the candidate is gated and **proceed** -- you named it. With
 the token omitted they skip gated candidates and refuse when nothing
 ungated serves the role.
 
 A candidate whose harness role files are missing on disk is gated the same
-way (`roles missing` in `relay policy`, `relay candidates`, `relay
-doctor`), fixed with `relay agent install --kind <kind>` -- except an
+way (`roles missing` in `relevo policy`, `relevo candidates`, `relevo
+doctor`), fixed with `relevo agent install --kind <kind>` -- except an
 explicit `--builder` pick of it is **refused**, not allowed to proceed,
-because it cannot succeed. `relay serve` logs each configured harness
+because it cannot succeed. `relevo serve` logs each configured harness
 kind's role coverage once at startup.
 
 #### Mid-round switching
 
-A builder relay spawned can be replaced by the daemon while a round is
+A builder relevo spawned can be replaced by the daemon while a round is
 open, in two cases:
 
 - its process exits without writing a report;
-- you gate its provider with `relay unavailable` -- which is how you
-  tell relay a running builder hit its limit. The command names the
+- you gate its provider with `relevo unavailable` -- which is how you
+  tell relevo a running builder hit its limit. The command names the
   bindings the daemon will switch.
 
 The daemon resolves `builder` again through `policy.json` order and the
@@ -1550,38 +1550,38 @@ tree. A `switch` entry in the log says what was tried and why:
 switched builder (rate-limited: 5h window): picked opencode/openrouter/z-ai/glm-5.3-flash for builder: order #3; skipped claude/anthropic/sonnet (rate-limited until cleared)
 ```
 
-`relay status` shows `switched 1x` on the builder line. After
+`relevo status` shows `switched 1x` on the builder line. After
 `max_switches` replacements in one round (default 2; set it in
 `policy.json`, `0` turns switching off), or when nothing ungated
 serves `builder`, the binding goes `NEEDS YOU` with the reason, and
-recovers on its own once `relay available` clears a provider. A
+recovers on its own once `relevo available` clears a provider. A
 failed replacement spawn counts as a switch and the daemon walks to
 the next candidate. The halt always states its reason, even on a round
-that has already notified once; a `relay send` re-send resets the
+that has already notified once; a `relevo send` re-send resets the
 round's switch budget, since the human asked for another attempt.
 
-A builder gone between rounds is `BROKEN` as before: `relay bind --resume`
-starts a fresh one. relay selects a role for every builder it starts, with
+A builder gone between rounds is `BROKEN` as before: `relevo bind --resume`
+starts a fresh one. relevo selects a role for every builder it starts, with
 `--agent` on the launch line.
 
 `aliases.json` from earlier versions is no longer read.
 
 #### History
 
-Every gate relay records -- a limit you report, a spawn failure it hit
--- is also kept for 30 days in `~/.local/state/relay/availability.json`, by
-provider and local hour. `relay policy` shows it twice: a `limited 3x
+Every gate relevo records -- a limit you report, a spawn failure it hit
+-- is also kept for 30 days in `~/.local/state/relevo/availability.json`, by
+provider and local hour. `relevo policy` shows it twice: a `limited 3x
 around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
-cue to write a different order, or to `relay unavailable` a provider
+cue to write a different order, or to `relevo unavailable` a provider
 before it bites. Older installs are migrated on first read.
 
 ## Permission tiers
 
-relay defines four permission tiers that control how autonomously agents may use tools and make changes:
+relevo defines four permission tiers that control how autonomously agents may use tools and make changes:
 
-- `harness` — relay passes no permission flags to the harness; the harness CLI defaults or configuration files decide (relay default). Outside the tier order.
+- `harness` — relevo passes no permission flags to the harness; the harness CLI defaults or configuration files decide (relevo default). Outside the tier order.
 - `read` — read-only inspection and planning; write operations are denied.
 - `edit` — file editing and standard workspace modification commands permitted.
 - `yolo` — full autonomy; interactive permission prompts and confirmation dialogs bypassed.
@@ -1597,61 +1597,61 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 
-codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relay stages under `~/.local/state/relay/<binding>/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relay adds the binding's state directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
+codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's state directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
 ### Ceiling semantics and ordering
 
 Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
 
 `max_tier` in `policy.json` defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
-- The command includes `--allow-yolo` on the command line (e.g. `relay bind --tier yolo --allow-yolo` or `relay send --tier yolo --allow-yolo`), or
+- The command includes `--allow-yolo` on the command line (e.g. `relevo bind --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
 - `max_tier` is explicitly raised to `"yolo"` in `policy.json`.
 
 `max_tier` cannot be set to `"harness"` because `"harness"` is outside the rank order and does not represent a ceiling.
 
 ### Resolution chain
 
-When starting an agent, relay resolves the permission tier through a precedence chain:
+When starting an agent, relevo resolves the permission tier through a precedence chain:
 1. Explicit CLI flag: `--tier <tier>` passed to `bind`, `add`, `fork`, or `send`.
 2. Candidate configuration: `"tier"` set on the candidate in `candidates.json`.
 3. Policy configuration: `"tier"` mapped for the active role (`builder`, `reviewer`, `researcher`) in `policy.json`.
 4. Fallback default: `harness`.
 
-When forking a binding (`relay fork`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
+When forking a binding (`relevo fork`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
 
-For consults (`relay ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
+For consults (`relevo ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
 
 ### Per-round tiers
 
-Every builder runs a new process for each round, so a round may temporarily override the tier with `relay send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
+Every builder runs a new process for each round, so a round may temporarily override the tier with `relevo send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
-`relay send --builder <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relay stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relay add --builder`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
+`relevo send --builder <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo add --builder`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
 
 ### Permission-blocked exits
 
-When a headless builder exits without producing a report file, relay inspects the tail of its stdout/stderr log against the harness's default denial patterns (or the candidate's `denial_patterns` if configured).
+When a headless builder exits without producing a report file, relevo inspects the tail of its stdout/stderr log against the harness's default denial patterns (or the candidate's `denial_patterns` if configured).
 
 If a permission denial pattern matches (for example, if a tool was refused because the agent attempted an edit while in `read` mode, or executed a command without required approvals):
 - The binding halts and transitions to `NEEDS YOU`.
 - The halt message quotes the matching denial line and instructs the planner to re-send with a higher tier or adjust harness allow lists.
 - The ledger records an exit entry with note suffix `; permission-blocked: <line>`.
-- relay does **not** switch to another candidate (which would waste quota on a configuration error) and does **not** record a rate-limit gate.
+- relevo does **not** switch to another candidate (which would waste quota on a configuration error) and does **not** record a rate-limit gate.
 
-To recover from a permission-blocked halt, adjust the tier (e.g. `relay send --tier edit` or `relay send --tier yolo --allow-yolo`) or update permissions, then re-send the plan.
+To recover from a permission-blocked halt, adjust the tier (e.g. `relevo send --tier edit` or `relevo send --tier yolo --allow-yolo`) or update permissions, then re-send the plan.
 
 ### Migration from extra_args
 
 Previously, permission bypass flags were often passed via `extra_args` in `candidates.json` (such as `"--dangerously-skip-permissions"` or `"--auto"`).
 
-When any explicit tier (`read`, `edit`, `yolo`) is active, relay validates that `extra_args` does not contain conflicting permission flags (e.g. `--permission-mode`, `--dangerously-skip-permissions`, `--mode`, `--auto`). If detected, relay refuses to launch.
+When any explicit tier (`read`, `edit`, `yolo`) is active, relevo validates that `extra_args` does not contain conflicting permission flags (e.g. `--permission-mode`, `--dangerously-skip-permissions`, `--mode`, `--auto`). If detected, relevo refuses to launch.
 
 To migrate:
 - Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in `candidates.json`, and set `"max_tier": "yolo"` in `policy.json` (or use `--allow-yolo` on CLI commands).
-- Alternatively, leave `tier` unset (or set to `"harness"`), and relay will leave `extra_args` untouched.
+- Alternatively, leave `tier` unset (or set to `"harness"`), and relevo will leave `extra_args` untouched.
 
 ## Gate
 
-A binding can carry a **gate command**: a shell line relay runs in the
+A binding can carry a **gate command**: a shell line relevo runs in the
 worktree the instant the builder's completion marker appears, against the
 tree exactly as the builder left it, the same moment the round's diff is
 captured. The gate never decides anything -- it annotates. The round still
@@ -1663,9 +1663,9 @@ While the gate runs, the round is held: nothing else acts on the
 builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
 
-Configure it with `--gate '<cmd>'` on `relay bind`, `relay add`, or `relay
+Configure it with `--gate '<cmd>'` on `relevo bind`, `relevo add`, or `relevo
 fork`; `--no-gate` opts a binding out of `policy.json`'s `gate.default` (see
-above) even when one is configured machine-wide. `relay fork` without
+above) even when one is configured machine-wide. `relevo fork` without
 `--gate`/`--no-gate` inherits the source binding's gate. Omitting both flags
 on `bind`/`add` falls back to `gate.default`, `""` meaning no gate at all --
 bindings written before this feature have no gate and are unaffected.
@@ -1689,37 +1689,37 @@ Gate: make check -- FAIL (exit 2, 1m40s). Output: /path/to/003-gate.log
   ...
 ```
 
-`relay status` shows `gating <age>` in place of the builder's own status
-while the gate is running, and `relay log` appends ` gate=<result>` to the
+`relevo status` shows `gating <age>` in place of the builder's own status
+while the gate is running, and `relevo log` appends ` gate=<result>` to the
 round's report entry.
 
 A round's report entry also carries its **builder session**, `builder_session`
-in the JSON that `relay log --json` and `relay show --json` print: the harness
+in the JSON that `relevo log --json` and `relevo show --json` print: the harness
 session that built the closed round, so a report read two rounds later can
 still name the session that wrote it. It is the session the round's stream
-announced in its first event. It is absent when the harness named none -- relay
+announced in its first event. It is absent when the harness named none -- relevo
 never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is what
 `ask --round` resumes.
 
 ### Verify
 
-`relay send --verify` -- or `policy.json` `"verify": {"default": true}` -- marks
+`relevo send --verify` -- or `policy.json` `"verify": {"default": true}` -- marks
 the round: when it closes, **after the gate** so the reviewer sees the gate's
-own output, relay runs a read-only **reviewer** over the finished round and
+own output, relevo runs a read-only **reviewer** over the finished round and
 records its verdict. `--no-verify` overrides the policy default for one send;
 the two flags are exclusive.
 
-The reviewer is an ordinary consult (`relay ask --role reviewer`) with two
+The reviewer is an ordinary consult (`relevo ask --role reviewer`) with two
 differences. It runs **headless**, so its findings are its final message rather
-than a file, and it runs in a **throwaway worktree**: relay creates a detached
+than a file, and it runs in a **throwaway worktree**: relevo creates a detached
 worktree at the builder's HEAD under
-`~/.local/state/relay/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
+`~/.local/state/relevo/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
 there, and removes the tree once the consult reaches any terminal state. That
 isolation is what lets the reviewer run tests without touching the builder's
 tree or the planner's checkout, and it is why the reviewer consult's tier is
 `policy.json` `tier.reviewer` when set, else the candidate's, else **yolo** --
 for this consult only, in this tree only. The reviewer's role definition still
-tells it not to edit; relay cannot observe writes.
+tells it not to edit; relevo cannot observe writes.
 
 The question names the round's plan, report, diff and gate log, and asks the
 reviewer to end its findings with exactly this block:
@@ -1729,20 +1729,20 @@ verdict: accepted | rejected
 reasons: ["..."]
 ```
 
-relay parses the last ` ```relay ` block for those two lines. Anything else --
+relevo parses the last ` ```relevo ` block for those two lines. Anything else --
 no block, an unreadable one, a verdict that is neither word -- is recorded as
 `unstructured` and delivered as prose for the planner to read. `verdict` and
 `reasons` ride on the findings entry, and the newest verdict shows in
-`relay status` as `verdict: rejected (2 reasons)` for as long as it judges the
+`relevo status` as `verdict: rejected (2 reasons)` for as long as it judges the
 round just closed.
 
 **A verdict decides nothing.** `rejected` does not reopen the round, stop the
 binding, or summon a human: the report is delivered exactly as it always was,
-and the human still judges. `relay wait --verdict` is a follow-up.
+and the human still judges. `relevo wait --verdict` is a follow-up.
 
 A round whose reviewer could not be started -- no reviewer candidate, every one
 of them gated, no runner, a worktree that could not be created -- closes
-normally with one `verify skipped: <why>` note in the log. A crashed relay can
+normally with one `verify skipped: <why>` note in the log. A crashed relevo can
 leave a tree under `.worktrees/.verify/`; remove it with
 `git worktree remove <path>`.
 
@@ -1750,14 +1750,14 @@ leave a tree under `.worktrees/.verify/`; remove it with
 
 A failing gate does nothing on its own: the round closes, the report goes to
 the planner, and a human judges the diff. A binding can opt into a **repair
-round** instead, with `--regate N` on `relay bind`, `relay add`, `relay fork`
-or `relay send`, or with `"regate": N` under `gate` in `policy.json` (the
-default for new bindings, which `relay fork` inherits from its source). `N` is
-how many repair rounds relay may open after failing gates; `0` -- the default
+round** instead, with `--regate N` on `relevo bind`, `relevo add`, `relevo fork`
+or `relevo send`, or with `"regate": N` under `gate` in `policy.json` (the
+default for new bindings, which `relevo fork` inherits from its source). `N` is
+how many repair rounds relevo may open after failing gates; `0` -- the default
 -- turns the loop off, and `--regate` on a binding with no gate is accepted and
 inert, since a binding with no gate never fails one.
 
-When a round closes with `gate=fail` and the budget is not yet spent, relay
+When a round closes with `gate=fail` and the budget is not yet spent, relevo
 stages round N+1 in the same tick, after the report has been queued. Its plan
 file is written for the builder rather than by the planner: it names the failed
 round's acceptance check and the original plan, and carries the last 200
@@ -1775,8 +1775,8 @@ Two bounds end the loop with `NEEDS YOU` instead of another repair round:
   paths are stripped before the two are compared.
 
 The failed round stays closed either way: its own report, diff and `gate=fail`
-stand, and relay never writes or removes `NNN-done`. A passing gate or a human
-`relay send` resets the count, so the next failure gets a fresh budget.
+stand, and relevo never writes or removes `NNN-done`. A passing gate or a human
+`relevo send` resets the count, so the next failure gets a fresh budget.
 Headless bindings are the intended case -- the server runs the same reconcile,
 so a remote headless binding gets repair rounds too.
 
@@ -1790,59 +1790,59 @@ record on the binding, not a binding of its own.
 The planner runs, from its own session:
 
 ```
-relay ask --role reviewer --file q.md webshop
+relevo ask --role reviewer --file q.md webshop
 ```
 
-relay stages the question and starts the role. The consult reads the staged question, writes its findings to a
+relevo stages the question and starts the role. The consult reads the staged question, writes its findings to a
 file, and replies with only that path. Findings land under the binding's state
 directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —
-and relay queues them to the planner like any other report, once the file
-exists. That file's existence is the only completion gate: relay makes no
+and relevo queues them to the planner like any other report, once the file
+exists. That file's existence is the only completion gate: relevo makes no
 judgements about what the findings say.
 
-A consult is a one-shot process: relay starts the harness in its print form,
-and the consult's **final message** becomes the findings, which relay writes
+A consult is a one-shot process: relevo starts the harness in its print form,
+and the consult's **final message** becomes the findings, which relevo writes
 to `NNN-<id>-findings.md` and queues to the planner (`--headless` is accepted
 and ignored). The same form resumes a closed round's builder session and runs
-a verifier at round close. The process is the only thing relay can observe: it is killed at the
+a verifier at round close. The process is the only thing relevo can observe: it is killed at the
 consult timeout (10m), and a process that exits without a final message is
 reported silent with its exit code and the stream to read. The resolved tier
 still gates the pick: at `read`, claude and agy
 can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
 and codex cannot honour `read` and are refused.
 
-While consults are running, `relay status` appends ` +Nc` to the binding's row
+While consults are running, `relevo status` appends ` +Nc` to the binding's row
 — only when non-zero, so a healthy binding looks no different. A finished
 consult's record is dropped once its findings have been queued. Terminal
 consults are not work in flight, so the count does not include them.
 
-`relay agent install` writes the reviewer definition with the other
+`relevo agent install` writes the reviewer definition with the other
 roles; to install just this one:
 
 ```
-relay agent install --role reviewer
+relevo agent install --role reviewer
 ```
 
-`relay doctor` reports whether the definition landed, on every kind.
+`relevo doctor` reports whether the definition landed, on every kind.
 
 Read-only is a property of the role's configuration — the definition pins a
 read-only tool set and the candidate's `tree` decides where it runs — not
-something relay enforces. On agy the definition's `tools:` allowlist makes it
+something relevo enforces. On agy the definition's `tools:` allowlist makes it
 a property the harness enforces: a write tool that is not listed is not
 offered. The list is also load-bearing the other way: a definition with no
 `tools:` gets no write or shell tool at all, and one naming a tool agy does
-not have does not start -- so every agy definition relay ships carries an
-explicit, verified list, and `relay doctor` warns when the installed agy
+not have does not start -- so every agy definition relevo ships carries an
+explicit, verified list, and `relevo doctor` warns when the installed agy
 copy differs from it (on claude and opencode the copy is yours to edit, and
-doctor leaves it alone). relay cannot observe writes; it reports what is in a tree
+doctor leaves it alone). relevo cannot observe writes; it reports what is in a tree
 and no more. Note also that `reviewer` is deliberately not the `researcher`
 role: `researcher` is dispatched by a builder's own plan-executor and returns
-findings in-band to it, while a reviewer runs as its own relay consult and
+findings in-band to it, while a reviewer runs as its own relevo consult and
 hands back a file path.
 
 ### Round usage
 
-At every round close relay records what the round consumed on the
+At every round close relevo records what the round consumed on the
 round's `report` entry in `log.jsonl` (and a consult's on its `findings`
 entry): harness, provider, model, duration, tokens (`in`, `cache_read`,
 `cache_write`, `out` -- `out` includes thinking), and a cost with its
@@ -1851,7 +1851,7 @@ provenance:
 | `cost.basis` | meaning |
 |---|---|
 | `measured` | the harness reported dollars itself (claude's `total_cost_usd`, opencode's `cost`) |
-| `estimated` | relay multiplied the harness's token counts by `~/.config/relay/prices.json` |
+| `estimated` | relevo multiplied the harness's token counts by `~/.config/relevo/prices.json` |
 | `unknown` | no record, no price row, or no way to read; `note` says which |
 
 `unknown` is an answer, not a failure. Where each figure comes from:
@@ -1867,16 +1867,16 @@ are `unknown` (`shared cwd`) rather than counting the planner's spend.
 
 `prices.json` is `{"as_of": "YYYY-MM-DD", "source": "...", "models":
 {"<provider>/<model>": {"in": …, "cache_read": …, "cache_write": …,
-"out": …}}}` in USD per million tokens, overlaid on the table relay ships;
+"out": …}}}` in USD per million tokens, overlaid on the table relevo ships;
 a model with no row is `unknown`, never `$0`. Mark a subscription lane
 with `"plan": true` on its candidate: its rounds record `cost.plan` and
 are shown as a quota draw, never as free.
 
-Where you see it: `relay log` prints the round line under each report
+Where you see it: `relevo log` prints the round line under each report
 (`⎿ opencode/cline-pass/glm-5.3-flash  14m  in 2k  cache 166k (91%)  write 14k  out 12k  $0.41`);
-`relay status` adds a `usage` row (newest round) and a `spend` row
+`relevo status` adds a `usage` row (newest round) and a `spend` row
 (the binding's total: `4 rounds +2c · $1.23 · ~$0.40 · 2 unknown · 2.1M tok`), both
-on `--json` as `last_usage` and `spend`; `relay ui` shows the total on
+on `--json` as `last_usage` and `spend`; `relevo ui` shows the total on
 the card and in the header.
 
 A remote builder's round is measured on the server, from the builder's
@@ -1885,18 +1885,18 @@ server's figure verbatim instead of reading a record it does not have. A
 server built before this ships no figure, and its rounds print
 `unknown · remote: server sent no usage`.
 
-While a round is running, `relay status` and `relay ui` show a `live`
+While a round is running, `relevo status` and `relevo ui` show a `live`
 figure read from the harness's record on each refresh, and
-`relay statusline` appends `live $0.02 · 41k tok` to the row. On
+`relevo statusline` appends `live $0.02 · 41k tok` to the row. On
 `status --json` it is carried as `live_usage`. The live figure is
 estimated (`~$`) unless the harness reports dollars per step (opencode).
 It is never recorded and never added to `spend`. Across bindings:
 
 ```
-relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]
+relevo tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]
 ```
 
-sums every round relay has recorded, including bindings `gc` has
+sums every round relevo has recorded, including bindings `gc` has
 archived, one row per group and a total, with the four token columns
 `in`, `cache`, `write`, `out` (a sum across models has no meaningful
 ratio, so `cache` carries no percentage). Measured and estimated dollars
@@ -1908,11 +1908,11 @@ view has no other home.
 ### Usage stats
 
 ```
-relay stats [--since 7d] [--json]
+relevo stats [--since 7d] [--json]
 ```
 
-`relay stats` answers the questions `relay tab`'s money sums do not. It reads
-the same logs and archives as `relay tab`, live and archived, locally only:
+`relevo stats` answers the questions `relevo tab`'s money sums do not. It reads
+the same logs and archives as `relevo tab`, live and archived, locally only:
 nothing leaves the machine. `--since` cuts on a round's start, so a round that
 started before the cut is not counted.
 
@@ -1922,7 +1922,7 @@ report's usage record when it has one, else from the round's pick, else
 
 | outcome | meaning |
 |---|---|
-| `done` | the report's relay block said `done` |
+| `done` | the report's relevo block said `done` |
 | `halted` | the report's block said `halted` |
 | `blocked` | the report's block said `blocked` |
 | `deferred` | the report's block said `deferred` |
@@ -1933,9 +1933,9 @@ report's usage record when it has one, else from the round's pick, else
 | `open` | no report, no stop and no exit: the round is still open |
 
 `needs-you` and `stalled` are not outcomes because they are live state, not a
-property of a finished round: relay records neither in the round log, so there
+property of a finished round: relevo records neither in the round log, so there
 is nothing to count after the fact. They stay where they are visible, on
-`relay status` and in `relay ui`.
+`relevo status` and in `relevo ui`.
 
 `switches` counts the rounds that changed builder mid-round, attributes each to
 the provider it left with a reason (`rate-limited`, `exited`, `gated`, `remote`
@@ -1946,22 +1946,22 @@ the verifies that were skipped.
 
 `blocked` comes from `availability.json`, which keeps 30 days: rate-limit and
 spawn-failure events in that window, and the gates a human cleared with
-`relay available`. Only a gate cleared by hand has a recorded length -- an
+`relevo available`. Only a gate cleared by hand has a recorded length -- an
 expired gate keeps no expiry time, so it counts as an event with no duration.
 
 ### Consult candidates
 
-`relay ask --role reviewer` resolves `reviewer` through the role table and then
+`relevo ask --role reviewer` resolves `reviewer` through the role table and then
 picks a candidate whose `roles` include it, by the same rule as `--builder`.
 
-In `~/.config/relay/candidates.json`:
+In `~/.config/relevo/candidates.json`:
 
 ```json
 {"harness": "claude", "provider": "anthropic", "model": "opus", "roles": ["reviewer"]}
 ```
 
 ```bash
-relay ask --role reviewer --candidate claude/anthropic/opus --file q.md webshop
+relevo ask --role reviewer --candidate claude/anthropic/opus --file q.md webshop
 ```
 
 Until a candidate lists `reviewer`, `ask` fails with
@@ -1973,13 +1973,13 @@ A closed round's report names the harness session that built it, so you can ask
 that session what it did and why without reopening the round:
 
 ```
-relay ask --round 1 -q "why did you stop at the second migration?" webshop
+relevo ask --round 1 -q "why did you stop at the second migration?" webshop
 ```
 
 `--round N` looks the session up on round N's report entry and resumes it as a
 headless consult with the harness's own resume form — claude `--resume`, agy
 `--conversation`, opencode `run --session … --fork`. The answer is the
-process's final message, which relay writes to the usual
+process's final message, which relevo writes to the usual
 `NNN-<id>-findings.md` and queues to the planner exactly as any consult's
 findings are. `--role` and `--candidate` are ignored (with a note on stderr if
 you passed one): resuming a session fixes both. The question comes from
@@ -1987,30 +1987,30 @@ you passed one): resuming a session fixes both. The question comes from
 
 Round N must be closed. Resuming the open round's builder would put two writers
 in one session, so `--round` refuses the current round and says which; a round
-whose report names no session — built before relay recorded sessions, or by a
-harness that printed none — is refused too, because relay will not guess which
+whose report names no session — built before relevo recorded sessions, or by a
+harness that printed none — is refused too, because relevo will not guess which
 session to resume.
 
 Resuming mutates the session on claude and agy: the resumed turn is appended to
-it. That is why relay reaches for this only once the round has closed, and why
+it. That is why relevo reaches for this only once the round has closed, and why
 the prompt tells the builder to change nothing and run no writing tool — but it
 is the session's own history that changes, not the tree. opencode has no
 read-only flag, so its round consult runs at `harness` tier and its `--fork`
 leaves the original session untouched: the resumed turn lands in a copy. codex
-has no verified resume form, and `relay ask --round` refuses it by name.
+has no verified resume form, and `relevo ask --round` refuses it by name.
 
 ## The planner: architect
 
-relay ships one more definition it never launches: `architect`, the planner's
-persona. The planner is the session you drive -- the one you run `relay bind`
-and `relay ask` from -- and relay does not pick its harness or start it. What
-relay provides is the definition, so the same architect runs on any kind:
+relevo ships one more definition it never launches: `architect`, the planner's
+persona. The planner is the session you drive -- the one you run `relevo bind`
+and `relevo ask` from -- and relevo does not pick its harness or start it. What
+relevo provides is the definition, so the same architect runs on any kind:
 
 ```
-relay agent install --role architect
+relevo agent install --role architect
 ```
 
-(`relay agent install` with no flags writes it too.)
+(`relevo agent install` with no flags writes it too.)
 
 Then start the planner with the harness's own `--agent` flag, for example:
 
@@ -2019,16 +2019,16 @@ claude   --agent architect --model opus
 opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
 ```
 
-The `relay planner init` SessionStart hook also injects the relay handoff
+The `relevo planner init` SessionStart hook also injects the relevo handoff
 rules, so a planner session running an agent other than `architect` still
 receives them.
 
 **Wait for the report after every send.** In Claude Code the planner starts
-`relay wait <name> --timeout <budget>; relay pull <name>` as a **background**
+`relevo wait <name> --timeout <budget>; relevo pull <name>` as a **background**
 command and ends its turn: Claude Code wakes the session when the command exits,
-and the `relay mcp` send result prints the exact command for that binding. Other
-harnesses run `relay wait <name> --timeout 9m` in a loop while it exits 124,
-then `relay pull <name>`, and end their turn only when no binding has a round in
+and the `relevo mcp` send result prints the exact command for that binding. Other
+harnesses run `relevo wait <name> --timeout 9m` in a loop while it exits 124,
+then `relevo pull <name>`, and end their turn only when no binding has a round in
 flight.
 
 The architect designs and never implements: it produces a system overview,
@@ -2039,38 +2039,38 @@ read-plus-`write_to_file` tool set, enough to read the tree and write the plan
 and nothing more; the claude and opencode copies leave `model:` unset so the
 launch line's flag decides.
 
-`architect` is not a relay role: it is absent from the role table, so
-`relay ask --role architect` is refused, candidates cannot list it, and
-`relay doctor` does not check for it -- doctor reports only the definitions
+`architect` is not a relevo role: it is absent from the role table, so
+`relevo ask --role architect` is refused, candidates cannot list it, and
+`relevo doctor` does not check for it -- doctor reports only the definitions
 some candidate would load, and no candidate loads the planner.
 
 ## Display states
 
-`relay status` collapses the binding's internal state into five:
+`relevo status` collapses the binding's internal state into five:
 
 - **ACTIVE** — someone is working (planner or builder), nothing needs a human
   yet.
-- **NEEDS YOU** — relay has stopped and a person must act. Covers a dead
+- **NEEDS YOU** — relevo has stopped and a person must act. Covers a dead
   builder process, a round that ran past its timeout, and a binding that hit
   its round cap.
-- **PAUSED** — `relay pause` released the binding's worktree between rounds;
-  the branch and the round log stay, and `relay bind --resume`
+- **PAUSED** — `relevo pause` released the binding's worktree between rounds;
+  the branch and the round log stay, and `relevo bind --resume`
   restores it. Nothing needs a human, and `gc` leaves it alone.
-- **DONE** — the planner declared the work verified via `relay done`, and
+- **DONE** — the planner declared the work verified via `relevo done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
-  a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay on disk (`relay log <name>`
-  still works as an audit trail) until `relay unbind` or `relay gc` removes them;
+  a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay on disk (`relevo log <name>`
+  still works as an audit trail) until `relevo unbind` or `relevo gc` removes them;
   a clean worktree is released at `done` so the branch is free to review.
 
 ## Running the daemon
 
-`relay daemon` is the reconciler: it watches builders, queues reports back to
+`relevo daemon` is the reconciler: it watches builders, queues reports back to
 the planner, and flags stalled rounds. Nothing else needs it running — the CLI
 works on its own — but without it, reports are only delivered when you run
-`relay pull` by hand.
+`relevo pull` by hand.
 
-You can just run `relay daemon` in any spare terminal. To have it start with
+You can just run `relevo daemon` in any spare terminal. To have it start with
 your session:
 
 ```
@@ -2078,41 +2078,41 @@ make service     # systemd user unit on Linux, LaunchAgent on macOS
 make uninstall   # stop it and remove both the binary and the unit
 ```
 
-On Linux that installs `dist/relay.service` to
-`~/.config/systemd/user/relay.service` and enables it. On macOS it renders
-`dist/com.github.fuad-daoud.relay.plist.in` into `~/Library/LaunchAgents/` and
-loads it, logging to `~/Library/Logs/relay.log`.
+On Linux that installs `dist/relevo.service` to
+`~/.config/systemd/user/relevo.service` and enables it. On macOS it renders
+`dist/com.github.fuad-daoud.relevo.plist.in` into `~/Library/LaunchAgents/` and
+loads it, logging to `~/Library/Logs/relevo.log`.
 
-Only one daemon runs at a time. `relay daemon` takes an exclusive lock on
-`$XDG_STATE_HOME/relay/.daemon.lock` and refuses to start if another one holds
+Only one daemon runs at a time. `relevo daemon` takes an exclusive lock on
+`$XDG_STATE_HOME/relevo/.daemon.lock` and refuses to start if another one holds
 it, so starting a second by hand next to the service is an error rather than
-two reconcilers racing. `relay daemon --check` exits 0 if a daemon is running
+two reconcilers racing. `relevo daemon --check` exits 0 if a daemon is running
 and 1 if not, printing nothing.
 
 ## Lifecycle hooks
 
-relay supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relay daemon` executes scripts located in `$XDG_CONFIG_HOME/relay/hooks/<event_type>.d/` (default `~/.config/relay/hooks/<event_type>.d/`).
+relevo supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relevo daemon` executes scripts located in `$XDG_CONFIG_HOME/relevo/hooks/<event_type>.d/` (default `~/.config/relevo/hooks/<event_type>.d/`).
 
 ### Supported events
 
-- `state_changed` (`~/.config/relay/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
-- `round_started` (`~/.config/relay/hooks/round_started.d/`) — fires whenever a new round starts.
-- `builder_stalled` (`~/.config/relay/hooks/builder_stalled.d/`) — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
-- `binding_stale` (`~/.config/relay/hooks/binding_stale.d/`) — fires once when a `NEEDS YOU` or `HELD` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
+- `state_changed` (`~/.config/relevo/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
+- `round_started` (`~/.config/relevo/hooks/round_started.d/`) — fires whenever a new round starts.
+- `builder_stalled` (`~/.config/relevo/hooks/builder_stalled.d/`) — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
+- `binding_stale` (`~/.config/relevo/hooks/binding_stale.d/`) — fires once when a `NEEDS YOU` or `HELD` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
 
 ### Hook execution & environment
 
-Each hook script is executed asynchronously in a detached process with a 10-second timeout. relay injects the following environment variables:
+Each hook script is executed asynchronously in a detached process with a 10-second timeout. relevo injects the following environment variables:
 
-- `RELAY_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`, `binding_stale`).
-- `RELAY_BINDING`: The name of the binding.
-- `RELAY_STATE`: The current state of the binding.
-- `RELAY_OLD_STATE`: The previous state of the binding.
-- `RELAY_ROUND`: The current round number.
+- `RELEVO_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`, `binding_stale`).
+- `RELEVO_BINDING`: The name of the binding.
+- `RELEVO_STATE`: The current state of the binding.
+- `RELEVO_OLD_STATE`: The previous state of the binding.
+- `RELEVO_ROUND`: The current round number.
 
-Hook stdout, stderr, and execution failures are logged to `~/.local/state/relay/hooks.log` (or `$XDG_STATE_HOME/relay/hooks.log`).
+Hook stdout, stderr, and execution failures are logged to `~/.local/state/relevo/hooks.log` (or `$XDG_STATE_HOME/relevo/hooks.log`).
 
-Scripts must have their executable bit set (`chmod +x`). If `~/.config/relay/hooks/` or an event directory does not exist, event dispatch is a silent no-op.
+Scripts must have their executable bit set (`chmod +x`). If `~/.config/relevo/hooks/` or an event directory does not exist, event dispatch is a silent no-op.
 
 ### Webhooks
 
@@ -2141,13 +2141,13 @@ Each matching webhook POSTs in its own goroutine with a 5-second timeout and nev
 ## Setting up your agent harnesses
 
 A harness needs nothing installed beyond its own binary on `PATH` and the role
-definitions relay installs (`relay agent install`). relay starts each builder
+definitions relevo installs (`relevo agent install`). relevo starts each builder
 as a non-interactive process and reads the round from the harness's own stream,
 so there is no lifecycle hook to install for it.
 
 ### opencode permission allowlist
 
-relay stages plans and reports under `~/.local/state/relay/<binding>/`, outside
+relevo stages plans and reports under `~/.local/state/relevo/<binding>/`, outside
 the repo the builder is working in, so a fresh opencode builder blocks on an
 "Access external directory" dialog on its first round. To skip it entirely, add
 this to `~/.config/opencode/opencode.jsonc`:
@@ -2155,8 +2155,8 @@ this to `~/.config/opencode/opencode.jsonc`:
 ```jsonc
 "permission": {
   "external_directory": {
-    "/home/you/.local/state/relay/*": "allow",
-    "/home/you/.local/state/relay/**": "allow"
+    "/home/you/.local/state/relevo/*": "allow",
+    "/home/you/.local/state/relevo/**": "allow"
   }
 }
 ```
@@ -2165,36 +2165,36 @@ Substitute your real home directory: opencode does not expand `~` or `$HOME`
 in these patterns. Claude builders (`claude/anthropic/sonnet`) have their own permission model
 and are not covered by that entry.
 
-relay doctor warns when this entry is missing (row external_directory under opencode).
+relevo doctor warns when this entry is missing (row external_directory under opencode).
 
 ## Recovering a broken binding
 
-If the builder's process dies without a report, relay switches to the next
+If the builder's process dies without a report, relevo switches to the next
 candidate or, when none serves the binding, goes `NEEDS YOU` — see "Headless
 builders". A binding whose builder is gone between rounds is `BROKEN` and
 relaying stops until you point it at a new builder:
 
 ```bash
-relay bind --resume --name N --rebind                                       # start a fresh builder, picked by policy order
-relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
+relevo bind --resume --name N --rebind                                       # start a fresh builder, picked by policy order
+relevo bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its role on the launch line,
-like any builder relay spawns. With `--rebind` the candidate is resolved through
+like any builder relevo spawns. With `--rebind` the candidate is resolved through
 `policy.json` order and the ledger, and the pick is logged, exactly as a fresh
-bind with `--builder` omitted. Relay does not automatically re-send the current
-plan: it prints the `relay send` command pointing at the staged plan so you can
+bind with `--builder` omitted. Relevo does not automatically re-send the current
+plan: it prints the `relevo send` command pointing at the staged plan so you can
 hand over the round when ready.
 
-If only the planner moved or restarted, `relay bind --resume --name N` re-points
+If only the planner moved or restarted, `relevo bind --resume --name N` re-points
 the planner without touching the builder. If you want to start over from scratch,
-use `relay unbind N` and bind fresh.
+use `relevo unbind N` and bind fresh.
 
 A headless binding is never `BROKEN` for lack of a process: between rounds
 there is none. If its process died mid-round the daemon already switched or
 halted it (see "Headless builders"). To move a binding to a fresh process by
-hand, `relay send` the staged plan again once `relay status` shows the builder
+hand, `relevo send` the staged plan again once `relevo status` shows the builder
 `exited`.
 
 ## Platform support
@@ -2204,78 +2204,78 @@ current stable.
 
 Windows is not supported. State locking is behind a build tag
 (`internal/store/lock_unix.go`) and could be implemented there, but the
-harnesses and process supervision relay relies on are unix-shaped. The tree
-still cross-compiles for `windows/amd64` (CI checks it), and relay will refuse
+harnesses and process supervision relevo relies on are unix-shaped. The tree
+still cross-compiles for `windows/amd64` (CI checks it), and relevo will refuse
 at runtime with a clear error rather than running without a state lock.
 
 ## Claude Code plugin
 
-The relay plugin gives a Claude Code planner two things: the `relay mcp` MCP
-server (`relay` from `PATH`), and a `SessionStart` hook that runs
-`relay planner init`. The hook exports `RELAY_PLANNER` and tells the model its
+The relevo plugin gives a Claude Code planner two things: the `relevo mcp` MCP
+server (`relevo` from `PATH`), and a `SessionStart` hook that runs
+`relevo planner init`. The hook exports `RELEVO_PLANNER` and tells the model its
 planner name. Install it once per machine:
 
-    /plugin marketplace add fuad-daoud/relay
-    /plugin install relay@relay
+    /plugin marketplace add fuad-daoud/relevo
+    /plugin install relevo@relevo
 
-The plugin also carries three slash commands over relay's read verbs:
+The plugin also carries three slash commands over relevo's read verbs:
 
-- `/relay:status [--name <binding>] [--all]` -- the bindings, round and state.
-- `/relay:diff [<binding>] [--round N]` -- what a builder changed in a round.
-- `/relay:log <binding> [--round N]` -- a binding's append-only round log.
+- `/relevo:status [--name <binding>] [--all]` -- the bindings, round and state.
+- `/relevo:diff [<binding>] [--round N]` -- what a builder changed in a round.
+- `/relevo:log <binding> [--round N]` -- a binding's append-only round log.
 
 Then launch Claude Code normally:
 
     claude --agent architect --model opus
 
-**The background wait is the default.** After each `relay send`, the planner
+**The background wait is the default.** After each `relevo send`, the planner
 runs
 
-    relay wait --name <n> --timeout <budget>; relay pull --name <n>
+    relevo wait --name <n> --timeout <budget>; relevo pull --name <n>
 
 as a background Bash command and ends its turn. Claude Code wakes the session
 when the command exits, and its output is the report (or the reason the round
-stopped). The `relay mcp` send result prints that exact command for the
+stopped). The `relevo mcp` send result prints that exact command for the
 binding, so the model does not have to remember it. Act on the pull output
-after every exit except `WaitTimeout`; on a timeout, run `relay status --name
+after every exit except `WaitTimeout`; on a timeout, run `relevo status --name
 <n>` and start the wait again if the round is still running.
 
 **The channel is an opt-in upgrade.** With the channel enabled, reports,
-consult answers and edge artifacts arrive as `<channel source="relay">` events
+consult answers and edge artifacts arrive as `<channel source="relevo">` events
 the moment the daemon has them, instead of being fetched by the wait. Turn it
 on by launching with the development flag, which asks for confirmation at
 every start:
 
-    claude --agent architect --model opus --dangerously-load-development-channels plugin:relay@relay
+    claude --agent architect --model opus --dangerously-load-development-channels plugin:relevo@relevo
 
 During the research preview `--channels` only registers plugins on an
-Anthropic-curated allowlist, and relay is not on it. A Team or Enterprise admin
-can instead add `{"marketplace": "relay", "plugin": "relay"}` under
+Anthropic-curated allowlist, and relevo is not on it. A Team or Enterprise admin
+can instead add `{"marketplace": "relevo", "plugin": "relevo"}` under
 `allowedChannelPlugins` (with `channelsEnabled: true`) in managed settings,
 which replaces Anthropic's list for that org and makes plain
-`--channels plugin:relay@relay` work. Without either, `relay mcp` runs in
+`--channels plugin:relevo@relevo` work. Without either, `relevo mcp` runs in
 tools mode: the tools work and nothing is pushed, which is the background wait
 above.
 
-**How reports arrive.** relay identifies the planner session itself -- the
-plugin's hook registers it, and `relay planner list` shows the records -- so no
+**How reports arrive.** relevo identifies the planner session itself -- the
+plugin's hook registers it, and `relevo planner list` shows the records -- so no
 verb has to guess who is calling. A report then reaches the planner by exactly
 one of four routes: the background wait (the Claude Code default), the channel
 (opt-in, above), a deliverer for a harness that has one (opencode, agy), or
-`relay pull` by hand. Nothing is ever typed into a terminal.
+`relevo pull` by hand. Nothing is ever typed into a terminal.
 
-An agy planner runs `relay planner init` once inside agy, with no flags: relay
+An agy planner runs `relevo planner init` once inside agy, with no flags: relevo
 detects the session from agy's own environment, so nothing has to be exported by
-hand. Every relay command that planner runs refreshes the session's local
-agentapi credentials, which relay keeps 0600 under its state directory and never
-prints. A report relay pushes through those credentials wakes the idle agy
+hand. Every relevo command that planner runs refreshes the session's local
+agentapi credentials, which relevo keeps 0600 under its state directory and never
+prints. A report relevo pushes through those credentials wakes the idle agy
 session, so an agy planner is woken by a report rather than polling for it --
 and that wake-up costs one turn of the agy session.
 
 ## Design
 
 [`docs/design.md`](docs/design.md) is the architecture document written before
-relay was built. It explains why the CLI and the daemon are split and what was
+relevo was built. It explains why the CLI and the daemon are split and what was
 deliberately left out. It is a historical record, not maintained against the
 code.
 
@@ -2284,7 +2284,7 @@ code.
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
 stdlib-only, write the test, and make sure `make check` passes.
 
-`make e2e` runs one headless relay round end to end -- planner init, bind,
+`make e2e` runs one headless relevo round end to end -- planner init, bind,
 send, delivery -- with a fake harness binary on `PATH`. It runs in CI and is not
 part of `make check`.
 

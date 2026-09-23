@@ -1,8 +1,8 @@
 #!/bin/sh
 # agents-shipped.sh -- record and verify the sha256 of every agent definition
-# relay has ever shipped (#371 round 3).
+# relevo has ever shipped (#371 round 3).
 #
-# shipped.sha256 lets a later relay recognise an on-disk definition as an
+# shipped.sha256 lets a later relevo recognise an on-disk definition as an
 # unmodified copy of an older release -- not a user edit -- so an existing
 # install auto-updates instead of being kept forever
 # (internal/harness/shipped.go, ShippedBefore).
@@ -21,7 +21,7 @@
 #
 # Each file is hashed twice: its raw bytes, and its bytes with trailing ASCII
 # whitespace trimmed and one newline appended. An installed copy written by a
-# past relay that normalised line endings therefore matches either way.
+# past relevo that normalised line endings therefore matches either way.
 set -eu
 
 usage() {

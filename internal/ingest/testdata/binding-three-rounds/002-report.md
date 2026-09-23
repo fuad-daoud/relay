@@ -2,7 +2,7 @@
 
 Fixture report text for round 2.
 
-```relay
+```relevo
 status: halted
 halted_at: "step 3"
 changed_paths: []

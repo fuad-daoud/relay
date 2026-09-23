@@ -60,11 +60,11 @@ func TestFinalTextClaudeFallsBackToResult(t *testing.T) {
 	}
 }
 
-// TestFinalTextStreamOfOnlyTheTrailer is nothing: the relay-exit trailer is
+// TestFinalTextStreamOfOnlyTheTrailer is nothing: the relevo-exit trailer is
 // not a JSON object and the stream carries no assistant message.
 func TestFinalTextStreamOfOnlyTheTrailer(t *testing.T) {
 	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
-		if got := FinalText(kind, []byte("relay-exit:0\n")); got != "" {
+		if got := FinalText(kind, []byte("relevo-exit:0\n")); got != "" {
 			t.Errorf("FinalText(%q, trailer-only) = %q, want \"\"", kind, got)
 		}
 	}

@@ -11,7 +11,7 @@ func TestPointerRoundTrip(t *testing.T) {
 	defaultRoot := t.TempDir()
 	startedAt := time.Date(2026, 9, 20, 12, 34, 56, 0, time.UTC)
 	want := DaemonPointer{
-		Root:      "/srv/data/relay-serve/serve",
+		Root:      "/srv/data/relevo-serve/serve",
 		PID:       4242,
 		Listen:    ":7777",
 		StartedAt: startedAt,

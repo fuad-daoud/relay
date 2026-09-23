@@ -7,7 +7,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // stdoutStat is os.Stdout.Stat, replaceable so the terminal refusal path can
@@ -22,7 +22,7 @@ var stdoutStat = os.Stdout.Stat
 // Errors:         nil after a successful verb; ErrCancelled, ErrNothingToPick
 // or ErrVerbFailed for the three outcomes already shown on screen; any other
 // error is a startup or terminal failure the caller should print.
-func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
+func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 	info, err := stdoutStat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return errors.New("--pick needs a terminal; name the binding instead")

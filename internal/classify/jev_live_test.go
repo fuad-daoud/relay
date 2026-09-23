@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 func TestJevInjectionFixtures(t *testing.T) {
@@ -29,7 +29,7 @@ func TestJevInjectionFixtures(t *testing.T) {
 		}
 	}
 	if key == "" {
-		t.Skip("skipping live test: no TYPESAFE_API_KEY or ~/.config/relay/typesafe.key found")
+		t.Skip("skipping live test: no TYPESAFE_API_KEY or ~/.config/relevo/typesafe.key found")
 	}
 
 	client := NewClient(key, "jev-latest")

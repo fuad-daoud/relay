@@ -10,7 +10,7 @@ func TestDetectMode(t *testing.T) {
 	}{
 		{
 			name: "dangerously-load-development-channels",
-			argv: []string{"claude", "--agent", "architect", "--dangerously-load-development-channels", "plugin:relay@relay"},
+			argv: []string{"claude", "--agent", "architect", "--dangerously-load-development-channels", "plugin:relevo@relevo"},
 			want: ModeChannel,
 		},
 		{

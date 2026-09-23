@@ -14,7 +14,7 @@ func initAt(host int, session string, now time.Time) InitInput {
 	return InitInput{
 		Kind:          "claude",
 		SessionID:     session,
-		CWD:           "/tmp/relay-planner-test",
+		CWD:           "/tmp/relevo-planner-test",
 		Agent:         "architect",
 		HostPID:       host,
 		HostStartedAt: int64(host) * 10,
@@ -100,7 +100,7 @@ func TestInitReattachesBySessionInNewProcess(t *testing.T) {
 // TestInitReusesPriorDBID pins §3.5's upgrade path: when the database already
 // has a row for (kind, session), the new record takes that row's id rather
 // than minting one, so history stays joined across the upgrade. Every id in a
-// real relay.db is a 26-character ULID, so that is the shape the path must
+// real relevo.db is a 26-character ULID, so that is the shape the path must
 // carry; NewID's `pl_` shape keeps working too.
 func TestInitReusesPriorDBID(t *testing.T) {
 	cases := []struct {
@@ -170,7 +170,7 @@ func TestInitExplicitRegistrationHasNoHost(t *testing.T) {
 	in := InitInput{
 		Kind:      "opencode",
 		SessionID: "ses_abc123",
-		CWD:       "/tmp/relay-planner-test",
+		CWD:       "/tmp/relevo-planner-test",
 		Now:       testNow,
 	}
 	first, res, err := Init(reg, in)
@@ -238,7 +238,7 @@ func TestInitRenamesWhenNameGiven(t *testing.T) {
 }
 
 // TestConcurrentInitSerialises is §4.1's locking rule made observable: two
-// registries racing on one root -- the hook and `relay mcp` starting together
+// registries racing on one root -- the hook and `relevo mcp` starting together
 // -- must end with exactly one record, not two.
 func TestConcurrentInitSerialises(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "planners")

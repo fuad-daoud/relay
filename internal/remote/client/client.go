@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 func fingerprintOf(der []byte) string {
@@ -37,7 +37,7 @@ var (
 
 // Version is this client's own build version, sent as remote.HeaderClientVersion
 // on every request (#373 §4.4). It is informational -- the server logs it and
-// never signs or rejects on it -- and cmd/relay sets it once at startup.
+// never signs or rejects on it -- and cmd/relevo sets it once at startup.
 var Version = ""
 
 // HTTPError represents an HTTP error response containing status and a remote.ErrorBody.
@@ -53,7 +53,7 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("http %d: %s", e.Status, e.Body.Code)
 }
 
-// Client communicates with remote relay servers using ed25519 request signing.
+// Client communicates with remote relevo servers using ed25519 request signing.
 type Client struct {
 	servers Servers
 	key     remote.Keypair
@@ -171,7 +171,7 @@ func (c *Client) doRequest(ctx context.Context, server, method, pathWithQuery st
 		return nil, ErrVersion
 	}
 
-	// A gateway status is a redeploy in progress, not an answer from relay's
+	// A gateway status is a redeploy in progress, not an answer from relevo's
 	// own handler (#373 §4.4): the 52x/530 pages are Cloudflare's HTML, so the
 	// body is dropped and the error is an ErrUnreachable a retry can act on.
 	if isGatewayStatus(resp.StatusCode) {
@@ -217,7 +217,7 @@ func (c *Client) do(ctx context.Context, server, method, pathWithQuery string, b
 }
 
 // isGatewayStatus reports whether status is one a CDN gateway answers with
-// while the relay server behind it is down (#373 §4.4): 502, 503, 504, the
+// while the relevo server behind it is down (#373 §4.4): 502, 503, 504, the
 // Cloudflare 520-527 range and 530.
 func isGatewayStatus(status int) bool {
 	switch status {
@@ -400,7 +400,7 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 // from its start, so the retried request carries the same plan and bundle
 // bytes as the first.
 func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error) {
-	tmp, err := os.CreateTemp("", "relay-start-round-*.tmp")
+	tmp, err := os.CreateTemp("", "relevo-start-round-*.tmp")
 	if err != nil {
 		return remote.BindingView{}, fmt.Errorf("create temp file: %w", err)
 	}

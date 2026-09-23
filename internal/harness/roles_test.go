@@ -43,7 +43,7 @@ func TestMissingDefinitions(t *testing.T) {
 	})
 }
 
-// TestMissingDefinitionsCustomNames pins #374 §4.1: a definition relay does
+// TestMissingDefinitionsCustomNames pins #374 §4.1: a definition relevo does
 // not ship resolves to its kind's path convention, so a missing custom name is
 // reported instead of silently skipped, and a shipped name still resolves to
 // its table path.

@@ -380,11 +380,11 @@ func TestRoundOfFile(t *testing.T) {
 }
 
 func TestStoreWorktreeDirAndPath(t *testing.T) {
-	s := New("/tmp/relay-state-test")
-	if got, want := s.WorktreeDir(), "/tmp/relay-state-test/.worktrees"; got != want {
+	s := New("/tmp/relevo-state-test")
+	if got, want := s.WorktreeDir(), "/tmp/relevo-state-test/.worktrees"; got != want {
 		t.Errorf("WorktreeDir = %q, want %q", got, want)
 	}
-	if got, want := s.WorktreePath("myfork"), "/tmp/relay-state-test/.worktrees/myfork"; got != want {
+	if got, want := s.WorktreePath("myfork"), "/tmp/relevo-state-test/.worktrees/myfork"; got != want {
 		t.Errorf("WorktreePath = %q, want %q", got, want)
 	}
 }

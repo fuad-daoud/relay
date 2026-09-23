@@ -13,7 +13,7 @@ import (
 // unexported applyMigrations(db, fs) entry point, so it never touches the
 // embedded migration set Open uses.
 func TestMigrationsApplyInOrder(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 	sqlDB, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
@@ -58,7 +58,7 @@ func TestMigrationsApplyInOrder(t *testing.T) {
 // TestMigrationsApplyInOrderIsIdempotent pins that a migration whose number
 // is already recorded is skipped, not re-applied.
 func TestMigrationsApplyInOrderIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.db")
+	path := filepath.Join(t.TempDir(), "relevo.db")
 	sqlDB, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)

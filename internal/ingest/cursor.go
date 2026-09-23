@@ -7,7 +7,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // headSampleBytes is how much of an append-only member's start is hashed

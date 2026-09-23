@@ -2,7 +2,7 @@
 
 package proc
 
-// InheritedReaper has no implementation off unix: there is no wait4, and relay
+// InheritedReaper has no implementation off unix: there is no wait4, and relevo
 // does not re-exec there either. It keeps the same API so callers need no build
 // tag of their own.
 type InheritedReaper struct{}

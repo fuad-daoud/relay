@@ -1,0 +1,624 @@
+package relevo
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// builderPrompt is the fixed handoff template. It names both paths explicitly
+// because alternate-screen output is unrecoverable, so the report must be a
+// file rather than something relevo reads off the terminal. The marker is the
+// builder's own "the tree is final": relevo closes the round on it, not on the
+// report appearing (spec 2026-09-12-completion-marker §1).
+//
+// It opens by naming the working tree and a halt rule (#192): a headless
+// agy builder has been observed to run its shell somewhere else and execute
+// a round against the planner's main checkout instead of its own worktree.
+// Telling the builder which tree is its own, and to check with `git status`
+// before doing anything else, is relevo's second line of defence alongside
+// pinning the process's workspace with --add-dir.
+const builderPrompt = `Your working tree is: %s
+It is the only tree you may touch. Before anything else, run ` + "`git status`" + `
+there. If that fails, or reports a different directory or branch than you
+expect for this tree, stop: write a report saying so, create the done marker,
+and do nothing else.
+
+Read: %s
+When you are done, write your report to: %s
+Then, as the very last thing you do -- after every edit, test and commit --
+create this empty file: %s
+End the report with this block as its last lines, filled in honestly:
+
+` + "```relevo" + `
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # repo-relative files you changed
+commands_run: []        # commands you ran, e.g. ["make check"]
+not_done: []            # adjacent work you deliberately left
+` + "```" + `
+Reply here with only the report path.`
+
+// SendResult is what one successful Send produced.
+type SendResult struct {
+	Round int    // the round the plan was filed under
+	Drift string // the drift line for stdout, or "" when there is nothing to say
+	// Pick is the pick line when SendOptions.Builder changed the builder (the
+	// KindPick note), or "" otherwise. For the CLI to print.
+	Pick string
+}
+
+// SendOptions is what a send may add to the plan file (#141).
+type SendOptions struct {
+	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
+	AllowYolo bool
+	// Builder is a candidate token that persists as the binding's builder from
+	// this round on, until another --builder or a mid-round switch changes it.
+	// "" means the binding's current builder. In contrast to Tier, it is not a
+	// one-round override: the issue's failure was a plain send silently going
+	// to the builder the binding was bound to (#318).
+	Builder string
+	// Regate sets the binding's repair-round budget (#132 part 2); nil leaves
+	// it unchanged.
+	Regate *int
+	// Verify marks the round for a read-only reviewer at round close (#144).
+	// nil takes policy.json verify.default, so a plain send honours the
+	// planner's configured default and --verify/--no-verify overrides it.
+	Verify *bool
+	// Defer stages the round -- plan written, log entry appended, State ==
+	// active -- but does not spawn a builder; the caller (serve.admit or
+	// relevo.Admit) starts it later (#285, server only).
+	Defer bool
+}
+
+// preflight is everything Send checks before it takes the state lock and
+// writes: the plan bytes, the effective tier, the headless launch argv, the
+// paths and the composed prompt. sendPreflight computes it read-only; Send and
+// SendDryRun both call it, so a dry run can never disagree with a real send
+// about the state of the world (#149). A failed precondition is an error in
+// Send's exact wording.
+type preflight struct {
+	b    store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
+	body []byte        // the plan file's bytes
+	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick *Resolution   // --builder's resolution to apply under the lock; nil when the builder does not change
+
+	planPath, reportPath, donePath string
+	prompt                         string // composePrompt(...) -- computed, never sent
+
+	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
+}
+
+// sendPreflight runs Send's read-only preconditions in Send's exact order and
+// error wording. It makes no write: Store.Load takes the store lock briefly
+// (it always has) but that is a read. CaptureBaseline is deliberately not here:
+// it adds git objects. The remote path stops after the checks that need no
+// server contact (no WhoAmI, no bundle); Send's remote branch calls sendRemote
+// as it always did.
+func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
+	// Read the caller's file first; it is the one input that does not depend
+	// on binding state.
+	body, err := os.ReadFile(file)
+	if err != nil {
+		return preflight{}, fmt.Errorf("read plan %s: %w", file, err)
+	}
+
+	var tier harness.Tier
+	if opts.Tier != "" {
+		t, err := harness.ParseTier(opts.Tier)
+		if err != nil {
+			return preflight{}, err
+		}
+		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+			return preflight{}, err
+		}
+		tier = t
+	}
+
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return preflight{}, err
+	}
+	if b.State == store.StatePaused {
+		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
+	}
+
+	// --builder resolves the new candidate read-only and substitutes it in
+	// memory, so every later precondition (the argv, the advisory gate note,
+	// the dry run) is computed against the builder this round will actually
+	// use. Nothing is saved here: Send re-applies the change under its lock.
+	// A remote binding's candidates decide on the server, so only the token's
+	// shape is checked here (§5.1).
+	var pick *Resolution
+	if opts.Builder != "" {
+		entries, err := rt.Store.ReadLog(name)
+		if err != nil {
+			return preflight{}, err
+		}
+		if roundOpenIn(entries, b.Round) {
+			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+		}
+		if b.Builder.Remote() {
+			if _, err := candidate.ParseRef(opts.Builder); err != nil {
+				return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
+			}
+		} else {
+			p, err := ResolveSendBuilder(rt, b.BuilderCandidate, opts.Builder)
+			if err != nil {
+				return preflight{}, err
+			}
+			if p != nil {
+				b2, err := applyBuilder(b, *p, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
+				if err != nil {
+					return preflight{}, err
+				}
+				b = b2
+				pick = p
+			}
+		}
+	}
+
+	if tier == "" {
+		tier = effectiveTier(b)
+	}
+
+	planPath := rt.Store.PlanPath(name, b.Round)
+	reportPath := rt.Store.ReportPath(name, b.Round)
+	donePath := rt.Store.DonePath(name, b.Round)
+	prompt := composePrompt(b, planPath, reportPath, donePath)
+
+	pf := preflight{
+		b: b, body: body, tier: tier,
+		planPath: planPath, reportPath: reportPath, donePath: donePath,
+		prompt: prompt, pick: pick,
+	}
+
+	// A remote binding's read-only prefix: the client and transport must be
+	// configured and the branch must resolve locally. Nothing here contacts
+	// the server, so a dry run of a remote binding is offline and safe.
+	if b.Builder.Remote() {
+		if rt.Remote == nil {
+			return preflight{}, ErrRemoteUnavailable
+		}
+		if rt.Git == nil {
+			return preflight{}, ErrGitRequired
+		}
+		if rt.Transport == nil {
+			return preflight{}, errors.New("no remote transport configured")
+		}
+		branchRef := b.Branch
+		if !strings.HasPrefix(branchRef, "refs/heads/") {
+			branchRef = "refs/heads/" + branchRef
+		}
+		sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, branchRef)
+		if err != nil {
+			return preflight{}, fmt.Errorf("resolve branch %s: %w", b.Branch, err)
+		}
+		if !ok {
+			return preflight{}, fmt.Errorf("branch %s not found", b.Branch)
+		}
+		pf.remoteSHA = sha
+		return pf, nil
+	}
+
+	if b.State == store.StateBroken {
+		return preflight{}, fmt.Errorf("binding %q is broken; rebind before sending", name)
+	}
+	if b.Round > b.RoundCap {
+		return preflight{}, fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
+	}
+
+	// A headless builder (#99) is a process relevo starts per round, so the
+	// runner must exist and no previous process may still be alive -- and both
+	// are checked here, before Send stages anything.
+	if rt.Runner == nil {
+		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+	}
+	if b.Builder.PID != 0 {
+		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+		if err != nil {
+			return preflight{}, fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+		}
+		if alive {
+			return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+		}
+	}
+	ref, err := candidate.ParseRef(b.BuilderCandidate)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	var role harness.RoleSpec
+	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	if err != nil {
+		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
+	}
+	argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	if err != nil {
+		return preflight{}, err
+	}
+	pf.argv = argv
+
+	// The gate is advisory only: a gated candidate can still be sent to, it
+	// just tells the human the daemon would switch away after the start.
+	for _, g := range Gates(rt) {
+		if g.Token == b.BuilderCandidate && (g.Kind == ledger.RateLimited || g.Kind == ledger.RolesMissing) {
+			gate := g
+			pf.gate = &gate
+			break
+		}
+	}
+
+	return pf, nil
+}
+
+// Send copies the planner's plan into relevo state and hands it to the builder
+// as the prompt of a fresh process started in the binding's tree (#99). It
+// returns a SendResult describing the round and any between-rounds drift.
+//
+// Every precondition that needs no lock lives in sendPreflight, which
+// `relevo send --dry-run` calls too (#149). The in-lock checks stay: they guard
+// against a change between the preflight and the lock.
+func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (SendResult, error) {
+	pf, err := sendPreflight(ctx, rt, name, file, opts)
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	// A remote binding's preflight stops at the read-only checks; the round
+	// itself is still shipped by sendRemote, which contacts the server.
+	if pf.b.Builder.Remote() {
+		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, opts.Builder)
+	}
+
+	// The baseline snapshot adds git objects, so it stays out of the
+	// read-only preflight and is taken here, before the lock.
+	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
+	hintRound := pf.b.Round
+
+	var round int
+	var driftLineOut string
+	var pickLine string
+
+	// The whole round advance is one critical section: the daemon rewrites this
+	// same binding on every tick, and a lost update here would re-send a plan
+	// the builder already has. Spawning a process does not wait on it, so
+	// holding the lock across it costs milliseconds, not the length of a turn.
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		if b.State == store.StateBroken {
+			return fmt.Errorf("binding %q is broken; rebind before sending", name)
+		}
+		if b.State == store.StatePaused {
+			return fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
+		}
+		if b.Round > b.RoundCap {
+			return fmt.Errorf("binding %q hit its round cap of %d", name, b.RoundCap)
+		}
+		// One process per round (headless spec §5.2): a previous round's
+		// process still running means the human is early, not that relevo
+		// should start a second builder in the same tree.
+		if b.Builder.PID != 0 {
+			if rt.Runner == nil {
+				return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+			}
+			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
+			if err != nil {
+				return fmt.Errorf("binding %q: check previous process %d: %w", name, b.Builder.PID, err)
+			}
+			if alive {
+				return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
+			}
+		}
+
+		// --builder is re-applied under the lock, against the fresh binding:
+		// the preflight's resolution must not be trusted over a round that
+		// opened in between. The re-check writes nothing when it fires (§5.2).
+		if pf.pick != nil {
+			entries, err := tx.ReadLog(name)
+			if err != nil {
+				return err
+			}
+			if roundOpenIn(entries, b.Round) {
+				return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+			}
+			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
+			if err != nil {
+				return err
+			}
+		}
+
+		if opts.Tier != "" {
+			b.RoundTier = opts.Tier
+		}
+
+		planPath := rt.Store.PlanPath(name, b.Round)
+		reportPath := rt.Store.ReportPath(name, b.Round)
+		donePath := rt.Store.DonePath(name, b.Round)
+		if err := os.WriteFile(planPath, pf.body, 0o644); err != nil {
+			return fmt.Errorf("stage plan at %s: %w", planPath, err)
+		}
+
+		text := composePrompt(b, planPath, reportPath, donePath)
+
+		// Defer stages the round without spawning: the caller (serve.admit
+		// or relevo.Admit) starts the builder later (#285).
+		deferred := opts.Defer
+
+		// The builder changed: say so in the new round's log before the
+		// process starts appending to it. A deferred round never spawns here,
+		// so it writes no marker.
+		if pf.pick != nil && !deferred {
+			appendLogMarker(rt.Store.BuilderLogPath(name, b.Round), rt.Now(), "builder changed to "+pf.pick.Token()+" (send --builder)")
+		}
+
+		late := false
+		if !deferred {
+			started, err := startRound(ctx, rt, tx, b, text)
+			if err != nil {
+				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+					_ = os.Remove(planPath)
+					return err
+				}
+				// The plan is staged and the round is open; nothing was
+				// started. NEEDS YOU says so in status, and the ledger's
+				// spawn_failed (written by startRound) gates the candidate
+				// for the next pick.
+				b.State = store.StateNeedsYou
+				b.Halt = "builder spawn failed: " + err.Error()
+				b.HaltAt = rt.Now().UTC()
+				// The builder change is still recorded first, so the log
+				// explains why the round was sent to the new candidate.
+				if pf.pick != nil {
+					if appendErr := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); appendErr != nil {
+						return fmt.Errorf("%v; and appending the builder pick failed: %w", err, appendErr)
+					}
+				}
+				if saveErr := tx.Save(b); saveErr != nil {
+					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
+				}
+				return err
+			}
+			b = started
+		}
+
+		// The pick entry is filed under the new round, before its plan entry,
+		// so builderForRound attributes the round to the new builder. It goes
+		// after startRound on purpose: an ErrTierUnsupported /
+		// ErrExtraArgsPermission early return saves nothing, so a builder
+		// change that did not happen must not be recorded.
+		if pf.pick != nil {
+			if err := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); err != nil {
+				return err
+			}
+			pickLine = ExplainResolution("builder", *pf.pick)
+		}
+
+		entry := store.LogEntry{
+			TS: rt.Now().UTC(), Round: b.Round,
+			Direction: store.DirToBuilder, Kind: store.KindPlan,
+			Path: planPath, Confirmed: true, Late: late,
+			Tier: string(effectiveTier(b)),
+		}
+		if err := tx.AppendLog(name, entry); err != nil {
+			return err
+		}
+
+		driftLine := ""
+		if b.Round == hintRound {
+			res := CaptureDrift(ctx, rt, b, baseline)
+			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
+				driftEntry := store.LogEntry{
+					TS: rt.Now().UTC(), Round: b.Round,
+					Direction: store.DirToPlanner, Kind: store.KindDrift,
+					Path: res.Path, Note: DriftSummary(res),
+					Confirmed: true,
+				}
+				if err := tx.AppendLog(name, driftEntry); err != nil {
+					return err
+				}
+				driftLine = DriftLine(res, b.Round)
+			}
+		}
+
+		round = b.Round
+		driftLineOut = driftLine
+		b.RoundBaselineTree = baseline
+		b.RoundBaselineHead = baselineHead
+		b.RoundClosedTree = ""
+		if deferred {
+			b.QueuedAt = rt.Now().UTC()
+		} else {
+			b.RoundStartedAt = rt.Now().UTC()
+		}
+		b.FinishPending = true
+		b.State = store.StateActive
+		b.Halt = ""
+		b.HaltAt = time.Time{}
+		// A human re-send is a fresh attempt: the next halt in this round
+		// notifies again, and the round gets a full switch budget.
+		b.HaltNotifiedRound = 0
+		b.RoundSwitches = 0
+		b.RoundExcluded = nil
+		// A fresh send is a fresh process: any stall stamp from the previous
+		// round is gone (#252), and so is the whole progress clock -- the
+		// tree, the output and the stale stamp all describe the round that
+		// just ended (#135).
+		b.StalledSince = time.Time{}
+		// A new round supersedes any stop requested for the old one (#138):
+		// the builder is being asked to work again, not to wrap up.
+		b.StopRequestedAt = time.Time{}
+		b.StopGraceMS = 0
+		// A new round moves the branch again, so the last land no longer
+		// describes it (#136): status stops saying "landed" here.
+		b.LandedAt = time.Time{}
+		b.LandedPR = ""
+		b.Progress = nil
+		b.ExploringSince = time.Time{}
+		b.StaleSince = time.Time{}
+		b.StaleNotifiedAt = time.Time{}
+		// A human send is a fresh attempt, so the repair bookkeeping from the
+		// old rounds says nothing about this one (#132 part 2): the budget
+		// starts unspent and no previous failure is held against the builder.
+		b.RepairCount = 0
+		b.LastGateSig = ""
+		if opts.Regate != nil {
+			b.Regate = *opts.Regate
+		}
+
+		// Whether this round gets a reviewer at its close (#144): the flag,
+		// else policy.json verify.default. Persisted with the round, and
+		// cleared by queueReport once the close has acted on it.
+		if opts.Verify != nil {
+			b.RoundVerify = *opts.Verify
+		} else {
+			b.RoundVerify = rt.Policy.VerifyDefault()
+		}
+
+		return tx.Save(b)
+	})
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	return SendResult{Round: round, Drift: driftLineOut, Pick: pickLine}, nil
+}
+
+// DryRun is what SendDryRun found: the round Send would open, the builder it
+// would go to, the paths and the head of the prompt. It is a description only;
+// nothing was written (#149).
+type DryRun struct {
+	Name       string   `json:"name"`
+	Round      int      `json:"round"`
+	Mode       string   `json:"mode"` // "headless" | "remote"
+	Candidate  string   `json:"candidate"`
+	Where      string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
+	GateNote   string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
+	PlanPath   string   `json:"plan_path"`
+	PlanFrom   string   `json:"plan_from"`
+	PlanBytes  int64    `json:"plan_bytes"`
+	ReportPath string   `json:"report_path"`
+	DonePath   string   `json:"done_path"`
+	Tier       string   `json:"tier"`
+	PromptHead []string `json:"prompt_head"` // the prompt's first two non-empty lines
+}
+
+// SendDryRun checks every precondition Send checks and describes the round
+// Send would open, without making a single write: no staged plan, no log
+// entry, no Save, no Prompt, no Runner.Start, no baseline snapshot (#149). A
+// failed precondition is the identical error Send would return for the same
+// state, so a script can rely on the dry run as a gate.
+func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (DryRun, error) {
+	pf, err := sendPreflight(ctx, rt, name, file, opts)
+	if err != nil {
+		return DryRun{}, err
+	}
+
+	d := DryRun{
+		Name:       pf.b.Name,
+		Round:      pf.b.Round,
+		Mode:       dryRunMode(pf.b),
+		Candidate:  pf.b.BuilderCandidate,
+		Where:      dryRunWhere(pf),
+		PlanPath:   pf.planPath,
+		PlanFrom:   absoluteOr(file),
+		PlanBytes:  int64(len(pf.body)),
+		ReportPath: pf.reportPath,
+		DonePath:   pf.donePath,
+		Tier:       string(pf.tier),
+		PromptHead: promptHead(pf.prompt),
+	}
+	if pf.gate != nil {
+		d.GateNote = dryRunGateNote(pf.gate)
+	}
+	return d, nil
+}
+
+// dryRunMode names the builder's shape as the dry run prints it.
+func dryRunMode(b store.Binding) string {
+	if b.Builder.Remote() {
+		return "remote"
+	}
+	return "headless"
+}
+
+// dryRunWhere is where the round would go: the headless argv that proves the
+// launch is well-formed, or the remote server and the branch the plan would be
+// shipped from.
+func dryRunWhere(pf preflight) string {
+	if pf.b.Builder.Remote() {
+		sha := pf.remoteSHA
+		if len(sha) > 12 {
+			sha = sha[:12]
+		}
+		return fmt.Sprintf("server %s, branch %s @ %s; server not contacted", pf.b.Builder.Server, pf.b.Branch, sha)
+	}
+	if len(pf.argv) == 0 {
+		return ""
+	}
+	if len(pf.argv) == 1 {
+		return pf.argv[0]
+	}
+	return pf.argv[0] + " " + pf.argv[1]
+}
+
+// dryRunGateNote is the advisory sentence for a gated candidate: what the gate
+// is, and that the daemon would switch the builder once the round started.
+func dryRunGateNote(g *ledger.Gate) string {
+	if g.Kind == ledger.RolesMissing {
+		return g.Note + "; the daemon would switch after start"
+	}
+	return GateKindText(g.Kind) + " " + GateUntilText(g.Until) + "; the daemon would switch after start"
+}
+
+// promptHead is the prompt's first two non-empty lines: enough for a human to
+// recognise the handoff without printing the whole template.
+func promptHead(prompt string) []string {
+	var out []string
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+		if len(out) == 2 {
+			break
+		}
+	}
+	return out
+}
+
+// absoluteOr resolves path against the current directory when it can, so a dry
+// run can report where the plan came from even when the caller typed a
+// relative path.
+func absoluteOr(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
+// composePrompt renders the builder prompt for this round. Line 1 is the
+// origin line naming the round and builder, followed by a blank line and the
+// handoff text (#139).
+func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
+	origin := OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
+	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
+	return origin + "\n\n" + body
+}

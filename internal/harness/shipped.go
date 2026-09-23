@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// shippedSHA256 is the generated index of every agent-definition blob relay has
+// shippedSHA256 is the generated index of every agent-definition blob relevo has
 // ever shipped (#371 round 3): one "<sha256>  <basename>" line per historical
 // and working-tree version of every file under agents/, sorted and unique.
 // scripts/agents-shipped.sh --write regenerates it from git history; --check
@@ -16,7 +16,7 @@ import (
 var shippedSHA256 string
 
 // shippedSets is shippedSHA256 parsed once: basename to the set of sha256
-// values relay has shipped under it.
+// values relevo has shipped under it.
 var (
 	shippedOnce sync.Once
 	shippedSets map[string]map[string]struct{}
@@ -47,11 +47,11 @@ func shippedIndex() map[string]map[string]struct{} {
 }
 
 // ShippedBefore reports whether sha is the sha256 of a version of the
-// definition named doc that some past relay shipped.
+// definition named doc that some past relevo shipped.
 //
 // doc is the embedded basename the role reads -- Role.Doc + "." + DocExt, as
 // AgentDoc composes it, e.g. "architect.claude.md". sha is the lowercase hex
-// sha256 of the raw bytes on disk. A match means the file is a copy relay wrote
+// sha256 of the raw bytes on disk. A match means the file is a copy relevo wrote
 // in an older release, not a user edit, so installOne may refresh it exactly as
 // it would a manifest hit (#371 round 3 §4).
 //

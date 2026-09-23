@@ -3,8 +3,8 @@ package dash
 import (
 	"sort"
 
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/histq"
 )
 
 // Round rows cycle through roundSortKeys, group rows through groupSortKeys

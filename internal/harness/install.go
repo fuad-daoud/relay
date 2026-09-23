@@ -26,7 +26,7 @@ type InstallEnv interface {
 	// WriteFile writes whole file with permission 0644, truncating if it exists.
 	WriteFile(path string, data []byte) error
 	// LoadManifest reads the role manifest (#371 §4.10): a home-relative
-	// path (Role.Path) to the lowercase hex sha256 of what relay last wrote
+	// path (Role.Path) to the lowercase hex sha256 of what relevo last wrote
 	// there. A missing manifest is an empty map, never an error.
 	LoadManifest() (map[string]string, error)
 	// SaveManifest writes the manifest. Install calls it once per Install,
@@ -48,7 +48,7 @@ type InstallOutcome string
 const (
 	OutcomeWrote          InstallOutcome = "wrote"
 	OutcomeOverwrote      InstallOutcome = "overwrote"
-	OutcomeUpdated        InstallOutcome = "updated (unchanged since relay wrote it)"
+	OutcomeUpdated        InstallOutcome = "updated (unchanged since relevo wrote it)"
 	OutcomeKeptIdentical  InstallOutcome = "kept (identical)"
 	OutcomeKeptDiffers    InstallOutcome = "kept (differs; --force to overwrite)"
 	OutcomeWouldWrite     InstallOutcome = "would write"
@@ -212,9 +212,9 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		res.Outcome = OutcomeKeptIdentical
 		return res, record(manifest, r.Path, existingSHA), nil
 	case rerr == nil && (manifest[r.Path] == existingSHA || ShippedBefore(agentDocBase(r, kind), existingSHA)):
-		// The bytes on disk are exactly what relay last wrote, or a blob
-		// some past relay shipped before manifests existed, so the
-		// difference from the shipped copy is relay's own older release,
+		// The bytes on disk are exactly what relevo last wrote, or a blob
+		// some past relevo shipped before manifests existed, so the
+		// difference from the shipped copy is relevo's own older release,
 		// not the user's edit: safe to refresh (#371 §4.10, round 3 §4).
 		if opts.DryRun {
 			res.Outcome = OutcomeWouldUpdate
@@ -294,7 +294,7 @@ func OSInstallEnv() InstallEnv {
 }
 
 // OSInstallEnvAt is OSInstallEnv with the role manifest at
-// ManifestPath(stateRoot) (#371 §4.10). stateRoot is relay's state root, which
+// ManifestPath(stateRoot) (#371 §4.10). stateRoot is relevo's state root, which
 // package main resolves through store.DefaultRoot and passes in, because this
 // package cannot import internal/store (harness <- usage <- store).
 func OSInstallEnvAt(stateRoot string) InstallEnv {

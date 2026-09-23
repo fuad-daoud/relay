@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // TestGroupByBuilderSums asserts every counter and sum of the builder axis

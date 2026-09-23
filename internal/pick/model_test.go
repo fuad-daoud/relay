@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func key(s string) tea.KeyMsg {
@@ -42,7 +42,7 @@ func wantQuit(t *testing.T, m Model, cmd func() interface{}, outcome error) {
 }
 
 func TestEmptyListEndsOnResultScreenWithNothingToPick(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg())
 	if m.screen != screenResult || m.result.text != "no bindings to mark done" {
 		t.Fatalf("screen=%v text=%q", m.screen, m.result.text)
@@ -52,7 +52,7 @@ func TestEmptyListEndsOnResultScreenWithNothingToPick(t *testing.T) {
 }
 
 func TestStatusErrorEndsOnResultScreen(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbUnbind})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbUnbind})
 	m, _ = update(t, m, statusMsg{err: errors.New("harness: connection refused")})
 	if m.screen != screenResult || m.result.err == nil {
 		t.Fatalf("screen=%v err=%v", m.screen, m.result.err)
@@ -62,7 +62,7 @@ func TestStatusErrorEndsOnResultScreen(t *testing.T) {
 }
 
 func TestListCursorStaysInBounds(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbUnbind})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbUnbind})
 	m, _ = update(t, m, rowsMsg(row("a", "ACTIVE", "working"), row("b", "ACTIVE", "working")))
 	m, _ = update(t, m, key("up"))
 	if m.cursor != 0 {
@@ -80,14 +80,14 @@ func TestListCursorStaysInBounds(t *testing.T) {
 }
 
 func TestEscCancelsFromTheList(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("a", "ACTIVE", "working")))
 	m, cmd := update(t, m, key("esc"))
 	wantQuit(t, m, cmd, ErrCancelled)
 }
 
 func TestCtrlCCancelsFromAnyScreen(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg())
 	m, cmd := update(t, m, key("ctrl+c"))
 	wantQuit(t, m, cmd, ErrCancelled)
@@ -110,7 +110,7 @@ func TestEnterRunsDoneAndShowsItsText(t *testing.T) {
 	if m.result.pending || m.result.err != nil {
 		t.Fatalf("result: pending=%v err=%v", m.result.pending, m.result.err)
 	}
-	if m.result.text != relay.DoneText("webshop", relay.DoneResult{}) {
+	if m.result.text != relevo.DoneText("webshop", relevo.DoneResult{}) {
 		t.Fatalf("text = %q, want DoneText", m.result.text)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -245,7 +245,7 @@ func TestUnbindOnDoneRowRunsWithoutConfirm(t *testing.T) {
 }
 
 func TestConfirmViewNamesTheBindingItsStateAndRound(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
 	m, _ = update(t, m, key("enter"))
 	v := m.confirmView()
@@ -254,7 +254,7 @@ func TestConfirmViewNamesTheBindingItsStateAndRound(t *testing.T) {
 			t.Errorf("confirm view lacks %q:\n%s", want, v)
 		}
 	}
-	m = newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbUnbind})
+	m = newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbUnbind})
 	m, _ = update(t, m, rowsMsg(row("webshop", "NEEDS YOU", "blocked")))
 	m, _ = update(t, m, key("enter"))
 	v = m.confirmView()
@@ -266,7 +266,7 @@ func TestConfirmViewNamesTheBindingItsStateAndRound(t *testing.T) {
 }
 
 func TestCtrlCCancelsFromConfirm(t *testing.T) {
-	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbDone})
+	m := newModel(context.Background(), relevo.Runtime{}, Options{Verb: VerbDone})
 	m, _ = update(t, m, rowsMsg(row("a", "ACTIVE", "working")))
 	m, _ = update(t, m, key("enter"))
 	m, cmd := update(t, m, key("ctrl+c"))

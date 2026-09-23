@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/release"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/release"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // Env abstracts external system facts for testability.
 type Env interface {
-	// DaemonRunning reports whether a relay daemon holds the lock.
+	// DaemonRunning reports whether a relevo daemon holds the lock.
 	DaemonRunning(ctx context.Context) (bool, error)
 	// DaemonInfo reads the daemon's own record (daemon.json): the version,
 	// executable and identity of the running image, and any binary it refused
@@ -32,7 +32,7 @@ type Env interface {
 	// is never itself a check failure.
 	ReadFile(path string) ([]byte, error)
 	// LoadManifest reads the role manifest (#371 §4.10): a home-relative
-	// definition path to the lowercase hex sha256 relay last wrote there. A
+	// definition path to the lowercase hex sha256 relevo last wrote there. A
 	// missing manifest is an empty map; a malformed one is an error this
 	// package treats as "nothing recorded".
 	LoadManifest() (map[string]string, error)
@@ -51,14 +51,14 @@ type Env interface {
 	// ReleaseState returns the running version, the cached latest (ok false
 	// when there is no usable cache) and the install kind (#293). Cache read
 	// only: it never touches the network, which is why the release check can
-	// be unconditional while every claim it makes is one relay can prove.
+	// be unconditional while every claim it makes is one relevo can prove.
 	ReleaseState() (running string, latest string, ok bool, kind release.Kind)
 }
 
 type realEnv struct {
 	store *store.Store
 
-	// self is relay's own build fact. Only package main can see
+	// self is relevo's own build fact. Only package main can see
 	// buildVersion(), so the caller gathers it and passes it to NewEnv; the
 	// zero value means this install cannot be classified, which
 	// ReleaseState reports as release.KindUnknown.
@@ -67,7 +67,7 @@ type realEnv struct {
 
 // NewEnv returns a real Env backed by the given store.
 //
-// self is release.Detect's Inputs for the running relay, optional because a
+// self is release.Detect's Inputs for the running relevo, optional because a
 // caller that never reads ReleaseState (the bind preflight) need not gather
 // it: the check then reads as "not checked" rather than guessing.
 func NewEnv(st *store.Store, self ...release.Inputs) Env {
@@ -115,7 +115,7 @@ func (e *realEnv) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// LoadManifest reads the role manifest from relay's state root, composed
+// LoadManifest reads the role manifest from relevo's state root, composed
 // through store.DefaultRoot the same way ReleaseState composes the release
 // cache path (#42, #371 §3).
 func (e *realEnv) LoadManifest() (map[string]string, error) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 type screen int
@@ -18,7 +18,7 @@ const (
 
 // statusMsg is the list's rows, or why there are none.
 type statusMsg struct {
-	report relay.Report
+	report relevo.Report
 	err    error
 }
 
@@ -33,14 +33,14 @@ type verbDoneMsg struct {
 // is pure and tests drive it with messages.
 type Model struct {
 	ctx  context.Context
-	rt   relay.Runtime
+	rt   relevo.Runtime
 	opts Options
 
 	screen        screen
 	width, height int
 
 	// list screen
-	rows   []relay.BindingStatus
+	rows   []relevo.BindingStatus
 	loaded bool // false until the first statusMsg
 	cursor int
 	top    int
@@ -48,14 +48,14 @@ type Model struct {
 	result resultModel
 	// confirm is the row a done/unbind is waiting on a `y` for (#103).
 	// Meaningful only while screen == screenConfirm.
-	confirm relay.BindingStatus
+	confirm relevo.BindingStatus
 
 	// outcome is what Run returns: nil after a verb succeeded, else one of
 	// the sentinels in verb.go. Set exactly once, by quit.
 	outcome error
 }
 
-func newModel(ctx context.Context, rt relay.Runtime, opts Options) Model {
+func newModel(ctx context.Context, rt relevo.Runtime, opts Options) Model {
 	return Model{ctx: ctx, rt: rt, opts: opts, screen: screenList}
 }
 
@@ -63,9 +63,9 @@ func (m Model) Init() tea.Cmd {
 	return fetchStatus(m.ctx, m.rt)
 }
 
-func fetchStatus(ctx context.Context, rt relay.Runtime) tea.Cmd {
+func fetchStatus(ctx context.Context, rt relevo.Runtime) tea.Cmd {
 	return func() tea.Msg {
-		rep, err := relay.Status(ctx, rt)
+		rep, err := relevo.Status(ctx, rt)
 		if err != nil {
 			return statusMsg{err: err}
 		}
@@ -75,21 +75,21 @@ func fetchStatus(ctx context.Context, rt relay.Runtime) tea.Cmd {
 
 // runVerb runs the chosen verb and reports its text, which is the same text
 // the CLI prints (spec §5).
-func runVerb(ctx context.Context, rt relay.Runtime, opts Options, name string) tea.Cmd {
+func runVerb(ctx context.Context, rt relevo.Runtime, opts Options, name string) tea.Cmd {
 	return func() tea.Msg {
 		switch opts.Verb {
 		case VerbDone:
-			res, err := relay.Done(ctx, rt, name)
+			res, err := relevo.Done(ctx, rt, name)
 			if err != nil {
 				return verbDoneMsg{err: err}
 			}
-			return verbDoneMsg{text: relay.DoneText(name, res)}
+			return verbDoneMsg{text: relevo.DoneText(name, res)}
 		case VerbUnbind:
-			res, err := relay.Unbind(ctx, rt, name, opts.Archive)
+			res, err := relevo.Unbind(ctx, rt, name, opts.Archive)
 			if err != nil {
 				return verbDoneMsg{err: err}
 			}
-			return verbDoneMsg{text: relay.UnbindText(name, res)}
+			return verbDoneMsg{text: relevo.UnbindText(name, res)}
 		}
 		return verbDoneMsg{err: fmt.Errorf("unknown verb %q", opts.Verb)}
 	}
@@ -175,7 +175,7 @@ func (m Model) listKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // pick acts on the chosen row. done and unbind run at once on a DONE row and
 // stop for a `y` on any other (#103, needsConfirm).
-func (m Model) pick(r relay.BindingStatus) (tea.Model, tea.Cmd) {
+func (m Model) pick(r relevo.BindingStatus) (tea.Model, tea.Cmd) {
 	switch m.opts.Verb {
 	case VerbDone, VerbUnbind:
 		if needsConfirm(m.opts.Verb, r) {

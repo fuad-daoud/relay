@@ -16,7 +16,7 @@ func TestDaemonInfoRoundTrip(t *testing.T) {
 		Version:    "v1.2.3",
 		PID:        4242,
 		StartedAt:  base,
-		Exe:        "/usr/local/bin/relay",
+		Exe:        "/usr/local/bin/relevo",
 		ExeID:      FileID{Dev: 1, Ino: 2, Size: 3, ModTime: base},
 		ReexecFrom: "v1.2.2",
 		ReexecFailed: &ReexecFailure{

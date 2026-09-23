@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// TestUpsertPlannerByID pins §3.5's id-first write: relay's planner records
+// TestUpsertPlannerByID pins §3.5's id-first write: relevo's planner records
 // carry their own id, so ingest upserts by that id -- inserting it first, then
 // updating the columns a move can change.
 func TestUpsertPlannerByID(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // handingOffSection returns doc from the line "## Handing off" to the end, or

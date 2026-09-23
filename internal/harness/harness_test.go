@@ -142,7 +142,7 @@ func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 		}
 		if h.Kind == "agy" {
 			// #191: agy's plan-executor never dispatches a sub-agent of any
-			// kind -- an idle root agent there is an exit relay treats as a
+			// kind -- an idle root agent there is an exit relevo treats as a
 			// failed builder -- so it names no researcher to dispatch to.
 			if strings.Contains(string(doc), "researcher") {
 				t.Errorf("agy plan-executor must not mention researcher (#191)")
@@ -170,9 +170,9 @@ func TestPlanExecutorReportsGitSurgeryOnEveryKind(t *testing.T) {
 	}
 }
 
-// The architect is the planner's definition: relay ships it so the
+// The architect is the planner's definition: relevo ships it so the
 // planner session can be started with --agent architect on any kind, but
-// relay never launches it, so it is a Role row and not a roleTable entry.
+// relevo never launches it, so it is a Role row and not a roleTable entry.
 func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("architect", h.Kind)
@@ -180,7 +180,7 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		if h.DocExt == "toml" {
-			// A profile has no frontmatter: its identity is the file relay
+			// A profile has no frontmatter: its identity is the file relevo
 			// installs it at (architect.config.toml, selected with -p
 			// architect) and the literal that carries the role text.
 			if !strings.Contains(string(doc), "developer_instructions = '''") {
@@ -197,13 +197,13 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 		}
 	}
 	if _, ok := RoleByName("architect"); ok {
-		t.Error("architect is a shipped definition, not a relay role")
+		t.Error("architect is a shipped definition, not a relevo role")
 	}
 }
 
 // The architect body -- everything after the frontmatter -- is one text
 // shipped three times. #188 added the Handing off section that makes the
-// planner reach for relay; this pins both the section and the identity, so
+// planner reach for relevo; this pins both the section and the identity, so
 // an edit to one kind cannot drift from the others.
 func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	bodies := map[string]string{}
@@ -213,7 +213,7 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		body := definitionBody(t, h.Kind, string(doc))
-		for _, want := range []string{"## Handing off", "relay send", "RELAY_PLANNER", "relay unavailable"} {
+		for _, want := range []string{"## Handing off", "relevo send", "RELEVO_PLANNER", "relevo unavailable"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}
@@ -577,14 +577,14 @@ func TestPrintArgsFillsState(t *testing.T) {
 		t.Fatalf("codex Launch() TierEdit error: %v", err)
 	}
 
-	stateDir := "/home/u/.local/state/relay/x"
+	stateDir := "/home/u/.local/state/relevo/x"
 	got := l.PrintArgs("p", 0, "/wt", stateDir)
 	for _, a := range got {
 		if a == StatePlaceholder {
 			t.Errorf("StatePlaceholder survived PrintArgs: %v", got)
 		}
 	}
-	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relay/x"]`
+	wantRoot := `sandbox_workspace_write.writable_roots=["/home/u/.local/state/relevo/x"]`
 	found := false
 	for i, a := range got {
 		if a == "-s" && i+1 < len(got) && got[i+1] == "workspace-write" {

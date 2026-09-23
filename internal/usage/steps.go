@@ -24,7 +24,7 @@ type StepStats struct {
 // it (#323, #324). It is pure -- no I/O, no clock -- and never fails: a
 // shape the harness does not emit is a zero and an undecodable line is
 // skipped. It reads the harness's own JSON lines only, so the
-// `relay-exit:`/`relay-rusage:` trailers, blanks and junk are not events.
+// `relevo-exit:`/`relevo-rusage:` trailers, blanks and junk are not events.
 // The rules key on event names unique to each harness, so a stream that
 // holds a second run after a mid-round switch is read as one.
 func StreamSteps(harness string, stream []byte) StepStats {

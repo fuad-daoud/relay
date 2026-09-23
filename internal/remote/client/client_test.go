@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/remote/client"
-	"github.com/fuad-daoud/relay/internal/serve"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -58,8 +58,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 
 type scriptRunner struct {
 	mu           sync.Mutex
-	specs        []relay.ProcSpec
-	aliveHandles []relay.ProcHandle
+	specs        []relevo.ProcSpec
+	aliveHandles []relevo.ProcHandle
 	pidSeq       int
 	alive        bool
 }
@@ -68,7 +68,7 @@ func newScriptRunner() *scriptRunner {
 	return &scriptRunner{alive: true}
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
@@ -77,17 +77,17 @@ func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.Pr
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return relay.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
+	return relevo.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aliveHandles = append(r.aliveHandles, h)
 	return r.alive, nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (code int, ok bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (code int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.alive {
@@ -96,15 +96,15 @@ func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath
 	return 0, true
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
-	return relay.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
+	return relevo.ProcRusage{}, false
 }
 
 func (r *scriptRunner) setAlive(a bool) {
@@ -351,11 +351,11 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	}
 
 	// 2. StartRound with a real bundle from temp client repo
-	runGit(t, clientDir, "branch", "relay/api", headSHA)
-	if err := fix.gitClient.UpdateRef(ctx, clientDir, "refs/relay/api/out", headSHA, ""); err != nil {
+	runGit(t, clientDir, "branch", "relevo/api", headSHA)
+	if err := fix.gitClient.UpdateRef(ctx, clientDir, "refs/relevo/api/out", headSHA, ""); err != nil {
 		t.Fatalf("UpdateRef: %v", err)
 	}
-	snap, err := fix.transport.Snapshot(ctx, clientDir, []string{"refs/relay/api/out"}, "")
+	snap, err := fix.transport.Snapshot(ctx, clientDir, []string{"refs/relevo/api/out"}, "")
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	runGit(t, b.Worktree, "commit", "-m", "round 1 result")
 
 	// 4. Write report+marker on server side and tick it
-	reportText := "Finished round\n\n```relay\nstatus: done\n```\n"
+	reportText := "Finished round\n\n```relevo\nstatus: done\n```\n"
 	if err := os.WriteFile(st.ReportPath("api", 1), []byte(reportText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	if bundleRC == nil {
 		t.Fatal("RoundBundle returned nil, want bundle stream")
 	}
-	absorbed, err := fix.transport.Absorb(ctx, clientDir, remote.ContentTypeGitBundle, bundleRC, []string{"refs/heads/relay/api"})
+	absorbed, err := fix.transport.Absorb(ctx, clientDir, remote.ContentTypeGitBundle, bundleRC, []string{"refs/heads/relevo/api"})
 	_ = bundleRC.Close()
 	if err != nil {
 		t.Fatalf("Absorb round bundle: %v", err)

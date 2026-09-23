@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 )
 
-// manifestFileName is the role manifest's name inside relay's state root.
+// manifestFileName is the role manifest's name inside relevo's state root.
 const manifestFileName = "agents-manifest.json"
 
 // ManifestPath returns the role manifest's location under stateRoot (#371 §3).
 // The manifest maps a home-relative definition path -- exactly Role.Path, the
-// form InstallResult.Path carries -- to the lowercase hex sha256 of what relay
-// last wrote there, so a later relay can tell "unchanged since relay wrote it"
+// form InstallResult.Path carries -- to the lowercase hex sha256 of what relevo
+// last wrote there, so a later relevo can tell "unchanged since relevo wrote it"
 // (safe to refresh) from "edited by the user" (kept).
 func ManifestPath(stateRoot string) string {
 	return filepath.Join(stateRoot, manifestFileName)
@@ -31,7 +31,7 @@ func docSHA(data []byte) string {
 }
 
 // ReadManifest loads the manifest at path. A missing file is an empty map and
-// no error: a machine relay has never installed roles on has nothing recorded.
+// no error: a machine relevo has never installed roles on has nothing recorded.
 // Malformed JSON is an error, and the caller decides what to do with it --
 // Install reports it once and then treats the manifest as empty (#371 §3).
 func ReadManifest(path string) (map[string]string, error) {
@@ -74,7 +74,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".relay-*")
+	tmp, err := os.CreateTemp(dir, ".relevo-*")
 	if err != nil {
 		return fmt.Errorf("create temp file in %s: %w", dir, err)
 	}

@@ -14,7 +14,7 @@ Here is the diff that was committed:
 
 All existing regression tests pass.
 
-```relay
+```relevo
 status: done
 changed_paths: ["router.go", "router_test.go"]
 commands_run: ["go test ./..."]

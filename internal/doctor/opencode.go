@@ -27,7 +27,7 @@ const opencodeDBPath = ".local/share/opencode/opencode.db"
 // `opencode run` without --standalone is a thin client of the one `opencode
 // serve --service` per user, so a killed or switched-away client leaves its
 // agent session running inside the service, still editing the worktree
-// relay has moved on from -- Runner.Kill (a process-group kill of the
+// relevo has moved on from -- Runner.Kill (a process-group kill of the
 // client) never reaches it. This row is informational only, so it is always
 // SevOK when it appears, and it appears only when service.json exists: the
 // one local signal that the shared-service model is actually in play here.
@@ -69,7 +69,7 @@ func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, boo
 }
 
 // opencodeAllowlistCheck reports whether opencode's own config lets a headless
-// builder read the plan relay stages under stateRoot (#236). opencode refuses
+// builder read the plan relevo stages under stateRoot (#236). opencode refuses
 // that read unless permission.external_directory allows the directory, and it
 // does not expand ~ or $HOME in these patterns, so the entry is compared
 // against the literal home-resolved root.

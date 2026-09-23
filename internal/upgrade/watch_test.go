@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 var watchBase = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
@@ -25,7 +25,7 @@ type statResult struct {
 func scriptedWatcher(t *testing.T, stats []statResult, preflights []error, want []Action) *Watcher {
 	t.Helper()
 
-	w := &Watcher{Path: "/usr/local/bin/relay", Started: id(1)}
+	w := &Watcher{Path: "/usr/local/bin/relevo", Started: id(1)}
 	i, pf := 0, 0
 	w.Stat = func(string) (store.FileID, error) {
 		if i >= len(stats) {
@@ -162,7 +162,7 @@ func TestWatcherRollbackClearsRefusal(t *testing.T) {
 // the package's own bounded context, not the daemon's whole lifetime.
 func TestWatcherPreflightGetsATimeoutDeadline(t *testing.T) {
 	cur := id(2)
-	w := &Watcher{Path: "/relay", Started: id(1)}
+	w := &Watcher{Path: "/relevo", Started: id(1)}
 	w.Stat = func(string) (store.FileID, error) { return cur, nil }
 
 	var deadline bool

@@ -20,7 +20,7 @@ func TestLoadMapsHeldAndOrphanedToActive(t *testing.T) {
 
 			// Write the binding through the store so every other field is
 			// what a real bind.json holds, then rewrite its state to the
-			// legacy word exactly as an older relay wrote it.
+			// legacy word exactly as an older relevo wrote it.
 			b := Binding{Name: "webshop", CWD: "/repo/webshop", Round: 2}
 			if err := s.Save(b); err != nil {
 				t.Fatalf("Save: %v", err)

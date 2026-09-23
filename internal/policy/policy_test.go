@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 func load(t *testing.T, body string) (Policy, error) {
@@ -970,7 +970,7 @@ func TestServeScopeValidation(t *testing.T) {
 		name string
 		body string
 	}{
-		{"slice ends in .slice", `{"serve":{"scope":{"slice":"relay.slice"}}}`},
+		{"slice ends in .slice", `{"serve":{"scope":{"slice":"relevo.slice"}}}`},
 		{"cpu_weight in range", `{"serve":{"scope":{"cpu_weight":500}}}`},
 		{"memory_max matches", `{"serve":{"scope":{"memory_max":"512M"}}}`},
 		{"tasks_max positive", `{"serve":{"scope":{"tasks_max":10}}}`},
@@ -988,7 +988,7 @@ func TestServeScopeValidation(t *testing.T) {
 		body     string
 		contains string
 	}{
-		{"slice missing suffix", `{"serve":{"scope":{"slice":"relay"}}}`, "serve.scope.slice: must end in \".slice\""},
+		{"slice missing suffix", `{"serve":{"scope":{"slice":"relevo"}}}`, "serve.scope.slice: must end in \".slice\""},
 		{"cpu_weight above range", `{"serve":{"scope":{"cpu_weight":10001}}}`, "serve.scope.cpu_weight: must be 1..10000"},
 		{"cpu_weight negative", `{"serve":{"scope":{"cpu_weight":-1}}}`, "serve.scope.cpu_weight: must be 1..10000"},
 		{"memory_max does not match", `{"serve":{"scope":{"memory_max":"512x"}}}`, "serve.scope.memory_max: must match"},
@@ -1143,7 +1143,7 @@ func TestScopeForWholeBlockOverride(t *testing.T) {
 	})
 }
 
-// TestParseCPUList pins #314's cpu-list grammar: the pool of cores relay hands
+// TestParseCPUList pins #314's cpu-list grammar: the pool of cores relevo hands
 // out, one per round. Numbers and ranges are comma-separated with no spaces;
 // the result is sorted and de-duplicated; a backwards range and any core above
 // 1023 are errors.

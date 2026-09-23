@@ -13,12 +13,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/hooks"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // sameSavedPlan reports whether planText is byte-identical to the plan the
@@ -26,7 +26,7 @@ import (
 // used since the round-resend rule, factored out for the open-round idempotent
 // send (#373 §4.2). A plan that was never saved, or cannot be read, is not the
 // same plan.
-func sameSavedPlan(rt relay.Runtime, name string, round int, planText string) bool {
+func sameSavedPlan(rt relevo.Runtime, name string, round int, planText string) bool {
 	saved, err := os.ReadFile(rt.Store.PlanPath(name, round))
 	if err != nil {
 		return false
@@ -117,10 +117,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// re-Send, reset QueuedAt, append a log entry or absorb the bundle
 	// again. It returns before the running->409 check below; a different plan
 	// for the open round is still 409 round_open.
-	st := relay.RoundStateOf(b, entries)
+	st := relevo.RoundStateOf(b, entries)
 	if (st == remote.RoundRunning || st == remote.RoundQueued) && reqRound == b.Round && sameSavedPlan(rt, name, b.Round, planText) {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+		writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 		return
 	}
 	if st == remote.RoundRunning {
@@ -132,7 +132,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	if reqRound != b.Round {
 		if reqRound == b.Round-1 && sameSavedPlan(rt, name, b.Round-1, planText) {
 			s.mu.Unlock()
-			writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+			writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 			return
 		}
 		s.mu.Unlock()
@@ -150,7 +150,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// token refuses with nothing absorbed and no ref touched (#318 §5.4). Send
 	// re-resolves it under its own lock as a backstop.
 	if candidate != "" {
-		if _, err := relay.ResolveSendBuilder(rt, b.BuilderCandidate, candidate); err != nil {
+		if _, err := relevo.ResolveSendBuilder(rt, b.BuilderCandidate, candidate); err != nil {
 			s.mu.Unlock()
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 			return
@@ -158,7 +158,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bare := b.Serve.BareRepo
-	outRef := "refs/relay/" + name + "/out"
+	outRef := "refs/relevo/" + name + "/out"
 
 	// Absorb OUTSIDE s.mu
 	s.mu.Unlock()
@@ -230,7 +230,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if err := s.cfg.Git.MergeFF(r.Context(), b.Worktree, outRef); err != nil {
 			if errors.Is(err, git.ErrNotFastForward) {
-				writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "relay/"+name+" on the server has moved past your copy")
+				writeErr(w, http.StatusUnprocessableEntity, remote.CodeNotFastForward, "relevo/"+name+" on the server has moved past your copy")
 				return
 			}
 			if errors.Is(err, git.ErrMergeConflict) {
@@ -257,23 +257,23 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmpFile.Close()
 
-	_, sendErr := relay.Send(r.Context(), rt, name, tmpFilePath, relay.SendOptions{Tier: tierStr, Builder: candidate, Defer: true})
+	_, sendErr := relevo.Send(r.Context(), rt, name, tmpFilePath, relevo.SendOptions{Tier: tierStr, Builder: candidate, Defer: true})
 	if sendErr != nil {
-		if errors.Is(sendErr, relay.ErrRunnerUnavailable) {
+		if errors.Is(sendErr, relevo.ErrRunnerUnavailable) {
 			writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
 			return
 		}
-		if errors.Is(sendErr, relay.ErrBuilderBusy) {
+		if errors.Is(sendErr, relevo.ErrBuilderBusy) {
 			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
 			return
 		}
-		if errors.Is(sendErr, relay.ErrTierAboveMax) {
+		if errors.Is(sendErr, relevo.ErrTierAboveMax) {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
 			return
 		}
 		// Backstop: the token was validated before absorb, but the ledger or
 		// the candidates could have changed in between (#318).
-		if errors.Is(sendErr, relay.ErrBadBuilder) {
+		if errors.Is(sendErr, relevo.ErrBadBuilder) {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
 			return
 		}
@@ -327,7 +327,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	view := relay.ServedView(b, entries)
+	view := relevo.ServedView(b, entries)
 	view.Queue = s.queuePositionView(b, view, caller)
 	writeJSON(w, http.StatusCreated, view)
 }
@@ -461,7 +461,7 @@ func (s *Server) handleRoundBundle(w http.ResponseWriter, r *http.Request) {
 	bare := b.Serve.BareRepo
 	refs := []string{"refs/heads/" + b.Branch}
 	if b.Serve.DirtyCommit != "" {
-		refs = append(refs, fmt.Sprintf("refs/relay/%s/round-%d", name, n))
+		refs = append(refs, fmt.Sprintf("refs/relevo/%s/round-%d", name, n))
 	}
 	since := r.URL.Query().Get("since")
 
@@ -526,5 +526,5 @@ func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 }

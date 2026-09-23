@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // PreflightTimeout bounds the `--preflight` run Check makes before it refuses a

@@ -9,15 +9,15 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/ingest"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // histFixtureDir is the ingest package's own golden fixture -- three
 // rounds (reported, halted, exited) -- reused read-only here exactly as
-// internal/relay's Show tests reuse it (Task 4's plan: seed a db by
+// internal/relevo's Show tests reuse it (Task 4's plan: seed a db by
 // ingest.Ingest over a copy packed as a tarball, so the binding is
 // archived and not live).
 const histFixtureDir = "../ingest/testdata/binding-three-rounds"
@@ -30,11 +30,11 @@ var histFixtureBindFiles = map[string]bool{
 
 // seedArchivedHistBinding packs the golden fixture into a tarball and
 // ingests it as an archive source, so the binding it produces carries
-// ArchivedAt and is never in a live report -- fetchShow and relay.Show
+// ArchivedAt and is never in a live report -- fetchShow and relevo.Show
 // fall through to the db for it by construction. It returns a runtime
-// carrying that db and the one HistoryBinding row relay.Bindings gives
+// carrying that db and the one HistoryBinding row relevo.Bindings gives
 // back for it.
-func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding) {
+func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBinding) {
 	t.Helper()
 	root := t.TempDir()
 	s := store.New(root)
@@ -62,7 +62,7 @@ func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding)
 		t.Fatalf("Archive: %v", err)
 	}
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -76,9 +76,9 @@ func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding)
 		t.Fatalf("archive Ingest: %v", err)
 	}
 
-	rt := relay.Runtime{Store: store.New(t.TempDir()), DB: d}
+	rt := relevo.Runtime{Store: store.New(t.TempDir()), DB: d}
 
-	rows, err := relay.Bindings(context.Background(), rt, "")
+	rows, err := relevo.Bindings(context.Background(), rt, "")
 	if err != nil {
 		t.Fatalf("Bindings: %v", err)
 	}
@@ -88,7 +88,7 @@ func seedArchivedHistBinding(t *testing.T) (relay.Runtime, relay.HistoryBinding)
 	return rt, rows[0]
 }
 
-func histModel(t *testing.T, rt relay.Runtime, h relay.HistoryBinding) Model {
+func histModel(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding) Model {
 	t.Helper()
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true

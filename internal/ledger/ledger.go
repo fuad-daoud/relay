@@ -1,5 +1,5 @@
 // Package ledger records when a candidate could not be used
-// and why: spawn failures relay observed, rate limits the planner reported.
+// and why: spawn failures relevo observed, rate limits the planner reported.
 // It records and answers; it never decides (#61 step 1).
 package ledger
 
@@ -19,7 +19,7 @@ import (
 type Kind string
 
 const (
-	// SpawnFailed records that relay failed to start a candidate process or
+	// SpawnFailed records that relevo failed to start a candidate process or
 	// that the process died during initialization. Subject is a candidate token.
 	SpawnFailed Kind = "spawn_failed"
 
@@ -34,9 +34,9 @@ const (
 	ExitedNoReport Kind = "exited_no_report"
 
 	// RolesMissing records that a candidate's harness kind is missing role
-	// files (definitions) relay needs to run it as a builder. Like
+	// files (definitions) relevo needs to run it as a builder. Like
 	// ExitedNoReport, it is never written to the ledger file: it is
-	// synthesised in memory by relay.Gates from an injectable
+	// synthesised in memory by relevo.Gates from an injectable
 	// Runtime.Roles checker, so Load never needs to validate it (#238).
 	RolesMissing Kind = "roles_missing"
 )
@@ -64,7 +64,7 @@ func (e Entry) Expired(now time.Time) bool {
 // Ledger holds an ordered collection of availability entries.
 //
 // Entries are the ones this binary understands. Other holds entries with an
-// unknown kind or source, preserved verbatim so an older relay never erases a
+// unknown kind or source, preserved verbatim so an older relevo never erases a
 // newer one's records (#372 §4.2): they are invisible to every reader, never
 // pruned or cleared, and written back byte-for-byte.
 type Ledger struct {
@@ -82,7 +82,7 @@ func knownKind(k Kind) bool {
 // knownSource reports whether s is a source this binary reads from the ledger
 // file.
 func knownSource(s string) bool {
-	return s == "relay" || s == "planner"
+	return s == "relevo" || s == "planner"
 }
 
 // Load reads and validates the availability ledger from disk. A missing file
@@ -91,7 +91,7 @@ func knownSource(s string) bool {
 // against their own notion of time (#61 step 1).
 //
 // An entry whose kind or source is unknown to this binary is preserved raw in
-// Other rather than rejected, so a ledger written by a newer relay survives a
+// Other rather than rejected, so a ledger written by a newer relevo survives a
 // rollback (#372 §4.2). Malformed JSON is still an error.
 func Load(path string) (Ledger, error) {
 	data, err := os.ReadFile(path)

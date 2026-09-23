@@ -1,4 +1,4 @@
-// Package policy loads policy.json: where the planner tells relay how to
+// Package policy loads policy.json: where the planner tells relevo how to
 // choose among candidates. This step carries order[role] only; later #61
 // steps add the scoring knobs -- weights, floor, providers[].peak,
 // max_switches, cooldown -- each arriving with the step that reads it
@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
 // ErrBadPolicy reports a policy.json that does not validate.
@@ -39,7 +39,7 @@ var memoryMaxPattern = regexp.MustCompile(`^[0-9]+[KMGT]?$`)
 var cpuQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
 
 // cpuListPattern is allowed_cpus' shape: a systemd cpu-list of numbers and
-// ranges, comma-separated, with no spaces. It is the pool of cores relay
+// ranges, comma-separated, with no spaces. It is the pool of cores relevo
 // hands out, one per round.
 var cpuListPattern = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
 
@@ -61,7 +61,7 @@ type Policy struct {
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
 
 	// StallAfterMS is how long a live headless builder's stream may go
-	// without an event before relay labels it stalled (#252). nil is
+	// without an event before relevo labels it stalled (#252). nil is
 	// DefaultStallAfter; a present value must be > 0.
 	StallAfterMS *int `json:"stall_after_ms,omitempty"`
 
@@ -71,12 +71,12 @@ type Policy struct {
 	ProgressIntervalMS *int `json:"progress_interval_ms,omitempty"`
 
 	// ExploreAfterMS is how long a builder's output or screen may keep moving
-	// while its tree has not before relay labels it exploring (#135). nil is
+	// while its tree has not before relevo labels it exploring (#135). nil is
 	// DefaultExploreAfter; a present value must be > 0.
 	ExploreAfterMS *int `json:"explore_after_ms,omitempty"`
 
 	// StaleAfterMS is how long a NEEDS YOU or HELD binding may sit unacted
-	// before relay labels it stale (#135). nil is DefaultStaleAfter; a present
+	// before relevo labels it stale (#135). nil is DefaultStaleAfter; a present
 	// value must be > 0.
 	StaleAfterMS *int `json:"stale_after_ms,omitempty"`
 
@@ -96,12 +96,12 @@ type Policy struct {
 	// (#141). "" is DefaultMaxTier. Must parse and must not be "harness".
 	MaxTier string `json:"max_tier,omitempty"`
 
-	// Gate configures the acceptance command relay runs on a binding's
+	// Gate configures the acceptance command relevo runs on a binding's
 	// completion marker when the binding itself has none (#132).
 	Gate *GatePolicy `json:"gate,omitempty"`
 
-	// Verify configures the default for `relay send --verify` (#144): when
-	// verify.default is true, a plain `relay send` marks the round for a
+	// Verify configures the default for `relevo send --verify` (#144): when
+	// verify.default is true, a plain `relevo send` marks the round for a
 	// read-only reviewer at round close.
 	Verify *VerifyPolicy `json:"verify,omitempty"`
 
@@ -109,7 +109,7 @@ type Policy struct {
 	// HTTP, beside the hooks.d script dispatcher (#4).
 	Notify *NotifyPolicy `json:"notify,omitempty"`
 
-	// Serve configures relay serve (#285). nil is every default.
+	// Serve configures relevo serve (#285). nil is every default.
 	Serve *ServePolicy `json:"serve,omitempty"`
 
 	// Scope is the systemd scope template for rounds this host runs. Serve.Scope
@@ -117,7 +117,7 @@ type Policy struct {
 	Scope *ScopePolicy `json:"scope,omitempty"`
 }
 
-// ServePolicy configures relay serve (#285).
+// ServePolicy configures relevo serve (#285).
 type ServePolicy struct {
 	// MaxBuilders caps headless builders running at once across all
 	// owners. nil = max(1, runtime.NumCPU()-1). A value below 1 is a Load error.
@@ -138,10 +138,10 @@ type ScopePolicy struct {
 	// uses CPUQuota, the same as a round. Otherwise it must match
 	// ^[0-9]+%$ and be at least 1%, the same grammar as CPUQuota.
 	GateCPUQuota string `json:"gate_cpu_quota,omitempty"`
-	// AllowedCPUs is the pool of cores relay hands out, one per round: a
+	// AllowedCPUs is the pool of cores relevo hands out, one per round: a
 	// systemd cpu-list such as "0-2". "" means no pinning, and nothing in the
 	// CPU-pinning path runs. It needs cpuset delegated to the user manager,
-	// which `relay doctor` checks.
+	// which `relevo doctor` checks.
 	AllowedCPUs string `json:"allowed_cpus,omitempty"`
 	TasksMax    int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
 }
@@ -166,7 +166,7 @@ type Webhook struct {
 	Format string `json:"format,omitempty"`
 }
 
-// VerifyPolicy configures the default verify flag for the rounds `relay
+// VerifyPolicy configures the default verify flag for the rounds `relevo
 // send` opens (#144).
 type VerifyPolicy struct {
 	// Default is what Send uses when neither --verify nor --no-verify was
@@ -179,7 +179,7 @@ type GatePolicy struct {
 	Default   string `json:"default,omitempty"`    // "" = no gate unless --gate
 	TimeoutMS *int   `json:"timeout_ms,omitempty"` // nil = DefaultGateTimeout; must be > 0
 	// Regate is the default repair-round budget for new bindings (#132 part
-	// 2): how many automatic repair rounds relay opens after a failing gate.
+	// 2): how many automatic repair rounds relevo opens after a failing gate.
 	// nil = 0 = no repair; must be >= 0 when present.
 	Regate *int `json:"regate,omitempty"`
 }
@@ -230,7 +230,7 @@ const DefaultMaxSwitches = 2
 const DefaultLimitGate = time.Hour
 
 // DefaultStallAfter is how long a live headless builder's stream may go
-// without an event before relay labels it stalled (#252): long enough that a
+// without an event before relevo labels it stalled (#252): long enough that a
 // thinking builder is never labelled, short enough that a hung one is.
 const DefaultStallAfter = 15 * time.Minute
 
@@ -241,13 +241,13 @@ const DefaultStallAfter = 15 * time.Minute
 const DefaultProgressInterval = 30 * time.Second
 
 // DefaultExploreAfter is how long a builder's output or screen may keep moving
-// while its tree has not before relay labels it exploring (#135): long enough
+// while its tree has not before relevo labels it exploring (#135): long enough
 // that a read-heavy plan is never labelled, short enough that a plan which has
 // stopped writing is.
 const DefaultExploreAfter = 20 * time.Minute
 
 // DefaultStaleAfter is how long a NEEDS YOU or HELD binding may sit unacted
-// before relay labels it stale (#135): hours, not minutes, because a human's
+// before relevo labels it stale (#135): hours, not minutes, because a human's
 // decision may wait on their next working day.
 const DefaultStaleAfter = 4 * time.Hour
 
@@ -438,7 +438,7 @@ func validateScope(path, prefix string, sc *ScopePolicy) error {
 	return nil
 }
 
-// ParseCPUList parses a systemd cpu-list: the pool of cores relay hands out,
+// ParseCPUList parses a systemd cpu-list: the pool of cores relevo hands out,
 // one per round. Numbers and ranges are comma-separated with no spaces, e.g.
 // "0-2" or "1,3,5-7". It returns the cores sorted and de-duplicated. A range
 // a-b requires a <= b, and no core above 1023 is accepted -- that stops a typo
@@ -543,7 +543,7 @@ func policyUnknownKeyWarnings(path string, raw []byte) []string {
 	base := filepath.Base(path)
 	warnings := make([]string, 0, len(paths))
 	for _, p := range paths {
-		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relay reads)", base, p))
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
 	}
 	return warnings
 }
@@ -571,7 +571,7 @@ func Load(path string) (Policy, error) {
 }
 
 // LoadWithWarnings reads and validates a policy file, returning the keys this
-// relay does not know as warnings. A missing file is the zero Policy and no
+// relevo does not know as warnings. A missing file is the zero Policy and no
 // error, so every machine without a policy.json behaves exactly as it did
 // before this file existed. A present file whose known keys do not validate is
 // an error wrapping ErrBadPolicy: LoadWithWarnings checks only the file's own
@@ -579,8 +579,8 @@ func Load(path string) (Policy, error) {
 // candidate is tolerated here and caught later, by the resolver and by
 // PolicyWarnings.
 //
-// An unknown key is a warning, not an error (#372 §4.4): a key a newer relay
-// reads must not stop this relay, and a typo surfaces in `relay doctor`. A key
+// An unknown key is a warning, not an error (#372 §4.4): a key a newer relevo
+// reads must not stop this relevo, and a typo surfaces in `relevo doctor`. A key
 // inside a map-typed field (order, tier) is never unknown.
 func LoadWithWarnings(path string) (Policy, []string, error) {
 	raw, err := os.ReadFile(path)

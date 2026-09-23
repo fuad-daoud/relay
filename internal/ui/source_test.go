@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/serve"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestPlannerSourceResolvesEveryKey: a planner source answers every key
@@ -16,7 +16,7 @@ import (
 // planner.
 func TestPlannerSourceResolvesEveryKey(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	src := plannerSource{rt: rt}
 
 	if _, err := src.Status(context.Background()); err != nil {
@@ -95,7 +95,7 @@ func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 // the runtime itself, so scope all reads the planner's own database (§2).
 func TestPlannerSourceBaseIsRuntime(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 
 	if base := (plannerSource{rt: rt}).Base(); base.Store != rt.Store {
 		t.Fatalf("Base().Store != the runtime's store")
@@ -103,7 +103,7 @@ func TestPlannerSourceBaseIsRuntime(t *testing.T) {
 }
 
 // TestServerSourceBaseHasNoDB pins the contract: a server's Base carries
-// no database -- the server box does not run relay.db, so scope all is
+// no database -- the server box does not run relevo.db, so scope all is
 // refused there with the existing "no database" notice (§2).
 func TestServerSourceBaseHasNoDB(t *testing.T) {
 	root := t.TempDir()

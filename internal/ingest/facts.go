@@ -3,8 +3,8 @@ package ingest
 import (
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // roundFacts derives round n's plain facts from its events: when it

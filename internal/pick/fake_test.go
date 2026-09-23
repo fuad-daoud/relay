@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type sentKeys struct{ Target, Keys string }
@@ -26,7 +26,7 @@ func testBinding(name string) store.Binding {
 // testRuntime seeds a store with the given bindings and returns a runtime
 // over it. Now is set because the verb stamps its log entry with it; a nil
 // clock panics.
-func testRuntime(t *testing.T, bindings ...store.Binding) relay.Runtime {
+func testRuntime(t *testing.T, bindings ...store.Binding) relevo.Runtime {
 	t.Helper()
 	st := store.New(t.TempDir())
 	for _, b := range bindings {
@@ -34,16 +34,16 @@ func testRuntime(t *testing.T, bindings ...store.Binding) relay.Runtime {
 			t.Fatalf("Save %s: %v", b.Name, err)
 		}
 	}
-	return relay.Runtime{Store: st, Now: time.Now}
+	return relevo.Runtime{Store: st, Now: time.Now}
 }
 
 // rowsMsg builds the statusMsg the list would receive for these rows.
-func rowsMsg(rows ...relay.BindingStatus) statusMsg {
-	return statusMsg{report: relay.Report{Bindings: rows}}
+func rowsMsg(rows ...relevo.BindingStatus) statusMsg {
+	return statusMsg{report: relevo.Report{Bindings: rows}}
 }
 
-func row(name, display, builderStatus string) relay.BindingStatus {
-	return relay.BindingStatus{Name: name, Display: display, Round: 2, BuilderCandidate: "agy", BuilderStatus: builderStatus}
+func row(name, display, builderStatus string) relevo.BindingStatus {
+	return relevo.BindingStatus{Name: name, Display: display, Round: 2, BuilderCandidate: "agy", BuilderStatus: builderStatus}
 }
 
 // update runs one message through the model and returns the Model back.

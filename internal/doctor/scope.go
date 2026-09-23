@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// ScopeBlock is one policy scope block whose allowed_cpus asks relay to pin a
+// ScopeBlock is one policy scope block whose allowed_cpus asks relevo to pin a
 // round per core (#314). Key is the block-qualified field name the row's
 // messages use ("scope.allowed_cpus" or "serve.scope.allowed_cpus"), and MaxCPU
 // is the highest core AllowedCPUs names. The caller computes MaxCPU with
@@ -17,7 +17,7 @@ type ScopeBlock struct {
 }
 
 // UserManagerControllersPath is the user manager's cgroup.controllers file.
-// `relay doctor` reads it to tell whether cpuset is delegated, because a
+// `relevo doctor` reads it to tell whether cpuset is delegated, because a
 // systemd that ignores an undelegated AllowedCPUs silently shows no exit code
 // anywhere else.
 func UserManagerControllersPath(uid int) string {

@@ -6,7 +6,7 @@ package planner
 //
 // procStart is RecordState's injected process read. bindings reports how many
 // non-DONE bindings name a planner id -- the same store walk Forget's in-use
-// guard uses (cmd/relay's plannerBindingCounts); nil counts nothing. A record
+// guard uses (cmd/relevo's plannerBindingCounts); nil counts nothing. A record
 // that is live, an explicit registration, and a record any non-DONE binding
 // names are all left alone.
 //

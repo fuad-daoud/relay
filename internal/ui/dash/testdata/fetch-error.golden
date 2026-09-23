@@ -1,4 +1,4 @@
- relay · dashboard   (all rounds)   by:none                                                                      / filter  b regroup  s sort  d fleet  r refresh
+ relevo · dashboard   (all rounds)   by:none                                                                     / filter  b regroup  s sort  d fleet  r refresh
 query failed: no such column: repo.origin_url                                                                                                                   
 started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
 2026-09-20 22:01  persist       r5   claude/anthropic/sonnet               reported       +1       clean   pass   1.2M     $0.42    27m                         

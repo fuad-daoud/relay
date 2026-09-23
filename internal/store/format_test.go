@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
 // update rewrites the golden file, but only when BindingFormat was bumped:
@@ -29,7 +29,7 @@ const bindingGoldenPath = "testdata/binding-shape.golden"
 // leaves open.
 const (
 	bindingShapeMsg   = "store.Binding's JSON shape changed: bump store.BindingFormat, then run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
-	bindingRefusalMsg = "bump store.BindingFormat first; an older relay would erase the new fields"
+	bindingRefusalMsg = "bump store.BindingFormat first; an older relevo would erase the new fields"
 	bindingStaleMsg   = "store.Binding's golden format line is stale; run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
 )
 
@@ -74,7 +74,7 @@ func marshalGolden(format int, keys []string) []byte {
 //
 // A rewrite needs BindingFormat to be greater than the golden's format line,
 // so a mismatch with no bump fails rather than silently accepting a shape an
-// older relay would erase.
+// older relevo would erase.
 func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg string) {
 	if same && goldenFormat == codeFormat {
 		return false, ""
@@ -221,7 +221,7 @@ func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
 	}
 }
 
-// TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relay
+// TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relevo
 // loads, and saving it back is refused with ErrNewerFormat, leaving the file
 // byte-for-byte as it was and no temp file behind.
 func TestSaveRefusesANewerFormat(t *testing.T) {
@@ -263,7 +263,7 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "binding" || newer.Name != b.Name || newer.Have != BindingFormat+1 || newer.Know != BindingFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `binding "webshop" was written by a newer relay (format 2; this relay knows 1): upgrade relay; a planner session reconnects relay mcp with /mcp`
+	wantText := `binding "webshop" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a planner session reconnects relevo mcp with /mcp`
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

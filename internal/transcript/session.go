@@ -20,7 +20,7 @@ import (
 //     one is absent;
 //   - codex:    thread_id, on the thread.started event only.
 //
-// Any other kind, a line that is not a JSON object (the relay-exit trailer),
+// Any other kind, a line that is not a JSON object (the relevo-exit trailer),
 // and an id that is not a string all answer "". A missing id is never an
 // error and never a guess.
 func SessionID(kind string, line []byte) string {

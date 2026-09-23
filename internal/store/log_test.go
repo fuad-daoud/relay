@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 func seedBinding(t *testing.T) (*Store, string) {
@@ -292,7 +292,7 @@ func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 
 	// A report, a blocked-dialog question and a drift note can already be
 	// pending together today; consults only make it routine. Arrival order is
-	// the only order relay can defend without judging content.
+	// the only order relevo can defend without judging content.
 	for _, e := range []LogEntry{
 		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
 		{Round: 3, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r3"},
@@ -430,7 +430,7 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 }
 
 // TestConfirmIndexPreservesUnknownKeys pins #372 §4.3: confirmIndex patches
-// the one line it changes from a map, so a key a newer relay wrote survives,
+// the one line it changes from a map, so a key a newer relevo wrote survives,
 // and every line it does not change keeps its exact bytes.
 func TestConfirmIndexPreservesUnknownKeys(t *testing.T) {
 	s, name := seedBinding(t)

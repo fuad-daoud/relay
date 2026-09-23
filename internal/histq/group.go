@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // basisUnknown is the CostBasis word a round's cost is not trusted for;
@@ -12,7 +12,7 @@ import (
 const basisUnknown = "unknown"
 
 // GroupRow is one bucket of rounds that share an axis value, with the sums
-// `relay history --by` and the dashboard print.
+// `relevo history --by` and the dashboard print.
 type GroupRow struct {
 	Key                                                            string
 	Rounds, Reported, Halted, Exited, Switched, DoneNoReport, Open int

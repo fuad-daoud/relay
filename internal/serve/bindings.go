@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // Allowed reports whether caller is authorized to perform verb on binding b (spec §2.5).
@@ -32,17 +32,17 @@ func isHex(s string) bool {
 	return true
 }
 
-func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding, relay.Runtime, error) {
+func (s *Server) loadBinding(caller remote.ClientID, name string) (store.Binding, relevo.Runtime, error) {
 	if caller == "" {
-		return store.Binding{}, relay.Runtime{}, store.ErrNotFound
+		return store.Binding{}, relevo.Runtime{}, store.ErrNotFound
 	}
 	rt, err := s.runtime(caller)
 	if err != nil {
-		return store.Binding{}, relay.Runtime{}, err
+		return store.Binding{}, relevo.Runtime{}, err
 	}
 	b, err := rt.Store.Load(name)
 	if err != nil {
-		return store.Binding{}, relay.Runtime{}, err
+		return store.Binding{}, relevo.Runtime{}, err
 	}
 	return b, rt, nil
 }
@@ -115,11 +115,11 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.cfg.Now()
-	candidateToken, harnessKind := relay.PickServedCandidate(rt, req.Candidate)
+	candidateToken, harnessKind := relevo.PickServedCandidate(rt, req.Candidate)
 
-	tier, err := relay.ResolveServedTier(rt, candidateToken, req.Tier)
+	tier, err := relevo.ResolveServedTier(rt, candidateToken, req.Tier)
 	if err != nil {
-		if errors.Is(err, relay.ErrTierAboveMax) {
+		if errors.Is(err, relevo.ErrTierAboveMax) {
 			offending := req.Tier
 			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's policy.json"
 			if offending == "" {
@@ -145,7 +145,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		Owner:            string(caller),
 		CWD:              cwd,
 		Worktree:         cwd,
-		Branch:           "relay/" + req.Name,
+		Branch:           "relevo/" + req.Name,
 		Base:             req.BaseCommit,
 		Repo:             bare,
 		Builder:          store.Endpoint{Kind: harnessKind, Mode: store.ModeHeadless, AgentName: req.Name},
@@ -174,7 +174,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(req.Name)
-	writeJSON(w, http.StatusCreated, relay.ServedView(b, entries))
+	writeJSON(w, http.StatusCreated, relevo.ServedView(b, entries))
 }
 
 func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +200,7 @@ func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entries, _ := rt.Store.ReadLog(b.Name)
-		views = append(views, relay.ServedView(b, entries))
+		views = append(views, relevo.ServedView(b, entries))
 	}
 
 	writeJSON(w, http.StatusOK, views)
@@ -235,7 +235,7 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 	_ = rt.Store.Save(b)
 
 	entries, _ := rt.Store.ReadLog(name)
-	view := relay.ServedView(b, entries)
+	view := relevo.ServedView(b, entries)
 	view.Queue = s.queuePositionView(b, view, caller)
 	writeJSON(w, http.StatusOK, view)
 }
@@ -262,16 +262,16 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	switch relay.RoundStateOf(b, entries) {
+	switch relevo.RoundStateOf(b, entries) {
 	case remote.RoundRunning:
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is open")
 		return
 	case remote.RoundQueued:
-		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is queued; relay stop to drop it from the queue, or unbind", b.Round))
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is queued; relevo stop to drop it from the queue, or unbind", b.Round))
 		return
 	}
 
-	_, err = relay.Done(r.Context(), rt, name)
+	_, err = relevo.Done(r.Context(), rt, name)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "round") && strings.Contains(errStr, "open") {
@@ -286,7 +286,7 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 }
 
 func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +310,7 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = relay.Unbind(r.Context(), rt, name, true)
+	_, err = relevo.Unbind(r.Context(), rt, name, true)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
@@ -346,17 +346,17 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	switch relay.RoundStateOf(b, entries) {
+	switch relevo.RoundStateOf(b, entries) {
 	case remote.RoundIdle, remote.RoundClosed:
-		writeErr(w, http.StatusConflict, remote.CodeNothingToStop, relay.ErrNothingToStop.Error())
+		writeErr(w, http.StatusConflict, remote.CodeNothingToStop, relevo.ErrNothingToStop.Error())
 		return
 	case remote.RoundNeedsYou:
 		writeErr(w, http.StatusConflict, remote.CodeRoundHalted, b.Halt)
 		return
 	}
 
-	if _, err := relay.Stop(r.Context(), rt, name, relay.StopOptions{}); err != nil {
-		if errors.Is(err, relay.ErrNothingToStop) {
+	if _, err := relevo.Stop(r.Context(), rt, name, relevo.StopOptions{}); err != nil {
+		if errors.Is(err, relevo.ErrNothingToStop) {
 			writeErr(w, http.StatusConflict, remote.CodeNothingToStop, err.Error())
 			return
 		}
@@ -368,7 +368,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +412,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+	writeJSON(w, http.StatusOK, relevo.ServedView(b, entries))
 }
 
 func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
@@ -453,7 +453,7 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := relay.Unavailable(rt, req.Token, time.Time{}, req.Reason); err != nil {
+	if _, err := relevo.Unavailable(rt, req.Token, time.Time{}, req.Reason); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}
@@ -464,9 +464,9 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 // handleAvailable lifts the server-wide ledger's rate-limit gate on a
 // subject's provider. It is handleUnavailable minus the binding-scoped
 // branch: the ledger is server-wide, so there is nothing binding-scoped to
-// check and no /v1/bindings/{name}/available route. relay.Available itself
+// check and no /v1/bindings/{name}/available route. relevo.Available itself
 // decides what the subject names (#301): a bare provider that gates nothing
-// is still a 200 with Removed 0 when it is known, while a subject relay
+// is still a 200 with Removed 0 when it is known, while a subject relevo
 // knows nothing about is a 422 carrying the local verb's message.
 func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
@@ -489,7 +489,7 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, removed, err := relay.Available(rt, req.Subject, relay.ClearedByPlanner)
+	provider, removed, err := relevo.Available(rt, req.Subject, relevo.ClearedByPlanner)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 		return

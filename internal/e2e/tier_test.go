@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/policy"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestServedBuilderLaunchesAtPolicyTier is Part A's proof that a served
@@ -34,25 +34,25 @@ func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	if _, err := relay.Add(ctx, rt, relay.AddOptions{
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	}); err != nil {
-		t.Fatalf("relay.Add: %v", err)
+		t.Fatalf("relevo.Add: %v", err)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send: %v", err)
 	}
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relay.ProcSpec
+	var spec relevo.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
@@ -76,7 +76,7 @@ func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 }
 
 // TestServedBuilderDefaultsToHarness is the same round with no policy tier
-// configured: the served builder launches at tier harness, so relay adds no
+// configured: the served builder launches at tier harness, so relevo adds no
 // permission flag at all (#141 remote half).
 func TestServedBuilderDefaultsToHarness(t *testing.T) {
 	ctx := context.Background()
@@ -88,25 +88,25 @@ func TestServedBuilderDefaultsToHarness(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	if _, err := relay.Add(ctx, rt, relay.AddOptions{
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 	}); err != nil {
-		t.Fatalf("relay.Add: %v", err)
+		t.Fatalf("relevo.Add: %v", err)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{}); err != nil {
-		t.Fatalf("relay.Send: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send: %v", err)
 	}
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relay.ProcSpec
+	var spec relevo.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
@@ -156,14 +156,14 @@ func TestRemoteTierOverWire(t *testing.T) {
 		t.Fatalf("who.BuilderTier = %q, want harness", who.BuilderTier)
 	}
 
-	res, err := relay.Add(ctx, rt, relay.AddOptions{
+	res, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
 		Tier:   "edit",
 	})
 	if err != nil {
-		t.Fatalf("relay.Add: %v", err)
+		t.Fatalf("relevo.Add: %v", err)
 	}
 	if res.Binding.Tier != "edit" {
 		t.Fatalf("res.Binding.Tier = %q, want edit", res.Binding.Tier)
@@ -182,13 +182,13 @@ func TestRemoteTierOverWire(t *testing.T) {
 	if err := os.WriteFile(planFile, []byte("# Plan for api\nDo work.\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile, relay.SendOptions{Tier: "yolo", AllowYolo: true}); err != nil {
-		t.Fatalf("relay.Send round 1: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile, relevo.SendOptions{Tier: "yolo", AllowYolo: true}); err != nil {
+		t.Fatalf("relevo.Send round 1: %v", err)
 	}
 
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec0 relay.ProcSpec
+	var spec0 relevo.ProcSpec
 	if specsLen > 0 {
 		spec0 = runner.specs[0]
 	}
@@ -202,7 +202,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 
 	// Close round 1 exactly as TestRemoteRoundEndToEnd does.
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	serverRT := relay.Runtime{
+	serverRT := relevo.Runtime{
 		Store:  serverStore,
 		Git:    gitClient,
 		Runner: runner,
@@ -213,7 +213,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 		t.Fatalf("srv.Tick: %v", err)
 	}
 
-	clientDaemon := relay.NewDaemon(rt, time.Second)
+	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	tickUntil(t, 10*time.Second, func() bool {
 		_ = clientDaemon.Tick(ctx)
 		entries, err := rt.Store.ReadLog("api")
@@ -244,13 +244,13 @@ func TestRemoteTierOverWire(t *testing.T) {
 	if err := os.WriteFile(planFile2, []byte("# Plan for api round 2\nDo more work.\n"), 0o644); err != nil {
 		t.Fatalf("write plan2: %v", err)
 	}
-	if _, err := relay.Send(ctx, rt, "api", planFile2, relay.SendOptions{}); err != nil {
-		t.Fatalf("relay.Send round 2: %v", err)
+	if _, err := relevo.Send(ctx, rt, "api", planFile2, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send round 2: %v", err)
 	}
 
 	runner.mu.Lock()
 	specsLen = len(runner.specs)
-	var spec1 relay.ProcSpec
+	var spec1 relevo.ProcSpec
 	if specsLen > 1 {
 		spec1 = runner.specs[1]
 	}
@@ -278,15 +278,15 @@ func TestRemoteTierAboveServerMax(t *testing.T) {
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
-	_, err := relay.Add(ctx, rt, relay.AddOptions{
+	_, err := relevo.Add(ctx, rt, relevo.AddOptions{
 		Name:      "api",
 		Server:    "zen",
 		Repo:      repo,
 		Tier:      "yolo",
 		AllowYolo: true,
 	})
-	if !errors.Is(err, relay.ErrTierAboveMax) {
-		t.Fatalf("relay.Add err = %v, want ErrTierAboveMax", err)
+	if !errors.Is(err, relevo.ErrTierAboveMax) {
+		t.Fatalf("relevo.Add err = %v, want ErrTierAboveMax", err)
 	}
 
 	serverStore := srvStore(owner)
@@ -298,11 +298,11 @@ func TestRemoteTierAboveServerMax(t *testing.T) {
 	}
 
 	repoGit := git.NewClient("git", 10*time.Second, 0)
-	exists, err := repoGit.BranchExists(ctx, repo, "relay/api")
+	exists, err := repoGit.BranchExists(ctx, repo, "relevo/api")
 	if err != nil {
 		t.Fatalf("BranchExists: %v", err)
 	}
 	if exists {
-		t.Fatal("local branch relay/api exists despite tier_above_max refusal")
+		t.Fatal("local branch relevo/api exists despite tier_above_max refusal")
 	}
 }

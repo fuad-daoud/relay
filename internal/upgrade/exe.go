@@ -1,4 +1,4 @@
-// Package upgrade moves the running daemon onto a replaced relay binary
+// Package upgrade moves the running daemon onto a replaced relevo binary
 // (#371). It resolves the executable the daemon runs, identifies it by the
 // bytes on disk, and decides -- behind a two-check debounce and a preflight --
 // when a new binary is safe to exec into.

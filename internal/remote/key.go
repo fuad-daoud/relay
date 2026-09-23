@@ -18,7 +18,7 @@ var ErrKeyFormat = errors.New("invalid key format")
 // ErrKeyType indicates that a key is not an ed25519 key.
 var ErrKeyType = errors.New("invalid key type; ed25519 required")
 
-const pemTypePrivate = "RELAY ED25519 PRIVATE KEY"
+const pemTypePrivate = "RELEVO ED25519 PRIVATE KEY"
 
 // ClientID is "SHA256:" + base64.RawStdEncoding(sha256(raw 32-byte ed25519 public key)).
 // Same shape as ssh-keygen -l; 7 + 43 = 50 characters. Never empty.
@@ -86,7 +86,7 @@ func IDFromDir(dir string) (ClientID, bool) {
 	return ClientID("SHA256:" + base64.RawStdEncoding.EncodeToString(raw)), true
 }
 
-// MarshalPrivate encodes k's private key as a PEM block of type "RELAY ED25519 PRIVATE KEY".
+// MarshalPrivate encodes k's private key as a PEM block of type "RELEVO ED25519 PRIVATE KEY".
 func MarshalPrivate(k Keypair) ([]byte, error) {
 	if len(k.Private) != ed25519.PrivateKeySize {
 		return nil, ErrKeyFormat
@@ -98,7 +98,7 @@ func MarshalPrivate(k Keypair) ([]byte, error) {
 }
 
 // ParsePrivate parses a PEM-encoded private key. If the PEM block is not of type
-// "RELAY ED25519 PRIVATE KEY" or the key length is invalid, an error is returned.
+// "RELEVO ED25519 PRIVATE KEY" or the key length is invalid, an error is returned.
 func ParsePrivate(data []byte) (Keypair, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {

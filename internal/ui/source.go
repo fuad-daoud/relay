@@ -8,26 +8,26 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
 // Source is everything the ui reads state through: one refresh of the
 // whole fleet, and a key resolver for the tabs.
 type Source interface {
 	// Status is one refresh: the whole fleet this UI shows.
-	Status(ctx context.Context) (relay.Report, error)
+	Status(ctx context.Context) (relevo.Report, error)
 	// Runtime resolves a row key to the runtime that owns it and the bare
 	// binding name inside that runtime's store. ok is false when the key
 	// cannot be resolved (server: malformed key or unknown owner); a
 	// planner source resolves every key.
-	Runtime(key string) (rt relay.Runtime, name string, ok bool)
+	Runtime(key string) (rt relevo.Runtime, name string, ok bool)
 	// Base is the runtime for fleet-wide reads that are not per row: the
 	// database behind scope all and a hist row's tabs. On a planner it is
 	// the planner's own runtime. On the server it carries no DB, so scope
 	// all is refused there with the existing "no database" notice.
-	Base() relay.Runtime
+	Base() relevo.Runtime
 	// MarkViewed stamps key's .viewed sidecar (#143), the moment a human
 	// points the detail pane at it. A planner source writes through its own
 	// store; a server source is a no-op -- ui never mutates bind.json, and
@@ -37,23 +37,23 @@ type Source interface {
 	MarkViewed(key string)
 }
 
-// plannerSource is the single-runtime source `relay ui` always had: no
+// plannerSource is the single-runtime source `relevo ui` always had: no
 // branch, every key resolves to rt under its own name.
 type plannerSource struct {
-	rt relay.Runtime
+	rt relevo.Runtime
 }
 
-func (s plannerSource) Status(ctx context.Context) (relay.Report, error) {
-	return relay.Status(ctx, s.rt)
+func (s plannerSource) Status(ctx context.Context) (relevo.Report, error) {
+	return relevo.Status(ctx, s.rt)
 }
 
-func (s plannerSource) Runtime(key string) (relay.Runtime, string, bool) {
+func (s plannerSource) Runtime(key string) (relevo.Runtime, string, bool) {
 	return s.rt, key, true
 }
 
 // Base is the runtime itself: the planner's only runtime owns its
 // database, its store and everything else fleet-wide reads need.
-func (s plannerSource) Base() relay.Runtime {
+func (s plannerSource) Base() relevo.Runtime {
 	return s.rt
 }
 
@@ -76,11 +76,11 @@ func ServerSource(srv *serve.Server) Source {
 	return serverSource{srv: srv}
 }
 
-func (s serverSource) Status(ctx context.Context) (relay.Report, error) {
+func (s serverSource) Status(ctx context.Context) (relevo.Report, error) {
 	return serve.FlatStatus(ctx, s.srv)
 }
 
-func (s serverSource) Runtime(key string) (relay.Runtime, string, bool) {
+func (s serverSource) Runtime(key string) (relevo.Runtime, string, bool) {
 	// The owner part is a ClientID ("SHA256:<base64>") whose base64
 	// alphabet includes '/', so the separator is the LAST slash, never
 	// the first: splitting at the first broke resolution outright for
@@ -89,20 +89,20 @@ func (s serverSource) Runtime(key string) (relay.Runtime, string, bool) {
 	// the last slash is unambiguous.
 	i := strings.LastIndexByte(key, '/')
 	if i <= 0 || i == len(key)-1 {
-		return relay.Runtime{}, "", false
+		return relevo.Runtime{}, "", false
 	}
 	rt, err := s.srv.OwnerRuntime(remote.ClientID(key[:i]))
 	if err != nil {
-		return relay.Runtime{}, "", false
+		return relevo.Runtime{}, "", false
 	}
 	return rt, key[i+1:], true
 }
 
 // Base is a runtime with no database: the server box does not run
-// relay.db, so scope all is refused there with the existing "no
+// relevo.db, so scope all is refused there with the existing "no
 // database" notice. Nothing else fleet-wide is read on a server.
-func (s serverSource) Base() relay.Runtime {
-	return relay.Runtime{Now: time.Now}
+func (s serverSource) Base() relevo.Runtime {
+	return relevo.Runtime{Now: time.Now}
 }
 
 // MarkViewed is a no-op on a server source: the .viewed sidecar belongs to
@@ -121,7 +121,7 @@ func notTTY() bool {
 // text otherwise.
 func pipeRefusal(hint string) error {
 	if hint == "" {
-		hint = "relay ui needs a terminal; use `relay status` or `relay watch` when piping"
+		hint = "relevo ui needs a terminal; use `relevo status` or `relevo watch` when piping"
 	}
 	return errors.New(hint)
 }

@@ -7,7 +7,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // ExeIdentity identifies the file at path by device and inode, with size and

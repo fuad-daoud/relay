@@ -9,30 +9,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/history"
-	"github.com/fuad-daoud/relay/internal/ledger"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/history"
+	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type aliveRunner struct{}
 
-func (aliveRunner) Start(context.Context, relay.ProcSpec) (relay.ProcHandle, error) {
-	return relay.ProcHandle{}, nil
+func (aliveRunner) Start(context.Context, relevo.ProcSpec) (relevo.ProcHandle, error) {
+	return relevo.ProcHandle{}, nil
 }
 
-func (aliveRunner) Alive(context.Context, relay.ProcHandle) (bool, error) { return true, nil }
+func (aliveRunner) Alive(context.Context, relevo.ProcHandle) (bool, error) { return true, nil }
 
-func (aliveRunner) ExitCode(context.Context, relay.ProcHandle, string) (int, bool) {
+func (aliveRunner) ExitCode(context.Context, relevo.ProcHandle, string) (int, bool) {
 	return 0, false
 }
 
-func (aliveRunner) Kill(context.Context, relay.ProcHandle) error { return nil }
+func (aliveRunner) Kill(context.Context, relevo.ProcHandle) error { return nil }
 
-func (aliveRunner) Rusage(context.Context, relay.ProcHandle, string) (relay.ProcRusage, bool) {
-	return relay.ProcRusage{}, false
+func (aliveRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.ProcRusage, bool) {
+	return relevo.ProcRusage{}, false
 }
 
 // TestFlatStatusStampsOwnersAndDedupsGates: FlatStatus is the whole fleet
@@ -159,7 +159,7 @@ func TestAdminStatusAllOwners(t *testing.T) {
 
 	// Owner with no bindings
 	noBindingsStatus := []OwnerStatus{
-		{Owner: idA, Label: "charlie", Report: relay.Report{}},
+		{Owner: idA, Label: "charlie", Report: relevo.Report{}},
 	}
 	if got := RenderAdminStatus(noBindingsStatus, remote.BuildersView{}); got != "builders 0/0, queued 0\ncharlie  no bindings\n" {
 		t.Errorf("RenderAdminStatus(no bindings) = %q, want %q", got, "builders 0/0, queued 0\ncharlie  no bindings\n")
@@ -170,7 +170,7 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 
-	newServer := func(r relay.Runner) *Server {
+	newServer := func(r relevo.Runner) *Server {
 		t.Helper()
 		s, err := New(Config{Root: root, Now: func() time.Time { return now }, Runner: r})
 		if err != nil {
@@ -859,7 +859,7 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 
 // TestAdminAvailableRecordsServerClear: the server host's own clear is an
 // observation too (#302), and it is recorded as the server's, not a
-// planner's -- `relay serve available` is not a forwarded client verb.
+// planner's -- `relevo serve available` is not a forwarded client verb.
 func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
@@ -898,8 +898,8 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	if ev.Kind != history.Cleared {
 		t.Errorf("kind = %q, want %q", ev.Kind, history.Cleared)
 	}
-	if ev.Source != relay.ClearedByServer {
-		t.Errorf("source = %q, want %q", ev.Source, relay.ClearedByServer)
+	if ev.Source != relevo.ClearedByServer {
+		t.Errorf("source = %q, want %q", ev.Source, relevo.ClearedByServer)
 	}
 	if ev.Provider != "t" {
 		t.Errorf("provider = %q, want t", ev.Provider)
@@ -967,7 +967,7 @@ func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 	}
 
 	// One ledger gate through the server's (server-wide) ledger path.
-	if _, err := relay.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
+	if _, err := relevo.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

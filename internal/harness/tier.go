@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// Tier is the permission ceiling relay renders into a harness's flags.
+// Tier is the permission ceiling relevo renders into a harness's flags.
 type Tier string
 
 const (
-	TierHarness Tier = "harness" // relay adds nothing; outside the order
+	TierHarness Tier = "harness" // relevo adds nothing; outside the order
 	TierRead    Tier = "read"
 	TierEdit    Tier = "edit"
 	TierYolo    Tier = "yolo"
@@ -101,7 +101,7 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 	case "codex":
 		switch tier {
 		case TierRead:
-			return nil, fmt.Errorf("%w: codex cannot honour tier read: -s read-only cannot write the report relay needs (writable_roots is ignored under read-only); use --tier edit or --tier harness", ErrTierUnsupported)
+			return nil, fmt.Errorf("%w: codex cannot honour tier read: -s read-only cannot write the report relevo needs (writable_roots is ignored under read-only); use --tier edit or --tier harness", ErrTierUnsupported)
 		case TierEdit:
 			return []string{"-s", "workspace-write", "-c", StatePlaceholder}, nil
 		case TierYolo:
@@ -114,7 +114,7 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 	}
 }
 
-// PermissionFlags are the flags relay recognises as permission flags for
+// PermissionFlags are the flags relevo recognises as permission flags for
 // this kind, matched against extra_args as whole elements or as `flag=`
 // prefixes:
 //

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// ErrResumeUnsupported reports a resume request for a harness relay has no
-// verified resume form for: codex, and any kind relay was not taught. The
+// ErrResumeUnsupported reports a resume request for a harness relevo has no
+// verified resume form for: codex, and any kind relevo was not taught. The
 // error names the kind.
 var ErrResumeUnsupported = errors.New("resume is not supported for this harness")
 
@@ -32,7 +32,7 @@ func checkResumeSessionID(sessionID string) error {
 // caller prepends h.Binary, exactly as it does for Launch's print form.
 //
 // claude and agy continue the session in place: the new turn is appended to
-// the session the round recorded, which is why relay reaches for this only
+// the session the round recorded, which is why relevo reaches for this only
 // once the round is closed. opencode forks: --fork puts the new turn in a
 // copy, so the original session is untouched.
 //
@@ -74,7 +74,7 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
 // permission flags. The returned slice is the full argv AFTER the binary --
 // the caller prepends h.Binary, exactly as headlessLaunch does.
 //
-// A kind with no verified resume selector -- codex, and any kind relay was
+// A kind with no verified resume selector -- codex, and any kind relevo was
 // not taught -- returns ErrResumeUnsupported, which the caller reads as "fall
 // back to a fresh relaunch".
 //

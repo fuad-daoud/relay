@@ -23,7 +23,7 @@ func TestShippedBeforeMatchesHistoricalBlob(t *testing.T) {
 }
 
 func TestShippedBeforeRejectsUnknownAndEmpty(t *testing.T) {
-	// A sha256 that no relay has ever shipped.
+	// A sha256 that no relevo has ever shipped.
 	unknown := strings.Repeat("ab", 32)
 	if ShippedBefore("architect.claude.md", unknown) {
 		t.Errorf("ShippedBefore(architect.claude.md, %s) = true, want false", unknown)
@@ -41,7 +41,7 @@ func TestShippedBeforeRejectsUnknownAndEmpty(t *testing.T) {
 
 // TestShippedBeforeCoversEveryWorkingTreeDefinition pins the other half of
 // scripts/agents-shipped.sh --check: every definition this build embeds has its
-// current sha in the index, so a fresh install is recognised on the next relay.
+// current sha in the index, so a fresh install is recognised on the next relevo.
 func TestShippedBeforeCoversEveryWorkingTreeDefinition(t *testing.T) {
 	for _, h := range All() {
 		for _, r := range h.Roles {

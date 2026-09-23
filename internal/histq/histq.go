@@ -1,10 +1,10 @@
-// Package histq is relay's round-history query language: the text
-// `relay history -q` and, from round 2, the dashboard's filter line share.
+// Package histq is relevo's round-history query language: the text
+// `relevo history -q` and, from round 2, the dashboard's filter line share.
 // It parses a query into a db.Filter plus the conditions only Go can apply,
 // and it carries the regroup axis on the same line
 // (docs/specs/2026-09-21-dashboard-design.md §3-§5).
 //
-// It imports internal/db and the standard library only. internal/relay
+// It imports internal/db and the standard library only. internal/relevo
 // imports histq, never the other way around, so the parse/group half stays
 // usable from anywhere the db is.
 package histq
@@ -17,17 +17,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // ErrBadSince is ParseSince's error for a window it cannot read. It is the
-// same value relay.ErrBadSince names, so a caller that matched on that
+// same value relevo.ErrBadSince names, so a caller that matched on that
 // sentinel before ParseSince moved here still does.
 var ErrBadSince = errors.New("--since wants 24h, 7d or YYYY-MM-DD")
 
 // ParseSince turns "" (zero: no cut), "24h", "7d" or "2026-09-01" into the
 // instant before which rounds are ignored. `2w` forms are deliberately not
-// accepted (internal/relay's test pins "7w" as an error).
+// accepted (internal/relevo's test pins "7w" as an error).
 func ParseSince(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil

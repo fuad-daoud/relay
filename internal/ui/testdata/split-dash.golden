@@ -1,4 +1,4 @@
- relay · dashboard   (all rounds)   by:none                                                                      / filter  b regroup  s sort  d fleet  r refresh
+ relevo · dashboard   (all rounds)   by:none                                                                     / filter  b regroup  s sort  d fleet  r refresh
 rounds 3   cost $1.52 (1 unknown)   tokens 3.7M   halted 1 · exited 0   median 19m   bindings 2 · builders 2                                                    
 started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
 2026-09-17 12:02  persist       r5   claude/anthropic/sonnet               reported       +1       clean   pass   1.2M     $0.42    27m                         

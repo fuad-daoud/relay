@@ -328,7 +328,7 @@ func TestServerPushEmitsNotificationAndDropsBadKey(t *testing.T) {
 // is one more text content block on the tool result, on a verb error's result
 // exactly as on a success.
 func TestServerAppendsNoticeToToolResults(t *testing.T) {
-	const notice = "note: relay was upgraded to v0.8.0; this session's relay MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
+	const notice = "note: relevo was upgraded to v0.8.0; this session's relevo MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
 
 	srv := &Server{
 		Verbs: &fakeVerbs{

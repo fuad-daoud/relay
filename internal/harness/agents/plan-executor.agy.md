@@ -119,7 +119,7 @@ runs in the foreground and you wait for it: no background tasks, no `&`, no
 detached `make e2e`. The report file is written before the done marker, which
 is the last action.
 
-On agy an idle root agent is an exit, and relay treats an exit without a
+On agy an idle root agent is an exit, and relevo treats an exit without a
 report as a failed builder and switches (#191).
 
 EVERY MODEL STEP IS A ROUND TRIP
@@ -184,9 +184,9 @@ Your final report must include:
 - Files created/modified, mapped to the steps that produced them.
 - Git surgery on your branch: every rebase, reset, amend, cherry-pick, merge, force-push or branch switch you ran, each with its command and why -- or "none". Report it even when the plan asked for it.
 
-End every report with the `relay` block relay's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
+End every report with the `relevo` block relevo's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
 
-```relay
+```relevo
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
@@ -198,7 +198,7 @@ not_done: []            # adjacent work you deliberately left
 
 `subagent: false` above means no agent can invoke a plan-executor with
 `invoke_subagent`. A plan-executor dispatched by another plan-executor is a
-second writer in one tree; relay forbids that in prose on every harness and
+second writer in one tree; relevo forbids that in prose on every harness and
 by configuration on this one.
 
 # Why the tools list is this

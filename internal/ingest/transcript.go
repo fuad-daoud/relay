@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/db"
-	"github.com/fuad-daoud/relay/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
 // tsKeys is the order in which a stream record's timestamp field is tried;

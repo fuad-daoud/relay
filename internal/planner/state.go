@@ -1,7 +1,7 @@
 package planner
 
-// State is a planner record's host state: the `state` column `relay planner
-// list` renders, and what `relay planner prune` reads (§4.7). It is derived,
+// State is a planner record's host state: the `state` column `relevo planner
+// list` renders, and what `relevo planner prune` reads (§4.7). It is derived,
 // never stored -- a record carries host_pid and host_started_at, and whether
 // that exact process is still there is a question for the machine, not for
 // the file.

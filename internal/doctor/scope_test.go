@@ -7,7 +7,7 @@ import (
 )
 
 // errReadEnv is fakeEnv with ReadFile failing: the controllers file exists on
-// a real host but relay cannot read it, the ProbeFailed case.
+// a real host but relevo cannot read it, the ProbeFailed case.
 type errReadEnv struct {
 	Env
 	err error

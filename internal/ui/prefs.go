@@ -10,7 +10,7 @@ import (
 
 // prefs is what ui.json holds: the three things a human sets and would
 // not want to set again next time (spec §6.0). The ui's own file, under
-// relay's state root, written by the ui alone and read by nothing else.
+// relevo's state root, written by the ui alone and read by nothing else.
 type prefs struct {
 	Sort     string `json:"sort"` // "attention" | "name"
 	Compact  bool   `json:"compact"`

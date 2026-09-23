@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // ScopeUnitFileName returns the systemd unit file name for a scope unit
@@ -26,7 +26,7 @@ func ScopeUnitFileName(unit string) string {
 // a transient systemd --scope unit instead: systemd-run execs inner in
 // place once the scope is registered, so the pid Start records is inner's
 // own pid (#244).
-func ScopeArgv(s relay.ScopeSpec, inner []string) []string {
+func ScopeArgv(s relevo.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.Slice != "" {
 		argv = append(argv, "--slice="+s.Slice)
@@ -59,7 +59,7 @@ func ProbeScopes(ctx context.Context, slice string) error {
 	if _, err := rand.Read(suffix); err != nil {
 		return fmt.Errorf("systemd-run: %s", err.Error())
 	}
-	spec := relay.ScopeSpec{Unit: "relay-probe-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100}
+	spec := relevo.ScopeSpec{Unit: "relevo-probe-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100}
 	argv := ScopeArgv(spec, []string{"true"})
 
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -83,13 +83,13 @@ func ProbeScopes(ctx context.Context, slice string) error {
 // non-nil error names why it was refused, and the caller runs its spawns with
 // the scope and its quota but without pinning. It detects refusal only: a
 // systemd that silently ignores an undelegated cpuset shows no exit code, and
-// `relay doctor` is where that is reported.
+// `relevo doctor` is where that is reported.
 func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {
 		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, err.Error())
 	}
-	spec := relay.ScopeSpec{Unit: "relay-probe-cpus-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
+	spec := relevo.ScopeSpec{Unit: "relevo-probe-cpus-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
 	argv := ScopeArgv(spec, []string{"true"})
 
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -117,19 +117,19 @@ func firstNonEmptyLine(s string) string {
 }
 
 // RusageTrailer prefixes the line the supervisor appends, inside a
-// relay-round-*.scope cgroup only, right before the exit trailer:
-// "relay-rusage:cpu_usec=<n> mem_peak=<n>".
-const RusageTrailer = "relay-rusage:"
+// relevo-round-*.scope cgroup only, right before the exit trailer:
+// "relevo-rusage:cpu_usec=<n> mem_peak=<n>".
+const RusageTrailer = "relevo-rusage:"
 
 // ParseRusageTrailer parses a RusageTrailer line. Fields are
 // space-separated key=value; either may be absent (that field stays
 // zero); unknown keys are ignored; a malformed number leaves that field
 // zero. A line not starting with RusageTrailer reports ok false.
-func ParseRusageTrailer(line string) (relay.ProcRusage, bool) {
+func ParseRusageTrailer(line string) (relevo.ProcRusage, bool) {
 	if !strings.HasPrefix(line, RusageTrailer) {
-		return relay.ProcRusage{}, false
+		return relevo.ProcRusage{}, false
 	}
-	var r relay.ProcRusage
+	var r relevo.ProcRusage
 	rest := strings.TrimPrefix(line, RusageTrailer)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")

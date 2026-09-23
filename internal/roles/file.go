@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/jsonshape"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
 // ErrBadRoles reports a roles.json that does not validate. Callers treat it
@@ -44,7 +44,7 @@ type File struct {
 type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
 	// repeat the built-in shape; a new role must give it and must be a
-	// reader (writer rows need `relay send --role`, S2).
+	// reader (writer rows need `relevo send --role`, S2).
 	Shape *string `json:"shape"`
 
 	// Gate marks a writer role whose round closes on a gate. true is
@@ -83,8 +83,8 @@ func Load(path string) (*File, error) {
 }
 
 // LoadWithWarnings reads and validates roles.json, returning one warning per
-// key this relay does not know (#372 §4.4): a key a newer relay reads must not
-// stop this relay, and a typo surfaces in `relay doctor`.
+// key this relevo does not know (#372 §4.4): a key a newer relevo reads must not
+// stop this relevo, and a typo surfaces in `relevo doctor`.
 //
 // A missing file is nil, nil, nil. A file that does not validate is an error
 // wrapping ErrBadRoles, naming the file, the row and the field; the warnings
@@ -146,7 +146,7 @@ func validate(path string, f *File) error {
 					return badField("shape", "built-in role is "+shapeWord(builtin.Shape))
 				}
 			} else if word == "writer" {
-				return badField("shape", "a new writer role needs relay send --role, not yet available")
+				return badField("shape", "a new writer role needs relevo send --role, not yet available")
 			}
 		} else if !isBuiltin {
 			return badField("shape", "required for a new role")
@@ -291,7 +291,7 @@ func rolesUnknownKeyWarnings(path string, raw []byte) []string {
 	base := filepath.Base(path)
 	warnings := make([]string, 0, len(paths))
 	for _, p := range paths {
-		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relay reads)", base, p))
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
 	}
 	return warnings
 }

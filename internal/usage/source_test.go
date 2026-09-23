@@ -50,7 +50,7 @@ func TestReadHeadlessNotes(t *testing.T) {
 	if _, note := r.Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: "/nonexistent"}); note != "no stream" {
 		t.Errorf("missing stream: note = %q", note)
 	}
-	_, empty := mustTemp(t, "relay-exit:0\n")
+	_, empty := mustTemp(t, "relevo-exit:0\n")
 	if _, note := r.Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, StreamPath: empty}); note != "no usage events" {
 		t.Errorf("no events: note = %q", note)
 	}
@@ -64,11 +64,11 @@ func TestStreamClosed(t *testing.T) {
 	if streamClosed(open) {
 		t.Error("no trailer: must be open")
 	}
-	_, closed := mustTemp(t, "{\"type\":\"result\"}\n\nrelay-exit:0\n")
+	_, closed := mustTemp(t, "{\"type\":\"result\"}\n\nrelevo-exit:0\n")
 	if !streamClosed(closed) {
 		t.Error("trailer as last line: must be closed")
 	}
-	_, mid := mustTemp(t, "relay-exit:0\n{\"type\":\"assistant\"}\n")
+	_, mid := mustTemp(t, "relevo-exit:0\n{\"type\":\"assistant\"}\n")
 	if streamClosed(mid) {
 		t.Error("trailer not last: must be open")
 	}
@@ -108,7 +108,7 @@ func TestReadHeadlessWaitsForTrailer(t *testing.T) {
 func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
 	raw, _ := os.ReadFile("testdata/claude-stream-killed.jsonl")
 	// The killed fixture ends in a trailer; strip it to make an open stream.
-	body := strings.TrimSuffix(strings.TrimRight(string(raw), "\n"), "relay-exit:137")
+	body := strings.TrimSuffix(strings.TrimRight(string(raw), "\n"), "relevo-exit:137")
 	_, path := mustTemp(t, body)
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()

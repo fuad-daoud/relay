@@ -11,36 +11,36 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/hooks"
-	"github.com/fuad-daoud/relay/internal/policy"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/remote"
-	"github.com/fuad-daoud/relay/internal/roles"
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 type Config struct {
 	Root           string // <state>/serve
 	Candidates     *candidate.Set
 	Policy         policy.Policy
-	Runner         relay.Runner
+	Runner         relevo.Runner
 	Git            *git.Client // concrete: the transport needs it too
 	Now            func() time.Time
-	Interval       time.Duration // daemon tick, floored by relay.NewDaemon
+	Interval       time.Duration // daemon tick, floored by relevo.NewDaemon
 	MaxBundleBytes int64         // default 512 << 20
 	Usage          usage.Reader  // nil = the server records "no reader", as today
 	Prices         usage.Prices  // zero value = embedded defaults via usage.Fold's rules
-	// StartedAt is when this relay serve process started; zero means
+	// StartedAt is when this relevo serve process started; zero means
 	// unknown, which disables the daemon-restart-relaunch check (#244).
 	StartedAt time.Time
 	// Roles checks candidate harness role-file coverage (#238); nil means
 	// no check.
 	Roles harness.RoleChecker
-	// Registry is relay's roles registry (#374): roles.json merged over the
+	// Registry is relevo's roles registry (#374): roles.json merged over the
 	// built-ins, or the legacy derivation. Nil means the runtime derives it
 	// from Candidates and Policy on demand.
 	Registry *roles.Registry
@@ -52,7 +52,7 @@ type Config struct {
 	// Scope is the systemd scope template served rounds launch under
 	// (#244, #216); nil means no scopes -- cmdServeRun sets it from policy
 	// only after ProbeScopes confirms systemd-run works on this box.
-	Scope *relay.ScopeSpec
+	Scope *relevo.ScopeSpec
 }
 
 type Server struct {
@@ -106,7 +106,7 @@ func New(cfg Config) (*Server, error) {
 }
 
 // sweepTmp removes the stale request temp files in dir (#373 §4.3): the
-// req-body-* and plan-* files relay serve creates while a request is in
+// req-body-* and plan-* files relevo serve creates while a request is in
 // flight, whose mtime is older than olderThan. It matches no other name. It is
 // pure apart from the filesystem -- now is a parameter, so a test pins the
 // age boundary. A missing dir is empty, not an error; a per-file failure is
@@ -169,21 +169,21 @@ func (s *Server) repoRoot(owner remote.ClientID) (string, error) {
 
 // OwnerRuntime resolves owner's runtime: the same store-over-owner-dir
 // runtime every server verb uses, exported for the ui's server source.
-func (s *Server) OwnerRuntime(owner remote.ClientID) (relay.Runtime, error) {
+func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(owner)
 	if err != nil {
-		return relay.Runtime{}, err
+		return relevo.Runtime{}, err
 	}
 	return s.runtimeAt(root), nil
 }
 
-func (s *Server) runtime(id remote.ClientID) (relay.Runtime, error) {
+func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 	return s.OwnerRuntime(id)
 }
 
-func (s *Server) runtimeAt(root string) relay.Runtime {
+func (s *Server) runtimeAt(root string) relevo.Runtime {
 	st := store.New(root)
-	return relay.Runtime{
+	return relevo.Runtime{
 		Git:              s.cfg.Git,
 		Runner:           s.cfg.Runner,
 		Store:            st,
@@ -205,7 +205,7 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 
 // heldCPUs returns the cores held by live rounds other than self, across every
 // owner's store (#314). It is the server's cross-owner census, injected as
-// Runtime.HeldCPUs so internal/relay stays unaware of owners.
+// Runtime.HeldCPUs so internal/relevo stays unaware of owners.
 //
 // The caller holds s.mu -- the same rule census and admit rely on (see
 // admit.go): every tick and every admit is serialised by it, so taking another
@@ -244,7 +244,7 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 				}
 				continue
 			}
-			held = append(held, relay.HeldIn(bindings, self)...)
+			held = append(held, relevo.HeldIn(bindings, self)...)
 			continue
 		}
 		bindings, err := store.New(ownerPath).List()
@@ -256,7 +256,7 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 			continue
 		}
 		// Another owner's binding can never be self.
-		held = append(held, relay.HeldIn(bindings, "")...)
+		held = append(held, relevo.HeldIn(bindings, "")...)
 	}
 
 	return held, firstErr

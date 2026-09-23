@@ -1,4 +1,4 @@
- relay   1 bindings                                                                                                                   14:02 
+ relevo   1 bindings                                                                                                                  14:02 
 
  ACTIVE  1                        │ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  round 1   ACTIVE                                              
 ▎  xxxxxxxxxxxxxxxxxxxxxxxxxxxxr1 │ planner                 route                                                                           
@@ -10,7 +10,7 @@
                                   │ remote · captured 0s ago · 2 lines                                                                      
                                   │                                                                                                         
                                   │ $ go test ./...                                                                                         
-                                  │ ok      github.com/fuad-daoud/relay/internal/ui    1.2s                                                 
+                                  │ ok      github.com/fuad-daoud/relevo/internal/ui    1.2s                                                
                                   │                                                                                                         
                                   │                                                                                                         
                                   │                                                                                                         

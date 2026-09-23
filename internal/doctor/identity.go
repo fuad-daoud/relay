@@ -3,7 +3,7 @@ package doctor
 // GitIdentityInput is everything #335's git identity row needs that
 // GitIdentityCheck cannot read itself: whether any remote server is
 // configured, whether the working directory is inside a git work tree, and
-// the identity resolved there. cmd/relay gathers it; the rule lives here.
+// the identity resolved there. cmd/relevo gathers it; the rule lives here.
 type GitIdentityInput struct {
 	// HasServers is true when at least one remote server is configured.
 	HasServers bool
@@ -14,7 +14,7 @@ type GitIdentityInput struct {
 	Email string
 }
 
-// GitIdentityCheck is the `relay add --server` preflight (#335): a remote
+// GitIdentityCheck is the `relevo add --server` preflight (#335): a remote
 // builder commits as the client, so a repo whose effective user.name or
 // user.email is unset makes every remote add refuse.
 //
@@ -38,7 +38,7 @@ func GitIdentityCheck(in GitIdentityInput) (Check, bool) {
 	detail := "user.name not set"
 	switch {
 	case in.Name == "" && in.Email == "":
-		detail = "user.name/user.email not set: relay add --server will refuse"
+		detail = "user.name/user.email not set: relevo add --server will refuse"
 	case in.Email == "":
 		detail = "user.email not set"
 	}

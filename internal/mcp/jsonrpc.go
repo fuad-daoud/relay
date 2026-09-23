@@ -1,4 +1,4 @@
-// Package mcp implements relay mcp: a JSON-RPC 2.0 server over stdio that
+// Package mcp implements relevo mcp: a JSON-RPC 2.0 server over stdio that
 // Claude Code spawns as an MCP server (docs/specs/2026-09-21-planner-channel-design.md).
 // The wire protocol is hand-written on the standard library: the surface is
 // five methods and one notification, not worth a dependency and its

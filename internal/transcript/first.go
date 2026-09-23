@@ -7,7 +7,7 @@ import "encoding/json"
 //
 // It is pure and never errors: it decodes the line and inspects its shape
 // only, so a caller measuring time to first output needs no rendering and no
-// state beyond "have I seen one yet". A non-JSON line -- the relay-exit
+// state beyond "have I seen one yet". A non-JSON line -- the relevo-exit
 // trailer, say -- and an unknown kind are false.
 func FirstOutput(kind string, line []byte) bool {
 	var obj map[string]any

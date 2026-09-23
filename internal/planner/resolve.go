@@ -38,7 +38,7 @@ type ResolveInput struct {
 // Resolve is how every verb except `init` gets its planner: flag > env > host >
 // session, first hit wins (§4.3).
 //
-// It never creates a record. Only `relay planner init` does, so a missing hook
+// It never creates a record. Only `relevo planner init` does, so a missing hook
 // is loud -- ErrNoPlanner with the fix in its text -- rather than a silently
 // unnamed planner.
 func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
@@ -55,7 +55,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		return hit(reg, rec, ResolutionFlag, in.Now)
 	}
 
-	if v := env("RELAY_PLANNER"); v != "" {
+	if v := env("RELEVO_PLANNER"); v != "" {
 		rec, err := lookupRef(reg, v)
 		if err != nil {
 			return Record{}, "", err
@@ -65,8 +65,8 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 
 	ident, detected := Detect(env, in.PPID)
 
-	// The host step covers `relay mcp` and a session whose hook could not
-	// export RELAY_PLANNER. A ProcStart error means "no host match" -- the ps
+	// The host step covers `relevo mcp` and a session whose hook could not
+	// export RELEVO_PLANNER. A ProcStart error means "no host match" -- the ps
 	// read failed, so there is nothing to compare -- and falls through to the
 	// session step rather than failing the caller.
 	if detected && ident.HostPID > 0 && in.ProcStart != nil {

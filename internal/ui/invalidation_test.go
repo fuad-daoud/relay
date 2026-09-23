@@ -8,13 +8,13 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	name := "webshop"
@@ -27,12 +27,12 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	m.detail.lastLogTS = ts
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "initial report"}
 
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{
 				Name:  name,
 				Round: 2,
-				Last: &relay.LastEvent{
+				Last: &relevo.LastEvent{
 					TS:    ts,
 					Round: 2,
 				},
@@ -53,7 +53,7 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 
 func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -78,12 +78,12 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "live terminal"}
 
 	newTS := ts.Add(10 * time.Second)
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{
 				Name:  name,
 				Round: 4,
-				Last: &relay.LastEvent{
+				Last: &relevo.LastEvent{
 					TS:    newTS,
 					Round: 4,
 				},
@@ -129,7 +129,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 
 func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	name := "webshop"
@@ -144,12 +144,12 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
 	m.detail.vp.YOffset = 33
 
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{
 				Name:  name,
 				Round: 2,
-				Last: &relay.LastEvent{
+				Last: &relevo.LastEvent{
 					TS:    ts,
 					Round: 2,
 				},
@@ -167,7 +167,7 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 
 func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -209,7 +209,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 
 func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	// width 80 (stack layout): this test predates footerView's width-aware
 	// left/right layout and was built at width 0, which the new footerView
@@ -221,8 +221,8 @@ func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
 	m.detail.live = true
 
 	// Report without "webshop"
-	emptyRep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	emptyRep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "other-binding"},
 		},
 	}

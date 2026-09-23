@@ -30,7 +30,7 @@ func DetectMode(parentArgv []string) Mode {
 
 // ParentArgv returns this process's parent's command line: on Linux,
 // /proc/<ppid>/cmdline, NUL-separated; on macOS, `ps -o args= -p <ppid>`,
-// space-separated. Any other platform, or a parent relay cannot read,
+// space-separated. Any other platform, or a parent relevo cannot read,
 // returns an error -- DetectMode's caller then falls back to ModeTools and
 // logs why (spec §7 risk: mode detection fails closed).
 func ParentArgv() ([]string, error) {

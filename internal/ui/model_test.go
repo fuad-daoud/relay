@@ -10,9 +10,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/serve"
-	"github.com/fuad-daoud/relay/internal/store"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func extractBatch(cmd tea.Cmd) []tea.Cmd {
@@ -49,7 +49,7 @@ func hasTabMsg(batch []tea.Cmd) bool {
 
 func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
@@ -70,7 +70,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 
 func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
@@ -91,7 +91,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 
 func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
@@ -110,11 +110,11 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 
 func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
-	initialReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	initialReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "webshop", Round: 2, State: "active", Display: "ACTIVE"},
 		},
 	}
@@ -138,14 +138,14 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 
 func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
 	m.statusInFlight = true
 
-	goodReport := relay.Report{
-		Bindings: []relay.BindingStatus{
+	goodReport := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "webshop", Round: 3, State: "active", Display: "ACTIVE"},
 		},
 	}
@@ -165,7 +165,7 @@ func TestStatusMsgSuccessClearsError(t *testing.T) {
 
 func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
@@ -199,7 +199,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 
 func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.ready = false
@@ -221,8 +221,8 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 }
 
 func TestRowHelper(t *testing.T) {
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: "a", Round: 1},
 			{Name: "b", Round: 2},
 		},
@@ -241,7 +241,7 @@ func TestRowHelper(t *testing.T) {
 
 func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -275,7 +275,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 // longer on screen must be discarded, not accepted as a legitimate lag.
 func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -305,7 +305,7 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 
 func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	name := "webshop"
 	ts := time.Now()
@@ -316,12 +316,12 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	m.detail.lastLogTS = ts
 	m.tabInFlight = true
 
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{
 				Name:  name,
 				Round: 3,
-				Last: &relay.LastEvent{
+				Last: &relevo.LastEvent{
 					TS:    ts.Add(5 * time.Second),
 					Round: 3,
 				},
@@ -342,7 +342,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 
 func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -352,8 +352,8 @@ func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.statusInFlight = false
-	rep := relay.Report{
-		Bindings: []relay.BindingStatus{
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
 			{Name: name, Round: 2, Display: "ACTIVE"},
 		},
 	}
@@ -375,7 +375,7 @@ func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 
 func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
@@ -391,7 +391,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 
 func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if m.statusLoaded {
@@ -402,7 +402,7 @@ func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 	}
 
 	m.statusInFlight = false
-	res, _ := m.Update(statusMsg{report: relay.Report{}})
+	res, _ := m.Update(statusMsg{report: relevo.Report{}})
 	loaded := res.(Model)
 	if !loaded.statusLoaded {
 		t.Fatal("statusMsg must set statusLoaded = true")
@@ -414,12 +414,12 @@ func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 
 func TestEmptyFleetFooter(t *testing.T) {
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relay.Report{}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{}})
 	m = res.(Model)
 
 	for _, tc := range []struct {
@@ -492,7 +492,7 @@ func TestEmptyFleetSnapsBackToList(t *testing.T) {
 		t.Fatal("fixture must start with the pane focused")
 	}
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relay.Report{}})
+	res, _ = m.Update(statusMsg{report: relevo.Report{}})
 	m = res.(Model)
 
 	if m.screen != screenList {
@@ -567,7 +567,7 @@ func TestScopeAllRefusedOnServer(t *testing.T) {
 // different round's stale content.
 func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -578,7 +578,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
-	rep := relay.Report{Bindings: []relay.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 3, Display: "ACTIVE"}}}
 	res, _ := m.Update(statusMsg{report: rep})
 	m = res.(Model)
 
@@ -631,7 +631,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 // [1, detail.rounds] changes nothing -- not the round, not the cache.
 func TestStepRoundEdgesNoop(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	m.detail.name = "webshop"
@@ -670,9 +670,9 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rt := relay.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.report = relay.Report{Bindings: []relay.BindingStatus{
+	m.report = relevo.Report{Bindings: []relevo.BindingStatus{
 		{Name: "webshop", Round: 2, Display: "ACTIVE"},
 	}}
 

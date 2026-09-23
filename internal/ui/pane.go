@@ -5,15 +5,15 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // paneHead is the pane's first rows: title with the state pill and the
 // last event, planner, builder, tree, blank -- plus a usage and a spend row
 // when the binding has them, which is why the caller measures it rather than
 // assuming paneHeadRows. Each row is unpadded; paneView fits them.
-func (m Model) paneHead(b *relay.BindingStatus) []string {
+func (m Model) paneHead(b *relevo.BindingStatus) []string {
 	label := func(s string) string { return dimStyle.Render(fmt.Sprintf("%-9s", s)) }
 	if b == nil {
 		return []string{"", "", "", "", ""}
@@ -34,7 +34,7 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	// client line replaces the planner line (empty OwnerLabel is a planner
 	// row, which renders today's line above).
 	if b.OwnerLabel != "" {
-		planner = label("client") + b.OwnerLabel + "  (" + dimStyle.Render(relay.ShortOwner(b.Owner)) + ")"
+		planner = label("client") + b.OwnerLabel + "  (" + dimStyle.Render(relevo.ShortOwner(b.Owner)) + ")"
 	}
 
 	var bparts []string
@@ -78,7 +78,7 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 		tparts = append(tparts, dimStyle.Render(s))
 	}
 	rows = append(rows, label("tree")+strings.Join(tparts, sep))
-	// usage and spend mirror `relay status`'s rows (#142): the newest
+	// usage and spend mirror `relevo status`'s rows (#142): the newest
 	// round's line, then the binding's total. A running round shows its
 	// live figure instead of the last closed one's (#234); spend is
 	// closed rounds only and never shares a cell with the live figure.
@@ -205,7 +205,7 @@ func colourDiff(patch string) string {
 // by the transcript's own markers and nothing else: a call is a green
 // bullet, a bold tool name and its argument in parentheses, dim; an ok
 // result is dim; an error result is red; every other line -- assistant
-// prose, [unknown] events, the relay-exit trailer -- is left alone.
+// prose, [unknown] events, the relevo-exit trailer -- is left alone.
 func colourTranscript(body string) string {
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
@@ -299,11 +299,11 @@ func (m Model) sourceLine() string {
 // hintLine is the one rendered line under a blocked builder's dialog on
 // the terminal tab: the verb that resolves it (spec §3.4). The ui runs
 // nothing; it names the command.
-func (m Model) hintLine(b *relay.BindingStatus) (string, bool) {
+func (m Model) hintLine(b *relevo.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || m.detail.active != tabTerminal {
 		return "", false
 	}
-	return accentStyle.Render("relay: ") + fgStyle.Render(b.Waiting.Hint), true
+	return accentStyle.Render("relevo: ") + fgStyle.Render(b.Waiting.Hint), true
 }
 
 // emptyPaneBlock is the prose the pane shows at zero rows, already styled
@@ -315,9 +315,9 @@ func emptyPaneBlock(width, height int) []string {
 	raw := []string{
 		"no bindings",
 		"",
-		"  relay bind                   put a builder on this tree",
-		"  relay add --name <name>      put a builder on its own worktree",
-		"  relay candidates             list what can be bound",
+		"  relevo bind                   put a builder on this tree",
+		"  relevo add --name <name>      put a builder on its own worktree",
+		"  relevo candidates             list what can be bound",
 	}
 	lines := make([]string, 0, height)
 	for _, l := range raw {

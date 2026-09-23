@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/store"
-	"github.com/fuad-daoud/relay/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 func TestRoundFactsFromFixtureRound1(t *testing.T) {

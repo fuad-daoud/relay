@@ -42,10 +42,10 @@ func TestFirstOutput(t *testing.T) {
 		{"codex turn.started", "codex", `{"type":"turn.started"}`, false},
 
 		// a non-JSON line is false for every kind, and so is an unknown kind.
-		{"non-JSON claude", "claude", `relay-exit:0`, false},
-		{"non-JSON opencode", "opencode", `relay-exit:0`, false},
-		{"non-JSON agy", "agy", `relay-exit:0`, false},
-		{"non-JSON codex", "codex", `relay-exit:0`, false},
+		{"non-JSON claude", "claude", `relevo-exit:0`, false},
+		{"non-JSON opencode", "opencode", `relevo-exit:0`, false},
+		{"non-JSON agy", "agy", `relevo-exit:0`, false},
+		{"non-JSON codex", "codex", `relevo-exit:0`, false},
 		{"unknown kind", "nope", `{"type":"assistant","event":"result"}`, false},
 	}
 

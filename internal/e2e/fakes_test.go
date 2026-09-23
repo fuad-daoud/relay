@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 type promptCall struct {
@@ -22,39 +22,39 @@ type promptCall struct {
 
 type scriptRunner struct {
 	mu    sync.Mutex
-	specs []relay.ProcSpec
+	specs []relevo.ProcSpec
 	alive bool
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
 	r.alive = true
-	return relay.ProcHandle{PID: 4242, StartedAt: time.Now()}, nil
+	return relevo.ProcHandle{PID: 4242, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relay.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.alive, nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relay.ProcHandle, logPath string) (int, bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return 0, !r.alive
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relay.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relay.ProcHandle, streamPath string) (relay.ProcRusage, bool) {
-	return relay.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
+	return relevo.ProcRusage{}, false
 }
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -86,7 +86,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func finishRound(t *testing.T, serverRT relay.Runtime, name string, round int, commitMsg string) {
+func finishRound(t *testing.T, serverRT relevo.Runtime, name string, round int, commitMsg string) {
 	t.Helper()
 	b, err := serverRT.Store.Load(name)
 	if err != nil {
@@ -97,7 +97,7 @@ func finishRound(t *testing.T, serverRT relay.Runtime, name string, round int, c
 		worktree = serverRT.Store.WorktreePath(name)
 	}
 
-	reportContent := fmt.Sprintf("# Round %d Report\n\n```relay\nstatus: done\nchanged_paths: [hello.txt]\n```\n", round)
+	reportContent := fmt.Sprintf("# Round %d Report\n\n```relevo\nstatus: done\nchanged_paths: [hello.txt]\n```\n", round)
 	if err := os.WriteFile(serverRT.Store.ReportPath(name, round), []byte(reportContent), 0o644); err != nil {
 		t.Fatalf("finishRound: write report: %v", err)
 	}

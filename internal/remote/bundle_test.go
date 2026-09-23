@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relevo/internal/git"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -58,7 +58,7 @@ func TestBundleTransportOutboundThenInbound(t *testing.T) {
 	runGit(t, clientRepo, "add", "f1.txt")
 	runGit(t, clientRepo, "commit", "-m", "c1")
 	c1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
-	branch := "refs/heads/relay/api"
+	branch := "refs/heads/relevo/api"
 	runGit(t, clientRepo, "update-ref", branch, c1)
 
 	// Server bare repo
@@ -130,9 +130,9 @@ func TestBundleTransportOutboundThenInbound(t *testing.T) {
 		t.Fatalf("UpdateRef branch c3: %v", err)
 	}
 
-	// Server round 2 closed dirty: side ref refs/relay/api/round-2
-	sideRef := "refs/relay/api/round-2"
-	sideCommit, err := g.CommitTree(ctx, bareServer, treeServer, c3, "[relay] api: round 2, uncommitted work")
+	// Server round 2 closed dirty: side ref refs/relevo/api/round-2
+	sideRef := "refs/relevo/api/round-2"
+	sideCommit, err := g.CommitTree(ctx, bareServer, treeServer, c3, "[relevo] api: round 2, uncommitted work")
 	if err != nil {
 		t.Fatalf("CommitTree side: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestBundleTransportOutboundThenInbound(t *testing.T) {
 		t.Fatalf("unexpected movedIn2: %v", movedIn2)
 	}
 
-	// Assert client's refs/relay/api/round-2 exists and its parent is client's refs/heads/relay/api
+	// Assert client's refs/relevo/api/round-2 exists and its parent is client's refs/heads/relevo/api
 	clientSideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
 	if err != nil || !ok || clientSideSHA != sideCommit {
 		t.Fatalf("client sideRef: got (%q, %v, %v), want (%q, true, nil)", clientSideSHA, ok, err, sideCommit)
@@ -226,7 +226,7 @@ func TestBundleTransportUnexpectedRef(t *testing.T) {
 	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
 
 	refMain := "refs/heads/main"
-	refAPI := "refs/heads/relay/api"
+	refAPI := "refs/heads/relevo/api"
 	runGit(t, repoA, "update-ref", refMain, c1)
 	runGit(t, repoA, "update-ref", refAPI, c1)
 

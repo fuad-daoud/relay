@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // Mode is how the builder ran.
@@ -23,7 +23,7 @@ const (
 )
 
 // Source is everything a reader needs to find one round's record. It is
-// built by internal/relay from a binding; this package never sees one.
+// built by internal/relevo from a binding; this package never sees one.
 type Source struct {
 	Harness    string // "claude" | "agy" | "opencode" | "codex"
 	Mode       Mode
@@ -77,13 +77,13 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// exitTrailer is proc.ExitTrailer: the last line relay's supervisor
+// exitTrailer is proc.ExitTrailer: the last line relevo's supervisor
 // writes to a headless stream, after the harness has exited. Copied, not
-// imported, so this package stays free of relay's process model;
-// TestExitTrailerMatchesProc in internal/relay pins the two equal.
-const exitTrailer = "relay-exit:"
+// imported, so this package stays free of relevo's process model;
+// TestExitTrailerMatchesProc in internal/relevo pins the two equal.
+const exitTrailer = "relevo-exit:"
 
-// ExitTrailerForTest exposes exitTrailer so internal/relay can pin it to
+// ExitTrailerForTest exposes exitTrailer so internal/relevo can pin it to
 // proc.ExitTrailer; nothing else calls it.
 func ExitTrailerForTest() string { return exitTrailer }
 

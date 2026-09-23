@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // pathEnv is the InstallEnv seam Plan consults. Only LookPath answers; every
@@ -104,12 +104,12 @@ func TestWriteRefusesWithoutForceBothOrNeither(t *testing.T) {
 		Policy:     []byte("{}\n"),
 	}
 
-	relayDir := filepath.Join(dir, "relay")
-	if err := os.MkdirAll(relayDir, 0o755); err != nil {
+	relevoDir := filepath.Join(dir, "relevo")
+	if err := os.MkdirAll(relevoDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	policyPath := filepath.Join(relayDir, "policy.json")
-	candidatesPath := filepath.Join(relayDir, "candidates.json")
+	policyPath := filepath.Join(relevoDir, "policy.json")
+	candidatesPath := filepath.Join(relevoDir, "candidates.json")
 	if err := os.WriteFile(policyPath, []byte("keep\n"), 0o644); err != nil {
 		t.Fatalf("pre-create policy: %v", err)
 	}

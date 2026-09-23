@@ -2,7 +2,7 @@
 // JSON event per line, in each harness's own shape -- into the lines a
 // human reads in NNN-builder.log (#168). It knows harness kinds and
 // nothing else: no rounds, no files, no bindings. It is presentation only:
-// nothing in relay decides anything on what it returns.
+// nothing in relevo decides anything on what it returns.
 package transcript
 
 import (
@@ -23,7 +23,7 @@ var argKeys = []string{"command", "file_path", "path", "AbsolutePath", "pattern"
 // Render turns one raw line of the stream (without its trailing newline)
 // into the lines to append to the log, each without a trailing newline.
 // Rules, in order: an empty line is nothing; a line that is not a JSON
-// object is itself, verbatim (that is how the relay-exit trailer and a
+// object is itself, verbatim (that is how the relevo-exit trailer and a
 // plain-text error reach the log); a known event renders per its kind's
 // table; noise renders as nothing; anything else renders as "[<type>]" so a
 // harness upgrade degrades to noise, not silence. Never errors, never

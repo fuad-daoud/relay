@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // serveOnce drives a fully-built Server over an in-memory pipe with one line
@@ -66,10 +66,10 @@ func callSend(t *testing.T, mode Mode, res any) string {
 // for #303 §4.5: in tools mode the send tool's result ends with the exact
 // background-wait command, carrying this binding's name and its round budget.
 func TestMCPToolsModeSendResultCarriesBackgroundWait(t *testing.T) {
-	text := callSend(t, ModeTools, sendResult{SendResult: relay.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
+	text := callSend(t, ModeTools, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
 
 	want := "background wait (run with run_in_background, then end your turn):\n" +
-		"  relay wait --name webshop --timeout 24h0m0s; relay pull --name webshop"
+		"  relevo wait --name webshop --timeout 24h0m0s; relevo pull --name webshop"
 	if !strings.HasSuffix(text, want) {
 		t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
 	}
@@ -79,9 +79,9 @@ func TestMCPToolsModeSendResultCarriesBackgroundWait(t *testing.T) {
 // channel mode the event arrives by itself, so the result carries no wait
 // command -- a report must not arrive twice, once by channel and once by pull.
 func TestMCPChannelModeSendResultHasNoWaitLine(t *testing.T) {
-	text := callSend(t, ModeChannel, sendResult{SendResult: relay.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
+	text := callSend(t, ModeChannel, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
 
-	if strings.Contains(text, "background wait") || strings.Contains(text, "relay wait") {
+	if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
 		t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
 	}
 }
@@ -105,7 +105,7 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 	if strings.Contains(channel, "background wait") {
 		t.Error("channel instructions must not describe the background wait")
 	}
-	for _, want := range []string{"background wait", "relay pull", "WaitTimeout", "relay status --name"} {
+	for _, want := range []string{"background wait", "relevo pull", "WaitTimeout", "relevo status --name"} {
 		if !strings.Contains(tools, want) {
 			t.Errorf("tools instructions must mention %q", want)
 		}

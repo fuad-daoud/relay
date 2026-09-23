@@ -56,7 +56,7 @@ func TestRenderRules(t *testing.T) {
 	}{
 		"empty":               {"claude", "", nil},
 		"blank":               {"claude", "   ", nil},
-		"non-json":            {"claude", "relay-exit:0", []string{"relay-exit:0"}},
+		"non-json":            {"claude", "relevo-exit:0", []string{"relevo-exit:0"}},
 		"json but not object": {"claude", `["a"]`, []string{`["a"]`}},
 		"broken json":         {"agy", `{"event":`, []string{`{"event":`}},
 		"unknown type":        {"claude", `{"type":"brand_new"}`, []string{"[brand_new]"}},
@@ -99,8 +99,8 @@ func TestClaudeTable(t *testing.T) {
 			[]string{"  ⎿ error"},
 		},
 		"result ok with string content": {
-			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"     1\t# relay\n     2\t"}]}}`,
-			[]string{"  ⎿ ok:      1\t# relay"},
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"     1\t# relevo\n     2\t"}]}}`,
+			[]string{"  ⎿ ok:      1\t# relevo"},
 		},
 		"result ok with array content": {
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":[{"type":"text","text":"7c3ca64 docs: x\ne19924c feat: y"}]}]}}`,

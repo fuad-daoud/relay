@@ -9,7 +9,7 @@ import (
 // stepStream joins JSON lines the way a round's builder stream file holds
 // them: one per line, with a blank line and the round's trailer after them.
 func stepStream(lines ...string) []byte {
-	return []byte(strings.Join(lines, "\n") + "\n\nrelay-exit:0\n")
+	return []byte(strings.Join(lines, "\n") + "\n\nrelevo-exit:0\n")
 }
 
 func TestStreamStepsOpencode(t *testing.T) {
@@ -117,7 +117,7 @@ func TestStreamStepsUnknownHarnessAndJunk(t *testing.T) {
 	if got := StreamSteps("nope", stepStream(`{"type":"step_start","timestamp":1000}`)); got != (StepStats{}) {
 		t.Errorf("unknown harness = %+v, want the zero StepStats", got)
 	}
-	junk := []byte("not json\n{broken\n[1,2]\n\n   \nrelay-exit:0\nrelay-rusage:in=1\n")
+	junk := []byte("not json\n{broken\n[1,2]\n\n   \nrelevo-exit:0\nrelevo-rusage:in=1\n")
 	if got := StreamSteps("opencode", junk); got != (StepStats{}) {
 		t.Errorf("junk stream = %+v, want the zero StepStats", got)
 	}

@@ -343,7 +343,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 	// 1. AddWorktree produces a working tree on a new branch at the requested commit
 	// while the source tree's git status is unchanged.
 	wtDir := filepath.Join(t.TempDir(), "wt1")
-	branch := "relay/test-wt"
+	branch := "relevo/test-wt"
 	if err := client.AddWorktree(ctx, repoDir, wtDir, branch, commit1); err != nil {
 		t.Fatalf("AddWorktree failed: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 
 	// 5. RemoveWorktree with force: true succeeds on dirty tree.
 	wtDir3 := filepath.Join(t.TempDir(), "wt3")
-	branch3 := "relay/test-wt3"
+	branch3 := "relevo/test-wt3"
 	if err := client.AddWorktree(ctx, repoDir, wtDir3, branch3, commit1); err != nil {
 		t.Fatalf("AddWorktree 3: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 
 	// 6. AddWorktree cleans up path on error (e.g. bad commit).
 	wtDirBad := filepath.Join(t.TempDir(), "wt-bad")
-	err = client.AddWorktree(ctx, repoDir, wtDirBad, "relay/bad", "0000000000000000000000000000000000000000")
+	err = client.AddWorktree(ctx, repoDir, wtDirBad, "relevo/bad", "0000000000000000000000000000000000000000")
 	if err == nil {
 		t.Fatal("AddWorktree with invalid commit expected error, got nil")
 	}
@@ -838,7 +838,7 @@ func TestCommitTreeFromLinkedWorktree(t *testing.T) {
 	bare := t.TempDir()
 	runGit(t, bare, "init", "--bare")
 
-	// seed it by cloning, committing one file and pushing refs/heads/relay/api
+	// seed it by cloning, committing one file and pushing refs/heads/relevo/api
 	seedDir := t.TempDir()
 	runGit(t, seedDir, "clone", bare, ".")
 	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
@@ -846,11 +846,11 @@ func TestCommitTreeFromLinkedWorktree(t *testing.T) {
 	}
 	runGit(t, seedDir, "add", "file.txt")
 	runGit(t, seedDir, "commit", "-m", "init")
-	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relay/api")
+	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
 
 	// git worktree add from the bare repo at that branch
 	wt := t.TempDir()
-	runGit(t, bare, "worktree", "add", wt, "refs/heads/relay/api")
+	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
 
 	// write an untracked file in the worktree
 	if err := os.WriteFile(filepath.Join(wt, "untracked.txt"), []byte("dirty work\n"), 0o644); err != nil {
@@ -863,25 +863,25 @@ func TestCommitTreeFromLinkedWorktree(t *testing.T) {
 		t.Fatalf("SnapshotTree: %v", err)
 	}
 
-	head, ok, err := client.RefSHA(ctx, bare, "refs/heads/relay/api")
+	head, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
 	if err != nil || !ok {
 		t.Fatalf("RefSHA(bare): %v, ok=%v", err, ok)
 	}
 
 	// CommitTree(bare, tree, head, msg)
-	msg := "[relay] api: round 1, uncommitted work"
+	msg := "[relevo] api: round 1, uncommitted work"
 	sha, err := client.CommitTree(ctx, bare, tree, head, msg)
 	if err != nil {
 		t.Fatalf("CommitTree: %v", err)
 	}
 
-	// UpdateRef(bare, "refs/relay/api/round-1", sha, "")
-	sideRef := "refs/relay/api/round-1"
+	// UpdateRef(bare, "refs/relevo/api/round-1", sha, "")
+	sideRef := "refs/relevo/api/round-1"
 	if err := client.UpdateRef(ctx, bare, sideRef, sha, ""); err != nil {
 		t.Fatalf("UpdateRef(sideRef): %v", err)
 	}
 
-	// assert git cat-file -p <sha> in the bare repo shows tree, parent, author relay <relay@localhost>
+	// assert git cat-file -p <sha> in the bare repo shows tree, parent, author relevo <relevo@localhost>
 	catOut := runGit(t, bare, "cat-file", "-p", sha)
 	if !strings.Contains(catOut, "tree "+tree) {
 		t.Errorf("cat-file missing tree %q in:\n%s", tree, catOut)
@@ -889,17 +889,17 @@ func TestCommitTreeFromLinkedWorktree(t *testing.T) {
 	if !strings.Contains(catOut, "parent "+head) {
 		t.Errorf("cat-file missing parent %q in:\n%s", head, catOut)
 	}
-	if !strings.Contains(catOut, "author relay <relay@localhost>") {
-		t.Errorf("cat-file missing relay author in:\n%s", catOut)
+	if !strings.Contains(catOut, "author relevo <relevo@localhost>") {
+		t.Errorf("cat-file missing relevo author in:\n%s", catOut)
 	}
-	if !strings.Contains(catOut, "committer relay <relay@localhost>") {
-		t.Errorf("cat-file missing relay committer in:\n%s", catOut)
+	if !strings.Contains(catOut, "committer relevo <relevo@localhost>") {
+		t.Errorf("cat-file missing relevo committer in:\n%s", catOut)
 	}
 
-	// refs/heads/relay/api still equals head
-	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relay/api")
+	// refs/heads/relevo/api still equals head
+	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
 	if err != nil || !ok || headAfter != head {
-		t.Fatalf("refs/heads/relay/api changed: got %q, want %q", headAfter, head)
+		t.Fatalf("refs/heads/relevo/api changed: got %q, want %q", headAfter, head)
 	}
 }
 
@@ -1079,8 +1079,8 @@ func TestBundleCreateTwoRefs(t *testing.T) {
 	runGit(t, repo, "commit", "-m", "c2")
 	c2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
 
-	ref1 := "refs/heads/relay/api"
-	ref2 := "refs/relay/api/round-1"
+	ref1 := "refs/heads/relevo/api"
+	ref2 := "refs/relevo/api/round-1"
 	runGit(t, repo, "update-ref", ref1, c2)
 	runGit(t, repo, "update-ref", ref2, c1)
 
@@ -1114,7 +1114,7 @@ func TestFetchBundleFastForwards(t *testing.T) {
 	runGit(t, repoA, "add", "f1.txt")
 	runGit(t, repoA, "commit", "-m", "c1")
 	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
-	ref := "refs/heads/relay/api"
+	ref := "refs/heads/relevo/api"
 	runGit(t, repoA, "update-ref", ref, c1)
 
 	bareB := t.TempDir()
@@ -1177,7 +1177,7 @@ func TestFetchBundleRefusesNonFastForward(t *testing.T) {
 	runGit(t, repoA, "add", "f1.txt")
 	runGit(t, repoA, "commit", "-m", "c1")
 	c1 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
-	ref := "refs/heads/relay/api"
+	ref := "refs/heads/relevo/api"
 	runGit(t, repoA, "update-ref", ref, c1)
 
 	bareB := t.TempDir()
@@ -1249,7 +1249,7 @@ func TestFetchBundleMissingPrereq(t *testing.T) {
 	runGit(t, repoA, "commit", "-m", "c2")
 	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
 
-	ref := "refs/heads/relay/api"
+	ref := "refs/heads/relevo/api"
 	runGit(t, repoA, "update-ref", ref, c2)
 
 	// Incremental bundle requiring c1
@@ -1288,8 +1288,8 @@ func TestFetchBundleIgnoresRefsNotAsked(t *testing.T) {
 	runGit(t, repoA, "commit", "-m", "c2")
 	c2 := strings.TrimSpace(runGit(t, repoA, "rev-parse", "HEAD"))
 
-	ref1 := "refs/heads/relay/api"
-	ref2 := "refs/relay/api/round-1"
+	ref1 := "refs/heads/relevo/api"
+	ref2 := "refs/relevo/api/round-1"
 	runGit(t, repoA, "update-ref", ref1, c1)
 	runGit(t, repoA, "update-ref", ref2, c2)
 
@@ -1346,7 +1346,7 @@ func TestMergeFF(t *testing.T) {
 	runGit(t, repoDir, "commit", "-m", "c2")
 	c2 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
-	refOut := "refs/relay/test/out"
+	refOut := "refs/relevo/test/out"
 	runGit(t, repoDir, "update-ref", refOut, c2)
 
 	if err := client.MergeFF(ctx, wtDir, refOut); err != nil {
@@ -1376,7 +1376,7 @@ func TestMergeFF(t *testing.T) {
 	runGit(t, repoDir, "add", "repo_only.txt")
 	runGit(t, repoDir, "commit", "-m", "c4 in repo")
 	c4 := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-	refDiverged := "refs/relay/test/diverged"
+	refDiverged := "refs/relevo/test/diverged"
 	runGit(t, repoDir, "update-ref", refDiverged, c4)
 
 	err = client.MergeFF(ctx, wtDir, refDiverged)
@@ -1398,7 +1398,7 @@ func TestMergeFF(t *testing.T) {
 	runGit(t, repoDir, "add", "f2.txt")
 	runGit(t, repoDir, "commit", "-m", "conflict commit")
 	conflictHead := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
-	refConflict := "refs/relay/test/conflict"
+	refConflict := "refs/relevo/test/conflict"
 	runGit(t, repoDir, "update-ref", refConflict, conflictHead)
 
 	// Make f2.txt dirty in wtDir
@@ -2256,7 +2256,7 @@ func TestNormalizeOriginURL(t *testing.T) {
 	}
 }
 
-// TestClientSetsNoOptionalLocks pins relay's git reads to GIT_OPTIONAL_LOCKS=0:
+// TestClientSetsNoOptionalLocks pins relevo's git reads to GIT_OPTIONAL_LOCKS=0:
 // without it a read can take the repository's index.lock, and that lock is what
 // fails a builder's concurrent commit in the same worktree.
 //
@@ -2308,7 +2308,7 @@ esac
 }
 
 // TestStatusDoesNotTakeIndexLock is the regression test for the collision that
-// failed TestRemoteTierOverWire: relay's git read took the index lock while a
+// failed TestRemoteTierOverWire: relevo's git read took the index lock while a
 // builder was committing in the same worktree, and the builder's commit died
 // with `fatal: Unable to create '.../index.lock': File exists`.
 //
@@ -2365,7 +2365,7 @@ func TestStatusDoesNotTakeIndexLock(t *testing.T) {
 	}
 
 	// The same read with the lock held by hand, as another process would hold
-	// it: relay's read must still succeed.
+	// it: relevo's read must still succeed.
 	lockPath := filepath.Join(repoDir, ".git", "index.lock")
 	if err := os.WriteFile(lockPath, nil, 0o644); err != nil {
 		t.Fatalf("hold .git/index.lock: %v", err)

@@ -3,7 +3,7 @@ package release
 import "testing"
 
 // TestAssetURLs pins the exact shape of both URLs: the published v0.9.0 asset
-// names are relay_v0.9.0_linux_amd64.tar.gz and so on, plus checksums.txt.
+// names are relevo_v0.9.0_linux_amd64.tar.gz and so on, plus checksums.txt.
 func TestAssetURLs(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -18,16 +18,16 @@ func TestAssetURLs(t *testing.T) {
 			tag:           "v0.9.0",
 			goos:          "linux",
 			goarch:        "amd64",
-			wantArchive:   "https://github.com/fuad-daoud/relay/releases/download/v0.9.0/relay_v0.9.0_linux_amd64.tar.gz",
-			wantChecksums: "https://github.com/fuad-daoud/relay/releases/download/v0.9.0/checksums.txt",
+			wantArchive:   "https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/relevo_v0.9.0_linux_amd64.tar.gz",
+			wantChecksums: "https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/checksums.txt",
 		},
 		{
 			name:          "darwin arm64",
 			tag:           "v1.2.3",
 			goos:          "darwin",
 			goarch:        "arm64",
-			wantArchive:   "https://github.com/fuad-daoud/relay/releases/download/v1.2.3/relay_v1.2.3_darwin_arm64.tar.gz",
-			wantChecksums: "https://github.com/fuad-daoud/relay/releases/download/v1.2.3/checksums.txt",
+			wantArchive:   "https://github.com/fuad-daoud/relevo/releases/download/v1.2.3/relevo_v1.2.3_darwin_arm64.tar.gz",
+			wantChecksums: "https://github.com/fuad-daoud/relevo/releases/download/v1.2.3/checksums.txt",
 		},
 	}
 

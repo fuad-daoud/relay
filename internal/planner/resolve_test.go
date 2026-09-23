@@ -62,7 +62,7 @@ func TestResolveOrder(t *testing.T) {
 			name: "flag beats env, host and session",
 			in: ResolveInput{
 				Flag:      "beta",
-				Env:       envFunc(withEnv(claudeAt(101, "sess-a"), "RELAY_PLANNER", "alpha")),
+				Env:       envFunc(withEnv(claudeAt(101, "sess-a"), "RELEVO_PLANNER", "alpha")),
 				PPID:      101,
 				ProcStart: procStartAt(1010),
 			},
@@ -94,7 +94,7 @@ func TestResolveOrder(t *testing.T) {
 		{
 			name: "env beats host and session",
 			in: ResolveInput{
-				Env:       envFunc(withEnv(claudeAt(101, "sess-a"), "RELAY_PLANNER", "beta")),
+				Env:       envFunc(withEnv(claudeAt(101, "sess-a"), "RELEVO_PLANNER", "beta")),
 				PPID:      101,
 				ProcStart: procStartAt(1010),
 			},
@@ -104,7 +104,7 @@ func TestResolveOrder(t *testing.T) {
 		{
 			name: "env by id",
 			in: ResolveInput{
-				Env:       envFunc(withEnv(claudeAt(0, ""), "RELAY_PLANNER", alpha.ID)),
+				Env:       envFunc(withEnv(claudeAt(0, ""), "RELEVO_PLANNER", alpha.ID)),
 				PPID:      999,
 				ProcStart: procStartAt(0),
 			},
@@ -196,7 +196,7 @@ func TestResolveOrder(t *testing.T) {
 
 	// The same for an environment value.
 	_, _, err = Resolve(reg, ResolveInput{
-		Env:       envFunc(withEnv(claudeAt(0, ""), "RELAY_PLANNER", "nope")),
+		Env:       envFunc(withEnv(claudeAt(0, ""), "RELEVO_PLANNER", "nope")),
 		PPID:      999,
 		ProcStart: procStartAt(0),
 	})
@@ -279,7 +279,7 @@ func TestDetectOnlyClaude(t *testing.T) {
 		t.Errorf("Detect = %+v, want claude/sess-a/4242", ident)
 	}
 
-	// Inside `relay mcp` and the hook CLAUDE_PID is unset: the parent pid is
+	// Inside `relevo mcp` and the hook CLAUDE_PID is unset: the parent pid is
 	// the Claude process.
 	ident, ok = Detect(envFunc(map[string]string{"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "sess-a"}), 42)
 	if !ok || ident.HostPID != 42 {

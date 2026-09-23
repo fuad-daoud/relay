@@ -12,16 +12,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // strPtr is a *string for the Row fields these tests build in memory.
 func strPtr(s string) *string { return &s }
 
 // legacyFixtures loads the round-1 fixtures: the candidates.json and
-// policy.json relay translates.
+// policy.json relevo translates.
 func legacyFixtures(t *testing.T) (*candidate.Set, policy.Policy) {
 	t.Helper()
 	return setFromFile(t, filepath.Join("testdata", "legacy-candidates.json")),
@@ -159,7 +159,7 @@ func TestFromLegacyAmbiguousTier(t *testing.T) {
 }
 
 // TestFromLegacyNotes pins §3.1's notes: an unordered role with several
-// candidates says relay refused to choose, and an ordered role with an unlisted
+// candidates says relevo refused to choose, and an ordered role with an unlisted
 // server says it was appended.
 func TestFromLegacyNotes(t *testing.T) {
 	t.Run("no order", func(t *testing.T) {

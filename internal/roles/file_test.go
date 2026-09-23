@@ -69,7 +69,7 @@ const specExample = `{
 }`
 
 // TestLoadSpecExample pins that the design's own example parses with no
-// warnings: every key in it is a key this relay knows.
+// warnings: every key in it is a key this relevo knows.
 func TestLoadSpecExample(t *testing.T) {
 	f, warnings, err := LoadWithWarnings(writeRoles(t, specExample))
 	if err != nil {
@@ -129,7 +129,7 @@ func TestLoadValidation(t *testing.T) {
 		{
 			name:          "new writer role",
 			body:          `{"my-role": {"shape": "writer"}}`,
-			wantSubstring: "my-role.shape: a new writer role needs relay send --role, not yet available",
+			wantSubstring: "my-role.shape: a new writer role needs relevo send --role, not yet available",
 		},
 		{
 			name:          "gate on a reader",
@@ -204,7 +204,7 @@ func TestLoadValidation(t *testing.T) {
 	}
 }
 
-// TestLoadUnknownKeyWarnings pins #372 §4.4 for roles.json: a key this relay
+// TestLoadUnknownKeyWarnings pins #372 §4.4 for roles.json: a key this relevo
 // does not know is kept and warned about, never refused, and the warning names
 // the row path exactly as policy's does.
 func TestLoadUnknownKeyWarnings(t *testing.T) {
@@ -223,8 +223,8 @@ func TestLoadUnknownKeyWarnings(t *testing.T) {
 	}
 
 	want := []string{
-		`roles.json: unknown key "builder.colour" (a typo, or a key a newer relay reads)`,
-		`roles.json: unknown key "builder.definitions.claude.model" (a typo, or a key a newer relay reads)`,
+		`roles.json: unknown key "builder.colour" (a typo, or a key a newer relevo reads)`,
+		`roles.json: unknown key "builder.definitions.claude.model" (a typo, or a key a newer relevo reads)`,
 	}
 	if !reflect.DeepEqual(warnings, want) {
 		t.Fatalf("warnings = %q, want %q", warnings, want)
@@ -288,13 +288,13 @@ func TestLoadBuiltinShapeOverride(t *testing.T) {
 }
 
 // TestLoadNewWriterRefused pins the S1 restriction: a new role may not be a
-// writer until `relay send --role` exists (S2).
+// writer until `relevo send --role` exists (S2).
 func TestLoadNewWriterRefused(t *testing.T) {
 	_, err := Load(writeRoles(t, `{"my-writer": {"shape": "writer"}}`))
 	if err == nil {
 		t.Fatal("Load(new writer row) = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "a new writer role needs relay send --role, not yet available") {
+	if !strings.Contains(err.Error(), "a new writer role needs relevo send --role, not yet available") {
 		t.Errorf("err = %q, want the not-yet-available text", err.Error())
 	}
 }

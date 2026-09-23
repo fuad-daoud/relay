@@ -340,7 +340,7 @@ func TestAtomicWriteCleanupTempFile(t *testing.T) {
 
 // TestFindByCWDSkipsDoneBindings guards the cwd fallback the CLI resolves
 // almost every command through: a done binding no longer drives its tree, and
-// resolving onto one would point `relay send` at a finished session.
+// resolving onto one would point `relevo send` at a finished session.
 func TestFindByCWDSkipsDoneBindings(t *testing.T) {
 	s := New(t.TempDir())
 	done := newBinding("webshop", "/repo")
@@ -425,7 +425,7 @@ func TestAssertCWDFreeIgnoresRemote(t *testing.T) {
 }
 
 // TestFindByCWDSkipsRemote pins the other half of #100's exemption: the
-// cwd-addressed verbs (`relay send` with no --name, `relay status` for "this
+// cwd-addressed verbs (`relevo send` with no --name, `relevo status` for "this
 // tree") must never resolve onto a remote binding, since a remote binding's
 // CWD is not a working tree it drives. Remote bindings are always addressed
 // by --name.
@@ -555,7 +555,7 @@ func TestArchiveIsCompressed(t *testing.T) {
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// Highly compressible content, as relay's own state files are.
+	// Highly compressible content, as relevo's own state files are.
 	big := strings.Repeat("the planner told the builder to read the plan file\n", 2000)
 	if err := os.WriteFile(s.PlanPath("webshop", 1), []byte(big), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
