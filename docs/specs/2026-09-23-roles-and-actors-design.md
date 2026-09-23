@@ -162,9 +162,12 @@ and `pol.TierFor` directly.
 
 ### 4.2 Wiring
 
-- `relay.Runtime` gains `Roles *roles.Registry`. The existing `Roles` field
-  is the `harness.RoleChecker`, so the old field is renamed `RoleFiles`, and
-  its ~6 uses are renamed with it.
+- `relay.Runtime` gains `Registry *roles.Registry`, and
+  `rt.RoleRegistry()` returns it, or the legacy registry derived on demand
+  when it is nil. The existing `Roles harness.RoleChecker` field keeps its
+  name (amended in round 2).
+- The daemon's `ConfigWatcher` reloads `roles.json` with the other two
+  files and rebuilds the registry.
 - Every place that builds a Runtime from config loads `roles.json` after
   `candidates.json` and `policy.json`, then calls `Build`: `cmd/relay/main.go`
   near `:533`, and `cmd/relay/serve.go:269`.
@@ -185,8 +188,8 @@ and `pol.TierFor` directly.
 | `internal/relay/candidates_list.go:50` | the `roles` column from `c.Roles` | the roles that `Serves` the candidate, from the registry |
 | `internal/harness/roles.go:54` `osRoleChecker.Missing(kind)` | the builder's shipped `Definitions` | `Missing(kind string, defs []string)`: the caller passes the resolved `Spec(...).Definitions`. `MissingDefinitions` resolves a non-shipped name to that kind's path convention (§5) |
 | `cmd/relay/doctor.go:76,102` | `RoleByName` | the registry: definitions per kind for every role some candidate on that kind serves |
-| `internal/candidate/candidate.go:203-212` | `roles` required, checked by `CanServe` | `roles` optional. If present, each entry must be a built-in name (legacy only). The `CanServe` check is removed: every kind ships every built-in definition, and a custom definition is the gate's job. `tier` is still parsed, but read only in legacy mode |
-| `internal/harness/harness.go:246` `CanServe` | used by the candidate loader | deleted (its only caller is gone) |
+| `internal/candidate/candidate.go:203-212` | `roles` required, checked by `CanServe` | `roles` optional. If present, each entry must be a built-in name (legacy only). The `CanServe` check stays (always true for built-ins); a custom definition is the gate's job. `tier` is still parsed, but read only in legacy mode |
+| `internal/harness/harness.go:246` `CanServe` | used by the candidate loader | kept: for a built-in role it is true on every kind, so the loader keeps calling it (amended in round 3; nothing to delete) |
 
 ## 5. Definition files, gate and doctor (S1)
 
