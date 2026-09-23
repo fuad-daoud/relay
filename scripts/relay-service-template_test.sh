@@ -2,9 +2,13 @@
 set -eu
 
 # Asserts the checked-in systemd unit template's [Service] keys (spec
-# 2026-09-13-headless-recovery §4.1). Headless builders are children of the
-# daemon and share its cgroup, so the unit must not cap memory, and an
-# OOM-killed builder must not take the daemon down with it.
+# 2026-09-13-headless-recovery §4.1). Builders, gates and consults run in
+# their own relay-*.scope units and survive a restart of this unit (#370);
+# they share this unit's cgroup only when scopes are unavailable, so the unit
+# still must not cap memory, and an OOM-killed builder must not take the
+# daemon down (`OOMPolicy=continue`).
+#
+# The script also asserts StartLimitIntervalSec=0 (#370).
 #
 # Usage: relay-service-template_test.sh [path-to-template]
 # Defaults to the repo's dist/relay.service.

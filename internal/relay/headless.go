@@ -692,9 +692,14 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// code unknown. The daemon can tell the two apart because it knows its
 	// own start time and, since #370, which processes it has seen alive: a
 	// process that started before this daemon and that this daemon never
-	// saw is the one this daemon's restart must have killed. Relaunching
-	// the same candidate on the same round, uncounted, keeps a daemon
-	// restart from spending the round's switch budget (#244).
+	// saw is the one this daemon's restart must have killed. Recovery keeps
+	// the same candidate on the same round, uncounted, so a daemon restart
+	// does not spend the round's switch budget (#244). A lost local builder
+	// first resumes its own harness session (claude --resume, agy
+	// --conversation, opencode --session --fork), and falls back to a fresh
+	// relaunch when the harness cannot resume (codex), announced no session,
+	// or failed to spawn with the resume selector. Both carry the
+	// interrupted note, stay uncounted and keep RoundStartedAt.
 	lost := codeText == "unknown" && lostToRestart(rt, b.Builder.PID, b.Builder.StartedAt)
 
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
