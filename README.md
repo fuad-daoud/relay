@@ -86,6 +86,25 @@ edited alone; a planner session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
+### Upgrading from relay
+
+relay was renamed relevo in v0.12.0. A machine that ran relay keeps its state,
+its old `relay.service` (or LaunchAgent) and the old `relay` binary until
+`relevo migrate` moves them. The order:
+
+1. Finish or pause every binding (`relevo status`).
+2. Install `relevo`.
+3. Run `relevo migrate --dry-run`, then `relevo migrate`.
+4. Reinstall the Claude Code plugin: remove `relay@relay`, then add the
+   marketplace and install the plugin again:
+   ```
+   /plugin uninstall relay@relay
+   /plugin marketplace add fuad-daoud/relevo
+   /plugin install relevo@relevo
+   ```
+5. Run `relevo agent install`.
+6. Restart planner sessions.
+
 ### The Claude Code plugin
 
 A Claude Code planner installs relevo as a plugin. The plugin provides the

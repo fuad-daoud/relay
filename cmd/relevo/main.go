@@ -91,6 +91,7 @@ Commands:
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
+  migrate   move relay-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
   candidates   list the configured harness/provider/model candidates [--probe]
   policy       show, per role, which candidate relevo would pick right now and why
   roles        list each role's shape, candidates, tier and definitions; roles init writes roles.json
@@ -369,6 +370,8 @@ func run(args []string) error {
 		return cmdMCP(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
+	case "migrate":
+		return cmdMigrate(args[1:])
 	case "candidates":
 		return cmdCandidates(args[1:])
 	case "policy":
