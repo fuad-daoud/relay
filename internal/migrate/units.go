@@ -291,9 +291,7 @@ func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
 		return Step{Name: "rename-slice", Detail: fmt.Sprintf("read %s: %v", path, err)}, err
 	}
 
-	oldSeq := []byte(`"` + legacy.Slice + `"`) // "relay.slice" // name-guard: legacy
-	newSeq := []byte(`"relevo.slice"`)
-	if !bytes.Contains(data, oldSeq) {
+	if !bytes.Contains(data, legacySliceSeq) {
 		return Step{Name: "rename-slice", Detail: "no relay.slice in policy.json", Skipped: true}, nil // name-guard: legacy
 	}
 
@@ -305,7 +303,7 @@ func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
 	if err != nil {
 		return Step{Name: "rename-slice", Detail: fmt.Sprintf("stat %s: %v", path, err)}, err
 	}
-	out := bytes.ReplaceAll(data, oldSeq, newSeq)
+	out := normalizeLegacy(data)
 	if err := writeFileAtomic(path, out, fi.Mode().Perm()); err != nil {
 		return Step{Name: "rename-slice", Detail: fmt.Sprintf("write %s: %v", path, err)}, err
 	}

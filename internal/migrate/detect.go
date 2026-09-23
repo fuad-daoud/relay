@@ -270,9 +270,28 @@ func daemonLockFileExists(root string) bool {
 	return err == nil
 }
 
-// sameBytes reports whether two files hold identical bytes.
+// legacySliceSeq and relevoSliceSeq are the exact quoted JSON values the slice
+// rename rewrites: `"relay.slice"` becomes `"relevo.slice"` (#292 §3 step 6). // name-guard: legacy
+// The quotes make the rule exact, so `"relay.slicer"` is left alone. // name-guard: legacy
+var (
+	legacySliceSeq = []byte(`"` + legacy.Slice + `"`) // "relay.slice" // name-guard: legacy
+	relevoSliceSeq = []byte(`"relevo.slice"`)
+)
+
+// normalizeLegacy replaces every exact legacy slice value in b with relevo's.
+// It is the byte rule RenameSliceValue applies and the config merge compares
+// through: a file whose only difference is that rewrite is not a conflict,
+// because migrate's own result would be identical (#292).
+func normalizeLegacy(b []byte) []byte {
+	return bytes.ReplaceAll(b, legacySliceSeq, relevoSliceSeq)
+}
+
+// sameBytes reports whether the old file a, once the slice rename is applied to
+// it, holds the same bytes as the new file b. The config merge compares an old
+// entry with the new one this way: a file that differs only by the rename
+// migrate would make anyway is not a conflict (#292).
 func sameBytes(a, b string) bool {
 	da, errA := os.ReadFile(a)
 	db, errB := os.ReadFile(b)
-	return errA == nil && errB == nil && bytes.Equal(da, db)
+	return errA == nil && errB == nil && bytes.Equal(normalizeLegacy(da), db)
 }

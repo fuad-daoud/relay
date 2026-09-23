@@ -277,6 +277,32 @@ func TestRunConfigMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("slice rename only merges", func(t *testing.T) {
+		base := t.TempDir()
+		stateFrom := filepath.Join(base, "oldstate")
+		stateTo := filepath.Join(base, "newstate")
+		configFrom := filepath.Join(base, "oldconfig")
+		configTo := filepath.Join(base, "newconfig")
+
+		saveBinding(t, stateFrom, "one", filepath.Join(stateFrom, ".worktrees", "one"), "", store.StateDone)
+		newPolicy := `{"slice": "relevo.slice"}`
+		oldPolicy := strings.Replace(newPolicy, `"relevo.slice"`, `"`+legacy.Slice+`"`, 1)
+		mustWrite(t, filepath.Join(configFrom, "policy.json"), oldPolicy)
+		mustWrite(t, filepath.Join(configTo, "policy.json"), newPolicy)
+
+		f := newFakes()
+		var out bytes.Buffer
+		if _, err := Run(context.Background(), f.options(stateFrom, stateTo, configFrom, configTo, &out)); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if got := readFixture(t, filepath.Join(configTo, "policy.json")); got != newPolicy {
+			t.Errorf("policy.json = %q, want %q", got, newPolicy)
+		}
+		if _, err := os.Stat(configFrom); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("old config root still exists: %v", err)
+		}
+	})
+
 	t.Run("differing file refuses", func(t *testing.T) {
 		base := t.TempDir()
 		stateFrom := filepath.Join(base, "oldstate")
