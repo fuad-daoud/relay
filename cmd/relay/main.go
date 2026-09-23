@@ -2236,6 +2236,12 @@ func cmdDaemon(args []string) error {
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown" (#244).
 	rt.StartedAt = time.Now()
+	// The daemon's in-memory "seen alive" set (#370, spec §4.2): it tells a
+	// process this daemon actually watched from one that merely predates it,
+	// so a restart relaunches only what it really took down. Nothing else
+	// creates one; every CLI one-shot leaves Watched nil and keeps #244's
+	// rule exactly.
+	rt.Watched = relay.NewWatched()
 	// The scope template newRuntime filled is logged once here, in the same
 	// shape `relay serve` uses (#295). "off" is scope.enabled: false; the
 	// local daemon does not probe at startup, so there is no "unavailable"

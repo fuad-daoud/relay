@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/ingest"
@@ -104,11 +105,14 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// binding's saved state rather than just what changed this tick. Firing
 	// happens here, outside every WithLock the per-binding loop took, so
 	// Send's own lock on the target never nests inside the source's.
-	runFires(ctx, d.rt, armedFires(fresh))
+	// Each of Tick's non-binding phases runs through safely, so a panic in
+	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
+	// with a stack and the next tick tries again.
+	d.safely("fires", func() { runFires(ctx, d.rt, armedFires(fresh)) })
 
-	ingestLiveBindings(ctx, d.rt, fresh)
+	d.safely("ingest", func() { ingestLiveBindings(ctx, d.rt, fresh) })
 
-	d.refreshRelease(ctx)
+	d.safely("refresh", func() { d.refreshRelease(ctx) })
 
 	return nil
 }
@@ -184,7 +188,18 @@ func armedFires(bindings []store.Binding) []firePending {
 // writes it back without releasing the lock. Reconcile and everything it calls
 // take the *store.Tx rather than locking themselves, so a CLI command running
 // concurrently cannot land a write between the read and the save.
-func (d *Daemon) tickOne(ctx context.Context, name string) error {
+func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
+	// A panic anywhere under this binding is contained here (#370, spec
+	// §4.6): it is logged with a stack and returned as an error, so Tick logs
+	// "reconcile failed" and goes on to the next binding. WithLock releases
+	// both of its locks through defers, so unwinding through it is safe.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("reconcile panicked", "binding", name, "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("reconcile %s panicked: %v", name, r)
+		}
+	}()
+
 	return d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
@@ -210,6 +225,19 @@ func (d *Daemon) tickOne(ctx context.Context, name string) error {
 
 		return tx.Save(next)
 	})
+}
+
+// safely runs one of Tick's non-binding phases, recovering a panic so that a
+// single bad phase cannot take the whole daemon down (#370, spec §4.6). It logs
+// at Error with phase, the panic value and the stack, and never re-panics: the
+// phase simply does not happen this tick, and the next tick tries again.
+func (d *Daemon) safely(phase string, f func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("tick phase panicked", "phase", phase, "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	f()
 }
 
 // backfillPlannerID is §5.6's upgrade path (#303 §5.6, last paragraph): a

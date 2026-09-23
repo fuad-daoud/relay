@@ -222,6 +222,10 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
 		return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
 	}
+	// This daemon has now seen the process alive (#370): every successful
+	// Start made from a reconcile path marks its handle, so a later tick
+	// never judges it lost to a restart.
+	rt.Watched.Mark(h.PID, h.StartedAt.Unix())
 	b.Builder.PID = h.PID
 	b.Builder.StartedAt = h.StartedAt.Unix()
 	b.Builder.LogPath = logPath
@@ -509,6 +513,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		slog.Warn("headless liveness check failed; treating as alive", "binding", b.Name, "pid", b.Builder.PID, "err", err)
 		alive = true
 	}
+	if err == nil && alive {
+		// A sighting: this daemon now knows the process is alive (#370), so
+		// no later tick classifies it as lost to a restart.
+		rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
+	}
 	if alive {
 		now := rt.Now().UTC()
 		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
@@ -613,12 +622,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// process tree) takes the supervisor with it before it can write the
 	// relay-exit: trailer, which reads exactly like a real builder death:
 	// code unknown. The daemon can tell the two apart because it knows its
-	// own start time: a builder whose recorded start predates the daemon's
-	// own could not have been killed by anything the builder itself did.
-	// Relaunching the same candidate on the same round, uncounted, keeps a
-	// daemon restart from spending the round's switch budget (#244).
-	lost := codeText == "unknown" && !rt.StartedAt.IsZero() && b.Builder.StartedAt != 0 &&
-		time.Unix(b.Builder.StartedAt, 0).Before(rt.StartedAt)
+	// own start time and, since #370, which processes it has seen alive: a
+	// process that started before this daemon and that this daemon never
+	// saw is the one this daemon's restart must have killed. Relaunching
+	// the same candidate on the same round, uncounted, keeps a daemon
+	// restart from spending the round's switch budget (#244).
+	lost := codeText == "unknown" && lostToRestart(rt, b.Builder.PID, b.Builder.StartedAt)
 
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
 	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
@@ -642,12 +651,18 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, nil
 		}
 
-		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
+		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
+			"\n\n" + interruptedNote(rt.StartedAt)
+		keep := b.RoundStartedAt
 		relaunched, err := startRound(ctx, rt, tx, b, text)
 		if err != nil {
 			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}
 		b = relaunched
+		// The round's budget clock survives the restart (#370, spec §4.3):
+		// the interruption is relay's, so it must not buy the round more
+		// time than it had.
+		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
 			Note: fmt.Sprintf("relaunched builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
@@ -656,7 +671,6 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, err
 		}
 		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "relaunched "+b.BuilderCandidate+" (lost to a daemon restart)")
-		b.RoundStartedAt = now
 		b.State = store.StateActive
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil
@@ -757,6 +771,21 @@ func appendUnique(s []string, v string) []string {
 		return s
 	}
 	return append(s, v)
+}
+
+// interruptedNoteFormat is the relaunch prompt's note (#370, spec §4.3): a
+// constant text with the interruption time interpolated. It tells the
+// builder three things: the round was interrupted by a relay daemon restart
+// at T; the working tree may already hold partial edits from an earlier
+// attempt at this same plan, and those edits are its own; and it should run
+// git status and git diff first, keep what is correct and finish the plan.
+const interruptedNoteFormat = `This round was interrupted at %s by a relay daemon restart. The working tree may already hold partial edits from an earlier attempt at this same plan, and those edits are your own work, not someone else's. Run "git status" and "git diff" first, keep whatever is correct, and finish the plan.`
+
+// interruptedNote renders interruptedNoteFormat for the daemon restart at t
+// (#370, spec §4.3). t is rendered as UTC RFC 3339, the same shape the
+// relaunch log entry uses.
+func interruptedNote(t time.Time) string {
+	return fmt.Sprintf(interruptedNoteFormat, t.UTC().Format(time.RFC3339))
 }
 
 // ErrStopFailed reports that relay marked a binding done or unbound but

@@ -41,29 +41,11 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	}
 
 	if b.GateRun == nil {
-		h, err := rt.Runner.Start(ctx, ProcSpec{
-			Dir:        b.CWD,
-			Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
-			LogPath:    log,
-			StreamPath: log,
-			Scope:      scopeFor(rt, scopeGate, scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""), cpuPinText(b)),
-		})
-		if err != nil {
-			return b, true, &store.GateRecord{Command: b.Gate, Result: "error", Note: err.Error(), LogPath: log}, nil
+		b, rec, err := startGate(ctx, rt, tx, b, 0, "gate started: "+b.Gate)
+		if rec != nil {
+			return b, true, rec, err
 		}
-		b.GateRun = &store.GateRun{PID: h.PID, StartedAt: h.StartedAt.Unix(), Round: b.Round, Command: b.Gate}
-		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS:        rt.Now().UTC(),
-			Round:     b.Round,
-			Direction: store.DirToPlanner,
-			Kind:      store.KindGate,
-			Path:      log,
-			Note:      "gate started: " + b.Gate,
-			Confirmed: true,
-		}); err != nil {
-			return b, false, nil, err
-		}
-		return b, false, nil, nil
+		return b, false, nil, err
 	}
 
 	h := ProcHandle{PID: b.GateRun.PID, StartedAt: time.Unix(b.GateRun.StartedAt, 0)}
@@ -73,6 +55,11 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 		// this tick, the same rule the headless path applies (spec §6).
 		slog.Warn("gate liveness check failed; treating as alive", "binding", b.Name, "pid", b.GateRun.PID, "err", err)
 		alive = true
+	}
+	if err == nil && alive {
+		// A sighting: this daemon now knows the gate is running (#370, spec
+		// §4.2), so its own restart is never blamed for this process later.
+		rt.Watched.Mark(b.GateRun.PID, b.GateRun.StartedAt)
 	}
 	elapsed := rt.Now().Sub(time.Unix(b.GateRun.StartedAt, 0))
 
@@ -92,6 +79,22 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	rec := &store.GateRecord{Command: b.GateRun.Command, LogPath: log, DurationMS: elapsed.Milliseconds()}
 	switch {
 	case !ok:
+		// A gate this daemon never saw alive, whose recorded start predates
+		// the daemon, was taken down by the daemon's own restart (#370, spec
+		// §4.4): run it once more, as Attempt 1, instead of reporting the
+		// interruption as the gate's failure. Attempt 1 is the last one: a
+		// second loss reports an error rather than starting a third run.
+		if b.GateRun.Attempt == 0 && lostToRestart(rt, b.GateRun.PID, b.GateRun.StartedAt) {
+			cmd := b.GateRun.Command
+			b.GateRun = nil
+			var rrec *store.GateRecord
+			var rerr error
+			b, rrec, rerr = startGate(ctx, rt, tx, b, 1, "gate restarted (lost to a daemon restart): "+cmd)
+			if rrec != nil {
+				return b, true, rrec, rerr // the re-run could not start: report it
+			}
+			return b, false, nil, rerr
+		}
 		rec.Result = "error"
 		rec.Note = "no exit trailer"
 	case code == 0:
@@ -103,6 +106,43 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	}
 	b.GateRun = nil
 	return b, true, rec, nil
+}
+
+// startGate starts the round's gate as a process and records the handle: it is
+// gateStep's GateRun == nil body, factored out so that a gate lost to a daemon
+// restart is started again exactly as the first run was (#370, spec §4.4).
+// attempt is stored on the new GateRun (0 for the round's first run, 1 for the
+// one re-run after a loss) and note is the KindGate entry's note. A Start
+// failure returns a non-nil GateRecord{Result: "error"} and a nil error,
+// exactly as the inlined branch did.
+func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, attempt int, note string) (store.Binding, *store.GateRecord, error) {
+	log := rt.Store.GateLogPath(b.Name, b.Round)
+	h, err := rt.Runner.Start(ctx, ProcSpec{
+		Dir:        b.CWD,
+		Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
+		LogPath:    log,
+		StreamPath: log,
+		Scope:      scopeFor(rt, scopeGate, scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""), cpuPinText(b)),
+	})
+	if err != nil {
+		return b, &store.GateRecord{Command: b.Gate, Result: "error", Note: err.Error(), LogPath: log}, nil
+	}
+	// The daemon has now seen this gate alive (#370, spec §4.2): a later tick
+	// never judges it lost to a restart.
+	rt.Watched.Mark(h.PID, h.StartedAt.Unix())
+	b.GateRun = &store.GateRun{PID: h.PID, StartedAt: h.StartedAt.Unix(), Round: b.Round, Command: b.Gate, Attempt: attempt}
+	if err := tx.AppendLog(b.Name, store.LogEntry{
+		TS:        rt.Now().UTC(),
+		Round:     b.Round,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindGate,
+		Path:      log,
+		Note:      note,
+		Confirmed: true,
+	}); err != nil {
+		return b, nil, err
+	}
+	return b, nil, nil
 }
 
 // gateTimeoutFor is the timeout that bounds one gate run: the binding's own

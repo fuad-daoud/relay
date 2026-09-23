@@ -194,6 +194,177 @@ func TestGateStepScopesTheGate(t *testing.T) {
 	})
 }
 
+// TestGateStepRestartsAGateLostToRestart pins #370, spec §4.4: a gate whose
+// last run predates the daemon and that this daemon never saw alive, found
+// exited with no exit trailer, is started once more as Attempt 1 -- through the
+// same spec as the first run -- and the re-run is logged.
+//
+// Mutation check: drop the `Attempt == 0` guard (or the lostToRestart call)
+// and this fails on Result "error" with no second Start.
+func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.StartedAt = baseTime
+	rt.Watched = NewWatched()
+	b.Gate = "make check"
+	b.GateRun = &store.GateRun{
+		PID:       9001,
+		StartedAt: baseTime.Add(-time.Minute).Unix(),
+		Round:     b.Round,
+		Command:   "make check",
+		Attempt:   0,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(9001, false) // exited; no exit() set: no trailer
+
+	var got store.Binding
+	var done bool
+	var rec *store.GateRecord
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, done, rec, err = gateStep(context.Background(), rt, tx, b)
+		return err
+	}); err != nil {
+		t.Fatalf("gateStep: %v", err)
+	}
+
+	if rec != nil {
+		t.Fatalf("rec = %+v, want none: a lost gate is re-run, not reported", rec)
+	}
+	if done {
+		t.Error("done = true, want false while the re-run runs")
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("Start calls = %d, want the one re-run", len(fr.specs))
+	}
+	if want := []string{"sh", "-c", "make check 2>&1"}; !reflect.DeepEqual(fr.specs[0].Argv, want) {
+		t.Errorf("re-run Argv = %v, want the first run's spec %v", fr.specs[0].Argv, want)
+	}
+	if got.GateRun == nil {
+		t.Fatal("GateRun = nil after the re-run")
+	}
+	if got.GateRun.Attempt != 1 {
+		t.Errorf("Attempt = %d, want 1", got.GateRun.Attempt)
+	}
+	if got.GateRun.PID != fr.handles[0].PID || got.GateRun.StartedAt != fr.handles[0].StartedAt.Unix() {
+		t.Errorf("GateRun = %+v, want the re-run's handle %+v", got.GateRun, fr.handles[0])
+	}
+
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gates []store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindGate {
+			gates = append(gates, e)
+		}
+	}
+	if len(gates) != 1 || gates[0].Note != "gate restarted (lost to a daemon restart): make check" {
+		t.Fatalf("KindGate entries = %+v, want one 'gate restarted (lost to a daemon restart)' entry", gates)
+	}
+}
+
+// TestGateStepSecondLossIsReportedNotRerun pins §4.4's one-re-run bound: a
+// gate already at Attempt 1 that is lost again is reported as an error, not
+// restarted a second time.
+func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.StartedAt = baseTime
+	rt.Watched = NewWatched()
+	b.Gate = "make check"
+	b.GateRun = &store.GateRun{
+		PID:       9001,
+		StartedAt: baseTime.Add(-time.Minute).Unix(),
+		Round:     b.Round,
+		Command:   "make check",
+		Attempt:   1,
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(9001, false) // exited; no exit() set: no trailer
+
+	var rec *store.GateRecord
+	var done bool
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		_, done, rec, err = gateStep(context.Background(), rt, tx, b)
+		return err
+	}); err != nil {
+		t.Fatalf("gateStep: %v", err)
+	}
+
+	if !done {
+		t.Error("done = false, want true: the second loss is terminal")
+	}
+	if rec == nil || rec.Result != "error" || rec.Note != "no exit trailer" {
+		t.Fatalf("rec = %+v, want Result \"error\" with Note \"no exit trailer\"", rec)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Start calls = %d, want none: Attempt 1 gets no second re-run", len(fr.specs))
+	}
+}
+
+// TestGateStepSeenAliveThenNoTrailerIsAnError pins the opposite case: a gate
+// this daemon saw alive and that later dies without a trailer is the gate's
+// own failure, not the daemon's, so it is reported and never re-run.
+//
+// Mutation check: drop the Seen clause from lostToRestart and this fails with
+// a second Start.
+func TestGateStepSeenAliveThenNoTrailerIsAnError(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentBinding(t)
+	rt.Runner = fr
+	rt.StartedAt = baseTime
+	rt.Watched = NewWatched()
+	b.Gate = "make check"
+	pid, started := 9001, baseTime.Add(-time.Minute).Unix()
+	b.GateRun = &store.GateRun{PID: pid, StartedAt: started, Round: b.Round, Command: "make check"}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	runGate := func() (*store.GateRecord, bool) {
+		t.Helper()
+		var rec *store.GateRecord
+		var done bool
+		if err := rt.Store.WithLock(func(tx *store.Tx) error {
+			var err error
+			_, done, rec, err = gateStep(context.Background(), rt, tx, b)
+			return err
+		}); err != nil {
+			t.Fatalf("gateStep: %v", err)
+		}
+		return rec, done
+	}
+
+	fr.script(pid, true) // this tick: alive
+	if rec, done := runGate(); rec != nil || done {
+		t.Fatalf("alive gate: rec = %+v, done = %v, want none and false", rec, done)
+	}
+	if !rt.Watched.Seen(pid, started) {
+		t.Fatal("an alive gate the daemon observed must be marked seen")
+	}
+
+	fr.script(pid, false) // next tick: exited, no trailer
+	rec, done := runGate()
+	if !done {
+		t.Error("done = false, want true")
+	}
+	if rec == nil || rec.Result != "error" || rec.Note != "no exit trailer" {
+		t.Fatalf("rec = %+v, want Result \"error\" with Note \"no exit trailer\"", rec)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Start calls = %d, want none: a seen gate's death is not a restart", len(fr.specs))
+	}
+}
+
 func TestGateTimeoutFor(t *testing.T) {
 	t.Run("binding override wins", func(t *testing.T) {
 		b := store.Binding{GateTimeoutMS: 5000}

@@ -1371,7 +1371,12 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
+	rt.Watched = NewWatched()                           // and it has seen nothing yet: this builder is lost
 	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
+	// Tick ten minutes after the round started, so a relaunch that restarted
+	// the round's budget clock (the pre-#370 reset) is visible here.
+	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
+	keep := b.RoundStartedAt
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -1380,8 +1385,37 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	if len(fr.specs) != 2 {
 		t.Fatalf("specs = %d, want 2 (the relaunch)", len(fr.specs))
 	}
-	if !reflect.DeepEqual(fr.specs[1].Argv, fr.specs[0].Argv) {
-		t.Errorf("relaunch Argv = %v, want the same as the first: %v", fr.specs[1].Argv, fr.specs[0].Argv)
+	// The relaunch's argv is the first run's with only the prompt replaced by
+	// one carrying the interrupted note (#370, spec §4.3): the two slices have
+	// equal length, exactly one element differs, and that element is the old
+	// prompt plus "\n\n" and the note.
+	first, relaunch := fr.specs[0].Argv, fr.specs[1].Argv
+	if len(relaunch) != len(first) {
+		t.Fatalf("relaunch Argv has %d elements, want the first run's %d:\n %v\n %v", len(relaunch), len(first), relaunch, first)
+	}
+	diff := -1
+	for i := range first {
+		if relaunch[i] == first[i] {
+			continue
+		}
+		if diff != -1 {
+			t.Fatalf("relaunch Argv differs at elements %d and %d, want exactly one differing element:\n %v\n %v", diff, i, relaunch, first)
+		}
+		diff = i
+	}
+	if diff == -1 {
+		t.Fatalf("relaunch Argv = %v, want its prompt element to carry the interrupted note", relaunch)
+	}
+	wantPrompt := first[diff] + "\n\n" + interruptedNote(rt.StartedAt)
+	if relaunch[diff] != wantPrompt {
+		t.Errorf("relaunch prompt = %q, want the first prompt plus the note %q", relaunch[diff], wantPrompt)
+	}
+	if !strings.Contains(relaunch[diff], interruptedNote(rt.StartedAt)) {
+		t.Errorf("relaunch prompt = %q, want it to contain the interrupted note %q", relaunch[diff], interruptedNote(rt.StartedAt))
+	}
+	if !got.RoundStartedAt.Equal(keep) {
+		t.Errorf("RoundStartedAt = %s, want the pre-relaunch value %s: the interruption must not restart the round's clock",
+			got.RoundStartedAt, keep)
 	}
 	if got.RoundSwitches != 0 {
 		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
@@ -1425,6 +1459,74 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 	}
 	if len(fr.specs) != 2 {
 		t.Errorf("specs after second tick = %d, want still 2", len(fr.specs))
+	}
+}
+
+// TestReconcileHeadlessSeenBuilderIsNotLost pins the other half of #370's
+// rule (spec §4.3): a builder this daemon saw alive that later exits with no
+// trailer is not lost to a restart. It takes the normal
+// exited-without-report path -- here a counted switch -- and is never
+// relaunched on the same round.
+//
+// Mutation check: drop the Seen clause from lostToRestart and this fails: the
+// marked pid is relaunched, so there is no switch and no exit entry.
+func TestReconcileHeadlessSeenBuilderIsNotLost(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
+	rt.Watched = NewWatched()
+	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt) // ... but this daemon saw it alive
+	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ex := exits(t, rt)
+	if len(ex) != 1 || ex[0].Note != "builder exited (code unknown) without a report" {
+		t.Fatalf("exit entries = %+v, want the normal exited-without-a-report entry", ex)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "switched builder (exited (code unknown) without a report): picked "+testClaudeRef) {
+		t.Fatalf("switch entries = %+v, want the counted switch, not a relaunch", sw)
+	}
+	if got.RoundSwitches != 1 {
+		t.Errorf("RoundSwitches = %d, want 1: a seen builder's failure is the round's own", got.RoundSwitches)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Errorf("specs = %+v, want the switch to claude, not a relaunch of agy", fr.specs)
+	}
+	if got.Builder.PID != fr.handles[1].PID {
+		t.Errorf("PID = %d, want the switched process's %d", got.Builder.PID, fr.handles[1].PID)
+	}
+}
+
+// TestReconcileHeadlessCLINeverRelaunchesLostBuilder pins lostToRestart's
+// first clause (spec §4.2): rt.StartedAt is zero in a CLI one-shot, so a
+// builder that merely predates the command is never judged lost and takes the
+// normal counted switch instead of being relaunched (#244 kept).
+func TestReconcileHeadlessCLINeverRelaunchesLostBuilder(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	rt.StartedAt = time.Time{} // the CLI: this process did not start a daemon
+	rt.Watched = NewWatched()
+	fr.script(b.Builder.PID, false) // exited; no exit() set: code unknown
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "switched builder (exited (code unknown) without a report): picked "+testClaudeRef) {
+		t.Fatalf("switch entries = %+v, want the normal counted switch", sw)
+	}
+	if got.RoundSwitches != 1 {
+		t.Errorf("RoundSwitches = %d, want 1: a CLI one-shot charges the switch", got.RoundSwitches)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Errorf("specs = %+v, want a switch to claude, never a relaunch", fr.specs)
 	}
 }
 

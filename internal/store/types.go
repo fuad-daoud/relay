@@ -498,6 +498,11 @@ type GateRun struct {
 	StartedAt int64  `json:"started_at"` // Unix seconds, as Endpoint.StartedAt
 	Round     int    `json:"round"`
 	Command   string `json:"command"`
+	// Attempt is 0 for this round's first gate run and 1 for the single
+	// re-run allowed after a daemon restart took the gate with it (#370,
+	// spec §4.4). It is never greater than 1, and a bind.json written before
+	// the field existed decodes as 0, the first run.
+	Attempt int `json:"attempt,omitempty"`
 }
 
 // Verdict is one reviewer's verdict on a closed round (#144): what a verify

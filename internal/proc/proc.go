@@ -367,16 +367,24 @@ const psLayout = "Mon Jan _2 15:04:05 2006"
 
 // psInfo asks ps for one process's start time and state. ps is the one
 // portable source of a start time: /proc is Linux-only and sysctl needs
-// cgo. ps exits non-zero when the pid does not exist, which is
-// errNoProcess; any other failure is returned as is.
+// cgo. A failed ps is classified (#370, spec §4.1): only "exited 1 with
+// nothing on stdout" -- how procps and BSD ps report a pid that is gone --
+// is errNoProcess. A ps that was signalled or cut short by the caller's
+// context is a plain error, so every Alive caller treats the process as
+// alive this tick rather than as dead.
 func psInfo(ctx context.Context, pid int) (started time.Time, state string, err error) {
 	out, err := exec.CommandContext(ctx, "ps", "-o", "stat=", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		var exit *exec.ExitError
-		if errors.As(err, &exit) {
+		errors.As(err, &exit) // nil when ps never ran (e.g. not on PATH)
+		switch classifyPS(ctx.Err(), exit, out) {
+		case psNoProcess:
 			return time.Time{}, "", errNoProcess
+		default:
+			// psTransient, and psOK (a non-ExitError failure): both are
+			// returned wrapped, exactly as any other ps failure was.
+			return time.Time{}, "", fmt.Errorf("proc: ps: %w", err)
 		}
-		return time.Time{}, "", fmt.Errorf("proc: ps: %w", err)
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) == 0 {

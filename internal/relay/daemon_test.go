@@ -537,6 +537,75 @@ func TestTickSurvivesFetchError(t *testing.T) {
 	})
 }
 
+// panickingRunner is the fake Runner with one pid whose Alive panics, so a
+// test can prove the daemon contains a panic raised under one binding
+// (#370, spec §4.6).
+type panickingRunner struct {
+	*fakeRunner
+	panicPID int
+}
+
+func (p *panickingRunner) Alive(ctx context.Context, h ProcHandle) (bool, error) {
+	if h.PID == p.panicPID {
+		panic("alive exploded")
+	}
+	return p.fakeRunner.Alive(ctx, h)
+}
+
+// TestTickSurvivesAPanickingReconcile pins #370, spec §4.6: a panic raised
+// anywhere under one binding is recovered in tickOne, logged, and returned as
+// an error, so the tick still reconciles every other binding and returns nil.
+//
+// Mutation check: remove the recover from tickOne and this test crashes the
+// test binary instead of passing.
+func TestTickSurvivesAPanickingReconcile(t *testing.T) {
+	fr := newFakeRunner()
+	rt, first := sentHeadless(t, fr)
+
+	// A second, healthy binding on the same store, reconciled by the same
+	// tick. Its own working tree, since a tree carries one binding.
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "other", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-other",
+	}); err != nil {
+		t.Fatalf("Bind other: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "other", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send other: %v", err)
+	}
+	other, err := rt.Store.Load("other")
+	if err != nil {
+		t.Fatalf("Load other: %v", err)
+	}
+
+	// From here on, observing the first binding's builder panics.
+	rt.Runner = &panickingRunner{fakeRunner: fr, panicPID: first.Builder.PID}
+
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	defer slog.SetDefault(previous)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick = %v, want nil: one binding's panic must not fail the tick", err)
+	}
+	if !strings.Contains(logged.String(), "reconcile panicked") {
+		t.Errorf("no 'reconcile panicked' error line:\n%s", logged.String())
+	}
+
+	// The healthy binding was reconciled in that same tick and its process is
+	// untouched: the panic ended nothing but the panicking binding's tick.
+	after, err := rt.Store.Load("other")
+	if err != nil {
+		t.Fatalf("Load other after tick: %v", err)
+	}
+	if after.Builder.PID != other.Builder.PID {
+		t.Errorf("other.Builder.PID = %d, want it left at %d", after.Builder.PID, other.Builder.PID)
+	}
+	if after.State != store.StateActive {
+		t.Errorf("other.State = %s, want active", after.State)
+	}
+}
+
 // TestBackfillLeavesDoneBindingsAlone pins the DONE guard in
 // backfillPlannerID: a finished binding is history, and a tick must not
 // rewrite it even when its planner session now has a record.
