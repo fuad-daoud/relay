@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -396,17 +397,20 @@ func releaseCheck(env Env) Check {
 		Name:     "release",
 		Severity: SevWarn,
 		Detail:   fmt.Sprintf("%s is behind %s", running, latest),
-		Fix:      releaseFix(kind),
+		Fix:      releaseFix(kind, latest, runtime.GOOS, runtime.GOARCH),
 	}
 }
 
 // releaseFix names the update path of the variant that is actually
 // installed. KindUnknown and KindLocalBuild have no path, but neither
 // reaches a Fix: both are SevOK.
-func releaseFix(kind release.Kind) string {
+func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 	switch kind {
 	case release.KindGoInstall:
 		return "go install github.com/fuad-daoud/relay/cmd/relay@latest"
+	case release.KindRelease:
+		archive, checksums := release.AssetURLs(latest, goos, goarch)
+		return fmt.Sprintf("download %s, check it against %s, and replace this relay binary with the one inside", archive, checksums)
 	}
 	return ""
 }

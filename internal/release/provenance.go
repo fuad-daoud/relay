@@ -8,8 +8,17 @@ type Kind string
 const (
 	KindGoInstall  Kind = "go-install"
 	KindLocalBuild Kind = "local-build"
-	KindUnknown    Kind = "unknown"
+	// KindRelease is a binary built by release.yml and unpacked from a
+	// published archive. It is the only kind that carries the distribution
+	// stamp with a clean tag.
+	KindRelease Kind = "release"
+	KindUnknown Kind = "unknown"
 )
+
+// DistributionRelease is the only value of main.distribution Detect
+// recognises. Any other non-empty value, such as a future "homebrew", falls
+// through to the existing rules.
+const DistributionRelease = "release"
 
 // Inputs is every fact Detect reads. The caller gathers them; Detect
 // touches no disk and no environment, so the table in the test is the
@@ -24,6 +33,10 @@ type Inputs struct {
 	// FromModule is true when debug.ReadBuildInfo gave the version, i.e.
 	// there was no ldflags stamp.
 	FromModule bool
+	// Distribution is the main.distribution ldflags stamp. Only release.yml
+	// sets it, and it is empty in every other build. It is optional, and the
+	// zero value means "no claim".
+	Distribution string
 }
 
 // Detect classifies the install. Pure. A binary that sits next to an old
@@ -32,6 +45,15 @@ type Inputs struct {
 func Detect(in Inputs) Kind {
 	if in.FromModule {
 		return KindGoInstall
+	}
+	// Rule 2: the release stamp together with a clean tag. A stamped
+	// non-clean version -- a describe suffix, -dirty or (devel) -- is not a
+	// release, and falls through to rule 3, which classifies it as a local
+	// build.
+	if in.Distribution == DistributionRelease {
+		if v, ok := ParseVersion(in.Version); ok && v.Suffix == "" {
+			return KindRelease
+		}
 	}
 	if in.Version == "(devel)" {
 		return KindLocalBuild

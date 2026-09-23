@@ -37,7 +37,7 @@ jobs:
             goos="${target%/*}"; goarch="${target#*/}"
             echo "==> $goos/$goarch"
             GOOS="$goos" GOARCH="$goarch" go build \
-              -ldflags "-s -w -X main.version=${version}" \
+              -ldflags "-s -w -X main.version=${version} -X main.distribution=release" \
               -o "dist/relay" ./cmd/relay
             tar -czf "dist/relay_${version}_${goos}_${goarch}.tar.gz" \
               -C dist relay \

@@ -46,6 +46,12 @@ import (
 // the module version the toolchain records in the build info.
 var version = ""
 
+// distribution is stamped by release.yml with
+// -X main.distribution=release. No Makefile target and no `go install` sets
+// it, so it is empty in every other build; release.Detect reads the zero
+// value as "no claim".
+var distribution = ""
+
 const usage = `relay automates the plan/report handoff between two AI coding agent
 processes: a planner hands work to a builder, and relay moves
 the files between them.
@@ -159,7 +165,7 @@ func buildVersion() string {
 // stamp supplied it, and where the executable lives. Disk reads only -- the
 // release check never touches the network to learn who it is.
 func releaseInputs() release.Inputs {
-	in := release.Inputs{Version: buildVersion()}
+	in := release.Inputs{Version: buildVersion(), Distribution: distribution}
 
 	if exe, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {

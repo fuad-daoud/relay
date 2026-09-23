@@ -40,6 +40,12 @@ go install github.com/fuad-daoud/relay/cmd/relay@latest
 
 That drops `relay` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
 
+A release binary and a `go install` both know how they were installed. `relay
+doctor` warns when a newer release exists and prints the update step for that
+install: the archive and `checksums.txt` to download, or the `go install`
+command. `relay status` shows one line when a newer release exists. A local
+build is never called stale.
+
 Or from a clone, which also stamps the binary with the current tag so
 `relay version` is meaningful:
 
