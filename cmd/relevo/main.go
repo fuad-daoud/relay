@@ -285,16 +285,28 @@ func noteRegateNoGate(b store.Binding) {
 }
 
 func run(args []string) error {
-	// Every verb captures, before it does anything else (#349): an agy planner
-	// runs relevo constantly (send, wait, pull, status), and whichever verb it
-	// happens to run after an agy restart is the one that refreshes the
-	// session's agentapi credentials.
-	captureAgyEnv()
-
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		return errUsagePrinted
 	}
+
+	// #292 §4: an install that runs relevo before `relevo migrate` sees empty
+	// new roots and starts creating them, which then blocks migrate. Every
+	// verb that could touch state is refused except the exempt four. This runs
+	// before captureAgyEnv because captureAgyEnv writes into the state root --
+	// exactly what the guard exists to prevent.
+	if !guardExempt(args[0]) {
+		if err := refuseUnmigrated(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitCodeErr{code: 1}
+		}
+	}
+
+	// Every verb captures the calling agy session's agentapi credentials
+	// (#349): an agy planner runs relevo constantly (send, wait, pull,
+	// status), and whichever verb it happens to run after an agy restart is
+	// the one that refreshes the session's agentapi credentials.
+	captureAgyEnv()
 
 	switch args[0] {
 	case "help", "-h", "--help":

@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -405,13 +406,22 @@ func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 }
 
 // ExitCode reads the trailer the supervisor appended, if it is the stream's
-// last line. The handle is unused: the stream is the record.
+// last line. A stream written before the rename ends in legacy.ExitTrailer
+// instead, and reads the same way (#292 §1). The handle is unused: the stream
+// is the record.
 func (r *Runner) ExitCode(_ context.Context, _ relevo.ProcHandle, logPath string) (int, bool) {
 	line, ok := lastLine(logPath)
-	if !ok || !strings.HasPrefix(line, ExitTrailer) {
+	if !ok {
 		return 0, false
 	}
-	code, err := strconv.Atoi(strings.TrimPrefix(line, ExitTrailer))
+	prefix := ExitTrailer
+	if !strings.HasPrefix(line, prefix) {
+		prefix = legacy.ExitTrailer
+		if !strings.HasPrefix(line, prefix) {
+			return 0, false
+		}
+	}
+	code, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
 	if err != nil {
 		return 0, false
 	}
@@ -451,7 +461,8 @@ func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 }
 
 // Rusage scans the last few lines of streamPath, from last to first, for the
-// relevo-rusage: trailer; ok is false when none of those lines match (plain
+// relevo-rusage: trailer, or the relay-rusage: one a pre-rename stream
+// carries (#292 §1); ok is false when none of those lines match (plain
 // spawn, killed supervisor, still running). The scan -- rather than assuming
 // a fixed offset -- is needed because supervisorScript's printf leaves a
 // blank line between the rusage and exit trailers, so the trailer is not
@@ -463,7 +474,7 @@ func (r *Runner) Rusage(_ context.Context, _ relevo.ProcHandle, streamPath strin
 		return relevo.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], RusageTrailer) {
+		if strings.HasPrefix(lines[i], RusageTrailer) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}

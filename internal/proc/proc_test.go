@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -281,14 +282,48 @@ func TestExitCodeReadsOnlyATrailingRelevoExitLine(t *testing.T) {
 	}
 }
 
+// TestExitCodeReadsLegacyTrailer pins #292 §1: a log a pre-rename supervisor
+// wrote ends in relay-exit:<n> and reads exactly like the new form.
+func TestExitCodeReadsLegacyTrailer(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	cases := map[string]struct {
+		body string
+		code int
+		ok   bool
+	}{
+		"legacy trailer":            {"noise\n" + legacy.ExitTrailer + "3\n", 3, true},
+		"legacy trailer no newline": {legacy.ExitTrailer + "0", 0, true},
+		"legacy trailer not last":   {legacy.ExitTrailer + "1\nmore output\n", 0, false},
+		"legacy garbage code":       {legacy.ExitTrailer + "x\n", 0, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".log")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, p)
+			if code != c.code || ok != c.ok {
+				t.Errorf("ExitCode = %d, %v; want %d, %v", code, ok, c.code, c.ok)
+			}
+		})
+	}
+}
+
 // The usage reader waits for the exit trailer before reading a headless
 // stream (#142) and carries its own copy of the prefix so internal/usage
 // stays free of the process model. This is the only place that pins the
 // two equal: proc imports relevo, so the pin cannot live in relevo's tests.
+// #292 §1 adds the relay-era copy, pinned to legacy.ExitTrailer here too.
 func TestExitTrailerMatchesUsage(t *testing.T) {
 	if usage.ExitTrailerForTest() != ExitTrailer {
 		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
 			usage.ExitTrailerForTest(), ExitTrailer)
+	}
+	if usage.LegacyExitTrailerForTest() != legacy.ExitTrailer {
+		t.Fatalf("usage.legacyExitTrailer %q != legacy.ExitTrailer %q: a pre-rename stream would still read as open",
+			usage.LegacyExitTrailerForTest(), legacy.ExitTrailer)
 	}
 }
 
@@ -319,6 +354,28 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 func TestRusageTrailerPrefixMatchesProc(t *testing.T) {
 	if relevo.RusageTrailerPrefix != RusageTrailer {
 		t.Errorf("relevo.RusageTrailerPrefix = %q, want proc.RusageTrailer %q", relevo.RusageTrailerPrefix, RusageTrailer)
+	}
+}
+
+// TestRusageReadsLegacyTrailer pins #292 §1: a pre-rename stream's
+// relay-rusage: line is found by the backward scan and parsed the same way.
+func TestRusageReadsLegacyTrailer(t *testing.T) {
+	r := New()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.jsonl")
+	body := "builder output\n\n" + legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576\n\n" + legacy.ExitTrailer + "3\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := r.Rusage(context.Background(), relevo.ProcHandle{}, path)
+	if !ok {
+		t.Fatal("Rusage on a legacy stream: want ok=true")
+	}
+	if want := (relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}); got != want {
+		t.Errorf("Rusage = %+v, want %+v", got, want)
+	}
+	if code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, path); !ok || code != 3 {
+		t.Errorf("ExitCode = %d, %v; want 3, true", code, ok)
 	}
 }
 

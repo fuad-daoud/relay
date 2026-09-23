@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -121,16 +122,22 @@ func firstNonEmptyLine(s string) string {
 // "relevo-rusage:cpu_usec=<n> mem_peak=<n>".
 const RusageTrailer = "relevo-rusage:"
 
-// ParseRusageTrailer parses a RusageTrailer line. Fields are
-// space-separated key=value; either may be absent (that field stays
-// zero); unknown keys are ignored; a malformed number leaves that field
-// zero. A line not starting with RusageTrailer reports ok false.
+// ParseRusageTrailer parses a RusageTrailer line, or the relay-rusage: line a
+// pre-rename stream carries (#292 §1): whichever prefix matches is stripped,
+// and behaviour for the new prefix is unchanged. Fields are space-separated
+// key=value; either may be absent (that field stays zero); unknown keys are
+// ignored; a malformed number leaves that field zero. A line matching neither
+// prefix reports ok false.
 func ParseRusageTrailer(line string) (relevo.ProcRusage, bool) {
-	if !strings.HasPrefix(line, RusageTrailer) {
-		return relevo.ProcRusage{}, false
+	prefix := RusageTrailer
+	if !strings.HasPrefix(line, prefix) {
+		prefix = legacy.RusageTrailer
+		if !strings.HasPrefix(line, prefix) {
+			return relevo.ProcRusage{}, false
+		}
 	}
 	var r relevo.ProcRusage
-	rest := strings.TrimPrefix(line, RusageTrailer)
+	rest := strings.TrimPrefix(line, prefix)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {

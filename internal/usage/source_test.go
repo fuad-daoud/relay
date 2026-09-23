@@ -161,3 +161,32 @@ func TestPeekMissingStream(t *testing.T) {
 		t.Errorf("Peek on a missing stream = %d samples, note %q", len(got), note)
 	}
 }
+
+// TestStreamClosedLegacyTrailer pins #292 §1: a stream whose last line is the
+// old relay-exit: marker counts as closed, so a pre-rename round's cost is
+// read with its measured figures instead of "stream still open".
+func TestStreamClosedLegacyTrailer(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]struct {
+		body string
+		want bool
+	}{
+		"legacy trailer":       {"hello\nrelay-exit:3\n", true},
+		"legacy no newline":    {"relay-exit:0", true},
+		"legacy not last":      {"relay-exit:3\nmore output\n", false},
+		"new trailer":          {"hello\nrelevo-exit:3\n", true},
+		"no trailer":           {"hello\n", false},
+		"empty last line only": {"\n", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".jsonl")
+			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := streamClosed(p); got != c.want {
+				t.Errorf("streamClosed() = %v, want %v for %q", got, c.want, c.body)
+			}
+		})
+	}
+}

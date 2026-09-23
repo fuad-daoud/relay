@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -187,7 +188,8 @@ func gateLine(rec store.GateRecord, tail []string) string {
 // tailLines returns the last n non-empty lines of the file at path, or nil
 // when it cannot be read; never an error (the log is a convenience). Lines
 // carrying the rusage trailer are skipped (#313): any scoped spawn prints one
-// before its exit trailer, and it is not gate output.
+// before its exit trailer, and it is not gate output. A pre-rename log's
+// relay-rusage: line is skipped the same way (#292 §1).
 func tailLines(path string, n int) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -195,7 +197,7 @@ func tailLines(path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, RusageTrailerPrefix) {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, RusageTrailerPrefix) || strings.HasPrefix(l, legacy.RusageTrailer) {
 			continue
 		}
 		nonEmpty = append(nonEmpty, l)
