@@ -126,9 +126,10 @@ func TestGoMaxProcsEnv(t *testing.T) {
 		{"no limits", nil, nil, &relay.ScopeSpec{}, nil},
 		{"single core", nil, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"quota only", nil, nil, quota, []string{"GOMAXPROCS=2"}},
-		{"parent GOMAXPROCS wins", []string{"GOMAXPROCS=8"}, nil, pinned, nil},
+		{"parent GOMAXPROCS is overridden", []string{"GOMAXPROCS=8"}, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"extra GOMAXPROCS wins", nil, []string{"GOMAXPROCS=4"}, pinned, nil},
-		{"bare parent name wins", []string{"GOMAXPROCS"}, nil, pinned, nil},
+		{"bare parent name is overridden", []string{"GOMAXPROCS"}, nil, pinned, []string{"GOMAXPROCS=1"}},
+		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &relay.ScopeSpec{}, nil},
 	}
 
 	for _, tc := range cases {

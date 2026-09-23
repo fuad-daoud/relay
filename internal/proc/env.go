@@ -38,10 +38,12 @@ func ChildEnv(parent, deny, extra []string) []string {
 
 // goMaxProcsEnv returns the GOMAXPROCS entry to add to a scoped child's
 // environment, or nil when none is wanted (#315): nil when scope is nil,
-// when the scope limits nothing (relay.GoMaxProcsFor), or when parent or
-// extra already carries a GOMAXPROCS entry -- a user who set it for the
-// daemon or the served process keeps their value. Otherwise it returns
-// exactly one entry, "GOMAXPROCS=<n>". Pure; never mutates its inputs.
+// when the scope limits nothing (relay.GoMaxProcsFor), or when extra
+// (relay's own spec.Env) already carries one. An inherited GOMAXPROCS in
+// parent does not stop it: a scope that limits CPUs is the operator's
+// explicit choice, and Start removes the parent's entry so the child sees
+// one value (#315 round 2). Otherwise it returns exactly one entry,
+// "GOMAXPROCS=<n>". Pure; never mutates its inputs.
 func goMaxProcsEnv(parent, extra []string, scope *relay.ScopeSpec) []string {
 	if scope == nil {
 		return nil
@@ -50,7 +52,7 @@ func goMaxProcsEnv(parent, extra []string, scope *relay.ScopeSpec) []string {
 	if !ok {
 		return nil
 	}
-	if hasEnvName(parent, "GOMAXPROCS") || hasEnvName(extra, "GOMAXPROCS") {
+	if hasEnvName(extra, "GOMAXPROCS") {
 		return nil
 	}
 	return []string{"GOMAXPROCS=" + strconv.Itoa(n)}

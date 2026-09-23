@@ -212,15 +212,26 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	// A scoped spawn gets GOMAXPROCS sized to the CPUs its scope allows
 	// (#315). It runs after both fallbacks so it follows the scope actually
 	// launched: a refused pin contributes nothing, and a dropped scope adds
-	// nothing at all. The full-slice expression forces a copy, so the append
-	// never writes the caller's backing array -- spec is a value copy, but
-	// spec.Env shares the caller's array.
-	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], goMaxProcsEnv(os.Environ(), spec.Env, spec.Scope)...)
+	// nothing at all. The value replaces an inherited GOMAXPROCS: when an
+	// entry is added, the parent's is denied below so the child sees exactly
+	// one (#315 round 2). The full-slice expression forces a copy, so the
+	// append never writes the caller's backing array -- spec is a value copy,
+	// but spec.Env shares the caller's array.
+	add := goMaxProcsEnv(os.Environ(), spec.Env, spec.Scope)
+	spec.Env = append(spec.Env[:len(spec.Env):len(spec.Env)], add...)
+
+	// deny carries GOMAXPROCS only when an entry was added: the scope's value
+	// must replace the inherited one, not sit beside it. The full-slice
+	// expression copies, so the package var is never appended in place.
+	deny := DeniedEnv
+	if len(add) > 0 {
+		deny = append(DeniedEnv[:len(DeniedEnv):len(DeniedEnv)], "GOMAXPROCS")
+	}
 
 	argv := buildArgv(spec, bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = spec.Dir
-	cmd.Env = ChildEnv(os.Environ(), DeniedEnv, spec.Env)
+	cmd.Env = ChildEnv(os.Environ(), deny, spec.Env)
 	cmd.Stdin = nil
 	cmd.Stdout = streamf
 	cmd.Stderr = logf

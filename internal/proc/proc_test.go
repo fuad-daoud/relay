@@ -745,6 +745,24 @@ func childEnvValue(t *testing.T, stream, name string) (string, bool) {
 	return value, found
 }
 
+// childEnvValues returns every value of name in a spawn's stream, whose argv
+// ran `env`, in order; a name can appear more than once when a duplicate
+// leaked through, which is what the override test counts.
+func childEnvValues(t *testing.T, stream, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	var values []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, name+"="); ok {
+			values = append(values, v)
+		}
+	}
+	return values
+}
+
 // TestStartSetsGoMaxProcsFromThePin pins #315's pinned case: a scope with
 // AllowedCPUs=1, its pin probe accepted, gives the child GOMAXPROCS=1.
 func TestStartSetsGoMaxProcsFromThePin(t *testing.T) {
@@ -830,14 +848,17 @@ func TestStartNoGoMaxProcsWithoutScopes(t *testing.T) {
 	}
 }
 
-// TestStartParentGoMaxProcsWins pins #315's precedence: a GOMAXPROCS in the
-// parent environment wins over the scope-derived value, even for a pinned
-// scope.
-func TestStartParentGoMaxProcsWins(t *testing.T) {
+// TestStartScopeGoMaxProcsOverridesParent pins #315 round 2: a scope that
+// limits CPUs sets the child's GOMAXPROCS even when the daemon inherited one,
+// and the inherited entry is removed rather than shadowed, so the child sees
+// exactly one value. Start must not append to the DeniedEnv package var.
+func TestStartScopeGoMaxProcsOverridesParent(t *testing.T) {
 	t.Setenv("GOMAXPROCS", "7")
 	stubDir := t.TempDir()
 	writeStub(t, stubDir, acceptScopeStub)
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	deniedBefore := slices.Clone(DeniedEnv)
 
 	r := New()
 	dir := t.TempDir()
@@ -852,9 +873,40 @@ func TestStartParentGoMaxProcsWins(t *testing.T) {
 	}
 	waitGone(t, r, h, 5*time.Second)
 
-	got, ok := childEnvValue(t, stream, "GOMAXPROCS")
-	if !ok || got != "7" {
-		t.Errorf("child GOMAXPROCS = %q, %v; want the parent's 7, true", got, ok)
+	got := childEnvValues(t, stream, "GOMAXPROCS")
+	if len(got) != 1 || got[0] != "1" {
+		t.Errorf("child GOMAXPROCS entries = %v, want exactly [1]", got)
+	}
+	if !reflect.DeepEqual(DeniedEnv, deniedBefore) {
+		t.Errorf("DeniedEnv = %v, want %v (Start must not append to the package var)", DeniedEnv, deniedBefore)
+	}
+}
+
+// TestStartParentGoMaxProcsPassesThroughWithoutLimits pins #315 round 2's
+// other half: a scope that limits nothing leaves an inherited GOMAXPROCS
+// untouched, and only once.
+func TestStartParentGoMaxProcsPassesThroughWithoutLimits(t *testing.T) {
+	t.Setenv("GOMAXPROCS", "7")
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, acceptScopeStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "env"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	got := childEnvValues(t, stream, "GOMAXPROCS")
+	if len(got) != 1 || got[0] != "7" {
+		t.Errorf("child GOMAXPROCS entries = %v, want exactly [7]", got)
 	}
 }
 
