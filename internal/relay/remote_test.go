@@ -3128,6 +3128,78 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	}
 }
 
+// TestCatchUpAppendsPathsLineFromView pins #216's remote half: when the
+// server's DiffNote carries the "paths: report N, diff M" clause, catchUp's
+// queued payload repeats it as a Paths: line right after its Diff: line. A
+// note without the clause adds no line.
+func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
+	const joinedNote = "24 files, +1 -2; 1 commit on relay/x, tree clean paths: report 0, diff 24"
+
+	cases := []struct {
+		name     string
+		diffNote string
+		wantLine string
+	}{
+		{"note carries the clause", joinedNote, PathsLine(0, 24)},
+		{"note without the clause", "1 file, +1 -0; 1 commit, clean", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New(t.TempDir())
+			b := remoteBinding("zen")
+			if err := st.Save(b); err != nil {
+				t.Fatal(err)
+			}
+
+			fr := &fakeRemote{
+				getBindingResp: remote.BindingView{
+					RoundState: remote.RoundClosed, ClosedRound: 1,
+					DiffNote: tc.diffNote, DiffCommits: 1, DiffTree: "clean",
+				},
+				roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+					switch kind {
+					case "report":
+						return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+					case "diff":
+						return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+					default:
+						return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+					}
+				},
+			}
+			fg := &fakeGit{}
+			rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+			if _, err := reconcile(t, rt, b); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+
+			entries, err := st.ReadLog("api")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reportEntry store.LogEntry
+			for _, e := range entries {
+				if e.Kind == store.KindReport {
+					reportEntry = e
+				}
+			}
+			if tc.wantLine == "" {
+				if strings.Contains(reportEntry.Payload, "Paths:") {
+					t.Fatalf("payload = %q, want no Paths: line", reportEntry.Payload)
+				}
+				return
+			}
+			if !strings.Contains(reportEntry.Payload, tc.wantLine) {
+				t.Fatalf("payload = %q, want it to contain %q", reportEntry.Payload, tc.wantLine)
+			}
+			if diffAt, lineAt := strings.Index(reportEntry.Payload, "Diff:"), strings.Index(reportEntry.Payload, tc.wantLine); lineAt < diffAt {
+				t.Fatalf("payload = %q, want the Paths: line after the Diff: line", reportEntry.Payload)
+			}
+		})
+	}
+}
+
 // TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
 // (#274): `add --server --branch feature/x` adopts a branch relay did not
 // create, but the server still cuts its own branch and the round bundle it

@@ -1184,6 +1184,9 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	if line := DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
 	}
+	if line := PathsLineFromNote(view.DiffNote); line != "" {
+		payload = payload + "\n" + line
+	}
 	if view.DirtyCommit != "" {
 		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n))
 	}

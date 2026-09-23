@@ -112,6 +112,7 @@ Your final report must include:
 - Which research was delegated, and what it returned.
 - Deviations: none is the goal; any must be explicitly flagged with justification.
 - Files created/modified, mapped to the steps that produced them.
+- Git surgery on your branch: every rebase, reset, amend, cherry-pick, merge, force-push or branch switch you ran, each with its command and why -- or "none". Report it even when the plan asked for it.
 
 End every report with the `relay` block relay's prompt shows you; list under `not_done` anything adjacent you deliberately did not do, because that is where reviewers find surprises.
 

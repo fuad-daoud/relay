@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relay/internal/git"
@@ -556,5 +557,35 @@ func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
 					note, tc.facts.Commits, tc.tree, branch, got, want)
 			}
 		})
+	}
+}
+
+// TestPathsLine pins the payload line for a changed_paths mismatch (#216):
+// its exact wording, and both plural forms formatFiles renders.
+func TestPathsLine(t *testing.T) {
+	if got, want := PathsLine(0, 24), "Paths: the report's changed_paths lists 0, the diff has 24 files -- check the diff, not the list"; got != want {
+		t.Errorf("PathsLine(0, 24) = %q, want %q", got, want)
+	}
+	if got, want := PathsLine(2, 1), "Paths: the report's changed_paths lists 2, the diff has 1 file -- check the diff, not the list"; got != want {
+		t.Errorf("PathsLine(2, 1) = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(PathsLine(2, 1), "1 file -- check the diff, not the list") {
+		t.Errorf("PathsLine(2, 1) = %q, want it to end '1 file -- check the diff, not the list'", PathsLine(2, 1))
+	}
+}
+
+// TestPathsLineFromNote pins the reading of the clause out of a KindDiff
+// note (#216), including the position joinNotes leaves it in and the
+// no-clause cases that must stay silent.
+func TestPathsLineFromNote(t *testing.T) {
+	joined := "24 files, +1 -2; 1 commit on relay/x, tree clean paths: report 0, diff 24"
+	if got, want := PathsLineFromNote(joined), PathsLine(0, 24); got != want {
+		t.Errorf("PathsLineFromNote(%q) = %q, want %q", joined, got, want)
+	}
+	if got := PathsLineFromNote("3 files, +1 -1"); got != "" {
+		t.Errorf("PathsLineFromNote(%q) = %q, want \"\"", "3 files, +1 -1", got)
+	}
+	if got := PathsLineFromNote(""); got != "" {
+		t.Errorf("PathsLineFromNote(\"\") = %q, want \"\"", got)
 	}
 }

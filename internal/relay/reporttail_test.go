@@ -23,11 +23,12 @@ not_done: ["cleanup tmp", "docs"]
 			t.Fatalf("expected ok=true, got false")
 		}
 		expected := ReportTail{
-			Status:       OutcomeHalted,
-			HaltedAt:     "Task 2 step 3",
-			ChangedPaths: []string{"internal/relay/send.go", "internal/relay/deliver.go"},
-			CommandsRun:  []string{"go test ./...", "make check"},
-			NotDone:      []string{"cleanup tmp", "docs"},
+			Status:          OutcomeHalted,
+			HaltedAt:        "Task 2 step 3",
+			ChangedPathsSet: true,
+			ChangedPaths:    []string{"internal/relay/send.go", "internal/relay/deliver.go"},
+			CommandsRun:     []string{"go test ./...", "make check"},
+			NotDone:         []string{"cleanup tmp", "docs"},
 		}
 		if !reflect.DeepEqual(tail, expected) {
 			t.Fatalf("expected %+v, got %+v", expected, tail)
@@ -345,6 +346,64 @@ changed_paths:
 		}
 		if reason != "" {
 			t.Fatalf("reason = %q, want empty", reason)
+		}
+	})
+
+	// TestParseReportTailChangedPathsSet pins ChangedPathsSet (#216): the
+	// changed_paths key counts as present whether its list is inline or a
+	// block, whether empty or not. Only a tail with no such key at all is
+	// never compared against the diff.
+	t.Run("changed_paths presence", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			body    string
+			wantSet bool
+			want    []string
+		}{
+			{
+				name:    "inline empty list",
+				body:    "```relay\nstatus: done\nchanged_paths: []\n```\n",
+				wantSet: true,
+				want:    nil,
+			},
+			{
+				name:    "inline two elements",
+				body:    "```relay\nstatus: done\nchanged_paths: [a, b]\n```\n",
+				wantSet: true,
+				want:    []string{"a", "b"},
+			},
+			{
+				name:    "block form with no items",
+				body:    "```relay\nstatus: done\nchanged_paths:\n```\n",
+				wantSet: true,
+				want:    nil,
+			},
+			{
+				name:    "block form with two items",
+				body:    "```relay\nstatus: done\nchanged_paths:\n  - a.go\n  - b.go\n```\n",
+				wantSet: true,
+				want:    []string{"a.go", "b.go"},
+			},
+			{
+				name:    "key absent",
+				body:    "```relay\nstatus: done\n```\n",
+				wantSet: false,
+				want:    nil,
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				tail, ok := ParseReportTail([]byte(tc.body))
+				if !ok {
+					t.Fatalf("ParseReportTail(%q) not ok", tc.body)
+				}
+				if tail.ChangedPathsSet != tc.wantSet {
+					t.Errorf("ChangedPathsSet = %v, want %v", tail.ChangedPathsSet, tc.wantSet)
+				}
+				if !reflect.DeepEqual(tail.ChangedPaths, tc.want) {
+					t.Errorf("ChangedPaths = %+v, want %+v", tail.ChangedPaths, tc.want)
+				}
+			})
 		}
 	})
 
