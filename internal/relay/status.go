@@ -592,7 +592,7 @@ func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank boo
 
 	for _, g := range gates {
 		fmt.Fprintf(sb, "  %-*s  %-12s  %s  %s",
-			width, g.Token, GateKindText(g.Kind), g.Since.Local().Format("15:04"), GateUntilText(g.Until))
+			width, g.Token, GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
 		if g.Note != "" {
 			fmt.Fprintf(sb, "  %s", g.Note)
 		}

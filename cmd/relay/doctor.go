@@ -319,7 +319,7 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 			provider = ref.Provider
 		}
 
-		fix := "wait until " + g.Until.Local().Format("15:04")
+		fix := "wait until " + relay.GateTimeText(g.Until)
 		if g.Kind == ledger.RateLimited {
 			fix = "relay available " + provider
 		}
@@ -329,7 +329,7 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 			Name:     "ledger",
 			Severity: doctor.SevWarn,
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
-				g.Token, relay.GateKindText(g.Kind), g.Since.Local().Format("15:04"), relay.GateUntilText(g.Until)),
+				g.Token, relay.GateKindText(g.Kind), relay.GateTimeText(g.Since), relay.GateUntilText(g.Until)),
 			Fix: fix,
 		})
 	}

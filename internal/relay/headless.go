@@ -523,7 +523,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
 			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), reportPath)
 		if m.Line != "" {
-			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, m.Until.Local().Format("15:04"))
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, GateTimeText(m.Until))
 		}
 		note := "unmarked"
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {

@@ -195,6 +195,7 @@ func feedTerminal(t *testing.T, m Model, name, body string) Model {
 }
 
 func TestGoldenViews(t *testing.T) {
+	t.Cleanup(relay.SetGateClock(func() time.Time { return railNow }))
 	terminalBody := "$ go test ./...\nok  \tgithub.com/fuad-daoud/relay/internal/ui\t1.2s\n"
 
 	cases := []struct {

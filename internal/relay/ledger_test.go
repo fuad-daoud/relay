@@ -271,15 +271,44 @@ func TestGateKindTextRolesMissing(t *testing.T) {
 	}
 }
 
+// TestGateTimeText pins the one formatter every gate time goes through: the
+// clock time alone on today's local date, the date as well otherwise.
+func TestGateTimeText(t *testing.T) {
+	t.Cleanup(SetGateClock(func() time.Time { return time.Date(2026, 9, 23, 14, 0, 0, 0, time.Local) }))
+
+	tests := []struct {
+		name string
+		in   time.Time
+		want string
+	}{
+		{"today", time.Date(2026, 9, 23, 22, 16, 0, 0, time.Local), "22:16"},
+		{"26 days out", time.Date(2026, 10, 19, 22, 16, 0, 0, time.Local), "Oct 19 22:16"},
+		{"tomorrow", time.Date(2026, 9, 24, 0, 5, 0, 0, time.Local), "Sep 24 00:05"},
+		{"next year", time.Date(2027, 1, 2, 3, 4, 0, 0, time.Local), "2027-01-02 03:04"},
+	}
+	for _, tt := range tests {
+		if got := GateTimeText(tt.in); got != tt.want {
+			t.Errorf("GateTimeText(%s) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestGateUntilText(t *testing.T) {
 	if got := GateUntilText(time.Time{}); got != "until cleared" {
 		t.Errorf("GateUntilText(zero) = %q, want %q", got, "until cleared")
 	}
 
 	fixed := baseTime
+	t.Cleanup(SetGateClock(func() time.Time { return fixed }))
 	want := "until " + fixed.Local().Format("15:04")
 	if got := GateUntilText(fixed); got != want {
 		t.Errorf("GateUntilText(fixed) = %q, want %q", got, want)
+	}
+
+	// A gate 26 days out shows its date: the --for 632h example.
+	t.Cleanup(SetGateClock(func() time.Time { return time.Date(2026, 9, 23, 14, 0, 0, 0, time.Local) }))
+	if got := GateUntilText(time.Date(2026, 10, 19, 22, 16, 0, 0, time.Local)); got != "until Oct 19 22:16" {
+		t.Errorf("GateUntilText(26d) = %q, want %q", got, "until Oct 19 22:16")
 	}
 }
 

@@ -180,6 +180,7 @@ func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
 
 func TestRenderStatusGatedBlock(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	t.Cleanup(SetGateClock(func() time.Time { return now }))
 	r := Report{
 		Bindings: []BindingStatus{{
 			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
