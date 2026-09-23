@@ -1,11 +1,13 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +58,10 @@ type Server struct {
 	addr         net.Addr
 	insecureHTTP bool
 	mu           sync.Mutex // §6.3 of the spec: every store/ledger mutation and every tick
+	// tickFn, when non-nil, replaces Tick in Run (#373): the drain and
+	// WithoutCancel tests need a tick they can hold open. Production leaves
+	// it nil.
+	tickFn func(context.Context) error
 }
 
 func New(cfg Config) (*Server, error) {
@@ -72,6 +78,12 @@ func New(cfg Config) (*Server, error) {
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return nil, err
 	}
+	// Serve's startup path, before anything listens: drop the request temp
+	// files a previous process left behind (#373 §4.3). A sweep error is a
+	// Warn and startup continues.
+	if removed, err := sweepTmp(tmpDir, time.Hour, cfg.Now()); err != nil {
+		slog.Warn("temp sweep failed", "dir", tmpDir, "removed", removed, "err", err)
+	}
 	clientsPath := filepath.Join(cfg.Root, "clients.json")
 	clients, err := LoadClients(clientsPath)
 	if err != nil {
@@ -86,6 +98,52 @@ func New(cfg Config) (*Server, error) {
 		nonces:    nonces,
 		transport: transport,
 	}, nil
+}
+
+// sweepTmp removes the stale request temp files in dir (#373 §4.3): the
+// req-body-* and plan-* files relay serve creates while a request is in
+// flight, whose mtime is older than olderThan. It matches no other name. It is
+// pure apart from the filesystem -- now is a parameter, so a test pins the
+// age boundary. A missing dir is empty, not an error; a per-file failure is
+// kept as the first error and the walk continues, so one unreadable file
+// cannot stop the sweep. removed counts the files actually removed.
+func sweepTmp(dir string, olderThan time.Duration, now time.Time) (removed int, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	var firstErr error
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "req-body-") && !strings.HasPrefix(name, "plan-") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if now.Sub(info.ModTime()) < olderThan {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, firstErr
 }
 
 func (s *Server) ownerRoot(owner remote.ClientID) (string, error) {

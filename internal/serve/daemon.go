@@ -53,6 +53,14 @@ func (s *Server) Tick(ctx context.Context) error {
 // When serving plain HTTP, it logs a warning once per tick summary (every 60 ticks);
 // the spec says "every tick logs it", but once a minute (every 60 ticks at the 1s floor)
 // is the honest reading of that.
+//
+// A tick already in flight when ctx is cancelled runs to completion on a
+// context cancellation cannot reach (#373 §4.1): a tick cut between
+// Runner.Start and tx.Save would leave a live builder while the round still
+// looked queued. Run returns nil after that tick, and starts no new one.
+//
+// tickFn, when non-nil, replaces Tick. It is the narrow seam the drain tests
+// use to hold a tick open; production leaves it nil.
 func (s *Server) Run(ctx context.Context) error {
 	interval := s.cfg.Interval
 	if interval < 500*time.Millisecond {
@@ -60,6 +68,11 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	tick := s.tickFn
+	if tick == nil {
+		tick = s.Tick
+	}
 
 	ticks := 0
 	for {
@@ -77,8 +90,11 @@ func (s *Server) Run(ctx context.Context) error {
 			if insecure && ticks%60 == 0 {
 				slog.Warn("serving plain HTTP; every client request is readable on the network")
 			}
-			if err := s.Tick(ctx); err != nil {
+			if err := tick(context.WithoutCancel(ctx)); err != nil {
 				slog.Error("server tick failed", "err", err)
+			}
+			if ctx.Err() != nil {
+				return nil
 			}
 		}
 	}

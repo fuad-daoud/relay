@@ -21,6 +21,19 @@ import (
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
+// sameSavedPlan reports whether planText is byte-identical to the plan the
+// server saved for round -- the sha256 comparison the closed-round dedupe has
+// used since the round-resend rule, factored out for the open-round idempotent
+// send (#373 §4.2). A plan that was never saved, or cannot be read, is not the
+// same plan.
+func sameSavedPlan(rt relay.Runtime, name string, round int, planText string) bool {
+	saved, err := os.ReadFile(rt.Store.PlanPath(name, round))
+	if err != nil {
+		return false
+	}
+	return sha256.Sum256([]byte(planText)) == sha256.Sum256(saved)
+}
+
 func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(s.cfg.MaxBundleBytes); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "invalid multipart form: "+err.Error())
@@ -96,25 +109,31 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries, _ := rt.Store.ReadLog(name)
-	if relay.RoundStateOf(b, entries) == remote.RoundRunning {
+
+	// An identical retry of the open round is a no-op 200 (#373 §4.2). The
+	// client's StartRound retries once the server advertises
+	// FeatureIdempotentSend, so a repeated request for the round that is
+	// running or queued, with the plan the server saved for it, must not
+	// re-Send, reset QueuedAt, append a log entry or absorb the bundle
+	// again. It returns before the running->409 check below; a different plan
+	// for the open round is still 409 round_open.
+	st := relay.RoundStateOf(b, entries)
+	if (st == remote.RoundRunning || st == remote.RoundQueued) && reqRound == b.Round && sameSavedPlan(rt, name, b.Round, planText) {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+		return
+	}
+	if st == remote.RoundRunning {
 		s.mu.Unlock()
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is running")
 		return
 	}
 
 	if reqRound != b.Round {
-		if reqRound == b.Round-1 {
-			planPath := rt.Store.PlanPath(name, b.Round-1)
-			savedPlan, readErr := os.ReadFile(planPath)
-			if readErr == nil {
-				h1 := sha256.Sum256([]byte(planText))
-				h2 := sha256.Sum256(savedPlan)
-				if h1 == h2 {
-					s.mu.Unlock()
-					writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
-					return
-				}
-			}
+		if reqRound == b.Round-1 && sameSavedPlan(rt, name, b.Round-1, planText) {
+			s.mu.Unlock()
+			writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
+			return
 		}
 		s.mu.Unlock()
 		writeErr(w, http.StatusConflict, remote.CodeRoundStarted, fmt.Sprintf("round %d already started with a different plan", reqRound))

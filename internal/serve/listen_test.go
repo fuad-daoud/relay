@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -240,5 +241,86 @@ func TestListenInsecureHTTP(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("ListenAndServe did not return within 5 seconds")
+	}
+}
+
+// TestListenAndServeWaitsForRun pins #373 §4.1's drain: on cancel,
+// ListenAndServe shuts the HTTP server down and returns only after Run has
+// finished its in-flight tick. Tick cannot be held open through the real
+// implementation without a large refactor, so this uses the unexported tickFn
+// seam.
+//
+// Mutation check: take the `<-drained` wait out of ListenAndServe and this
+// fails: it returns before the held tick is released.
+func TestListenAndServeWaitsForRun(t *testing.T) {
+	srv, err := New(Config{Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var mu sync.Mutex
+	var sawCancelled, tickReturned bool
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	srv.tickFn = func(ctx context.Context) error {
+		if ctx.Err() != nil {
+			mu.Lock()
+			sawCancelled = true
+			mu.Unlock()
+		}
+		once.Do(func() { close(started) })
+		<-release
+		mu.Lock()
+		tickReturned = true
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe(ctx, ListenConfig{Addr: "127.0.0.1:0", InsecureHTTP: true})
+	}()
+
+	if _, err := waitForAddr(srv); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first tick never started")
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("ListenAndServe returned %v before the in-flight tick finished", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("ListenAndServe returned %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListenAndServe did not return after the in-flight tick finished")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !tickReturned {
+		t.Error("the tick never returned")
+	}
+	if sawCancelled {
+		t.Error("the tick saw a cancelled context, want the WithoutCancel one")
 	}
 }

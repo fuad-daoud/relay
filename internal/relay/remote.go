@@ -394,20 +394,19 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 
 	server := b.Builder.Server
 
-	// The cap check already ran in Send; do not repeat it here. The feature
-	// probes are this function's job when a tier or a builder was asked for:
-	// both need a server that advertises them, and they share one WhoAmI call.
-	if tier != "" || builder != "" {
-		who, err := rt.Remote.WhoAmI(ctx, server)
-		if err != nil {
-			return SendResult{}, err
-		}
-		if tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
-			return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, server)
-		}
-		if builder != "" && !slices.Contains(who.Features, remote.FeatureBuilder) {
-			return SendResult{}, fmt.Errorf("server %s cannot change a binding's builder (no %q feature); upgrade it, or send without --builder", server, remote.FeatureBuilder)
-		}
+	// The cap check already ran in Send; do not repeat it here. One WhoAmI
+	// answers everything this function asks the server about itself: whether a
+	// requested tier or builder is supported, each of which needs a server that
+	// advertises it, and whether a repeated send is safe to retry (#373 §4.4).
+	who, err := rt.Remote.WhoAmI(ctx, server)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
+		return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, server)
+	}
+	if builder != "" && !slices.Contains(who.Features, remote.FeatureBuilder) {
+		return SendResult{}, fmt.Errorf("server %s cannot change a binding's builder (no %q feature); upgrade it, or send without --builder", server, remote.FeatureBuilder)
 	}
 
 	name := b.Name
@@ -465,7 +464,11 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
 
 	// 3. view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, snap.Body or nil when Empty, tier, builder, tags)
-	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, tags)
+	// The retry is safe only on a server that dedupes a repeated send (#373
+	// §4.5): without idempotent_send a retry could re-queue a round that did
+	// start, so a gateway error is reported as unreachable instead.
+	view, err := rt.Remote.StartRound(ctx, server, name, b.Round, planBody, bundleReader, tier, builder, tags,
+		slices.Contains(who.Features, remote.FeatureIdempotentSend))
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
@@ -627,8 +630,27 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) {
 			if httpErr.Status == 401 {
-				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
-				return b, false, err
+				// A revoked key is permanent: halt at once, as it always did.
+				if httpErr.Body.Code == remote.CodeRevoked {
+					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
+					return b, false, err
+				}
+				// Every other 401 -- stale, bad_signature, not_enrolled -- may
+				// clear on its own (#373 §4.6): a reboot's clock skew is the
+				// common case. Show it, warn once, and halt only after the
+				// grace. A CLI one-shot (nil AuthGrace) never halts.
+				first := rt.AuthGrace.Note(name, now)
+				if first.Equal(now) {
+					slog.Warn("transient auth error", "server", server, "binding", name, "code", string(httpErr.Body.Code))
+				}
+				b.Builder.RemoteStatus = "auth: " + string(httpErr.Body.Code)
+				if rt.AuthGrace.Expired(name, now, authGraceLimit) {
+					dur := now.Sub(first).Truncate(time.Second)
+					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relay servers",
+						name, server, httpErr.Body.Code, dur))
+					return b, false, err
+				}
+				return b, false, nil
 			}
 			if httpErr.Status == 404 {
 				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
@@ -665,6 +687,10 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
 		return b, false, nil
 	}
+
+	// A poll that got through means any transient auth error is over, so the
+	// next one starts its own grace (#373 §4.6).
+	rt.AuthGrace.Clear(name)
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
@@ -743,6 +769,15 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	case remote.RoundIdle:
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
+		}
+		// A lost reply to /ack leaves the server Idle with this round closed
+		// while the client never recorded the report (#373 §4.5). A repeat ack
+		// is idempotent on the server, so catching up again is safe.
+		entries, rerr := tx.ReadLog(name)
+		if rerr == nil && view.ClosedRound >= b.Round &&
+			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+			next, err := catchUp(ctx, rt, tx, b, view)
+			return next, true, err
 		}
 		return b, true, nil
 

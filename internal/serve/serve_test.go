@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -489,8 +490,13 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	if len(who.Features) != 4 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue || who.Features[2] != remote.FeatureStop || who.Features[3] != remote.FeatureBuilder {
-		t.Fatalf("Features = %v, want [%s %s %s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder)
+	if len(who.Features) != 6 ||
+		who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue ||
+		who.Features[2] != remote.FeatureStop || who.Features[3] != remote.FeatureBuilder ||
+		who.Features[4] != remote.FeatureIdempotentSend || who.Features[5] != remote.FeatureAuthor {
+		t.Fatalf("Features = %v, want [%s %s %s %s %s %s]", who.Features,
+			remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder,
+			remote.FeatureIdempotentSend, remote.FeatureAuthor)
 	}
 	if who.Builders == nil || who.Builders.Cap <= 0 {
 		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
@@ -1876,7 +1882,11 @@ func TestRoundStartWhileRunningIs409(t *testing.T) {
 		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
 	}
 
-	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	// The second request sends a different plan: since #373 §4.2 an identical
+	// retry for the open round is a no-op 200, so "a new start while a round
+	// runs is 409 round_open" is what this test pins.
+	changedBytes, changedCT := makeRoundForm(t, 1, "# Plan 1 (changed)", bundleBytes)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", changedBytes, changedCT)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("second start status = %d, want 409; body: %s", resp.StatusCode, string(body))
 	}
@@ -1884,6 +1894,173 @@ func TestRoundStartWhileRunningIs409(t *testing.T) {
 	_ = json.Unmarshal(body, &errBody)
 	if errBody.Code != remote.CodeRoundOpen {
 		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
+// TestRoundStartRunningSamePlanIs200 is #373 §4.2's open-round idempotent
+// send: a repeated identical start-round request for the round that is
+// running returns 200 with the current view and changes nothing -- no new log
+// entry and no second Start on the runner.
+func TestRoundStartRunningSamePlanIs200(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first start status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+	first := decodeView(t, body)
+	if first.RoundState != remote.RoundRunning {
+		t.Fatalf("first round_state = %q, want running", first.RoundState)
+	}
+
+	rt := env.runtime(t)
+	entriesBefore, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	before := startedSpecs(env)
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	got := decodeView(t, body)
+	if got.Round != first.Round {
+		t.Errorf("view Round = %d, want %d", got.Round, first.Round)
+	}
+	if got.RoundState != remote.RoundRunning {
+		t.Errorf("view RoundState = %q, want running", got.RoundState)
+	}
+
+	entriesAfter, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog after: %v", err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Errorf("log entries = %d, want %d (an identical retry appends nothing)", len(entriesAfter), len(entriesBefore))
+	}
+	if after := startedSpecs(env); len(after) != len(before) {
+		t.Errorf("runner starts = %d, want %d (an identical retry starts no builder)", len(after), len(before))
+	}
+}
+
+// TestRoundStartRunningDifferentPlanIs409 pins the other half of #373 §4.2:
+// a different plan for the round that is running is still 409 round_open.
+func TestRoundStartRunningDifferentPlanIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relay/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
+	}
+
+	otherBytes, otherCT := makeRoundForm(t, 1, "# A Different Plan", nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", otherBytes, otherCT)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("resend status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
+// TestRoundStartQueuedSamePlanIs200 is the queued half of #373 §4.2: the
+// identical retry of a round waiting in the builder queue is a 200 that leaves
+// QueuedAt and the log alone.
+func TestRoundStartQueuedSamePlanIs200(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	before, err := rtB.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	if before.QueuedAt.IsZero() {
+		t.Fatal("B QueuedAt is zero, want set")
+	}
+	entriesBefore, err := rtB.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog B: %v", err)
+	}
+
+	outRef := "refs/relay/api/out"
+	snap, err := env.transport.Snapshot(context.Background(), ownerB.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot B: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snapshot B: %v", err)
+	}
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan B", bundleBytes)
+	resp, body := doSigned(t, env.ts, ownerB.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resend status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+
+	after, err := rtB.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load B after: %v", err)
+	}
+	if !after.QueuedAt.Equal(before.QueuedAt) {
+		t.Errorf("QueuedAt = %v, want unchanged %v", after.QueuedAt, before.QueuedAt)
+	}
+	entriesAfter, err := rtB.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog B after: %v", err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Errorf("log entries = %d, want %d (an identical retry appends nothing)", len(entriesAfter), len(entriesBefore))
+	}
+	if relay.RoundStateOf(after, entriesAfter) != remote.RoundQueued {
+		t.Errorf("round_state = %q, want queued", relay.RoundStateOf(after, entriesAfter))
+	}
+	if after.Builder.PID != 0 {
+		t.Errorf("PID = %d, want 0 (an identical retry starts no builder)", after.Builder.PID)
 	}
 }
 
@@ -3114,5 +3291,81 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 	}
 	if got != env.headSHA {
 		t.Errorf("server out ref = %q, want it unmoved at %q", got, env.headSHA)
+	}
+}
+
+// TestSweepTmp pins #373 §4.3: the startup sweep removes a stale req-body-*
+// and plan-*, and nothing else -- a fresh req-body-* and an old file with an
+// unrelated name stay.
+func TestSweepTmp(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-2 * time.Hour)
+
+	write := func(name string, mtime time.Time) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+		return path
+	}
+
+	oldReq := write("req-body-x", old)
+	freshReq := write("req-body-y", now)
+	oldPlan := write("plan-z", old)
+	oldOther := write("other", old)
+
+	removed, err := sweepTmp(dir, time.Hour, now)
+	if err != nil {
+		t.Fatalf("sweepTmp: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+	for _, path := range []string{oldReq, oldPlan} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s still exists (stat err %v), want it removed", path, err)
+		}
+	}
+	for _, path := range []string{freshReq, oldOther} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s stat err = %v, want it kept", path, err)
+		}
+	}
+}
+
+// TestRequestLogClientVersion pins #373 §3's client-version logging: the
+// request log line carries client_version when Relay-Client-Version is
+// present, and omits the attribute when it is not. The request logger is the
+// inline slog.Info in Handler and has no seam of its own, so this captures the
+// default slog logger.
+func TestRequestLogClientVersion(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	send := func(version string) string {
+		t.Helper()
+		buf.Reset()
+		req := httptest.NewRequest("GET", "/v1/whoami", nil)
+		if version != "" {
+			req.Header.Set(remote.HeaderClientVersion, version)
+		}
+		s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+		return buf.String()
+	}
+
+	if got := send("v1.2.3"); !strings.Contains(got, "client_version=v1.2.3") {
+		t.Errorf("log with the header = %q, want it to contain client_version=v1.2.3", got)
+	}
+	if got := send(""); strings.Contains(got, "client_version") {
+		t.Errorf("log without the header = %q, want no client_version attribute", got)
 	}
 }
