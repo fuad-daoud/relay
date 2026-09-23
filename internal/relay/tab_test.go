@@ -199,3 +199,47 @@ func TestRenderTabColumns(t *testing.T) {
 		t.Errorf("row = %q, want no percentage cell", row)
 	}
 }
+
+// TestRenderTabStepColumns pins the two step columns (#323, #324), right
+// after rounds: the summed step count and calls per step. A group that
+// recorded no steps leaves both cells empty; the other expectations --
+// rounds, the token cells, money -- are untouched.
+func TestRenderTabStepColumns(t *testing.T) {
+	entries := []TabEntry{
+		{Binding: "a", Entry: store.LogEntry{TS: tabNow, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+			Usage: &usage.Usage{Harness: "h", Provider: "p", Model: "m", Samples: 1, Steps: 10, ToolCalls: 15}}},
+		{Binding: "b", Entry: store.LogEntry{TS: tabNow, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+			Usage: &usage.Usage{Harness: "h", Provider: "p", Model: "m", Samples: 1}}},
+	}
+	rows, total, err := TabRows(entries, "binding", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := RenderTab(TabReport{By: "binding", Rows: rows, Total: total})
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[0], "steps") || !strings.Contains(lines[0], "calls/st") {
+		t.Errorf("header = %q, want the steps and calls/st columns", lines[0])
+	}
+	// The group column is as wide as "group", then two spaces and the six
+	// characters of the rounds cell, then two spaces: the six after that
+	// are the steps cell.
+	stepsCell := func(line string) string {
+		at := len("group") + 2 + 6 + 2
+		return strings.TrimSpace(line[at : at+6])
+	}
+	if got := stepsCell(lines[1]); got != "10" {
+		t.Errorf("a row steps cell = %q, want 10", got)
+	}
+	if !strings.Contains(lines[1], "1.50") {
+		t.Errorf("a row = %q, want calls/st 1.50", lines[1])
+	}
+	if got := stepsCell(lines[2]); got != "" {
+		t.Errorf("b row steps cell = %q, want blank", got)
+	}
+	if strings.Contains(lines[2], "1.50") {
+		t.Errorf("b row = %q, want no calls/st cell", lines[2])
+	}
+	if got := stepsCell(lines[3]); got != "10" || !strings.Contains(lines[3], "1.50") {
+		t.Errorf("total row = %q, want steps 10 and calls/st 1.50", lines[3])
+	}
+}

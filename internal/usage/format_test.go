@@ -117,6 +117,25 @@ func TestLine(t *testing.T) {
 			u:    Usage{Harness: "claude", Provider: "anthropic", Model: "m", Tokens: Tokens{Out: 5}, Cost: Cost{USD: 0.01, Basis: Measured}, Samples: 1},
 			want: "claude/anthropic/m  in 0  cache 0  write 0  out 5  $0.01",
 		},
+		{
+			// The step figures sit between the token cells and the money
+			// (#323, #324), in this order.
+			name: "steps, calls/step and step latency",
+			u: Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 14 * 60_000,
+				Tokens: Tokens{In: 2_100, CacheRead: 166_000, CacheWrite: 14_000, Out: 12_000},
+				Cost:   Cost{USD: 0.41, Basis: Measured}, Samples: 1,
+				Steps: 157, ToolCalls: 183, StepP50MS: 3100, FirstOutputP50MS: 640},
+			want: "opencode/cline-pass/glm-5.3-flash  14m  in 2k  cache 166k (91%)  write 14k  out 12k  157 steps  1.17 calls/step  step p50 3.1s  first out p50 640ms  $0.41",
+		},
+		{
+			// A harness whose stream shows tool calls but no steps names
+			// the calls, never a rate (#323 part 5: codex).
+			name: "tool calls without steps",
+			u: Usage{Harness: "codex", Provider: "openai", Model: "gpt-5", DurationMS: 60_000,
+				Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.01, Basis: Measured}, Samples: 1,
+				ToolCalls: 4},
+			want: "codex/openai/gpt-5  1m  in 100  cache 0 (0%)  write 0  out 50  4 tool calls  $0.01",
+		},
 	}
 	for _, c := range cases {
 		if got := Line(c.u); got != c.want {
