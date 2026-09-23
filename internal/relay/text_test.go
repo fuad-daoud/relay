@@ -38,15 +38,15 @@ func TestUnbindText(t *testing.T) {
 		want string
 	}{
 		{"deleted, no worktree", UnbindResult{},
-			"unbound webshop (panes left untouched)"},
+			"unbound webshop"},
 		{"archived", UnbindResult{ArchivedTo: "/a/webshop.tar.gz"},
-			"archived webshop to /a/webshop.tar.gz (panes left untouched)"},
+			"archived webshop to /a/webshop.tar.gz"},
 		{"worktree removed", UnbindResult{WorktreeRemoved: "/w/webshop"},
-			"unbound webshop (panes left untouched)\nremoved worktree /w/webshop"},
+			"unbound webshop\nremoved worktree /w/webshop"},
 		{"worktree kept", UnbindResult{WorktreeKept: "/w/webshop", KeptReason: "uncommitted changes"},
-			"unbound webshop (panes left untouched)\nkept worktree /w/webshop (uncommitted changes)\n  remove by hand: git -C /w/webshop worktree remove /w/webshop"},
+			"unbound webshop\nkept worktree /w/webshop (uncommitted changes)\n  remove by hand: git -C /w/webshop worktree remove /w/webshop"},
 		{"worktree gone", UnbindResult{WorktreeGone: "/w/webshop"},
-			"unbound webshop (panes left untouched)\nworktree /w/webshop was already gone"},
+			"unbound webshop\nworktree /w/webshop was already gone"},
 	}
 	for _, c := range cases {
 		if got := UnbindText("webshop", c.res); got != c.want {
@@ -57,15 +57,15 @@ func TestUnbindText(t *testing.T) {
 
 func TestUnbindTextProcessLines(t *testing.T) {
 	got := UnbindText("x", UnbindResult{ProcessStopped: 4242})
-	if got != "unbound x (panes left untouched)\nstopped builder process 4242" {
+	if got != "unbound x\nstopped builder process 4242" {
 		t.Errorf("stopped: %q", got)
 	}
 	got = UnbindText("x", UnbindResult{ArchivedTo: "/a/x.tgz", ProcessErr: "pid 4242: SIGTERM: operation not permitted"})
-	if got != "archived x to /a/x.tgz (panes left untouched)\ncould not stop builder process (pid 4242: SIGTERM: operation not permitted); check for it yourself" {
+	if got != "archived x to /a/x.tgz\ncould not stop builder process (pid 4242: SIGTERM: operation not permitted); check for it yourself" {
 		t.Errorf("failed: %q", got)
 	}
 	// No process, no line: existing output is unchanged.
-	if got := UnbindText("x", UnbindResult{}); got != "unbound x (panes left untouched)" {
+	if got := UnbindText("x", UnbindResult{}); got != "unbound x" {
 		t.Errorf("plain: %q", got)
 	}
 }

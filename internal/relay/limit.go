@@ -44,6 +44,29 @@ var durationComponentRe = regexp.MustCompile(`(?i)(\d+)\s*(hours?|hr|h|minutes?|
 // clockRe matches "resets 7pm", "resets at 23:30", "resets ~00:26".
 var clockRe = regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?~?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?`)
 
+// dateRe matches the absolute-date form codex's weekly limit uses: "try
+// again at Oct 19th, 2026 7:14 PM", "resets on October 3, 2026". The capture
+// groups are, in order: month, day, year (may be empty), hour, minute and
+// am/pm (each may be empty when the line names no time).
+var dateRe = regexp.MustCompile(`(?i)(?:try again|resets?)\s+(?:at|on)\s+~?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?(?:\s*,?\s*(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?)?`)
+
+// monthByName maps a month's lower-cased 3-letter prefix to its time.Month,
+// so both "sept" and "september" resolve through "sep".
+var monthByName = map[string]time.Month{
+	"jan": time.January,
+	"feb": time.February,
+	"mar": time.March,
+	"apr": time.April,
+	"may": time.May,
+	"jun": time.June,
+	"jul": time.July,
+	"aug": time.August,
+	"sep": time.September,
+	"oct": time.October,
+	"nov": time.November,
+	"dec": time.December,
+}
+
 // matchLimit scans text line by line from the last line backwards and
 // returns the first (i.e. most recent) line any pattern matches. Until is
 // parseReset(line, now) when that succeeds, else now.Add(fallback). ok is
@@ -80,11 +103,14 @@ func matchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback 
 	return LimitMatch{}, false
 }
 
-// parseReset tries two forms, in this order, on the matched line only: a
-// duration ("resets in 2h48m52s") and a clock time ("resets 7pm", "resets
-// at 23:30"). Either result must lie in (now, now+7d]; anything else is
-// ok=false -- garbage in a line that happened to match the limit pattern
-// must not gate a provider indefinitely. The returned time is UTC.
+// parseReset tries three forms, in this order, on the matched line only: a
+// duration ("resets in 2h48m52s"), an absolute date ("try again at Oct 19th,
+// 2026 7:14 PM"), and a clock time ("resets 7pm", "resets at 23:30"). A
+// duration and a clock time must lie in (now, now+7d]; a date that names a
+// year may lie in (now, now+31d], because a full date is hard to misread.
+// Anything else is ok=false -- garbage in a line that happened to match the
+// limit pattern must not gate a provider indefinitely. The returned time is
+// UTC.
 func parseReset(line string, now time.Time) (time.Time, bool) {
 	if m := durationRe.FindStringSubmatch(line); m != nil {
 		var d time.Duration
@@ -103,7 +129,88 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 			}
 		}
 		t := now.Add(d)
-		if !inLimitWindow(t, now) {
+		if !inLimitWindow(t, now, limitWindowShort) {
+			return time.Time{}, false
+		}
+		return t.UTC(), true
+	}
+
+	if m := dateRe.FindStringSubmatch(line); m != nil {
+		key := strings.ToLower(m[1])
+		if len(key) > 3 {
+			key = key[:3]
+		}
+		month, known := monthByName[key]
+		if !known {
+			return time.Time{}, false
+		}
+		day, err := strconv.Atoi(m[2])
+		if err != nil || day < 1 || day > 31 {
+			return time.Time{}, false
+		}
+
+		hour, minute := 0, 0
+		if m[4] != "" {
+			hour, err = strconv.Atoi(m[4])
+			if err != nil {
+				return time.Time{}, false
+			}
+			minute, err = strconv.Atoi(m[5])
+			if err != nil {
+				return time.Time{}, false
+			}
+			if minute < 0 || minute > 59 {
+				return time.Time{}, false
+			}
+			switch ampm := strings.ToLower(m[6]); ampm {
+			case "am":
+				if hour < 1 || hour > 12 {
+					return time.Time{}, false
+				}
+				if hour == 12 {
+					hour = 0
+				}
+			case "pm":
+				if hour < 1 || hour > 12 {
+					return time.Time{}, false
+				}
+				if hour != 12 {
+					hour += 12
+				}
+			default:
+				if hour < 0 || hour > 23 {
+					return time.Time{}, false
+				}
+			}
+		}
+
+		loc := now.Location() // codex prints the machine's local time
+		var t time.Time
+		var window time.Duration
+		if m[3] != "" {
+			year, err := strconv.Atoi(m[3])
+			if err != nil {
+				return time.Time{}, false
+			}
+			t = time.Date(year, month, day, hour, minute, 0, 0, loc)
+			if t.Day() != day {
+				return time.Time{}, false
+			}
+			window = limitWindowDated
+		} else {
+			t = time.Date(now.Year(), month, day, hour, minute, 0, 0, loc)
+			if t.Day() != day {
+				return time.Time{}, false
+			}
+			if !t.After(now) {
+				t = time.Date(now.Year()+1, month, day, hour, minute, 0, 0, loc)
+				if t.Day() != day {
+					return time.Time{}, false
+				}
+			}
+			window = limitWindowShort
+		}
+		if !inLimitWindow(t, now, window) {
 			return time.Time{}, false
 		}
 		return t.UTC(), true
@@ -148,7 +255,7 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 		if !t.After(now) {
 			t = t.Add(24 * time.Hour)
 		}
-		if !inLimitWindow(t, now) {
+		if !inLimitWindow(t, now, limitWindowShort) {
 			return time.Time{}, false
 		}
 		return t.UTC(), true
@@ -157,9 +264,17 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// inLimitWindow is parseReset's (now, now+7d] bound.
-func inLimitWindow(t, now time.Time) bool {
-	return t.After(now) && !t.After(now.Add(7*24*time.Hour))
+// limitWindowShort bounds the vaguer reset forms -- a duration and a clock
+// time, both easy to misread -- to (now, now+7d].
+const limitWindowShort = 7 * 24 * time.Hour
+
+// limitWindowDated bounds a reset that names a full date with a year: a
+// full calendar date is hard to misread, so it earns the longer window.
+const limitWindowDated = 31 * 24 * time.Hour
+
+// inLimitWindow is parseReset's (now, now+max] bound.
+func inLimitWindow(t, now time.Time, max time.Duration) bool {
+	return t.After(now) && !t.After(now.Add(max))
 }
 
 // limitPatterns is the harness defaults for token's kind followed by the

@@ -413,9 +413,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 type DryRun struct {
 	Name       string   `json:"name"`
 	Round      int      `json:"round"`
-	Mode       string   `json:"mode"` // "pane" | "headless" | "remote"
+	Mode       string   `json:"mode"` // "headless" | "remote"
 	Candidate  string   `json:"candidate"`
-	Where      string   `json:"where"`               // pane: "pane w2:p4 (working)"; headless: the harness binary + first arg; remote: "server contabo, branch relay/x @ <sha12>; server not contacted"
+	Where      string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relay/x @ <sha12>; server not contacted"
 	GateNote   string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
 	PlanPath   string   `json:"plan_path"`
 	PlanFrom   string   `json:"plan_from"`

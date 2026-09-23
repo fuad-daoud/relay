@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/store"
@@ -179,10 +180,11 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, c.FindingsPath)
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
-		// does not exist would send the planner to read nothing. A consult
-		// never has a pane since #303, so there is never one to name.
-		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s. No pane was spawned.",
-			c.ID, c.Role, note)
+		// does not exist would send the planner to read nothing. The note is
+		// arbitrary text, so trim one trailing period from it: the payload
+		// supplies its own, and a doubled period reads as a typo.
+		entry.Payload = fmt.Sprintf("Consult %s (%s) wrote no findings: %s.",
+			c.ID, c.Role, strings.TrimSuffix(note, "."))
 	}
 
 	// A verify consult is the round-close reviewer (#144): its findings carry

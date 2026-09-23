@@ -762,8 +762,11 @@ func TestUsageChecks(t *testing.T) {
 		if !ok || c.Severity != SevWarn {
 			t.Errorf("want a warn row for sqlite3: %+v", rep.Checks)
 		}
-		if !strings.Contains(c.Detail, "unknown") {
-			t.Errorf("Detail = %q, want it to say opencode pane rounds record unknown", c.Detail)
+		if !strings.Contains(c.Detail, "relay pull") {
+			t.Errorf("Detail = %q, want it to say an opencode planner's reports wait for relay pull", c.Detail)
+		}
+		if strings.Contains(c.Detail, "pane") {
+			t.Errorf("Detail = %q, want it to name no pane", c.Detail)
 		}
 	})
 	t.Run("sqlite3 not needed without opencode", func(t *testing.T) {
