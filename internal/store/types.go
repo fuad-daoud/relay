@@ -212,6 +212,12 @@ type Binding struct {
 	// RoundTier overrides Tier for the CURRENT round of a headless binding,
 	// written by Send --tier and cleared by queueReport with RoundSwitches.
 	RoundTier string `json:"round_tier,omitempty"`
+	// RoundCPU is the core the CURRENT round is pinned to (#314): the lowest
+	// free core from scope.allowed_cpus. nil means none -- no pool, an
+	// exhausted pool, a census error, or no round started yet. It is a pointer
+	// because core 0 is valid, and an old binding without the key decodes as
+	// nil. startRound sets it; queueReport clears it with RoundTier.
+	RoundCPU *int `json:"round_cpu,omitempty"`
 	// Gate is the acceptance command relay runs in the worktree when the
 	// round's completion marker appears (#132); "" means no gate. Run through
 	// `sh -c`, so it may be any shell line. Set at bind/add/fork; never changed

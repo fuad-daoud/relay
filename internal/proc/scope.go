@@ -35,6 +35,9 @@ func ScopeArgv(s relay.ScopeSpec, inner []string) []string {
 	if s.CPUQuota != "" {
 		argv = append(argv, "-p", "CPUQuota="+s.CPUQuota)
 	}
+	if s.AllowedCPUs != "" {
+		argv = append(argv, "-p", "AllowedCPUs="+s.AllowedCPUs)
+	}
 	if s.MemoryMax != "" {
 		argv = append(argv, "-p", "MemoryMax="+s.MemoryMax)
 	}
@@ -70,6 +73,36 @@ func ProbeScopes(ctx context.Context, slice string) error {
 			line = err.Error()
 		}
 		return fmt.Errorf("systemd-run: %s", line)
+	}
+	return nil
+}
+
+// ProbeAllowedCPUs confirms systemd-run accepts AllowedCPUs=<cpus> before the
+// daemon relies on pinning every round (#314): a throwaway scope that runs
+// "true" and exits, launched with the property. nil means it is accepted; a
+// non-nil error names why it was refused, and the caller runs its spawns with
+// the scope and its quota but without pinning. It detects refusal only: a
+// systemd that silently ignores an undelegated cpuset shows no exit code, and
+// `relay doctor` is where that is reported.
+func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, err.Error())
+	}
+	spec := relay.ScopeSpec{Unit: "relay-probe-cpus-" + hex.EncodeToString(suffix), Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
+	argv := ScopeArgv(spec, []string{"true"})
+
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		line := firstNonEmptyLine(stderr.String())
+		if line == "" {
+			line = err.Error()
+		}
+		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, line)
 	}
 	return nil
 }

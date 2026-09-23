@@ -90,6 +90,16 @@ type Runner struct {
 	// scoped specs are launched as scopes, false means every later Start
 	// drops the scope and spawns plainly.
 	scopesOK bool
+
+	// pinOnce guards the lazy pin probe (#314): the first Start whose scope
+	// carries an AllowedCPUs pool probes systemd-run with that property, and
+	// every later Start reuses that verdict. A Runner never asked for a pin
+	// never probes.
+	pinOnce sync.Once
+	// pinOK is the verdict of that one probe: true means AllowedCPUs is
+	// accepted and specs keep it, false means every later Start drops the pin
+	// while keeping the scope and its quota.
+	pinOK bool
 }
 
 var _ relay.Runner = (*Runner)(nil)
@@ -174,6 +184,28 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 		})
 		if !r.scopesOK {
 			spec.Scope = nil // local copy; the caller's spec is not mutated
+		}
+	}
+
+	// The pin probe is lazy and runs at most once per Runner (#314), like the
+	// scope probe above: a user manager that refuses AllowedCPUs gets one
+	// warning and scopes without pinning, and a round never fails because of
+	// pinning. The fallback clears the field on a dereference copy and
+	// re-points the local field: Start took spec by value, but Scope is a
+	// pointer, so a write through spec.Scope would mutate the caller's spec.
+	if spec.Scope != nil && spec.Scope.AllowedCPUs != "" {
+		r.pinOnce.Do(func() {
+			if err := ProbeAllowedCPUs(ctx, spec.Scope.Slice, spec.Scope.AllowedCPUs); err != nil {
+				slog.Warn("cpu pinning unavailable; scopes will run without AllowedCPUs", "allowed_cpus", spec.Scope.AllowedCPUs, "err", err)
+				r.pinOK = false
+				return
+			}
+			r.pinOK = true
+		})
+		if !r.pinOK {
+			sc := *spec.Scope
+			sc.AllowedCPUs = ""
+			spec.Scope = &sc
 		}
 	}
 

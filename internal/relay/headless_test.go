@@ -142,7 +142,7 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 		t.Fatalf("Bind --headless: %v", err)
 	}
 
-	_, err = startRound(context.Background(), rt, b, "the prompt")
+	_, err = startRound(context.Background(), rt, nil, b, "the prompt")
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	// previous round's id must not survive the start.
 	b.Builder.StreamSessionID = "sess-from-the-previous-process"
 
-	got, err := startRound(context.Background(), rt, b, "the prompt")
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
-	got, err := startRound(context.Background(), rt, b, "again")
+	got, err := startRound(context.Background(), rt, nil, b, "again")
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 	rt, b := seedHeadless(t, fr)
 	b.Round = 2
 	b.Builder.StreamRound, b.Builder.StreamOffset = 1, 512
-	got, err := startRound(context.Background(), rt, b, "round two")
+	got, err := startRound(context.Background(), rt, nil, b, "round two")
 	if err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
@@ -270,9 +270,9 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 	rt, b := seedHeadless(t, fr)
 
 	var got store.Binding
-	err := rt.Store.WithLock(func(_ *store.Tx) error {
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		got, err = startRound(context.Background(), rt, b, "p")
+		got, err = startRound(context.Background(), rt, tx, b, "p")
 		return err
 	})
 	if err == nil || !errors.Is(err, fr.startErr) {
@@ -295,7 +295,7 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 	rt, b := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
-	if _, err := startRound(context.Background(), rt, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
+	if _, err := startRound(context.Background(), rt, nil, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
 		t.Errorf("err = %v, want ErrRunnerUnavailable", err)
 	}
 }
@@ -308,7 +308,7 @@ func TestStartRoundSetsScope(t *testing.T) {
 	rt, b := seedHeadless(t, fr)
 	rt.Scope = &ScopeSpec{Slice: "relay.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
 
-	if _, err := startRound(context.Background(), rt, b, "the prompt"); err != nil {
+	if _, err := startRound(context.Background(), rt, nil, b, "the prompt"); err != nil {
 		t.Fatalf("startRound: %v", err)
 	}
 	if len(fr.specs) != 1 {
@@ -379,7 +379,7 @@ func TestScopeFor(t *testing.T) {
 	base := ScopeSpec{Slice: "relay.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
 
 	t.Run("nil template gives nil", func(t *testing.T) {
-		if got := scopeFor(Runtime{}, scopeGate, "relay-gate-local-webshop-1"); got != nil {
+		if got := scopeFor(Runtime{}, scopeGate, "relay-gate-local-webshop-1", ""); got != nil {
 			t.Fatalf("scopeFor(nil template) = %+v, want nil", got)
 		}
 	})
@@ -389,7 +389,7 @@ func TestScopeFor(t *testing.T) {
 			tmpl := base
 			tmpl.GateCPUQuota = "300%"
 			rt := Runtime{Scope: &tmpl}
-			got := scopeFor(rt, kind, "unit")
+			got := scopeFor(rt, kind, "unit", "")
 			if got == nil {
 				t.Fatalf("scopeFor(%s) = nil, want a spec", kind)
 			}
@@ -412,7 +412,7 @@ func TestScopeFor(t *testing.T) {
 	t.Run("gate with GateCPUQuota uses it", func(t *testing.T) {
 		tmpl := base
 		tmpl.GateCPUQuota = "300%"
-		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit")
+		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit", "")
 		if got == nil {
 			t.Fatal("scopeFor = nil, want a spec")
 		}
@@ -426,7 +426,7 @@ func TestScopeFor(t *testing.T) {
 
 	t.Run("gate without GateCPUQuota falls back to CPUQuota", func(t *testing.T) {
 		tmpl := base
-		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit")
+		got := scopeFor(Runtime{Scope: &tmpl}, scopeGate, "unit", "")
 		if got == nil {
 			t.Fatal("scopeFor = nil, want a spec")
 		}
@@ -435,13 +435,27 @@ func TestScopeFor(t *testing.T) {
 		}
 	})
 
+	t.Run("cpus overrides the pool for every kind", func(t *testing.T) {
+		for _, kind := range []scopeKind{scopeRound, scopeGate, scopeConsult, scopeVerify} {
+			tmpl := base
+			tmpl.AllowedCPUs = "0-2"
+			rt := Runtime{Scope: &tmpl}
+			if got := scopeFor(rt, kind, "unit", ""); got == nil || got.AllowedCPUs != "0-2" {
+				t.Errorf("%s with cpus=\"\" AllowedCPUs = %+v, want the pool 0-2", kind, got)
+			}
+			if got := scopeFor(rt, kind, "unit", "1"); got == nil || got.AllowedCPUs != "1" {
+				t.Errorf("%s with cpus=\"1\" AllowedCPUs = %+v, want 1", kind, got)
+			}
+		}
+	})
+
 	t.Run("template is not mutated", func(t *testing.T) {
 		tmpl := base
 		tmpl.GateCPUQuota = "300%"
 		before := tmpl
 		rt := Runtime{Scope: &tmpl}
-		_ = scopeFor(rt, scopeGate, "unit")
-		_ = scopeFor(rt, scopeConsult, "unit")
+		_ = scopeFor(rt, scopeGate, "unit", "")
+		_ = scopeFor(rt, scopeConsult, "unit", "")
 		if tmpl != before {
 			t.Errorf("rt.Scope mutated: %+v, want %+v", tmpl, before)
 		}

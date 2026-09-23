@@ -186,6 +186,13 @@ type Runtime struct {
 	// (the local daemon, CI, or a server whose scope probe failed).
 	Scope *ScopeSpec
 
+	// HeldCPUs returns the cores held by live rounds other than the binding
+	// named self, in every store that shares this host's pool (#314). Nil
+	// means localHeldCPUs, which reads only the caller's tx. The server sets
+	// it to a closure over its owner root, so internal/relay stays unaware of
+	// owners.
+	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
+
 	// Channels arbitrates a planner's mailbox between the daemon and a live
 	// `relay mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending

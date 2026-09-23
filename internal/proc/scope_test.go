@@ -71,6 +71,20 @@ func TestScopeArgv(t *testing.T) {
 				"--", "/bin/sh", "-c", "script", "relay-supervisor", "bin",
 			},
 		},
+		// The pin sits between the quota and the memory pairs (#314).
+		"with allowed cpus": {
+			spec: relay.ScopeSpec{Unit: "relay-round-abc12345-foo-1", Slice: "relay.slice", CPUWeight: 200, CPUQuota: "200%", AllowedCPUs: "2", MemoryMax: "2G", TasksMax: 50},
+			want: []string{
+				"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=relay-round-abc12345-foo-1.scope",
+				"--slice=relay.slice",
+				"-p", "CPUWeight=200",
+				"-p", "CPUQuota=200%",
+				"-p", "AllowedCPUs=2",
+				"-p", "MemoryMax=2G",
+				"-p", "TasksMax=50",
+				"--", "/bin/sh", "-c", "script", "relay-supervisor", "bin",
+			},
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -211,6 +225,32 @@ func TestProbeScopesStub(t *testing.T) {
 		err := ProbeScopes(context.Background(), "relay.slice")
 		if err == nil || !strings.Contains(err.Error(), "Failed to start transient scope unit: Permission denied") {
 			t.Fatalf("ProbeScopes error = %v; want it to contain the stub's stderr line", err)
+		}
+	})
+}
+
+// TestProbeAllowedCPUsStub puts a fake systemd-run on PATH so the test never
+// calls the real one (#314). The success stub execs everything after "--";
+// the failure stub reproduces the stderr line a refused AllowedCPUs prints.
+func TestProbeAllowedCPUsStub(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		dir := t.TempDir()
+		writeStub(t, dir, "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n")
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		if err := ProbeAllowedCPUs(context.Background(), "relay.slice", "2"); err != nil {
+			t.Fatalf("ProbeAllowedCPUs: %v", err)
+		}
+	})
+	t.Run("failure", func(t *testing.T) {
+		dir := t.TempDir()
+		writeStub(t, dir, "#!/bin/sh\necho 'Failed to set AllowedCPUs: Permission denied' >&2\nexit 1\n")
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		err := ProbeAllowedCPUs(context.Background(), "relay.slice", "2")
+		if err == nil || !strings.Contains(err.Error(), "Failed to set AllowedCPUs: Permission denied") {
+			t.Fatalf("ProbeAllowedCPUs error = %v; want it to contain the stub's stderr line", err)
+		}
+		if !strings.Contains(err.Error(), "AllowedCPUs=2") {
+			t.Errorf("ProbeAllowedCPUs error = %v; want it to name AllowedCPUs=2", err)
 		}
 	})
 }

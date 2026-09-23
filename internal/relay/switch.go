@@ -162,7 +162,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
-	started, err := startRound(ctx, rt, b, text)
+	started, err := startRound(ctx, rt, tx, b, text)
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: switched builder to %s but could not start round %d: %v",

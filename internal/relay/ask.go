@@ -200,7 +200,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		Argv:       argv,
 		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
 		StreamPath: streamPath,
-		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID)),
+		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID), ""),
 	}); err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)
@@ -429,7 +429,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 		Argv:       append([]string{h.Binary}, argv...),
 		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
 		StreamPath: streamPath,
-		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID)),
+		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID), ""),
 	}); err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)

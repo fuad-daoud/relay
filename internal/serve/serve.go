@@ -2,6 +2,7 @@ package serve
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -134,5 +135,65 @@ func (s *Server) runtimeAt(root string) relay.Runtime {
 		Roles:            s.cfg.Roles,
 		Hooks:            s.cfg.Hooks,
 		Scope:            s.cfg.Scope,
+		HeldCPUs:         func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
 	}
+}
+
+// heldCPUs returns the cores held by live rounds other than self, across every
+// owner's store (#314). It is the server's cross-owner census, injected as
+// Runtime.HeldCPUs so internal/relay stays unaware of owners.
+//
+// The caller holds s.mu -- the same rule census and admit rely on (see
+// admit.go): every tick and every admit is serialised by it, so taking another
+// owner's store lock while holding the current owner's is safe, because the
+// admin CLI takes one owner lock at a time.
+//
+// A per-owner List error is logged and skipped, exactly as census does, and
+// the first is returned after the walk completes; the cores of the owners that
+// did list are still returned.
+func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error) {
+	var held []int
+	var firstErr error
+
+	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
+	entries, err := os.ReadDir(bindingsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		id, ok := remote.IDFromDir(entry.Name())
+		if !entry.IsDir() || !ok {
+			slog.Warn("unexpected entry in bindings dir", "entry", entry.Name())
+			continue
+		}
+		ownerPath := filepath.Join(bindingsDir, entry.Name())
+		if ownerPath == root {
+			// The current owner's bindings are already under the caller's tx.
+			bindings, err := tx.List()
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			held = append(held, relay.HeldIn(bindings, self)...)
+			continue
+		}
+		bindings, err := store.New(ownerPath).List()
+		if err != nil {
+			slog.Warn("cpu census: list owner bindings failed", "owner", id, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		// Another owner's binding can never be self.
+		held = append(held, relay.HeldIn(bindings, "")...)
+	}
+
+	return held, firstErr
 }

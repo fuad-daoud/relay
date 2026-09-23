@@ -1195,7 +1195,7 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 // template's CPUQuota -- never its GateCPUQuota.
 func TestAskScopesBothConsultPaths(t *testing.T) {
 	template := func() *ScopeSpec {
-		return &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+		return &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 	}
 
 	assertConsultScope := func(t *testing.T, spec ProcSpec, c store.Consult) {
@@ -1209,6 +1209,9 @@ func TestAskScopesBothConsultPaths(t *testing.T) {
 		}
 		if spec.Scope.CPUQuota != "150%" {
 			t.Errorf("Scope.CPUQuota = %q, want the template's 150%%, not the gate quota", spec.Scope.CPUQuota)
+		}
+		if spec.Scope.AllowedCPUs != "0-3" {
+			t.Errorf("Scope.AllowedCPUs = %q, want the whole pool 0-3: a consult runs alongside the builder", spec.Scope.AllowedCPUs)
 		}
 		if spec.Scope.GateCPUQuota != "" {
 			t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)

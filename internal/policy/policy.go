@@ -36,6 +36,11 @@ var memoryMaxPattern = regexp.MustCompile(`^[0-9]+[KMGT]?$`)
 // ("200%" = two cores' worth).
 var cpuQuotaPattern = regexp.MustCompile(`^[0-9]+%$`)
 
+// cpuListPattern is allowed_cpus' shape: a systemd cpu-list of numbers and
+// ranges, comma-separated, with no spaces. It is the pool of cores relay
+// hands out, one per round.
+var cpuListPattern = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
+
 // Policy is the planner's candidate preferences, loaded from policy.json.
 type Policy struct {
 	// Order maps a role to its preferred candidate tokens, most preferred
@@ -131,7 +136,12 @@ type ScopePolicy struct {
 	// uses CPUQuota, the same as a round. Otherwise it must match
 	// ^[0-9]+%$ and be at least 1%, the same grammar as CPUQuota.
 	GateCPUQuota string `json:"gate_cpu_quota,omitempty"`
-	TasksMax     int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
+	// AllowedCPUs is the pool of cores relay hands out, one per round: a
+	// systemd cpu-list such as "0-2". "" means no pinning, and nothing in the
+	// CPU-pinning path runs. It needs cpuset delegated to the user manager,
+	// which `relay doctor` checks.
+	AllowedCPUs string `json:"allowed_cpus,omitempty"`
+	TasksMax    int    `json:"tasks_max,omitempty"` // 0 = none; else >= 1
 }
 
 // NotifyPolicy configures webhook delivery of lifecycle events (#4).
@@ -415,10 +425,64 @@ func validateScope(path, prefix string, sc *ScopePolicy) error {
 			return fmt.Errorf("%s: %s.gate_cpu_quota: must be at least 1%%, got %q: %w", path, prefix, sc.GateCPUQuota, ErrBadPolicy)
 		}
 	}
+	if sc.AllowedCPUs != "" {
+		if _, err := ParseCPUList(sc.AllowedCPUs); err != nil {
+			return fmt.Errorf("%s: %s.allowed_cpus: %s, got %q: %w", path, prefix, err, sc.AllowedCPUs, ErrBadPolicy)
+		}
+	}
 	if sc.TasksMax != 0 && sc.TasksMax < 1 {
 		return fmt.Errorf("%s: %s.tasks_max: must be at least 1, got %d: %w", path, prefix, sc.TasksMax, ErrBadPolicy)
 	}
 	return nil
+}
+
+// ParseCPUList parses a systemd cpu-list: the pool of cores relay hands out,
+// one per round. Numbers and ranges are comma-separated with no spaces, e.g.
+// "0-2" or "1,3,5-7". It returns the cores sorted and de-duplicated. A range
+// a-b requires a <= b, and no core above 1023 is accepted -- that stops a typo
+// from making the expansion allocate a huge slice. Pure.
+func ParseCPUList(s string) ([]int, error) {
+	if !cpuListPattern.MatchString(s) {
+		return nil, fmt.Errorf("not a cpu list")
+	}
+	seen := make(map[int]bool)
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		lo, hi := 0, 0
+		if dash := strings.Index(part, "-"); dash >= 0 {
+			var err error
+			lo, err = strconv.Atoi(part[:dash])
+			if err != nil {
+				return nil, fmt.Errorf("not a cpu list")
+			}
+			hi, err = strconv.Atoi(part[dash+1:])
+			if err != nil {
+				return nil, fmt.Errorf("not a cpu list")
+			}
+			if lo > hi {
+				return nil, fmt.Errorf("range %d-%d runs backwards", lo, hi)
+			}
+		} else {
+			n, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("not a cpu list")
+			}
+			lo, hi = n, n
+		}
+		for n := lo; n <= hi; n++ {
+			if n > 1023 {
+				return nil, fmt.Errorf("cpu %d is above 1023", n)
+			}
+		}
+		for n := lo; n <= hi; n++ {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	sort.Ints(out)
+	return out, nil
 }
 
 // Load reads and validates a policy file. A missing file is the zero Policy

@@ -367,7 +367,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		late := false
 		if !deferred {
-			started, err := startRound(ctx, rt, b, text)
+			started, err := startRound(ctx, rt, tx, b, text)
 			if err != nil {
 				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
 					_ = os.Remove(planPath)

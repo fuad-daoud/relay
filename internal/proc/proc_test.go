@@ -551,3 +551,159 @@ func TestStartWithoutScopeNeverProbes(t *testing.T) {
 		t.Errorf("systemd-run stub was called (%q); a Runner never asked for a scope must never probe", data)
 	}
 }
+
+// refusePinningStub is a systemd-run that accepts a plain scope but refuses any
+// invocation carrying AllowedCPUs, the shape a user manager without a
+// delegated cpuset prints. It still execs the inner command for the accepted
+// (unpinned) scope.
+const refusePinningStub = `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    AllowedCPUs=*) echo 'Failed to set AllowedCPUs: Permission denied' >&2; exit 1;;
+  esac
+done
+while [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+`
+
+// TestStartDropsPinningWhenRefused pins #314's fallback: the scope probe
+// accepts scopes, the pin probe is refused, and the spawn still runs -- with
+// the scope and its quota but no AllowedCPUs. The command really runs: it
+// writes a line only the builder could write.
+func TestStartDropsPinningWhenRefused(t *testing.T) {
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, refusePinningStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "echo ran-unpinned-fallback"},
+		LogPath: log, StreamPath: stream,
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "ran-unpinned-fallback") {
+		t.Errorf("stream = %q; want the builder's own output, so the command still ran", got)
+	}
+	if !strings.Contains(got, "\n"+ExitTrailer+"0\n") {
+		t.Errorf("stream = %q; want the normal %s0 trailer", got, ExitTrailer)
+	}
+}
+
+// probeUnitStub is a systemd-run that records every *probe* invocation: one
+// carrying an AllowedCPUs= argument under a relay-probe-cpus- unit. It never
+// records a real round spawn (unit relay-round-*), so the count is exactly the
+// number of pin probes. Everything is exec'd, so the spawns run for real.
+func probeUnitStub(calls string) string {
+	return `#!/bin/sh
+pin=0
+for a in "$@"; do
+  case "$a" in
+    --unit=relay-probe-cpus-*) pin=1;;
+  esac
+done
+[ "$pin" = 1 ] && echo pin >> "` + calls + `"
+while [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+`
+}
+
+// TestStartPinsOnlyOnce pins #314's sync.Once: a Runner asked for a pin probes
+// AllowedCPUs exactly once, however many pinned Starts follow.
+func TestStartPinsOnlyOnce(t *testing.T) {
+	stubDir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	writeStub(t, stubDir, probeUnitStub(calls))
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	for i := 0; i < 2; i++ {
+		dir := t.TempDir()
+		h, err := r.Start(context.Background(), relay.ProcSpec{
+			Dir: dir, Argv: []string{"sh", "-c", "true"},
+			LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+			Scope: scope,
+		})
+		if err != nil {
+			t.Fatalf("Start %d: %v", i, err)
+		}
+		waitGone(t, r, h, 5*time.Second)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatalf("read the stub's call log: %v", err)
+	}
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Errorf("pinning probe ran %d times; want exactly 1 for the Runner's lifetime", got)
+	}
+}
+
+// TestStartWithoutAllowedCPUsNeverProbes pins #314's laziness: a scope with no
+// AllowedCPUs must never probe the pin.
+func TestStartWithoutAllowedCPUsNeverProbes(t *testing.T) {
+	stubDir := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	writeStub(t, stubDir, probeUnitStub(calls))
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+		Scope: &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+	if data, err := os.ReadFile(calls); err == nil && strings.TrimSpace(string(data)) != "" {
+		t.Errorf("pinning probe ran (%q); a scope with no AllowedCPUs must never probe the pin", data)
+	}
+}
+
+// TestStartDoesNotMutateCallerScope pins #314's copy discipline: when the pin
+// probe is refused, the fallback clears AllowedCPUs on a local copy, so the
+// caller's ScopeSpec object is byte-for-byte unchanged.
+func TestStartDoesNotMutateCallerScope(t *testing.T) {
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, refusePinningStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	scope := &relay.ScopeSpec{Unit: "relay-round-local-foo-1", Slice: "relay.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	before := *scope
+
+	dir := t.TempDir()
+	h, err := r.Start(context.Background(), relay.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"},
+		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
+		Scope: scope,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+
+	if *scope != before {
+		t.Errorf("caller's ScopeSpec mutated: %+v, want %+v", *scope, before)
+	}
+	if scope.AllowedCPUs != "2" {
+		t.Errorf("caller's AllowedCPUs = %q, want it unchanged at 2", scope.AllowedCPUs)
+	}
+}

@@ -829,3 +829,94 @@ func TestGetBindingQueuePosition(t *testing.T) {
 		}
 	}
 }
+
+// TestHeldCPUsCrossOwnerCensus pins #314's server census: owner A's live round
+// pins core 0 in its own store, and owner B's round -- started through the
+// served runtime's HeldCPUs -- takes core 1.
+//
+// Mutation check: make heldCPUs read only the caller's tx (drop the other
+// owners) and B gets core 0: the distinct-core assertion fails.
+func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Scope = &relay.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+	})
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	rtA := testRuntime(t, env.srv, env.id)
+	bA, err := rtA.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load A: %v", err)
+	}
+	if bA.RoundCPU == nil {
+		t.Fatal("A RoundCPU = nil, want 0")
+	}
+	if *bA.RoundCPU != 0 {
+		t.Errorf("A RoundCPU = %d, want 0", *bA.RoundCPU)
+	}
+
+	rtB := testRuntime(t, env.srv, ownerB.id)
+	bB, err := rtB.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	if bB.RoundCPU == nil {
+		t.Fatal("B RoundCPU = nil, want 1: A's core 0 is held across the owner boundary")
+	}
+	if *bB.RoundCPU != 1 {
+		t.Errorf("B RoundCPU = %d, want 1: A's core 0 is held across the owner boundary", *bB.RoundCPU)
+	}
+}
+
+// TestHeldCPUsSkipsAFailingOwner pins #314's error rule: an owner whose store
+// cannot be listed is skipped and its error returned first, but the cores of
+// the owners that did list are still returned.
+func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.Scope = &relay.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+	})
+	ownerB := addOwner(t, env, "bob")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	// A third owner whose state lock is a directory: OpenFile on it fails for
+	// any uid, so its List errors where B's does not.
+	ownerC := addOwner(t, env, "carol")
+	cDir, ok := ownerC.id.Dir()
+	if !ok {
+		t.Fatal("carol's client id has no dir")
+	}
+	if err := os.MkdirAll(filepath.Join(env.srv.cfg.Root, "bindings", cDir, ".lock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	aDir, ok := env.id.Dir()
+	if !ok {
+		t.Fatal("alice's client id has no dir")
+	}
+	rootA := filepath.Join(env.srv.cfg.Root, "bindings", aDir)
+	rtA := testRuntime(t, env.srv, env.id)
+	err := rtA.Store.WithLock(func(tx *store.Tx) error {
+		held, herr := env.srv.heldCPUs(rootA, tx, "nobody")
+		if herr == nil {
+			t.Error("heldCPUs: want the unreadable owner's error, got nil")
+		}
+		found := false
+		for _, c := range held {
+			if c == 0 {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("held = %v, want B's core 0 despite the failing owner", held)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+}

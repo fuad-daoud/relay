@@ -508,6 +508,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// consult, when there is one, is already running.
 	b.RoundVerify = false
 	b.RoundTier = ""
+	b.RoundCPU = nil
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
 	b.RoundClosedTree = closed
