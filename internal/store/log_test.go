@@ -428,3 +428,51 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 		t.Errorf("second line = %s, want it to contain %q", lines[1], `"seq":2`)
 	}
 }
+
+// TestConfirmIndexPreservesUnknownKeys pins #372 §4.3: confirmIndex patches
+// the one line it changes from a map, so a key a newer relay wrote survives,
+// and every line it does not change keeps its exact bytes.
+func TestConfirmIndexPreservesUnknownKeys(t *testing.T) {
+	s, name := seedBinding(t)
+
+	raw := `{"seq":1,"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}
+{"seq":2,"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":false,"future_key":1}
+{"seq":3,"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true,"future_key":1}
+`
+	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	before := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+
+	// Confirm the middle line, so both a changed line and unchanged lines on
+	// either side are exercised.
+	if err := s.ConfirmIndex(name, 1, "channel"); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+
+	data, err := os.ReadFile(s.logPath(name))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	after := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(after) != len(before) {
+		t.Fatalf("rewritten file has %d lines, want %d", len(after), len(before))
+	}
+	if after[0] != before[0] {
+		t.Errorf("unchanged line 0 changed:\n got %s\nwant %s", after[0], before[0])
+	}
+	if after[2] != before[2] {
+		t.Errorf("unchanged line 2 changed:\n got %s\nwant %s", after[2], before[2])
+	}
+	for i, line := range after {
+		if !strings.Contains(line, `"future_key":1`) {
+			t.Errorf("line %d lost future_key: %s", i, line)
+		}
+	}
+	if !strings.Contains(after[1], `"confirmed":true`) {
+		t.Errorf("confirmed line = %s, want it confirmed", after[1])
+	}
+	if !strings.Contains(after[1], `"route":"channel"`) {
+		t.Errorf("confirmed line = %s, want the route recorded", after[1])
+	}
+}

@@ -62,14 +62,37 @@ func (e Entry) Expired(now time.Time) bool {
 }
 
 // Ledger holds an ordered collection of availability entries.
+//
+// Entries are the ones this binary understands. Other holds entries with an
+// unknown kind or source, preserved verbatim so an older relay never erases a
+// newer one's records (#372 §4.2): they are invisible to every reader, never
+// pruned or cleared, and written back byte-for-byte.
 type Ledger struct {
-	Entries []Entry `json:"entries"`
+	Entries []Entry           `json:"-"`
+	Other   []json.RawMessage `json:"-"`
+}
+
+// knownKind reports whether k is a kind this binary reads from the ledger
+// file. ExitedNoReport and RolesMissing are synthesised in memory, never
+// written, so they are not known here either.
+func knownKind(k Kind) bool {
+	return k == SpawnFailed || k == RateLimited
+}
+
+// knownSource reports whether s is a source this binary reads from the ledger
+// file.
+func knownSource(s string) bool {
+	return s == "relay" || s == "planner"
 }
 
 // Load reads and validates the availability ledger from disk. A missing file
 // returns an empty Ledger without error, as a fresh install records no events yet.
 // Load validates entry schema but does not prune expired entries; callers prune
 // against their own notion of time (#61 step 1).
+//
+// An entry whose kind or source is unknown to this binary is preserved raw in
+// Other rather than rejected, so a ledger written by a newer relay survives a
+// rollback (#372 §4.2). Malformed JSON is still an error.
 func Load(path string) (Ledger, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -79,28 +102,38 @@ func Load(path string) (Ledger, error) {
 		return Ledger{}, fmt.Errorf("read ledger %s: %w", path, err)
 	}
 
-	var l Ledger
-	if err := json.Unmarshal(data, &l); err != nil {
+	var doc struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
 		return Ledger{}, fmt.Errorf("decode ledger %s: %w", path, err)
 	}
 
-	for i, e := range l.Entries {
+	var l Ledger
+	for i, raw := range doc.Entries {
+		var e Entry
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return Ledger{}, fmt.Errorf("decode ledger %s: entry %d: %w", path, i, err)
+		}
+
+		if !knownKind(e.Kind) || !knownSource(e.Source) {
+			l.Other = append(l.Other, raw)
+			continue
+		}
+
 		var why string
 		switch {
-		case e.Kind != SpawnFailed && e.Kind != RateLimited:
-			why = fmt.Sprintf("unknown kind %q", e.Kind)
 		case e.Subject == "":
 			why = "subject is empty"
 		case e.At.IsZero():
 			why = "at is zero"
 		case !e.Until.IsZero() && e.Until.Before(e.At):
 			why = "until precedes at"
-		case e.Source != "relay" && e.Source != "planner":
-			why = fmt.Sprintf("source must be \"relay\" or \"planner\" (got %q)", e.Source)
 		}
 		if why != "" {
 			return Ledger{}, fmt.Errorf("ledger %s: entry %d: %s: %w", path, i, why, ErrBadEntry)
 		}
+		l.Entries = append(l.Entries, e)
 	}
 
 	return l, nil
@@ -109,12 +142,29 @@ func Load(path string) (Ledger, error) {
 // Save writes the ledger to disk atomically via a temporary file and rename,
 // ensuring concurrent readers never observe torn writes. It creates any missing
 // parent directories so callers need not ensure state root existence (#61 step 1).
+//
+// The known entries are marshalled as before; Other's raw bytes follow
+// verbatim (#372 §4.2).
 func Save(path string, l Ledger) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create ledger dir: %w", err)
 	}
 
-	data, err := json.MarshalIndent(l, "", "  ")
+	var entries []json.RawMessage
+	for _, e := range l.Entries {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("marshal ledger entry: %w", err)
+		}
+		entries = append(entries, raw)
+	}
+	entries = append(entries, l.Other...)
+
+	doc := struct {
+		Entries []json.RawMessage `json:"entries"`
+	}{Entries: entries}
+
+	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal ledger: %w", err)
 	}
@@ -132,7 +182,8 @@ func Save(path string, l Ledger) error {
 }
 
 // Prune returns a new Ledger containing every non-expired entry, in order.
-// It does not mutate the receiver's slice.
+// It does not mutate the receiver's slice. Other is carried through untouched:
+// it is never pruned (#372 §4.2).
 func (l Ledger) Prune(now time.Time) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -140,19 +191,19 @@ func (l Ledger) Prune(now time.Time) Ledger {
 			kept = append(kept, e)
 		}
 	}
-	return Ledger{Entries: append([]Entry(nil), kept...)}
+	return Ledger{Entries: append([]Entry(nil), kept...), Other: append([]json.RawMessage(nil), l.Other...)}
 }
 
 // Append returns a new Ledger with e added to the end.
 // It performs no deduplication: two spawn failures are two events; step 7 counts them.
-// It does not mutate the receiver's slice.
+// It does not mutate the receiver's slice. Other is carried through untouched.
 func (l Ledger) Append(e Entry) Ledger {
 	cp := append([]Entry(nil), l.Entries...)
-	return Ledger{Entries: append(cp, e)}
+	return Ledger{Entries: append(cp, e), Other: append([]json.RawMessage(nil), l.Other...)}
 }
 
 // Clear returns a new Ledger without every entry whose Kind == kind and Subject == subject.
-// It does not mutate the receiver's slice.
+// It does not mutate the receiver's slice. Other is never cleared (#372 §4.2).
 func (l Ledger) Clear(kind Kind, subject string) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -161,7 +212,7 @@ func (l Ledger) Clear(kind Kind, subject string) Ledger {
 		}
 		kept = append(kept, e)
 	}
-	return Ledger{Entries: append([]Entry(nil), kept...)}
+	return Ledger{Entries: append([]Entry(nil), kept...), Other: append([]json.RawMessage(nil), l.Other...)}
 }
 
 // Gate is one candidate's exposure to one live ledger entry: which token it

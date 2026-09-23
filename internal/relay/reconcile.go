@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/hooks"
@@ -126,6 +127,22 @@ func retireLegacyPane(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding,
 	return b, nil
 }
 
+// stateWarned is the daemon's warn-once memory, keyed by binding name plus the
+// reason (#372). It is a log dedupe and nothing more: the skipped binding is
+// still skipped on every tick. Keying on the reason as well as the name lets
+// one binding carry both a newer-format and an unknown-state warning.
+var stateWarned sync.Map
+
+// warnOnce logs msg at Warn the first time binding+reason is seen in this
+// process. The variadic args are structured attributes, as every other slog
+// call in the package uses.
+func warnOnce(binding, reason, msg string, args ...any) {
+	if _, seen := stateWarned.LoadOrStore(binding+"\x00"+reason, struct{}{}); seen {
+		return
+	}
+	slog.Warn(msg, args...)
+}
+
 // Reconcile advances one binding: its consults, then its builder's round
 // (headless process or remote poll), and finally any pending planner payload.
 //
@@ -134,6 +151,21 @@ func retireLegacyPane(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding,
 // same tx rather than locking itself, which is what lets the caller hold one
 // critical section across the whole read-reconcile-write.
 func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (out store.Binding, err error) {
+	// An unknown State is one a newer relay wrote (#372 §4.1). Reconciling it
+	// as live would drive a builder the newer relay is already driving, so
+	// the binding is returned exactly as it is and nothing at all runs: no
+	// consults, no builder handling, and no save by the caller. The warning
+	// repeats only once per process.
+	//
+	// It comes before every other step -- including the consult pass below --
+	// because "left alone" must mean byte-for-byte unchanged.
+	if !store.KnownState(b.State) {
+		warnOnce(b.Name, "unknown-state",
+			fmt.Sprintf("binding %s has unknown state %q; leaving it to a newer relay", b.Name, string(b.State)),
+			"binding", b.Name, "state", string(b.State))
+		return b, nil
+	}
+
 	orig := b
 	defer func() {
 		if err == nil {

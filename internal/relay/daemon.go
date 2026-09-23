@@ -261,6 +261,19 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 			return err
 		}
 
+		// A binding written by a newer relay is left to that relay: this
+		// binary's Save would erase every field it does not know (#372).
+		// Format 1 is stored as 0, so any loaded Format above BindingFormat
+		// is a newer file. The binding is neither reconciled nor saved, and
+		// the file keeps every field it had.
+		if loaded.Format > store.BindingFormat {
+			warnOnce(name, "newer-format",
+				fmt.Sprintf("binding %s is format %d; this relay knows %d; leaving it to a newer relay",
+					name, loaded.Format, store.BindingFormat),
+				"binding", name, "format", loaded.Format, "known", store.BindingFormat)
+			return nil
+		}
+
 		fresh := backfillPlannerID(d.rt, loaded)
 
 		next, err := Reconcile(ctx, d.rt, tx, fresh)

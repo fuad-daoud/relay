@@ -81,6 +81,13 @@ func cmdDBMigrate(_ []string) error {
 	}
 	defer d.Close()
 
+	// A schema a newer relay wrote is never migrated by this binary: refuse
+	// with the version pair so the operator upgrades instead (#372 §4.5).
+	if err := d.CheckMigrate(); err != nil {
+		fmt.Fprintf(os.Stderr, "relay db: %s: %v\n", path, err)
+		return exitCodeErr{code: 1}
+	}
+
 	v, err := d.Version()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay db: %s: %v\n", path, err)

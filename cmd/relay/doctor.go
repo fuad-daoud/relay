@@ -243,6 +243,7 @@ func cmdDoctor(args []string) error {
 	rep := doctor.Run(context.Background(), env, kinds,
 		doctor.WithDefinitions(assembleDefinitions(rt.Candidates, kinds)),
 		doctor.WithUsage(pricesPath, opencodeConfigured),
+		doctor.WithConfigWarnings(rt.ConfigWarnings),
 		doctor.WithExtraChecks(extraChecks),
 		doctor.WithStateRoot(stateRoot))
 	// #370: whether a restart right now would kill anything, read from the

@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -181,20 +182,6 @@ func TestLoadValidation(t *testing.T) {
 		wantWhy string
 	}{
 		{
-			name: "unknown kind",
-			json: `{
-  "entries": [
-    {
-      "kind": "unsupported",
-      "subject": "anthropic",
-      "at": "2026-09-11T15:00:00Z",
-      "source": "relay"
-    }
-  ]
-}`,
-			wantWhy: `unknown kind "unsupported"`,
-		},
-		{
 			name: "subject is empty",
 			json: `{
   "entries": [
@@ -236,20 +223,6 @@ func TestLoadValidation(t *testing.T) {
 }`,
 			wantWhy: "until precedes at",
 		},
-		{
-			name: "source invalid",
-			json: `{
-  "entries": [
-    {
-      "kind": "spawn_failed",
-      "subject": "anthropic",
-      "at": "2026-09-11T15:00:00Z",
-      "source": "unknown"
-    }
-  ]
-}`,
-			wantWhy: `source must be "relay" or "planner" (got "unknown")`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +246,94 @@ func TestLoadValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLoadUnknownKindOrSourceIsPreserved pins #372 §4.2: an entry whose kind
+// or source this binary does not know is kept raw in Other instead of failing
+// the whole ledger, so a record a newer relay wrote survives a rollback.
+func TestLoadUnknownKindOrSourceIsPreserved(t *testing.T) {
+	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relay"}`
+	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
+	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
+
+	path := filepath.Join(t.TempDir(), "ledger.json")
+	doc := `{"entries":[` + unknownKind + `,` + unknownSource + `,` + known + `]}`
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	if len(l.Entries) != 1 || l.Entries[0].Kind != RateLimited {
+		t.Fatalf("Entries = %+v, want the one known rate_limited entry", l.Entries)
+	}
+	if len(l.Other) != 2 {
+		t.Fatalf("Other has %d entries, want 2: %v", len(l.Other), l.Other)
+	}
+	if !sameJSON(t, l.Other[0], unknownKind) || !sameJSON(t, l.Other[1], unknownSource) {
+		t.Errorf("Other = %v, want the unknown entries preserved verbatim", l.Other)
+	}
+}
+
+// TestSaveCarriesOtherThroughMutation is the survival test: Other must ride
+// through Load -> Prune/Append -> Save untouched. Drop Other from Save and
+// this test fails (#372 §4.2).
+func TestSaveCarriesOtherThroughMutation(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relay"}`
+	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
+	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
+
+	path := filepath.Join(t.TempDir(), "ledger.json")
+	doc := `{"entries":[` + unknownKind + `,` + unknownSource + `,` + known + `]}`
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	l, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	appended := Entry{
+		Kind:    RateLimited,
+		Subject: "google",
+		At:      now,
+		Source:  "planner",
+	}
+	if err := Save(path, l.Prune(now).Append(appended)); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() after Save unexpected error: %v", err)
+	}
+	if len(reloaded.Entries) != 2 {
+		t.Fatalf("Entries after Save = %+v, want the 2 known entries", reloaded.Entries)
+	}
+	if len(reloaded.Other) != 2 {
+		t.Fatalf("Other after Save has %d entries, want 2: %v", len(reloaded.Other), reloaded.Other)
+	}
+	if !sameJSON(t, reloaded.Other[0], unknownKind) || !sameJSON(t, reloaded.Other[1], unknownSource) {
+		t.Errorf("Other after Save = %v, want the unknown entries preserved verbatim", reloaded.Other)
+	}
+}
+
+// sameJSON reports whether raw and want encode the same JSON value, ignoring
+// formatting differences.
+func sameJSON(t *testing.T, raw json.RawMessage, want string) bool {
+	t.Helper()
+	var got, exp any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal raw %q: %v", raw, err)
+	}
+	if err := json.Unmarshal([]byte(want), &exp); err != nil {
+		t.Fatalf("unmarshal want %q: %v", want, err)
+	}
+	return reflect.DeepEqual(got, exp)
 }
 
 func TestGated(t *testing.T) {

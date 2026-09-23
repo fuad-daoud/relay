@@ -242,6 +242,8 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 	}
 }
 
+// TestGatesToleratesABadLedger pins that a ledger relay cannot parse is still
+// read as empty with its stderr note, never a crash.
 func TestGatesToleratesABadLedger(t *testing.T) {
 	rt := newRuntime(t)
 
@@ -251,6 +253,67 @@ func TestGatesToleratesABadLedger(t *testing.T) {
 
 	if got := Gates(rt); got != nil {
 		t.Errorf("Gates() = %+v, want nil", got)
+	}
+}
+
+// TestMutateLedgerCarriesUnknownEntries pins #372 §4.2: an entry with an
+// unknown kind or source rides through the Load -> Prune -> mutate -> Save
+// path mutateLedgerLocked takes, untouched.
+func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
+	rt := newRuntime(t)
+
+	doc := `{"entries":[
+  {"kind":"future_kind","subject":"test","at":"2026-09-11T15:00:00Z","source":"relay"},
+  {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}
+]}`
+	if err := os.WriteFile(rt.LedgerPath, []byte(doc), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger {
+		return l.Append(ledger.Entry{
+			Kind:    ledger.RateLimited,
+			Subject: "test",
+			At:      baseTime,
+			Source:  "planner",
+		})
+	})
+	if err != nil {
+		t.Fatalf("mutateLedgerLocked: %v", err)
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 1 || l.Entries[0].Kind != ledger.RateLimited {
+		t.Fatalf("Entries = %+v, want the one appended rate_limited", l.Entries)
+	}
+	if len(l.Other) != 2 {
+		t.Fatalf("Other = %v, want the 2 unknown entries preserved", l.Other)
+	}
+}
+
+// TestGatesIgnoresUnknownEntries pins that the preserved entries in Other are
+// invisible to readers: Gates still returns exactly the known gates (#372
+// §4.2).
+func TestGatesIgnoresUnknownEntries(t *testing.T) {
+	rt := newRuntime(t)
+
+	doc := `{"entries":[
+  {"kind":"future_kind","subject":"test","at":"2026-09-11T15:00:00Z","source":"relay"},
+  {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"},
+  {"kind":"rate_limited","subject":"test","at":"2026-09-11T15:00:00Z","source":"planner"}
+]}`
+	if err := os.WriteFile(rt.LedgerPath, []byte(doc), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	gates := Gates(rt)
+	if len(gates) != 3 {
+		t.Fatalf("got %d gates, want 3 (one per candidate on provider test): %+v", len(gates), gates)
+	}
+	for _, g := range gates {
+		if g.Kind != ledger.RateLimited {
+			t.Errorf("gate = %+v, want only the known rate_limited gate", g)
+		}
 	}
 }
 

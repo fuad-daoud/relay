@@ -17,3 +17,8 @@ var ErrNotFound = errors.New("not found")
 // its allowed set, or a natural key with none of its parts set. Writers wrap
 // it with the field name: fmt.Errorf("%s: %w", field, ErrInvalid).
 var ErrInvalid = errors.New("invalid")
+
+// ErrNewerSchema reports that the database's schema is newer than the
+// migrations this relay embeds. Open leaves such a database untouched and
+// reports it through DB.Newer; `relay db migrate` refuses with this error.
+var ErrNewerSchema = errors.New("schema is newer than this relay")

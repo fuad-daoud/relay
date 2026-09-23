@@ -1,0 +1,300 @@
+package store
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/fuad-daoud/relay/internal/jsonshape"
+)
+
+// update rewrites the golden file, but only when BindingFormat was bumped:
+// see goldenDecision.
+var update = flag.Bool("update", false, "rewrite testdata/binding-shape.golden when BindingFormat was bumped")
+
+// bindingGoldenPath is the golden file TestBindingShapeMatchesFormat compares
+// against, and the one -update rewrites.
+const bindingGoldenPath = "testdata/binding-shape.golden"
+
+// The messages #372's spec §4.1 names, plus the stale-format-line case it
+// leaves open.
+const (
+	bindingShapeMsg   = "store.Binding's JSON shape changed: bump store.BindingFormat, then run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
+	bindingRefusalMsg = "bump store.BindingFormat first; an older relay would erase the new fields"
+	bindingStaleMsg   = "store.Binding's golden format line is stale; run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
+)
+
+// goldenFile is the parsed golden: its format line and its key paths.
+type goldenFile struct {
+	format int
+	keys   []string
+}
+
+// parseGolden reads the golden file format: "format <N>" on the first line,
+// then one key path per line.
+func parseGolden(raw []byte) (goldenFile, error) {
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return goldenFile{}, errors.New("golden file is empty")
+	}
+	rest, ok := strings.CutPrefix(lines[0], "format ")
+	if !ok {
+		return goldenFile{}, fmt.Errorf("golden first line = %q, want \"format <N>\"", lines[0])
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(rest))
+	if err != nil {
+		return goldenFile{}, fmt.Errorf("golden format line: %w", err)
+	}
+	return goldenFile{format: n, keys: lines[1:]}, nil
+}
+
+// marshalGolden writes the golden file format.
+func marshalGolden(format int, keys []string) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "format %d\n", format)
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String())
+}
+
+// goldenDecision is the -update rule as a pure function: write rewrites the
+// golden and a non-empty msg fails the test instead. same reports whether the
+// key paths already match the golden.
+//
+// A rewrite needs BindingFormat to be greater than the golden's format line,
+// so a mismatch with no bump fails rather than silently accepting a shape an
+// older relay would erase.
+func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg string) {
+	if same && goldenFormat == codeFormat {
+		return false, ""
+	}
+	if codeFormat > goldenFormat {
+		return true, ""
+	}
+	return false, bindingRefusalMsg
+}
+
+// checkBindingShape compares keys against the golden and returns the message
+// to fail with, or "" when all is well. When update is true it rewrites the
+// golden whenever goldenDecision allows it.
+func checkBindingShape(g goldenFile, codeFormat int, keys []string, update bool) string {
+	same := slices.Equal(g.keys, keys)
+	if update {
+		write, msg := goldenDecision(g.format, codeFormat, same)
+		if msg != "" {
+			return msg
+		}
+		if write {
+			if err := os.WriteFile(bindingGoldenPath, marshalGolden(codeFormat, keys), 0o644); err != nil {
+				return fmt.Sprintf("write %s: %v", bindingGoldenPath, err)
+			}
+			return ""
+		}
+	}
+	if !same {
+		return bindingShapeMsg
+	}
+	if g.format != codeFormat {
+		if g.format > codeFormat {
+			return bindingRefusalMsg
+		}
+		return bindingStaleMsg
+	}
+	return ""
+}
+
+// readBindingGolden reads the golden, treating a missing file as the
+// pre-creation state: format 0 and no keys, which any real shape differs from.
+func readBindingGolden(t *testing.T) goldenFile {
+	t.Helper()
+	raw, err := os.ReadFile(bindingGoldenPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return goldenFile{}
+		}
+		t.Fatalf("read %s: %v", bindingGoldenPath, err)
+	}
+	g, err := parseGolden(raw)
+	if err != nil {
+		t.Fatalf("%s: %v", bindingGoldenPath, err)
+	}
+	return g
+}
+
+// TestBindingShapeMatchesFormat pins Binding's JSON shape against the golden
+// file: a new field is a new key path, and that fails until BindingFormat is
+// bumped and the golden regenerated.
+func TestBindingShapeMatchesFormat(t *testing.T) {
+	g := readBindingGolden(t)
+	keys := jsonshape.Keys(reflect.TypeOf(Binding{}))
+
+	if msg := checkBindingShape(g, BindingFormat, keys, *update); msg != "" {
+		t.Fatal(msg)
+	}
+	if got := readBindingGolden(t); got.format != BindingFormat {
+		t.Errorf("golden format = %d, want BindingFormat %d", got.format, BindingFormat)
+	}
+}
+
+// TestBindingShapeFailurePath exercises the golden test's failure path without
+// mutating the real type: a struct with one extra field is a key-path mismatch
+// and fails with the bump message, and -update without a bump refuses.
+func TestBindingShapeFailurePath(t *testing.T) {
+	type bindingWithANewField struct {
+		Binding
+		BrandNew string `json:"brand_new"`
+	}
+	g := readBindingGolden(t)
+	keys := jsonshape.Keys(reflect.TypeOf(bindingWithANewField{}))
+
+	if slices.Equal(g.keys, keys) {
+		t.Fatal("an extra field must change the key paths")
+	}
+	if msg := checkBindingShape(g, BindingFormat, keys, false); msg != bindingShapeMsg {
+		t.Errorf("mismatch message = %q, want %q", msg, bindingShapeMsg)
+	}
+	if msg := checkBindingShape(g, BindingFormat, keys, true); msg != bindingRefusalMsg {
+		t.Errorf("-update without a bump = %q, want %q", msg, bindingRefusalMsg)
+	}
+}
+
+func TestGoldenDecision(t *testing.T) {
+	cases := []struct {
+		name                     string
+		goldenFormat, codeFormat int
+		same                     bool
+		write                    bool
+		msg                      string
+	}{
+		{"same keys, same format", 1, 1, true, false, ""},
+		{"keys changed, format bumped", 1, 2, false, true, ""},
+		{"keys changed, no bump", 1, 1, false, false, bindingRefusalMsg},
+		{"keys changed, code older", 2, 1, false, false, bindingRefusalMsg},
+		{"keys match, format bumped", 1, 2, true, true, ""},
+		{"keys match, golden newer", 2, 1, true, false, bindingRefusalMsg},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			write, msg := goldenDecision(c.goldenFormat, c.codeFormat, c.same)
+			if write != c.write || msg != c.msg {
+				t.Errorf("goldenDecision(%d, %d, %v) = (%v, %q), want (%v, %q)",
+					c.goldenFormat, c.codeFormat, c.same, write, msg, c.write, c.msg)
+			}
+		})
+	}
+}
+
+func TestStoredFormat(t *testing.T) {
+	if got := storedFormat(BindingFormat); got != 0 {
+		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", BindingFormat, got)
+	}
+	if got := storedFormat(2); got != 2 {
+		t.Errorf("storedFormat(2) = %d, want 2", got)
+	}
+}
+
+// TestSaveOmitsTheFormatKeyForFormat1 pins §3: format 1 is stored as an absent
+// field, so a binding saved today is byte-identical to one saved before the
+// field existed.
+func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(s.Dir("webshop"), "bind.json"))
+	if err != nil {
+		t.Fatalf("read bind.json: %v", err)
+	}
+	if bytes.Contains(raw, []byte(`"format"`)) {
+		t.Errorf("a format-1 binding must carry no format key:\n%s", raw)
+	}
+}
+
+// TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relay
+// loads, and saving it back is refused with ErrNewerFormat, leaving the file
+// byte-for-byte as it was and no temp file behind.
+func TestSaveRefusesANewerFormat(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/home/dev/projects/webshop")
+	b.Format = BindingFormat + 1
+
+	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir(b.Name), "bind.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"format": 2`)) {
+		t.Fatalf("the fixture must carry format 2, got:\n%s", raw)
+	}
+
+	got, err := s.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Format != BindingFormat+1 {
+		t.Fatalf("loaded Format = %d, want %d", got.Format, BindingFormat+1)
+	}
+
+	err = s.Save(got)
+	var newer *ErrNewerFormat
+	if !errors.As(err, &newer) {
+		t.Fatalf("Save of a newer format = %v, want *ErrNewerFormat", err)
+	}
+	if !errors.Is(err, ErrNewerFormatSentinel) {
+		t.Errorf("errors.Is(%v, ErrNewerFormatSentinel) = false, want true", err)
+	}
+	if newer.Kind != "binding" || newer.Name != b.Name || newer.Have != BindingFormat+1 || newer.Know != BindingFormat {
+		t.Errorf("ErrNewerFormat = %+v", newer)
+	}
+	wantText := `binding "webshop" was written by a newer relay (format 2; this relay knows 1): upgrade relay; a planner session reconnects relay mcp with /mcp`
+	if err.Error() != wantText {
+		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, after) {
+		t.Error("a refused save must leave the file byte-identical")
+	}
+	entries, err := os.ReadDir(s.Dir(b.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("a refused save left a temp file behind: %s", e.Name())
+		}
+	}
+}
+
+func TestKnownState(t *testing.T) {
+	for _, s := range []State{StateActive, StateNeedsYou, StateBroken, StateDone, StatePaused} {
+		if !KnownState(s) {
+			t.Errorf("KnownState(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []State{"", "frozen", "held", "orphaned"} {
+		if KnownState(s) {
+			t.Errorf("KnownState(%q) = true, want false", s)
+		}
+	}
+}

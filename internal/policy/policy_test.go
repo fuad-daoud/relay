@@ -23,6 +23,60 @@ func load(t *testing.T, body string) (Policy, error) {
 	return Load(path)
 }
 
+// loadWarnings writes body to a temp policy.json and loads it with
+// LoadWithWarnings, failing on any error.
+func loadWarnings(t *testing.T, body string) (Policy, []string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, warnings, err := LoadWithWarnings(path)
+	if err != nil {
+		t.Fatalf("LoadWithWarnings(%s): %v", body, err)
+	}
+	return p, warnings
+}
+
+// TestLoadUnknownKeysWarn pins #372 §4.4: an unknown key is a warning and the
+// policy still loads; its dotted path names where the key was; a key under a
+// map-typed field is never unknown; a bad value is still an error.
+func TestLoadUnknownKeysWarn(t *testing.T) {
+	t.Run("unknown top-level key", func(t *testing.T) {
+		p, warnings := loadWarnings(t, `{"orders":{"builder":["a/b/c"]}}`)
+		if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown key "orders"`) {
+			t.Fatalf("warnings = %v, want one naming orders", warnings)
+		}
+		if len(p.Order) != 0 {
+			t.Errorf("Order = %v, want empty", p.Order)
+		}
+	})
+
+	t.Run("unknown nested key", func(t *testing.T) {
+		_, warnings := loadWarnings(t, `{"classify":{"provider":"jev","unknown_key":true}}`)
+		if len(warnings) != 1 || !strings.Contains(warnings[0], `unknown key "classify.unknown_key"`) {
+			t.Fatalf("warnings = %v, want one naming classify.unknown_key", warnings)
+		}
+	})
+
+	t.Run("a key under a map-typed field gives no warning", func(t *testing.T) {
+		_, warnings := loadWarnings(t, `{"order":{"builder":["a/b/c"]},"tier":{"builder":"read"}}`)
+		if len(warnings) != 0 {
+			t.Fatalf("warnings = %v, want none", warnings)
+		}
+	})
+
+	t.Run("a bad value is still an error", func(t *testing.T) {
+		_, err := load(t, `{"max_switches":-1,"unknown_key":true}`)
+		if err == nil {
+			t.Fatal("Load: got nil error, want one wrapping ErrBadPolicy")
+		}
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("Load error %v does not wrap ErrBadPolicy", err)
+		}
+	})
+}
+
 func TestLoadMissingFileIsZeroPolicy(t *testing.T) {
 	p, err := Load(filepath.Join(t.TempDir(), "absent.json"))
 	if err != nil {
@@ -83,11 +137,6 @@ func TestLoadErrors(t *testing.T) {
 			name:     "bad json",
 			body:     `{`,
 			contains: []string{"policy.json"},
-		},
-		{
-			name:     "unknown top-level key",
-			body:     `{"orders":{}}`,
-			contains: []string{"orders"},
 		},
 		{
 			name:     "unknown role",
@@ -586,7 +635,6 @@ func TestClassifyPolicy(t *testing.T) {
 		{"threshold 1.5", `{"classify":{"provider":"jev","injection_threshold":1.5}}`, "classify.injection_threshold: must be in (0, 1], got 1.5"},
 		{"timeout 0", `{"classify":{"provider":"jev","timeout_ms":0}}`, "classify.timeout_ms: must be > 0, got 0"},
 		{"timeout negative", `{"classify":{"provider":"jev","timeout_ms":-10}}`, "classify.timeout_ms: must be > 0, got -10"},
-		{"unknown key inside classify", `{"classify":{"provider":"jev","unknown_key":true}}`, "unknown_key"},
 	}
 
 	for _, bc := range badCases {
@@ -1172,14 +1220,16 @@ func TestScopeAllowedCPUsValidation(t *testing.T) {
 	}
 }
 
-func TestServeUnknownKeyRejected(t *testing.T) {
+// TestServeUnknownKeyWarns pins #372 §4.4: an unknown key inside serve or
+// scope no longer rejects the file; it warns with its dotted path.
+func TestServeUnknownKeyWarns(t *testing.T) {
 	for _, body := range []string{`{"serve":{"frobnicate":true}}`, `{"scope":{"frobnicate":true}}`} {
-		_, err := load(t, body)
-		if err == nil {
-			t.Fatalf("Load(%s): expected error, got nil", body)
+		_, warnings := loadWarnings(t, body)
+		if len(warnings) != 1 {
+			t.Fatalf("Load(%s): warnings = %v, want exactly one", body, warnings)
 		}
-		if !errors.Is(err, ErrBadPolicy) {
-			t.Fatalf("Load(%s): error %v does not wrap ErrBadPolicy", body, err)
+		if !strings.Contains(warnings[0], "unknown key") || !strings.Contains(warnings[0], "frobnicate") {
+			t.Errorf("Load(%s): warning %q does not name the unknown key", body, warnings[0])
 		}
 	}
 }

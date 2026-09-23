@@ -567,9 +567,11 @@ func TestCandidatesConfigHome(t *testing.T) {
 
 // TestDiffHonoursConfigHome pins #235: cmdDiff's newRuntime() reads
 // candidates.json through userConfigRoot(), so XDG_CONFIG_HOME decides which
-// file it reads. A candidates file naming a harness the branch does not know
-// must make `relay diff` fail with that harness, exactly the way the two diff
-// tests used to fail when they picked the file up from the real home.
+// file it reads. A candidates file the branch rejects must make `relay diff`
+// fail with that rejection, exactly the way the two diff tests used to fail
+// when they picked the file up from the real home. (An unknown harness no
+// longer rejects the load: #372 skips it with a warning, so this uses a bad
+// tree instead.)
 func TestDiffHonoursConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
@@ -581,17 +583,56 @@ func TestDiffHonoursConfigHome(t *testing.T) {
 	if err := os.MkdirAll(relayDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `[{"harness":"nonesuch","provider":"p","model":"m","roles":["builder"]}]`
+	body := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tree":"sideways"}]`
 	if err := os.WriteFile(filepath.Join(relayDir, "candidates.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	err := run([]string{"diff", "--name", "anything"})
 	if err == nil {
-		t.Fatal("diff must fail when XDG_CONFIG_HOME names an unknown harness")
+		t.Fatal("diff must fail when XDG_CONFIG_HOME names an invalid candidate")
 	}
-	if !strings.Contains(err.Error(), `unknown harness "nonesuch"`) {
+	if !strings.Contains(err.Error(), `tree must be "binding" or "none"`) {
 		t.Fatalf("diff must read candidates from XDG_CONFIG_HOME; got %v", err)
+	}
+}
+
+// TestDaemonCheckLeavesNoDB pins #372 §4.5: the plugin's `relay daemon --check`
+// probe runs before the daemon opens (and migrates) the database, so it leaves
+// no relay.db in a fresh state root. cmdDaemon returns exitCodeErr{1} instead
+// of calling os.Exit, which main maps to the same silent exit status.
+func TestDaemonCheckLeavesNoDB(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+
+	err := cmdDaemon([]string{"--check"})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 1 {
+		t.Fatalf("cmdDaemon --check error = %v, want exitCodeErr{code: 1} with no daemon running", err)
+	}
+
+	dbPath := filepath.Join(root, "state", "relay", "relay.db")
+	if _, serr := os.Stat(dbPath); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("relay.db exists after --check: stat error = %v, want not-exist", serr)
+	}
+}
+
+// TestDefaultServeRoot pins the root `relay available` reads the serve
+// pointer from (#372 §4.6): the serve root under the state root, not the
+// client root's daemon.json.
+func TestDefaultServeRoot(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	got, err := defaultServeRoot()
+	if err != nil {
+		t.Fatalf("defaultServeRoot: %v", err)
+	}
+	want := filepath.Join(stateHome, "relay", "serve")
+	if got != want {
+		t.Errorf("defaultServeRoot() = %q, want %q", got, want)
 	}
 }
 

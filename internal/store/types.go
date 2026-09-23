@@ -188,6 +188,12 @@ type Progress struct {
 
 // Binding ties one planner to one builder over one working tree.
 type Binding struct {
+	// Format is the on-disk format this record was written at (#372): 0 (a
+	// missing key) is format 1, today's shape, and from 2 on the number is
+	// written. save refuses to overwrite a Format it does not know, so a
+	// newer relay's fields survive an older binary's rewrite.
+	Format int `json:"format,omitempty"`
+
 	Name    string   `json:"name"`
 	CWD     string   `json:"cwd"`
 	Planner Endpoint `json:"planner"`

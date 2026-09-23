@@ -34,12 +34,22 @@ const sqliteBusy = 5
 // usable; construct one with Open.
 type DB struct {
 	sqlDB *sql.DB
+	// newer is true when the database's schema is newer than this binary's
+	// embedded migrations, in which case Open must not migrate or write it.
+	newer bool
+	have  int // schema version on disk
+	know  int // highest migration this binary embeds
 }
 
 // Open opens (creating if needed) the sqlite database at path, applying
 // every pending migration before returning. path's directory must already
 // exist. The connection runs with WAL journaling, a 5s busy timeout, and
 // foreign keys on.
+//
+// A database whose schema is newer than this binary's embedded migrations is
+// left untouched -- never migrated, never written -- and returned with
+// Newer() == true, so an older relay can read it without downgrading it
+// (#372 §4.5).
 func Open(path string) (*DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
 
@@ -48,17 +58,72 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
 	}
 
-	if err := sqlDB.Ping(); err != nil {
+	if err := ping(sqlDB); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open %s: ping: %w: %w", path, ErrOpen, err)
+	}
+
+	have, err := maxVersion(sqlDB)
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
+	}
+	know, err := maxEmbedded(migrationFiles)
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
+	}
+	if have > know {
+		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
 	}
 
 	if err := applyMigrations(sqlDB, migrationFiles); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("db: open %s: %w: %w", path, ErrOpen, err)
+		return nil, fmt.Errorf("db: open %s: migrate: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB}, nil
+	have, err = maxVersion(sqlDB)
+	if err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
+	}
+
+	return &DB{sqlDB: sqlDB, have: have, know: know}, nil
+}
+
+// Newer reports whether the database's schema is newer than this relay's
+// embedded migrations. Such a database is never migrated or written.
+func (d *DB) Newer() bool { return d.newer }
+
+// SchemaVersions returns the schema version on disk and the highest version
+// this relay knows, for the newer-schema warning text.
+func (d *DB) SchemaVersions() (have, know int) { return d.have, d.know }
+
+// CheckMigrate returns an error when the database's schema is newer than this
+// relay, so `relay db migrate` refuses rather than touching it. A nil result
+// means the schema is this relay's to migrate.
+func (d *DB) CheckMigrate() error {
+	if !d.newer {
+		return nil
+	}
+	return fmt.Errorf("schema version %d is newer than this relay (knows %d): upgrade relay: %w", d.have, d.know, ErrNewerSchema)
+}
+
+// ping establishes the first connection, retrying while sqlite reports the
+// database busy. Two processes opening a fresh database at once both try to
+// switch it to WAL in the DSN, and sqlite does not invoke the busy handler for
+// a journal_mode change: it returns SQLITE_BUSY to the loser. Once the winner
+// has set WAL, the loser's pragma is a no-op, so a bounded retry succeeds.
+func ping(sqlDB *sql.DB) error {
+	var err error
+	for attempt := 0; attempt < 50; attempt++ {
+		err = sqlDB.Ping()
+		if err == nil || !errors.Is(mapBusy(err), ErrBusy) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return err
 }
 
 // Close closes the underlying connection.

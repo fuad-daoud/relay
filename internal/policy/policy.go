@@ -6,12 +6,13 @@
 package policy
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/jsonshape"
 )
 
 // ErrBadPolicy reports a policy.json that does not validate.
@@ -485,94 +487,183 @@ func ParseCPUList(s string) ([]int, error) {
 	return out, nil
 }
 
-// Load reads and validates a policy file. A missing file is the zero Policy
-// and no error, so every machine without a policy.json behaves exactly as it
-// did before this file existed. A present file that does not validate is an
-// error wrapping ErrBadPolicy: Load checks only the file's own shape -- it
-// never opens candidates.json, so a token naming no configured candidate is
-// tolerated here and caught later, by the resolver and by PolicyWarnings.
+// policyUnknownKeyWarnings returns one warning per decoded key path that
+// Policy's JSON shape (jsonshape.Keys) does not declare.
+//
+// A key inside a map-typed field (order, tier) is never unknown: the keys of a
+// map are data, not schema, so any name is allowed below it (#372 §4.4).
+func policyUnknownKeyWarnings(path string, raw []byte) []string {
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		// The typed decode already reported the shape error.
+		return nil
+	}
+
+	leaves := jsonshape.Keys(reflect.TypeOf(Policy{}))
+	leafSet := make(map[string]bool, len(leaves))
+	for _, l := range leaves {
+		leafSet[l] = true
+	}
+
+	var paths []string
+	var walk func(prefix string, v any)
+	walk = func(prefix string, v any) {
+		switch val := v.(type) {
+		case map[string]any:
+			if hasLeafPrefix(leaves, prefix, "{}") {
+				return // a map-typed field: any key below it is allowed
+			}
+			keys := make([]string, 0, len(val))
+			for k := range val {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				child := k
+				if prefix != "" {
+					child = prefix + "." + k
+				}
+				switch {
+				case leafSet[child] || hasLeafPrefix(leaves, child, ".") ||
+					hasLeafPrefix(leaves, child, "[]") || hasLeafPrefix(leaves, child, "{}"):
+					walk(child, val[k])
+				default:
+					paths = append(paths, child)
+				}
+			}
+		case []any:
+			// An array adds "[]" to the path, matching jsonshape's shape.
+			for _, item := range val {
+				walk(prefix+"[]", item)
+			}
+		}
+	}
+	walk("", data)
+
+	base := filepath.Base(path)
+	warnings := make([]string, 0, len(paths))
+	for _, p := range paths {
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relay reads)", base, p))
+	}
+	return warnings
+}
+
+// hasLeafPrefix reports whether some declared leaf path continues p with sep:
+// sep is "." for a nested object, "[]" for an array, "{}" for a map.
+func hasLeafPrefix(leaves []string, p, sep string) bool {
+	if p == "" {
+		return false
+	}
+	pre := p + sep
+	for _, l := range leaves {
+		if strings.HasPrefix(l, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// Load reads and validates a policy file, discarding the unknown-key warnings
+// LoadWithWarnings returns. Callers that surface warnings use that function.
 func Load(path string) (Policy, error) {
+	p, _, err := LoadWithWarnings(path)
+	return p, err
+}
+
+// LoadWithWarnings reads and validates a policy file, returning the keys this
+// relay does not know as warnings. A missing file is the zero Policy and no
+// error, so every machine without a policy.json behaves exactly as it did
+// before this file existed. A present file whose known keys do not validate is
+// an error wrapping ErrBadPolicy: LoadWithWarnings checks only the file's own
+// shape -- it never opens candidates.json, so a token naming no configured
+// candidate is tolerated here and caught later, by the resolver and by
+// PolicyWarnings.
+//
+// An unknown key is a warning, not an error (#372 §4.4): a key a newer relay
+// reads must not stop this relay, and a typo surfaces in `relay doctor`. A key
+// inside a map-typed field (order, tier) is never unknown.
+func LoadWithWarnings(path string) (Policy, []string, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Policy{}, nil
+		return Policy{}, nil, nil
 	}
 	if err != nil {
-		return Policy{}, fmt.Errorf("read %s: %w", path, err)
+		return Policy{}, nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	var p Policy
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&p); err != nil {
-		return Policy{}, fmt.Errorf("%s: %v: %w", path, err, ErrBadPolicy)
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return Policy{}, nil, fmt.Errorf("%s: %v: %w", path, err, ErrBadPolicy)
 	}
 
+	warnings := policyUnknownKeyWarnings(path, raw)
+
 	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
-		return Policy{}, fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
 	}
 
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
 	}
 
 	if p.StallAfterMS != nil && *p.StallAfterMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
 	}
 
 	if p.ProgressIntervalMS != nil && *p.ProgressIntervalMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: progress_interval_ms: must be > 0, got %d: %w", path, *p.ProgressIntervalMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: progress_interval_ms: must be > 0, got %d: %w", path, *p.ProgressIntervalMS, ErrBadPolicy)
 	}
 
 	if p.ExploreAfterMS != nil && *p.ExploreAfterMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: explore_after_ms: must be > 0, got %d: %w", path, *p.ExploreAfterMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: explore_after_ms: must be > 0, got %d: %w", path, *p.ExploreAfterMS, ErrBadPolicy)
 	}
 
 	if p.StaleAfterMS != nil && *p.StaleAfterMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: stale_after_ms: must be > 0, got %d: %w", path, *p.StaleAfterMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: stale_after_ms: must be > 0, got %d: %w", path, *p.StaleAfterMS, ErrBadPolicy)
 	}
 
 	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
-		return Policy{}, fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
 	}
 
 	if p.Gate != nil && p.Gate.Regate != nil && *p.Gate.Regate < 0 {
-		return Policy{}, fmt.Errorf("%s: gate.regate: must be >= 0, got %d: %w", path, *p.Gate.Regate, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: gate.regate: must be >= 0, got %d: %w", path, *p.Gate.Regate, ErrBadPolicy)
 	}
 
 	if p.Serve != nil && p.Serve.MaxBuilders != nil && *p.Serve.MaxBuilders < 1 {
-		return Policy{}, fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
+		return Policy{}, warnings, fmt.Errorf("%s: serve.max_builders: must be at least 1, got %d: %w", path, *p.Serve.MaxBuilders, ErrBadPolicy)
 	}
 
 	if err := validateScope(path, "scope", p.Scope); err != nil {
-		return Policy{}, err
+		return Policy{}, warnings, err
 	}
 	if p.Serve != nil {
 		if err := validateScope(path, "serve.scope", p.Serve.Scope); err != nil {
-			return Policy{}, err
+			return Policy{}, warnings, err
 		}
 	}
 
 	for i, pat := range p.ScanPatterns {
 		if _, err := regexp.Compile(pat); err != nil {
-			return Policy{}, fmt.Errorf("%s: scan_patterns[%d]: %v: %w", path, i, err, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: scan_patterns[%d]: %v: %w", path, i, err, ErrBadPolicy)
 		}
 	}
 
 	if p.Classify != nil {
 		if p.Classify.Provider == "" {
-			return Policy{}, fmt.Errorf("%s: classify.provider: required: %w", path, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: classify.provider: required: %w", path, ErrBadPolicy)
 		}
 		if p.Classify.Provider != "jev" {
-			return Policy{}, fmt.Errorf("%s: classify.provider: unknown %q (known: jev): %w", path, p.Classify.Provider, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: classify.provider: unknown %q (known: jev): %w", path, p.Classify.Provider, ErrBadPolicy)
 		}
 		if p.Classify.InjectionThreshold != nil {
 			v := *p.Classify.InjectionThreshold
 			if v <= 0 || v > 1 {
-				return Policy{}, fmt.Errorf("%s: classify.injection_threshold: must be in (0, 1], got %v: %w", path, v, ErrBadPolicy)
+				return Policy{}, warnings, fmt.Errorf("%s: classify.injection_threshold: must be in (0, 1], got %v: %w", path, v, ErrBadPolicy)
 			}
 		}
 		if p.Classify.TimeoutMS != nil && *p.Classify.TimeoutMS <= 0 {
-			return Policy{}, fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *p.Classify.TimeoutMS, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: classify.timeout_ms: must be > 0, got %d: %w", path, *p.Classify.TimeoutMS, ErrBadPolicy)
 		}
 	}
 
@@ -580,10 +671,10 @@ func Load(path string) (Policy, error) {
 	if p.MaxTier != "" {
 		parsed, err := harness.ParseTier(p.MaxTier)
 		if err != nil {
-			return Policy{}, fmt.Errorf("%s: max_tier: %v: %w", path, err, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: max_tier: %v: %w", path, err, ErrBadPolicy)
 		}
 		if parsed == harness.TierHarness {
-			return Policy{}, fmt.Errorf("%s: max_tier: \"harness\" is not a cap: %w", path, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: max_tier: \"harness\" is not a cap: %w", path, ErrBadPolicy)
 		}
 		maxTier = parsed
 	}
@@ -596,15 +687,15 @@ func Load(path string) (Policy, error) {
 
 	for _, role := range tierRoles {
 		if _, ok := harness.RoleByName(role); !ok {
-			return Policy{}, fmt.Errorf("%s: tier.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
 		}
 		val := p.Tier[role]
 		parsed, err := harness.ParseTier(val)
 		if err != nil {
-			return Policy{}, fmt.Errorf("%s: tier.%s: %v: %w", path, role, err, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: %v: %w", path, role, err, ErrBadPolicy)
 		}
 		if parsed.Above(maxTier) {
-			return Policy{}, fmt.Errorf("%s: tier.%s: %s exceeds max_tier %s; raise max_tier in the same file: %w", path, role, parsed, maxTier, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: tier.%s: %s exceeds max_tier %s; raise max_tier in the same file: %w", path, role, parsed, maxTier, ErrBadPolicy)
 		}
 	}
 
@@ -616,21 +707,21 @@ func Load(path string) (Policy, error) {
 
 	for _, role := range roles {
 		if _, ok := harness.RoleByName(role); !ok {
-			return Policy{}, fmt.Errorf("%s: order.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: order.%s: unknown role (known: %v): %w", path, role, harness.RoleNames(), ErrBadPolicy)
 		}
 
 		tokens := p.Order[role]
 		if tokens == nil {
-			return Policy{}, fmt.Errorf("%s: order.%s: must be an array: %w", path, role, ErrBadPolicy)
+			return Policy{}, warnings, fmt.Errorf("%s: order.%s: must be an array: %w", path, role, ErrBadPolicy)
 		}
 
 		seen := make(map[string]bool, len(tokens))
 		for i, tok := range tokens {
 			if _, err := candidate.ParseRef(tok); err != nil {
-				return Policy{}, fmt.Errorf("%s: order.%s[%d]: %v: %w", path, role, i, err, ErrBadPolicy)
+				return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: %v: %w", path, role, i, err, ErrBadPolicy)
 			}
 			if seen[tok] {
-				return Policy{}, fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)
+				return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)
 			}
 			seen[tok] = true
 		}
@@ -648,28 +739,28 @@ func Load(path string) (Policy, error) {
 		for i, hook := range p.Notify.Webhooks {
 			u, err := url.Parse(hook.URL)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].url: must be an http or https URL, got %q: %w", path, i, hook.URL, ErrBadPolicy)
+				return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].url: must be an http or https URL, got %q: %w", path, i, hook.URL, ErrBadPolicy)
 			}
 
 			switch hook.Format {
 			case "", "json", "slack", "discord":
 			default:
-				return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].format: unknown %q (known: json, slack, discord): %w", path, i, hook.Format, ErrBadPolicy)
+				return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].format: unknown %q (known: json, slack, discord): %w", path, i, hook.Format, ErrBadPolicy)
 			}
 
 			for j, ev := range hook.Events {
 				name, _, hasState := strings.Cut(ev, ":")
 				if !knownEvents[name] {
-					return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: state_changed, round_started, fork_created, builder_stalled, binding_stale): %w", path, i, j, ev, ErrBadPolicy)
+					return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: state_changed, round_started, fork_created, builder_stalled, binding_stale): %w", path, i, j, ev, ErrBadPolicy)
 				}
 				if hasState && name != "state_changed" {
-					return Policy{}, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: %q: only state_changed accepts a :<state> suffix: %w", path, i, j, ev, ErrBadPolicy)
+					return Policy{}, warnings, fmt.Errorf("%s: notify.webhooks[%d].events[%d]: %q: only state_changed accepts a :<state> suffix: %w", path, i, j, ev, ErrBadPolicy)
 				}
 			}
 		}
 	}
 
-	return p, nil
+	return p, warnings, nil
 }
 
 // OrderFor returns role's preferred candidate tokens, most preferred first,

@@ -131,6 +131,13 @@ type Runtime struct {
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
 
+	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
+	// the last config load produced (candidates.json then policy.json). They
+	// never fail a command: `relay doctor` renders them in a `config` row and
+	// the daemon logs each once (#372 §4.4). newRuntime fills it without
+	// printing; the daemon's ConfigWatcher refills it on reload.
+	ConfigWarnings []string
+
 	// Usage reads what a round consumed from the harness's own record
 	// (#142). Nil means every round records Basis unknown, note
 	// "no reader"; tests that do not set it behave as a machine with no
