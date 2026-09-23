@@ -631,6 +631,17 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 	return nil
 }
 
+// WorktreeRepair repairs the administrative link between repo and a worktree
+// whose directory was moved: `git -C <repo> worktree repair <worktree>` (#292
+// §3 step 5). It is what makes a plain rename of a state root -- and with it
+// every worktree inside -- leave a working tree that git still recognises.
+//
+// Errors carry git's stderr, through run's wrapping.
+func (c *Client) WorktreeRepair(ctx context.Context, repo, worktree string) error {
+	_, err := c.run(ctx, repo, nil, "worktree", "repair", worktree)
+	return err
+}
+
 // Dirty reports whether dir has uncommitted or untracked (non-ignored) changes.
 // Errors: ErrNotRepo, ErrGitUnavailable, wrapped git failure.
 func (c *Client) Dirty(ctx context.Context, dir string) (bool, error) {
