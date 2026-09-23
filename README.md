@@ -419,12 +419,6 @@ error: the report and diff tabs say so ("round N is open; report arrives
 when it closes", "diff is captured when round N closes") rather than
 showing stale content.
 
-For a claude pane builder the terminal tab is the round's own transcript:
-the daemon renders the harness's session record
-(`~/.claude/projects/*/<session>.jsonl`) into `NNN-builder.log` from the
-moment the round was sent, so the tab scrolls, follows the tail and is
-styled exactly as a headless builder's. opencode and agy pane builders
-keep the live screen capture (#184).
 
 ### `relay ui`'s dashboard: every round, filtered and regrouped
 
@@ -493,8 +487,8 @@ shows `no database: <err>` in the rail and the scope stays on `live`;
 
 A builder is a process relay runs, one fresh process per round; there is no
 pane. Each `relay send` starts the harness's non-interactive form -- `agy -p …`,
-`claude -p …`, `opencode run …` -- in the binding's tree with the same prompt a
-pane builder would be typed, writes the harness's streamed JSON events to
+`claude -p …`, `opencode run …` -- in the binding's tree with the round's
+prompt, writes the harness's streamed JSON events to
 `~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
 `NNN-builder.log`, both beside the round's plan and report, and returns.
 The daemon renders the stream into the `.log` as it grows -- one line per
@@ -662,7 +656,7 @@ relay status                              # round state comes from the server, p
 
 What comes back as `relay/<name>`: the result of a closed round is fetched
 into your repository's own `refs/heads/relay/<name>` branch -- fast-forward
-only, exactly like a pane builder's worktree branch. If the round closed with
+only, exactly like a local builder's worktree branch. If the round closed with
 uncommitted changes on the server, they land on a side ref,
 `refs/relay/<name>/round-<N>`, whose parent is that round's commit on
 `relay/<name>`; the report names it. If that fast-forward collides with a
@@ -1480,10 +1474,9 @@ When forking a binding (`relay fork`), if `--tier` is omitted, the new binding i
 
 For consults (`relay ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
 
-### Headless vs. pane builder tiers
+### Per-round tiers
 
-- **Pane builders**: A pane builder is a persistent terminal process spawned when the binding is created. Its CLI flags are fixed at spawn. Passing `--tier` to `relay send` on a pane binding is refused because an active interactive harness cannot be re-flagged mid-flight. To change the tier of a pane builder, re-bind it with `relay bind --resume --rebind --tier <tier>`.
-- **Headless builders**: Headless builders execute a new process for each round. A round may temporarily override the tier using `relay send --tier <tier> [--allow-yolo]`. The round override takes precedence during that round, and is automatically reset to the binding's default tier when the round completes.
+Every builder runs a new process for each round, so a round may temporarily override the tier with `relay send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
 ### Permission-blocked exits
 
@@ -1658,16 +1651,14 @@ and relay queues them to the planner like any other report, once the file
 exists. That file's existence is the only completion gate: relay makes no
 judgements about what the findings say.
 
-`relay ask --headless` runs the consult as a one-shot process instead of a
-pane: relay starts the harness in its print form and the consult's **final
-message** becomes the findings, which relay writes to the same
-`NNN-<id>-findings.md` and queues to the planner exactly as a pane consult's
-file is. Use it where there is no pane to open — resuming a closed round's
-builder session, or running a verifier at round close. Because there is no
-pane, the process is the only thing relay can observe: it is killed at the
+A consult is a one-shot process: relay starts the harness in its print form,
+and the consult's **final message** becomes the findings, which relay writes
+to `NNN-<id>-findings.md` and queues to the planner (`--headless` is accepted
+and ignored). The same form resumes a closed round's builder session and runs
+a verifier at round close. The process is the only thing relay can observe: it is killed at the
 consult timeout (10m), and a process that exits without a final message is
 reported silent with its exit code and the stream to read. The resolved tier
-still gates the pick, exactly as for a pane consult: at `read`, claude and agy
+still gates the pick: at `read`, claude and agy
 can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
 and codex cannot honour `read` and are refused.
 
@@ -1872,14 +1863,9 @@ some candidate would load, and no candidate loads the planner.
 - **DONE** — the planner declared the work verified via `relay done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
-  a done binding — no reports are queued, no dialogs captured, no timeouts
-  flagged. The binding and its round log stay on disk (`relay log <name>`
+  a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay on disk (`relay log <name>`
   still works as an audit trail) until `relay unbind` or `relay gc` removes them;
   a clean worktree is released at `done` so the branch is free to review.
-
-The daemon raises one "all rounds finished" toast (sound done) per planner
-when the planner is idle and none of its bindings has a round open, a payload
-pending or a switch due.
 
 ## Running the daemon
 
