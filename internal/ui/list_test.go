@@ -39,8 +39,7 @@ func TestListWindow(t *testing.T) {
 
 func TestListRowsBudget(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
@@ -72,8 +71,7 @@ func TestListRowsBudget(t *testing.T) {
 func tenBindings(t *testing.T, height int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
@@ -182,8 +180,7 @@ func TestListViewUnlimitedBeforeResize(t *testing.T) {
 	// height stays 0 and listRows reads as no limit — every row must render,
 	// exactly as before windowing existed.
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
@@ -201,8 +198,7 @@ func TestListViewUnlimitedBeforeResize(t *testing.T) {
 
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
@@ -238,8 +234,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 
 func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
@@ -277,8 +272,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 
 func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.ready = true
 	m.width = 80
@@ -305,8 +299,7 @@ func TestEmptyBindingsList(t *testing.T) {
 
 func TestQuitFromList(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -348,8 +341,7 @@ func TestStateStylesDistinguishable(t *testing.T) {
 
 func TestListScreenThreeStates(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	// 1. Fresh model with no message renders "loading…"
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
@@ -409,8 +401,7 @@ func TestListScreenThreeStates(t *testing.T) {
 
 func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	// 1. A three-line error renders as three lines with no line exceeding width
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -35,35 +34,6 @@ func claudeStream(t *testing.T, text string) []byte {
 // the round closed, the reviewer was started in its throwaway worktree, and
 // the process is scripted to have exited 0. The caller writes the stream the
 // reviewer left behind, then ticks the consult.
-func startVerifyRound(t *testing.T, f *fakeHerdr) (Runtime, *fakeRunner, *fakeGit, store.Binding) {
-	t.Helper()
-	rt, b := sentBinding(t, f)
-	fr := newFakeRunner()
-	fg := &fakeGit{headCommitID: "head1"}
-	rt.Runner = fr
-	rt.Git = fg
-	rt.NewID = func() string { return verifyConsultID }
-
-	b.RoundVerify = true
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	touch(t, rt.Store.DonePath("webshop", 1))
-
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(fr.handles) != 1 {
-		t.Fatalf("verify consult processes = %d, want 1", len(fr.handles))
-	}
-	return rt, fr, fg, got
-}
-
 // leaveVerifyStream writes what the reviewer's process left on its stream and
 // scripts it as exited with code 0.
 func leaveVerifyStream(t *testing.T, rt Runtime, fr *fakeRunner, text string) {
@@ -102,9 +72,8 @@ func tickConsults(t *testing.T, rt Runtime) store.Binding {
 // `State != ConsultRunning` guard at the top of reconcileConsults and this
 // fails. Without the guard every tick re-queues findings already delivered.
 func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
+	rt, c := seedHeadlessConsult(t, fr)
 
 	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
 		"relay-exit:0\n"
@@ -146,31 +115,9 @@ func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
 	}
 }
 
-func TestReconcileConsultsMakesNoHerdrCallsForTerminalRecords(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
-
-	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
-		"relay-exit:0\n"
-	if err := os.WriteFile(c.Endpoint.LogPath, []byte(stream), 0o644); err != nil {
-		t.Fatalf("write stream: %v", err)
-	}
-	fr.script(c.Endpoint.PID, false)
-	fr.exit(c.Endpoint.PID, 0)
-	tickConsults(t, rt)
-
-	listsBefore := f.listCalls
-	tickConsults(t, rt)
-
-	if f.listCalls != listsBefore {
-		t.Errorf("reconcileConsults made %d ListAgents calls; it never reads herdr", f.listCalls-listsBefore)
-	}
-}
-
-func seedSpawning(t *testing.T, f *fakeHerdr) (Runtime, *fakeClock) {
+func seedSpawning(t *testing.T) (Runtime, *fakeClock) {
 	t.Helper()
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -195,8 +142,7 @@ func seedSpawning(t *testing.T, f *fakeHerdr) (Runtime, *fakeClock) {
 }
 
 func TestReconcileSkipsAFreshReservation(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedSpawning(t, f)
+	rt, _ := seedSpawning(t)
 
 	b := tickConsults(t, rt)
 	if b.Consults[0].State != store.ConsultSpawning {
@@ -212,14 +158,10 @@ func TestReconcileSkipsAFreshReservation(t *testing.T) {
 	if len(entries) != 1 || entries[0].Kind != store.KindPick {
 		t.Errorf("got %d log entries queued, want the single pick entry from the bind: %+v", len(entries), entries)
 	}
-	if len(f.prompts) != 0 {
-		t.Errorf("len(f.prompts) = %d, want 0", len(f.prompts))
-	}
 }
 
 func TestReconcileExpiresAStaleReservation(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, clock := seedSpawning(t, f)
+	rt, clock := seedSpawning(t)
 	clock.Advance(consultSpawnTimeout + time.Second)
 
 	b := tickConsults(t, rt)
@@ -259,9 +201,13 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 // endpoint written before this round has Mode "" (a pane consult). relay can
 // no longer drive a pane, so the next reconcile closes it silent with the
 // reason and reports it to the planner, instead of reconciling it as a pane.
+
+// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
+// endpoint written before this round has Mode "" (a pane consult). relay can
+// no longer drive a pane, so the next reconcile closes it silent with the
+// reason and reports it to the planner, instead of reconciling it as a pane.
 func TestReconcileAbandonsLegacyPaneConsult(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -299,14 +245,17 @@ func TestReconcileAbandonsLegacyPaneConsult(t *testing.T) {
 
 // seedHeadlessConsult asks for a consult as a process on the webshop binding
 // and returns the runtime and the record relay made.
-func seedHeadlessConsult(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Consult) {
+
+// seedHeadlessConsult asks for a consult as a process on the webshop binding
+// and returns the runtime and the record relay made.
+func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
 	t.Helper()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "review it")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -317,10 +266,13 @@ func seedHeadlessConsult(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, s
 // TestHeadlessConsultFinalMessageBecomesFindings: the process's last
 // assistant message is the findings. Deleting the WriteFile leaves the
 // consult running and this fails.
+
+// TestHeadlessConsultFinalMessageBecomesFindings: the process's last
+// assistant message is the findings. Deleting the WriteFile leaves the
+// consult running and this fails.
 func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
+	rt, c := seedHeadlessConsult(t, fr)
 
 	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
 		"relay-exit:0\n"
@@ -353,10 +305,12 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 
 // TestHeadlessConsultExitWithoutTextIsSilent: a process that died without a
 // final message is reported silent with its exit code and where to look.
+
+// TestHeadlessConsultExitWithoutTextIsSilent: a process that died without a
+// final message is reported silent with its exit code and where to look.
 func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
+	rt, c := seedHeadlessConsult(t, fr)
 
 	if err := os.WriteFile(c.Endpoint.LogPath, []byte("relay-exit:1\n"), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
@@ -383,10 +337,12 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 
 // TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
 // killed and reported silent.
+
+// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// killed and reported silent.
 func TestHeadlessConsultTimesOut(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
+	rt, c := seedHeadlessConsult(t, fr)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
 
@@ -412,9 +368,14 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 // verdict and its two reasons on the findings entry and on the binding, names
 // them in the payload, removes the throwaway worktree, and shows in `relay
 // status` until the round after next.
+
+// TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
+// verify consult whose findings end with `verdict: rejected` records the
+// verdict and its two reasons on the findings entry and on the binding, names
+// them in the payload, removes the throwaway worktree, and shows in `relay
+// status` until the round after next.
 func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, fr, fg, _ := startVerifyRound(t, f)
+	rt, fr, fg, _ := startVerifyRound(t)
 	leaveVerifyStream(t, rt, fr, "checked it\n\n```relay\nverdict: rejected\nreasons: [\"a\",\"b\"]\n```\n")
 
 	b := tickConsults(t, rt)
@@ -481,8 +442,7 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 2))
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-	closed, err := reconcile(t, rt, b, agents)
+	closed, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile round 2: %v", err)
 	}
@@ -505,9 +465,11 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 
 // TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
 // a readable block are delivered as unstructured rather than guessed at.
+
+// TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
+// a readable block are delivered as unstructured rather than guessed at.
 func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, fr, _, _ := startVerifyRound(t, f)
+	rt, fr, _, _ := startVerifyRound(t)
 	leaveVerifyStream(t, rt, fr, "I read it; it looks fine to me, no block here.\n")
 
 	b := tickConsults(t, rt)

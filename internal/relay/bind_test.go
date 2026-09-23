@@ -13,7 +13,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -22,10 +21,33 @@ import (
 // baseTime is the instant newRuntime's fixed clock reports.
 var baseTime = time.Unix(1757000000, 0).UTC()
 
-func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
+// The planner record newRuntime's registry holds. The id and the name are
+// both tested, so both are named constants; --planner accepts either (§4.3),
+// and the id shape is the one planner.ValidID accepts.
+const (
+	testPlannerID   = "pl_aaaaaaaaaaaa"
+	testPlannerName = "architect-1"
+)
+
+// newRuntime builds a Runtime for tests: a temp store, the test candidate
+// set, a fake runner and a fixed clock. No harness is faked: a local builder
+// is a process relay runs, and the tests drive it through fakeRunner.
+//
+// Planners is a registry on a t.TempDir() holding exactly one record
+// (testPlannerID/testPlannerName), so every verb that resolves a planner
+// finds it by --planner name. ProcStart fails, so planner.Resolve's host step
+// can never match and resolution stays on the flag step, which is the one
+// these tests drive.
+func newRuntime(t *testing.T) Runtime {
 	t.Helper()
+	reg, _ := testPlannerRegistry(t, planner.Record{
+		ID:          testPlannerID,
+		Name:        testPlannerName,
+		HarnessKind: "claude",
+		SessionID:   "sess-architect",
+		CWD:         "/repo",
+	})
 	return Runtime{
-		Herdr:            f,
 		Store:            store.New(t.TempDir()),
 		Candidates:       candidateSet(t, testCandidatesJSON),
 		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
@@ -34,68 +56,31 @@ func newRuntime(t *testing.T, f *fakeHerdr) Runtime {
 		// Every local builder is headless since #303, so every Send needs a
 		// Runner. A test that wants "no runner" sets rt.Runner = nil.
 		Runner: newFakeRunner(),
+		// The one seeded planner, and a ProcStart that always fails so the
+		// host step of Resolve is inert.
+		Planners:  reg,
+		ProcStart: func(int) (int64, error) { return 0, errors.New("no proc start in tests") },
 	}
 }
 
-func plannerAgent() herdr.Agent {
-	return herdr.Agent{
-		Kind: "claude", Status: herdr.StatusWorking, CWD: "/repo",
-		PaneID: "w2:p3", Session: herdr.Session{Value: "planner-sess"},
-	}
-}
-
-// TestBindRecordsRepoFeatureAndLocator pins #172: a fresh bind captures the
-// git repo identity (normalised), the human-given --feature label, and the
-// planner's own transcript file path (via rt.Sessions), and stamps CreatedAt.
-func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
-	rt.Git = &fakeGit{repoFactsOrigin: "git@github.com:o/r.git", repoFactsCommonDir: "/repo/.git"}
-	rt.Sessions = func(kind, sessionID string) (string, bool) {
-		if kind == "claude" && sessionID == "planner-sess" {
-			return "/home/x/.claude/projects/slug/S.jsonl", true
-		}
-		return "", false
-	}
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Feature: "auth",
+// runtimeWithPlanner is newRuntime with its one registry record replaced, for
+// the tests that need a planner whose session id, kind or transcript locator
+// a case names. An empty locator leaves Planner.TranscriptLocator for
+// plannerLocator (rt.Sessions) to fill, exactly as a real record without one
+// would.
+func runtimeWithPlanner(t *testing.T, sessionID, locator string) Runtime {
+	t.Helper()
+	rt := newRuntime(t)
+	reg, _ := testPlannerRegistry(t, planner.Record{
+		ID:                testPlannerID,
+		Name:              testPlannerName,
+		HarnessKind:       "claude",
+		SessionID:         sessionID,
+		CWD:               "/repo",
+		TranscriptLocator: locator,
 	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	wantRepoRef := &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
-	if !reflect.DeepEqual(b.RepoRef, wantRepoRef) {
-		t.Errorf("RepoRef = %+v, want %+v", b.RepoRef, wantRepoRef)
-	}
-	if b.Feature != "auth" {
-		t.Errorf("Feature = %q, want auth", b.Feature)
-	}
-	if b.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
-		t.Errorf("Planner.TranscriptLocator = %q, want the resolved session path", b.Planner.TranscriptLocator)
-	}
-	if b.CreatedAt.IsZero() {
-		t.Error("CreatedAt is zero, want set")
-	}
-}
-
-// TestBindRepoFactsFailureIsNil pins that a git failure never fails a bind:
-// captureRepo swallows it and RepoRef stays nil.
-func TestBindRepoFactsFailureIsNil(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
-	rt.Git = &fakeGit{repoFactsErr: errors.New("boom")}
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if b.RepoRef != nil {
-		t.Errorf("RepoRef = %+v, want nil when RepoFacts errors", b.RepoRef)
-	}
+	rt.Planners = reg
+	return rt
 }
 
 // testPlannerRegistry seeds a registry holding rec and returns it with the
@@ -110,38 +95,81 @@ func testPlannerRegistry(t *testing.T, rec planner.Record) (*planner.FileRegistr
 	return reg, created
 }
 
-// TestBindRecordsPlannerFromRegistry is the plan's required case (§3.2,
-// §5.3): with a registry configured, Binding.PlannerID, Planner.Kind and
-// Planner.SessionID come from the record -- not from the herdr agent list --
-// while Planner.PaneID comes from the pane env the caller passes.
-func TestBindRecordsPlannerFromRegistry(t *testing.T) {
-	t.Setenv("HERDR_PANE_ID", "w2:p9")
-
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
-	reg, rec := testPlannerRegistry(t, planner.Record{
-		ID:                "pl_aaaaaaaabbbb",
-		Name:              "architect-1",
-		HarnessKind:       "claude",
-		SessionID:         "sess-from-record",
-		CWD:               "/repo",
-		TranscriptLocator: "/home/x/.claude/projects/slug/S.jsonl",
-	})
-	rt.Planners = reg
+// TestBindRecordsRepoFeatureAndLocator pins #172: a fresh bind captures the
+// git repo identity (normalised), the human-given --feature label, and the
+// planner's own transcript file path (via rt.Sessions), and stamps CreatedAt.
+// TestBindRepoFactsFailureIsNil pins that a git failure never fails a bind:
+// captureRepo swallows it and RepoRef stays nil.
+func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		repoFactsOrigin:    "git@github.com:o/r.git",
+		repoFactsCommonDir: "/repo/.git",
+	}
+	rt.Sessions = func(kind, sessionID string) (string, bool) {
+		if kind == "claude" && sessionID == "sess-architect" {
+			return "/home/x/.claude/projects/slug/S.jsonl", true
+		}
+		return "", false
+	}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testOpencodeRef,
-		PlannerID:   rec.ID,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		CWD:         "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName,
+		CWD: "/repo", Feature: "auth",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	want := &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	if !reflect.DeepEqual(b.RepoRef, want) {
+		t.Errorf("RepoRef = %+v, want %+v", b.RepoRef, want)
+	}
+	if b.Feature != "auth" {
+		t.Errorf("Feature = %q, want auth", b.Feature)
+	}
+	if b.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
+		t.Errorf("Planner.TranscriptLocator = %q, want the resolved session path", b.Planner.TranscriptLocator)
+	}
+	if b.CreatedAt.IsZero() {
+		t.Error("CreatedAt must be stamped at bind")
+	}
+}
+
+func TestBindRepoFactsFailureIsNil(t *testing.T) {
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{repoFactsErr: errors.New("not a git repository")}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind must tolerate a git failure, got %v", err)
+	}
+	if b.RepoRef != nil {
+		t.Errorf("RepoRef = %+v, want nil", b.RepoRef)
+	}
+}
+
+// TestBindRecordsPlannerFromRegistry is the plan's required case (§3.2,
+// §5.3): with a registry configured, Binding.PlannerID, Planner.Kind and
+// Planner.SessionID come from the record. #303 deleted the pane the caller
+// used to pass, so Planner.PaneID is no longer written by anything (see the
+// field's own comment); the assertion on it is gone with the pane.
+func TestBindRecordsPlannerFromRegistry(t *testing.T) {
+	rt := runtimeWithPlanner(t, "sess-from-record", "/home/x/.claude/projects/slug/S.jsonl")
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name:      "webshop",
+		Candidate: testOpencodeRef,
+		PlannerID: testPlannerID,
+		CWD:       "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	if b.PlannerID != rec.ID {
-		t.Errorf("PlannerID = %q, want the record's %q", b.PlannerID, rec.ID)
+	if b.PlannerID != testPlannerID {
+		t.Errorf("PlannerID = %q, want the record's %q", b.PlannerID, testPlannerID)
 	}
 	if b.Planner.Kind != "claude" {
 		t.Errorf("Planner.Kind = %q, want the record's claude", b.Planner.Kind)
@@ -149,8 +177,8 @@ func TestBindRecordsPlannerFromRegistry(t *testing.T) {
 	if b.Planner.SessionID != "sess-from-record" {
 		t.Errorf("Planner.SessionID = %q, want the record's sess-from-record", b.Planner.SessionID)
 	}
-	if b.Planner.PaneID != "w2:p9" {
-		t.Errorf("Planner.PaneID = %q, want the pane env's w2:p9", b.Planner.PaneID)
+	if b.Planner.PaneID != "" {
+		t.Errorf("Planner.PaneID = %q, want empty: nothing writes a pane id since #303", b.Planner.PaneID)
 	}
 	if b.Planner.TranscriptLocator != "/home/x/.claude/projects/slug/S.jsonl" {
 		t.Errorf("Planner.TranscriptLocator = %q, want the record's", b.Planner.TranscriptLocator)
@@ -162,61 +190,57 @@ func TestBindRecordsPlannerFromRegistry(t *testing.T) {
 // $RELAY_PLANNER, no host and no detectable session -- a verb fails with
 // exactly the CLI's no-planner line. The old "no planner pane" error is gone.
 func TestBindNoPlannerIsHardError(t *testing.T) {
-	t.Setenv("HERDR_PANE_ID", "w2:p3")
 	t.Setenv("RELAY_PLANNER", "")
 	t.Setenv("CLAUDECODE", "")
 
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, CWD: "/repo",
 	})
 	if err == nil {
 		t.Fatal("Bind with no resolvable planner must fail")
 	}
-	const want = `no relay planner for this session. Run "relay planner init" once here, or enable the relay plugin (relay doctor).`
-	if err.Error() != want {
-		t.Errorf("err = %q, want exactly %q", err.Error(), want)
+	if err.Error() != ErrNoPlannerSession.Error() {
+		t.Errorf("err = %q, want exactly %q", err.Error(), ErrNoPlannerSession.Error())
 	}
 }
 
 // TestBindRejectsBadFeature pins that a bad --feature is refused before
 // anything is spawned, with the same error store.ValidFeature reports.
 func TestBindRejectsBadFeature(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Feature: "a/b",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo", Feature: "a/b",
 	})
 	if err == nil || !strings.Contains(err.Error(), "feature:") {
 		t.Fatalf("Bind err = %v, want one containing %q", err, "feature:")
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("a rejected feature must spawn no builder, got %d starts", len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a rejected feature must spawn no process, got %d", got)
 	}
 }
 
 // TestBindRefusesABuilderNameHerdrWouldRefuse pins #64: a 25-character binding
 // name passes the store's own limit but builds a 33-character agent name, and
-// Bind must refuse it before any pane is split, any agent started or any
-// binding saved.
+// Bind must refuse it before anything is started or any binding saved. #303
+// deleted herdr.ErrInvalidAgentName with the herdr client, so the wrapped
+// error is store.ValidName's own text.
 func TestBindRefusesABuilderNameHerdrWouldRefuse(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: name, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: name, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
-	if len(f.starts) != 0 || len(f.tabs) != 0 {
-		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(f.tabs), len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused name must start no process, got %d", got)
 	}
-	if !errors.Is(err, herdr.ErrInvalidAgentName) {
-		t.Fatalf("Bind err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Bind err = %v, want the agent-name length refusal", err)
 	}
 	if _, loadErr := rt.Store.Load(name); !errors.Is(loadErr, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound: a refused name saves no binding", loadErr)
@@ -254,52 +278,44 @@ func launchArgs(t *testing.T, rt Runtime, b store.Binding, tier harness.Tier) []
 }
 
 func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"test","model":"m","roles":["reviewer"]}]`)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testClaudeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Fatalf("want ErrRoleNotServed, got %v", err)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused bind must spawn nothing, got %d processes", got)
 	}
-	// Also assert no pane was SPLIT. Checking only f.starts cannot tell a
-	// refusal that happened before anything was created from one that ran after
-	// builderPane and left a pane behind with nothing pointing at it -- the
-	// ~800 MB leak CLAUDE.md warns about. This is what pins the refusal's
-	// placement ahead of builderPane.
-	if len(f.tabs) != 0 {
-		t.Errorf("created %d tabs; a refused bind must not create a pane it then abandons", len(f.tabs))
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("a refused bind must save no binding, Load = %v", loadErr)
 	}
 }
 
 func TestBindSpawnUnknownAliasFails(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "claude/test/nope", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "claude/test/nope", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, candidate.ErrUnknownCandidate) {
 		t.Fatalf("got %v, want ErrUnknownCandidate", err)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("an unknown alias must not start an agent, got %+v", f.starts)
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("an unknown alias must not start a process, got %d", got)
 	}
 }
 
 func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--x"]}]`)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -319,30 +335,25 @@ func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
 }
 
 func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrAmbiguousCandidate) {
 		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("started %d agents; a refused bind must spawn nothing", len(f.starts))
-	}
-	if len(f.tabs) != 0 {
-		t.Errorf("created %d tabs; a refused bind must not create a pane it then abandons", len(f.tabs))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused bind must spawn nothing, got %d processes", got)
 	}
 }
 
 func TestBindWithNoCandidatesSaysSo(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, "[]")
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrNoCandidates) {
 		t.Fatalf("want ErrNoCandidates, got %v", err)
@@ -350,33 +361,32 @@ func TestBindWithNoCandidatesSaysSo(t *testing.T) {
 }
 
 func TestResumeWithoutABuilderDoesNotSpawn(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/test/m", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "agy/test/m", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("seed Bind: %v", err)
 	}
-	f.starts = nil
+	fr := runnerOf(t, rt)
+	fr.specs = nil
 
 	_, err = Bind(context.Background(), rt, BindOptions{
-		Name: b.Name, Resume: true, Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: b.Name, Resume: true, Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("resume Bind: %v", err)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("resume without candidate must not spawn, got starts = %+v", f.starts)
+	if len(fr.specs) != 0 {
+		t.Errorf("resume without candidate must not spawn, got specs = %+v", fr.specs)
 	}
 }
 
 func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
-	opts := BindOptions{Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo"}
+	rt := newRuntime(t)
+	opts := BindOptions{Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo"}
 	if _, err := Bind(context.Background(), rt, opts); err != nil {
 		t.Fatalf("first Bind: %v", err)
 	}
@@ -389,27 +399,21 @@ func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
 }
 
 func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := runtimeWithPlanner(t, "planner-sess-2", "")
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	b.Round = 5
-	b.State = store.StateOrphaned
+	b.State = store.StateBroken
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	f.agents = []herdr.Agent{{
-		Kind: "claude", Status: herdr.StatusWorking, CWD: "/repo",
-		PaneID: "w7:pB", Session: herdr.Session{Value: "planner-sess-2"},
-	}}
-
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w7:pB", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("resume Bind: %v", err)
@@ -417,8 +421,11 @@ func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
 	if got.Round != 5 {
 		t.Errorf("resume must keep the round, got %d", got.Round)
 	}
-	if got.Planner.SessionID != "planner-sess-2" || got.Planner.PaneID != "w7:pB" {
+	if got.Planner.SessionID != "planner-sess-2" {
 		t.Errorf("resume must repoint the planner, got %+v", got.Planner)
+	}
+	if got.PlannerID != testPlannerID {
+		t.Errorf("PlannerID = %q, want the record's %q", got.PlannerID, testPlannerID)
 	}
 	if got.State != store.StateActive {
 		t.Errorf("state = %s, want active", got.State)
@@ -431,16 +438,15 @@ func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
 // (which endpointOf wipes along with the rest of the old Planner endpoint)
 // since it was previously empty.
 func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := runtimeWithPlanner(t, "planner-sess", "")
 
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
 		Round:   3,
-		State:   store.StateOrphaned,
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"},
+		State:   store.StateBroken,
+		Planner: store.Endpoint{Kind: "claude", SessionID: "old-sess"},
+		Builder: store.Endpoint{AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless},
 		RepoRef: &store.RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"},
 		Feature: "auth",
 	}
@@ -456,7 +462,7 @@ func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("resume Bind: %v", err)
@@ -479,16 +485,15 @@ func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
 // must not overwrite it with whatever rt.Sessions resolves for the new
 // planner pane's session.
 func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
 		Round:   3,
-		State:   store.StateOrphaned,
-		Planner: store.Endpoint{PaneID: "w1:p1", TranscriptLocator: "/already/set.jsonl"},
-		Builder: store.Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"},
+		State:   store.StateBroken,
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect", TranscriptLocator: "/already/set.jsonl"},
+		Builder: store.Endpoint{AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
@@ -499,7 +504,7 @@ func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("resume Bind: %v", err)
@@ -528,33 +533,34 @@ func TestSanitizeName(t *testing.T) {
 // log.jsonl and NNN-*.md files survive and a fresh round 1 collides with the
 // old round 1. Reconcile then reads the old report entry as "already handled"
 // and the binding stalls with no error and no notification.
+// TestBindResumeStillAdoptsAnExistingName guards the exit the refusal offers.
+// TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
+// restores the released worktree and rebinds a fresh builder even though the
+// caller passed neither --rebind nor --builder, because a paused binding has
+// no builder identity left to keep.
 func TestBindRefusesExistingName(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	existing := store.Binding{
 		Name: "webshop", CWD: "/repo", Round: 4, State: store.StateDone,
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{PaneID: "w1:p2"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder: store.Endpoint{Mode: store.ModeHeadless, AgentName: "webshop-builder"},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err == nil {
 		t.Fatal("binding an existing name must be refused")
 	}
 
-	// The refusal has to happen before anything is spawned, or it strands a
-	// live builder pane with nothing pointing at it.
-	if len(f.starts) != 0 {
-		t.Errorf("no agent may be started, got %+v", f.starts)
-	}
-	if len(f.tabs) != 0 {
-		t.Errorf("no tab may be created, got %d", len(f.tabs))
+	// The refusal has to happen before anything is started, or it strands a
+	// live builder process with nothing pointing at it.
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("no process may be started, got %d", got)
 	}
 
 	if !strings.Contains(err.Error(), "relay unbind webshop") {
@@ -569,36 +575,37 @@ func TestBindRefusesExistingName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Round != 4 || got.Builder.PaneID != "w1:p2" {
+	if got.Round != 4 || got.Builder.AgentName != "webshop-builder" {
 		t.Errorf("refused bind must not rewrite the binding, got %+v", got)
 	}
 }
 
-// TestBindResumeStillAdoptsAnExistingName guards the exit the refusal offers.
 func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	existing := store.Binding{
-		Name: "webshop", CWD: "/repo", Round: 4, State: store.StateOrphaned,
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{PaneID: "w1:p2"},
+		Name: "webshop", CWD: "/repo", Round: 4, State: store.StateBroken,
+		Planner: store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder: store.Endpoint{AgentName: "webshop-builder", Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("resume must still adopt an existing binding: %v", err)
 	}
-	if got.Round != 4 || got.Planner.PaneID != "w2:p3" || got.State != store.StateActive {
+	if got.Round != 4 || got.State != store.StateActive {
 		t.Errorf("resume = %+v", got)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("resume must not start an agent, got %+v", f.starts)
+	if got.Planner.SessionID != "sess-architect" {
+		t.Errorf("resume must repoint the planner, got %+v", got.Planner)
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("resume must not start a process, got %d", got)
 	}
 }
 
@@ -614,26 +621,19 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 		HaltAt:            baseTime,
 		BuilderScreen:     "some terminal output",
 		BuilderScreenAt:   baseTime,
-		Planner:           store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:           store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		Planner:           store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder:           store.Endpoint{Mode: store.ModeHeadless, Kind: "opencode", AgentName: "webshop-builder"},
 		BuilderCandidate:  testOpencodeRef,
 	}
 
 	t.Run("spawn replacement builder", func(t *testing.T) {
-		f := &fakeHerdr{
-			agents: []herdr.Agent{
-				plannerAgent(),
-				{Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
-			},
-			newPane: "w2:p9",
-		}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		if err := rt.Store.Save(existing); err != nil {
 			t.Fatalf("seed existing binding: %v", err)
 		}
 
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("rebind: %v", err)
@@ -688,16 +688,15 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 }
 
 func TestBindResumeDoneBindingScope(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
 		Round:   4,
 		State:   store.StateDone,
-		Planner: store.Endpoint{PaneID: "w1:p1"},
-		Builder: store.Endpoint{PaneID: "w1:p2", SessionID: "builder-sess"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder: store.Endpoint{Mode: store.ModeHeadless, AgentName: "webshop-builder", Kind: "opencode"},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
@@ -705,7 +704,7 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 
 	t.Run("planner-only resume of DONE binding succeeds", func(t *testing.T) {
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("planner-only resume on done binding must succeed: %v", err)
@@ -713,14 +712,14 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 		if got.State != store.StateActive {
 			t.Errorf("state = %s, want active", got.State)
 		}
-		if got.Planner.PaneID != "w2:p3" {
-			t.Errorf("Planner.PaneID = %q, want w2:p3", got.Planner.PaneID)
+		if got.Planner.SessionID != "sess-architect" {
+			t.Errorf("Planner.SessionID = %q, want the record's", got.Planner.SessionID)
 		}
 		if got.Builder != existing.Builder {
 			t.Errorf("Builder = %+v, want %+v (untouched)", got.Builder, existing.Builder)
 		}
-		if len(f.tabs) != 0 || len(f.starts) != 0 {
-			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
+		if got := len(runnerOf(t, rt).specs); got != 0 {
+			t.Errorf("no process may be started, got %d", got)
 		}
 	})
 
@@ -730,7 +729,7 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 			t.Fatalf("reset existing binding: %v", err)
 		}
 		_, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 		})
 		if err == nil {
 			t.Fatal("rebind on done binding must be refused")
@@ -739,15 +738,14 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 		if !strings.Contains(err.Error(), wantMsg) {
 			t.Errorf("error = %q, want containing %q", err.Error(), wantMsg)
 		}
-		if len(f.tabs) != 0 || len(f.starts) != 0 {
-			t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
+		if got := len(runnerOf(t, rt).specs); got != 0 {
+			t.Errorf("no process may be started, got %d", got)
 		}
 	})
 }
 
 func TestResumeRestoresMissingWorktree(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -759,15 +757,15 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -799,8 +797,7 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 // caller passed neither --rebind nor --builder, because a paused binding has
 // no builder identity left to keep.
 func TestResumePausedRestoresAndRebinds(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -814,15 +811,15 @@ func TestResumePausedRestoresAndRebinds(t *testing.T) {
 		Branch:   "relay/webshop",
 		Round:    4,
 		State:    store.StatePaused,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{Kind: "agy"}, // pause cleared PaneID, kept Kind
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Kind: "agy", Mode: store.ModeHeadless}, // pause cleared the identity
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	got, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -857,13 +854,11 @@ func TestResumePausedRestoresAndRebinds(t *testing.T) {
 }
 
 func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
-	fr := newFakeRunner()
-	rt.Runner = fr
+	rt.Runner = newFakeRunner()
 
 	wt := filepath.Join(t.TempDir(), "gone")
 	existing := store.Binding{
@@ -872,7 +867,7 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
 		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
@@ -880,7 +875,7 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 	}
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -894,8 +889,7 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 }
 
 func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -907,15 +901,15 @@ func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
 		Worktree: wt,
 		Branch:   "",
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "no branch is recorded") {
 		t.Fatalf("err = %v, want containing 'no branch is recorded'", err)
@@ -933,8 +927,7 @@ func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
 }
 
 func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{} // branchExists stays false: the caller's cwd has no relay/webshop
 	rt.Git = fg
 
@@ -945,15 +938,15 @@ func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/elsewhere",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/elsewhere",
 	})
 	if err == nil || !strings.Contains(err.Error(), "run resume from the repository") {
 		t.Fatalf("err = %v, want 'run resume from the repository'", err)
@@ -974,8 +967,7 @@ func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
 }
 
 func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{checkoutWorktreeErr: git.ErrBranchCheckedOut}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -987,27 +979,26 @@ func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err == nil || !strings.Contains(err.Error(), "git worktree list") {
 		t.Fatalf("err = %v, want containing 'git worktree list'", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("tabs=%d starts=%+v, want none", len(f.tabs), f.starts)
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused resume must start no process, got %d", got)
 	}
 }
 
 func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -1019,15 +1010,15 @@ func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
 		Worktree: wt,
 		Branch:   "relay/webshop",
 		State:    store.StateActive,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatal(err)
 	}
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -1041,18 +1032,7 @@ func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
 }
 
 func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
-	oldBuilder := herdr.Agent{
-		Name:   "webshop-builder",
-		Kind:   "opencode",
-		Status: herdr.StatusIdle,
-		PaneID: "w2:p4",
-		CWD:    "/repo",
-	}
-	f := &fakeHerdr{
-		agents:  []herdr.Agent{plannerAgent(), oldBuilder},
-		newPane: "w2:p5",
-	}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fg.branchExists = true // relay/webshop lives in the caller's repo
@@ -1065,15 +1045,15 @@ func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
 		Branch:   "relay/webshop",
 		Round:    4,
 		State:    store.StateDone,
-		Planner:  store.Endpoint{PaneID: "w2:p3"},
-		Builder:  store.Endpoint{PaneID: "w2:p4"},
+		Planner:  store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:  store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
 	}
 
 	got, _, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Rebind: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Rebind: true, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -1090,27 +1070,25 @@ func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
 }
 
 func TestBindRebindNotFound(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("got err = %v, want store.ErrNotFound", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("no tab may be created or agent started, tabs=%d starts=%+v", len(f.tabs), f.starts)
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("no process may be started, got %d", got)
 	}
 }
 
 func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 	t.Run("override is stored", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 
 		b, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 			RoundTimeout: 90 * time.Minute,
 		})
 		if err != nil {
@@ -1122,11 +1100,10 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 	})
 
 	t.Run("default is a day, not half an hour", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 
 		b, err := Bind(context.Background(), rt, BindOptions{
-			Name: "kobe", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo2",
+			Name: "kobe", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo2",
 		})
 		if err != nil {
 			t.Fatalf("Bind: %v", err)
@@ -1143,11 +1120,10 @@ func TestUnbindTeardown(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("ordinary binding unbinds with all-zero result", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		b := store.Binding{
 			Name: "webshop", CWD: "/repo", State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1167,15 +1143,14 @@ func TestUnbindTeardown(t *testing.T) {
 
 	t.Run("clean worktree is removed", func(t *testing.T) {
 		fg := &fakeGit{}
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		rt.Git = fg
 
 		wt := t.TempDir()
 		b := store.Binding{
 			Name: "fork-clean", CWD: wt,
 			Worktree: wt, State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1204,15 +1179,14 @@ func TestUnbindTeardown(t *testing.T) {
 
 	t.Run("dirty worktree is kept and says why", func(t *testing.T) {
 		fg := &fakeGit{dirtyResult: true}
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		rt.Git = fg
 
 		wt := t.TempDir()
 		b := store.Binding{
 			Name: "fork-dirty", CWD: wt,
 			Worktree: wt, State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1241,15 +1215,14 @@ func TestUnbindTeardown(t *testing.T) {
 
 	t.Run("dirty check error keeps worktree with honest reason", func(t *testing.T) {
 		fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		rt.Git = fg
 
 		wt := t.TempDir()
 		b := store.Binding{
 			Name: "fork-dirty-err", CWD: wt,
 			Worktree: wt, State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1271,14 +1244,13 @@ func TestUnbindTeardown(t *testing.T) {
 	})
 
 	t.Run("git unavailable keeps worktree", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		rt.Git = nil
 
 		b := store.Binding{
 			Name: "fork-nogit", CWD: "/state/.worktrees/fork-nogit",
 			Worktree: "/state/.worktrees/fork-nogit", State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1298,15 +1270,14 @@ func TestUnbindTeardown(t *testing.T) {
 
 	t.Run("git remove failure keeps worktree and completes unbind", func(t *testing.T) {
 		fg := &fakeGit{removeWorktreeErr: errors.New("git lock locked\ndetails")}
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		rt.Git = fg
 
 		wt := t.TempDir()
 		b := store.Binding{
 			Name: "fork-fail", CWD: wt,
 			Worktree: wt, State: store.StateActive,
-			Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 		}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -1331,15 +1302,14 @@ func TestUnbindTeardown(t *testing.T) {
 func TestUnbindReportsAnAlreadyGoneWorktree(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGit{}
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	missingWT := filepath.Join(t.TempDir(), "already-gone-worktree")
 	b := store.Binding{
 		Name: "fork-gone", CWD: "/repo",
 		Worktree: missingWT, State: store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
 	}
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -1366,18 +1336,9 @@ func TestUnbindReportsAnAlreadyGoneWorktree(t *testing.T) {
 	}
 }
 
-// A session-less builder that cannot be located may be dead or may be alive in
-// a pane that moved workspaces. relay cannot tell, so it must not spawn a
-// replacement on the guess -- that is how a live builder gets orphaned.
-// A builder with a recorded session is unambiguous: if no live agent carries
-// that session it really is gone, so the gate must not fire.
-// A builder with an agent name is unambiguous: it can be identified by name, so
-// the gate must not fire even when SessionID is empty and a round was open.
-// --assume-dead releases only the unverifiable case. A builder relay can
-// positively see is alive is still refused: that is #20's guarantee.
-// #20's recovery (PR #22): a session-less builder with no round in flight is
-// unambiguous enough to rebind without ceremony. The gate must not broaden to
-// catch this case -- if it ever does, this test fails loudly.
+// TestResumeRebindClearsRoundClosedTree: a rebind replaces the builder, so a
+// tree that changed hands says nothing about the new one and RoundClosedTree
+// is cleared.
 func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 	existing := store.Binding{
 		Name:             "webshop",
@@ -1385,26 +1346,19 @@ func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 		Round:            3,
 		RoundClosedTree:  "tree-closed-123",
 		State:            store.StateActive,
-		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:          store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess"},
+		Planner:          store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder:          store.Endpoint{Mode: store.ModeHeadless, Kind: "opencode"},
 		BuilderCandidate: testOpencodeRef,
 	}
 
 	t.Run("with alias", func(t *testing.T) {
-		f := &fakeHerdr{
-			agents: []herdr.Agent{
-				plannerAgent(),
-				{Kind: "opencode", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
-			},
-			newPane: "w2:p9",
-		}
-		rt := newRuntime(t, f)
+		rt := newRuntime(t)
 		if err := rt.Store.Save(existing); err != nil {
 			t.Fatalf("seed existing binding: %v", err)
 		}
 
 		got, err := Bind(context.Background(), rt, BindOptions{
-			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo",
+			Name: "webshop", Resume: true, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
 		})
 		if err != nil {
 			t.Fatalf("Bind resume with alias: %v", err)
@@ -1425,11 +1379,7 @@ func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 }
 
 func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{
-		{Kind: "claude", Status: herdr.StatusWorking, CWD: "/repo",
-			PaneID: "w7:pB", Session: herdr.Session{Value: "planner-sess-2"}},
-	}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	const closedTree = "tree-closed-123"
 	existing := store.Binding{
@@ -1437,16 +1387,16 @@ func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
 		CWD:             "/repo",
 		Round:           3,
 		RoundClosedTree: closedTree,
-		State:           store.StateOrphaned,
-		Planner:         store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:         store.Endpoint{PaneID: "w2:p4", SessionID: "builder-sess"},
+		State:           store.StateBroken,
+		Planner:         store.Endpoint{Kind: "claude", SessionID: "old"},
+		Builder:         store.Endpoint{Mode: store.ModeHeadless, AgentName: "webshop-builder"},
 	}
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed existing binding: %v", err)
 	}
 
 	got, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, PlannerPane: "w7:pB", CWD: "/repo",
+		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind resume planner only: %v", err)
@@ -1474,25 +1424,18 @@ func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 		CWD:              "/repo",
 		Round:            3,
 		State:            store.StateBroken,
-		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
-		Builder:          store.Endpoint{PaneID: "w2:p4", SessionID: "dead-builder-sess", Kind: "opencode"},
+		Planner:          store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder:          store.Endpoint{Mode: store.ModeHeadless, Kind: "opencode", AgentName: "webshop-builder"},
 		BuilderCandidate: testOpencodeRef,
 	}
-	f := &fakeHerdr{
-		agents: []herdr.Agent{
-			plannerAgent(),
-			{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p9", Session: herdr.Session{Value: "new-builder-sess"}},
-		},
-		newPane: "w2:p9",
-	}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
 	if err := rt.Store.Save(existing); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	got, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Rebind: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
@@ -1524,17 +1467,16 @@ func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 }
 
 func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo", Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind --headless: %v", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Fatalf("headless must open no tab and start no agent: tabs=%d starts=%d", len(f.tabs), len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Fatalf("headless bind must start no process, got %d", got)
 	}
 	ep := b.Builder
 	if !ep.Headless() || ep.Mode != store.ModeHeadless {
@@ -1554,7 +1496,7 @@ func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
 	}
 	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil || len(entries) != 1 || entries[0].Kind != store.KindPick {
-		t.Errorf("a fresh headless binding logs its pick and nothing else: %+v (%v)", entries, err)
+		t.Errorf("a fresh binding logs its pick and nothing else: %+v (%v)", entries, err)
 	}
 	// The stored binding reads back headless too.
 	stored, err := rt.Store.Load("webshop")
@@ -1571,15 +1513,14 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 		CWD:     "/repo",
 		Round:   4,
 		State:   store.StateBroken,
-		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
 		Builder: store.Endpoint{
 			AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless,
 			PID: 4321, StartedAt: 1_700_000_000, LogPath: "/state/webshop/004-builder.log",
 		},
 		BuilderCandidate: testOpencodeRef,
 	}
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
 	fr := newFakeRunner()
 	fr.script(4321, false) // the old process is gone
@@ -1589,13 +1530,13 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 	}
 
 	got, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Rebind: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Fatalf("a headless rebind must open no tab and start no agent: tabs=%+v starts=%+v", f.tabs, f.starts)
+	if len(fr.specs) != 0 {
+		t.Fatalf("a headless rebind must start no process: specs=%+v", fr.specs)
 	}
 	ep := got.Builder
 	if !ep.Headless() || ep.Mode != store.ModeHeadless {
@@ -1616,23 +1557,22 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 	}
 }
 
-// herdr's agent list cannot see a process, so a headless binding's liveness
-// is the Runner's answer. A live process refuses the rebind (§4.3).
+// The Runner is the only thing that can see a process, so a headless
+// binding's liveness is its answer. A live process refuses the rebind (§4.3).
 func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
 		Round:   4,
 		State:   store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
 		Builder: store.Endpoint{
 			AgentName: "webshop-builder", Kind: "opencode", Mode: store.ModeHeadless,
 			PID: 4321, StartedAt: 1_700_000_000, LogPath: "/state/webshop/004-builder.log",
 		},
 		BuilderCandidate: testOpencodeRef,
 	}
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
 	fr := newFakeRunner()
 	fr.script(4321, true) // still running
@@ -1642,13 +1582,13 @@ func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Resume: true, Rebind: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrBuilderAlive) {
 		t.Fatalf("err = %v, want ErrBuilderAlive", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("a refused rebind must spawn nothing: tabs=%+v starts=%+v", f.tabs, f.starts)
+	if len(fr.specs) != 0 {
+		t.Errorf("a refused rebind must start no process: specs=%+v", fr.specs)
 	}
 	stored, err := rt.Store.Load("webshop")
 	if err != nil || stored.Builder.PID != 4321 || !stored.Builder.Headless() {
@@ -1656,16 +1596,14 @@ func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 	}
 }
 
-// A pane cannot replace a process builder; the mode is fixed at creation.
 func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
 	// The agent name is validated even though no herdr agent is started:
 	// the name is what status, log and a later pane-mode rebind identify
 	// the builder by, and the limit must not depend on the mode.
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: name, Candidate: testOpencodeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+		Name: name, Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo", Headless: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "builder agent name") {
 		t.Fatalf("err = %v, want the agent-name refusal", err)
@@ -1673,15 +1611,14 @@ func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
 }
 
 func TestBindWithTierEditOnClaude(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testClaudeRef,
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Tier:        "edit",
+		Name:      "webshop",
+		Candidate: testClaudeRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Tier:      "edit",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1698,21 +1635,20 @@ func TestBindWithTierEditOnClaude(t *testing.T) {
 }
 
 func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testClaudeRef,
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Tier:        "yolo",
+		Name:      "webshop",
+		Candidate: testClaudeRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Tier:      "yolo",
 	})
 	if !errors.Is(err, ErrTierAboveMax) {
 		t.Fatalf("err = %v, want ErrTierAboveMax", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused tier must start no process, got %d", got)
 	}
 	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
@@ -1720,21 +1656,20 @@ func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
 }
 
 func TestBindOpencodeCandidateTierReadRefused(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testOpencodeRef,
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Tier:        "read",
+		Name:      "webshop",
+		Candidate: testOpencodeRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Tier:      "read",
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
 	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused tier must start no process, got %d", got)
 	}
 	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
@@ -1742,15 +1677,14 @@ func TestBindOpencodeCandidateTierReadRefused(t *testing.T) {
 }
 
 func TestBindPolicyTierBuilderRead(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy.Tier = map[string]string{"builder": "read"}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testClaudeRef,
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
+		Name:      "webshop",
+		Candidate: testClaudeRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1767,18 +1701,17 @@ func TestBindPolicyTierBuilderRead(t *testing.T) {
 		}
 	}
 	if !hasFlag {
-		t.Errorf("expected --permission-mode plan in starts[0].Args, got %v", f.starts[0].Args)
+		t.Errorf("expected --permission-mode plan in the launch args, got %v", args)
 	}
 }
 
 // TestBindGateFlagStored pins #132: an explicit --gate is stored on the
 // binding as given.
 func TestBindGateFlagStored(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 		Gate: "make check",
 	})
 	if err != nil {
@@ -1792,12 +1725,11 @@ func TestBindGateFlagStored(t *testing.T) {
 // TestBindGatePolicyDefaultApplied pins #132: with no --gate, policy.json's
 // gate.default is used.
 func TestBindGatePolicyDefaultApplied(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1810,12 +1742,11 @@ func TestBindGatePolicyDefaultApplied(t *testing.T) {
 // TestBindNoGateOverridesPolicyDefault pins #132: --no-gate opts a binding
 // out of policy.json's gate.default.
 func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 		NoGate: true,
 	})
 	if err != nil {
@@ -1830,9 +1761,8 @@ func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
 // inherits the source binding's Gate.
 func TestForkInheritsSourceGate(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -1849,10 +1779,10 @@ func TestForkInheritsSourceGate(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)
@@ -1873,11 +1803,10 @@ func TestForkInheritsSourceGate(t *testing.T) {
 // TestBindRegateFlagStored pins #132 part 2: an explicit --regate is stored on
 // the binding as given.
 func TestBindRegateFlagStored(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 		Regate: ptr(3),
 	})
 	if err != nil {
@@ -1898,12 +1827,11 @@ func TestBindRegateFlagStored(t *testing.T) {
 // TestBindRegatePolicyDefaultApplied pins #132 part 2: with no --regate,
 // policy.json's gate.regate becomes the binding's budget.
 func TestBindRegatePolicyDefaultApplied(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1916,12 +1844,11 @@ func TestBindRegatePolicyDefaultApplied(t *testing.T) {
 // TestBindRegateFlagOverridesPolicy pins #132 part 2: an explicit --regate 0
 // turns the policy default off for this binding.
 func TestBindRegateFlagOverridesPolicy(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 		Regate: ptr(0),
 	})
 	if err != nil {
@@ -1936,9 +1863,8 @@ func TestBindRegateFlagOverridesPolicy(t *testing.T) {
 // inherits the source binding's budget.
 func TestForkInheritsSourceRegate(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -1955,10 +1881,10 @@ func TestForkInheritsSourceRegate(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)
@@ -1980,9 +1906,8 @@ func TestForkInheritsSourceRegate(t *testing.T) {
 // a fork wins over the source's budget.
 func TestForkRegateFlagOverridesSource(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -1999,11 +1924,11 @@ func TestForkRegateFlagOverridesSource(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
-		Regate:      ptr(0),
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
+		Regate:    ptr(0),
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)

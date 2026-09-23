@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -1516,495 +1515,26 @@ func remoteBinding(server string) store.Binding {
 	}
 }
 
-func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
-		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Builder.RemoteStatus != string(remote.RoundRunning) {
-		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundRunning)
-	}
-	data, err := os.ReadFile(st.BuilderLogPath("api", 1))
-	if err != nil {
-		t.Fatalf("read mirrored log: %v", err)
-	}
-	if string(data) != "builder log line 1\n" {
-		t.Fatalf("log = %q, want mirrored content", string(data))
-	}
-	foundGet, foundLog := false, false
-	for _, c := range fr.calls {
-		if c == "GetBinding:zen:api" {
-			foundGet = true
-		}
-		if c == "RoundFile:zen:api:1:log" {
-			foundLog = true
-		}
-	}
-	if !foundGet || !foundLog {
-		t.Fatalf("calls = %v, want GetBinding and RoundFile(log)", fr.calls)
-	}
-	if got.State != store.StateActive {
-		t.Fatalf("state = %s, want active while running", got.State)
-	}
-}
-
 // TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
 // round's stall stamp rides from the server view onto the client binding,
 // status shows it, and a later view without one clears it.
-func TestObserveRemoteCopiesStalledSince(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	stalled := baseTime.Add(-20 * time.Minute)
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
-		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if !got.StalledSince.Equal(stalled) {
-		t.Fatalf("StalledSince = %s, want the view's %s", got.StalledSince, stalled)
-	}
-
-	// Status reads the stamp and labels the remote row stalled.
-	if err := st.Save(got); err != nil {
-		t.Fatal(err)
-	}
-	rep, err := Status(context.Background(), rt)
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if len(rep.Bindings) != 1 {
-		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
-	}
-	if status := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(status, "stalled ") {
-		t.Fatalf("BuilderStatus = %q, want it to start with %q", status, "stalled ")
-	} else if !strings.Contains(status, AgeText(baseTime.Sub(stalled))) {
-		t.Errorf("BuilderStatus = %q, want it to contain the age %q", status, AgeText(baseTime.Sub(stalled)))
-	}
-
-	// A later view with a zero stamp clears it.
-	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
-	got2, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile (cleared): %v", err)
-	}
-	if !got2.StalledSince.IsZero() {
-		t.Fatalf("StalledSince = %s, want zero once the view has none", got2.StalledSince)
-	}
-}
-
 // TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
 // view copies the server's queue facts onto Builder.RemoteQueue, sets
 // RemoteStatus to "queued", and neither halts nor catches up.
-func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("contabo")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	since := baseTime.Add(-4 * time.Minute)
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundQueued,
-			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since},
-		},
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Builder.RemoteStatus != string(remote.RoundQueued) {
-		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundQueued)
-	}
-	if got.Builder.RemoteQueue == nil {
-		t.Fatal("RemoteQueue = nil, want the view's facts")
-	}
-	want := store.QueueFacts{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since}
-	if *got.Builder.RemoteQueue != want {
-		t.Errorf("RemoteQueue = %+v, want %+v", *got.Builder.RemoteQueue, want)
-	}
-	if got.State == store.StateNeedsYou || got.State == store.StateBroken {
-		t.Errorf("state = %s, want no halt while queued", got.State)
-	}
-}
-
 // TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
 // was queued and now observes a running view drops its stale RemoteQueue.
-func TestObserveRemoteRunningClearsQueue(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("contabo")
-	b.Builder.RemoteStatus = string(remote.RoundQueued)
-	b.Builder.RemoteQueue = &store.QueueFacts{Position: 1, Ahead: 0, Running: 2, Cap: 3, Since: baseTime.Add(-time.Minute)}
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
-		roundFileResp:  io.NopCloser(strings.NewReader("")),
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Builder.RemoteQueue != nil {
-		t.Errorf("RemoteQueue = %+v, want nil once the round is running", got.Builder.RemoteQueue)
-	}
-}
-
 // TestReconcileRemoteRefreshesCandidate checks that a server-side switch
 // (the round is now running a different candidate than this binding last
 // recorded) updates the token and harness kind and logs a switch entry
 // naming the server, and that a later tick whose view still names the same
 // candidate adds nothing more (#100 step 2).
-func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.BuilderCandidate = "claude/anthropic/haiku"
-	b.Builder.Kind = "claude"
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
-		roundFileResp:  io.NopCloser(strings.NewReader("")),
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.BuilderCandidate != "opencode/anthropic/sonnet" {
-		t.Fatalf("BuilderCandidate = %q, want the server's candidate", got.BuilderCandidate)
-	}
-	if got.Builder.Kind != "opencode" {
-		t.Fatalf("Builder.Kind = %q, want opencode", got.Builder.Kind)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	switches := 0
-	var note string
-	for _, e := range entries {
-		if e.Kind == store.KindSwitch {
-			switches++
-			note = e.Note
-		}
-	}
-	if switches != 1 {
-		t.Fatalf("switch entries = %d, want 1", switches)
-	}
-	if !strings.Contains(note, "zen") || !strings.Contains(note, "claude/anthropic/haiku") || !strings.Contains(note, "opencode/anthropic/sonnet") {
-		t.Fatalf("switch note = %q, want it to name the server and both tokens", note)
-	}
-
-	// Mutation target: compare view.Candidate against something other than
-	// b.BuilderCandidate (or drop the comparison entirely) and a second,
-	// identical view adds a second switch entry instead of nothing.
-	got2, err := reconcile(t, rt, got, agents)
-	if err != nil {
-		t.Fatalf("Reconcile (second tick): %v", err)
-	}
-	if got2.BuilderCandidate != "opencode/anthropic/sonnet" {
-		t.Fatalf("BuilderCandidate after second tick = %q, want unchanged", got2.BuilderCandidate)
-	}
-	entries2, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	switches2 := 0
-	for _, e := range entries2 {
-		if e.Kind == store.KindSwitch {
-			switches2++
-		}
-	}
-	if switches2 != 1 {
-		t.Fatalf("switch entries after an identical second view = %d, want still 1", switches2)
-	}
-}
-
-func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"},
-	}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you", got.State)
-	}
-	if got.Halt != "stuck at a dialog" {
-		t.Fatalf("Halt = %q, want the server's halt text", got.Halt)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "stuck at a dialog") {
-		t.Fatalf("notices = %v, want one naming the server's halt", f.notices)
-	}
-}
-
-func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.RoundTimeoutMS = 1000 // 1s budget; unreachableGrace (30m) is what keeps this from halting below
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.RemoteUnreachableSince.IsZero() {
-		t.Fatal("RemoteUnreachableSince must be set once unreachable")
-	}
-	if got.Builder.RemoteStatus != "unreachable" {
-		t.Fatalf("RemoteStatus = %q, want unreachable", got.Builder.RemoteStatus)
-	}
-
-	// Five minutes later: well past the 1s budget alone, but inside the 30m
-	// grace, so this must not halt.
-	got, err = reconcile(t, at(rt, 5*time.Minute), got, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State == store.StateNeedsYou {
-		t.Fatalf("halted after 5m unreachable; the grace should have covered it")
-	}
-	if len(f.notices) != 0 {
-		t.Fatalf("notices = %v, want none before the grace elapses", f.notices)
-	}
-}
-
-func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.RoundTimeoutMS = 1000 // 1s budget
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WithLock(func(tx *store.Tx) error {
-		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-
-	// Past the 1s budget plus the 30m unreachableGrace: this must halt.
-	// Mutation target: drop "+ unreachableGrace" from the comparison in
-	// reconcileRemote and this halt fires one tick early (or the
-	// not-halt test above starts halting instead).
-	got, err = reconcile(t, at(rt, 31*time.Minute), got, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you past budget+grace", got.State)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "unreachable for") || !strings.Contains(f.notices[0], "may still be running there") {
-		t.Fatalf("notices = %v, want the unreachable-past-budget halt", f.notices)
-	}
-}
-
-func TestReconcileRemote401Halts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: "revoked", Message: "key revoked"}}}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you on 401", got.State)
-	}
-	if !strings.Contains(got.Halt, "key revoked") {
-		t.Fatalf("Halt = %q, want the server's message", got.Halt)
-	}
-}
-
-func TestReconcileRemote404Halts(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "gone"}}}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you on 404", got.State)
-	}
-	if !strings.Contains(got.Halt, "binding removed by the server admin") {
-		t.Fatalf("Halt = %q, want the removed-by-admin message", got.Halt)
-	}
-}
-
 // TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
 // (the read path `relay status`/`pull`/`wait` share, spec §2.2) collects a
 // closed round -- the report entry lands, pending -- without ever
 // delivering it to a planner pane.
-func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	synced, err := SyncRemote(context.Background(), rt)
-	if err != nil {
-		t.Fatalf("SyncRemote: %v", err)
-	}
-	if synced != 1 {
-		t.Fatalf("synced = %d, want 1", synced)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			found = true
-			if e.Confirmed {
-				t.Fatal("report entry must still be pending: SyncRemote must never deliver it")
-			}
-		}
-	}
-	if !found {
-		t.Fatal("no report entry after SyncRemote collected the closed round")
-	}
-
-	got, err := st.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Mutation target: have SyncRemote call reconcileRemote instead of
-	// observeRemote, and this assertion fails: reconcileRemote's
-	// deliverAndSettle reads a nil agents list as "the planner is gone"
-	// and orphans the binding.
-	if got.State == store.StateOrphaned {
-		t.Fatal("SyncRemote must not deliver, so it must never orphan a binding")
-	}
-}
-
 // TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
 // network for a binding it should not sync: one already DONE, and one that
 // is not a remote binding at all.
-func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
-	st := store.New(t.TempDir())
-
-	doneRemote := remoteBinding("zen")
-	doneRemote.Name = "done-remote"
-	doneRemote.State = store.StateDone
-	if err := st.Save(doneRemote); err != nil {
-		t.Fatal(err)
-	}
-
-	local := store.Binding{
-		Name: "local", CWD: "/fake/repo", State: store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
-	}
-	if err := st.Save(local); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Now: func() time.Time { return baseTime }}
-
-	synced, err := SyncRemote(context.Background(), rt)
-	if err != nil {
-		t.Fatalf("SyncRemote: %v", err)
-	}
-	if synced != 0 {
-		t.Fatalf("synced = %d, want 0: a DONE remote binding and a local binding must both be skipped", synced)
-	}
-	if len(fr.calls) != 0 {
-		t.Fatalf("fakeRemote calls = %v, want none: SyncRemote must not touch the network for a skipped binding", fr.calls)
-	}
-}
-
 // newRemoteClientRepo creates a client-side repo (what a remote binding's
 // Repo points at day to day) with one commit and a "relay/<name>" branch ref
 // at that commit -- not checked out, matching the ordinary case where the
@@ -2052,319 +1582,11 @@ func newRoundResultBundle(t *testing.T, ctx context.Context, g *git.Client, base
 	return snap.Body, headSHA
 }
 
-func TestCatchUpOrderAndIdempotence(t *testing.T) {
-	ctx := context.Background()
-	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-	clientRepo, c1 := newRemoteClientRepo(t, "api")
-
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.Repo = clientRepo
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-	}
-	rt := Runtime{
-		Store:     st,
-		Herdr:     &fakeHerdr{},
-		Remote:    fr,
-		Transport: remote.NewBundleTransport(g, t.TempDir()),
-		Now:       func() time.Time { return baseTime },
-	}
-	agents := []herdr.Agent{plannerAgent()}
-
-	// First tick: the server hands back a bundle that carries an extra ref
-	// the client never allowed (view.DirtyCommit == "", so only the branch
-	// itself is permitted). A real Absorb genuinely fails on this --
-	// ErrUnexpectedRef -- which is what lets this test tell "Ack moved
-	// before Absorb" apart from "Ack never runs at all": the RPC round-trip
-	// (RoundFile, RoundBundle) succeeds, catchUp actually reaches Absorb, and
-	// only Absorb itself rejects the bundle.
-	badResultDir := t.TempDir()
-	runGit(t, badResultDir, "clone", clientRepo, ".")
-	runGit(t, badResultDir, "checkout", "relay/api")
-	if err := os.WriteFile(filepath.Join(badResultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, badResultDir, "add", "result.txt")
-	runGit(t, badResultDir, "commit", "-m", "round result")
-	runGit(t, badResultDir, "branch", "extra", "HEAD")
-	badBundleTransport := remote.NewBundleTransport(g, t.TempDir())
-	badSnap, err := badBundleTransport.Snapshot(ctx, badResultDir, []string{"refs/heads/relay/api", "refs/heads/extra"}, c1)
-	if err != nil {
-		t.Fatalf("Snapshot (bad): %v", err)
-	}
-	if badSnap.Empty || badSnap.Body == nil {
-		t.Fatal("expected a non-empty bad bundle")
-	}
-	fr.roundBundleResp = badSnap.Body
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile (absorb fails): %v", err)
-	}
-	if got.Builder.LastKnown != "" {
-		t.Fatalf("LastKnown = %q after a failed absorb, want empty", got.Builder.LastKnown)
-	}
-	if got.RemoteAbsorbFailures != 1 {
-		t.Fatalf("RemoteAbsorbFailures = %d, want 1", got.RemoteAbsorbFailures)
-	}
-	if got.Round != 1 {
-		t.Fatalf("Round = %d after a failed absorb, want unchanged 1", got.Round)
-	}
-	for _, c := range fr.calls {
-		if strings.HasPrefix(c, "Ack:") {
-			t.Fatalf("Ack called before a successful absorb: %v", fr.calls)
-		}
-	}
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			t.Fatalf("a report entry exists after a failed absorb: %+v", e)
-		}
-	}
-
-	// Next tick: a clean bundle carrying only the allowed ref, so the absorb
-	// succeeds.
-	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
-	fr.roundBundleResp = bundle
-	fr.getBindingResp.ResultCommit = headSHA
-
-	got, err = reconcile(t, rt, got, agents)
-	if err != nil {
-		t.Fatalf("Reconcile (bundle succeeds): %v", err)
-	}
-	if got.Builder.LastKnown != headSHA {
-		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, headSHA)
-	}
-	if got.RemoteAbsorbFailures != 0 {
-		t.Fatalf("RemoteAbsorbFailures = %d, want 0 after success", got.RemoteAbsorbFailures)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-	foundAck := false
-	for _, c := range fr.calls {
-		if strings.HasPrefix(c, "Ack:") {
-			foundAck = true
-		}
-	}
-	if !foundAck {
-		t.Fatalf("Ack never called after a successful absorb: %v", fr.calls)
-	}
-
-	entries, err = st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reportCount := 0
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportCount++
-		}
-	}
-	if reportCount != 1 {
-		t.Fatalf("report entries = %d, want exactly 1", reportCount)
-	}
-
-	branchHead, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
-	if err != nil || !ok || branchHead != headSHA {
-		t.Fatalf("client branch after absorb: got (%q, %v, %v), want (%q, true, nil)", branchHead, ok, err, headSHA)
-	}
-}
-
-func TestCatchUpDirtyNote(t *testing.T) {
-	ctx := context.Background()
-	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-	clientRepo, c1 := newRemoteClientRepo(t, "api")
-
-	// Build the round's result: relay/api advances to c2, and a dirty side
-	// ref (round-1) sits on top of it, exactly as a real dirty close does.
-	resultDir := t.TempDir()
-	runGit(t, resultDir, "clone", clientRepo, ".")
-	runGit(t, resultDir, "checkout", "relay/api")
-	if err := os.WriteFile(filepath.Join(resultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, resultDir, "add", "result.txt")
-	runGit(t, resultDir, "commit", "-m", "round result")
-	c2 := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD"))
-	tree := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD^{tree}"))
-	c3, err := g.CommitTree(ctx, resultDir, tree, c2, "[relay] api: round 1, uncommitted work")
-	if err != nil {
-		t.Fatalf("CommitTree: %v", err)
-	}
-	sideRef := "refs/relay/api/round-1"
-	if err := g.UpdateRef(ctx, resultDir, sideRef, c3, ""); err != nil {
-		t.Fatalf("UpdateRef side: %v", err)
-	}
-
-	transport := remote.NewBundleTransport(g, t.TempDir())
-	snap, err := transport.Snapshot(ctx, resultDir, []string{"refs/heads/relay/api", sideRef}, c1)
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	if snap.Empty || snap.Body == nil {
-		t.Fatal("expected a non-empty bundle")
-	}
-
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.Repo = clientRepo
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, DirtyCommit: c3, ResultCommit: c2},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-		roundBundleResp: snap.Body,
-	}
-	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: transport,
-		Now: func() time.Time { return baseTime },
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2", got.Round)
-	}
-	if got.Builder.LastKnown != c2 {
-		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, c2)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reportNote string
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportNote = e.Note
-			found = true
-		}
-	}
-	if !found || !strings.Contains(reportNote, "uncommitted work at "+sideRef) {
-		t.Fatalf("report note = %q (found=%v), want it to name %s", reportNote, found, sideRef)
-	}
-
-	sideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
-	if err != nil || !ok || sideSHA != c3 {
-		t.Fatalf("client side ref: got (%q, %v, %v), want (%q, true, nil)", sideSHA, ok, err, c3)
-	}
-}
-
 // TestCatchUpWritesDiffEntryFromView checks that catchUp writes the
 // client's own diff log entry from the server's view facts (Note, Commits,
 // Tree, plus the downloaded patch as Path) rather than letting queueReport
 // capture its own diff from a local baseline that a remote binding never
 // has.
-func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundClosed, ClosedRound: 1,
-			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
-		},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "diff":
-				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-
-	// Mutation target: skip writing the diff entry in catchUp, and
-	// queueReport falls back to its own CaptureRoundDiff, which either
-	// calls fakeGit.SnapshotTree (raising this count above 0) or, since a
-	// remote binding never carries a local RoundBaselineTree, writes a
-	// diff entry whose note reads "unavailable: no baseline" instead of
-	// the server's own note.
-	if fg.snapshotCalls != 0 {
-		t.Fatalf("fakeGit.SnapshotTree called %d times, want 0: queueReport must not capture its own diff", fg.snapshotCalls)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var diffEntry store.LogEntry
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindDiff {
-			diffEntry, found = e, true
-		}
-	}
-	if !found {
-		t.Fatal("no diff entry written")
-	}
-	if diffEntry.Note != "1 file, +1 -0; 1 commit, clean" {
-		t.Fatalf("diff entry Note = %q, want the server's own note", diffEntry.Note)
-	}
-	if diffEntry.Commits != 1 {
-		t.Fatalf("diff entry Commits = %d, want 1", diffEntry.Commits)
-	}
-	if diffEntry.Tree != "clean" {
-		t.Fatalf("diff entry Tree = %q, want clean", diffEntry.Tree)
-	}
-	if diffEntry.Path != st.DiffPath("api", 1) {
-		t.Fatalf("diff entry Path = %q, want the downloaded patch's path %q", diffEntry.Path, st.DiffPath("api", 1))
-	}
-	if !diffEntry.Confirmed {
-		t.Fatal("diff entry must be Confirmed, like every other relay-bookkeeping entry")
-	}
-
-	var reportEntry store.LogEntry
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportEntry = e
-		}
-	}
-	if !strings.Contains(reportEntry.Payload, "Diff:") {
-		t.Fatalf("report payload = %q, want a Diff: line from DiffLineFromNote", reportEntry.Payload)
-	}
-}
-
 // TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
 // (#274): `add --server --branch feature/x` adopts a branch relay did not
 // create, but the server still cuts its own branch and the round bundle it
@@ -2373,454 +1595,17 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 // Catch-up must allow the server's ref through Absorb, then fast-forward the
 // adopted branch to it, so the planner's own branch is the one carrying the
 // round's result.
-func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
-	ctx := context.Background()
-	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-
-	// The client repo: an adopted branch feature/x at base. relay creates no
-	// local relay/<name> branch when it adopts feature/x, so the round bundle
-	// is cut here from refs/heads/relay/api -- the server's own branch name,
-	// this repo standing in for the server repo the bundle really comes from.
-	// Catch-up absorbs that ref (moving it here) and then fast-forwards the
-	// adopted feature/x to it.
-	clientRepo := t.TempDir()
-	runGit(t, clientRepo, "init")
-	if err := os.WriteFile(filepath.Join(clientRepo, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, clientRepo, "add", "seed.txt")
-	runGit(t, clientRepo, "commit", "-m", "seed")
-	c1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
-	runGit(t, clientRepo, "update-ref", "refs/heads/feature/x", c1)
-	runGit(t, clientRepo, "update-ref", "refs/heads/relay/api", c1)
-
-	bundle, c2 := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
-
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.Branch = "feature/x"
-	b.ExistingBranch = true
-	b.Repo = clientRepo
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: c2,
-			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
-		},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "diff":
-				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-		roundBundleResp: bundle,
-	}
-	trans := &recordingTransport{inner: remote.NewBundleTransport(g, t.TempDir())}
-	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr, Transport: trans, Git: g,
-		Now: func() time.Time { return baseTime },
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	// Mutation target: allow refs/heads/<b.Branch> instead of the server's
-	// ref and this reads "unexpected ref: refs/heads/relay/api" -- the
-	// bundle is rejected, nothing is absorbed, and no ref moves below.
-	if trans.err != nil {
-		t.Fatalf("Absorb rejected the server's bundle: %v", trans.err)
-	}
-	if moved := trans.moved["refs/heads/relay/api"]; moved != c2 {
-		t.Fatalf("Absorb moved refs/heads/relay/api to %q, want the bundle tip %q", moved, c2)
-	}
-	if got.State == store.StateNeedsYou {
-		t.Fatal("the binding needs you after catch-up, want the round absorbed")
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-	if got.Builder.LastKnown != c2 {
-		t.Fatalf("LastKnown = %q, want the bundle tip %q", got.Builder.LastKnown, c2)
-	}
-	if got.RemoteAbsorbFailures != 0 {
-		t.Fatalf("RemoteAbsorbFailures = %d, want 0: the server's ref must absorb, not fail", got.RemoteAbsorbFailures)
-	}
-
-	adoptedSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/feature/x")
-	if err != nil || !ok || adoptedSHA != c2 {
-		t.Fatalf("refs/heads/feature/x: got (%q, %v, %v), want (%q, true, nil): the adopted branch must be fast-forwarded to the round's result", adoptedSHA, ok, err, c2)
-	}
-	serverSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
-	if err != nil || !ok || serverSHA != c2 {
-		t.Fatalf("refs/heads/relay/api: got (%q, %v, %v), want (%q, true, nil): the server's own ref stays beside the adopted branch", serverSHA, ok, err, c2)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundReport := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			foundReport = true
-		}
-	}
-	if !foundReport {
-		t.Fatal("no report entry queued after catch-up")
-	}
-}
-
-func TestCatchUpFetchesStream(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	streamBody := "{\"type\":\"assistant\"}\n{\"type\":\"error\",\"message\":\"boom\"}\n"
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "stream":
-				return io.NopCloser(strings.NewReader(streamBody)), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
-
-	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()}); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-
-	got, err := os.ReadFile(st.BuilderStreamPath("api", 1))
-	if err != nil {
-		t.Fatalf("read stream file: %v", err)
-	}
-	if string(got) != streamBody {
-		t.Fatalf("stream file = %q, want %q", string(got), streamBody)
-	}
-	found := false
-	for _, c := range fr.calls {
-		if c == "RoundFile:zen:api:1:stream" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("catch-up never fetched the stream file: %v", fr.calls)
-	}
-}
-
-func TestCatchUpStreamMissingIsFine(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State == store.StateNeedsYou {
-		t.Fatalf("a missing stream file must not halt: %+v", got)
-	}
-	if _, err := os.Stat(st.BuilderStreamPath("api", 1)); !os.IsNotExist(err) {
-		t.Fatalf("stream file exists (stat err = %v), want none", err)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hasReport := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			hasReport = true
-		}
-	}
-	if !hasReport {
-		t.Fatal("no report entry: catch-up must still complete")
-	}
-}
-
 // TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
 // server measured and shipped with the round (#216): the client's report
 // entry stores it verbatim instead of re-measuring a round whose record
 // lives on the server.
-func TestCatchUpKeepsServerUsage(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	sent := usage.Usage{
-		Harness: "opencode",
-		Model:   "haiku",
-		Tokens:  usage.Tokens{In: 1000, Out: 200},
-		Cost:    usage.Cost{USD: 0.12, Basis: usage.Measured},
-	}
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundClosed, ClosedRound: 1,
-			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
-			Usage: &sent,
-		},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "diff":
-				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reportEntry store.LogEntry
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportEntry, found = e, true
-		}
-	}
-	if !found {
-		t.Fatal("no report entry written")
-	}
-	if reportEntry.Usage == nil {
-		t.Fatal("report entry Usage = nil, want the server's figure")
-	}
-	if *reportEntry.Usage != sent {
-		t.Fatalf("report entry Usage = %+v, want the server's figure %+v", *reportEntry.Usage, sent)
-	}
-	// The server's round is not re-measured here: the client's own record
-	// of a shared-cwd read would be wrong, and its note must not say
-	// otherwise.
-	if strings.Contains(reportEntry.Usage.Note, "shared cwd") {
-		t.Fatalf("Usage.Note = %q, must not mention a shared cwd", reportEntry.Usage.Note)
-	}
-}
-
 // TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
 // the server's cgroup measurement rides the same view as Usage, and lands
 // on the report entry catchUp writes (#244, #216).
-func TestCatchUpRecordsRusage(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	sentRusage := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundClosed, ClosedRound: 1,
-			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
-			Rusage: &sentRusage,
-		},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "diff":
-				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reportEntry store.LogEntry
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportEntry, found = e, true
-		}
-	}
-	if !found {
-		t.Fatal("no report entry written")
-	}
-	if reportEntry.Rusage == nil {
-		t.Fatal("report entry Rusage = nil, want the server's figure")
-	}
-	if *reportEntry.Rusage != sentRusage {
-		t.Fatalf("report entry Rusage = %+v, want the server's figure %+v", *reportEntry.Rusage, sentRusage)
-	}
-}
-
 // TestCatchUpPreUsageServerNotes checks the honest answer for a server
 // built before this (#216): with no usage in the view, the client's report
 // entry says the server sent none -- basis unknown -- rather than reading
 // a record the client does not have.
-func TestCatchUpPreUsageServerNotes(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{
-			RoundState: remote.RoundClosed, ClosedRound: 1,
-			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
-		},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			switch kind {
-			case "report":
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			case "diff":
-				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
-			default:
-				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-			}
-		},
-	}
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Remote: fr, Git: &fakeGit{}, Now: func() time.Time { return baseTime }}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 2 {
-		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
-	}
-
-	entries, err := st.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reportEntry store.LogEntry
-	found := false
-	for _, e := range entries {
-		if e.Kind == store.KindReport {
-			reportEntry, found = e, true
-		}
-	}
-	if !found {
-		t.Fatal("no report entry written")
-	}
-	if reportEntry.Usage == nil {
-		t.Fatal("report entry Usage = nil, want an honest unknown")
-	}
-	if reportEntry.Usage.Cost.Basis != usage.Unknown {
-		t.Fatalf("Usage.Cost.Basis = %q, want unknown", reportEntry.Usage.Cost.Basis)
-	}
-	if reportEntry.Usage.Note != "remote: server sent no usage" {
-		t.Fatalf("Usage.Note = %q, want %q", reportEntry.Usage.Note, "remote: server sent no usage")
-	}
-}
-
-func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
-	ctx := context.Background()
-	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-	clientRepo, c1 := newRemoteClientRepo(t, "api")
-	// Unlike the ordinary case, check the binding's own branch out as this
-	// repo's current branch, which is what makes the fetch below collide.
-	runGit(t, clientRepo, "checkout", "relay/api")
-
-	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
-
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.Repo = clientRepo
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-		roundBundleResp: bundle,
-	}
-	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
-		Transport: remote.NewBundleTransport(g, t.TempDir()),
-		Now:       func() time.Time { return baseTime },
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 1 {
-		t.Fatalf("Round = %d, want unchanged 1 (retried, not halted)", got.Round)
-	}
-	if got.Builder.LastKnown != "" {
-		t.Fatalf("LastKnown = %q, want empty: the absorb never happened", got.Builder.LastKnown)
-	}
-	if got.RemoteAbsorbFailures != 0 {
-		t.Fatalf("RemoteAbsorbFailures = %d, want 0: a checked-out branch is retried, not counted as a failure", got.RemoteAbsorbFailures)
-	}
-	if got.State == store.StateNeedsYou {
-		t.Fatal("a checked-out branch must retry quietly, not halt")
-	}
-	for _, c := range fr.calls {
-		if strings.HasPrefix(c, "Ack:") {
-			t.Fatalf("Ack called despite the absorb never completing: %v", fr.calls)
-		}
-	}
-}
-
 // captureHandler is a slog.Handler that records every record it sees, so a
 // test can count how often a message was logged (#253).
 type captureHandler struct {
@@ -2845,121 +1630,6 @@ func (h *captureHandler) snapshot() []slog.Record {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.records)
-}
-
-func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
-	ctx := context.Background()
-	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-	clientRepo, c1 := newRemoteClientRepo(t, "api")
-	// Check the binding's own branch out, which makes the absorb below collide.
-	runGit(t, clientRepo, "checkout", "relay/api")
-
-	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
-	bundleBytes, err := io.ReadAll(bundle)
-	if err != nil {
-		t.Fatalf("read bundle: %v", err)
-	}
-	_ = bundle.Close()
-
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	b.Repo = clientRepo
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bundleBytes)), nil
-		},
-	}
-	rt := Runtime{
-		Store: st, Herdr: &fakeHerdr{}, Remote: fr,
-		Transport: remote.NewBundleTransport(g, t.TempDir()),
-		Now:       func() time.Time { return baseTime },
-	}
-
-	// Ordering between tests cannot leak: this binding starts unwarned.
-	checkedOutWarned.Delete("api")
-
-	h := &captureHandler{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(h))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	cur := b
-	for i := 0; i < 3; i++ {
-		next, err := reconcile(t, rt, cur, []herdr.Agent{plannerAgent()})
-		if err != nil {
-			t.Fatalf("Reconcile %d: %v", i, err)
-		}
-		cur = next
-	}
-
-	count := 0
-	for _, r := range h.snapshot() {
-		if r.Level == slog.LevelInfo && r.Message == "checkout another branch, then relay pull" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatalf("Info 'checkout another branch, then relay pull' logged %d times, want exactly 1", count)
-	}
-}
-
-func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
-		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if kind == "report" {
-				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
-			}
-			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
-		},
-		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
-			return io.NopCloser(strings.NewReader("not a real bundle")), nil
-		},
-	}
-	ft := &fakeTransport{absorbErr: errors.New("disk full")}
-	f := &fakeHerdr{}
-	rt := Runtime{Store: st, Herdr: f, Remote: fr, Transport: ft, Now: func() time.Time { return baseTime }}
-	agents := []herdr.Agent{plannerAgent()}
-
-	got := b
-	var err error
-	for i := 1; i <= 10; i++ {
-		got, err = reconcile(t, rt, got, agents)
-		if err != nil {
-			t.Fatalf("Reconcile iteration %d: %v", i, err)
-		}
-		if i < 10 {
-			if got.State == store.StateNeedsYou {
-				t.Fatalf("halted after only %d absorb failures", i)
-			}
-			if got.RemoteAbsorbFailures != i {
-				t.Fatalf("iteration %d: RemoteAbsorbFailures = %d, want %d", i, got.RemoteAbsorbFailures, i)
-			}
-		}
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you at 10 absorb failures", got.State)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "cannot absorb round") {
-		t.Fatalf("notices = %v, want one naming the absorb failure", f.notices)
-	}
 }
 
 func TestDoneRemoteForwardsFirst(t *testing.T) {
@@ -3013,25 +1683,6 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("server Unbind never called: %v", fr.calls)
-	}
-}
-
-func TestResumeRemoteRefusesRebind(t *testing.T) {
-	ctx := context.Background()
-	st := store.New(t.TempDir())
-	b := remoteBinding("zen")
-	if err := st.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := Runtime{Store: st, Herdr: f, Now: func() time.Time { return baseTime }}
-
-	_, _, err := BindResolved(ctx, rt, BindOptions{
-		Name: "api", Resume: true, Rebind: true, PlannerPane: "w2:p3", CWD: "/fake/repo",
-	})
-	if err == nil || !strings.Contains(err.Error(), "cannot change a remote builder; unbind and add") {
-		t.Fatalf("BindResolved err = %v, want the remote-rebind refusal", err)
 	}
 }
 
@@ -3195,44 +1846,6 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	}
 }
 
-func TestAskForkRefuseRemote(t *testing.T) {
-	t.Run("Ask", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, _ := seedForAsk(t, f)
-		b := remoteBinding("zen")
-		b.Name = "remote-ask"
-		b.CWD = "/other-tree-remote"
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatal(err)
-		}
-		q := writeQuestion(t, "Review something.")
-
-		_, err := Ask(context.Background(), rt, AskOptions{
-			Role: "reviewer", File: q, Name: "remote-ask", PlannerPane: "w2:p3",
-		})
-		if err == nil || !strings.Contains(err.Error(), "consults are local-only") {
-			t.Fatalf("Ask err = %v, want the consults-are-local-only refusal", err)
-		}
-	})
-
-	t.Run("Fork", func(t *testing.T) {
-		f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-		rt := newForkRuntime(t, f, nil, nil)
-		b := remoteBinding("zen")
-		b.CWD = "/fake/fork-src"
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatal(err)
-		}
-
-		_, err := Fork(context.Background(), rt, ForkOptions{
-			Source: "api", NewName: "api2", Round: 1, PlannerPane: "w2:p3", CWD: "/fake/fork-dst",
-		})
-		if err == nil || !strings.Contains(err.Error(), "fork across servers is not supported") {
-			t.Fatalf("Fork err = %v, want the cross-server refusal", err)
-		}
-	})
-}
-
 func TestServerInUse(t *testing.T) {
 	bindings := []store.Binding{
 		remoteBinding("zen"),
@@ -3249,4 +1862,1474 @@ func TestServerInUse(t *testing.T) {
 	if got := ServerInUse(bindings, "pluto"); len(got) != 0 {
 		t.Fatalf("ServerInUse(pluto) = %v, want none", got)
 	}
+}
+
+func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteStatus != string(remote.RoundRunning) {
+		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundRunning)
+	}
+	data, err := os.ReadFile(st.BuilderLogPath("api", 1))
+	if err != nil {
+		t.Fatalf("read mirrored log: %v", err)
+	}
+	if string(data) != "builder log line 1\n" {
+		t.Fatalf("log = %q, want mirrored content", string(data))
+	}
+	foundGet, foundLog := false, false
+	for _, c := range fr.calls {
+		if c == "GetBinding:zen:api" {
+			foundGet = true
+		}
+		if c == "RoundFile:zen:api:1:log" {
+			foundLog = true
+		}
+	}
+	if !foundGet || !foundLog {
+		t.Fatalf("calls = %v, want GetBinding and RoundFile(log)", fr.calls)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s, want active while running", got.State)
+	}
+}
+
+// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
+// round's stall stamp rides from the server view onto the client binding,
+// status shows it, and a later view without one clears it.
+
+// TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
+// round's stall stamp rides from the server view onto the client binding,
+// status shows it, and a later view without one clears it.
+func TestObserveRemoteCopiesStalledSince(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	stalled := baseTime.Add(-20 * time.Minute)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
+		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !got.StalledSince.Equal(stalled) {
+		t.Fatalf("StalledSince = %s, want the view's %s", got.StalledSince, stalled)
+	}
+
+	// Status reads the stamp and labels the remote row stalled.
+	if err := st.Save(got); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep.Bindings))
+	}
+	if status := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(status, "stalled ") {
+		t.Fatalf("BuilderStatus = %q, want it to start with %q", status, "stalled ")
+	} else if !strings.Contains(status, AgeText(baseTime.Sub(stalled))) {
+		t.Errorf("BuilderStatus = %q, want it to contain the age %q", status, AgeText(baseTime.Sub(stalled)))
+	}
+
+	// A later view with a zero stamp clears it.
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	got2, err := reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (cleared): %v", err)
+	}
+	if !got2.StalledSince.IsZero() {
+		t.Fatalf("StalledSince = %s, want zero once the view has none", got2.StalledSince)
+	}
+}
+
+// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
+// view copies the server's queue facts onto Builder.RemoteQueue, sets
+// RemoteStatus to "queued", and neither halts nor catches up.
+
+// TestObserveRemoteQueuedKeepsFacts pins #285's client tolerance: a queued
+// view copies the server's queue facts onto Builder.RemoteQueue, sets
+// RemoteStatus to "queued", and neither halts nor catches up.
+func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	since := baseTime.Add(-4 * time.Minute)
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundQueued,
+			Queue:      &remote.QueueView{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since},
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteStatus != string(remote.RoundQueued) {
+		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundQueued)
+	}
+	if got.Builder.RemoteQueue == nil {
+		t.Fatal("RemoteQueue = nil, want the view's facts")
+	}
+	want := store.QueueFacts{Position: 3, Ahead: 2, Running: 3, Cap: 3, Since: since}
+	if *got.Builder.RemoteQueue != want {
+		t.Errorf("RemoteQueue = %+v, want %+v", *got.Builder.RemoteQueue, want)
+	}
+	if got.State == store.StateNeedsYou || got.State == store.StateBroken {
+		t.Errorf("state = %s, want no halt while queued", got.State)
+	}
+}
+
+// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
+// was queued and now observes a running view drops its stale RemoteQueue.
+
+// TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
+// was queued and now observes a running view drops its stale RemoteQueue.
+func TestObserveRemoteRunningClearsQueue(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	b.Builder.RemoteStatus = string(remote.RoundQueued)
+	b.Builder.RemoteQueue = &store.QueueFacts{Position: 1, Ahead: 0, Running: 2, Cap: 3, Since: baseTime.Add(-time.Minute)}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileResp:  io.NopCloser(strings.NewReader("")),
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteQueue != nil {
+		t.Errorf("RemoteQueue = %+v, want nil once the round is running", got.Builder.RemoteQueue)
+	}
+}
+
+// TestReconcileRemoteRefreshesCandidate checks that a server-side switch
+// (the round is now running a different candidate than this binding last
+// recorded) updates the token and harness kind and logs a switch entry
+// naming the server, and that a later tick whose view still names the same
+// candidate adds nothing more (#100 step 2).
+
+// TestReconcileRemoteRefreshesCandidate checks that a server-side switch
+// (the round is now running a different candidate than this binding last
+// recorded) updates the token and harness kind and logs a switch entry
+// naming the server, and that a later tick whose view still names the same
+// candidate adds nothing more (#100 step 2).
+func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.BuilderCandidate = "claude/anthropic/haiku"
+	b.Builder.Kind = "claude"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
+		roundFileResp:  io.NopCloser(strings.NewReader("")),
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != "opencode/anthropic/sonnet" {
+		t.Fatalf("BuilderCandidate = %q, want the server's candidate", got.BuilderCandidate)
+	}
+	if got.Builder.Kind != "opencode" {
+		t.Fatalf("Builder.Kind = %q, want opencode", got.Builder.Kind)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	switches := 0
+	var note string
+	for _, e := range entries {
+		if e.Kind == store.KindSwitch {
+			switches++
+			note = e.Note
+		}
+	}
+	if switches != 1 {
+		t.Fatalf("switch entries = %d, want 1", switches)
+	}
+	if !strings.Contains(note, "zen") || !strings.Contains(note, "claude/anthropic/haiku") || !strings.Contains(note, "opencode/anthropic/sonnet") {
+		t.Fatalf("switch note = %q, want it to name the server and both tokens", note)
+	}
+
+	// Mutation target: compare view.Candidate against something other than
+	// b.BuilderCandidate (or drop the comparison entirely) and a second,
+	// identical view adds a second switch entry instead of nothing.
+	got2, err := reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (second tick): %v", err)
+	}
+	if got2.BuilderCandidate != "opencode/anthropic/sonnet" {
+		t.Fatalf("BuilderCandidate after second tick = %q, want unchanged", got2.BuilderCandidate)
+	}
+	entries2, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	switches2 := 0
+	for _, e := range entries2 {
+		if e.Kind == store.KindSwitch {
+			switches2++
+		}
+	}
+	if switches2 != 1 {
+		t.Fatalf("switch entries after an identical second view = %d, want still 1", switches2)
+	}
+}
+
+func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if got.Halt != "stuck at a dialog" {
+		t.Fatalf("Halt = %q, want the server's halt text", got.Halt)
+	}
+}
+
+func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000 // 1s budget; unreachableGrace (30m) is what keeps this from halting below
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.RemoteUnreachableSince.IsZero() {
+		t.Fatal("RemoteUnreachableSince must be set once unreachable")
+	}
+	if got.Builder.RemoteStatus != "unreachable" {
+		t.Fatalf("RemoteStatus = %q, want unreachable", got.Builder.RemoteStatus)
+	}
+
+	// Five minutes later: well past the 1s budget alone, but inside the 30m
+	// grace, so this must not halt.
+	got, err = reconcile(t, at(rt, 5*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("halted after 5m unreachable; the grace should have covered it")
+	}
+}
+
+func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000 // 1s budget
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Past the 1s budget plus the 30m unreachableGrace: this must halt.
+	// Mutation target: drop "+ unreachableGrace" from the comparison in
+	// reconcileRemote and this halt fires one tick early (or the
+	// not-halt test above starts halting instead).
+	got, err = reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you past budget+grace", got.State)
+	}
+	if !strings.Contains(got.Halt, "unreachable for") || !strings.Contains(got.Halt, "may still be running there") {
+		t.Fatalf("Halt = %q, want the unreachable-past-budget halt", got.Halt)
+	}
+}
+
+func TestReconcileRemote401Halts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 401, Body: remote.ErrorBody{Code: "revoked", Message: "key revoked"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you on 401", got.State)
+	}
+	if !strings.Contains(got.Halt, "key revoked") {
+		t.Fatalf("Halt = %q, want the server's message", got.Halt)
+	}
+}
+
+func TestReconcileRemote404Halts(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "gone"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you on 404", got.State)
+	}
+	if !strings.Contains(got.Halt, "binding removed by the server admin") {
+		t.Fatalf("Halt = %q, want the removed-by-admin message", got.Halt)
+	}
+}
+
+// TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
+// (the read path `relay status`/`pull`/`wait` share, spec §2.2) collects a
+// closed round -- the report entry lands, pending -- without ever
+// delivering it to a planner pane.
+
+// TestSyncRemoteCollectsClosedRoundWithoutDelivery checks that SyncRemote
+// (the read path `relay status`/`pull`/`wait` share, spec §2.2) collects a
+// closed round -- the report entry lands, pending -- without ever
+// delivering it to a planner pane.
+func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("synced = %d, want 1", synced)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			found = true
+			if e.Confirmed {
+				t.Fatal("report entry must still be pending: SyncRemote must never deliver it")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no report entry after SyncRemote collected the closed round")
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mutation target: have SyncRemote call reconcileRemote instead of
+	// observeRemote, and this assertion fails: a delivering tick would move
+	// the binding off ACTIVE.
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s, want active: SyncRemote must not deliver", got.State)
+	}
+}
+
+// TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
+// network for a binding it should not sync: one already DONE, and one that
+// is not a remote binding at all.
+
+// TestSyncRemoteSkipsDoneAndLocal checks that SyncRemote never touches the
+// network for a binding it should not sync: one already DONE, and one that
+// is not a remote binding at all.
+func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
+	st := store.New(t.TempDir())
+
+	doneRemote := remoteBinding("zen")
+	doneRemote.Name = "done-remote"
+	doneRemote.State = store.StateDone
+	if err := st.Save(doneRemote); err != nil {
+		t.Fatal(err)
+	}
+
+	local := store.Binding{
+		Name: "local", CWD: "/fake/repo", State: store.StateActive,
+		Planner: store.Endpoint{PaneID: "w2:p3"}, Builder: store.Endpoint{PaneID: "w2:p4"},
+	}
+	if err := st.Save(local); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 0 {
+		t.Fatalf("synced = %d, want 0: a DONE remote binding and a local binding must both be skipped", synced)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("fakeRemote calls = %v, want none: SyncRemote must not touch the network for a skipped binding", fr.calls)
+	}
+}
+
+// newRemoteClientRepo creates a client-side repo (what a remote binding's
+// Repo points at day to day) with one commit and a "relay/<name>" branch ref
+// at that commit -- not checked out, matching the ordinary case where the
+// planner's own repo sits on its own branch.
+
+func TestCatchUpOrderAndIdempotence(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	rt := Runtime{
+		Store:     st,
+		Remote:    fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	// First tick: the server hands back a bundle that carries an extra ref
+	// the client never allowed (view.DirtyCommit == "", so only the branch
+	// itself is permitted). A real Absorb genuinely fails on this --
+	// ErrUnexpectedRef -- which is what lets this test tell "Ack moved
+	// before Absorb" apart from "Ack never runs at all": the RPC round-trip
+	// (RoundFile, RoundBundle) succeeds, catchUp actually reaches Absorb, and
+	// only Absorb itself rejects the bundle.
+	badResultDir := t.TempDir()
+	runGit(t, badResultDir, "clone", clientRepo, ".")
+	runGit(t, badResultDir, "checkout", "relay/api")
+	if err := os.WriteFile(filepath.Join(badResultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, badResultDir, "add", "result.txt")
+	runGit(t, badResultDir, "commit", "-m", "round result")
+	runGit(t, badResultDir, "branch", "extra", "HEAD")
+	badBundleTransport := remote.NewBundleTransport(g, t.TempDir())
+	badSnap, err := badBundleTransport.Snapshot(ctx, badResultDir, []string{"refs/heads/relay/api", "refs/heads/extra"}, c1)
+	if err != nil {
+		t.Fatalf("Snapshot (bad): %v", err)
+	}
+	if badSnap.Empty || badSnap.Body == nil {
+		t.Fatal("expected a non-empty bad bundle")
+	}
+	fr.roundBundleResp = badSnap.Body
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile (absorb fails): %v", err)
+	}
+	if got.Builder.LastKnown != "" {
+		t.Fatalf("LastKnown = %q after a failed absorb, want empty", got.Builder.LastKnown)
+	}
+	if got.RemoteAbsorbFailures != 1 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 1", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d after a failed absorb, want unchanged 1", got.Round)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Fatalf("Ack called before a successful absorb: %v", fr.calls)
+		}
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			t.Fatalf("a report entry exists after a failed absorb: %+v", e)
+		}
+	}
+
+	// Next tick: a clean bundle carrying only the allowed ref, so the absorb
+	// succeeds.
+	bundle, headSHA := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
+	fr.roundBundleResp = bundle
+	fr.getBindingResp.ResultCommit = headSHA
+
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (bundle succeeds): %v", err)
+	}
+	if got.Builder.LastKnown != headSHA {
+		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, headSHA)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0 after success", got.RemoteAbsorbFailures)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+	foundAck := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			foundAck = true
+		}
+	}
+	if !foundAck {
+		t.Fatalf("Ack never called after a successful absorb: %v", fr.calls)
+	}
+
+	entries, err = st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportCount := 0
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportCount++
+		}
+	}
+	if reportCount != 1 {
+		t.Fatalf("report entries = %d, want exactly 1", reportCount)
+	}
+
+	branchHead, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
+	if err != nil || !ok || branchHead != headSHA {
+		t.Fatalf("client branch after absorb: got (%q, %v, %v), want (%q, true, nil)", branchHead, ok, err, headSHA)
+	}
+}
+
+func TestCatchUpDirtyNote(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+
+	// Build the round's result: relay/api advances to c2, and a dirty side
+	// ref (round-1) sits on top of it, exactly as a real dirty close does.
+	resultDir := t.TempDir()
+	runGit(t, resultDir, "clone", clientRepo, ".")
+	runGit(t, resultDir, "checkout", "relay/api")
+	if err := os.WriteFile(filepath.Join(resultDir, "result.txt"), []byte("result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, resultDir, "add", "result.txt")
+	runGit(t, resultDir, "commit", "-m", "round result")
+	c2 := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD"))
+	tree := strings.TrimSpace(runGit(t, resultDir, "rev-parse", "HEAD^{tree}"))
+	c3, err := g.CommitTree(ctx, resultDir, tree, c2, "[relay] api: round 1, uncommitted work")
+	if err != nil {
+		t.Fatalf("CommitTree: %v", err)
+	}
+	sideRef := "refs/relay/api/round-1"
+	if err := g.UpdateRef(ctx, resultDir, sideRef, c3, ""); err != nil {
+		t.Fatalf("UpdateRef side: %v", err)
+	}
+
+	transport := remote.NewBundleTransport(g, t.TempDir())
+	snap, err := transport.Snapshot(ctx, resultDir, []string{"refs/heads/relay/api", sideRef}, c1)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.Empty || snap.Body == nil {
+		t.Fatal("expected a non-empty bundle")
+	}
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, DirtyCommit: c3, ResultCommit: c2},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: snap.Body,
+	}
+	rt := Runtime{
+		Store: st, Remote: fr, Transport: transport,
+		Now: func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2", got.Round)
+	}
+	if got.Builder.LastKnown != c2 {
+		t.Fatalf("LastKnown = %q, want %q", got.Builder.LastKnown, c2)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportNote string
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportNote = e.Note
+			found = true
+		}
+	}
+	if !found || !strings.Contains(reportNote, "uncommitted work at "+sideRef) {
+		t.Fatalf("report note = %q (found=%v), want it to name %s", reportNote, found, sideRef)
+	}
+
+	sideSHA, ok, err := g.RefSHA(ctx, clientRepo, sideRef)
+	if err != nil || !ok || sideSHA != c3 {
+		t.Fatalf("client side ref: got (%q, %v, %v), want (%q, true, nil)", sideSHA, ok, err, c3)
+	}
+}
+
+// TestCatchUpWritesDiffEntryFromView checks that catchUp writes the
+// client's own diff log entry from the server's view facts (Note, Commits,
+// Tree, plus the downloaded patch as Path) rather than letting queueReport
+// capture its own diff from a local baseline that a remote binding never
+// has.
+
+// TestCatchUpWritesDiffEntryFromView checks that catchUp writes the
+// client's own diff log entry from the server's view facts (Note, Commits,
+// Tree, plus the downloaded patch as Path) rather than letting queueReport
+// capture its own diff from a local baseline that a remote binding never
+// has.
+func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	// Mutation target: skip writing the diff entry in catchUp, and
+	// queueReport falls back to its own CaptureRoundDiff, which either
+	// calls fakeGit.SnapshotTree (raising this count above 0) or, since a
+	// remote binding never carries a local RoundBaselineTree, writes a
+	// diff entry whose note reads "unavailable: no baseline" instead of
+	// the server's own note.
+	if fg.snapshotCalls != 0 {
+		t.Fatalf("fakeGit.SnapshotTree called %d times, want 0: queueReport must not capture its own diff", fg.snapshotCalls)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diffEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindDiff {
+			diffEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no diff entry written")
+	}
+	if diffEntry.Note != "1 file, +1 -0; 1 commit, clean" {
+		t.Fatalf("diff entry Note = %q, want the server's own note", diffEntry.Note)
+	}
+	if diffEntry.Commits != 1 {
+		t.Fatalf("diff entry Commits = %d, want 1", diffEntry.Commits)
+	}
+	if diffEntry.Tree != "clean" {
+		t.Fatalf("diff entry Tree = %q, want clean", diffEntry.Tree)
+	}
+	if diffEntry.Path != st.DiffPath("api", 1) {
+		t.Fatalf("diff entry Path = %q, want the downloaded patch's path %q", diffEntry.Path, st.DiffPath("api", 1))
+	}
+	if !diffEntry.Confirmed {
+		t.Fatal("diff entry must be Confirmed, like every other relay-bookkeeping entry")
+	}
+
+	var reportEntry store.LogEntry
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry = e
+		}
+	}
+	if !strings.Contains(reportEntry.Payload, "Diff:") {
+		t.Fatalf("report payload = %q, want a Diff: line from DiffLineFromNote", reportEntry.Payload)
+	}
+}
+
+// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
+// (#274): `add --server --branch feature/x` adopts a branch relay did not
+// create, but the server still cuts its own branch and the round bundle it
+// ships always names refs/heads/relay/<name> (handleRoundBundle snapshots
+// refs/heads/<server branch>, and the server's branch is relay/<name>).
+// Catch-up must allow the server's ref through Absorb, then fast-forward the
+// adopted branch to it, so the planner's own branch is the one carrying the
+// round's result.
+
+// TestCatchUpAdoptedBranchAbsorbsServerRef pins the adopted-branch fix
+// (#274): `add --server --branch feature/x` adopts a branch relay did not
+// create, but the server still cuts its own branch and the round bundle it
+// ships always names refs/heads/relay/<name> (handleRoundBundle snapshots
+// refs/heads/<server branch>, and the server's branch is relay/<name>).
+// Catch-up must allow the server's ref through Absorb, then fast-forward the
+// adopted branch to it, so the planner's own branch is the one carrying the
+// round's result.
+func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+
+	// The client repo: an adopted branch feature/x at base. relay creates no
+	// local relay/<name> branch when it adopts feature/x, so the round bundle
+	// is cut here from refs/heads/relay/api -- the server's own branch name,
+	// this repo standing in for the server repo the bundle really comes from.
+	// Catch-up absorbs that ref (moving it here) and then fast-forwards the
+	// adopted feature/x to it.
+	clientRepo := t.TempDir()
+	runGit(t, clientRepo, "init")
+	if err := os.WriteFile(filepath.Join(clientRepo, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clientRepo, "add", "seed.txt")
+	runGit(t, clientRepo, "commit", "-m", "seed")
+	c1 := strings.TrimSpace(runGit(t, clientRepo, "rev-parse", "HEAD"))
+	runGit(t, clientRepo, "update-ref", "refs/heads/feature/x", c1)
+	runGit(t, clientRepo, "update-ref", "refs/heads/relay/api", c1)
+
+	bundle, c2 := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Branch = "feature/x"
+	b.ExistingBranch = true
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: c2,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+		roundBundleResp: bundle,
+	}
+	trans := &recordingTransport{inner: remote.NewBundleTransport(g, t.TempDir())}
+	rt := Runtime{
+		Store: st, Remote: fr, Transport: trans, Git: g,
+		Now: func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// Mutation target: allow refs/heads/<b.Branch> instead of the server's
+	// ref and this reads "unexpected ref: refs/heads/relay/api" -- the
+	// bundle is rejected, nothing is absorbed, and no ref moves below.
+	if trans.err != nil {
+		t.Fatalf("Absorb rejected the server's bundle: %v", trans.err)
+	}
+	if moved := trans.moved["refs/heads/relay/api"]; moved != c2 {
+		t.Fatalf("Absorb moved refs/heads/relay/api to %q, want the bundle tip %q", moved, c2)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatal("the binding needs you after catch-up, want the round absorbed")
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+	if got.Builder.LastKnown != c2 {
+		t.Fatalf("LastKnown = %q, want the bundle tip %q", got.Builder.LastKnown, c2)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: the server's ref must absorb, not fail", got.RemoteAbsorbFailures)
+	}
+
+	adoptedSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/feature/x")
+	if err != nil || !ok || adoptedSHA != c2 {
+		t.Fatalf("refs/heads/feature/x: got (%q, %v, %v), want (%q, true, nil): the adopted branch must be fast-forwarded to the round's result", adoptedSHA, ok, err, c2)
+	}
+	serverSHA, ok, err := g.RefSHA(ctx, clientRepo, "refs/heads/relay/api")
+	if err != nil || !ok || serverSHA != c2 {
+		t.Fatalf("refs/heads/relay/api: got (%q, %v, %v), want (%q, true, nil): the server's own ref stays beside the adopted branch", serverSHA, ok, err, c2)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			foundReport = true
+		}
+	}
+	if !foundReport {
+		t.Fatal("no report entry queued after catch-up")
+	}
+}
+
+func TestCatchUpFetchesStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	streamBody := "{\"type\":\"assistant\"}\n{\"type\":\"error\",\"message\":\"boom\"}\n"
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "stream":
+				return io.NopCloser(strings.NewReader(streamBody)), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got, err := os.ReadFile(st.BuilderStreamPath("api", 1))
+	if err != nil {
+		t.Fatalf("read stream file: %v", err)
+	}
+	if string(got) != streamBody {
+		t.Fatalf("stream file = %q, want %q", string(got), streamBody)
+	}
+	found := false
+	for _, c := range fr.calls {
+		if c == "RoundFile:zen:api:1:stream" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catch-up never fetched the stream file: %v", fr.calls)
+	}
+}
+
+func TestCatchUpStreamMissingIsFine(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("a missing stream file must not halt: %+v", got)
+	}
+	if _, err := os.Stat(st.BuilderStreamPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("stream file exists (stat err = %v), want none", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasReport := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			hasReport = true
+		}
+	}
+	if !hasReport {
+		t.Fatal("no report entry: catch-up must still complete")
+	}
+}
+
+// TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
+// server measured and shipped with the round (#216): the client's report
+// entry stores it verbatim instead of re-measuring a round whose record
+// lives on the server.
+
+// TestCatchUpKeepsServerUsage checks that catch-up keeps the usage the
+// server measured and shipped with the round (#216): the client's report
+// entry stores it verbatim instead of re-measuring a round whose record
+// lives on the server.
+func TestCatchUpKeepsServerUsage(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	sent := usage.Usage{
+		Harness: "opencode",
+		Model:   "haiku",
+		Tokens:  usage.Tokens{In: 1000, Out: 200},
+		Cost:    usage.Cost{USD: 0.12, Basis: usage.Measured},
+	}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+			Usage: &sent,
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no report entry written")
+	}
+	if reportEntry.Usage == nil {
+		t.Fatal("report entry Usage = nil, want the server's figure")
+	}
+	if *reportEntry.Usage != sent {
+		t.Fatalf("report entry Usage = %+v, want the server's figure %+v", *reportEntry.Usage, sent)
+	}
+	// The server's round is not re-measured here: the client's own record
+	// of a shared-cwd read would be wrong, and its note must not say
+	// otherwise.
+	if strings.Contains(reportEntry.Usage.Note, "shared cwd") {
+		t.Fatalf("Usage.Note = %q, must not mention a shared cwd", reportEntry.Usage.Note)
+	}
+}
+
+// TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
+// the server's cgroup measurement rides the same view as Usage, and lands
+// on the report entry catchUp writes (#244, #216).
+
+// TestCatchUpRecordsRusage extends TestCatchUpKeepsServerUsage's pattern:
+// the server's cgroup measurement rides the same view as Usage, and lands
+// on the report entry catchUp writes (#244, #216).
+func TestCatchUpRecordsRusage(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	sentRusage := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+			Rusage: &sentRusage,
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no report entry written")
+	}
+	if reportEntry.Rusage == nil {
+		t.Fatal("report entry Rusage = nil, want the server's figure")
+	}
+	if *reportEntry.Rusage != sentRusage {
+		t.Fatalf("report entry Rusage = %+v, want the server's figure %+v", *reportEntry.Rusage, sentRusage)
+	}
+}
+
+// TestCatchUpPreUsageServerNotes checks the honest answer for a server
+// built before this (#216): with no usage in the view, the client's report
+// entry says the server sent none -- basis unknown -- rather than reading
+// a record the client does not have.
+
+// TestCatchUpPreUsageServerNotes checks the honest answer for a server
+// built before this (#216): with no usage in the view, the client's report
+// entry says the server sent none -- basis unknown -- rather than reading
+// a record the client does not have.
+func TestCatchUpPreUsageServerNotes(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Git: &fakeGit{}, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no report entry written")
+	}
+	if reportEntry.Usage == nil {
+		t.Fatal("report entry Usage = nil, want an honest unknown")
+	}
+	if reportEntry.Usage.Cost.Basis != usage.Unknown {
+		t.Fatalf("Usage.Cost.Basis = %q, want unknown", reportEntry.Usage.Cost.Basis)
+	}
+	if reportEntry.Usage.Note != "remote: server sent no usage" {
+		t.Fatalf("Usage.Note = %q, want %q", reportEntry.Usage.Note, "remote: server sent no usage")
+	}
+}
+
+func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+	// Unlike the ordinary case, check the binding's own branch out as this
+	// repo's current branch, which is what makes the fetch below collide.
+	runGit(t, clientRepo, "checkout", "relay/api")
+
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleResp: bundle,
+	}
+	rt := Runtime{
+		Store: st, Remote: fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Fatalf("Round = %d, want unchanged 1 (retried, not halted)", got.Round)
+	}
+	if got.Builder.LastKnown != "" {
+		t.Fatalf("LastKnown = %q, want empty: the absorb never happened", got.Builder.LastKnown)
+	}
+	if got.RemoteAbsorbFailures != 0 {
+		t.Fatalf("RemoteAbsorbFailures = %d, want 0: a checked-out branch is retried, not counted as a failure", got.RemoteAbsorbFailures)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatal("a checked-out branch must retry quietly, not halt")
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "Ack:") {
+			t.Fatalf("Ack called despite the absorb never completing: %v", fr.calls)
+		}
+	}
+}
+
+func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
+	clientRepo, c1 := newRemoteClientRepo(t, "api")
+	// Check the binding's own branch out, which makes the absorb below collide.
+	runGit(t, clientRepo, "checkout", "relay/api")
+
+	bundle, _ := newRoundResultBundle(t, ctx, g, clientRepo, "refs/heads/relay/api", c1)
+	bundleBytes, err := io.ReadAll(bundle)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	_ = bundle.Close()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Repo = clientRepo
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bundleBytes)), nil
+		},
+	}
+	rt := Runtime{
+		Store: st, Remote: fr,
+		Transport: remote.NewBundleTransport(g, t.TempDir()),
+		Now:       func() time.Time { return baseTime },
+	}
+
+	// Ordering between tests cannot leak: this binding starts unwarned.
+	checkedOutWarned.Delete("api")
+
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cur := b
+	for i := 0; i < 3; i++ {
+		next, err := reconcile(t, rt, cur)
+		if err != nil {
+			t.Fatalf("Reconcile %d: %v", i, err)
+		}
+		cur = next
+	}
+
+	count := 0
+	for _, r := range h.snapshot() {
+		if r.Level == slog.LevelInfo && r.Message == "checkout another branch, then relay pull" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Info 'checkout another branch, then relay pull' logged %d times, want exactly 1", count)
+	}
+}
+
+func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+		roundBundleFunc: func(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("not a real bundle")), nil
+		},
+	}
+	ft := &fakeTransport{absorbErr: errors.New("disk full")}
+	rt := Runtime{Store: st, Remote: fr, Transport: ft, Now: func() time.Time { return baseTime }}
+
+	got := b
+	var err error
+	for i := 1; i <= 10; i++ {
+		got, err = reconcile(t, rt, got)
+		if err != nil {
+			t.Fatalf("Reconcile iteration %d: %v", i, err)
+		}
+		if i < 10 {
+			if got.State == store.StateNeedsYou {
+				t.Fatalf("halted after only %d absorb failures", i)
+			}
+			if got.RemoteAbsorbFailures != i {
+				t.Fatalf("iteration %d: RemoteAbsorbFailures = %d, want %d", i, got.RemoteAbsorbFailures, i)
+			}
+		}
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you at 10 absorb failures", got.State)
+	}
+	if !strings.Contains(got.Halt, "cannot absorb round") {
+		t.Fatalf("Halt = %q, want it to name the absorb failure", got.Halt)
+	}
+}
+
+func TestResumeRemoteRefusesRebind(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := newRuntime(t)
+	rt.Store = st
+	rt.Now = func() time.Time { return baseTime }
+
+	_, _, err := BindResolved(ctx, rt, BindOptions{
+		Name: "api", Resume: true, Rebind: true, PlannerID: testPlannerName, CWD: "/fake/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot change a remote builder; unbind and add") {
+		t.Fatalf("BindResolved err = %v, want the remote-rebind refusal", err)
+	}
+}
+
+func TestAskForkRefuseRemote(t *testing.T) {
+	t.Run("Ask", func(t *testing.T) {
+		rt, _ := seedForAsk(t)
+		b := remoteBinding("zen")
+		b.Name = "remote-ask"
+		b.CWD = "/other-tree-remote"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		q := writeQuestion(t, "Review something.")
+
+		_, err := Ask(context.Background(), rt, AskOptions{
+			Role: "reviewer", File: q, Name: "remote-ask", PlannerID: testPlannerName,
+		})
+		if err == nil || !strings.Contains(err.Error(), "consults are local-only") {
+			t.Fatalf("Ask err = %v, want the consults-are-local-only refusal", err)
+		}
+	})
+
+	t.Run("Fork", func(t *testing.T) {
+		rt := newForkRuntime(t, nil, nil)
+		b := remoteBinding("zen")
+		b.CWD = "/fake/fork-src"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Fork(context.Background(), rt, ForkOptions{
+			Source: "api", NewName: "api2", Round: 1, PlannerID: testPlannerName, CWD: "/fake/fork-dst",
+		})
+		if err == nil || !strings.Contains(err.Error(), "fork across servers is not supported") {
+			t.Fatalf("Fork err = %v, want the cross-server refusal", err)
+		}
+	})
 }

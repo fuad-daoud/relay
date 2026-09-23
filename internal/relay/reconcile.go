@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
@@ -78,7 +77,7 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 // what makes a notification one per episode rather than one per tick.
 func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 	switch b.State {
-	case store.StateNeedsYou, store.StateHeld:
+	case store.StateNeedsYou:
 	default:
 		b.StaleSince = time.Time{}
 		return b
@@ -99,75 +98,6 @@ func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 		b.StaleSince = since
 	}
 	return b
-}
-
-// emitProgressNotices raises the one advisory notification each progress label
-// gets (#135): one when a builder goes stalled, and one when a NEEDS YOU or
-// HELD binding goes stale. Unlike a halt notification, a failure here is logged
-// and the tick carries on. It returns the binding with StaleNotifiedAt set, so
-// the once-per-episode dedup survives into the saved binding.
-func emitProgressNotices(ctx context.Context, rt Runtime, orig, next store.Binding) store.Binding {
-	if rt.Herdr == nil {
-		return next
-	}
-	now := rt.Now().UTC()
-
-	if orig.StalledSince.IsZero() && !next.StalledSince.IsZero() {
-		msg := fmt.Sprintf("%s: builder stalled (no progress for %s)", next.Name, AgeText(now.Sub(next.StalledSince)))
-		if err := rt.Herdr.Notify(ctx, msg, fmt.Sprintf("round %d", next.Round), herdr.SoundRequest); err != nil {
-			slog.Warn("stall notify failed", "binding", next.Name, "err", err)
-		}
-	}
-
-	if !next.StaleSince.IsZero() && next.StaleNotifiedAt.IsZero() {
-		msg := fmt.Sprintf("%s: NEEDS YOU for %s", next.Name, AgeText(now.Sub(next.StaleSince)))
-		if err := rt.Herdr.Notify(ctx, msg, fmt.Sprintf("round %d", next.Round), herdr.SoundRequest); err != nil {
-			slog.Warn("stale notify failed", "binding", next.Name, "err", err)
-		}
-		next.StaleNotifiedAt = now
-	}
-
-	return next
-}
-
-// refreshEndpoint updates an endpoint from the live agent it was located by.
-//
-// Preconditions: SameAgent(a, ep) held -- the caller located this agent.
-// Postconditions:
-//   - SessionID is set when it was empty and the agent reports one;
-//   - PaneID becomes a.PaneID;
-//   - Kind is set when it was empty;
-//   - AgentName is untouched;
-//   - A recorded SessionID is never overwritten: it must not overwrite a recorded
-//     session on mismatch, or a sub-agent's session would be recorded and the
-//     parent would look foreign.
-func refreshEndpoint(ep store.Endpoint, a herdr.Agent) store.Endpoint {
-	ep.PaneID = a.PaneID
-	if ep.SessionID == "" && a.Session.Value != "" {
-		ep.SessionID = a.Session.Value
-	}
-	if ep.Kind == "" && a.Kind != "" {
-		ep.Kind = a.Kind
-	}
-	return ep
-}
-
-// effectiveStatus returns a's status, or StatusWorking when a foreground session
-// mismatch indicates that a sub-agent is occupying the pane.
-//
-// When herdr reports a foreground session that differs from the recorded
-// session, herdr is reporting a sub-agent running in the agent's pane. The
-// sub-agent's idle or done status reflects only the sub-agent's state, while the
-// parent agent remains busy waiting on it. In contrast, a blocked sub-agent has
-// an active dialog requiring human input that blocks the parent as well, so
-// StatusBlocked passes through.
-func effectiveStatus(ep store.Endpoint, a herdr.Agent) string {
-	if ep.SessionID != "" && a.Session.Value != "" && a.Session.Value != ep.SessionID {
-		if a.Status == herdr.StatusIdle || a.Status == herdr.StatusDone {
-			return herdr.StatusWorking
-		}
-	}
-	return a.Status
 }
 
 // legacyPaneBinding reports whether b is a binding from before #303: a local
@@ -196,15 +126,14 @@ func retireLegacyPane(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding,
 	return b, nil
 }
 
-// Reconcile advances one binding against the agent list the daemon already
-// fetched, so a tick costs exactly one herdr call no matter how many bindings
-// exist.
+// Reconcile advances one binding: its consults, then its builder's round
+// (headless process or remote poll), and finally any pending planner payload.
 //
 // Reconcile does NOT persist anything: it returns the binding and the caller
 // must `tx.Save` it before releasing the lock. Everything it calls takes the
 // same tx rather than locking itself, which is what lets the caller hold one
 // critical section across the whole read-reconcile-write.
-func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (out store.Binding, err error) {
+func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (out store.Binding, err error) {
 	orig := b
 	defer func() {
 		if err == nil {
@@ -212,7 +141,6 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 			// settled on, before the mutations and notices read it.
 			out = stampStale(rt, tx, out)
 			emitMutations(ctx, rt, orig, out)
-			out = emitProgressNotices(ctx, rt, orig, out)
 		}
 	}()
 	// Consults reconcile before the builder is located, and before the DONE
@@ -249,30 +177,22 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, a
 	}
 
 	if b.Builder.Remote() {
-		return reconcileRemote(ctx, rt, tx, b, agents)
+		return reconcileRemote(ctx, rt, tx, b)
 	}
 
-	// A headless builder (#99) is a process, not an agent herdr lists;
-	// everything below this line looks for a pane. Spec §5.1 is its own
-	// tick.
-	if b.Builder.Headless() {
-		return reconcileHeadless(ctx, rt, tx, b, agents)
-	}
-
-	// Only a remote or headless binding reaches this line: every legacy pane
-	// binding was retired above, and the remote and headless dispatches
-	// returned. A local builder is always headless since #303.
-	return b, nil
+	// Every local binding reaching this line is headless: the legacy pane
+	// bindings were retired above, and a local builder is only ever a process
+	// relay runs per round (#99, #303). Spec §5.1 is its own tick.
+	return reconcileHeadless(ctx, rt, tx, b)
 }
 
 // haltBinding stops relaying and asks for a human, exactly once per round.
 //
 // The dedup keys on HaltNotifiedRound rather than on State because State is
-// rewritten by other steps of the same tick (deliverAndSettle can turn NeedsYou
-// into Held or Orphaned), which is what made every earlier State-keyed guard
-// notify once per poll instead of once. Per round is also the behaviour a human
-// wants: one notification per round that goes wrong.
-func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
+// rewritten by other steps of the same tick, which is what made every earlier
+// State-keyed guard log once per poll instead of once. Per round is also the
+// behaviour a human wants: one log line per round that goes wrong.
+func haltBinding(_ context.Context, rt Runtime, b store.Binding, message string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 	if b.Halt != text || b.HaltAt.IsZero() {
 		b.HaltAt = rt.Now().UTC()
@@ -280,12 +200,6 @@ func haltBinding(ctx context.Context, rt Runtime, b store.Binding, message strin
 	b.Halt = text
 
 	if b.HaltNotifiedRound != b.Round {
-		body := fmt.Sprintf("round %d", b.Round)
-		if err := rt.Herdr.Notify(ctx, message, body, herdr.SoundRequest); err != nil {
-			return b, fmt.Errorf("notify halt: %w", err)
-		}
-
-		// Shares the notify's once-per-round dedup.
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 
 		b.HaltNotifiedRound = b.Round
@@ -350,8 +264,8 @@ func joinNotes(a, b string) string {
 }
 
 // closeOnMarker closes an open round when the builder's completion marker
-// (Store.DonePath) exists. It is the one place both the pane and the headless
-// path decide "the builder says it is finished", so they cannot disagree.
+// (Store.DonePath) exists. It is the one place the round decides "the builder
+// says it is finished".
 //
 // With a gate configured (#132) it first runs the gate across ticks: gating
 // is true while the gate is running and the round must be left alone --
@@ -445,9 +359,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	)
 	outcome := OutcomeUnstructured
 	if note != noteScraped {
-		// A scraped body is the terminal, which holds the prompt's own
+		// A scraped body is a terminal capture, which holds the prompt's own
 		// ```relay skeleton, truncated by the capture. The tail contract is
-		// for the file the builder writes, not for what herdr had on screen.
+		// for the file the builder writes.
 		tail, ok, reject = parseReportTail(body)
 	}
 	if ok {
@@ -624,46 +538,23 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return b, nil
 }
 
-// deliverAndSettle attempts any pending delivery and folds the result into the
-// binding's state. It is also where a held-path decision becomes visible:
-// DeliverPending records why it held or injected, and nothing else in
-// production reads that reason (#75).
-func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+// deliverAndSettle attempts any pending delivery. The binding is left pending
+// when no route can take the payload -- DeliverPending records why, and
+// `relay pull` or the channel's own poll delivers it later (#303 §5.4).
+func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Owner != "" {
-		// Owned by a remote client: there is no planner pane. Payloads stay
+		// Owned by a remote client: there is no planner. Payloads stay
 		// queued; the owner reads them over the wire (remote-builders spec §6.2).
 		return b, nil
 	}
-	prev := b.State
-	next, got, err := DeliverPending(ctx, rt, tx, b, agents)
+	next, got, err := DeliverPending(ctx, rt, tx, b)
 	if err != nil {
 		return b, err
 	}
 	b = next
 
-	switch {
-	case got.Held && prev != store.StateHeld:
-		// Log the transition only. A held tick's reason carries the quiet
-		// clock ("quiet 23s of 1m0s") and would change every tick.
-		slog.Info("payload held", "binding", b.Name, "round", got.Round, "reason", got.Reason)
-	case got.Delivered && got.Reason != "":
-		// The two focused-path injects. The unfocused delivery has an empty
-		// reason and stays silent: it is the ordinary path.
-		slog.Info("payload delivered", "binding", b.Name, "round", got.Round, "reason", got.Reason)
-	}
-
-	switch {
-	case got.PlannerGone:
-		b.State = store.StateOrphaned
-	case got.Held:
-		b.State = store.StateHeld
-	case got.Delivered && b.State == store.StateHeld:
-		b.State = store.StateActive
-	case got.Empty && b.State == store.StateHeld:
-		// Nothing is waiting any more, so the hold is over. This is the path a
-		// `relay pull` leaves behind: it claims the payload without delivering
-		// it, so nothing else ever clears Held.
-		b.State = store.StateActive
+	if got.Delivered && got.Reason != "" {
+		slog.Info("payload delivered", "binding", b.Name, "round", got.Round, "route", got.Route, "reason", got.Reason)
 	}
 
 	return b, nil

@@ -8,16 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // edgePairStore seeds two minimal, unrelated active bindings ("api" and
-// "client") in one store, with no herdr agents at all: enough for
-// AddEdge/ListEdges/RemoveEdge, which never touch herdr.
+// "client") in one store: enough for AddEdge/ListEdges/RemoveEdge, which
+// never touch a builder.
 func edgePairStore(t *testing.T) Runtime {
 	t.Helper()
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	for _, name := range []string{"api", "client"} {
 		b := store.Binding{Name: name, CWD: "/repo-" + name, Round: 1, State: store.StateActive}
 		if err := rt.Store.Save(b); err != nil {
@@ -160,23 +159,16 @@ func TestRemoveEdge(t *testing.T) {
 	}
 }
 
-// edgeSourceBinding binds "api" on a pane builder and sends it one round,
+// edgeSourceBinding binds "api" headless and sends it one round,
 // sentBinding-style, but under the name the edge tests use throughout (#37).
-func edgeSourceBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
+func edgeSourceBinding(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	f.newPane = "w2:p4"
-	rt := newRuntime(t, f)
-
+	rt := newRuntime(t)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "api", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo-api",
+		Name: "api", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-api",
 	}); err != nil {
 		t.Fatalf("Bind api: %v", err)
 	}
-	f.agents = append(f.agents, herdr.Agent{
-		Name: "api-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder",
-	})
-
 	if _, err := Send(context.Background(), rt, "api", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send api: %v", err)
 	}
@@ -184,24 +176,20 @@ func edgeSourceBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
 	if err != nil {
 		t.Fatalf("Load api: %v", err)
 	}
-	f.prompts = nil
 	return rt, b
 }
 
-// edgeSourceBindingHeadless is edgeSourceBinding for a headless "api",
-// mirroring sentHeadless under the edge tests' binding names.
-func edgeSourceBindingHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+// edgeSourceBindingHeadless is edgeSourceBinding with fr as the runtime's
+// Runner, mirroring sentHeadless under the edge tests' binding names.
+func edgeSourceBindingHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Runner = fr
-
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "api", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo-api", Headless: true,
+		Name: "api", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo-api", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind --headless api: %v", err)
 	}
-
 	if _, err := Send(context.Background(), rt, "api", writePlan(t, "do it"), SendOptions{}); err != nil {
 		t.Fatalf("Send api: %v", err)
 	}
@@ -215,9 +203,8 @@ func edgeSourceBindingHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runt
 // addClientBinding saves an active "client" binding with a headless builder,
 // so Send starts it a process on the runtime's Runner. live is false to make
 // the target unsendable (a broken binding), the "target is gone" case.
-func addClientBinding(t *testing.T, rt Runtime, f *fakeHerdr, live bool) store.Binding {
+func addClientBinding(t *testing.T, rt Runtime, live bool) store.Binding {
 	t.Helper()
-	_ = f
 	client := store.Binding{
 		Name: "client", CWD: "/repo-client",
 		Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
@@ -261,13 +248,6 @@ func reloadAPI(t *testing.T, rt Runtime) store.Binding {
 	return b
 }
 
-func apiAgents() []herdr.Agent {
-	return []herdr.Agent{
-		plannerWith(herdr.StatusWorking, false),
-		{Name: "api-builder", Kind: "agy", Status: herdr.StatusIdle, CWD: "/repo-api", PaneID: "w2:p4", Title: "api-builder"},
-	}
-}
-
 // findEdgeLogEntry returns the newest KindEdge log entry that carries a
 // payload -- the queue-mode delivery evaluateEdges (or runFires' failure
 // fallback) queues -- distinct from the Payload-less KindEdge entries
@@ -297,9 +277,8 @@ func findEdgeLogEntry(t *testing.T, rt Runtime, name string) (store.LogEntry, bo
 // Mutation check (run and report): skip the evaluateEdges call this round
 // added to reconcile.go's close path, and this fails.
 func TestEdgeQueueOnClose(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBinding(t)
+	addClientBinding(t, rt, true)
 	prompt := writePlan(t, "handoff to client")
 
 	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -311,7 +290,7 @@ func TestEdgeQueueOnClose(t *testing.T) {
 	closeAPIRound(t, rt, 1)
 	api = reloadAPI(t, rt)
 
-	got, err := reconcile(t, rt, api, apiAgents())
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -341,8 +320,8 @@ func TestEdgeQueueOnClose(t *testing.T) {
 	if client.Round != 1 || len(client.Edges) != 0 {
 		t.Errorf("client = %+v, want untouched at round 1 with no edges", client)
 	}
-	if len(f.prompts) != 0 {
-		t.Errorf("f.prompts = %+v, want none: a queued edge never prompts the target", f.prompts)
+	if starts := len(runnerOf(t, rt).specs); starts != 1 {
+		t.Errorf("builder starts = %d, want 1 (only api's round): a queued edge never starts the target", starts)
 	}
 }
 
@@ -350,9 +329,8 @@ func TestEdgeQueueOnClose(t *testing.T) {
 // edge rather than leaving it pending forever: at close, a round's artifacts
 // are final.
 func TestEdgeSkippedWhenArtifactMissing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBinding(t)
+	addClientBinding(t, rt, true)
 	prompt := writePlan(t, "handoff to client")
 
 	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -367,7 +345,7 @@ func TestEdgeSkippedWhenArtifactMissing(t *testing.T) {
 	// checkout, so CaptureDrift/CaptureRoundDiff produce nothing -- exactly
 	// the "no diff" case this test wants.
 
-	got, err := reconcile(t, rt, api, apiAgents())
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -389,11 +367,10 @@ func TestEdgeSkippedWhenArtifactMissing(t *testing.T) {
 // prompt to the target and settles the edge Fired with "sent round N".
 //
 // Mutation check (run and report): make runFires a no-op and this fails on
-// f.prompts and the edge's final Result.
+// the target's started process and the edge's final Result.
 func TestEdgeFireSendsToTarget(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBinding(t)
+	addClientBinding(t, rt, true)
 	prompt := writePlan(t, "handoff to client")
 
 	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -405,7 +382,7 @@ func TestEdgeFireSendsToTarget(t *testing.T) {
 	closeAPIRound(t, rt, 1)
 	api = reloadAPI(t, rt)
 
-	got, err := reconcile(t, rt, api, apiAgents())
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -463,11 +440,10 @@ func TestEdgeFireSendsToTarget(t *testing.T) {
 // queue-mode payload evaluateEdges would have queued, with the failure
 // named.
 func TestEdgeFireFailureIsQueued(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	// live=false: no herdr agent answers client's pane, so Send cannot
-	// locate its builder -- the "target is gone" case.
-	addClientBinding(t, rt, f, false)
+	rt, api := edgeSourceBinding(t)
+	// live=false: client is broken, so Send refuses it -- the "target is
+	// gone" case.
+	addClientBinding(t, rt, false)
 	prompt := writePlan(t, "handoff to client")
 
 	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -479,7 +455,7 @@ func TestEdgeFireFailureIsQueued(t *testing.T) {
 	closeAPIRound(t, rt, 1)
 	api = reloadAPI(t, rt)
 
-	got, err := reconcile(t, rt, api, apiAgents())
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -511,9 +487,8 @@ func TestEdgeFireFailureIsQueued(t *testing.T) {
 // it untouched by mistake -- an edge declared for that later round fires
 // then.
 func TestEdgeFiresOnce(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBinding(t)
+	addClientBinding(t, rt, true)
 	prompt1 := writePlan(t, "handoff round 1")
 	prompt2 := writePlan(t, "handoff round 2")
 
@@ -532,7 +507,7 @@ func TestEdgeFiresOnce(t *testing.T) {
 
 	closeAPIRound(t, rt, 1)
 	api = reloadAPI(t, rt)
-	got, err := reconcile(t, rt, api, apiAgents())
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile round 1 close: %v", err)
 	}
@@ -567,14 +542,13 @@ func TestEdgeFiresOnce(t *testing.T) {
 		t.Fatalf("Save after round 1 close: %v", err)
 	}
 
-	f.prompts = nil
 	if _, err := Send(context.Background(), rt, "api", writePlan(t, "round 2 work"), SendOptions{}); err != nil {
 		t.Fatalf("Send round 2: %v", err)
 	}
 	closeAPIRound(t, rt, 2)
 	got = reloadAPI(t, rt)
 
-	got, err = reconcile(t, rt, got, apiAgents())
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile round 2 close: %v", err)
 	}
@@ -598,9 +572,8 @@ func TestEdgeFiresOnce(t *testing.T) {
 // on the next Tick, because armedFires scans every binding's saved state,
 // not just what a given tick's Reconcile touched.
 func TestArmedEdgeSurvivesRestart(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, api := edgeSourceBinding(t, f)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBinding(t)
+	addClientBinding(t, rt, true)
 	prompt := writePlan(t, "handoff to client")
 
 	added, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -651,10 +624,9 @@ func TestArmedEdgeSurvivesRestart(t *testing.T) {
 // source binding: reconcileHeadless's close path evaluates edges exactly as
 // the pane path does.
 func TestEdgeHeadlessClosePath(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, api := edgeSourceBindingHeadless(t, f, fr)
-	addClientBinding(t, rt, f, true)
+	rt, api := edgeSourceBindingHeadless(t, fr)
+	addClientBinding(t, rt, true)
 	prompt := writePlan(t, "handoff to client")
 
 	if _, err := AddEdge(context.Background(), rt, "api", store.Edge{
@@ -668,7 +640,7 @@ func TestEdgeHeadlessClosePath(t *testing.T) {
 	fr.exit(api.Builder.PID, 0)
 	api = reloadAPI(t, rt)
 
-	got, err := reconcile(t, rt, api, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, api)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}

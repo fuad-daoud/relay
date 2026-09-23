@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -57,9 +56,6 @@ type AskOptions struct {
 	// planner" (§4.3). A round consult (Round > 0) resumes a recorded
 	// session and never resolves a planner.
 	PlannerID string
-	// PlannerPane is $HERDR_PANE_ID when set; optional.
-	PlannerPane string
-
 	// Round > 0 asks the builder that built this closed round instead of
 	// spawning a role: Role and Candidate are ignored, because the round's
 	// recorded session fixes both (#147 part 2).
@@ -92,8 +88,7 @@ type AskResult struct {
 // With opts.Round > 0 the ask is a round consult (#147 part 2): it resumes the
 // harness session that built closed round opts.Round and asks it the question,
 // headless and read-only, instead of resolving a role and a candidate. It then
-// requires exactly one of opts.File and opts.Question, and no opts.PlannerPane:
-// a resumed process opens no pane.
+// requires exactly one of opts.File and opts.Question.
 //
 // Preconditions:  opts.File is readable; opts.Role resolves to a consult spec
 //
@@ -123,7 +118,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	// planner verb: it resolves one, and ErrNoPlanner is the hard error.
 	if _, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID); err != nil {
 		return AskResult{}, err
-	} else if !haveRec && opts.PlannerPane == "" {
+	} else if !haveRec {
 		return AskResult{}, ErrNoPlannerSession
 	}
 
@@ -169,18 +164,18 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		newID = randomConsultID
 	}
 
-	// Mint the id and compose the agent name before the lock, so a name herdr
+	// Mint the id and compose the agent name before the lock, so a name relay
 	// would refuse fails as a validation error before the reservation is
 	// written or the question staged: nothing to clean up.
 	id := newID()
 	agentName := opts.Name + "-" + role.Name + "-" + id
-	if err := herdr.ValidateAgentName(agentName); err != nil {
+	if err := store.ValidName(agentName); err != nil {
 		return AskResult{}, fmt.Errorf(
 			"consult agent name %q: %w -- binding %q needs a name of at most %d characters to run %q consults",
-			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+role.Name+"-")-8, role.Name)
+			agentName, err, opts.Name, store.MaxAgentNameLen-len("-"+role.Name+"-")-8, role.Name)
 	}
 
-	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
+	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
 	consult, cwd, err := reserveConsult(rt, opts, id, role.Name,
 		store.Endpoint{AgentName: agentName, Kind: l.Kind}, body)
 	if err != nil {
@@ -221,7 +216,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		consult.State = store.ConsultRunning
 	}
 
-	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
+	// ── phase 3: record ──────────────────────────────── lock held, no external calls
 	var pick *store.LogEntry
 	if consult.State == store.ConsultRunning {
 		p := pickEntry(rt.Now(), consult.Round, role.Name, res)
@@ -394,10 +389,10 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	}
 	id := newID()
 	agentName := opts.Name + "-" + roundRole + "-" + id
-	if err := herdr.ValidateAgentName(agentName); err != nil {
+	if err := store.ValidName(agentName); err != nil {
 		return AskResult{}, fmt.Errorf(
 			"consult agent name %q: %w -- binding %q needs a name of at most %d characters to run %q consults",
-			agentName, err, opts.Name, herdr.MaxAgentNameLen-len("-"+roundRole+"-")-8, roundRole)
+			agentName, err, opts.Name, store.MaxAgentNameLen-len("-"+roundRole+"-")-8, roundRole)
 	}
 
 	// claude and agy have a read tier and resume in it. opencode has none, so
@@ -415,7 +410,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 		return AskResult{}, fmt.Errorf("%s session %s: %w", s.Kind, short8(s.ID), err)
 	}
 
-	// ── phase 1: reserve ─────────────────────────────── lock held, no herdr calls
+	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
 	consult, cwd, err := reserveConsult(rt, opts, id, roundRole,
 		store.Endpoint{AgentName: agentName, Kind: s.Kind, SessionID: s.ID}, body)
 	if err != nil {
@@ -447,7 +442,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 		consult.State = store.ConsultRunning
 	}
 
-	// ── phase 3: record ──────────────────────────────── lock held, no herdr calls
+	// ── phase 3: record ──────────────────────────────── lock held, no external calls
 	saveErr := recordConsult(rt, opts.Name, consult, nil,
 		fmt.Sprintf("round %d session %s:%s", opts.Round, s.Kind, short8(s.ID)))
 	result := AskResult{Consult: consult, Binding: opts.Name}

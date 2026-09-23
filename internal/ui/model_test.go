@@ -49,8 +49,7 @@ func hasTabMsg(batch []tea.Cmd) bool {
 
 func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
@@ -71,8 +70,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 
 func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
@@ -93,8 +91,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 
 func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
@@ -113,8 +110,7 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 
 func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	initialReport := relay.Report{
@@ -142,8 +138,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 
 func TestStatusMsgSuccessClearsError(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.err = errors.New("transient error")
@@ -170,8 +165,7 @@ func TestStatusMsgSuccessClearsError(t *testing.T) {
 
 func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
@@ -205,8 +199,7 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 
 func TestWindowSizeMsgSetsReady(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.ready = false
@@ -248,8 +241,7 @@ func TestRowHelper(t *testing.T) {
 
 func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -283,8 +275,7 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 // longer on screen must be discarded, not accepted as a legitimate lag.
 func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
 	m.detail.name = "webshop"
@@ -314,8 +305,7 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 
 func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	name := "webshop"
 	ts := time.Now()
@@ -352,8 +342,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 
 func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -386,8 +375,7 @@ func TestEnterPressedTwiceIssuesOneFetch(t *testing.T) {
 
 func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if !m.statusInFlight {
@@ -403,8 +391,7 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 
 func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	if m.statusLoaded {
@@ -427,8 +414,7 @@ func TestEmptyIsFalseBeforeLoad(t *testing.T) {
 
 func TestEmptyFleetFooter(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
@@ -524,7 +510,7 @@ func TestEmptyFleetSnapsBackToList(t *testing.T) {
 // with no database leaves scope on live, sets a sticky notice, and never
 // exits or panics.
 func TestKeyAToggleWithoutDBNotices(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...) // rt.DB is nil: newFakeHerdr's runtime carries no *db.DB
+	m := splitModel(t, 140, 40, threeRows()...) // rt.DB is nil: the planner runtime carries no *db.DB
 	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
@@ -581,8 +567,7 @@ func TestScopeAllRefusedOnServer(t *testing.T) {
 // different round's stale content.
 func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -646,8 +631,7 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 // [1, detail.rounds] changes nothing -- not the round, not the cache.
 func TestStepRoundEdgesNoop(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
 	m.detail.name = "webshop"
@@ -686,8 +670,7 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.report = relay.Report{Bindings: []relay.BindingStatus{
 		{Name: "webshop", Round: 2, Display: "ACTIVE"},

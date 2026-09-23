@@ -70,11 +70,6 @@ func whatAge(b relay.BindingStatus, now time.Time) (what, age string) {
 		} else {
 			what = "needs you"
 		}
-	case "HELD":
-		if b.Pending != nil {
-			what = fmt.Sprintf("%s r%d", b.Pending.Kind, b.Pending.Round)
-		}
-		age = relay.HoldText(b)
 	case "ACTIVE":
 		what = b.BuilderStatus
 		// #143: an ACTIVE row's own quiet clock, present whenever the round

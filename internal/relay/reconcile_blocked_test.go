@@ -1,34 +1,25 @@
 package relay
 
 import (
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// TestBlockedDialogToastsOnce checks the blocked-builder toast (#129): it
-// fires once, when the question is queued, naming the dialog's first line.
 func TestReconcileFlagsRoundTimeout(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	// Pin the budget explicitly: this exercises the timeout mechanism, not
 	// whatever the store's default happens to be.
 	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
 	b.RoundStartedAt = time.Unix(1757000000, 0).UTC().Add(-31 * time.Minute)
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.State != store.StateNeedsYou {
 		t.Errorf("state = %s, want needs_you after the round timeout", got.State)
-	}
-	if len(f.notices) == 0 {
-		t.Error("a timeout must notify")
 	}
 	if want := "round 1 has run past 30m0s"; got.Halt != want {
 		t.Errorf("Halt = %q, want %q", got.Halt, want)
@@ -36,27 +27,19 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	if !got.HaltAt.Equal(rt.Now().UTC()) {
 		t.Errorf("HaltAt = %v, want %v", got.HaltAt, rt.Now().UTC())
 	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d: the halt is recorded once per round", got.HaltNotifiedRound, got.Round)
+	}
 	haltAt := got.HaltAt
 
-	// A second tick against the same already-halted binding must not notify
-	// again: haltBinding's guard is per-transition, not per-tick. (#135's stall
-	// notice fires on the first tick too, so both are counted by their text.)
-	second, err := reconcile(t, rt, got, agents)
+	// A second tick against the same already-halted binding must not re-record
+	// the halt: haltBinding's guard is per-transition, not per-tick.
+	second, err := reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	var halts int
-	for _, n := range f.notices {
-		if strings.Contains(n, "run past") {
-			halts++
-		}
-	}
-	if halts != 1 {
-		t.Errorf("got %d timeout notices, want 1; a still-timed-out binding must not renotify: %v", halts, f.notices)
-	}
-	// A headless builder has no herdr screen to read.
-	if len(f.reads) != 0 {
-		t.Errorf("reads = %d, want 0: a local builder is headless", len(f.reads))
+	if second.HaltNotifiedRound != second.Round {
+		t.Errorf("HaltNotifiedRound = %d after a second tick, want %d", second.HaltNotifiedRound, second.Round)
 	}
 	if !second.HaltAt.Equal(haltAt) {
 		t.Errorf("HaltAt = %v after a second tick, want unchanged %v", second.HaltAt, haltAt)
@@ -64,7 +47,7 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 
 	// Even once the clock has moved on, a still-halted binding's HaltAt must
 	// stay pinned to the halting tick, not drift to a later poll.
-	third, err := reconcile(t, at(rt, time.Minute), second, agents)
+	third, err := reconcile(t, at(rt, time.Minute), second)
 	if err != nil {
 		t.Fatalf("third Reconcile: %v", err)
 	}
@@ -73,106 +56,63 @@ func TestReconcileFlagsRoundTimeout(t *testing.T) {
 	}
 }
 
-// TestReconcileTimeoutOnLimitSwitchesInsteadOfHalting checks the pane
-// budget's decision point (spec §5): the halting tick scans first, and a
-// match switches the builder instead of halting.
+// TestReconcileStopsAtRoundCap checks the cap's decision point: a round past
+// the cap halts instead of being relayed further.
 func TestReconcileStopsAtRoundCap(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	b.Round = b.RoundCap + 1
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusIdle)}
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.State != store.StateNeedsYou {
 		t.Errorf("state = %s, want needs_you at the cap", got.State)
 	}
-	if len(f.prompts) != 0 {
-		t.Error("nothing may be relayed past the round cap")
+	if got.Halt == "" {
+		t.Error("hitting the round cap must record its reason")
 	}
-	if len(f.notices) == 0 {
-		t.Error("hitting the round cap must notify")
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d", got.HaltNotifiedRound, got.Round)
 	}
-	if len(f.sounds) == 0 || f.sounds[0] != herdr.SoundRequest {
-		t.Errorf("sounds = %+v, want first sound %q", f.sounds, herdr.SoundRequest)
-	}
-}
-
-// timedOutBinding is a binding whose round is well past its budget, with a
-// payload already waiting on the planner. The waiting payload is what made the
-// halt and the held-payload notice overwrite each other's state and each
-// re-notify on every poll.
-func timedOutBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
-	t.Helper()
-	rt, b := sentBinding(t, f)
-	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
-	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
-	return rt, b
 }
 
 // TestReconcileTimeoutNotifiesOnceInEveryPlannerState is the regression test
-// for the notification storm: at a 2s poll, a halt that renotifies is a herdr
-// notification every couple of seconds, forever, on a live desktop. Two of
-// these three planner states used to storm, because the halt's dedup and the
-// held-payload dedup each keyed on a State the other one overwrote.
+// for the halt storm: at a 2s poll, a halt that re-records is a notification
+// every couple of seconds, forever, on a live desktop. Five ticks against a
+// timed-out binding must leave exactly one halt recorded for the round.
 func TestReconcileTimeoutNotifiesOnceInEveryPlannerState(t *testing.T) {
-	cases := map[string][]herdr.Agent{
-		"planner gone":      {builderAgent(herdr.StatusWorking)},
-		"planner focused":   {plannerWith(herdr.StatusIdle, true), builderAgent(herdr.StatusWorking)},
-		"planner unfocused": {plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)},
+	rt, b := timedOutBinding(t)
+
+	for i := 0; i < 5; i++ {
+		var err error
+		b, err = reconcile(t, rt, b)
+		if err != nil {
+			t.Fatalf("tick %d: %v", i+1, err)
+		}
 	}
 
-	for name, agents := range cases {
-		t.Run(name, func(t *testing.T) {
-			f := &fakeHerdr{}
-			rt, b := timedOutBinding(t, f)
-
-			for i := 0; i < 5; i++ {
-				var err error
-				b, err = reconcile(t, rt, b, agents)
-				if err != nil {
-					t.Fatalf("tick %d: %v", i+1, err)
-				}
-			}
-
-			// #135 adds one stall notice on the first tick (the round has been
-			// quiet past stall_after_ms); the halt itself must still notify
-			// exactly once over all five ticks, which is what guards against
-			// the storm this test exists for.
-			var halts int
-			for _, n := range f.notices {
-				if strings.Contains(n, "run past") {
-					halts++
-				}
-			}
-			if halts != 1 {
-				t.Errorf("got %d timeout notices over 5 ticks, want 1: %v", halts, f.notices)
-			}
-			if b.State != store.StateNeedsYou {
-				t.Errorf("state = %s, want needs_you to survive every tick", b.State)
-			}
-			if b.HaltNotifiedRound != b.Round {
-				t.Errorf("HaltNotifiedRound = %d, want %d", b.HaltNotifiedRound, b.Round)
-			}
-		})
+	if b.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you to survive every tick", b.State)
+	}
+	if b.HaltNotifiedRound != b.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d", b.HaltNotifiedRound, b.Round)
+	}
+	if b.HaltAt.IsZero() {
+		t.Error("HaltAt is zero, want the tick that halted")
 	}
 }
 
-// TestReconcileTimeoutNotifiesAgainInALaterRound is the other half of the
-// dedup: one notification per round that goes wrong, not one per binding.
+// TestReconcileTimeoutNotifiesAgainInALaterRound is the other half of
+// the dedup: one halt per round that goes wrong, not one per binding.
 func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := timedOutBinding(t, f)
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
+	rt, b := timedOutBinding(t)
 
-	b, err := reconcile(t, rt, b, agents)
+	b, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-
-	// The next round is sent, runs long too, and must get its own notice.
+	// The next round is sent, runs long too, and must get its own halt.
 	b.Round++
 	b.HaltNotifiedRound = 0
 	b.State = store.StateActive
@@ -185,38 +125,38 @@ func TestReconcileTimeoutNotifiesAgainInALaterRound(t *testing.T) {
 		t.Fatalf("seed round %d plan: %v", b.Round, err)
 	}
 
-	if _, err := reconcile(t, rt, b, agents); err != nil {
+	second, err := reconcile(t, rt, b)
+	if err != nil {
 		t.Fatalf("second round Reconcile: %v", err)
 	}
-	// One timeout notice per timed-out round, not one per binding. (#135's
-	// stall notice is separate and fires once for the episode.)
-	var halts int
-	for _, n := range f.notices {
-		if strings.Contains(n, "run past") {
-			halts++
-		}
+	if second.Round != 2 {
+		t.Fatalf("round = %d, want 2", second.Round)
 	}
-	if halts != 2 {
-		t.Errorf("got %d timeout notices, want one per timed-out round: %v", halts, f.notices)
+	if second.HaltNotifiedRound != second.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d: one halt per timed-out round", second.HaltNotifiedRound, second.Round)
+	}
+	if want := "round 2 has run past 30m0s"; second.Halt != want {
+		t.Errorf("Halt = %q, want %q: the later round gets its own halt", second.Halt, want)
 	}
 }
 
 // TestReconcileRoundCapNotifiesOnce guards the same dedup on the other halt.
 func TestReconcileRoundCapNotifiesOnce(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	b.Round = b.RoundCap + 1
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, true), builderAgent(herdr.StatusIdle)}
 
 	for i := 0; i < 5; i++ {
 		var err error
-		b, err = reconcile(t, rt, b, agents)
+		b, err = reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("tick %d: %v", i+1, err)
 		}
 	}
 
-	if len(f.notices) != 1 {
-		t.Errorf("got %d notices over 5 ticks at the cap, want 1: %v", len(f.notices), f.notices)
+	if b.HaltNotifiedRound != b.Round {
+		t.Errorf("HaltNotifiedRound = %d over 5 ticks at the cap, want %d", b.HaltNotifiedRound, b.Round)
+	}
+	if b.Halt == "" {
+		t.Error("Halt is empty over 5 ticks at the cap, want the reason recorded")
 	}
 }

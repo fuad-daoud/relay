@@ -2,25 +2,27 @@ package relay
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // Delivery is the outcome of one delivery attempt. All-false means "not yet,
 // try again next tick".
 type Delivery struct {
-	Delivered   bool
-	Held        bool
-	PlannerGone bool
-	Empty       bool // the planner was reachable and nothing was waiting
-	Reason      string
-	// Round is the pending entry's round, set on Held and Delivered so the
-	// caller can log the outcome without re-reading the queue.
+	Delivered bool
+	Empty     bool // nothing was pending for this binding
+	// Route is how this attempt would deliver, or did: "channel",
+	// "deliverer:<kind>" or "pull" (#303 §4.6). "pull" is a route, not a
+	// fault: the entry stays pending for `relay pull`, which is exactly how a
+	// Claude Code planner in tools mode gets its report through the
+	// background wait (D6).
+	Route  string
+	Reason string
+	// Round is the pending entry's round, set on Delivered and on a left-
+	// pending attempt so the caller can log the outcome without re-reading
+	// the queue.
 	Round int
 }
 
@@ -47,119 +49,81 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 	return tx.AppendLog(name, e)
 }
 
-// DeliverPending attempts the oldest pending payload for one binding. It takes
-// the agent list rather than fetching one, so a daemon tick costs exactly one
-// herdr call regardless of how many bindings it reconciles.
+// DeliverPending attempts the oldest pending payload for one binding against
+// the routes #303 §5.4 defines, in order:
 //
-// The hold is the anti-clobber rule: herdr agent prompt types text and presses
-// enter, and herdr cannot see the human's input buffer, so injecting into a
-// focused planner pane risks merging the payload with a half-typed message.
-// Focus alone is no longer the test: on a focused planner, plannerHold applies
-// the two signals that mean "nothing to clobber" -- the planner's input box
-// reads empty, or its visible screen has been unchanged for rt.HeldGrace. The
-// returned binding carries the fingerprint state a hold sets; every other
-// return clears it, and the caller must persist the returned binding.
+//  1. the channel: a live claim for b.PlannerID. The claim holder's own poll
+//     pushes the entry and confirms it with route=channel, so this returns
+//     without touching the log -- confirming here would empty the mailbox
+//     before the channel reader saw it.
+//  2. rt.Deliverers[b.Planner.Kind]: #300's port, unchanged. A deliverer that
+//     reports OutcomeNotMine leaves the entry pending with its reason; it no
+//     longer falls through to a pane (there is none).
+//  3. otherwise the entry stays pending with Delivery.Route "pull". For a
+//     Claude Code planner in tools mode that is the normal path, not a fault:
+//     the background wait's `relay pull` delivers it.
 //
-// The caller holds the state lock across pending -> prompt -> confirm and
+// The caller holds the state lock across pending -> deliver -> confirm and
 // passes tx in: `relay pull` runs the same sequence from another process, and
 // unserialised both could deliver the same payload, and Reconcile needs this
 // step inside the same lock as the rest of one binding's advance.
-func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, Delivery, error) {
+func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
+	pending, idx, found, err := tx.PendingForPlanner(b.Name)
+	if err != nil {
+		return b, Delivery{}, err
+	}
+	if !found {
+		return b, Delivery{Empty: true, Reason: "nothing pending"}, nil
+	}
+
 	if rt.Channels != nil && b.PlannerID != "" {
 		c, err := rt.Channels.Live(b.PlannerID, rt.Now())
 		if err != nil {
 			return b, Delivery{}, fmt.Errorf("channel claim: %w", err)
 		}
 		if c != nil {
-			return clearPlannerScreen(b), Delivery{Reason: "planner has a channel"}, nil
+			return b, Delivery{Route: "channel", Reason: "planner has a channel", Round: pending.Round}, nil
 		}
 	}
 
-	pending, idx, found, err := tx.PendingForPlanner(b.Name)
-	if err != nil {
-		return b, Delivery{}, err
-	}
-
-	if found {
-		if d, ok := rt.Deliverers[b.Planner.Kind]; ok {
-			text, _ := PushText(pending, os.ReadFile)
-			out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
-			if err != nil {
-				return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)
+	kind := b.Planner.Kind
+	if d, ok := rt.Deliverers[kind]; ok && kind != "" {
+		text, _ := PushText(pending, os.ReadFile)
+		out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
+		if err != nil {
+			return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)
+		}
+		if out == OutcomeDelivered {
+			route := "deliverer:" + kind
+			if err := tx.ConfirmIndex(b.Name, idx, route); err != nil {
+				return b, Delivery{}, err
 			}
-			switch out {
-			case OutcomeDelivered:
-				if err := tx.ConfirmIndex(b.Name, idx); err != nil {
-					return b, Delivery{}, err
-				}
-				return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason, Round: pending.Round}, nil
-			case OutcomeUnavailable:
-				return clearPlannerScreen(b), Delivery{Reason: reason, Round: pending.Round}, nil
-			}
-			// OutcomeNotMine falls through to the pane path.
+			return b, Delivery{Delivered: true, Route: route, Reason: reason, Round: pending.Round}, nil
+		}
+		// OutcomeNotMine and OutcomeUnavailable both leave the entry
+		// pending: the deliverer's own reason is the answer, and `relay pull`
+		// is the route that will finally take it.
+		return b, Delivery{Route: "pull", Reason: reason, Round: pending.Round}, nil
+	}
+
+	return b, Delivery{
+		Route:  "pull",
+		Reason: fmt.Sprintf("awaiting pull for planner %s (%s)", plannerLabel(rt, b), kind),
+		Round:  pending.Round,
+	}, nil
+}
+
+// plannerLabel names the binding's planner for a delivery reason: the record's
+// name when the registry knows it, else the planner id. Pure best-effort; a
+// nil registry leaves the id.
+func plannerLabel(rt Runtime, b store.Binding) string {
+	if b.PlannerID == "" {
+		return b.Planner.Kind
+	}
+	if rt.Planners != nil {
+		if rec, err := rt.Planners.Get(b.PlannerID); err == nil && rec.Name != "" {
+			return rec.Name
 		}
 	}
-
-	planner, ok := FindAgent(agents, b.Planner)
-	if !ok {
-		return clearPlannerScreen(b), Delivery{PlannerGone: true, Reason: "planner session is gone"}, nil
-	}
-
-	if planner.Status != herdr.StatusIdle && planner.Status != herdr.StatusDone {
-		return clearPlannerScreen(b), Delivery{Reason: "planner is " + planner.Status}, nil
-	}
-
-	if !found {
-		return clearPlannerScreen(b), Delivery{Empty: true, Reason: "nothing pending"}, nil
-	}
-
-	reason := ""
-	if planner.Focused {
-		var inject bool
-		b, inject, reason = plannerHold(ctx, rt, b, planner)
-		if !inject {
-			// Notify only on the transition into held. The daemon reconciles
-			// every couple of seconds and a payload stays held for as long as
-			// the human sits in the planner pane, so notifying per tick would
-			// fire indefinitely instead of nudging once.
-			if b.State != store.StateHeld {
-				msg := fmt.Sprintf("%s: round %d payload ready", b.Name, pending.Round)
-				body := "held: you are in the planner pane"
-				if pending.Note != "" {
-					body += "; " + pending.Note
-				}
-				if err := rt.Herdr.Notify(ctx, msg, body, herdr.SoundDone); err != nil {
-					return b, Delivery{}, fmt.Errorf("notify held delivery: %w", err)
-				}
-			}
-
-			return b, Delivery{Held: true, Reason: reason, Round: pending.Round}, nil
-		}
-	}
-
-	// Address the agent FindAgent just located; see internal/ui/fetch.go:170.
-	if err := promptWithRetry(ctx, rt, planner.PaneID, pending.Payload, pending.Path); err != nil {
-		if errors.Is(err, ErrPromptLate) {
-			slog.Info("report delivered late", "binding", b.Name, "round", pending.Round)
-		} else {
-			return b, Delivery{}, fmt.Errorf("prompt planner: %w", err)
-		}
-	}
-	if err := tx.ConfirmIndex(b.Name, idx); err != nil {
-		return b, Delivery{}, err
-	}
-
-	// The planner is mid-turn on this payload now, but the snapshot still says
-	// idle: it was taken once, before the daemon began its pass over the
-	// bindings, and nothing refreshes it. Two bindings sharing a planner would
-	// both read that stale idle and both type into the pane -- which is the
-	// exact clobber the status gate above exists to prevent (#46). Record what
-	// we just did, so every later binding in this pass sees the truth and takes
-	// the ordinary "planner is working" path. Tick owns a copy of the snapshot,
-	// so this never reaches the Herdr client or the next tick.
-	if i, ok := findAgentIndex(agents, b.Planner); ok {
-		agents[i].Status = herdr.StatusWorking
-	}
-
-	return clearPlannerScreen(b), Delivery{Delivered: true, Reason: reason, Round: pending.Round}, nil
+	return b.PlannerID
 }

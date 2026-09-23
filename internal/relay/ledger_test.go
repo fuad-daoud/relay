@@ -43,8 +43,7 @@ func loadHistory(t *testing.T, rt Runtime) history.History {
 // timer fires instead of failing fast, which is why the assertion is a
 // select against a timer rather than a bare call.
 func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	done := make(chan error, 1)
 	go func() {
@@ -76,8 +75,7 @@ func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
 }
 
 func TestUnavailableRecordsTheProvider(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	provider, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window")
 	if err != nil {
@@ -110,8 +108,7 @@ func TestUnavailableRecordsTheProvider(t *testing.T) {
 }
 
 func TestUnavailableWithUntil(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	until := baseTime.Add(2 * time.Hour)
 
 	if _, err := Unavailable(rt, testClaudeRef, until, "reason"); err != nil {
@@ -128,8 +125,7 @@ func TestUnavailableWithUntil(t *testing.T) {
 }
 
 func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, "claude/test/nope", time.Time{}, ""); !errors.Is(err, candidate.ErrUnknownCandidate) {
 		t.Errorf("err = %v, want ErrUnknownCandidate", err)
@@ -145,8 +141,7 @@ func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
 }
 
 func TestAvailableByTokenAndByProvider(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "first"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -180,8 +175,7 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 }
 
 func TestAvailableLeavesSpawnFailures(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	recordSpawnFailure(rt, testClaudeRef, "webshop", errors.New("boom"))
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -206,8 +200,7 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 }
 
 func TestGatesEmptyWhenNoLedger(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if got := Gates(rt); got != nil {
 		t.Errorf("Gates() = %+v, want nil", got)
@@ -215,8 +208,7 @@ func TestGatesEmptyWhenNoLedger(t *testing.T) {
 }
 
 func TestGatesProjectsOntoCandidates(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -251,8 +243,7 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 }
 
 func TestGatesToleratesABadLedger(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if err := os.WriteFile(rt.LedgerPath, []byte("not json"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -293,8 +284,7 @@ func TestGateUntilText(t *testing.T) {
 }
 
 func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if got := gatedNote(rt, testClaudeRef); got != "" {
 		t.Errorf("gatedNote() = %q, want empty", got)
@@ -302,8 +292,7 @@ func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
 }
 
 func TestGatedNoteFormatsEveryGate(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -329,8 +318,7 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 }
 
 func TestMutateLedgerPrunes(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	expired := ledger.Entry{
 		Kind:    ledger.RateLimited,
@@ -357,8 +345,7 @@ func TestMutateLedgerPrunes(t *testing.T) {
 }
 
 func TestUnavailableRecordsHistory(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -383,8 +370,7 @@ func TestUnavailableRecordsHistory(t *testing.T) {
 // TestRecordSpawnFailureLockedUnderHeldLock's already-held-lock setup, since
 // that is the daemon-switch path recordSpawnFailureLocked serves.
 func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	done := make(chan error, 1)
 	go func() {
@@ -422,8 +408,7 @@ func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
 // Since is the At of the entry the clear removed, so At - Since is how long
 // the provider was blocked.
 func TestAvailableRecordsClear(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -469,8 +454,7 @@ func TestAvailableRecordsClear(t *testing.T) {
 // TestAvailableNothingClearedRecordsNothing: zero removed is not an error and
 // is not an observation either, so the history stays empty.
 func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	provider, removed, err := Available(rt, "test", ClearedByPlanner)
 	if err != nil {
@@ -491,8 +475,7 @@ func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
 // given an Until that has passed by the time the clear runs precisely so the
 // pruned-and-saved ledger would differ from the file the refusal must leave.
 func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, baseTime.Add(time.Hour), "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -517,8 +500,7 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 // TestAvailableRejectsBadSource: source is one of two constants, and a
 // caller that passes anything else has a bug -- nothing is written.
 func TestAvailableRejectsBadSource(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -550,8 +532,7 @@ func readFileBytes(t *testing.T, path string) []byte {
 }
 
 func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {

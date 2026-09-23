@@ -25,8 +25,8 @@ func paneModel(t *testing.T, b relay.BindingStatus, active tab) Model {
 func TestPaneHeadRows(t *testing.T) {
 	b := relay.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
-		BuilderPane: "%7", BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
+		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
+		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relay/webshop", Dirty: true,
 		LastClose: &relay.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
 		Last:      &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
@@ -38,8 +38,8 @@ func TestPaneHeadRows(t *testing.T) {
 	}
 	want := []string{
 		"webshop  round 4   NEEDS YOU ",
-		"planner  %1   claude    idle · focused",
-		"builder  %7   agy       blocked · 2 consults",
+		"planner  architect-1",
+		"builder  agy",
 		"tree     relay/webshop · dirty · last close r3: 2 commits, clean",
 	}
 	for i, w := range want {
@@ -47,12 +47,14 @@ func TestPaneHeadRows(t *testing.T) {
 			t.Errorf("head[%d]:\n got %q\nwant prefix %q", i, got, w)
 		}
 	}
+	if got := stripANSI(head[1]); !strings.Contains(got, "route channel") {
+		t.Errorf("planner row must name the name and the route: %q", got)
+	}
+	if got := stripANSI(head[2]); !strings.Contains(got, "blocked · 2 consults") {
+		t.Errorf("builder row = %q", got)
+	}
 	if !strings.Contains(stripANSI(head[0]), "question r4 · 2m ago") {
 		t.Errorf("title row lacks the last event: %q", stripANSI(head[0]))
-	}
-	b.Foreign = []relay.ForeignAgent{{PaneID: "%9", Kind: "claude", Status: "working", Title: "reviewer"}}
-	if got := len(m.paneHead(&b)); got != paneHeadRows+1 {
-		t.Errorf("with a foreign agent: %d rows, want %d", got, paneHeadRows+1)
 	}
 
 	oneCommit := relay.BindingStatus{
@@ -67,7 +69,7 @@ func TestPaneHeadRows(t *testing.T) {
 func TestPaneHeadHeadlessAndCwd(t *testing.T) {
 	b := relay.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", CWD: "/home/x/api",
-		BuilderPane: "headless", BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
+		BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
 		Headless: &relay.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 	}
 	m := paneModel(t, b, tabReport)
@@ -140,7 +142,7 @@ func TestDiffStatAndColour(t *testing.T) {
 }
 
 func TestSourceLinePerTab(t *testing.T) {
-	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE", BuilderPane: "%7"}
+	b := relay.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabReport)
 	m.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
 	if got := stripANSI(m.sourceLine()); got != "report r2 · 13:02" {
@@ -148,7 +150,7 @@ func TestSourceLinePerTab(t *testing.T) {
 	}
 	m.detail.active = tabTerminal
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second)}
-	if got := stripANSI(m.sourceLine()); got != "%7 · captured 1s ago · 3 lines" {
+	if got := stripANSI(m.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
 	b.Headless = &relay.HeadlessInfo{LogPath: "/x/002-builder.log"}
@@ -213,7 +215,7 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 }
 
 func TestPaneViewRowsAndWidth(t *testing.T) {
-	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderPane: "%7",
+	b := relay.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		Waiting: &relay.Waiting{Cause: "blocked", Hint: "relay answer --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}

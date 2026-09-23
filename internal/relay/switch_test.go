@@ -7,38 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
-
-// sentSwitchable binds webshop to agy/other/m with the three-builder order
-// and hands it round 1, so a rate limit on provider "other" leaves claude
-// and opencode (provider "test") available to switch to.
-func sentSwitchable(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
-	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	f.newPane = "w2:p4"
-	rt := newRuntime(t, f)
-	rt.Candidates = candidateSet(t, testTwoProviderJSON)
-	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo",
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	f.agents = append(f.agents, builderAgent(herdr.StatusWorking))
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	f.prompts, f.starts, f.closed, f.notices = nil, nil, nil, nil
-	f.newPane = "w2:p9" // where a replacement would land
-	return rt, b
-}
 
 // runnerOf is the fakeRunner a fixture installed on rt.
 func runnerOf(t *testing.T, rt Runtime) *fakeRunner {
@@ -72,29 +43,19 @@ func switches(t *testing.T, rt Runtime) []store.LogEntry {
 	return out
 }
 
-// gone is the agents list Reconcile sees when webshop's builder cannot be
-// located.
-func gone() []herdr.Agent { return []herdr.Agent{plannerAgent()} }
-
-// present is the agents list Reconcile sees when webshop's builder is
-// there, working.
-func present() []herdr.Agent {
-	return []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
-}
-
-// TestSwitchRearmsSessionCursor pins switchBuilder's pane re-arm (#184,
-// round 2 correction to base plan §4): the replacement pane's own session
-// record starts empty, so the cursor is cut at offset 0 for the SAME
-// round's log -- but the marker line stays headless-only (the round-1
-// halt), so the log file itself must not exist yet.
+// TestSwitchRearmsSessionCursor pins switchBuilder's replacement-pane re-arm
+// (#184, round 2 correction to base plan §4): the replacement process starts
+// on the SAME round's plan, and the switch is recorded in the log.
+//
+// Mutation check (run and report): break switchBuilder's gated-candidate walk
+// and this fails.
 func TestGatedSwitchesAtOnce(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -124,8 +85,8 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	if !strings.HasPrefix(sw[0].Note, wantNote) {
 		t.Errorf("switch note = %q, want prefix %q", sw[0].Note, wantNote)
 	}
-	if len(f.notices) != 1 {
-		t.Errorf("notices = %+v, want exactly one", f.notices)
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active after a gated switch", got.State)
 	}
 }
 
@@ -134,8 +95,7 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 // the top of switchBuilder still applies to it -- a binding already at the
 // limit still halts instead of switching again.
 func TestGatedSwitchDoesNotCount(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	limit := rt.Policy.SwitchLimit()
 	b.RoundSwitches = limit - 1
 	if err := rt.Store.Save(b); err != nil {
@@ -145,7 +105,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -160,8 +120,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 		t.Errorf("RoundSwitches = %d, want %d; a gated switch does not advance the count", got.RoundSwitches, limit-1)
 	}
 
-	f2 := &fakeHerdr{}
-	rt2, b2 := sentSwitchable(t, f2)
+	rt2, b2 := sentSwitchable(t)
 	b2.RoundSwitches = rt2.Policy.SwitchLimit()
 	if err := rt2.Store.Save(b2); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -169,7 +128,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 	if _, err := Unavailable(rt2, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
-	got2, err := reconcile(t, rt2, b2, present())
+	got2, err := reconcile(t, rt2, b2)
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
@@ -182,11 +141,10 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 }
 
 func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	recordSpawnFailure(rt, "agy/other/m", "webshop", errors.New("x"))
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -203,14 +161,13 @@ func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
 }
 
 func TestNoOrderHalts(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	rt.Policy = policy.Policy{}
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -218,26 +175,24 @@ func TestNoOrderHalts(t *testing.T) {
 	if got.State != store.StateNeedsYou {
 		t.Errorf("state = %s, want needs_you", got.State)
 	}
-	if len(f.starts) != 0 {
-		t.Errorf("starts = %+v, want none", f.starts)
+	if len(runnerOf(t, rt).specs) != 1 {
+		t.Errorf("starts = %d, want none beyond round 1", len(runnerOf(t, rt).specs))
 	}
-	if len(f.notices) != 1 ||
-		!strings.Contains(f.notices[0], "cannot switch") ||
-		!strings.Contains(f.notices[0], `candidates serve "builder"`) {
-		t.Fatalf("notices = %+v, want one containing 'cannot switch' and `candidates serve \"builder\"`", f.notices)
+	if !strings.Contains(got.Halt, "cannot switch") ||
+		!strings.Contains(got.Halt, `candidates serve "builder"`) {
+		t.Fatalf("Halt = %q, want it to contain 'cannot switch' and `candidates serve \"builder\"`", got.Halt)
 	}
 }
 
 func TestMaxSwitchesZeroHalts(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	zero := 0
 	rt.Policy.MaxSwitches = &zero
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -251,27 +206,24 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 	if len(runnerOf(t, rt).kills) != 0 {
 		t.Errorf("kills = %+v, want none", runnerOf(t, rt).kills)
 	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "already switched 0 time(s) this round (max_switches 0)") {
-		t.Fatalf("notices = %+v, want one containing the max_switches 0 message", f.notices)
+	if !strings.Contains(got.Halt, "already switched 0 time(s) this round (max_switches 0)") {
+		t.Fatalf("Halt = %q, want it to contain the max_switches 0 message", got.Halt)
 	}
 }
 
-// TestExhaustionHalts pins spec §5.3: two switches succeed, the third
-// trigger halts once RoundSwitches reaches the default limit of 2.
 // TestExhaustionAfterResendStillSaysWhy pins #250 item 2: the second halt of
 // a re-sent round still records its reason (Halt is always set, not only on
 // the notifying branch), and a human's re-send is a fresh attempt -- it
 // resets the round's switch budget and notification dedup, so the next
-// exhaustion in the same round notifies again.
+// exhaustion in the same round records its reason again.
 //
 // Mutation check: move the `b.Halt =` line in haltBinding back inside the
 // `if b.HaltNotifiedRound != b.Round` guard and this test must fail, because
 // the second halt below would leave Halt empty (HaltNotifiedRound is
 // already back at b.Round from the first halt's dedup).
 func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 2)
 	b.RoundSwitches = rt.Policy.SwitchLimit()
@@ -279,7 +231,7 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -289,8 +241,8 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	if !strings.Contains(got.Halt, "max_switches") {
 		t.Fatalf("Halt = %q, want it to contain %q", got.Halt, "max_switches")
 	}
-	if len(f.notices) != 1 {
-		t.Fatalf("notices = %d, want 1 after the first halt", len(f.notices))
+	if got.HaltNotifiedRound != got.Round {
+		t.Fatalf("HaltNotifiedRound = %d after the first halt, want %d", got.HaltNotifiedRound, got.Round)
 	}
 
 	// The human asks for another attempt: same round, a fresh Send.
@@ -324,7 +276,7 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	if err := rt.Store.Save(got); err != nil {
 		t.Fatal(err)
 	}
-	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -333,9 +285,6 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, "max_switches") {
 		t.Errorf("Halt = %q, want it to contain %q again", got.Halt, "max_switches")
-	}
-	if len(f.notices) != 2 {
-		t.Errorf("notices = %d, want 2 (a fresh notice for the resent round)", len(f.notices))
 	}
 
 	// haltBinding's own invariant, isolated from Send's coupling (Send
@@ -349,7 +298,7 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 		t.Fatalf("test setup: HaltNotifiedRound = %d, want %d (round already notified)", got.HaltNotifiedRound, got.Round)
 	}
 	got.Halt = ""
-	beforeNotices := len(f.notices)
+	beforeNotified := got.HaltNotifiedRound
 	deduped, err := haltBinding(context.Background(), rt, got, "webshop: deduped halt check")
 	if err != nil {
 		t.Fatalf("haltBinding: %v", err)
@@ -357,8 +306,8 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	if deduped.Halt == "" {
 		t.Error("Halt is empty on a deduped halt, want the reason recorded")
 	}
-	if len(f.notices) != beforeNotices {
-		t.Errorf("notices = %d after a deduped halt, want unchanged %d", len(f.notices), beforeNotices)
+	if deduped.HaltNotifiedRound != beforeNotified {
+		t.Errorf("HaltNotifiedRound = %d after a deduped halt, want unchanged %d", deduped.HaltNotifiedRound, beforeNotified)
 	}
 }
 
@@ -373,8 +322,7 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 // first assertion below fails, since the second and third calls would each
 // advance it by a minute.
 func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 
 	first, err := haltBinding(context.Background(), rt, b, "webshop: same reason")
 	if err != nil {
@@ -435,8 +383,7 @@ func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
 }
 
 func TestAllGatedHalts(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentSwitchable(t, f)
+	rt, b := sentSwitchable(t)
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
@@ -444,7 +391,7 @@ func TestAllGatedHalts(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, present())
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -458,7 +405,7 @@ func TestAllGatedHalts(t *testing.T) {
 	if len(runnerOf(t, rt).kills) != 0 {
 		t.Errorf("kills = %+v, want none -- the halt precedes the close", runnerOf(t, rt).kills)
 	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], `every candidate serving "builder" is gated`) {
-		t.Fatalf("notices = %+v, want one containing the ErrAllGated text", f.notices)
+	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
+		t.Fatalf("Halt = %q, want it to contain the ErrAllGated text", got.Halt)
 	}
 }

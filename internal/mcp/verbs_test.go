@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -24,36 +23,6 @@ const (
 // ListAgents unconditionally, so every RelayVerbs test needs a non-nil
 // Herdr even when the binding under test never reaches a live pane; every
 // other method here is unused by the paths these tests exercise.
-type stubHerdr struct {
-	agents []herdr.Agent
-	err    error
-}
-
-func (s *stubHerdr) ListAgents(ctx context.Context) ([]herdr.Agent, error)   { return s.agents, s.err }
-func (s *stubHerdr) Prompt(ctx context.Context, target, text string) error   { return nil }
-func (s *stubHerdr) SendKeys(ctx context.Context, target, keys string) error { return nil }
-func (s *stubHerdr) ReadAgent(ctx context.Context, target string, lines int) (string, error) {
-	return "", nil
-}
-func (s *stubHerdr) ReadAgentSource(ctx context.Context, target, source string, lines int) (string, error) {
-	return "", nil
-}
-func (s *stubHerdr) CreateTab(ctx context.Context, workspaceID, cwd, label string) (string, error) {
-	return "", nil
-}
-func (s *stubHerdr) StartAgent(ctx context.Context, name, kind, paneID string, args []string) error {
-	return nil
-}
-func (s *stubHerdr) Notify(ctx context.Context, title, body string, sound herdr.Sound) error {
-	return nil
-}
-func (s *stubHerdr) ReportMetadata(ctx context.Context, paneID string, m herdr.PaneMetadata) error {
-	return nil
-}
-func (s *stubHerdr) ClosePane(ctx context.Context, paneID string) error { return nil }
-func (s *stubHerdr) Subscribe(ctx context.Context, paneIDs []string) (<-chan herdr.Event, error) {
-	return nil, herdr.ErrNoSocket
-}
 
 // stubRunner implements relay.Runner with no-op stubs, for a headless
 // binding whose PID is 0 (Alive is never actually called on that path, but
@@ -109,7 +78,6 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relay.Runtime{
-		Herdr: &stubHerdr{},
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
@@ -161,7 +129,6 @@ func TestRelayVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relay.Runtime{
-		Herdr: &stubHerdr{},
 		Store: s,
 		Now:   func() time.Time { return time.Unix(0, 0) },
 	}
@@ -191,7 +158,6 @@ func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relay.Runtime{
-		Herdr:      &stubHerdr{},
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
@@ -232,7 +198,6 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relay.Runtime{
-		Herdr:      &stubHerdr{},
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
@@ -254,12 +219,18 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	sr, ok := res.(relay.SendResult)
+	sr, ok := res.(sendResult)
 	if !ok {
-		t.Fatalf("result = %#v, want relay.SendResult", res)
+		t.Fatalf("result = %#v, want sendResult", res)
 	}
 	if sr.Round != 1 {
 		t.Errorf("Round = %d, want 1", sr.Round)
+	}
+	// #303 §4.5: the tools-mode send result names the round budget so the
+	// model's background wait cannot time out before the round does. store
+	// filled the 24h default in, since the fixture set no --timeout.
+	if sr.WaitBudget != "24h0m0s" {
+		t.Errorf("WaitBudget = %q, want 24h0m0s", sr.WaitBudget)
 	}
 }
 
@@ -268,7 +239,7 @@ func TestRelayVerbsSendRealRunHeadless(t *testing.T) {
 // alongside the structured DoneResult.
 func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	saveVerbBinding(t, s, store.Binding{
 		Name: "webshop", CWD: "/repo",
 		Planner: store.Endpoint{PaneID: "w2:p3"},
@@ -300,7 +271,7 @@ func TestRelayVerbsDoneForwardsAndReportsText(t *testing.T) {
 
 func TestRelayVerbsDoneErrorPropagates(t *testing.T) {
 	s := store.New(t.TempDir())
-	rt := relay.Runtime{Herdr: &stubHerdr{}, Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
+	rt := relay.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
 	v := &RelayVerbs{RT: rt, Planner: mcpTestPlannerA}
 
 	if _, err := v.Done(context.Background(), DoneArgs{Name: "nonexistent"}); err == nil {

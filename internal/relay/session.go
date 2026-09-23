@@ -20,7 +20,7 @@ type SessionLocator func(kind, sessionID string) (path string, ok bool)
 // filepath.Glob(home/.claude/projects/*/<sessionID>.jsonl); when several
 // match (a session copied between slugs) the newest by mtime wins. A
 // sessionID containing a path separator or a glob metacharacter is
-// refused (ok false) -- it came from herdr, but it is used in a path.
+// refused (ok false): a session id is used in a path.
 func HomeSessionLocator(home string) SessionLocator {
 	return func(kind, sessionID string) (string, bool) {
 		if kind != "claude" || sessionID == "" {

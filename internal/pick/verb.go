@@ -1,6 +1,6 @@
 // Package pick is the interactive mode behind `relay done --pick` and
 // `relay unbind --pick` (#15): a list of bindings, the verb run on the chosen
-// one, and the result held on screen until a key. It is built for a herdr
+// one, and the result held on screen until a key. It is built for a terminal
 // popup pane, which closes when the command exits.
 package pick
 
@@ -60,7 +60,7 @@ func emptyText(verb Verb) string {
 }
 
 // needsConfirm is the #103 rule: done and unbind stop for a `y` before
-// acting on any row that is not DONE. A herdr popup takes focus the instant
+// acting on any row that is not DONE. A terminal popup takes focus the instant
 // it opens, so a keystroke already in flight lands on it -- and the most
 // common such key is Enter. The list showed the row's state; nobody had
 // read it yet. DONE rows under unbind are what gc clears anyway and run at

@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -67,15 +66,10 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 // RoundStartedAt is restarted, so the replacement gets its own startGrace
 // before a nudge and its own round budget, exactly like a fresh handoff.
 //
-// For a headless binding the replacement is a new process started on the
-// same round's prompt; closeOld kills the old process instead of closing
-// a pane.
-//
-// closeOld must close the replaced pane before the replacement is spawned:
-// herdr agent names are unique, the replacement is again named
-// "<name>-builder", and herdr refuses that name while the old agent under it
-// is still alive. The gone trigger has no pane left to close and passes
-// closeOld=false; the gated trigger's pane is still open and passes true.
+// The replacement is a new process started on the same round's prompt.
+// closeOld kills the process it replaces; the gone trigger has nothing left
+// to kill and passes closeOld=false, the gated trigger's process is still
+// running and passes true.
 //
 // resolveBuilder's own Resolution is always HowExplicit -- it is handed the
 // already-chosen token -- and is discarded. The Resolution switchBuilder
@@ -134,7 +128,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		CWD:       b.CWD,
 		Headless:  b.Builder.Headless(),
 		Tier:      string(effectiveTier(b)),
-	}, b.Name, b.Planner.PaneID)
+	}, b.Name)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which
 		// gates it for the next resolution. Count the attempt and leave the
@@ -177,10 +171,6 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b = started
 
 	b.RoundStartedAt = now
-
-	if err := rt.Herdr.Notify(ctx, fmt.Sprintf("%s: switched builder to %s (%s)", b.Name, res.Token(), reason), reason, herdr.SoundNone); err != nil {
-		slog.Warn("switch notify failed", "binding", b.Name, "err", err)
-	}
 
 	slog.Info("builder switched", "binding", b.Name, "round", b.Round,
 		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)

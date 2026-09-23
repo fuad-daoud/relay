@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -26,22 +25,18 @@ func (r *recordHookDispatcher) Dispatch(ctx context.Context, event hooks.Event) 
 	r.events = append(r.events, event)
 }
 
-func newForkRuntime(t *testing.T, f *fakeHerdr, fg *fakeGit, hd hooks.Dispatcher) Runtime {
+// newForkRuntime is newRuntime with the fork tests' Git and hook dispatcher:
+// a local builder is headless (#303), so there is no herdr dependency left to
+// thread through, and fg may be nil for the tests that prove --cwd needs no
+// git.
+func newForkRuntime(t *testing.T, fg *fakeGit, hd hooks.Dispatcher) Runtime {
 	t.Helper()
-	var g Git
+	rt := newRuntime(t)
 	if fg != nil {
-		g = fg
+		rt.Git = fg
 	}
-	return Runtime{
-		Herdr:            f,
-		Git:              g,
-		Store:            store.New(t.TempDir()),
-		Candidates:       candidateSet(t, testCandidatesJSON),
-		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
-		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
-		Now:              func() time.Time { return baseTime },
-		Hooks:            hd,
-	}
+	rt.Hooks = hd
+	return rt
 }
 
 func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Binding {
@@ -49,8 +44,8 @@ func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Bind
 	b := store.Binding{
 		Name:             name,
 		CWD:              cwd,
-		Planner:          store.Endpoint{PaneID: "w2:p3", SessionID: "planner-sess", Kind: "claude"},
-		Builder:          store.Endpoint{AgentName: name + "-builder", PaneID: "w2:p4", Kind: "opencode"},
+		Planner:          store.Endpoint{Kind: "claude", SessionID: "planner-sess"},
+		Builder:          store.Endpoint{AgentName: name + "-builder", Kind: "opencode", Mode: store.ModeHeadless},
 		BuilderCandidate: testOpencodeRef,
 		Round:            4,
 		State:            store.StateActive,
@@ -119,9 +114,8 @@ func seedFourRoundBinding(t *testing.T, rt Runtime, name, cwd string) store.Bind
 // instead, which Fork continues to write unchanged.
 func TestForkInheritsFeatureAndRecordsParent(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -139,10 +133,10 @@ func TestForkInheritsFeatureAndRecordsParent(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)
@@ -177,9 +171,8 @@ func TestForkInheritsFeatureAndRecordsParent(t *testing.T) {
 // the source binding's.
 func TestForkFeatureOverride(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -196,11 +189,11 @@ func TestForkFeatureOverride(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
-		Feature:     "auth-2",
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
+		Feature:   "auth-2",
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)
@@ -212,10 +205,9 @@ func TestForkFeatureOverride(t *testing.T) {
 
 func TestForkSuccess(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	hd := &recordHookDispatcher{}
-	rt := newForkRuntime(t, fh, fg, hd)
+	rt := newForkRuntime(t, fg, hd)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -242,10 +234,10 @@ func TestForkSuccess(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork failed: %v", err)
@@ -309,6 +301,9 @@ func TestForkSuccess(t *testing.T) {
 	if !alt.Builder.Headless() || alt.Builder.AgentName != "alt-builder" {
 		t.Errorf("fork builder = %+v, want a headless alt-builder endpoint", alt.Builder)
 	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("fork started %d processes, want 0: a fork records a builder, it does not run one", got)
+	}
 
 	// Source binding is byte-for-byte unchanged
 	srcAfter, err := rt.Store.Load("source")
@@ -370,115 +365,130 @@ func TestForkSuccess(t *testing.T) {
 	}
 }
 
+// refusedCleanup asserts a refusal left nothing behind: no worktree cut, no
+// process started and no binding saved. #303 removed the pane, so the pane
+// assertions that used to stand here are now the runner's own process list.
+func refusedCleanup(t *testing.T, rt Runtime, fg *fakeGit, name string) {
+	t.Helper()
+	if len(fg.addWorktreeCalls) != 0 {
+		t.Errorf("a refusal must not cut a worktree: %+v", fg.addWorktreeCalls)
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refusal must not start a process, got %d", got)
+	}
+	if _, err := rt.Store.Load(name); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a refusal must save no binding, Load = %v", err)
+	}
+}
+
 func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 	ctx := context.Background()
 
-	setup := func(t *testing.T) (*fakeHerdr, *fakeGit, Runtime, string) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
+	setup := func(t *testing.T) (*fakeGit, Runtime, string) {
 		fg := &fakeGit{headCommitID: "commit-123"}
-		rt := newForkRuntime(t, fh, fg, nil)
+		rt := newForkRuntime(t, fg, nil)
 		srcCWD := filepath.Join(t.TempDir(), "repo")
 		if err := os.MkdirAll(srcCWD, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		seedFourRoundBinding(t, rt, "source", srcCWD)
-		return fh, fg, rt, srcCWD
+		return fg, rt, srcCWD
 	}
 
 	t.Run("round 0 out of range", func(t *testing.T) {
-		fh, fg, rt, _ := setup(t)
+		fg, rt, _ := setup(t)
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 0, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 0, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if !errors.Is(err, ErrRoundOutOfRange) {
 			t.Fatalf("got %v, want ErrRoundOutOfRange", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("worktree or pane created on refusal")
-		}
+		refusedCleanup(t, rt, fg, "alt")
 	})
 
 	t.Run("round 99 out of range", func(t *testing.T) {
-		fh, fg, rt, _ := setup(t)
+		fg, rt, _ := setup(t)
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 99, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 99, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if !errors.Is(err, ErrRoundOutOfRange) {
 			t.Fatalf("got %v, want ErrRoundOutOfRange", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("worktree or pane created on refusal")
-		}
+		refusedCleanup(t, rt, fg, "alt")
 	})
 
 	t.Run("taken binding name", func(t *testing.T) {
-		fh, fg, rt, _ := setup(t)
+		fg, rt, _ := setup(t)
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "source", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "source", PlannerID: testPlannerName,
 		})
 		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("got %v, want already exists error", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("worktree or pane created on refusal")
+		if len(fg.addWorktreeCalls) != 0 || len(runnerOf(t, rt).specs) != 0 {
+			t.Error("worktree or process created on refusal")
+		}
+		if _, err := rt.Store.Load("source"); err != nil {
+			t.Errorf("the source binding must survive a refused fork: %v", err)
+		}
+		if _, err := rt.Store.Load("alt"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a refusal must save no binding, Load alt = %v", err)
 		}
 	})
 
 	t.Run("taken working tree", func(t *testing.T) {
-		fh, fg, rt, srcCWD := setup(t)
+		fg, rt, srcCWD := setup(t)
 		// Try to fork to the same CWD as source
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", CWD: srcCWD,
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName, CWD: srcCWD,
 		})
 		if !errors.Is(err, store.ErrCWDTaken) {
 			t.Fatalf("got %v, want ErrCWDTaken", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("worktree or pane created on refusal")
-		}
+		refusedCleanup(t, rt, fg, "alt")
 	})
 
 	t.Run("nil Runtime.Git without CWD", func(t *testing.T) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-		rt := newForkRuntime(t, fh, nil, nil)
+		rt := newForkRuntime(t, nil, nil)
 		srcCWD := filepath.Join(t.TempDir(), "repo")
 		_ = os.MkdirAll(srcCWD, 0o755)
 		seedFourRoundBinding(t, rt, "source", srcCWD)
 
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if !errors.Is(err, ErrGitRequired) {
 			t.Fatalf("got %v, want ErrGitRequired", err)
 		}
-		if len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("pane created on refusal")
+		if got := len(runnerOf(t, rt).specs); got != 0 {
+			t.Errorf("a refusal must start no process, got %d", got)
+		}
+		if _, err := rt.Store.Load("alt"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a refusal must save no binding, Load = %v", err)
 		}
 	})
 
 	t.Run("branch exists", func(t *testing.T) {
-		fh, fg, rt, _ := setup(t)
+		fg, rt, _ := setup(t)
 		fg.branchExists = true
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if !errors.Is(err, git.ErrBranchExists) {
 			t.Fatalf("got %v, want ErrBranchExists", err)
 		}
-		if len(fg.addWorktreeCalls) != 0 || len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("worktree or pane created on refusal")
-		}
+		refusedCleanup(t, rt, fg, "alt")
 	})
 
 	t.Run("no builder candidate", func(t *testing.T) {
-		_, _, rt, srcCWD := setup(t)
+		_, rt, srcCWD := setup(t)
 		// Update source to have no builder candidate
 		src, _ := rt.Store.Load("source")
 		src.BuilderCandidate = ""
 		_ = rt.Store.Save(src)
 
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if !errors.Is(err, ErrNoBuilderCandidate) {
 			t.Fatalf("got %v, want ErrNoBuilderCandidate", err)
@@ -487,14 +497,14 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 	})
 
 	t.Run("no builder candidate inherits via single candidate", func(t *testing.T) {
-		_, _, rt, _ := setup(t)
+		_, rt, _ := setup(t)
 		rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 		src, _ := rt.Store.Load("source")
 		src.BuilderCandidate = ""
 		_ = rt.Store.Save(src)
 
 		res, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if err != nil {
 			t.Fatalf("Fork: %v", err)
@@ -510,9 +520,8 @@ func TestForkRefusalsLeaveNoWorktreeAndNoPane(t *testing.T) {
 // before the worktree is cut -- a refused name leaves nothing behind.
 func TestForkRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
 		t.Fatal(err)
@@ -522,16 +531,19 @@ func TestForkRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
 
 	_, err := Fork(ctx, rt, ForkOptions{
-		Source: "source", Round: 2, NewName: name, PlannerPane: "w2:p3",
+		Source: "source", Round: 2, NewName: name, PlannerID: testPlannerName,
 	})
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
 	}
-	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
-		t.Errorf("a refused name must touch no pane: tabs = %d, starts = %d", len(fh.tabs), len(fh.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused name must start no process, got %d", got)
 	}
-	if !errors.Is(err, herdr.ErrInvalidAgentName) {
-		t.Fatalf("Fork err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	// #303 deleted herdr.ErrInvalidAgentName with the herdr client; the
+	// refusal is now store.ValidName's own text, wrapped by
+	// builderAgentName with the length budget in it.
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Fork err = %v, want the agent-name length refusal", err)
 	}
 	if _, loadErr := rt.Store.Load(name); !errors.Is(loadErr, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound: a refused name saves no binding", loadErr)
@@ -542,34 +554,35 @@ func TestForkRollback(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("AddWorktree failure leaves nothing behind", func(t *testing.T) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 		fg := &fakeGit{headCommitID: "commit-123", addWorktreeErr: errors.New("worktree disk error")}
-		rt := newForkRuntime(t, fh, fg, nil)
+		rt := newForkRuntime(t, fg, nil)
 		srcCWD := filepath.Join(t.TempDir(), "repo")
 		_ = os.MkdirAll(srcCWD, 0o755)
 		seedFourRoundBinding(t, rt, "source", srcCWD)
 
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 		})
 		if err == nil || !strings.Contains(err.Error(), "worktree disk error") {
 			t.Fatalf("got %v, want worktree disk error", err)
 		}
-		if len(fh.starts) != 0 || len(fh.tabs) != 0 {
-			t.Error("builder pane spawned after AddWorktree failure")
+		if got := len(runnerOf(t, rt).specs); got != 0 {
+			t.Errorf("a failed fork must start no process, got %d", got)
+		}
+		if _, err := rt.Store.Load("alt"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a failed fork must save no binding, Load = %v", err)
 		}
 	})
 
 	t.Run("unknown candidate cuts no worktree", func(t *testing.T) {
-		fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 		fg := &fakeGit{headCommitID: "commit-123"}
-		rt := newForkRuntime(t, fh, fg, nil)
+		rt := newForkRuntime(t, fg, nil)
 		srcCWD := filepath.Join(t.TempDir(), "repo")
 		_ = os.MkdirAll(srcCWD, 0o755)
 		seedFourRoundBinding(t, rt, "source", srcCWD)
 
 		_, err := Fork(ctx, rt, ForkOptions{
-			Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Candidate: "claude/test/nope",
+			Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName, Candidate: "claude/test/nope",
 		})
 		if !errors.Is(err, candidate.ErrUnknownCandidate) {
 			t.Fatalf("got %v, want ErrUnknownCandidate", err)
@@ -583,8 +596,7 @@ func TestForkRollback(t *testing.T) {
 
 func TestForkWithCustomCWD(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
-	rt := newForkRuntime(t, fh, nil, nil) // nil Git allowed with --cwd
+	rt := newForkRuntime(t, nil, nil) // nil Git allowed with --cwd
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	_ = os.MkdirAll(srcCWD, 0o755)
 	seedFourRoundBinding(t, rt, "source", srcCWD)
@@ -593,11 +605,11 @@ func TestForkWithCustomCWD(t *testing.T) {
 	_ = os.MkdirAll(customCWD, 0o755)
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source:      "source",
-		Round:       2,
-		NewName:     "alt",
-		PlannerPane: "w2:p3",
-		CWD:         customCWD,
+		Source:    "source",
+		Round:     2,
+		NewName:   "alt",
+		PlannerID: testPlannerName,
+		CWD:       customCWD,
 	})
 	if err != nil {
 		t.Fatalf("Fork with CWD: %v", err)
@@ -623,9 +635,8 @@ func TestForkWithCustomCWD(t *testing.T) {
 }
 
 func TestForkWriteForkCleanupOnSaveFailure(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
 	fg := &fakeGit{headCommitID: "commit-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	_ = os.MkdirAll(srcCWD, 0o755)
 	seedFourRoundBinding(t, rt, "source", srcCWD)
@@ -665,9 +676,8 @@ func TestForkWriteForkCleanupOnSaveFailure(t *testing.T) {
 }
 
 func TestForkHeadlessSpawnsNothing(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -676,13 +686,13 @@ func TestForkHeadlessSpawnsNothing(t *testing.T) {
 	seedFourRoundBinding(t, rt, "source", srcCWD)
 
 	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", Headless: true,
+		Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName, Headless: true,
 	})
 	if err != nil {
 		t.Fatalf("Fork --headless: %v", err)
 	}
-	if len(fh.tabs) != 0 || len(fh.starts) != 0 {
-		t.Fatalf("headless fork must open no tab and start no agent: tabs=%d starts=%d", len(fh.tabs), len(fh.starts))
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Fatalf("a fork starts no process, got %d", got)
 	}
 	if len(fg.addWorktreeCalls) != 1 {
 		t.Fatalf("the worktree is still cut: %+v", fg.addWorktreeCalls)
@@ -694,10 +704,10 @@ func TestForkHeadlessSpawnsNothing(t *testing.T) {
 	if res.Binding.Round != 3 || res.Binding.ForkedFrom != "source" {
 		t.Errorf("fork bookkeeping: round=%d from=%q", res.Binding.Round, res.Binding.ForkedFrom)
 	}
-	// The source's pane builder is untouched: a fork inherits the candidate,
-	// not the mode.
+	// The source's builder is untouched: a fork inherits the candidate, not
+	// the mode, and a local builder is headless either way (#303).
 	src, _ := rt.Store.Load("source")
-	if src.Builder.Headless() || src.Builder.PaneID != "w2:p4" {
+	if !src.Builder.Headless() || src.Builder.PaneID != "" {
 		t.Errorf("source builder changed: %+v", src.Builder)
 	}
 }
@@ -707,9 +717,8 @@ func TestForkHeadlessSpawnsNothing(t *testing.T) {
 // land` knows what to rebase the fork's branch onto.
 func TestForkRecordsBaseRef(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
@@ -726,7 +735,7 @@ func TestForkRecordsBaseRef(t *testing.T) {
 	}
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3",
+		Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
@@ -754,15 +763,14 @@ func TestForkRecordsBaseRef(t *testing.T) {
 // cuts nothing, so it records no base ref and land asks for --onto.
 func TestForkRecordsNoBaseRefForACWDFork(t *testing.T) {
 	ctx := context.Background()
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 
 	seedFourRoundBinding(t, rt, "source", t.TempDir())
 	cwd := t.TempDir()
 
 	res, err := Fork(ctx, rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", PlannerPane: "w2:p3", CWD: cwd,
+		Source: "source", Round: 2, NewName: "alt", PlannerID: testPlannerName, CWD: cwd,
 	})
 	if err != nil {
 		t.Fatalf("Fork --cwd: %v", err)

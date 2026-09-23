@@ -1,5 +1,5 @@
-// Command relay automates plan and report handoff between a planner agent pane
-// and a builder agent pane running under herdr.
+// Command relay automates plan and report handoff between a planner agent and
+// a headless builder process.
 package main
 
 import (
@@ -25,7 +25,6 @@ import (
 	"github.com/fuad-daoud/relay/internal/doctor"
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	diffpatch "github.com/fuad-daoud/relay/internal/patch"
@@ -47,7 +46,7 @@ import (
 var version = ""
 
 const usage = `relay automates the plan/report handoff between two AI coding agent
-panes running under herdr: a planner hands work to a builder, and relay moves
+processes: a planner hands work to a builder, and relay moves
 the files between them.
 
 Usage:
@@ -81,7 +80,7 @@ Commands:
   mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
-  doctor    preflight check: herdr, daemon, harness binaries, integrations, roles
+  doctor    preflight check: plugin, daemon, harness binaries, roles
   candidates   list the configured harness/provider/model candidates
   policy       show, per role, which candidate relay would pick right now and why
   planner      register this planner (or re-attach an existing one), and list, rename or forget records
@@ -105,7 +104,7 @@ Commands:
 
 Run "relay <command> -h" for that command's flags.
 
-relay drives herdr, which must be on PATH: https://github.com/herdrdev/herdr
+relay drives the harness binaries it launches, which must be on PATH
 State lives in $XDG_STATE_HOME/relay (default ~/.local/state/relay).
 `
 
@@ -156,17 +155,17 @@ func buildVersion() string {
 
 // releaseInputs gathers what release.Detect needs about the running binary:
 // the version buildVersion chose, whether the module rather than an ldflags
-// stamp supplied it, and the herdr-plugin.toml sitting beside the executable
-// (the marker of either plugin install, since both leave ./relay in that
-// directory). Disk reads only -- the release check never touches the network
-// to learn who it is.
+// stamp supplied it, and where the executable lives. Disk reads only -- the
+// release check never touches the network to learn who it is.
+//
+// ManifestVersion is left empty: the plugin manifests that carried it are
+// packaging, which #303 step 4 owns.
 func releaseInputs() release.Inputs {
 	in := release.Inputs{Version: buildVersion()}
 
 	if exe, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 			in.ExeDir = filepath.Dir(resolved)
-			in.ManifestVersion = manifestVersion(filepath.Join(in.ExeDir, "herdr-plugin.toml"))
 		}
 	}
 
@@ -204,7 +203,7 @@ func manifestVersion(path string) string {
 // statusNotice is the line `relay status` prints above the rows when the
 // cached check says a newer release exists, and "" whenever it does not.
 // Pure: every input is an argument, so it is table-tested without a
-// store, a daemon or a network (CI has no herdr).
+// store, a daemon or a network (CI launches no harness).
 //
 // It returns "" for every SevOK row of the doctor's release table, so the
 // statusline stays quiet exactly where `relay doctor` says "not checked",
@@ -266,7 +265,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 // 2). The flag's default is -1, meaning "not given", which becomes nil so the
 // policy default or the existing binding value stands; any value the human
 // actually typed must be >= 0, and a bad one exits 2 -- before any runtime is
-// built, so nothing touches the state directory or herdr.
+// built, so nothing touches the state directory or launches a harness.
 func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 	given := false
 	fs.Visit(func(f *flag.Flag) {
@@ -535,7 +534,6 @@ func newRuntime() (relay.Runtime, error) {
 	}
 
 	rt := relay.Runtime{
-		Herdr:            herdr.NewClient("herdr", 30*time.Second),
 		Git:              gitClient,
 		Runner:           proc.New(),
 		Store:            st,
@@ -615,7 +613,7 @@ func noteConsultRolesTooLong(name string) {
 		return
 	}
 	// The tightest limit is set by the longest role: relay ask needs the
-	// binding name at most herdr.MaxAgentNameLen - 10 - len(role) characters.
+	// binding name at most store.MaxAgentNameLen - 10 - len(role) characters.
 	longest := roles[0]
 	for _, r := range roles[1:] {
 		if len(r) > len(longest) {
@@ -623,7 +621,7 @@ func noteConsultRolesTooLong(name string) {
 		}
 	}
 	fmt.Printf("note: %s is too long for the %s consult role(s); relay ask needs a binding name of at most %d characters for %s\n",
-		name, strings.Join(roles, ", "), herdr.MaxAgentNameLen-10-len(longest), longest)
+		name, strings.Join(roles, ", "), store.MaxAgentNameLen-10-len(longest), longest)
 }
 
 // notePick prints why relay chose the candidate it spawned. Silent for
@@ -642,7 +640,7 @@ const headlessFlagNote = "relay: --headless is the default and only local mode; 
 
 // headlessNoOpLines is what bind/add/fork print to stderr when --headless is
 // passed. Pure, so the rule is testable without running a subcommand that
-// reaches herdr.
+// launches a harness.
 func headlessNoOpLines(headless bool) []string {
 	if !headless {
 		return nil
@@ -656,7 +654,7 @@ const askHeadlessFlagNote = "relay: --headless is the default and only consult m
 
 // askHeadlessNoOpLines is what ask prints to stderr when --headless is
 // passed. Pure, so the rule is testable without running a subcommand that
-// reaches herdr.
+// launches a harness.
 func askHeadlessNoOpLines(headless bool) []string {
 	if !headless {
 		return nil
@@ -893,7 +891,6 @@ func cmdBind(args []string) error {
 	opts := relay.BindOptions{
 		Name:         *name,
 		PlannerID:    *plannerFlag,
-		PlannerPane:  os.Getenv("HERDR_PANE_ID"),
 		CWD:          cwd,
 		Resume:       *resume,
 		Rebind:       *rebind,
@@ -925,8 +922,8 @@ func cmdBind(args []string) error {
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
 	// failure is dropped rather than printed. See bindPreflight.
-	if hc, ok := rt.Herdr.(doctor.HerdrClient); ok && kind != "" {
-		env := doctor.NewEnv(hc, rt.Store)
+	if kind != "" {
+		env := doctor.NewEnv(rt.Store)
 		for _, line := range bindPreflight(context.Background(), env, kind, adopted) {
 			fmt.Fprintln(os.Stderr, line)
 		}
@@ -1023,20 +1020,19 @@ func cmdFork(args []string) error {
 	}
 
 	opts := relay.ForkOptions{
-		Source:      source,
-		Round:       *round,
-		NewName:     *newName,
-		Candidate:   *builderAlias,
-		PlannerID:   *plannerFlag,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		CWD:         *cwd,
-		Headless:    *headless,
-		Tier:        *tier,
-		AllowYolo:   *allowYolo,
-		Gate:        *gate,
-		NoGate:      *noGate,
-		Regate:      regateOpt,
-		Feature:     *feature,
+		Source:    source,
+		Round:     *round,
+		NewName:   *newName,
+		Candidate: *builderAlias,
+		PlannerID: *plannerFlag,
+		CWD:       *cwd,
+		Headless:  *headless,
+		Tier:      *tier,
+		AllowYolo: *allowYolo,
+		Gate:      *gate,
+		NoGate:    *noGate,
+		Regate:    regateOpt,
+		Feature:   *feature,
 	}
 	printHeadlessNoOp(*headless)
 
@@ -1120,22 +1116,21 @@ func cmdAdd(args []string) error {
 	}
 
 	res, err := relay.Add(context.Background(), rt, relay.AddOptions{
-		Name:        *name,
-		Candidate:   *builderAlias,
-		PlannerID:   *plannerFlag,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
-		Repo:        repo,
-		CWD:         *cwd,
-		Branch:      *branch,
-		Headless:    *headless,
-		Server:      *server,
-		Base:        *base,
-		Tier:        *tier,
-		AllowYolo:   *allowYolo,
-		Gate:        *gate,
-		NoGate:      *noGate,
-		Regate:      regateOpt,
-		Feature:     *feature,
+		Name:      *name,
+		Candidate: *builderAlias,
+		PlannerID: *plannerFlag,
+		Repo:      repo,
+		CWD:       *cwd,
+		Branch:    *branch,
+		Headless:  *headless,
+		Server:    *server,
+		Base:      *base,
+		Tier:      *tier,
+		AllowYolo: *allowYolo,
+		Gate:      *gate,
+		NoGate:    *noGate,
+		Regate:    regateOpt,
+		Feature:   *feature,
 	})
 	if err != nil {
 		return err
@@ -1307,7 +1302,7 @@ func cmdSend(args []string) error {
 		return err
 	}
 	// Before newRuntime, like add's flag pair: the refusal must not depend on
-	// argv order and must touch neither the state directory nor herdr.
+	// argv order and must touch neither the state directory nor a harness.
 	if *verify && *noVerify {
 		fmt.Fprintf(os.Stderr, "relay: relay send --verify and --no-verify are exclusive\n")
 		return fmt.Errorf("relay send --verify and --no-verify are exclusive: %w", exitCodeErr{code: 2})
@@ -1413,14 +1408,13 @@ func cmdAsk(args []string) error {
 	}
 
 	res, err := relay.Ask(context.Background(), rt, relay.AskOptions{
-		Role:        *role,
-		Candidate:   *cand,
-		File:        *file,
-		Question:    *question,
-		Round:       *round,
-		Name:        name,
-		PlannerID:   *plannerFlag,
-		PlannerPane: os.Getenv("HERDR_PANE_ID"),
+		Role:      *role,
+		Candidate: *cand,
+		File:      *file,
+		Question:  *question,
+		Round:     *round,
+		Name:      name,
+		PlannerID: *plannerFlag,
 	})
 	if err != nil {
 		return err
@@ -1586,7 +1580,7 @@ func cmdDiff(args []string) error {
 // always shown, DONE or not: asking for one by name is already a request for
 // that specific thing. Otherwise DONE rows are hidden unless --all, and the
 // same rule applies to --json so the two formats never disagree about what
-// exists. It is a pure function so the rule can be tested without a herdr.
+// exists. It is a pure function so the rule can be tested without a harness.
 func scopeReport(rep relay.Report, name string, all bool) relay.Report {
 	if name != "" || all {
 		return rep
@@ -1607,7 +1601,7 @@ func filterReport(rep relay.Report, name string) (relay.Report, error) {
 }
 
 // filterReportPlanner narrows a status report to one planner's bindings. It
-// is a pure function so the rule is testable without a herdr. An empty
+// is a pure function so the rule is testable without a harness. An empty
 // planner id keeps every row, which is what a runtime with no registry gets.
 func filterReportPlanner(rep relay.Report, plannerID string) relay.Report {
 	if plannerID == "" {
@@ -1674,10 +1668,9 @@ func cmdStatus(args []string) error {
 
 	// #293: one line above the rows, only when the daemon's cached check has
 	// seen a newer release. Read through the doctor's own Env so `status` and
-	// `doctor` can never disagree about the same file -- only ReleaseState is
-	// called here, which is why the nil herdr client is harmless. JSON output
-	// above stays notice-free.
-	env := doctor.NewEnv(nil, rt.Store, releaseInputs())
+	// `doctor` can never disagree about the same file. JSON output above stays
+	// notice-free.
+	env := doctor.NewEnv(rt.Store, releaseInputs())
 	running, latest, ok, kind := env.ReleaseState()
 	if notice := statusNotice(running, latest, ok, kind); notice != "" {
 		fmt.Println(notice)
@@ -1705,7 +1698,7 @@ func cmdStatusline(args []string) error {
 		return nil
 	}
 	// §3.3: the row set is the calling planner's bindings. A session with no
-	// planner renders nothing, the same as an unset $HERDR_PANE_ID did
+	// planner renders nothing, the same as no planner did
 	// before #303.
 	rec, ok := plannerFilter(rt)
 	if !ok {
@@ -1801,8 +1794,7 @@ func cmdLog(args []string) error {
 
 // cmdWait blocks until a round closes or needs a human, per spec
 // docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
-// relay's own state only: newRuntime's herdr client is constructed but never
-// called.
+// relay's own state only: it launches nothing.
 func cmdWait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
@@ -2143,8 +2135,6 @@ func bindingHint(verb string) string {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
-	heldGrace := fs.Duration("held-grace", relay.DefaultHeldGrace,
-		"how long a focused planner must be quiet before a held payload is injected anyway")
 	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -2157,7 +2147,6 @@ func cmdDaemon(args []string) error {
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown" (#244).
 	rt.StartedAt = time.Now()
-	rt.HeldGrace = *heldGrace
 	// The scope template newRuntime filled is logged once here, in the same
 	// shape `relay serve` uses (#295). "off" is scope.enabled: false; the
 	// local daemon does not probe at startup, so there is no "unavailable"
@@ -2189,7 +2178,7 @@ func cmdDaemon(args []string) error {
 
 	// --check is the plugin startup hook's probe. It prints nothing on either
 	// path: the exit status is the whole answer, and a hook that printed would
-	// only fill herdr's plugin log with noise on every server start.
+	// only fill a log with noise on every server start.
 	if *check {
 		running, err := rt.Store.DaemonRunning()
 		if err != nil {
@@ -2216,7 +2205,7 @@ func cmdDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("relay daemon starting", "interval", *interval, "held_grace", *heldGrace)
+	slog.Info("relay daemon starting", "interval", *interval)
 	return relay.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).Run(ctx)
 }
 

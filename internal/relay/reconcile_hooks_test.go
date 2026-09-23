@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -32,8 +31,7 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 }
 
 func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 
@@ -44,15 +42,10 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{
-		plannerAgent(),
-		builderAgent(herdr.StatusIdle),
-	}
-
 	var out store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		out, err = Reconcile(context.Background(), rt, tx, b, agents)
+		out, err = Reconcile(context.Background(), rt, tx, b)
 		return err
 	})
 	if err != nil {
@@ -82,18 +75,12 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 }
 
 func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 
-	agents := []herdr.Agent{
-		plannerAgent(),
-		builderAgent(herdr.StatusWorking),
-	}
-
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, err := Reconcile(context.Background(), rt, tx, b, agents)
+		_, err := Reconcile(context.Background(), rt, tx, b)
 		return err
 	})
 	if err != nil {
@@ -109,10 +96,13 @@ func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
 // TestBuilderStalledHookFiresOncePerEpisode pins #252's hook contract: the
 // builder_stalled event fires exactly once when a stall is first stamped,
 // never again while it persists, and never when it clears.
+
+// TestBuilderStalledHookFiresOncePerEpisode pins #252's hook contract: the
+// builder_stalled event fires exactly once when a stall is first stamped,
+// never again while it persists, and never when it clears.
 func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 
@@ -141,7 +131,7 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 	got := b
 	for i := 0; i < 3; i++ {
 		var err error
-		got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+		got, err = reconcile(t, rt, got)
 		if err != nil {
 			t.Fatalf("Reconcile (stalled tick %d): %v", i+1, err)
 		}
@@ -155,7 +145,7 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 	if err := os.Chtimes(stream, moved, moved); err != nil {
 		t.Fatalf("chtimes back: %v", err)
 	}
-	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, got); err != nil {
 		t.Fatalf("Reconcile (cleared): %v", err)
 	}
 	if n := stalls(); n != 1 {
@@ -164,8 +154,7 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 }
 
 func TestDone_EmitsStateChanged(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 

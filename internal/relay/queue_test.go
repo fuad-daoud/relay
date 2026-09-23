@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -20,9 +19,8 @@ import (
 // Mutation check: drop the `!deferred` guard around startRound in send.go
 // and this fails on fr.specs no longer being empty.
 func TestSendDeferQueues(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
 		t.Fatalf("Send(Defer): %v", err)
@@ -73,10 +71,16 @@ func TestSendDeferQueues(t *testing.T) {
 //
 // Mutation check: drop the `age` formatting (hardcode "0s") in queue.go and
 // this fails on the note not containing "1m30s".
+
+// TestAdmitStartsQueuedRound pins #285's admit half: Admit spawns the
+// process, stamps RoundStartedAt at the admitting clock, zeroes QueuedAt,
+// and logs how long the round waited.
+//
+// Mutation check: drop the `age` formatting (hardcode "0s") in queue.go and
+// this fails on the note not containing "1m30s".
 func TestAdmitStartsQueuedRound(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
 		t.Fatalf("Send(Defer): %v", err)
 	}
@@ -117,10 +121,12 @@ func TestAdmitStartsQueuedRound(t *testing.T) {
 
 // TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
 // (QueuedAt zero) is refused, and nothing spawns.
+
+// TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
+// (QueuedAt zero) is refused, and nothing spawns.
 func TestAdmitNotQueued(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, f, fr)
+	rt, b := seedHeadless(t, fr)
 
 	err := Admit(context.Background(), rt, b.Name)
 	if !errors.Is(err, ErrNotQueued) {
@@ -134,10 +140,13 @@ func TestAdmitNotQueued(t *testing.T) {
 // TestAdmitSpawnFailure pins Admit's failure path: mirrors Send's own
 // spawn-failure handling, and QueuedAt is zeroed so the round is never
 // re-admitted.
+
+// TestAdmitSpawnFailure pins Admit's failure path: mirrors Send's own
+// spawn-failure handling, and QueuedAt is zeroed so the round is never
+// re-admitted.
 func TestAdmitSpawnFailure(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
 		t.Fatalf("Send(Defer): %v", err)
 	}
@@ -170,16 +179,22 @@ func TestAdmitSpawnFailure(t *testing.T) {
 //
 // Mutation check: drop the `gatedBuilder` branch in queue.go (always call
 // startRound) and this fails on BuilderCandidate staying "agy/other/m".
+
+// TestAdmitGatedSwitches pins Admit's gated-candidate branch: when the
+// queued round's candidate is gated by the time a slot frees up, Admit
+// switches to the next candidate (uncounted, no pane/process to close) and
+// its KindQueue note says so.
+//
+// Mutation check: drop the `gatedBuilder` branch in queue.go (always call
+// startRound) and this fails on BuilderCandidate staying "agy/other/m".
 func TestAdmitGatedSwitches(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Runner = fr
 	rt.Candidates = candidateSet(t, testTwoProviderJSON)
 	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: "agy/other/m", PlannerID: testPlannerName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -210,9 +225,6 @@ func TestAdmitGatedSwitches(t *testing.T) {
 	}
 	if got.QueuedAt.IsZero() == false {
 		t.Errorf("QueuedAt = %v, want zero", got.QueuedAt)
-	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane to close: %+v", f.closed)
 	}
 
 	entries, err := rt.Store.ReadLog("webshop")

@@ -29,7 +29,7 @@ const (
 
 // cmdMCP runs relay mcp: an MCP server over stdio a Claude Code planner
 // spawns from its plugin manifest (docs/specs/2026-09-21-planner-channel-design.md,
-// docs/specs/2026-09-22-drop-herdr-design.md §4.5). In channel mode it also
+// #303 §4.5). In channel mode it also
 // claims its planner and drains its mailbox; in tools mode it only serves
 // the verbs as tools.
 func cmdMCP(args []string) error {
@@ -91,7 +91,10 @@ func cmdMCP(args []string) error {
 	srv := &mcp.Server{
 		Verbs:   &mcp.RelayVerbs{RT: rt, Planner: rec.ID},
 		Version: version,
-		Log:     os.Stderr,
+		// The mode is known before initialize is answered, so the model is
+		// told from its first turn which delivery it should expect (#303 §4.5).
+		Mode: mode,
+		Log:  os.Stderr,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -201,7 +204,7 @@ func startMCPChannel(ctx context.Context, rt relay.Runtime, rec planner.Record, 
 
 // pollMCPChannel is relay mcp's channel-mode poll loop: re-read the planner
 // record, refresh the claim, then drain that planner's mailbox (spec §3.4,
-// drop-herdr §4.5). It never exits on a drain error -- only a stolen claim
+// #303 §4.5). It never exits on a drain error -- only a stolen claim
 // (ErrClaimHeld on refresh) or a forgotten record stops it, leaving the
 // tools still serving.
 func pollMCPChannel(ctx context.Context, rt relay.Runtime, plannerID string, claim relay.Claim, p relay.Pusher, interval time.Duration) {

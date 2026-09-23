@@ -10,21 +10,16 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // seedForAsk puts a binding in place with a consult role available and a fixed
-// consult id, so filenames and agent names are assertable. seedBound's Bind
-// split a pane and started the builder to get there, so the fake's call
-// records are cleared here: every ask test counts the calls Ask itself made,
-// the same way deliver_test and send_test clear prompts after seeding.
-func seedForAsk(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
+// consult id, so filenames and agent names are assertable. Bind starts the
+// headless builder; every ask test counts what Ask itself did.
+func seedForAsk(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	rt.NewID = func() string { return "7f2a3c1d" }
-	f.newPane = "w2:p9"
-	f.starts, f.tabs = nil, nil
 	return rt, b
 }
 
@@ -37,13 +32,52 @@ func writeQuestion(t *testing.T, body string) string {
 	return path
 }
 
+// containsAdjacentPair reports whether args contains a, b as consecutive
+// elements, in that order.
+func containsAdjacentPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
+}
+
+// seedRoundReport writes round's report entry -- the one that carries the
+// builder session -- and moves the binding on to the next round, so the round
+// is closed and `ask --round` has something to resume. A nil session seeds the
+// report entry a round built before relay recorded sessions leaves behind.
+func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.BuilderSession) {
+	t.Helper()
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		if err := tx.AppendLog(b.Name, store.LogEntry{
+			TS:             rt.Now(),
+			Round:          round,
+			Direction:      store.DirToPlanner,
+			Kind:           store.KindReport,
+			Confirmed:      true,
+			BuilderSession: session,
+		}); err != nil {
+			return err
+		}
+		b.Round = round + 1
+		return tx.Save(b)
+	})
+	if err != nil {
+		t.Fatalf("seed closed round %d: %v", round, err)
+	}
+}
+
 // TestAskRefusesAConsultNameHerdrWouldRefuse pins #64: a 15-character binding
 // name builds a 33-character consult agent name, and Ask must refuse it before
 // the reservation is written or the question staged -- nothing on disk, no
 // pane split, no consult recorded.
 func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 
 	// seedBound fixes the binding name at "webshop", so seed a second binding
 	// by hand with the long name. It gets its own CWD: the store refuses a
@@ -63,7 +97,7 @@ func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
 	q := writeQuestion(t, "Review 003-diff.patch against the plan.")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: name, PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: name, PlannerID: testPlannerName,
 	})
 
 	// A refused ask leaves nothing behind; these are asserted before the
@@ -71,9 +105,6 @@ func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
 	// reports.
 	if matches, _ := filepath.Glob(filepath.Join(rt.Store.Dir(name), "*-ask.md")); len(matches) != 0 {
 		t.Errorf("a refused ask must stage no question file, found %v", matches)
-	}
-	if len(f.tabs) != 0 {
-		t.Errorf("a refused ask must touch no pane: tabs = %d", len(f.tabs))
 	}
 
 	got, loadErr := rt.Store.Load(name)
@@ -84,21 +115,19 @@ func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
 		t.Errorf("consults = %+v, want none: a refused ask records nothing", got.Consults)
 	}
 
-	if !errors.Is(err, herdr.ErrInvalidAgentName) {
-		t.Fatalf("Ask err = %v, want one wrapping herdr.ErrInvalidAgentName", err)
+	if err == nil || !strings.Contains(err.Error(), "needs a name of at most") {
+		t.Fatalf("Ask err = %v, want the consult agent-name cap refusal", err)
 	}
 }
 
 func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "Review 003-diff.patch against the plan.")
 
-	listsBefore := f.listCalls
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -123,10 +152,6 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	// The consult is a process, not a pane.
 	if len(fr.specs) != 1 {
 		t.Fatalf("got %d processes, want 1", len(fr.specs))
-	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 {
-		t.Errorf("a consult must touch no pane: tabs=%d starts=%d prompts=%d",
-			len(f.tabs), len(f.starts), len(f.prompts))
 	}
 	// The prompt names the staged question and asks for the findings as the
 	// process's final message.
@@ -171,19 +196,14 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 		t.Error("KindAsk log entry Confirmed = false, want true")
 	}
 
-	// Backfill is gone: ListAgents was not called during Ask.
-	if f.listCalls != listsBefore {
-		t.Errorf("listCalls increased %d -> %d during Ask; ListAgents backfill was deleted", listsBefore, f.listCalls)
-	}
 }
 
 func TestAskDoesNotAdvanceTheRound(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, before := seedForAsk(t, f)
+	rt, before := seedForAsk(t)
 	q := writeQuestion(t, "look at this")
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -201,12 +221,11 @@ func TestAskDoesNotAdvanceTheRound(t *testing.T) {
 }
 
 func TestAskRefusesAnUnknownRole(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviwer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviwer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 
 	if !errors.Is(err, ErrUnknownRole) {
@@ -214,12 +233,6 @@ func TestAskRefusesAnUnknownRole(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "known:") {
 		t.Errorf("expected error message to contain 'known:', got %q", err.Error())
-	}
-	if len(f.starts) != 0 {
-		t.Errorf("starts = %d, want 0", len(f.starts))
-	}
-	if len(f.tabs) != 0 {
-		t.Errorf("tabs = %d, want 0", len(f.tabs))
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -231,22 +244,15 @@ func TestAskRefusesAnUnknownRole(t *testing.T) {
 }
 
 func TestAskRefusesTheBuilderRole(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "builder", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "builder", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 
 	if !errors.Is(err, ErrNotAConsultRole) {
 		t.Fatalf("want ErrNotAConsultRole, got %v", err)
-	}
-	if len(f.starts) != 0 {
-		t.Errorf("starts = %d, want 0", len(f.starts))
-	}
-	if len(f.tabs) != 0 {
-		t.Errorf("tabs = %d, want 0", len(f.tabs))
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -258,16 +264,15 @@ func TestAskRefusesTheBuilderRole(t *testing.T) {
 }
 
 func TestAskRefusesACandidateThatDoesNotServeTheRole(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role:        "reviewer",
-		Candidate:   testAgyRef,
-		File:        q,
-		Name:        "webshop",
-		PlannerPane: "w2:p3",
+		Role:      "reviewer",
+		Candidate: testAgyRef,
+		File:      q,
+		Name:      "webshop",
+		PlannerID: testPlannerName,
 	})
 
 	if !errors.Is(err, ErrRoleNotServed) {
@@ -276,13 +281,12 @@ func TestAskRefusesACandidateThatDoesNotServeTheRole(t *testing.T) {
 }
 
 func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"a","model":"m","roles":["reviewer"]},{"harness":"claude","provider":"b","model":"m","roles":["reviewer"]}]`)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 
 	if !errors.Is(err, ErrAmbiguousCandidate) {
@@ -291,14 +295,13 @@ func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
 }
 
 func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "review this")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -320,16 +323,18 @@ func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
 
 // An agy consult is launched with --agent (#85); its prompt is the consult
 // prompt and carries no interactive preamble.
+
+// An agy consult is launched with --agent (#85); its prompt is the consult
+// prompt and carries no interactive preamble.
 func TestAskSendsTheConsultPromptAlone(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"t","model":"m","roles":["reviewer"]}]`)
 	q := writeQuestion(t, "review this")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -357,18 +362,9 @@ func TestAskSendsTheConsultPromptAlone(t *testing.T) {
 
 // containsAdjacentPair reports whether args contains a, b as consecutive
 // elements, in that order.
-func containsAdjacentPair(args []string, a, b string) bool {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == a && args[i+1] == b {
-			return true
-		}
-	}
-	return false
-}
 
 func TestAskRefusesAtTheConsultCap(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	b, err := rt.Store.Load("webshop")
@@ -382,7 +378,7 @@ func TestAskRefusesAtTheConsultCap(t *testing.T) {
 	}
 
 	_, err = Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if !errors.Is(err, ErrConsultCap) {
 		t.Fatalf("want ErrConsultCap, got %v", err)
@@ -390,8 +386,7 @@ func TestAskRefusesAtTheConsultCap(t *testing.T) {
 }
 
 func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	b, err := rt.Store.Load("webshop")
@@ -405,19 +400,15 @@ func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
 	}
 
 	_, err = Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if !errors.Is(err, ErrConsultCap) {
 		t.Fatalf("want ErrConsultCap, got %v", err)
 	}
-	if !(len(f.tabs) == 0 && len(f.starts) == 0) {
-		t.Errorf("expected no tabs and no starts, got tabs=%d starts=%d", len(f.tabs), len(f.starts))
-	}
 }
 
 func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	b, err := rt.Store.Load("webshop")
@@ -432,19 +423,18 @@ func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
 	}
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask refused over a reapable consult: %v", err)
 	}
 }
 
 func TestAskLogsTheQuestionOutbound(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -467,9 +457,8 @@ func TestAskLogsTheQuestionOutbound(t *testing.T) {
 }
 
 func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "x")
 
@@ -492,16 +481,15 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 	}
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 }
 
 func TestAskReservesBeforeSpawning(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
@@ -538,22 +526,21 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 	}
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 }
 
 func TestAskRecordsSilentWhenTheProcessFailsToStart(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	fr.startErr = errors.New("cannot start")
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err == nil {
 		t.Fatal("Ask succeeded when the process failed to start")
@@ -579,9 +566,8 @@ func TestAskRecordsSilentWhenTheProcessFailsToStart(t *testing.T) {
 }
 
 func TestAskUpsertsAnExpiredReservation(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
@@ -613,7 +599,7 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 	}
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -635,9 +621,8 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 }
 
 func TestAskReappendsAReapedReservation(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.NewID = func() string { return "7f2a3c1d" }
 	q := writeQuestion(t, "x")
@@ -664,7 +649,7 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 	}
 
 	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	}); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -682,19 +667,18 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 }
 
 func TestAskReviewerOnClaudeTierRead(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.Policy.Tier = map[string]string{"reviewer": "read"}
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role:        "reviewer",
-		Candidate:   testClaudeRef,
-		File:        q,
-		Name:        "webshop",
-		PlannerPane: "w2:p3",
+		Role:      "reviewer",
+		Candidate: testClaudeRef,
+		File:      q,
+		Name:      "webshop",
+		PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -711,15 +695,19 @@ func TestAskReviewerOnClaudeTierRead(t *testing.T) {
 // changes: the consult runs through proc.Runner in the harness's print form,
 // and no tab, agent start or prompt ever happens. Routing Headless through
 // the pane branch fails on fr.specs.
+
+// TestAskHeadlessStartsAProcessNotAPane pins the one thing `--headless`
+// changes: the consult runs through proc.Runner in the harness's print form,
+// and no tab, agent start or prompt ever happens. Routing Headless through
+// the pane branch fails on fr.specs.
 func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := seedForAsk(t, f)
+	rt, b := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "review it")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -745,11 +733,6 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 		t.Errorf("argv carries no consult-headless prompt: %v", spec.Argv)
 	} else if !strings.Contains(prompt, res.Consult.AskPath) {
 		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
-	}
-
-	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 {
-		t.Errorf("a headless consult must touch no pane: tabs=%d starts=%d prompts=%d",
-			len(f.tabs), len(f.starts), len(f.prompts))
 	}
 
 	got, err := rt.Store.Load("webshop")
@@ -788,29 +771,32 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 	}
 }
 
-// TestAskIsAlwaysHeadless pins #303: a consult never opens a pane. No
-// CreateTab or StartAgent reaches herdr, the endpoint Mode is headless, and the
-// process runs through the Runner.
+// TestAskIsAlwaysHeadless pins #303: a consult never opens a pane. No pane is
+// created or started, the endpoint Mode is headless, and the process runs
+// through the Runner.
 //
-// Mutation check: restoring the pane branch behind `if false`, then flipping it
-// to `if true`, fails this test on f.tabs/f.starts.
+// Mutation check: restoring the pane branch behind `if false`, then flipping
+// it to `if true`, fails this test: no pane call is reachable at all.
+
+// TestAskIsAlwaysHeadless pins #303: a consult never opens a pane. No pane is
+// created or started, the endpoint Mode is headless, and the process runs
+// through the Runner.
+//
+// Mutation check: restoring the pane branch behind `if false`, then flipping
+// it to `if true`, fails this test: no pane call is reachable at all.
 func TestAskIsAlwaysHeadless(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	q := writeQuestion(t, "review it")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Fatalf("a consult opened a pane: tabs=%d starts=%d", len(f.tabs), len(f.starts))
-	}
 	if !res.Consult.Endpoint.Headless() {
 		t.Errorf("endpoint mode = %q, want headless", res.Consult.Endpoint.Mode)
 	}
@@ -822,21 +808,24 @@ func TestAskIsAlwaysHeadless(t *testing.T) {
 // TestAskHeadlessRefusesUnsupportedTier: a headless consult resolves its tier
 // exactly as a pane one does, so opencode on `read` is refused before any
 // reservation or process.
+
+// TestAskHeadlessRefusesUnsupportedTier: a headless consult resolves its tier
+// exactly as a pane one does, so opencode on `read` is refused before any
+// reservation or process.
 func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	rt.Policy.Tier = map[string]string{"reviewer": "read"}
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role:        "reviewer",
-		Candidate:   testOpencodeRef,
-		File:        q,
-		Name:        "webshop",
-		PlannerPane: "w2:p3",
+		Role:      "reviewer",
+		Candidate: testOpencodeRef,
+		File:      q,
+		Name:      "webshop",
+		PlannerID: testPlannerName,
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
@@ -855,14 +844,16 @@ func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
 
 // TestAskHeadlessWithoutRunnerIsRefused: a runtime with no Runner cannot run
 // a process, so it refuses before anything is reserved.
+
+// TestAskHeadlessWithoutRunnerIsRefused: a runtime with no Runner cannot run
+// a process, so it refuses before anything is reserved.
 func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = nil
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerPane: "w2:p3",
+		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if !errors.Is(err, ErrRunnerUnavailable) {
 		t.Fatalf("err = %v, want ErrRunnerUnavailable", err)
@@ -877,24 +868,20 @@ func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
 }
 
 func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Policy.Tier = map[string]string{"reviewer": "read"}
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	q := writeQuestion(t, "x")
 
 	_, err := Ask(context.Background(), rt, AskOptions{
-		Role:        "reviewer",
-		Candidate:   testOpencodeRef,
-		File:        q,
-		Name:        "webshop",
-		PlannerPane: "w2:p3",
+		Role:      "reviewer",
+		Candidate: testOpencodeRef,
+		File:      q,
+		Name:      "webshop",
+		PlannerID: testPlannerName,
 	})
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
-	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 {
-		t.Errorf("tabs = %d, starts = %d; want 0", len(f.tabs), len(f.starts))
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -911,30 +898,6 @@ func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
 // builder session -- and moves the binding on to the next round, so the round
 // is closed and `ask --round` has something to resume. A nil session seeds the
 // report entry a round built before relay recorded sessions leaves behind.
-func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.BuilderSession) {
-	t.Helper()
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load("webshop")
-		if err != nil {
-			return err
-		}
-		if err := tx.AppendLog(b.Name, store.LogEntry{
-			TS:             rt.Now(),
-			Round:          round,
-			Direction:      store.DirToPlanner,
-			Kind:           store.KindReport,
-			Confirmed:      true,
-			BuilderSession: session,
-		}); err != nil {
-			return err
-		}
-		b.Round = round + 1
-		return tx.Save(b)
-	})
-	if err != nil {
-		t.Fatalf("seed closed round %d: %v", round, err)
-	}
-}
 
 // TestAskRoundResumesTheSession is the whole feature: a round with a recorded
 // builder session is resumed in the harness's own resume form, read-only, with
@@ -943,9 +906,8 @@ func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.Builder
 // Mutation check: launching the plain headless print form instead of Resume
 // leaves out --resume and this fails on the argv.
 func TestAskRoundResumesTheSession(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
 
@@ -1031,10 +993,13 @@ func TestAskRoundResumesTheSession(t *testing.T) {
 // TestAskRoundRefusesOpenRound: the open round's builder is live, and resuming
 // it would put two writers in one session. The refusal comes before anything
 // is reserved or a file staged.
+
+// TestAskRoundRefusesOpenRound: the open round's builder is live, and resuming
+// it would put two writers in one session. The refusal comes before anything
+// is reserved or a file staged.
 func TestAskRoundRefusesOpenRound(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
 
@@ -1059,10 +1024,12 @@ func TestAskRoundRefusesOpenRound(t *testing.T) {
 
 // TestAskRoundRefusesNoSession: a round closed before relay recorded sessions
 // has nothing to resume, and guessing a session would resume the wrong one.
+
+// TestAskRoundRefusesNoSession: a round closed before relay recorded sessions
+// has nothing to resume, and guessing a session would resume the wrong one.
 func TestAskRoundRefusesNoSession(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, nil)
 
@@ -1084,10 +1051,12 @@ func TestAskRoundRefusesNoSession(t *testing.T) {
 
 // TestAskRoundRefusesCodex: codex resume is not verified, so the round is
 // refused with the kind named rather than run with a guessed flag.
+
+// TestAskRoundRefusesCodex: codex resume is not verified, so the round is
+// refused with the kind named rather than run with a guessed flag.
 func TestAskRoundRefusesCodex(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "codex", ID: "thread-1"})
 
@@ -1113,10 +1082,13 @@ func TestAskRoundRefusesCodex(t *testing.T) {
 // TestAskRoundOpencodeForksOnHarnessTier: opencode has no read-only flag, so
 // the round runs at harness tier -- no permission flag, no --auto -- and
 // --fork keeps the original session untouched.
+
+// TestAskRoundOpencodeForksOnHarnessTier: opencode has no read-only flag, so
+// the round runs at harness tier -- no permission flag, no --auto -- and
+// --fork keeps the original session untouched.
 func TestAskRoundOpencodeForksOnHarnessTier(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "opencode", ID: "ses-1"})
 
@@ -1144,10 +1116,12 @@ func TestAskRoundOpencodeForksOnHarnessTier(t *testing.T) {
 
 // TestAskRoundNeedsExactlyOneQuestion: the round path takes either a file or
 // an inline question, never both and never neither.
+
+// TestAskRoundNeedsExactlyOneQuestion: the round path takes either a file or
+// an inline question, never both and never neither.
 func TestAskRoundNeedsExactlyOneQuestion(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
 
@@ -1169,10 +1143,14 @@ func TestAskRoundNeedsExactlyOneQuestion(t *testing.T) {
 // delivery: the resumed process's last message is the findings, written to
 // FindingsPath and queued to the planner. No reconcile code is round-aware;
 // the headless branch carries it.
+
+// TestAskRoundFinalMessageBecomesFindings reuses the headless consult's
+// delivery: the resumed process's last message is the findings, written to
+// FindingsPath and queued to the planner. No reconcile code is round-aware;
+// the headless branch carries it.
 func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedForAsk(t, f)
+	rt, _ := seedForAsk(t)
 	rt.Runner = fr
 	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
 

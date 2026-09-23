@@ -118,9 +118,23 @@ func TestReviewRendersPlan(t *testing.T) {
 
 // TestReviewSendHandsThePlanToSend pins Review's --send path: the review
 // plan becomes the next round's plan, the same as any other Send.
+func TestReviewDefaultsToNewestCompletedRound(t *testing.T) {
+	rt := seedReviewBinding(t, 2)
+	commentsFile := writeComments(t, "x.go:3: say more\n")
+
+	res, err := Review(context.Background(), rt, ReviewOptions{Name: "webshop", File: commentsFile})
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("Round = %d, want 1 (binding's Round-1)", res.Round)
+	}
+}
+
+// TestReviewSendHandsThePlanToSend pins Review's --send path: the review
+// plan becomes the next round's plan, the same as any other Send.
 func TestReviewSendHandsThePlanToSend(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 
 	if err := os.WriteFile(rt.Store.DiffPath("webshop", 1), []byte(reviewFixtureDiff), 0o644); err != nil {
 		t.Fatal(err)
@@ -165,18 +179,5 @@ func TestReviewSendHandsThePlanToSend(t *testing.T) {
 	}
 	if string(sentBody) != string(reviewBody) {
 		t.Error("round 2's plan must equal the review plan")
-	}
-}
-
-func TestReviewDefaultsToNewestCompletedRound(t *testing.T) {
-	rt := seedReviewBinding(t, 2)
-	commentsFile := writeComments(t, "x.go:3: say more\n")
-
-	res, err := Review(context.Background(), rt, ReviewOptions{Name: "webshop", File: commentsFile})
-	if err != nil {
-		t.Fatalf("Review: %v", err)
-	}
-	if res.Round != 1 {
-		t.Errorf("Round = %d, want 1 (binding's Round-1)", res.Round)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,19 +11,9 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
-
-// ErrPromptLate is returned by promptWithRetry in place of nil when the first
-// stall was contradicted by the screen. Every caller treats it as success and
-// records/logs late.
-var ErrPromptLate = errors.New("prompt landed late")
-
-// lateScanLines is how many lines are read from the visible source when
-// confirming a fingerprint.
-const lateScanLines = 40
 
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
@@ -59,14 +48,6 @@ not_done: []            # adjacent work you deliberately left
 ` + "```" + `
 Reply here with only the report path.`
 
-// Target is the herdr target for an endpoint: its pane id, which Reconcile
-// keeps current by refreshing every endpoint it locates. AgentName is
-// provenance rather than an address, because herdr can forget it across a
-// server restart while the pane stays addressable (#20).
-func Target(ep store.Endpoint) string {
-	return ep.PaneID
-}
-
 // SendResult is what one successful Send produced.
 type SendResult struct {
 	Round int    // the round the plan was filed under
@@ -86,8 +67,7 @@ type SendOptions struct {
 	Verify *bool
 	// Defer stages the round -- plan written, log entry appended, State ==
 	// active -- but does not spawn a builder; the caller (serve.admit or
-	// relay.Admit) starts it later (#285, server only). A pane binding
-	// ignores Defer: the pane path has no spawn.
+	// relay.Admit) starts it later (#285, server only).
 	Defer bool
 }
 
@@ -195,8 +175,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// A headless builder (#99) is a process relay starts per round, so the
 	// runner must exist and no previous process may still be alive -- and both
-	// are checked here, before Send stages anything. A local builder is always
-	// headless since #303.
+	// are checked here, before Send stages anything.
 	if rt.Runner == nil {
 		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
 	}
@@ -237,10 +216,9 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	return pf, nil
 }
 
-// Send copies the planner's plan into relay state and hands it to the builder:
-// typed into its pane, or -- for a headless binding (#99) -- as the prompt of
-// a fresh process started in the binding's tree. It returns a SendResult
-// describing the round and any between-rounds drift.
+// Send copies the planner's plan into relay state and hands it to the builder
+// as the prompt of a fresh process started in the binding's tree (#99). It
+// returns a SendResult describing the round and any between-rounds drift.
 //
 // Every precondition that needs no lock lives in sendPreflight, which
 // `relay send --dry-run` calls too (#149). The in-lock checks stay: they guard
@@ -267,8 +245,8 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 	// The whole round advance is one critical section: the daemon rewrites this
 	// same binding on every tick, and a lost update here would re-send a plan
-	// the builder already has. `Prompt` does not wait on the agent, so holding
-	// the lock across it costs milliseconds, not the length of a turn.
+	// the builder already has. Spawning a process does not wait on it, so
+	// holding the lock across it costs milliseconds, not the length of a turn.
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(name)
 		if err != nil {
@@ -285,8 +263,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		}
 		// One process per round (headless spec §5.2): a previous round's
 		// process still running means the human is early, not that relay
-		// should start a second builder in the same tree. A local builder is
-		// always headless since #303.
+		// should start a second builder in the same tree.
 		if b.Builder.PID != 0 {
 			if rt.Runner == nil {
 				return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
@@ -541,38 +518,6 @@ func absoluteOr(path string) string {
 		return abs
 	}
 	return path
-}
-
-// promptWithRetry retries once past herdr's five second stall detection, then
-// gives up. It never fires a third time: a double-submitted plan means two
-// builders' worth of edits, which is worse than a stalled round.
-func promptWithRetry(ctx context.Context, rt Runtime, target, text, fingerprint string) error {
-	err := rt.Herdr.Prompt(ctx, target, text)
-	if !errors.Is(err, herdr.ErrPromptStalled) {
-		return err
-	}
-
-	if fingerprint != "" {
-		screen, rerr := rt.Herdr.ReadAgentSource(ctx, target, "visible", lateScanLines)
-		if rerr != nil {
-			slog.Warn("late check: screen unreadable", "target", target, "err", rerr)
-		} else if strings.Contains(screen, fingerprint) {
-			return ErrPromptLate
-		}
-	}
-
-	if retryErr := rt.Herdr.Prompt(ctx, target, text); retryErr != nil {
-		// Only a second stall is a stall. The retry can fail for an unrelated
-		// reason -- the builder became blocked between the two attempts, say --
-		// and reporting that as a stall sends the human looking at the wrong
-		// thing.
-		if errors.Is(retryErr, herdr.ErrPromptStalled) {
-			return fmt.Errorf("prompt %s stalled twice: %w", target, retryErr)
-		}
-		return fmt.Errorf("prompt %s failed on retry: %w", target, retryErr)
-	}
-
-	return nil
 }
 
 // composePrompt renders the builder prompt for this round. Line 1 is the

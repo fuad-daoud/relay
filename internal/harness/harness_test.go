@@ -43,117 +43,6 @@ func TestLookupUnknown(t *testing.T) {
 	}
 }
 
-func TestTableExactValues(t *testing.T) {
-	expected := map[string]Harness{
-		"agy": {
-			Kind:        "agy",
-			Binary:      "agy",
-			Integration: "antigravity-cli",
-			MinVersion:  "1.1.6",
-			SubAgents:   SubAgentsForeground,
-			LimitPatterns: []string{
-				`(?i)individual quota reached`,
-				`(?i)RESOURCE_EXHAUSTED`,
-				`(?i)quota exceeded`,
-			},
-			DenialPatterns: []string{
-				`(?i)permission (request )?(denied|rejected)`,
-				`(?i)tool (call|use) (was )?rejected`,
-				`(?i)not permitted in (plan|accept-edits) mode`,
-			},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
-				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
-				{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
-				{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
-			},
-		},
-		"claude": {
-			Kind:        "claude",
-			Binary:      "claude",
-			Integration: "claude",
-			SubAgents:   SubAgentsSeparate,
-			LimitPatterns: []string{
-				`(?i)you've hit your .*limit`,
-				`(?i)usage limit reached`,
-				`(?i)rate limit reached`,
-				`(?i)limit .*resets`,
-			},
-			DenialPatterns: []string{
-				`(?i)requested permissions to use .* but you haven't granted`,
-				`(?i)permission (to use .* was )?denied`,
-				`(?i)tool use was rejected`,
-			},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
-				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
-				{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
-				{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
-			},
-		},
-		"opencode": {
-			Kind:        "opencode",
-			Binary:      "opencode",
-			Integration: "opencode",
-			SubAgents:   SubAgentsHidden,
-			LimitPatterns: []string{
-				`(?i)rate.?limit(ed)? (reached|exceeded)`,
-				`(?i)quota (exceeded|reached)`,
-				`(?i)insufficient (credits|quota)`,
-				`(?i)RESOURCE_EXHAUSTED`,
-			},
-			DenialPatterns: []string{
-				`(?i)permission.*(denied|rejected)`,
-				`(?i)rejected: external_directory`,
-			},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
-				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
-				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
-				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
-			},
-		},
-		"codex": {
-			Kind:        "codex",
-			Binary:      "codex",
-			Integration: "codex",
-			MinVersion:  "0.155.0",
-			SubAgents:   SubAgentsHidden,
-			LimitPatterns: []string{
-				`(?i)usage limit`,
-				`(?i)rate limit`,
-				`(?i)quota`,
-				`(?i)"status": 429`,
-				`(?i)too many requests`,
-			},
-			DenialPatterns: []string{
-				`(?i)patch rejected: writing outside of the project`,
-				`(?i)rejected by user approval settings`,
-				`(?i)sandbox.*(denied|blocked|not permitted)`,
-				`(?i)permission denied`,
-			},
-			DocExt: "toml",
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
-				{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
-				{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
-				{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
-			},
-		},
-	}
-
-	for kind, want := range expected {
-		got, ok := Lookup(kind)
-		if !ok {
-			t.Errorf("Lookup(%q) not found", kind)
-			continue
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("Lookup(%q) = %+v, want %+v", kind, got, want)
-		}
-	}
-}
-
 func TestRoleTable(t *testing.T) {
 	wantNames := []string{"builder", "reviewer", "researcher"}
 	if got := RoleNames(); !reflect.DeepEqual(got, wantNames) {
@@ -378,19 +267,6 @@ func TestCanServeRequiresEveryDefinition(t *testing.T) {
 
 // TestSubAgentsSetOnEveryKind pins the rule that "" is not a visibility
 // state: an unknown kind yields "" downstream, and a known kind never may.
-func TestSubAgentsSetOnEveryKind(t *testing.T) {
-	valid := map[SubAgentVisibility]bool{
-		SubAgentsSeparate:   true,
-		SubAgentsForeground: true,
-		SubAgentsHidden:     true,
-	}
-	for _, h := range All() {
-		if !valid[h.SubAgents] {
-			t.Errorf("harness %q: SubAgents = %q, want one of separate/foreground/hidden", h.Kind, h.SubAgents)
-		}
-	}
-}
-
 func TestLimitPatternsSetOnEveryKind(t *testing.T) {
 	for _, h := range All() {
 		if len(h.LimitPatterns) < 1 {
@@ -762,4 +638,107 @@ func containsAdjacent(argv []string, flag, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestTableExactValues(t *testing.T) {
+	expected := map[string]Harness{
+		"agy": {
+			Kind:       "agy",
+			Binary:     "agy",
+			MinVersion: "1.1.6",
+			LimitPatterns: []string{
+				`(?i)individual quota reached`,
+				`(?i)RESOURCE_EXHAUSTED`,
+				`(?i)quota exceeded`,
+			},
+			DenialPatterns: []string{
+				`(?i)permission (request )?(denied|rejected)`,
+				`(?i)tool (call|use) (was )?rejected`,
+				`(?i)not permitted in (plan|accept-edits) mode`,
+			},
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
+				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
+				{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+				{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
+			},
+		},
+		"claude": {
+			Kind:   "claude",
+			Binary: "claude",
+			LimitPatterns: []string{
+				`(?i)you've hit your .*limit`,
+				`(?i)usage limit reached`,
+				`(?i)rate limit reached`,
+				`(?i)limit .*resets`,
+			},
+			DenialPatterns: []string{
+				`(?i)requested permissions to use .* but you haven't granted`,
+				`(?i)permission (to use .* was )?denied`,
+				`(?i)tool use was rejected`,
+			},
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
+				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
+				{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
+				{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
+			},
+		},
+		"opencode": {
+			Kind:   "opencode",
+			Binary: "opencode",
+			LimitPatterns: []string{
+				`(?i)rate.?limit(ed)? (reached|exceeded)`,
+				`(?i)quota (exceeded|reached)`,
+				`(?i)insufficient (credits|quota)`,
+				`(?i)RESOURCE_EXHAUSTED`,
+			},
+			DenialPatterns: []string{
+				`(?i)permission.*(denied|rejected)`,
+				`(?i)rejected: external_directory`,
+			},
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
+				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
+				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
+				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+			},
+		},
+		"codex": {
+			Kind:       "codex",
+			Binary:     "codex",
+			MinVersion: "0.155.0",
+			LimitPatterns: []string{
+				`(?i)usage limit`,
+				`(?i)rate limit`,
+				`(?i)quota`,
+				`(?i)"status": 429`,
+				`(?i)too many requests`,
+			},
+			DenialPatterns: []string{
+				`(?i)patch rejected: writing outside of the project`,
+				`(?i)rejected by user approval settings`,
+				`(?i)sandbox.*(denied|blocked|not permitted)`,
+				`(?i)permission denied`,
+			},
+			DocExt: "toml",
+			Roles: []Role{
+				{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
+				{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
+				{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
+				{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
+			},
+		},
+	}
+
+	for kind, want := range expected {
+		got, ok := Lookup(kind)
+		if !ok {
+			t.Errorf("Lookup(%q) not found", kind)
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Lookup(%q) = %+v, want %+v", kind, got, want)
+		}
+	}
 }

@@ -10,8 +10,8 @@ import (
 )
 
 // paneHead is the pane's first rows: title with the state pill and the
-// last event, planner, builder, tree, blank -- plus one `foreign` row per
-// foreign agent, which is why the caller measures it rather than
+// last event, planner, builder, tree, blank -- plus a usage and a spend row
+// when the binding has them, which is why the caller measures it rather than
 // assuming paneHeadRows. Each row is unpadded; paneView fits them.
 func (m Model) paneHead(b *relay.BindingStatus) []string {
 	label := func(s string) string { return dimStyle.Render(fmt.Sprintf("%-9s", s)) }
@@ -25,10 +25,11 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 		title = spread(title, right, m.paneWidth())
 	}
 
-	planner := label("planner") + fmt.Sprintf("%-4s %-9s %s", b.PlannerPane, b.PlannerKind, b.PlannerStatus)
-	if b.PlannerFocus {
-		planner += sep + dimStyle.Render("focused")
+	plannerName := b.PlannerName
+	if plannerName == "" {
+		plannerName = b.PlannerID
 	}
+	planner := label("planner") + fmt.Sprintf("%-4s %-9s route %s", plannerName, b.PlannerKind, b.PlannerRoute)
 	// On a serve box the pane belongs to a client, not to this planner: the
 	// client line replaces the planner line (empty OwnerLabel is a planner
 	// row, which renders today's line above).
@@ -52,12 +53,9 @@ func (m Model) paneHead(b *relay.BindingStatus) []string {
 	if b.Switches > 0 {
 		bparts = append(bparts, dimStyle.Render(fmt.Sprintf("switched %dx", b.Switches)))
 	}
-	builder := label("builder") + fmt.Sprintf("%-4s %-9s ", b.BuilderPane, b.BuilderKind) + strings.Join(bparts, sep)
+	builder := label("builder") + fmt.Sprintf("%-9s ", b.BuilderKind) + strings.Join(bparts, sep)
 
 	rows := []string{title, planner, builder}
-	for _, fa := range b.Foreign {
-		rows = append(rows, label("foreign")+fmt.Sprintf("%-4s %-9s %s"+sep+"%s", fa.PaneID, fa.Kind, fa.Status, fa.Title))
-	}
 
 	var tparts []string
 	if b.Branch != "" {
@@ -263,7 +261,10 @@ func (m Model) sourceLine() string {
 		} else {
 			pane := ""
 			if r != nil {
-				pane = r.BuilderPane
+				pane = "remote"
+				if r.Headless != nil {
+					pane = "headless"
+				}
 			}
 			s = fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, m.now()), n)
 		}

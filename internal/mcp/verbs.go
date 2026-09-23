@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fuad-daoud/relay/internal/relay"
 )
@@ -18,7 +19,7 @@ type Verbs interface {
 
 // RelayVerbs adapts internal/relay's functions to Verbs, resolved against
 // one planner (spec docs/specs/2026-09-21-planner-channel-design.md §4, §5;
-// keyed by planner id in docs/specs/2026-09-22-drop-herdr-design.md §4.5).
+// keyed by planner id in #303 §4.5).
 type RelayVerbs struct {
 	RT      relay.Runtime
 	Planner string
@@ -64,6 +65,33 @@ func (v *RelayVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	return rep, nil
 }
 
+// sendResult is relay.SendResult plus the tools-mode background-wait budget:
+// the binding's round budget, rendered the way `relay wait --timeout`
+// accepts it (#303 §4.5). Empty on a dry run, where no round was opened.
+type sendResult struct {
+	relay.SendResult
+	WaitBudget string `json:"wait_budget,omitempty"`
+}
+
+// waitBudget renders a binding's round budget (ms) as a duration string for
+// `relay wait --timeout`. A non-positive value reads as "", which leaves the
+// wait command out of the send result.
+func waitBudget(roundTimeoutMS int) string {
+	if roundTimeoutMS <= 0 {
+		return ""
+	}
+	return (time.Duration(roundTimeoutMS) * time.Millisecond).String()
+}
+
+// budgetOf pulls the wait budget out of a Send result. A result that is not
+// a sendResult (a dry run, or a fake in a test) has none.
+func budgetOf(res any) string {
+	if sr, ok := res.(sendResult); ok {
+		return sr.WaitBudget
+	}
+	return ""
+}
+
 // Send calls relay.Send, or relay.SendDryRun when a.DryRun. AllowYolo is
 // always false: escalation to yolo stays on the CLI (spec §2 non-goals).
 func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
@@ -86,7 +114,15 @@ func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+	out := sendResult{SendResult: res}
+	// The budget is read back from the binding Send just saved: store fills
+	// the default in, so a binding with no --timeout still reads 24h.
+	if v.RT.Store != nil {
+		if b, lerr := v.RT.Store.Load(a.Name); lerr == nil {
+			out.WaitBudget = waitBudget(b.RoundTimeoutMS)
+		}
+	}
+	return out, nil
 }
 
 // doneResult is relay.DoneResult plus the CLI's rendered text, so a model

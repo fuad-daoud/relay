@@ -1,5 +1,5 @@
 // Package store owns relay's on-disk state: the bindings and the append-only
-// round log. Everything else relay knows is queried live from herdr.
+// round log.
 package store
 
 import (
@@ -14,20 +14,18 @@ type State string
 
 const (
 	StateActive   State = "active"    // someone is working
-	StateHeld     State = "held"      // payload ready, human is in the planner pane
 	StateNeedsYou State = "needs_you" // stalled on a human decision
-	StateBroken   State = "broken"    // builder pane is gone
-	StateOrphaned State = "orphaned"  // planner session is gone
+	StateBroken   State = "broken"    // the builder process is gone
 	StateDone     State = "done"      // planner declared the work verified
 	// StatePaused is the third lifecycle state between ACTIVE and DONE:
-	// worktree and pane released by `relay pause`; branch and log kept;
+	// worktree released by `relay pause`; branch and log kept;
 	// `relay bind --resume` restores it.
 	StatePaused State = "paused"
 )
 
-// Mode is the shape of a builder: a herdr pane relay watches, or a process
-// relay runs itself (#99). "" reads as pane so every binding written before
-// the field existed is unchanged.
+// Mode is the shape of a builder: a process relay runs itself (#99), or one
+// hosted on a remote relay server. "" is a pre-#303 pane binding, kept
+// loadable so an old bind.json still reads back unchanged.
 type Mode string
 
 const (
@@ -94,10 +92,10 @@ func ValidFeature(s string) error {
 // Endpoint is one side of a binding. PaneID moves when a pane is moved between
 // workspaces; SessionID does not, so it is the durable identity.
 //
-// A headless builder (#99) has no pane and no session: Mode is ModeHeadless,
-// PaneID and SessionID are "", and the process fields below describe the
-// current round's process -- PID 0 between rounds. Every one of them is
-// omitempty so a pane endpoint's JSON is byte-identical to what it was.
+// A headless builder (#99) has no session: Mode is ModeHeadless, SessionID
+// is "", and the process fields below describe the current round's process
+// -- PID 0 between rounds. Every one of them is omitempty so an endpoint
+// written before these fields existed is byte-identical to what it was.
 type Endpoint struct {
 	AgentName string `json:"agent_name,omitempty"`
 	PaneID    string `json:"pane_id"`
@@ -127,7 +125,7 @@ type Endpoint struct {
 	// StreamSessionID is the session id the round's stream announced, set
 	// once per round by drainStream from the harness's own event (#147).
 	// Headless only; startRound clears it, because a new process begins a new
-	// session. Pane builders keep using SessionID (from herdr).
+	// session. A pre-#303 pane binding keeps its SessionID field.
 	StreamSessionID string `json:"stream_session_id,omitempty"`
 
 	// Remote builder endpoint fields
@@ -179,26 +177,26 @@ type Progress struct {
 	// TreeAt is when Tree last changed, and the round's start when it never
 	// has.
 	TreeAt time.Time `json:"tree_at"`
-	// Output is the pane builder's last screen fingerprint. Headless builders
-	// do not use it: their output is the stream file's mtime, carried in
-	// OutputAt alone.
+	// Output is a pre-#303 pane builder's last screen fingerprint; nothing
+	// writes it now and only an old bind.json carries one. A headless
+	// builder's output is the stream file's mtime, carried in OutputAt alone.
 	Output string `json:"output,omitempty"`
-	// OutputAt is when the pane's screen last changed; for a headless builder
-	// it is the stream's last activity.
+	// OutputAt is the stream's last activity for a headless builder; it was
+	// the pane's last screen change before #303.
 	OutputAt time.Time `json:"output_at"`
 }
 
-// Binding ties one planner pane to one builder pane over one working tree.
+// Binding ties one planner to one builder over one working tree.
 type Binding struct {
 	Name    string   `json:"name"`
 	CWD     string   `json:"cwd"`
 	Planner Endpoint `json:"planner"`
 	// PlannerID names the relay planner record this binding belongs to
-	// (docs/specs/2026-09-22-drop-herdr-design.md §3.2, §5.3): the id in
-	// $XDG_STATE_HOME/relay/planners/<id>.json and in the db's planner table.
-	// Empty on every binding written before #303 step 1, and empty on a
-	// remote binding, which has no planner. bind/add/fork/ask set it from
-	// planner.Resolve, and the daemon back-fills it by planner session.
+	// (#303 §3.2, §5.3): the id in $XDG_STATE_HOME/relay/planners/<id>.json
+	// and in the db's planner table. Empty on every binding written before
+	// #303 step 1, and empty on a remote binding, which has no planner.
+	// bind/add/fork/ask set it from planner.Resolve, and the daemon
+	// back-fills it by planner session.
 	PlannerID string   `json:"planner_id,omitempty"`
 	Builder   Endpoint `json:"builder"`
 	// BuilderCandidate is the harness/provider/model token the builder was
@@ -312,8 +310,8 @@ type Binding struct {
 	// later of the tree's and the output's last change.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
-	// StopRequestedAt is when `relay stop` asked this pane round's builder to
-	// wrap up, and StopGraceMS is the grace it was called with (#138). Both
+	// StopRequestedAt is when `relay stop` asked this round's builder to
+	// wrap up, and StopGraceMS is what it was called with (#138). Both
 	// are zero on a binding that was never stopped; a stop is cleared by Send
 	// (a new round) and by the round close (queueReport), so a stale request
 	// never outlives the round it was made for.
@@ -332,10 +330,10 @@ type Binding struct {
 	// Cleared by Send, resume/rebind and round close.
 	ExploringSince time.Time `json:"exploring_since,omitempty"`
 
-	// StaleSince is when a NEEDS YOU or HELD binding last changed state (the
-	// halt time, or the newest log entry, whichever is available) once it has
-	// been unacted for policy.json's stale_after_ms (#135). Zero means not
-	// stale. Cleared by Send, resume/rebind and round close.
+	// StaleSince is when a NEEDS YOU binding last changed state (the halt
+	// time, or the newest log entry, whichever is available) once it has been
+	// unacted for policy.json's stale_after_ms (#135). Zero means not stale.
+	// Cleared by Send, resume/rebind and round close.
 	StaleSince time.Time `json:"stale_since,omitempty"`
 
 	// StaleNotifiedAt is when relay last raised the one stale notification for
@@ -362,33 +360,16 @@ type Binding struct {
 	// a non-git tree, an unborn HEAD, git unavailable, or a round sent before
 	// the field existed (#130).
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
-	// BuilderScreen is a fingerprint of the builder's terminal as relay last
-	// observed it, and BuilderScreenAt is when that observation was taken. They
-	// exist to tell a builder that has STOPPED from one that is merely quiet:
-	// herdr's idle status means "not currently emitting", which a builder waiting
-	// on its own subagents satisfies while very much alive.
-	//
-	// Both are transient per-round state, written when relay nudges and refreshed
-	// whenever the screen is seen to move. queueReport clears them with the round.
-	BuilderScreen   string    `json:"builder_screen,omitempty"`
-	BuilderScreenAt time.Time `json:"builder_screen_at,omitempty"`
-
-	// PlannerScreen is a fingerprint of the planner's visible screen as relay
-	// last observed it while HOLDING a payload, and PlannerScreenAt is when the
-	// screen was last seen to change. They exist to tell a human who is typing
-	// from one who has walked away with the pane focused: the hold ends when the
-	// screen has been unchanged for HeldGrace.
-	//
-	// Both are transient: set only while a payload is held on a focused planner,
-	// and cleared by every DeliverPending return that is not such a hold.
-	PlannerScreen   string    `json:"planner_screen,omitempty"`
-	PlannerScreenAt time.Time `json:"planner_screen_at,omitempty"`
-
-	// HeldGrace is the grace the daemon was running with when it started the
-	// PlannerScreen clock. It exists so `relay status`, which runs in another
-	// process and never sees `--held-grace`, can print "quiet 23s of 1m0s"
-	// rather than a bare duration. Written with PlannerScreen, cleared with it.
-	HeldGrace time.Duration `json:"held_grace,omitempty"`
+	// legacy: pre-#303 bind.json. BuilderScreen, BuilderScreenAt,
+	// PlannerScreen, PlannerScreenAt and HeldGrace recorded terminal screen
+	// fingerprints and the grace clock for the pane delivery path. Nothing
+	// writes them now; they stay in the struct only so an old bind.json still
+	// loads, and are removed after one minor release.
+	BuilderScreen   string        `json:"builder_screen,omitempty"`
+	BuilderScreenAt time.Time     `json:"builder_screen_at,omitempty"`
+	PlannerScreen   string        `json:"planner_screen,omitempty"`
+	PlannerScreenAt time.Time     `json:"planner_screen_at,omitempty"`
+	HeldGrace       time.Duration `json:"held_grace,omitempty"`
 
 	// preamble_pending (pre-#85) is ignored on load: the role is selected at
 	// launch now.
@@ -537,7 +518,7 @@ type ServeFacts struct {
 }
 
 // DefaultConsultCap bounds how many consults may be RUNNING on one binding at
-// once. It exists for the reason RoundCap does: an idle harness pane holds
+// once. It exists for the reason RoundCap does: an idle harness process holds
 // roughly 800 MB, so an unbounded fan-out is a memory failure, not a workspace.
 const DefaultConsultCap = 8
 
@@ -563,8 +544,8 @@ const (
 // forcing Status, gc, Fork, doctor and the UI to learn to filter it out.
 //
 // "Read-only" describes how the role is configured, not something relay
-// enforces: `herdr agent list` reports a kind, a status, a cwd and a title, and
-// nothing more, so relay cannot observe writes.
+// enforces: a consult's writes are not observable to relay, so the role is a
+// contract with the harness, not a sandbox.
 type Consult struct {
 	// ID is 8 lowercase hex characters, unique within one binding. It appears
 	// in the log, in both filenames, and in `relay reap`, so it is short enough

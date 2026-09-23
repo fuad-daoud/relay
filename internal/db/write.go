@@ -110,7 +110,7 @@ func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
 // session_id). A hit updates last_seen and fills transcript_locator when it
 // is null in the db and set on p.
 //
-// When p.ID is set the record's own id wins instead (docs/specs/2026-09-22-drop-herdr-design.md
+// When p.ID is set the record's own id wins instead (#303
 // §3.5): relay's planner records are keyed by the id `relay planner init`
 // minted, so ingest upserts by id and the natural key stays as the uniqueness
 // guard. A (harness_kind, session_id) another id already holds is refused with

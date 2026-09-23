@@ -25,7 +25,7 @@ type Model struct {
 	notice string       // sticky note (e.g. "webshop is gone"), cleared on keypress
 
 	// Two guards, not one. statusInFlight and tabInFlight are separate
-	// because a terminal read is a 30s-timeout herdr call: a single shared
+	// because a terminal read can block: a single shared
 	// guard would let one slow ReadAgent stall every list refresh behind it,
 	// freezing the fleet view for half a minute. Each is cleared by its own
 	// message.
@@ -784,9 +784,6 @@ func (m Model) footerView() string {
 	}
 	if m.err != nil {
 		notes = append(notes, errorStyle.Render("! refresh failed (retrying)"))
-	}
-	if m.report.HerdrError != "" {
-		notes = append(notes, errorStyle.Render("! herdr unreachable"))
 	}
 	if m.paneVisible() {
 		for _, b := range m.report.Bindings {

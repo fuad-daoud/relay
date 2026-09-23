@@ -15,9 +15,8 @@ import (
 // post-reconcile bindings share the change and the tick's SameBinding gate
 // skips the save -- and the next tick queues the findings entry again.
 func TestTickPersistsFinishedConsultOnce(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, c := seedHeadlessConsult(t, f, fr)
+	rt, c := seedHeadlessConsult(t, fr)
 
 	stream := `{"type":"assistant","message":{"content":[{"type":"text","text":"FINDINGS BODY"}]}}` + "\n" +
 		"relay-exit:0\n"
@@ -58,8 +57,7 @@ func TestTickPersistsFinishedConsultOnce(t *testing.T) {
 }
 
 func TestTickPersistsAnExpiredReservation(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, clock := seedSpawning(t, f)
+	rt, clock := seedSpawning(t)
 	clock.Advance(consultSpawnTimeout + time.Second)
 
 	d := NewDaemon(rt, time.Second)

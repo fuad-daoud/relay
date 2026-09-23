@@ -39,92 +39,6 @@ func (aliveRunner) Rusage(context.Context, relay.ProcHandle, string) (relay.Proc
 // as one report -- Owner/OwnerLabel stamped on every row, owners by label,
 // Key() distinct across two owners that share a binding name, and the
 // server-wide ledger gate appearing once, not once per owner.
-func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
-
-	candPath := filepath.Join(root, "candidates.json")
-	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	candidates, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatalf("candidate.Load: %v", err)
-	}
-
-	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idA := remote.IDOf(kpA.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-	kpB, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idB := remote.IDOf(kpB.Public)
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	rtA, err := s.runtime(idA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rtA.Store.Save(store.Binding{
-		Name: "persist", Owner: string(idA), CWD: rtA.Store.WorktreePath("persist"),
-		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rtB, err := s.runtime(idB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rtB.Store.Save(store.Binding{
-		Name: "persist", Owner: string(idB), CWD: rtB.Store.WorktreePath("persist"),
-		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// One ledger gate through the server's (server-wide) ledger path.
-	if _, err := relay.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
-		t.Fatalf("Unavailable: %v", err)
-	}
-
-	out, err := FlatStatus(context.Background(), s)
-	if err != nil {
-		t.Fatalf("FlatStatus: %v", err)
-	}
-
-	if len(out.Bindings) != 2 {
-		t.Fatalf("got %d rows, want 2", len(out.Bindings))
-	}
-	if out.Bindings[0].Owner != string(idA) || out.Bindings[0].OwnerLabel != "alice" || out.Bindings[0].Name != "persist" {
-		t.Errorf("row 0 = %+v", out.Bindings[0])
-	}
-	if out.Bindings[1].Owner != string(idB) || out.Bindings[1].OwnerLabel != "bob" || out.Bindings[1].Name != "persist" {
-		t.Errorf("row 1 = %+v", out.Bindings[1])
-	}
-	if out.Bindings[0].Key() == out.Bindings[1].Key() {
-		t.Errorf("Key() must separate two owners' same-named bindings: %q", out.Bindings[0].Key())
-	}
-	if len(out.Gated) != 1 {
-		t.Errorf("len(out.Gated) = %d, want 1 (one ledger gate, not one per owner)", len(out.Gated))
-	}
-	if out.DoneHidden != 0 || out.HerdrError != "" {
-		t.Errorf("DoneHidden = %d, HerdrError = %q; both must stay zero/empty", out.DoneHidden, out.HerdrError)
-	}
-}
-
 func TestOwnerRuntimeMalformedID(t *testing.T) {
 	s, err := New(Config{Root: t.TempDir(), Now: time.Now})
 	if err != nil {
@@ -840,5 +754,95 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	}
 	if ev.Provider != "t" {
 		t.Errorf("provider = %q, want t", ev.Provider)
+	}
+}
+
+// TestFlatStatusStampsOwnersAndDedupsGates: FlatStatus is the whole fleet
+// as one report -- Owner/OwnerLabel stamped on every row, owners by label,
+// Key() distinct across two owners that share a binding name, and the
+// server-wide ledger gate appearing once, not once per owner.
+func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	candPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	candidates, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+
+	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idA := remote.IDOf(kpA.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+	kpB, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB := remote.IDOf(kpB.Public)
+	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	rtA, err := s.runtime(idA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rtA.Store.Save(store.Binding{
+		Name: "persist", Owner: string(idA), CWD: rtA.Store.WorktreePath("persist"),
+		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rtB, err := s.runtime(idB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rtB.Store.Save(store.Binding{
+		Name: "persist", Owner: string(idB), CWD: rtB.Store.WorktreePath("persist"),
+		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// One ledger gate through the server's (server-wide) ledger path.
+	if _, err := relay.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	out, err := FlatStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("FlatStatus: %v", err)
+	}
+
+	if len(out.Bindings) != 2 {
+		t.Fatalf("got %d rows, want 2", len(out.Bindings))
+	}
+	if out.Bindings[0].Owner != string(idA) || out.Bindings[0].OwnerLabel != "alice" || out.Bindings[0].Name != "persist" {
+		t.Errorf("row 0 = %+v", out.Bindings[0])
+	}
+	if out.Bindings[1].Owner != string(idB) || out.Bindings[1].OwnerLabel != "bob" || out.Bindings[1].Name != "persist" {
+		t.Errorf("row 1 = %+v", out.Bindings[1])
+	}
+	if out.Bindings[0].Key() == out.Bindings[1].Key() {
+		t.Errorf("Key() must separate two owners' same-named bindings: %q", out.Bindings[0].Key())
+	}
+	if len(out.Gated) != 1 {
+		t.Errorf("len(out.Gated) = %d, want 1 (one ledger gate, not one per owner)", len(out.Gated))
+	}
+	if out.DoneHidden != 0 {
+		t.Errorf("DoneHidden = %d, want 0", out.DoneHidden)
 	}
 }

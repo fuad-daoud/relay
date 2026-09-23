@@ -13,7 +13,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/doctor"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/release"
@@ -349,7 +348,7 @@ func TestRefusalChecks(t *testing.T) {
 // other global rows rather than after the per-kind blocks.
 func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
 	checks := []doctor.Check{
-		{Name: "herdr", Severity: doctor.SevOK},
+		{Name: "release", Severity: doctor.SevOK},
 		{Name: "daemon", Severity: doctor.SevOK},
 		{Group: "claude", Name: "binary", Severity: doctor.SevOK},
 	}
@@ -369,10 +368,10 @@ func TestRenderReportVerdict(t *testing.T) {
 	// Success case
 	repOk := doctor.Report{
 		Checks: []doctor.Check{
-			{Group: "", Name: "herdr", Severity: doctor.SevOK, Detail: "0.9.0 (floor 0.8.2)"},
+			{Group: "", Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
 			{Group: "", Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
 			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-			{Group: "claude", Name: "integration", Severity: doctor.SevWarn, Detail: "outdated (v8 < v9)", Fix: "herdr integration install claude"},
+			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relay agent install --kind claude --role plan-executor"},
 		},
 		UsableBuilder: true,
 	}
@@ -384,14 +383,14 @@ func TestRenderReportVerdict(t *testing.T) {
 	if !strings.Contains(out, "1 warning, 0 failures -- relay can run.") {
 		t.Errorf("expected success footer, got: %s", out)
 	}
-	if !strings.Contains(out, "    fix: herdr integration install claude") {
+	if !strings.Contains(out, "    fix: relay agent install --kind claude --role plan-executor") {
 		t.Errorf("expected indented fix line, got: %s", out)
 	}
 
 	// Failure case
 	repFail := doctor.Report{
 		Checks: []doctor.Check{
-			{Group: "", Name: "herdr", Severity: doctor.SevFail, Detail: "not found"},
+			{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"},
 		},
 		UsableBuilder: false,
 	}
@@ -404,19 +403,17 @@ func TestRenderReportVerdict(t *testing.T) {
 		t.Errorf("expected failure footer, got: %s", outFail)
 	}
 
-	// Middle case: no failures, !UsableBuilder (via erroring IntegrationStatus)
+	// Middle case: no failures, !UsableBuilder (no checked harness on PATH)
 	envStub := &stubDoctorEnv{
-		ver:       "0.9.0",
-		intErr:    errors.New("timeout connecting to herdr"),
 		daemonRun: true,
-		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		lookPaths: map[string]string{},
 	}
 	repUnverified := doctor.Run(context.Background(), envStub, []string{"claude"})
 	if repUnverified.Failures() != 0 {
 		t.Fatalf("expected 0 failures, got %d", repUnverified.Failures())
 	}
 	if repUnverified.UsableBuilder {
-		t.Fatal("expected UsableBuilder = false when IntegrationStatus errors")
+		t.Fatal("expected UsableBuilder = false when no checked harness is on PATH")
 	}
 
 	buf.Reset()
@@ -429,10 +426,10 @@ func TestRenderReportVerdict(t *testing.T) {
 
 func TestRenderReportFooterPrecedence(t *testing.T) {
 	healthy := []doctor.Check{
-		{Name: "herdr", Severity: doctor.SevOK, Detail: "0.9.0 (floor 0.8.2)"},
+		{Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
 		{Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
 		{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-		{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
 	}
 	cases := []struct {
 		name string
@@ -449,7 +446,7 @@ func TestRenderReportFooterPrecedence(t *testing.T) {
 			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
 			"0 warnings, 0 failures -- no candidates configured; write ~/.config/relay/candidates.json first."},
 		{"a failure beats everything",
-			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Name: "herdr", Severity: doctor.SevFail, Detail: "x"}), NoCandidates: true, BuilderRefusal: "y"},
+			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
 			"Fix the failure above."},
 		{"clean machine can run",
 			doctor.Report{Checks: healthy, UsableBuilder: true},
@@ -475,26 +472,14 @@ func TestPolicyExample(t *testing.T) {
 }
 
 type stubDoctorEnv struct {
-	ver       string
-	herdrErr  error
-	intErr    error
-	intStates map[string]herdr.IntegrationState
 	daemonRun bool
+	daemonErr error
 	lookPaths map[string]string
 	statErr   error // nil means every role file exists
 }
 
-func (s *stubDoctorEnv) HerdrVersion(ctx context.Context) (string, error) {
-	return s.ver, s.herdrErr
-}
-func (s *stubDoctorEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
-	if s.intStates != nil {
-		return s.intStates, s.intErr
-	}
-	return nil, s.intErr
-}
 func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
-	return s.daemonRun, nil
+	return s.daemonRun, s.daemonErr
 }
 func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
 	if p, ok := s.lookPaths[binary]; ok {
@@ -548,16 +533,14 @@ func (s *stubDoctorEnv) Command(ctx context.Context, bin string, args ...string)
 // because the stub's Stat always succeeded.
 func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
 	env := &stubDoctorEnv{
-		ver:       "0.9.0",
-		intErr:    errors.New("connection reset by peer"),
-		daemonRun: true,
+		daemonErr: errors.New("connection reset by peer"),
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
 		statErr:   os.ErrNotExist,
 	}
 	rep := doctor.Run(context.Background(), env, []string{"claude"})
 	joined := strings.Join(bindWarningLines(rep), "\n")
 
-	if strings.Contains(joined, "status unavailable") {
+	if strings.Contains(joined, "probe error") {
 		t.Errorf("a row relay could not establish must not reach the hot path: %s", joined)
 	}
 	if !strings.Contains(joined, "plan-executor") {
@@ -568,20 +551,20 @@ func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
 // The exception: a failed probe whose verdict is SevFail means relay cannot run.
 // Silence would be the worst possible answer, so it prints anyway.
 func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
-	env := &stubDoctorEnv{herdrErr: errors.New("exec: \"herdr\": not found"), daemonRun: true}
-	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	rep := doctor.Report{Checks: []doctor.Check{
+		{Group: "agy", Name: "version", Severity: doctor.SevFail,
+			Detail: "1.1.5 (below floor 1.1.6)", Fix: "upgrade agy to >= 1.1.6", ProbeFailed: true},
+	}}
 	joined := strings.Join(bindWarningLines(rep), "\n")
-	if !strings.Contains(joined, "herdr") {
+	if !strings.Contains(joined, "version") {
 		t.Errorf("a SevFail probe failure must still be reported at bind: %s", joined)
 	}
 }
 
 func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 	env := &stubDoctorEnv{
-		ver:       "0.9.0",
 		daemonRun: true,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current (v9)"}},
 	}
 	rep := doctor.Run(context.Background(), env, []string{"claude"})
 	if lines := bindWarningLines(rep); len(lines) != 0 {
@@ -590,11 +573,11 @@ func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 }
 
 // Global rows reach bind too: a stopped daemon makes a binding exactly as inert
-// as a missing integration, which is the failure #24 is about.
+// as a missing role file, which is the failure #24 is about.
 func TestBindWarningLinesIncludesGlobalRows(t *testing.T) {
 	rep := doctor.Report{Checks: []doctor.Check{
 		{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relay daemon"},
-		{Group: "claude", Name: "integration", Severity: doctor.SevOK, Detail: "current"},
+		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
 	}}
 	joined := strings.Join(bindWarningLines(rep), "\n")
 	if !strings.Contains(joined, "daemon not running") {
@@ -608,56 +591,42 @@ type deadlineEnv struct {
 	sawDeadline bool
 }
 
-func (e *deadlineEnv) HerdrVersion(ctx context.Context) (string, error) {
+func (e *deadlineEnv) DaemonRunning(ctx context.Context) (bool, error) {
 	_, ok := ctx.Deadline()
 	e.sawDeadline = ok
-	return e.stubDoctorEnv.HerdrVersion(ctx)
+	return e.stubDoctorEnv.DaemonRunning(ctx)
 }
 
-// The bind preflight must be bounded: the herdr client allows 30s per call, so
-// an unbounded preflight can add a minute to `relay bind`.
+// The bind preflight must be bounded: a probe that hangs must not add its
+// delay to `relay bind`.
 func TestBindPreflightBoundsTheHotPath(t *testing.T) {
-	env := &deadlineEnv{stubDoctorEnv: stubDoctorEnv{ver: "0.9.0", daemonRun: true}}
+	env := &deadlineEnv{stubDoctorEnv: stubDoctorEnv{daemonRun: true}}
 	bindPreflight(context.Background(), env, "claude", false)
 	if !env.sawDeadline {
 		t.Error("bindPreflight must hand doctor.Run a deadline-bounded context")
 	}
 }
 
-// An adopted pane's integration row must survive a binary that is not on PATH:
-// the user launched that agent themselves, but the integration still decides
-// whether the round can ever be observed to finish. Fails if the call site stops
-// passing `adopted` through.
+// An adopted pane's binary is the user's to provide: the preflight must not
+// warn about it. Fails if the call site stops passing `adopted` through.
 func TestBindPreflightPassesAdoptedThrough(t *testing.T) {
-	env := &stubDoctorEnv{
-		ver:       "0.9.0",
-		daemonRun: true,
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: false}},
-	}
+	env := &stubDoctorEnv{daemonRun: true}
 
 	adopted := strings.Join(bindPreflight(context.Background(), env, "claude", true), "\n")
-	if !strings.Contains(adopted, "integration") {
-		t.Errorf("adopted preflight must report the integration despite no binary: %s", adopted)
-	}
 	if strings.Contains(adopted, "binary") {
-		t.Errorf("adopted preflight must not mention the binary: %s", adopted)
+		t.Errorf("adopted preflight must not warn about the absent binary: %s", adopted)
 	}
 
 	normal := strings.Join(bindPreflight(context.Background(), env, "claude", false), "\n")
 	if !strings.Contains(normal, "binary") {
 		t.Errorf("non-adopted preflight must report the absent binary: %s", normal)
 	}
-	if strings.Contains(normal, "integration") {
-		t.Errorf("a missing binary must still suppress the rest of that harness: %s", normal)
-	}
 }
 
 func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
 	env := &stubDoctorEnv{
-		ver:       herdr.MinVersion,
 		daemonRun: true,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		intStates: map[string]herdr.IntegrationState{"claude": {Installed: true, Detail: "current"}},
 		statErr:   os.ErrNotExist, // no role file exists
 	}
 	lines := bindPreflight(context.Background(), env, "claude", false)
@@ -672,15 +641,11 @@ func TestBindPreflightChecksOnlyBuilderDefinitions(t *testing.T) {
 
 func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 	envStub := &stubDoctorEnv{
-		ver:       "0.9.0",
 		daemonRun: true,
 		lookPaths: map[string]string{}, // binary absent
-		intStates: map[string]herdr.IntegrationState{
-			"claude": {Installed: false, Detail: "not installed"},
-		},
 	}
 
-	// Normal Run: binary absent suppresses integration row
+	// Normal Run: the absent binary is reported
 	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
 	normalLines := bindWarningLines(normalRep)
 	joinedNormal := strings.Join(normalLines, "\n")
@@ -688,21 +653,17 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 		t.Errorf("expected binary warning for normal bind, got: %s", joinedNormal)
 	}
 
-	// Adopted Run: integration row survives through real Run
+	// Adopted Run: the binary is the user's own agent, so it must not warn
 	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
 	adoptedLines := bindWarningLines(adoptedRep)
 	joinedAdopted := strings.Join(adoptedLines, "\n")
 	if strings.Contains(joinedAdopted, "binary") {
 		t.Errorf("adopted bind must not have binary warning: %s", joinedAdopted)
 	}
-	if !strings.Contains(joinedAdopted, "integration") {
-		t.Errorf("adopted bind must have integration warning, got: %s", joinedAdopted)
-	}
 }
 
 func TestBindWarningDaemonDownRealRun(t *testing.T) {
 	envStub := &stubDoctorEnv{
-		ver:       "0.9.0",
 		daemonRun: false,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
 	}

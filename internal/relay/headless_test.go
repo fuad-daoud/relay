@@ -13,25 +13,25 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-// seedHeadless binds webshop headless on the agy test candidate, with fr as
-// the runtime's Runner. No herdr agent is added for the builder: there is
-// none.
-func seedHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+// The headless fixtures (#303 step 3): a local builder is a process relay runs
+// per round, so every test here drives it through fakeRunner, and no herdr
+// agent or pane appears anywhere.
+
+// sentHeadless is seedHeadless plus one Send: round 1 open, one process
+// started on fr.
+func sentHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
-	rt.Runner = fr
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
-	})
-	if err != nil {
-		t.Fatalf("Bind --headless: %v", err)
+	rt, _ := seedHeadless(t, fr)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
-	f.listCalls = 0
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	return rt, b
 }
 
@@ -98,18 +98,17 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
 	]`
 	fr := newFakeRunner()
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, codexCandidatesJSON)
 	rt.Runner = fr
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "codex-binding",
-		Candidate:   "codex/openai/gpt-5.6-terra",
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Headless:    true,
-		Tier:        "edit",
+		Name:      "codex-binding",
+		Candidate: "codex/openai/gpt-5.6-terra",
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Headless:  true,
+		Tier:      "edit",
 	})
 	if err != nil {
 		t.Fatalf("Bind --headless: %v", err)
@@ -138,7 +137,7 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 
 func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 	// A new process announces its own session on the stream (#147): the
 	// previous round's id must not survive the start.
 	b.Builder.StreamSessionID = "sess-from-the-previous-process"
@@ -184,7 +183,7 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 
 func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
 	got, err := startRound(context.Background(), rt, b, "again")
 	if err != nil {
@@ -197,7 +196,7 @@ func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 
 func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 	b.Round = 2
 	b.Builder.StreamRound, b.Builder.StreamOffset = 1, 512
 	got, err := startRound(context.Background(), rt, b, "round two")
@@ -213,13 +212,12 @@ func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 3)
-	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != rt.Store.BuilderStreamPath("webshop", 1) {
@@ -228,6 +226,7 @@ func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
 }
 
 // containsArg reports whether argv has flag immediately followed by value.
+
 func containsArg(argv []string, flag, value string) bool {
 	for i := 0; i+1 < len(argv); i++ {
 		if argv[i] == flag && argv[i+1] == value {
@@ -240,7 +239,7 @@ func containsArg(argv []string, flag, value string) bool {
 func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found on PATH")
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 
 	var got store.Binding
 	err := rt.Store.WithLock(func(_ *store.Tx) error {
@@ -266,7 +265,7 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 }
 
 func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
-	rt, b := seedHeadless(t, &fakeHerdr{}, newFakeRunner())
+	rt, b := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
 	if _, err := startRound(context.Background(), rt, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
 		t.Errorf("err = %v, want ErrRunnerUnavailable", err)
@@ -275,9 +274,10 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 
 // TestStartRoundSetsScope: rt.Scope set fills ProcSpec.Scope with the
 // per-round unit name and the template's slice/weight/limits (#244, #216).
+
 func TestStartRoundSetsScope(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 	rt.Scope = &ScopeSpec{Slice: "relay.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
 
 	if _, err := startRound(context.Background(), rt, b, "the prompt"); err != nil {
@@ -315,9 +315,9 @@ func TestScopeUnitNameSafe(t *testing.T) {
 // Before the fix Send wrote the plan first and only startRound discovered the
 // runner was gone, leaving a staged plan and a NEEDS YOU binding behind a
 // process that could never start.
+
 func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedHeadless(t, f, newFakeRunner())
+	rt, _ := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
 
 	before, err := rt.Store.Load("webshop")
@@ -353,62 +353,9 @@ func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 	}
 }
 
-func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
-
-	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if res.Round != 1 {
-		t.Errorf("round = %d, want 1", res.Round)
-	}
-	if len(f.prompts) != 0 {
-		t.Fatalf("a headless send must not Prompt: %+v", f.prompts)
-	}
-	if f.listCalls != 0 {
-		t.Errorf("a headless send has no agent to look up: listCalls = %d", f.listCalls)
-	}
-	if len(fr.specs) != 1 {
-		t.Fatalf("specs = %+v, want one Start", fr.specs)
-	}
-	spec := fr.specs[0]
-	planPath := rt.Store.PlanPath("webshop", 1)
-	reportPath := rt.Store.ReportPath("webshop", 1)
-	donePath := rt.Store.DonePath("webshop", 1)
-	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
-	if spec.Argv[2] != wantPrompt {
-		t.Errorf("prompt handed to the process:\n%q\nwant the pane path's composePrompt:\n%q", spec.Argv[2], wantPrompt)
-	}
-	if spec.Dir != "/repo" || spec.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
-		t.Errorf("spec = %+v", spec)
-	}
-
-	// The endpoint carries the handle; the round is stamped as today.
-	if b.Builder.PID != fr.handles[0].PID || b.Builder.LogPath != spec.LogPath {
-		t.Errorf("stored endpoint = %+v", b.Builder)
-	}
-	if b.RoundStartedAt.IsZero() || b.State != store.StateActive {
-		t.Errorf("round not stamped: startedAt=%v state=%s", b.RoundStartedAt, b.State)
-	}
-	entries, _ := rt.Store.ReadLog("webshop")
-	var plans int
-	for _, e := range entries {
-		if e.Kind == store.KindPlan && e.Round == 1 && e.Path == planPath {
-			plans++
-		}
-	}
-	if plans != 1 {
-		t.Errorf("want exactly one plan entry for round 1, log = %+v", entries)
-	}
-}
-
 func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one"), SendOptions{}); err != nil {
 		t.Fatalf("first Send: %v", err)
 	}
@@ -428,7 +375,7 @@ func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 
 func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one"), SendOptions{}); err != nil {
 		t.Fatalf("first Send: %v", err)
 	}
@@ -448,7 +395,7 @@ func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
 func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found on PATH")
-	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := seedHeadless(t, fr)
 
 	_, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{})
 	if err == nil || !errors.Is(err, fr.startErr) {
@@ -484,9 +431,9 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 // TestSendClearsAStaleHalt pins Send's success path: a binding that was
 // halted for an earlier round must not carry that halt into a round it just
 // successfully handed over.
+
 func TestSendClearsAStaleHalt(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	b.Halt = "round 1 has run past 1s"
 	b.HaltAt = rt.Now()
 	b.State = store.StateNeedsYou
@@ -546,6 +493,7 @@ func TestClearProcessKeepsIdentity(t *testing.T) {
 }
 
 // streamWrite appends raw to webshop's round-1 stream file, creating it.
+
 func streamWrite(t *testing.T, rt Runtime, raw string) {
 	t.Helper()
 	p := rt.Store.BuilderStreamPath("webshop", 1)
@@ -563,6 +511,7 @@ func streamWrite(t *testing.T, rt Runtime, raw string) {
 }
 
 // readLog is webshop's round-1 builder log, "" when absent.
+
 func readLog(t *testing.T, rt Runtime) string {
 	t.Helper()
 	data, err := os.ReadFile(rt.Store.BuilderLogPath("webshop", 1))
@@ -580,10 +529,10 @@ const (
 
 func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr) // round 1 open, cursor at 1/0
+	rt, b := sentHeadless(t, fr) // round 1 open, cursor at 1/0
 	streamWrite(t, rt, agyToolActive+agyToolDone)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -595,14 +544,14 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 	}
 
 	// Nothing new: nothing appended.
-	again, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	again, err := reconcile(t, rt, got)
 	if err != nil || readLog(t, rt) != "● run_command go test ./...\n  ⎿ ok\n" || again.Builder.StreamOffset != got.Builder.StreamOffset {
 		t.Errorf("a tick with no new stream data must change nothing: log=%q offset=%d err=%v", readLog(t, rt), again.Builder.StreamOffset, err)
 	}
 
 	// More arrives: appended after, in order.
 	streamWrite(t, rt, agyResult)
-	got, err = reconcile(t, rt, again, []herdr.Agent{plannerAgent()})
+	got, err = reconcile(t, rt, again)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -613,11 +562,11 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 
 func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	whole := strings.TrimSuffix(agyToolActive, "\n")
 	streamWrite(t, rt, whole[:40]) // mid-event, no newline yet
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -625,7 +574,7 @@ func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 		t.Errorf("a partial line must not be rendered or consumed: log=%q offset=%d", readLog(t, rt), got.Builder.StreamOffset)
 	}
 	streamWrite(t, rt, whole[40:]+"\n")
-	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -636,9 +585,9 @@ func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 
 func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	streamWrite(t, rt, agyToolActive)
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -653,7 +602,7 @@ func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 		t.Fatalf("cursor after reload = %d/%d", loaded.Builder.StreamRound, loaded.Builder.StreamOffset)
 	}
 	// A daemon restarted from that state renders nothing twice.
-	if _, err := reconcile(t, rt, loaded, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, loaded); err != nil {
 		t.Fatal(err)
 	}
 	if readLog(t, rt) != "● run_command go test ./...\n" {
@@ -663,10 +612,10 @@ func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 
 func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	streamWrite(t, rt, agyToolActive)
 	b.Builder.StreamOffset = 10_000 // a state file rewritten by hand
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -677,10 +626,10 @@ func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
 
 func TestDrainStreamNoiseAdvancesWithoutWriting(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	noise := `{"event":"init","init":{}}` + "\n"
 	streamWrite(t, rt, noise)
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -693,9 +642,8 @@ func TestDrainStreamNoiseAdvancesWithoutWriting(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 0)
@@ -709,7 +657,7 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 	}
 	streamWrite(t, rt, agyToolActive+agyToolDone+agyResult+"\nrelay-exit:0\n")
 
-	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	ex := exits(t, rt)
@@ -726,16 +674,15 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 }
 
 func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("report"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 	streamWrite(t, rt, agyToolActive)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -747,7 +694,7 @@ func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 	}
 	// The builder flushes its result after relay saw the marker.
 	streamWrite(t, rt, agyResult+"\nrelay-exit:0\n")
-	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, got); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if want := "● run_command go test ./...\nall done\nrelay-exit:0\n"; readLog(t, rt) != want {
@@ -757,7 +704,7 @@ func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 
 func TestDrainStreamIsANoopBeforeAnyRound(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr) // bound, never sent: StreamRound 0
+	rt, b := seedHeadless(t, fr) // bound, never sent: StreamRound 0
 	got := drainStream(rt, b)
 	if !reflect.DeepEqual(got, b) {
 		t.Errorf("drainStream changed a binding with no stream: %+v", got.Builder)
@@ -766,12 +713,12 @@ func TestDrainStreamIsANoopBeforeAnyRound(t *testing.T) {
 
 func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	if err := os.MkdirAll(rt.Store.BuilderLogPath("webshop", 1), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	streamWrite(t, rt, agyToolActive)
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -782,31 +729,10 @@ func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
 
 // sentHeadless is seedHeadless plus one Send: round 1 open, one process
 // started on fr.
-func sentHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
-	t.Helper()
-	rt, _ := seedHeadless(t, f, fr)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	return rt, b
-}
 
-// TestReconcileHeadlessSkipsQueued pins #285: a queued round (Send(Defer)'s
-// QueuedAt, PID still 0) has no process and no clocks, so Reconcile leaves
-// it untouched -- no spawn, no halt -- until relay.Admit starts it.
-//
-// Mutation check: drop the `!b.QueuedAt.IsZero()` early return in
-// reconcileHeadless and this fails on fr.specs no longer being 0 (the PID==0
-// "spawn failed earlier" branch would otherwise treat it as NEEDS YOU-quiet,
-// but a policy/candidate change could make it try to spawn).
 func TestReconcileHeadlessSkipsQueued(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
 		t.Fatalf("Send(Defer): %v", err)
 	}
@@ -815,7 +741,7 @@ func TestReconcileHeadlessSkipsQueued(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -837,10 +763,10 @@ func TestReconcileHeadlessSkipsQueued(t *testing.T) {
 //
 // Mutation check (run and report): delete the wantVerify block from
 // reconcileHeadless's close path and this fails on addDetachedWorktreeCalls.
+
 func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{headCommitID: "head1"}
 	rt.Git = fg
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
@@ -858,7 +784,7 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 0)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -907,9 +833,10 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 // TestSendResetsRoundBudget pins #250 item 2 for the headless shape: a
 // human's re-send is a fresh attempt, so it clears the round's switch
 // bookkeeping along with Halt/HaltAt.
+
 func TestSendResetsRoundBudget(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false) // previous round's process no longer running
 	b.RoundSwitches = 1
 	b.RoundExcluded = []string{"x/y/z"}
@@ -937,6 +864,7 @@ func TestSendResetsRoundBudget(t *testing.T) {
 }
 
 // switchHeadless runs switchBuilder on b inside the lock, the way Reconcile does.
+
 func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, closeOld bool) (store.Binding, error) {
 	t.Helper()
 	var out store.Binding
@@ -948,89 +876,9 @@ func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, cl
 	return out, err
 }
 
-func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	// Order claude first so the switch lands on a different candidate.
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-	oldPID := b.Builder.PID
-
-	got, err := switchHeadless(t, rt, b, "exited (code 3) without a report", false)
-	if err != nil {
-		t.Fatalf("switchBuilder: %v", err)
-	}
-	if len(f.tabs) != 0 || len(f.starts) != 0 || len(f.prompts) != 0 || len(f.closed) != 0 {
-		t.Fatalf("a headless switch must touch no pane: tabs=%d starts=%d prompts=%d closed=%d", len(f.tabs), len(f.starts), len(f.prompts), len(f.closed))
-	}
-	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
-		t.Fatalf("want a second Start on claude, specs = %+v", fr.specs)
-	}
-	if !got.Builder.Headless() || got.Builder.PID != fr.handles[1].PID || got.Builder.PID == oldPID {
-		t.Errorf("new endpoint = %+v, want headless with the new pid %d", got.Builder, fr.handles[1].PID)
-	}
-	if got.Builder.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
-		t.Errorf("LogPath = %q, want round 1's log", got.Builder.LogPath)
-	}
-	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Round != 1 || got.State != store.StateActive {
-		t.Errorf("bookkeeping: cand=%q switches=%d round=%d state=%s", got.BuilderCandidate, got.RoundSwitches, got.Round, got.State)
-	}
-	if len(fr.kills) != 0 {
-		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "switched builder to "+testClaudeRef) {
-		t.Errorf("notices = %+v", f.notices)
-	}
-	// The prompt handed to the new process is the same round's prompt.
-	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PlanPath("webshop", 1)) {
-		t.Errorf("new process prompt lacks the round's plan path: %q", fr.specs[1].Argv[2])
-	}
-}
-
-func TestSwitchBuilderHeadlessCloseOldKillsTheProcess(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-	old := handleOf(b.Builder)
-
-	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
-		t.Fatalf("switchBuilder: %v", err)
-	}
-	if len(fr.kills) != 1 || fr.kills[0] != old {
-		t.Errorf("kills = %+v, want the old handle %+v", fr.kills, old)
-	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane to close: %+v", f.closed)
-	}
-}
-
-func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-	fr.startErr = errors.New("claude: not found")
-
-	got, err := switchHeadless(t, rt, b, "exited", false)
-	if err != nil {
-		t.Fatalf("switchBuilder: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you when the replacement cannot start", got.State)
-	}
-	if got.Builder.PID != 0 {
-		t.Errorf("pid = %d, want 0", got.Builder.PID)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "could not start") {
-		t.Errorf("notices = %+v, want one saying the round could not be started", f.notices)
-	}
-}
-
 func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 
 	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
@@ -1061,9 +909,8 @@ func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
 }
 
 func TestSwitchBuilderHeadlessMarkerSurvivesStartFailure(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.startErr = errors.New("claude: not found")
 
@@ -1091,6 +938,7 @@ func TestSwitchBuilderHeadlessMarkerSurvivesStartFailure(t *testing.T) {
 }
 
 // exits returns the exit entries in webshop's log.
+
 func exits(t *testing.T, rt Runtime) []store.LogEntry {
 	t.Helper()
 	entries, err := rt.Store.ReadLog("webshop")
@@ -1106,40 +954,15 @@ func exits(t *testing.T, rt Runtime) []store.LogEntry {
 	return out
 }
 
-func TestReconcileHeadlessIdleIsNotBroken(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, f, fr) // bound, nothing sent: no round open
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateActive {
-		t.Errorf("state = %s, want active: no process between rounds is normal, not broken", got.State)
-	}
-	if !got.BuilderMissingSince.IsZero() {
-		t.Errorf("BuilderMissingSince must stay zero for a headless binding: %s", got.BuilderMissingSince)
-	}
-	if len(f.starts) != 0 || len(fr.specs) != 0 || len(fr.kills) != 0 || len(f.notices) != 0 {
-		t.Errorf("an idle tick must do nothing: starts=%d specs=%d kills=%d notices=%v", len(f.starts), len(fr.specs), len(fr.kills), f.notices)
-	}
-	// A second idle tick, well after any grace, still does not switch.
-	got, err = reconcile(t, at(rt, 5*time.Minute), got, []herdr.Agent{plannerAgent()})
-	if err != nil || got.State != store.StateActive || len(fr.specs) != 0 {
-		t.Errorf("later idle tick: state=%s specs=%d err=%v", got.State, len(fr.specs), err)
-	}
-}
-
 func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 1)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	pending, found, perr := rt.Store.PendingForPlanner("webshop")
 	if err != nil || got.Round != 2 || len(exits(t, rt)) != 0 || len(fr.specs) != 1 || perr != nil || !found {
 		t.Fatalf("round=%d exits=%d specs=%d err=%v found=%v; want the report to finish the round with no exit entry and no switch", got.Round, len(exits(t, rt)), len(fr.specs), err, found)
@@ -1149,102 +972,9 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 	}
 }
 
-func TestReconcileHeadlessAliveWaits(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-
-	got, err := reconcile(t, at(rt, 10*time.Minute), b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 1 || got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
-		t.Errorf("a live process is left alone: round=%d state=%s pid=%d", got.Round, got.State, got.Builder.PID)
-	}
-	if len(fr.kills) != 0 || len(fr.specs) != 1 || len(exits(t, rt)) != 0 || len(f.notices) != 0 {
-		t.Errorf("nothing else may happen while it runs: kills=%d specs=%d exits=%d notices=%v", len(fr.kills), len(fr.specs), len(exits(t, rt)), f.notices)
-	}
-}
-
-// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core under
-// #135's shared clock: a live process whose stream file has not moved for
-// stall_after_ms is stamped StalledSince = the stream's last activity, one
-// advisory notice is raised, and nothing else happens. The second case is the
-// mutation target: with the stream only 5m quiet the comparison must not fire,
-// so inverting it (or comparing `<` for `>=`) makes both cases fail.
-func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
-	cases := []struct {
-		name     string
-		quietFor time.Duration
-		stalled  bool
-	}{
-		{"quiet past stall_after_ms", 20 * time.Minute, true},
-		{"quiet under stall_after_ms", 5 * time.Minute, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeHerdr{}
-			fr := newFakeRunner()
-			rt, b := sentHeadless(t, f, fr)
-
-			now := baseTime.Add(10 * time.Minute)
-			rt = at(rt, 10*time.Minute)
-			b.RoundStartedAt = now.Add(-30 * time.Minute)
-
-			stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
-			if err := os.WriteFile(stream, []byte("{\"a\":1}\n{\"b\":2}\n"), 0o644); err != nil {
-				t.Fatalf("write stream: %v", err)
-			}
-			quietAt := now.Add(-tc.quietFor)
-			if err := os.Chtimes(stream, quietAt, quietAt); err != nil {
-				t.Fatalf("chtimes: %v", err)
-			}
-
-			got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-			if err != nil {
-				t.Fatalf("Reconcile: %v", err)
-			}
-			if got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
-				t.Errorf("a stalled binding stays active and keeps its process: state=%s pid=%d", got.State, got.Builder.PID)
-			}
-			if len(fr.kills) != 0 || len(fr.specs) != 1 {
-				t.Errorf("a stall is never an action: kills=%d specs=%d", len(fr.kills), len(fr.specs))
-			}
-			// #135 makes a stall one advisory notice per episode; a stream that
-			// is quiet but under stall_after_ms must stay silent.
-			wantNotices := 0
-			if tc.stalled {
-				wantNotices = 1
-			}
-			if len(f.notices) != wantNotices {
-				t.Errorf("notices = %v, want %d", f.notices, wantNotices)
-			}
-			if tc.stalled {
-				if !got.StalledSince.Equal(quietAt) {
-					t.Errorf("StalledSince = %s, want the stream's mtime %s", got.StalledSince, quietAt)
-				}
-				// A second stalled tick keeps the same stamp.
-				next, err := reconcile(t, at(rt, 11*time.Minute), got, []herdr.Agent{plannerAgent()})
-				if err != nil {
-					t.Fatalf("Reconcile (second tick): %v", err)
-				}
-				if !next.StalledSince.Equal(quietAt) {
-					t.Errorf("StalledSince after a second tick = %s, want it unchanged at %s", next.StalledSince, quietAt)
-				}
-			} else if !got.StalledSince.IsZero() {
-				t.Errorf("StalledSince = %s, want zero: the stream is quiet but under stall_after_ms", got.StalledSince)
-			}
-		})
-	}
-}
-
-// TestReconcileHeadlessStallClearsWhenStreamMoves pins the clear side of
-// #252: a stream that moves again clears the stamp, and a process that exits
-// with a report clears it as the round closes.
 func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 
 	now := baseTime.Add(10 * time.Minute)
 	rt = at(rt, 10*time.Minute)
@@ -1258,7 +988,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1273,7 +1003,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	if err := os.Chtimes(stream, moved, moved); err != nil {
 		t.Fatalf("chtimes back: %v", err)
 	}
-	cleared, err := reconcile(t, at(rt, 11*time.Minute), got, []herdr.Agent{plannerAgent()})
+	cleared, err := reconcile(t, at(rt, 11*time.Minute), got)
 	if err != nil {
 		t.Fatalf("Reconcile (moved): %v", err)
 	}
@@ -1283,9 +1013,8 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 
 	// A process that exits with a report closes the round, and the closed
 	// binding carries no stall.
-	f2 := &fakeHerdr{}
 	fr2 := newFakeRunner()
-	rt2, b2 := sentHeadless(t, f2, fr2)
+	rt2, b2 := sentHeadless(t, fr2)
 	rt2 = at(rt2, 10*time.Minute)
 	b2.RoundStartedAt = rt2.Now().Add(-30 * time.Minute)
 	b2.StalledSince = rt2.Now().Add(-20 * time.Minute)
@@ -1293,7 +1022,7 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 	if err := os.WriteFile(rt2.Store.ReportPath(b2.Name, b2.Round), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
-	closed, err := reconcile(t, rt2, b2, []herdr.Agent{plannerAgent()})
+	closed, err := reconcile(t, rt2, b2)
 	if err != nil {
 		t.Fatalf("Reconcile (exited with report): %v", err)
 	}
@@ -1307,10 +1036,10 @@ func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
 
 // TestStatusHeadlessStalledLabel pins #252's label: a live, stalled headless
 // builder reads "stalled <age>", and a live, unstalled one reads "working".
+
 func TestStatusHeadlessStalledLabel(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	b.StalledSince = baseTime.Add(-20 * time.Minute)
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -1342,34 +1071,9 @@ func TestStatusHeadlessStalledLabel(t *testing.T) {
 	}
 }
 
-func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	b.RoundTimeoutMS = 1000
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := reconcile(t, at(rt, 2*time.Second), b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you past the budget", got.State)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "run past") {
-		t.Errorf("notices = %+v, want the budget halt", f.notices)
-	}
-	if len(fr.kills) != 0 || got.Builder.PID != b.Builder.PID {
-		t.Errorf("the budget never kills: kills=%+v pid=%d", fr.kills, got.Builder.PID)
-	}
-}
-
 func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	oldPID := b.Builder.PID
 	fr.script(oldPID, false)
@@ -1382,7 +1086,7 @@ func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, at(rt, time.Minute), b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1423,11 +1127,11 @@ func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
 
 func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false) // exited; no exit() set: killed before the trailer, say
 
-	if _, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	ex := exits(t, rt)
@@ -1445,14 +1149,14 @@ func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
 //
 // Mutation check: drop the `Before(rt.StartedAt)` condition in headless.go's
 // `lost` computation (making it always false) and this test must fail.
+
 func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
 	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1499,7 +1203,7 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 
 	// Second tick: the relaunched pid is alive, nothing repeats.
 	fr.script(got.Builder.PID, true)
-	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, got); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if len(fr.specs) != 2 {
@@ -1516,10 +1220,10 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 //
 // Mutation check: drop the `b.Owner != ""` branch in headless.go's lost
 // handling and this fails on fr.specs staying at 1.
+
 func TestLostBuilderRequeuesOnServer(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	b.Owner = "owner1"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -1528,7 +1232,7 @@ func TestLostBuilderRequeuesOnServer(t *testing.T) {
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
 	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1568,16 +1272,16 @@ func TestLostBuilderRequeuesOnServer(t *testing.T) {
 // death cannot be blamed on a restart) still switches and counts, exactly
 // as before -- and so does one whose daemon start is unknown (zero
 // rt.StartedAt), the control case for every other test in this file.
+
 func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T) {
 	t.Run("builder started after the daemon: a real death", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := sentHeadless(t, f, fr)
+		rt, b := sentHeadless(t, fr)
 		rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 		rt.StartedAt = time.Unix(b.Builder.StartedAt-60, 0) // the daemon started before the builder
 		fr.script(b.Builder.PID, false)
 
-		got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1593,14 +1297,13 @@ func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T
 	})
 
 	t.Run("daemon start unknown (zero)", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := sentHeadless(t, f, fr)
+		rt, b := sentHeadless(t, fr)
 		rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 		// rt.StartedAt left zero: unknown, so the check cannot fire.
 		fr.script(b.Builder.PID, false)
 
-		got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -1620,15 +1323,15 @@ func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T
 // path: the daemon recognizes the loss but cannot relaunch (e.g. the
 // binary vanished); the binding halts naming both facts, and nothing is
 // charged.
+
 func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
 	fr.script(b.Builder.PID, false)
 	fr.startErr = errors.New("boom: no such binary")
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1643,92 +1346,9 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
 	}
 }
 
-func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
-	fr.script(b.Builder.PID, false)
-	fr.exit(b.Builder.PID, 2)
-	b.RoundSwitches = rt.Policy.SwitchLimit()
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you at the switch limit", got.State)
-	}
-	if got.Halt == "" {
-		t.Error("Halt is empty, want the max_switches reason recorded")
-	}
-	if len(fr.specs) != 1 {
-		t.Errorf("no replacement may start past the limit: specs = %d", len(fr.specs))
-	}
-	if len(exits(t, rt)) != 1 {
-		t.Error("the exit is still logged")
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "already switched") {
-		t.Errorf("notices = %+v", f.notices)
-	}
-	if got.Builder.PID != 0 {
-		t.Errorf("pid = %d, want 0 after the exit", got.Builder.PID)
-	}
-	// Second tick: nothing repeats.
-	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
-		t.Fatal(err)
-	}
-	if len(exits(t, rt)) != 1 || len(f.notices) != 1 {
-		t.Errorf("a halted exit must not re-log or re-notify: exits=%d notices=%d", len(exits(t, rt)), len(f.notices))
-	}
-}
-
-func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
-	rt.Runner = fr
-	rt.Candidates = candidateSet(t, testTwoProviderJSON)
-	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, _ := rt.Store.Load("webshop")
-	old := handleOf(b.Builder)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
-		t.Fatalf("Unavailable: %v", err)
-	}
-
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(fr.kills) != 1 || fr.kills[0] != old {
-		t.Errorf("kills = %+v, want the gated builder's process %+v", fr.kills, old)
-	}
-	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
-		t.Fatalf("want a claude replacement: %+v", fr.specs)
-	}
-	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 0 || got.Builder.PID != fr.handles[1].PID {
-		t.Errorf("bookkeeping: cand=%q switches=%d (want 0; a gated switch is uncounted) pid=%d", got.BuilderCandidate, got.RoundSwitches, got.Builder.PID)
-	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane to close: %+v", f.closed)
-	}
-}
-
 func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := gateOnLimitSetup(t, f, fr)
+	rt, b := gateOnLimitSetup(t, fr)
 	oldPID := b.Builder.PID
 	fr.script(oldPID, false)
 	fr.exit(oldPID, 1)
@@ -1741,7 +1361,7 @@ func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, at(rt, time.Minute), b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1768,89 +1388,9 @@ func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
 	}
 }
 
-func TestReconcileHeadlessBudgetOnLimitKillsAndSwitches(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := gateOnLimitSetup(t, f, fr)
-	b.RoundTimeoutMS = 1000
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	old := handleOf(b.Builder)
-	logPath := b.Builder.LogPath
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	content := "working\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\n"
-	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := reconcile(t, at(rt, 2*time.Second), b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(fr.kills) != 1 || fr.kills[0] != old {
-		t.Errorf("kills = %+v, want the old process %+v", fr.kills, old)
-	}
-	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
-		t.Fatalf("want a claude replacement: %+v", fr.specs)
-	}
-	if got.State != store.StateActive {
-		t.Errorf("state = %s, want active", got.State)
-	}
-	var switchNotices, timeoutNotices int
-	for _, n := range f.notices {
-		if strings.Contains(n, "switched builder") {
-			switchNotices++
-		}
-		if strings.Contains(n, "run past") {
-			timeoutNotices++
-		}
-	}
-	if switchNotices != 1 || timeoutNotices != 0 {
-		t.Errorf("notices = %+v, want exactly one switch notice and no timeout notice", f.notices)
-	}
-	if got.HaltNotifiedRound != 0 {
-		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
-	}
-}
-
-func TestReconcileHeadlessBudgetWithoutLimitStillHalts(t *testing.T) {
-	f := &fakeHerdr{}
-	fr := newFakeRunner()
-	rt, b := gateOnLimitSetup(t, f, fr)
-	b.RoundTimeoutMS = 1000
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
-	logPath := b.Builder.LogPath
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(logPath, []byte("working hard\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := reconcile(t, at(rt, 2*time.Second), b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(f.notices) != 1 || !strings.Contains(f.notices[0], "run past") {
-		t.Errorf("notices = %+v, want the budget halt", f.notices)
-	}
-	if len(fr.kills) != 0 || got.Builder.PID != b.Builder.PID {
-		t.Errorf("the budget never kills: kills=%+v pid=%d", fr.kills, got.Builder.PID)
-	}
-	if l := loadLedger(t, rt); len(l.Entries) != 0 {
-		t.Errorf("ledger entries = %+v, want none", l.Entries)
-	}
-}
-
 func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := gateOnLimitSetup(t, f, fr)
+	rt, b := gateOnLimitSetup(t, fr)
 	oldPID := b.Builder.PID
 	fr.script(oldPID, false)
 	fr.exit(oldPID, 1)
@@ -1867,7 +1407,7 @@ func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing
 		t.Fatal(err)
 	}
 
-	if _, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, at(rt, time.Minute), b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
@@ -1894,7 +1434,7 @@ func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing
 
 func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr) // no round open
+	rt, b := seedHeadless(t, fr) // no round open
 	b.Builder.PID = 999
 	b.Builder.StartedAt = 1_700_000_000
 	b.Builder.LogPath = rt.Store.BuilderLogPath("webshop", 1)
@@ -1903,7 +1443,7 @@ func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1919,12 +1459,11 @@ func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
 }
 
 func TestReconcileHeadlessAliveErrorIsTreatedAsAlive(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.aliveErr = errors.New("ps: permission denied")
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile must not fail the tick on an OS hiccup: %v", err)
 	}
@@ -1940,7 +1479,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 	// A send whose Start failed: round open, PID 0, NEEDS YOU already set.
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found")
-	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err == nil {
 		t.Fatal("Send should have failed")
 	}
@@ -1953,7 +1492,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1964,7 +1503,7 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 
 func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	h := handleOf(b.Builder)
 
 	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
@@ -1981,7 +1520,7 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 
 func TestDoneHeadlessMarksTheLog(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	logPath := b.Builder.LogPath
 
 	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
@@ -2000,7 +1539,7 @@ func TestDoneHeadlessMarksTheLog(t *testing.T) {
 
 func TestStopProcessMarksUnbind(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	logPath := b.Builder.LogPath
 
 	pid, err := stopProcess(context.Background(), rt, b.Builder, "unbind")
@@ -2023,7 +1562,7 @@ func TestStopProcessMarksUnbind(t *testing.T) {
 
 func TestStopProcessKillFailureWritesNoMarker(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.killErr = errors.New("boom")
 
 	_, err := stopProcess(context.Background(), rt, b.Builder, "done")
@@ -2042,7 +1581,7 @@ func TestStopProcessKillFailureWritesNoMarker(t *testing.T) {
 
 func TestStopProcessIdleWritesNoMarker(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedHeadless(t, fr)
 
 	pid, err := stopProcess(context.Background(), rt, b.Builder, "done")
 	if err != nil {
@@ -2063,7 +1602,7 @@ func TestStopProcessIdleWritesNoMarker(t *testing.T) {
 
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := seedHeadless(t, fr)
 	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
 		t.Fatalf("Done: %v", err)
 	}
@@ -2074,7 +1613,7 @@ func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 
 func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
 	fr := newFakeRunner()
-	rt, _ := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, _ := sentHeadless(t, fr)
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
 
 	_, err := Done(context.Background(), rt, "webshop")
@@ -2092,7 +1631,7 @@ func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
 
 func TestDoneHeadlessKillFailureKeepsWorktree(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{}
 	rt.Git = fg
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
@@ -2120,7 +1659,7 @@ func TestDoneHeadlessKillFailureKeepsWorktree(t *testing.T) {
 
 func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{dirtyResult: false}
 	rt.Git = fg
 
@@ -2141,7 +1680,7 @@ func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
 
 func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	pid := b.Builder.PID
 
 	res, err := Unbind(context.Background(), rt, "webshop", false)
@@ -2165,7 +1704,7 @@ func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
 
 func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{}, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
 
 	res, err := Unbind(context.Background(), rt, "webshop", true)
@@ -2186,7 +1725,7 @@ func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
 
 func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	rt, b := sentHeadless(t, fr)
 	if err := os.MkdirAll(filepath.Dir(b.Builder.LogPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2199,8 +1738,8 @@ func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 	row := rep.Bindings[0]
-	if row.BuilderPane != "headless" || row.BuilderKind != "agy" || row.BuilderStatus != "working" {
-		t.Errorf("row = pane %q kind %q status %q; want headless/agy/working", row.BuilderPane, row.BuilderKind, row.BuilderStatus)
+	if row.BuilderKind != "agy" || row.BuilderStatus != "working" {
+		t.Errorf("row = kind %q status %q; want agy/working", row.BuilderKind, row.BuilderStatus)
 	}
 	if row.Headless == nil {
 		t.Fatal("Headless info missing")
@@ -2225,7 +1764,7 @@ func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 
 func TestStatusHeadlessIdle(t *testing.T) {
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	rt, _ := seedHeadless(t, fr)
 	rep, err := Status(context.Background(), rt)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -2245,7 +1784,7 @@ func TestStatusHeadlessIdle(t *testing.T) {
 
 func TestStatusHeadlessExited(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 3)
 
@@ -2260,7 +1799,7 @@ func TestStatusHeadlessExited(t *testing.T) {
 
 	// No trailer: exited, code unknown.
 	fr2 := newFakeRunner()
-	rt2, b2 := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, fr2)
+	rt2, b2 := sentHeadless(t, fr2)
 	fr2.script(b2.Builder.PID, false)
 	rep2, _ := Status(context.Background(), rt2)
 	if rep2.Bindings[0].BuilderStatus != "exited" || rep2.Bindings[0].Headless.ExitCode != "unknown" {
@@ -2269,7 +1808,7 @@ func TestStatusHeadlessExited(t *testing.T) {
 }
 
 func TestStatusHeadlessWithoutRunnerIsUnknown(t *testing.T) {
-	rt, _ := sentHeadless(t, &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}, newFakeRunner())
+	rt, _ := sentHeadless(t, newFakeRunner())
 	rt.Runner = nil
 	rep, err := Status(context.Background(), rt)
 	if err != nil {
@@ -2283,15 +1822,15 @@ func TestStatusHeadlessWithoutRunnerIsUnknown(t *testing.T) {
 // TestReconcileHeadlessAliveWithReportButNoMarkerWaits is the headless half
 // of the fix: a running process that has written a report is still running.
 // Mutation: stat the report instead of the marker -> round 2, PID cleared.
+
 func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("draft"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, at(rt, time.Minute), b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2308,17 +1847,17 @@ func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
 
 // TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked: exit is a
 // hard fact, so the report is trusted with the omission noted (spec §4.4).
+
 func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 0)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, at(rt, time.Minute), b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2343,16 +1882,16 @@ func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T
 
 // TestReconcileHeadlessMarkerClosesAndClearsTheHandle: the marker closes the
 // round the same way for a process as for a pane, and the handle goes with it.
+
 func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2377,42 +1916,18 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 // captured as the round's baseline by Send and compared against again at
 // close, so leaving it alone between the two is what makes treeUnchanged
 // hold.
-func escapeFixture(t *testing.T, f *fakeHerdr, fr *fakeRunner, fg *fakeGit, repo string) (Runtime, store.Binding) {
-	t.Helper()
-	rt, b := seedHeadless(t, f, fr)
-	rt.Git = fg
-	b.Repo = repo
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if b.RoundBaselineTree == "" {
-		t.Fatalf("baseline tree not captured; fixture assumes rt.Git is wired before Send")
-	}
-	return rt, b
-}
 
-// TestHeadlessMarkerCloseEscapedNote: the tree is unchanged and the source
-// repo is dirty, but the builder still produced a report and its marker --
-// the round closes normally, annotated "escaped" rather than halted (#192).
 func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
 	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
-	rt, b := escapeFixture(t, f, fr, fg, "/original/repo")
+	rt, b := escapeFixture(t, fr, fg, "/original/repo")
 
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2432,16 +1947,16 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 // repo is dirty, and the process exited without a report at all -- nothing
 // suggests the builder ever touched its own tree, so relay halts NEEDS YOU
 // rather than dispatching a replacement into the same broken setup (#192).
+
 func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
 	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
-	rt, b := escapeFixture(t, f, fr, fg, "/original/repo")
+	rt, b := escapeFixture(t, fr, fg, "/original/repo")
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 3)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2466,15 +1981,15 @@ func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
 // (an old bind.json, a --cwd bind, or an adopted one) is untouched by #192:
 // escapeCheck's precondition on b.Repo keeps the existing switch-on-exit
 // behaviour exactly as it was.
+
 func TestHeadlessExitNoReportNoRepoSwitches(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentHeadless(t, f, fr)
+	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 3)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2503,79 +2018,6 @@ const twoBuilderJSON = `[
 // excluded, relay halts instead of dispatching a third pick into the same
 // broken round. A report that eventually appears still closes the round
 // normally, and finishRound clears the exclusion with the switch count.
-func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	fr := newFakeRunner()
-	rt := newRuntime(t, f)
-	rt.Runner = fr
-	rt.Candidates = candidateSet(t, twoBuilderJSON)
-	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
-
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	f.listCalls = 0
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// Stage 1: A (agy) exits without a report -> switches to B (claude),
-	// RoundExcluded == [A].
-	fr.script(b.Builder.PID, false)
-	fr.exit(b.Builder.PID, 3)
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile (A exits): %v", err)
-	}
-	if got.BuilderCandidate != testClaudeRef {
-		t.Fatalf("candidate after switch = %q, want %q", got.BuilderCandidate, testClaudeRef)
-	}
-	if len(got.RoundExcluded) != 1 || got.RoundExcluded[0] != testAgyRef {
-		t.Fatalf("RoundExcluded = %v, want [%s]", got.RoundExcluded, testAgyRef)
-	}
-
-	// Stage 2: B (claude) also exits without a report -> every candidate
-	// serving builder is now excluded, so relay halts instead of switching.
-	fr.script(got.Builder.PID, false)
-	fr.exit(got.Builder.PID, 4)
-	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile (B exits): %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you", got.State)
-	}
-	if !strings.Contains(got.Halt, "exited without a report") {
-		t.Errorf("Halt = %q, want it to mention \"exited without a report\"", got.Halt)
-	}
-	if len(got.RoundExcluded) != 2 {
-		t.Errorf("RoundExcluded = %v, want both candidates excluded", got.RoundExcluded)
-	}
-
-	// Stage 3: a report and marker eventually appear for round 1 -- the
-	// marker still closes the round, and finishRound clears RoundExcluded
-	// alongside RoundSwitches.
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	touch(t, rt.Store.DonePath("webshop", 1))
-	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
-	if err != nil {
-		t.Fatalf("Reconcile (marker closes): %v", err)
-	}
-	if got.Round != 2 {
-		t.Errorf("round = %d, want 2", got.Round)
-	}
-	if got.RoundExcluded != nil {
-		t.Errorf("RoundExcluded = %v, want nil after finishRound", got.RoundExcluded)
-	}
-}
 
 func TestAppendLogMarker(t *testing.T) {
 	t.Run("appends in order", func(t *testing.T) {
@@ -2632,16 +2074,15 @@ func TestAppendLogMarker(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
 	fr := newFakeRunner()
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Runner = fr
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   testClaudeRef,
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Headless:    true,
+		Name:      "webshop",
+		Candidate: testClaudeRef,
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Headless:  true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -2667,7 +2108,7 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, at(rt, time.Minute), b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, at(rt, time.Minute), b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2700,10 +2141,10 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 // TestGateHeadlessCallSiteHolds pins #132: the headless marker path holds
 // the round while a configured gate runs -- no "exited without a report"
 // handling (no KindExit, no switch) -- exactly as the pane call site does.
+
 func TestGateHeadlessCallSiteHolds(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, f, fr)
+	rt, b := seedHeadless(t, fr)
 	b.Gate = "make check"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -2721,7 +2162,7 @@ func TestGateHeadlessCallSiteHolds(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2745,10 +2186,10 @@ func TestGateHeadlessCallSiteHolds(t *testing.T) {
 // TestRegateHeadlessStartsRepairProcess pins #132 part 2's intended case: a
 // headless binding whose gate fails gets round N+1 started as a fresh process,
 // with the repair plan as its prompt -- the same hand-off Send performs.
+
 func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := seedHeadless(t, f, fr)
+	rt, b := seedHeadless(t, fr)
 	b.Gate = "make check"
 	b.Regate = 1
 	if err := rt.Store.Save(b); err != nil {
@@ -2771,7 +2212,7 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile (start gate): %v", err)
 	}
@@ -2788,7 +2229,7 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 	// The gate's own process is a spec too, so the repair round is the last
 	// one: three starts, the third carrying the round-2 plan.
 	before := len(fr.specs)
-	got, err = reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile (close gate): %v", err)
 	}
@@ -2814,6 +2255,7 @@ func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
 // claudeStreamLines is internal/usage/testdata/claude-stream.jsonl's lines,
 // without their trailing newlines: the shape a claude builder's stream has,
 // and the fixture TestDrainStreamRecordsSessionIDOnce feeds it.
+
 func claudeStreamLines(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "usage", "testdata", "claude-stream.jsonl"))
@@ -2825,13 +2267,428 @@ func claudeStreamLines(t *testing.T) []string {
 
 // sentClaudeHeadless is sentHeadless with a claude builder, so its stream is
 // the claude fixture's shape -- the harness whose id arrives as session_id.
-func sentClaudeHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
+
+// escapeFixture seeds webshop headless with a Repo and a fake Git configured
+// so a round that leaves the worktree's tree unchanged while the repo is
+// dirty is detected as a worktree escape (#192): fg.snapshotTreeID is
+// captured as the round's baseline by Send and compared against again at
+// close, so leaving it alone between the two is what makes treeUnchanged
+// hold.
+func escapeFixture(t *testing.T, fr *fakeRunner, fg *fakeGit, repo string) (Runtime, store.Binding) {
 	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
+	rt, b := seedHeadless(t, fr)
+	rt.Git = fg
+	b.Repo = repo
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.RoundBaselineTree == "" {
+		t.Fatalf("baseline tree not captured; fixture assumes rt.Git is wired before Send")
+	}
+	return rt, b
+}
+
+func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("round = %d, want 1", res.Round)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	planPath := rt.Store.PlanPath("webshop", 1)
+	reportPath := rt.Store.ReportPath("webshop", 1)
+	donePath := rt.Store.DonePath("webshop", 1)
+	b, _ := rt.Store.Load("webshop")
+	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	if spec.Argv[2] != wantPrompt {
+		t.Errorf("prompt handed to the process:\n%q\nwant the composePrompt:\n%q", spec.Argv[2], wantPrompt)
+	}
+	if spec.Dir != "/repo" || spec.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
+		t.Errorf("spec = %+v", spec)
+	}
+
+	// The endpoint carries the handle; the round is stamped as today.
+	if b.Builder.PID != fr.handles[0].PID || b.Builder.LogPath != spec.LogPath {
+		t.Errorf("stored endpoint = %+v", b.Builder)
+	}
+	if b.RoundStartedAt.IsZero() || b.State != store.StateActive {
+		t.Errorf("round not stamped: startedAt=%v state=%s", b.RoundStartedAt, b.State)
+	}
+	entries, _ := rt.Store.ReadLog("webshop")
+	var plans int
+	for _, e := range entries {
+		if e.Kind == store.KindPlan && e.Round == 1 && e.Path == planPath {
+			plans++
+		}
+	}
+	if plans != 1 {
+		t.Errorf("want exactly one plan entry for round 1, log = %+v", entries)
+	}
+}
+
+func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	// Order claude first so the switch lands on a different candidate.
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	oldPID := b.Builder.PID
+
+	got, err := switchHeadless(t, rt, b, "exited (code 3) without a report", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Fatalf("want a second Start on claude, specs = %+v", fr.specs)
+	}
+	if !got.Builder.Headless() || got.Builder.PID != fr.handles[1].PID || got.Builder.PID == oldPID {
+		t.Errorf("new endpoint = %+v, want headless with the new pid %d", got.Builder, fr.handles[1].PID)
+	}
+	if got.Builder.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
+		t.Errorf("LogPath = %q, want round 1's log", got.Builder.LogPath)
+	}
+	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Round != 1 || got.State != store.StateActive {
+		t.Errorf("bookkeeping: cand=%q switches=%d round=%d state=%s", got.BuilderCandidate, got.RoundSwitches, got.Round, got.State)
+	}
+	if len(fr.kills) != 0 {
+		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
+	}
+	// #303 deleted the "switched builder to X" herdr notification; the switch
+	// log entry beside it survives and is what the human reads.
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.Contains(sw[0].Note, testClaudeRef) {
+		t.Errorf("switch entries = %+v, want one naming %s", sw, testClaudeRef)
+	}
+	// The prompt handed to the new process is the same round's prompt.
+	if !strings.Contains(fr.specs[1].Argv[2], rt.Store.PlanPath("webshop", 1)) {
+		t.Errorf("new process prompt lacks the round's plan path: %q", fr.specs[1].Argv[2])
+	}
+}
+
+func TestSwitchBuilderHeadlessCloseOldKillsTheProcess(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	old := handleOf(b.Builder)
+
+	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != old {
+		t.Errorf("kills = %+v, want the old handle %+v", fr.kills, old)
+	}
+}
+
+func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	fr.startErr = errors.New("claude: not found")
+
+	got, err := switchHeadless(t, rt, b, "exited", false)
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you when the replacement cannot start", got.State)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("pid = %d, want 0", got.Builder.PID)
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d: the halt is reported once", got.HaltNotifiedRound, got.Round)
+	}
+}
+
+func TestReconcileHeadlessIdleIsNotBroken(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr) // bound, nothing sent: no round open
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active: no process between rounds is normal, not broken", got.State)
+	}
+	if !got.BuilderMissingSince.IsZero() {
+		t.Errorf("BuilderMissingSince must stay zero for a headless binding: %s", got.BuilderMissingSince)
+	}
+	if len(fr.specs) != 0 || len(fr.kills) != 0 {
+		t.Errorf("an idle tick must do nothing: specs=%d kills=%d", len(fr.specs), len(fr.kills))
+	}
+	// A second idle tick, well after any grace, still does not switch.
+	got, err = reconcile(t, at(rt, 5*time.Minute), got)
+	if err != nil || got.State != store.StateActive || len(fr.specs) != 0 {
+		t.Errorf("later idle tick: state=%s specs=%d err=%v", got.State, len(fr.specs), err)
+	}
+}
+
+func TestReconcileHeadlessAliveWaits(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+
+	got, err := reconcile(t, at(rt, 10*time.Minute), b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 || got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
+		t.Errorf("a live process is left alone: round=%d state=%s pid=%d", got.Round, got.State, got.Builder.PID)
+	}
+	if len(fr.kills) != 0 || len(fr.specs) != 1 || len(exits(t, rt)) != 0 {
+		t.Errorf("nothing else may happen while it runs: kills=%d specs=%d exits=%d", len(fr.kills), len(fr.specs), len(exits(t, rt)))
+	}
+}
+
+// TestReconcileHeadlessStampsStallWhenStreamQuiet pins #252's core under
+// #135's shared clock: a live process whose stream file has not moved for
+// stall_after_ms is stamped StalledSince = the stream's last activity, and
+// nothing else happens. The second case is the mutation target: with the
+// stream only 5m quiet the comparison must not fire, so inverting it (or
+// comparing `<` for `>=`) makes both cases fail. The herdr notice beside the
+// stamp is gone (#303, closed-list item 4); the stamp itself and the
+// builder_stalled hook event are what survive.
+func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
+	cases := []struct {
+		name     string
+		quietFor time.Duration
+		stalled  bool
+	}{
+		{"quiet past stall_after_ms", 20 * time.Minute, true},
+		{"quiet under stall_after_ms", 5 * time.Minute, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := newFakeRunner()
+			rt, b := sentHeadless(t, fr)
+
+			now := baseTime.Add(10 * time.Minute)
+			rt = at(rt, 10*time.Minute)
+			b.RoundStartedAt = now.Add(-30 * time.Minute)
+
+			stream := rt.Store.BuilderStreamPath(b.Name, b.Round)
+			if err := os.WriteFile(stream, []byte("{\"a\":1}\n{\"b\":2}\n"), 0o644); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			quietAt := now.Add(-tc.quietFor)
+			if err := os.Chtimes(stream, quietAt, quietAt); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+
+			got, err := reconcile(t, rt, b)
+			if err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if got.State != store.StateActive || got.Builder.PID != b.Builder.PID {
+				t.Errorf("a stalled binding stays active and keeps its process: state=%s pid=%d", got.State, got.Builder.PID)
+			}
+			if len(fr.kills) != 0 || len(fr.specs) != 1 {
+				t.Errorf("a stall is never an action: kills=%d specs=%d", len(fr.kills), len(fr.specs))
+			}
+			if tc.stalled {
+				if !got.StalledSince.Equal(quietAt) {
+					t.Errorf("StalledSince = %s, want the stream's mtime %s", got.StalledSince, quietAt)
+				}
+				// A second stalled tick keeps the same stamp.
+				next, err := reconcile(t, at(rt, 11*time.Minute), got)
+				if err != nil {
+					t.Fatalf("Reconcile (second tick): %v", err)
+				}
+				if !next.StalledSince.Equal(quietAt) {
+					t.Errorf("StalledSince after a second tick = %s, want it unchanged at %s", next.StalledSince, quietAt)
+				}
+			} else if !got.StalledSince.IsZero() {
+				t.Errorf("StalledSince = %s, want zero: the stream is quiet but under stall_after_ms", got.StalledSince)
+			}
+		})
+	}
+}
+
+func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	b.RoundTimeoutMS = 1000
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, 2*time.Second), b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you past the budget", got.State)
+	}
+	// The halt is the surviving half of the old notice: the reason on the
+	// binding, and the per-round dedup.
+	if !strings.Contains(got.Halt, "run past") {
+		t.Errorf("Halt = %q, want it to name the budget", got.Halt)
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d", got.HaltNotifiedRound, got.Round)
+	}
+	if len(fr.kills) != 0 || got.Builder.PID != b.Builder.PID {
+		t.Errorf("the budget never kills: kills=%+v pid=%d", fr.kills, got.Builder.PID)
+	}
+}
+
+func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 2)
+	b.RoundSwitches = rt.Policy.SwitchLimit()
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you at the switch limit", got.State)
+	}
+	if got.Halt == "" {
+		t.Error("Halt is empty, want the max_switches reason recorded")
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("no replacement may start past the limit: specs = %d", len(fr.specs))
+	}
+	if len(exits(t, rt)) != 1 {
+		t.Error("the exit is still logged")
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d: the halt is reported once", got.HaltNotifiedRound, got.Round)
+	}
+	if got.Builder.PID != 0 {
+		t.Errorf("pid = %d, want 0 after the exit", got.Builder.PID)
+	}
+	// Second tick: nothing repeats.
+	again, err := reconcile(t, rt, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exits(t, rt)) != 1 || again.HaltNotifiedRound != got.HaltNotifiedRound {
+		t.Errorf("a halted exit must not re-log or re-notify: exits=%d notified=%d", len(exits(t, rt)), again.HaltNotifiedRound)
+	}
+}
+
+func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	old := handleOf(b.Builder)
+	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != old {
+		t.Errorf("kills = %+v, want the gated builder's process %+v", fr.kills, old)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Fatalf("want a claude replacement: %+v", fr.specs)
+	}
+	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 0 || got.Builder.PID != fr.handles[1].PID {
+		t.Errorf("bookkeeping: cand=%q switches=%d (want 0; a gated switch is uncounted) pid=%d", got.BuilderCandidate, got.RoundSwitches, got.Builder.PID)
+	}
+}
+
+func TestReconcileHeadlessBudgetOnLimitKillsAndSwitches(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	b.RoundTimeoutMS = 1000
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	old := handleOf(b.Builder)
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "working\nIndividual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s.\n"
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, 2*time.Second), b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != old {
+		t.Errorf("kills = %+v, want the old process %+v", fr.kills, old)
+	}
+	if len(fr.specs) != 2 || fr.specs[1].Argv[0] != "claude" {
+		t.Fatalf("want a claude replacement: %+v", fr.specs)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active", got.State)
+	}
+	// One switch, no timeout halt: the rate limit won the tick.
+	if n := len(switches(t, rt)); n != 1 {
+		t.Errorf("switch entries = %d, want exactly 1 (no timeout halt)", n)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+	}
+}
+
+func TestReconcileHeadlessBudgetWithoutLimitStillHalts(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	b.RoundTimeoutMS = 1000
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	logPath := b.Builder.LogPath
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("working hard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, at(rt, 2*time.Second), b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !strings.Contains(got.Halt, "run past") {
+		t.Errorf("Halt = %q, want the budget halt", got.Halt)
+	}
+	if len(fr.kills) != 0 || got.Builder.PID != b.Builder.PID {
+		t.Errorf("the budget never kills: kills=%+v pid=%d", fr.kills, got.Builder.PID)
+	}
+	if l := loadLedger(t, rt); len(l.Entries) != 0 {
+		t.Errorf("ledger entries = %+v, want none", l.Entries)
+	}
+}
+
+func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
+	fr := newFakeRunner()
+	rt := newRuntime(t)
 	rt.Runner = fr
+	rt.Candidates = candidateSet(t, twoBuilderJSON)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef)
+
 	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testClaudeRef, PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo", Headless: true,
 	}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -2842,7 +2699,57 @@ func sentClaudeHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, st
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return rt, b
+
+	// Stage 1: A (agy) exits without a report -> switches to B (claude),
+	// RoundExcluded == [A].
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile (A exits): %v", err)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Fatalf("candidate after switch = %q, want %q", got.BuilderCandidate, testClaudeRef)
+	}
+	if len(got.RoundExcluded) != 1 || got.RoundExcluded[0] != testAgyRef {
+		t.Fatalf("RoundExcluded = %v, want [%s]", got.RoundExcluded, testAgyRef)
+	}
+
+	// Stage 2: B (claude) also exits without a report -> every candidate
+	// serving builder is now excluded, so relay halts instead of switching.
+	fr.script(got.Builder.PID, false)
+	fr.exit(got.Builder.PID, 4)
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (B exits): %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "exited without a report") {
+		t.Errorf("Halt = %q, want it to mention \"exited without a report\"", got.Halt)
+	}
+	if len(got.RoundExcluded) != 2 {
+		t.Errorf("RoundExcluded = %v, want both candidates excluded", got.RoundExcluded)
+	}
+
+	// Stage 3: a report and marker eventually appear for round 1 -- the
+	// marker still closes the round, and finishRound clears RoundExcluded
+	// alongside RoundSwitches.
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile (marker closes): %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2", got.Round)
+	}
+	if got.RoundExcluded != nil {
+		t.Errorf("RoundExcluded = %v, want nil after finishRound", got.RoundExcluded)
+	}
 }
 
 // TestDrainStreamRecordsSessionIDOnce pins #147: the first drained line that
@@ -2850,11 +2757,11 @@ func sentClaudeHeadless(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, st
 // (a sub-agent's) leaves it alone.
 func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentClaudeHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedClaudeHeadless(t, fr) // round 1 open on a claude process
 	lines := claudeStreamLines(t)
 	streamWrite(t, rt, lines[0]+"\n"+lines[1]+"\n")
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2864,7 +2771,7 @@ func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
 
 	// A sub-agent's line carries a different session id; the first one stands.
 	streamWrite(t, rt, `{"type":"assistant","session_id":"sub-agent-sess","message":{}}`+"\n")
-	again, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()})
+	again, err := reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2878,7 +2785,7 @@ func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
 // from the endpoint once the round has closed.
 func TestReportEntryCarriesHeadlessSession(t *testing.T) {
 	fr := newFakeRunner()
-	rt, b := sentClaudeHeadless(t, &fakeHerdr{}, fr)
+	rt, b := seedClaudeHeadless(t, fr) // round 1 open on a claude process
 	lines := claudeStreamLines(t)
 	streamWrite(t, rt, lines[0]+"\n"+lines[1]+"\n")
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
@@ -2888,7 +2795,7 @@ func TestReportEntryCarriesHeadlessSession(t *testing.T) {
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 0)
 
-	got, err := reconcile(t, rt, b, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}

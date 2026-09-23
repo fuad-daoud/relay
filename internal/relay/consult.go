@@ -54,7 +54,7 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 
 		if b.Consults[i].State == store.ConsultSpawning {
-			// FindAgent is never called for a spawning record: there is no pane
+			// A spawning record is never reconciled against a live process:
 			// yet to match, and a fresh reservation is not gone. If the
 			// reservation has expired, finish it as silent.
 			if now.Sub(b.Consults[i].SpawnedAt) >= consultSpawnTimeout {

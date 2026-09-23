@@ -24,15 +24,13 @@ func pauseCloseRound(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 }
 
 func TestPauseReleasesWorktreeClosesPaneAndParks(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 
 	b.Worktree = "/wt/webshop"
 	b.Branch = "relay/webshop"
 	b = pauseCloseRound(t, rt, b)
-	paneID := b.Builder.PaneID
 
 	res, err := Pause(context.Background(), rt, "webshop", PauseOptions{})
 	if err != nil {
@@ -46,10 +44,6 @@ func TestPauseReleasesWorktreeClosesPaneAndParks(t *testing.T) {
 	if fg.removeWorktreeCalls[0] != want {
 		t.Errorf("removeWorktreeCall = %+v, want %+v", fg.removeWorktreeCalls[0], want)
 	}
-	if len(f.closed) != 0 {
-		t.Errorf("closed = %v, want none: relay closes no pane since #303", f.closed)
-	}
-	_ = paneID
 	if len(fg.deleteBranchCalls) != 0 {
 		t.Errorf("the branch must survive: deleteBranchCalls = %+v", fg.deleteBranchCalls)
 	}
@@ -89,17 +83,10 @@ func TestPauseReleasesWorktreeClosesPaneAndParks(t *testing.T) {
 	if res.Worktree != "/wt/webshop" {
 		t.Errorf("res.Worktree = %q, want /wt/webshop", res.Worktree)
 	}
-	if res.PaneClosed != paneID {
-		t.Errorf("res.PaneClosed = %q, want %q", res.PaneClosed, paneID)
-	}
-	if res.PaneCloseErr != "" {
-		t.Errorf("res.PaneCloseErr = %q, want empty", res.PaneCloseErr)
-	}
 }
 
 func TestPauseRefusesOpenRound(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 
@@ -117,9 +104,6 @@ func TestPauseRefusesOpenRound(t *testing.T) {
 	if fg.dirtyCalls != 0 || len(fg.removeWorktreeCalls) != 0 {
 		t.Errorf("no git call may run: dirty=%d remove=%d", fg.dirtyCalls, len(fg.removeWorktreeCalls))
 	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane may be closed: %v", f.closed)
-	}
 	got, _ := rt.Store.Load("webshop")
 	if got.State != store.StateActive {
 		t.Errorf("State = %s, want active (unchanged)", got.State)
@@ -127,8 +111,7 @@ func TestPauseRefusesOpenRound(t *testing.T) {
 }
 
 func TestPauseRefusesDirtyWithoutCommit(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	fg := &fakeGit{dirtyResult: true}
 	rt.Git = fg
 
@@ -146,9 +129,6 @@ func TestPauseRefusesDirtyWithoutCommit(t *testing.T) {
 	if len(fg.removeWorktreeCalls) != 0 {
 		t.Errorf("worktree must not be removed: %+v", fg.removeWorktreeCalls)
 	}
-	if len(f.closed) != 0 {
-		t.Errorf("no pane may be closed: %v", f.closed)
-	}
 	got, _ := rt.Store.Load("webshop")
 	if got.State != store.StateActive {
 		t.Errorf("State = %s, want active (unchanged)", got.State)
@@ -156,8 +136,7 @@ func TestPauseRefusesDirtyWithoutCommit(t *testing.T) {
 }
 
 func TestPauseCommitThenReleases(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	fg := &fakeGit{dirtyResult: true, commitAllSHA: "abc123abc123abc123abc123abc123abc123abcd"}
 	rt.Git = fg
 
@@ -183,9 +162,8 @@ func TestPauseCommitThenReleases(t *testing.T) {
 
 func TestPauseHeadlessClosesNoPane(t *testing.T) {
 	t.Run("between rounds", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := seedHeadless(t, f, fr)
+		rt, b := seedHeadless(t, fr)
 		fg := &fakeGit{}
 		rt.Git = fg
 
@@ -198,9 +176,6 @@ func TestPauseHeadlessClosesNoPane(t *testing.T) {
 		if _, err := Pause(context.Background(), rt, "webshop", PauseOptions{}); err != nil {
 			t.Fatalf("Pause: %v", err)
 		}
-		if len(f.closed) != 0 {
-			t.Errorf("a headless binding has no pane: closed = %v", f.closed)
-		}
 		got, _ := rt.Store.Load("webshop")
 		if got.State != store.StatePaused {
 			t.Errorf("State = %s, want paused", got.State)
@@ -208,9 +183,8 @@ func TestPauseHeadlessClosesNoPane(t *testing.T) {
 	})
 
 	t.Run("process alive", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := seedHeadless(t, f, fr)
+		rt, b := seedHeadless(t, fr)
 		fg := &fakeGit{}
 		rt.Git = fg
 		fr.script(4242, true)
@@ -230,8 +204,7 @@ func TestPauseHeadlessClosesNoPane(t *testing.T) {
 }
 
 func TestPauseRefusesRemoteCwdAndDone(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 
@@ -269,7 +242,7 @@ func TestPauseRefusesRemoteCwdAndDone(t *testing.T) {
 	if errRemote.Error() == errCwd.Error() || errCwd.Error() == errDone.Error() || errRemote.Error() == errDone.Error() {
 		t.Errorf("the three refusals must be distinct: %q / %q / %q", errRemote, errCwd, errDone)
 	}
-	if len(fg.removeWorktreeCalls) != 0 || len(f.closed) != 0 {
-		t.Errorf("nothing may change: remove=%d closed=%v", len(fg.removeWorktreeCalls), f.closed)
+	if len(fg.removeWorktreeCalls) != 0 {
+		t.Errorf("nothing may change: remove=%d", len(fg.removeWorktreeCalls))
 	}
 }

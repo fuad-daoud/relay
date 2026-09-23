@@ -28,8 +28,7 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relay.
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh, DB: d}
+	rt := relay.Runtime{Store: st, DB: d}
 	opts.Interval = time.Second
 	m := newModel(context.Background(), plannerSource{rt}, opts)
 	m.now = func() time.Time { return railNow }
@@ -212,8 +211,7 @@ func TestOptionsDashboardStartsOnDash(t *testing.T) {
 // same refusal `d` shows, and the fleet screen stays.
 func TestOptionsDashboardWithoutDBNotices(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second, Dashboard: true})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second, Dashboard: true})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)

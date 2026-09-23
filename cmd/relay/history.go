@@ -31,7 +31,7 @@ var historyOutcomeValues = []string{
 // validateHistoryFlags checks the two combinations `relay history` rejects
 // with a usage error: --archived with --live, and an --outcome outside the
 // enum. It is a pure function, factored out so a cmd/relay test can pin the
-// rule without executing the subcommand (CI has no herdr to reach).
+// rule without executing the subcommand (CI launches no harness).
 func validateHistoryFlags(archived, live bool, outcome string) error {
 	if archived && live {
 		return fmt.Errorf("--archived and --live are mutually exclusive")
@@ -44,7 +44,7 @@ func validateHistoryFlags(archived, live bool, outcome string) error {
 
 // validateHistoryBy checks that --by names one of histq's ten axes. It is a
 // pure function, so a cmd/relay test can pin the rule without executing the
-// subcommand (CI has no herdr to reach).
+// subcommand (CI launches no harness).
 func validateHistoryBy(by string) error {
 	if by == "" {
 		return nil

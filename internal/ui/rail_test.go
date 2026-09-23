@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relay/internal/relay"
-	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 	"github.com/muesli/termenv"
 )
@@ -31,10 +30,6 @@ func TestCardLinesShapes(t *testing.T) {
 		BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop", Dirty: true, Consults: 2,
 		Waiting: &relay.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
 	}
-	held := relay.BindingStatus{
-		Name: "ledger", Round: 3, Display: "HELD", BuilderKind: "agy", Branch: "relay/ledger",
-		Pending: &relay.PendingInfo{Round: 3, Kind: store.KindReport, Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000}},
-	}
 	headless := relay.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working",
 		Branch: "relay/api", Headless: &relay.HeadlessInfo{PID: 48211},
@@ -52,11 +47,6 @@ func TestCardLinesShapes(t *testing.T) {
 			"▎ question · 2m",
 			"▎ dirty · 2 consults",
 			"▎ agy · relay/webshop",
-		}},
-		{"held", held, []string{
-			"ledger r3",
-			"report r3 · quiet 23s of 1m0s",
-			"agy · relay/ledger",
 		}},
 		{"headless", headless, []string{
 			"api r2",

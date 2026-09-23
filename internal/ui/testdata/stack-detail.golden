@@ -1,15 +1,15 @@
- relay   6 bindings · 1 needs you · 1 held    codex gated until 15:30  ·  14:02 
+ relay   6 bindings · 1 needs you             codex gated until 15:30  ·  14:02 
 
 webshop  round 4   NEEDS YOU                                question r4 · 2m ago
-planner  %1   claude    idle                                                    
-builder  %7   agy       blocked · 2 consults                                    
+planner  architect-1 claude    route pull                                       
+builder  agy       blocked · 2 consults                                         
 tree     relay/webshop · dirty                                                  
 usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 50k · out 55
 spend    3 rounds +2c · $9.40 · 1 unknown                                       
                                                                                 
  plan    report    terminal    diff    log                                      
 ──────────────────━━━━━━━━━━────────────────────────────────────────────────────
-%7 · captured 0s ago · 2 lines                                                  
+remote · captured 0s ago · 2 lines                                              
                                                                                 
 $ go test ./...                                                                 
 ok      github.com/fuad-daoud/relay/internal/ui    1.2s                         

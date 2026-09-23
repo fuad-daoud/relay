@@ -38,10 +38,6 @@ type ForkOptions struct {
 	// planner" (§4.3).
 	PlannerID string
 
-	// PlannerPane is $HERDR_PANE_ID when set; optional. It only fills the
-	// pane delivery path's Planner.PaneID.
-	PlannerPane string
-
 	// CWD binds the fork to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
 	// records no Worktree for it and will never remove it.
@@ -106,7 +102,7 @@ type ForkResult struct {
 // Errors: store.ErrNotFound, ErrRoundOutOfRange, ErrNoBuilderCandidate,
 //
 //	ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists, or a wrapped
-//	herdr failure. Rollback is described in §5.
+//	git failure. Rollback is described in §5.
 func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error) {
 	rec, haveRec, err := resolveVerbPlanner(rt, opts.PlannerID)
 	if err != nil {
@@ -121,32 +117,18 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		}
 	}
 	// Refuse here, not just inside resolveBuilder: Fork cuts its worktree
-	// before that runs, and a name herdr would refuse must not leave a
+	// before that runs, and a name relay would refuse must not leave a
 	// worktree behind. The composed name is discarded -- resolveBuilder
 	// recomputes it.
 	if _, err := builderAgentName(opts.NewName); err != nil {
 		return ForkResult{}, err
 	}
 
-	plannerEP := store.Endpoint{}
-	if haveRec {
-		opts.PlannerID = rec.ID
-		plannerEP = recordEndpoint(rec, opts.PlannerPane)
-	} else {
-		// A Runtime with no planner registry: the pane is the identity.
-		if opts.PlannerPane == "" {
-			return ForkResult{}, ErrNoPlannerSession
-		}
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return ForkResult{}, fmt.Errorf("list agents: %w", err)
-		}
-		a, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-		if !ok {
-			return ForkResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
-		}
-		plannerEP = endpointOf(a)
+	if !haveRec {
+		return ForkResult{}, ErrNoPlannerSession
 	}
+	opts.PlannerID = rec.ID
+	plannerEP := recordEndpoint(rec)
 	if plannerEP.TranscriptLocator == "" {
 		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
 	}
@@ -285,21 +267,20 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}
 
 	bindOpts := BindOptions{
-		Name:        opts.NewName,
-		Candidate:   c.Ref().String(),
-		PlannerID:   opts.PlannerID,
-		PlannerPane: plannerEP.PaneID,
-		CWD:         cwd,
-		Headless:    opts.Headless,
-		Tier:        string(tier),
-		AllowYolo:   opts.AllowYolo,
+		Name:      opts.NewName,
+		Candidate: c.Ref().String(),
+		PlannerID: opts.PlannerID,
+		CWD:       cwd,
+		Headless:  opts.Headless,
+		Tier:      string(tier),
+		AllowYolo: opts.AllowYolo,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// resolved above -- res, from before the worktree was cut, is what the
 	// pick entry and ForkResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName, plannerEP.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.NewName)
 	if err != nil {
 		rollback()
 		return ForkResult{}, err
@@ -356,8 +337,8 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	})
 	if err != nil {
 		rollback()
-		return ForkResult{}, fmt.Errorf("fork failed after starting builder in pane %s (close it yourself): %w",
-			builder.PaneID, err)
+		return ForkResult{}, fmt.Errorf("fork failed after choosing builder %s: %w",
+			builder.Kind, err)
 	}
 
 	if stored, err := rt.Store.Load(b.Name); err == nil {

@@ -95,8 +95,8 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 // AdminStatus and their rows keep their Report order, so a client's cards
 // stay contiguous. Gated is the first owner's slice -- the server-wide
 // ledger projects identically into every owner's report -- and is nil when
-// there are no owners. DoneHidden is 0 and HerdrError empty: neither
-// filter applies to a flattened fleet.
+// there are no owners. DoneHidden is 0: nothing is filtered out of a
+// flattened fleet.
 func FlatStatus(ctx context.Context, s *Server) (relay.Report, error) {
 	owners, _, err := AdminStatus(ctx, s)
 	if err != nil {
@@ -348,7 +348,6 @@ func ledgerRuntime(s *Server) relay.Runtime {
 		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"),
 		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
 		Now:              s.cfg.Now,
-		Herdr:            stubHerdr{},
 	}
 }
 

@@ -27,8 +27,7 @@ var updateGolden = flag.Bool("update", false, "update golden files")
 func goldenModel(t *testing.T, width, height int, rep relay.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -39,15 +38,14 @@ func goldenModel(t *testing.T, width, height int, rep relay.Report) Model {
 
 // allStatesRows covers every display state and the row facts the rail and
 // pane can show today: ACTIVE (a running round's live usage on the card
-// and in the header, #234), NEEDS YOU (blocked, dirty, consults), HELD
-// (hold clock), ACTIVE, ACTIVE (headless, pid),
-// DONE (--cwd, no branch).
+// and in the header, #234), NEEDS YOU (blocked, dirty, consults), PAUSED,
+// ACTIVE, ACTIVE (headless, pid), DONE (--cwd, no branch).
 func allStatesRows() []relay.BindingStatus {
 	return []relay.BindingStatus{
 		{
 			Name: "atlas", Round: 4, Display: "ACTIVE",
-			PlannerPane: "%6", PlannerKind: "claude", PlannerStatus: "working",
-			BuilderPane: "%11", BuilderKind: "opencode", BuilderStatus: "working", Branch: "relay/atlas",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
+			BuilderKind: "opencode", BuilderStatus: "working", Branch: "relay/atlas",
 			LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
 				Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
 				Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3},
@@ -55,8 +53,8 @@ func allStatesRows() []relay.BindingStatus {
 		},
 		{
 			Name: "webshop", Round: 4, Display: "NEEDS YOU",
-			PlannerPane: "%1", PlannerKind: "claude", PlannerStatus: "idle",
-			BuilderPane: "%7", BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			BuilderKind: "agy", BuilderStatus: "blocked", Branch: "relay/webshop",
 			Dirty: true, Consults: 2,
 			LastUsage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 				Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, CacheWrite: 50_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1},
@@ -65,27 +63,26 @@ func allStatesRows() []relay.BindingStatus {
 			Last:    &relay.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 		},
 		{
-			Name: "ledger", Round: 3, Display: "HELD",
-			PlannerPane: "%2", PlannerKind: "claude", PlannerStatus: "idle", PlannerFocus: true,
-			BuilderPane: "%8", BuilderKind: "agy", BuilderStatus: "idle", Branch: "relay/ledger",
-			Pending: &relay.PendingInfo{Round: 3, Kind: store.KindReport, Hold: &relay.HoldInfo{QuietMS: 23000, GraceMS: 60000}},
-			Spend:   &usage.Spend{Rounds: 3, Measured: 1.23, Estimated: 0.40, Unknown: 1},
+			Name: "ledger", Round: 3, Display: "PAUSED",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			BuilderKind: "agy", BuilderStatus: "idle", Branch: "relay/ledger",
+			Spend: &usage.Spend{Rounds: 3, Measured: 1.23, Estimated: 0.40, Unknown: 1},
 		},
 		{
 			Name: "api", Round: 2, Display: "ACTIVE",
-			PlannerPane: "%3", PlannerKind: "claude", PlannerStatus: "working",
-			BuilderPane: "%9", BuilderKind: "agy", BuilderStatus: "working", Branch: "relay/api",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
+			BuilderKind: "agy", BuilderStatus: "working", Branch: "relay/api",
 		},
 		{
 			Name: "worker", Round: 2, Display: "ACTIVE",
-			PlannerPane: "%4", PlannerKind: "claude", PlannerStatus: "working",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel", PlannerRouteLive: true,
 			BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1", Branch: "relay/worker",
 			Headless: &relay.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 		},
 		{
 			Name: "docs", Round: 1, Display: "DONE",
-			PlannerPane: "%5", PlannerKind: "claude", PlannerStatus: "idle",
-			BuilderPane: "%10", BuilderKind: "agy", BuilderStatus: "gone", CWD: "/home/x/docs",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			BuilderKind: "agy", BuilderStatus: "unknown", CWD: "/home/x/docs",
 			Last: &relay.LastEvent{TS: railNow.Add(-3 * time.Hour)},
 		},
 	}
@@ -115,8 +112,7 @@ func histRows() []relay.HistoryBinding {
 func goldenAllScopeModel(t *testing.T, width, height int, rep relay.Report, hist []relay.HistoryBinding) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	m.scope = scopeAll
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -170,13 +166,12 @@ func dashRows() []db.RoundRow {
 func goldenDashModel(t *testing.T, width, height int, rep relay.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh, DB: d}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, DB: d}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -229,22 +224,6 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
-			name: "split-foreign", width: 140, height: 40,
-			build: func(t *testing.T) Model {
-				rows := []relay.BindingStatus{
-					{
-						Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working",
-						Foreign: []relay.ForeignAgent{
-							{PaneID: "%9", Kind: "claude", Status: "working", Title: "reviewer"},
-							{PaneID: "%10", Kind: "opencode", Status: "idle", Title: "researcher"},
-						},
-					},
-				}
-				m := goldenModel(t, 140, 40, relay.Report{Bindings: rows})
-				return feedTerminal(t, m, m.detail.name, terminalBody)
-			},
-		},
-		{
 			name: "split-empty", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				return goldenModel(t, 140, 40, relay.Report{})
@@ -254,13 +233,12 @@ func TestGoldenViews(t *testing.T) {
 			name: "split-error-before-load", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				st := store.New(t.TempDir())
-				fh := newFakeHerdr(t)
-				m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
+				m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
 				m.now = func() time.Time { return railNow }
 				res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 				m = res.(Model)
 				m.statusInFlight = false
-				res, _ = m.Update(statusMsg{err: errors.New("herdr connection refused")})
+				res, _ = m.Update(statusMsg{err: errors.New("status unavailable")})
 				return res.(Model)
 			},
 		},

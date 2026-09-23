@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/release"
 )
 
@@ -27,10 +26,6 @@ func shippedDoc(t *testing.T, role, kind string) string {
 }
 
 type fakeEnv struct {
-	herdrVer      string
-	herdrErr      error
-	intStatus     map[string]herdr.IntegrationState
-	intErr        error
 	daemonRunning bool
 	daemonErr     error
 	lookPaths     map[string]string // binary -> path
@@ -50,20 +45,6 @@ type fakeEnv struct {
 	releaseLatest  string
 	releaseOK      bool
 	releaseKind    release.Kind
-}
-
-func (f *fakeEnv) HerdrVersion(ctx context.Context) (string, error) {
-	if f.herdrErr != nil {
-		return "", f.herdrErr
-	}
-	return f.herdrVer, nil
-}
-
-func (f *fakeEnv) IntegrationStatus(ctx context.Context) (map[string]herdr.IntegrationState, error) {
-	if f.intErr != nil {
-		return nil, f.intErr
-	}
-	return f.intStatus, nil
 }
 
 func (f *fakeEnv) DaemonRunning(ctx context.Context) (bool, error) {
@@ -149,89 +130,8 @@ func countChecksForGroup(report Report, group string) int {
 	return count
 }
 
-func TestDoctorHerdrFloorChecks(t *testing.T) {
-	tests := []struct {
-		name         string
-		ver          string
-		err          error
-		wantSeverity Severity
-		wantFail     bool
-	}{
-		{
-			name:         "herdr absent",
-			err:          errors.New("herdr: executable file not found in $PATH"),
-			wantSeverity: SevFail,
-			wantFail:     true,
-		},
-		{
-			name:         "herdr unparseable",
-			ver:          "not-a-semver",
-			wantSeverity: SevFail,
-			wantFail:     true,
-		},
-		{
-			name:         "herdr below floor",
-			ver:          "0.8.1",
-			wantSeverity: SevFail,
-			wantFail:     true,
-		},
-		{
-			name:         "herdr exactly at floor",
-			ver:          "0.8.2",
-			wantSeverity: SevOK,
-			wantFail:     false,
-		},
-		{
-			name:         "herdr above floor",
-			ver:          "0.9.0",
-			wantSeverity: SevOK,
-			wantFail:     false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			env := &fakeEnv{
-				herdrVer: tc.ver,
-				herdrErr: tc.err,
-			}
-			report := Run(context.Background(), env, nil)
-			c := findCheck(report, "", "herdr")
-			if c == nil {
-				t.Fatal("herdr check not found in report")
-			}
-			if c.Severity != tc.wantSeverity {
-				t.Errorf("herdr severity = %v, want %v (detail: %q)", c.Severity, tc.wantSeverity, c.Detail)
-			}
-			if tc.wantFail && report.Failures() == 0 {
-				t.Errorf("expected failures > 0, got 0")
-			}
-		})
-	}
-}
-
-func TestDoctorIntegrationStatusErrorDegradesToWarning(t *testing.T) {
-	env := &fakeEnv{
-		herdrVer: "0.9.0",
-		intErr:   errors.New("connection timed out"),
-		lookPaths: map[string]string{
-			"claude": "/usr/bin/claude",
-		},
-	}
-
-	report := Run(context.Background(), env, []string{"claude"})
-	c := findCheck(report, "claude", "integration")
-	if c == nil {
-		t.Fatal("claude integration check not found")
-	}
-	if c.Severity != SevWarn {
-		t.Errorf("integration severity = %v, want SevWarn on error", c.Severity)
-	}
-}
-
 func TestDoctorMissingBinarySuppressesRemainingRows(t *testing.T) {
 	env := &fakeEnv{
-		herdrVer:  "0.9.0",
 		lookPaths: map[string]string{}, // nothing on PATH
 	}
 
@@ -254,12 +154,8 @@ func TestDoctorMissingBinarySuppressesRemainingRows(t *testing.T) {
 
 func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	env := &fakeEnv{
-		herdrVer: "0.9.0",
 		lookPaths: map[string]string{
 			"droid": "/usr/bin/droid",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			// droid is not in herdr integration status
 		},
 	}
 
@@ -271,209 +167,40 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	if roleCheck.Severity != SevOK {
 		t.Errorf("droid role check severity = %v, want SevOK", roleCheck.Severity)
 	}
-
-	intCheck := findCheck(report, "droid", "integration")
-	if intCheck == nil {
-		t.Fatal("droid integration check not found")
-	}
-	if intCheck.Severity != SevOK {
-		t.Errorf("droid integration severity = %v, want SevOK when not in herdr integration status", intCheck.Severity)
-	}
-}
-
-func TestDoctorSecondPassDemotionBesideCompleteHarness(t *testing.T) {
-	// claude is complete: binary on PATH and integration installed.
-	// opencode is present: binary on PATH, but integration NOT installed.
-	// Second pass rule: opencode integration demotes from SevFail to SevWarn, UsableBuilder is true, Failures() == 0.
-	env := &fakeEnv{
-		herdrVer:      "0.9.0",
-		daemonRunning: true,
-		lookPaths: map[string]string{
-			"claude":   "/usr/bin/claude",
-			"opencode": "/usr/bin/opencode",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"claude":   {Installed: true, Detail: "current (v9)"},
-			"opencode": {Installed: false, Detail: "not installed"},
-		},
-		homeDir: "/fake/home",
-		existingFiles: map[string]bool{
-			"/fake/home/.claude/agents/plan-executor.md": true,
-		},
-	}
-
-	report := Run(context.Background(), env, []string{"claude", "opencode"})
-	if !report.UsableBuilder {
-		t.Errorf("UsableBuilder = false, want true because claude is complete")
-	}
 	if report.Failures() != 0 {
-		t.Errorf("Failures() = %d, want 0", report.Failures())
-	}
-
-	opencodeInt := findCheck(report, "opencode", "integration")
-	if opencodeInt == nil {
-		t.Fatal("opencode integration check not found")
-	}
-	if opencodeInt.Severity != SevWarn {
-		t.Errorf("opencode integration severity = %v, want SevWarn (demoted from SevFail)", opencodeInt.Severity)
-	}
-	wantDetail := "not installed -- this binding will report `unknown` forever and never finish a round"
-	if opencodeInt.Detail != wantDetail {
-		t.Errorf("demoted row detail = %q, want %q", opencodeInt.Detail, wantDetail)
-	}
-	if opencodeInt.Fix != "herdr integration install opencode" {
-		t.Errorf("demoted row fix = %q, want 'herdr integration install opencode'", opencodeInt.Fix)
-	}
-}
-
-func TestDoctorSecondPassStaysFailWhenNoCompleteHarness(t *testing.T) {
-	// claude binary present, but integration NOT installed.
-	// opencode binary NOT present.
-	// No harness is complete -> UsableBuilder is false, claude integration stays SevFail, Failures() == 1.
-	env := &fakeEnv{
-		herdrVer:      "0.9.0",
-		daemonRunning: true,
-		lookPaths: map[string]string{
-			"claude": "/usr/bin/claude",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"claude": {Installed: false, Detail: "not installed"},
-		},
-	}
-
-	report := Run(context.Background(), env, []string{"claude", "opencode"})
-	if report.UsableBuilder {
-		t.Errorf("UsableBuilder = true, want false")
-	}
-	if report.Failures() != 1 {
-		t.Errorf("Failures() = %d, want 1", report.Failures())
-	}
-
-	claudeInt := findCheck(report, "claude", "integration")
-	if claudeInt == nil {
-		t.Fatal("claude integration check not found")
-	}
-	if claudeInt.Severity != SevFail {
-		t.Errorf("claude integration severity = %v, want SevFail", claudeInt.Severity)
+		t.Errorf("an unknown kind must not fail doctor, got %d failures", report.Failures())
 	}
 }
 
 func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
-	// Binary is absent on PATH.
-	// For normal Run: binary check suppresses remaining rows (0 integration rows).
-	// For adopted Run: integration row survives.
 	env := &fakeEnv{
-		herdrVer:  "0.9.0",
 		lookPaths: map[string]string{}, // binary absent
-		intStatus: map[string]herdr.IntegrationState{
-			"claude": {Installed: false, Detail: "not installed"},
-		},
 	}
 
-	// Normal run suppresses integration
+	// A normal Run reports the binary it could not find.
 	normalRep := Run(context.Background(), env, []string{"claude"})
-	if findCheck(normalRep, "claude", "integration") != nil {
-		t.Fatal("normal Run should suppress integration row when binary is absent")
+	if findCheck(normalRep, "claude", "binary") == nil {
+		t.Fatal("normal Run must report the binary it could not find on PATH")
 	}
 
-	// Adopted run computes and preserves integration row
+	// An adopted pane's binary is the user's own concern: no binary row, and
+	// the role rows that binary gates stay off too.
 	adoptedRep := Run(context.Background(), env, []string{"claude"}, WithAdopted(true))
-	c := findCheck(adoptedRep, "claude", "integration")
-	if c == nil {
-		t.Fatal("adopted Run must compute integration row even when binary is absent")
+	if c := findCheck(adoptedRep, "claude", "binary"); c != nil {
+		t.Fatalf("adopted Run must not report a binary row, got %+v", *c)
 	}
-	if c.Severity != SevFail {
-		t.Errorf("expected SevFail on missing integration, got %v", c.Severity)
-	}
-}
-
-func TestDoctorUnparseableOrMissingIntegrationIsWarningNotFailure(t *testing.T) {
-	// A known target missing from IntegrationStatus map, or whose line failed to parse
-	// (e.g. from ParseIntegrationStatus with empty_paren), must report SevWarn with
-	// detail that status could not be read, no fix command, and must NOT report SevFail.
-	rawHerdrOutput := `
-claude: state ()
-opencode: not installed (/path/to/opencode.js)
-`
-	parsedStatus := herdr.ParseIntegrationStatus([]byte(rawHerdrOutput))
-	if _, bad := parsedStatus["claude"]; bad {
-		t.Fatal("unparseable claude line should be skipped by parser")
-	}
-
-	env := &fakeEnv{
-		herdrVer:      "0.9.0",
-		daemonRunning: true,
-		lookPaths: map[string]string{
-			"claude": "/usr/bin/claude",
-		},
-		intStatus: parsedStatus,
-	}
-
-	report := Run(context.Background(), env, []string{"claude"})
-	c := findCheck(report, "claude", "integration")
-	if c == nil {
-		t.Fatal("claude integration check missing")
-	}
-	if c.Severity != SevWarn {
-		t.Errorf("expected SevWarn for unread status, got %v", c.Severity)
-	}
-	if c.Detail != "could not read herdr integration status for claude" {
-		t.Errorf("detail = %q, want 'could not read herdr integration status for claude'", c.Detail)
-	}
-	if c.Fix != "" {
-		t.Errorf("fix should be empty, got %q", c.Fix)
-	}
-	if report.Failures() != 0 {
-		t.Errorf("expected 0 failures, got %d", report.Failures())
-	}
-	if report.UsableBuilder {
-		t.Errorf("UsableBuilder should be false when status could not be read")
-	}
-}
-
-func TestDoctorUsableBuilderOutdatedCountsAsComplete(t *testing.T) {
-	// A checked kind with binary on PATH and integration outdated still counts as complete:
-	// UsableBuilder is true, and Failures() is 0.
-	env := &fakeEnv{
-		herdrVer:      "0.9.0",
-		daemonRunning: true,
-		lookPaths: map[string]string{
-			"claude": "/usr/bin/claude",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"claude": {Installed: true, Outdated: true, Detail: "outdated (v8 < v9)"},
-		},
-		homeDir: "/fake/home",
-		existingFiles: map[string]bool{
-			"/fake/home/.claude/agents/plan-executor.md": true,
-		},
-	}
-
-	report := Run(context.Background(), env, []string{"claude"})
-	if !report.UsableBuilder {
-		t.Error("UsableBuilder should be true when integration is outdated (counts as complete)")
-	}
-	if report.Failures() != 0 {
-		t.Errorf("expected 0 failures, got %d", report.Failures())
-	}
-	c := findCheck(report, "claude", "integration")
-	if c == nil || c.Severity != SevWarn {
-		t.Errorf("outdated integration should be SevWarn, got: %+v", c)
+	for _, role := range []string{"plan-executor", "researcher", "reviewer"} {
+		if c := findCheck(adoptedRep, "claude", role); c != nil {
+			t.Errorf("adopted Run must not report a %s role row, got %+v", role, *c)
+		}
 	}
 }
 
 func TestDoctorUsableBuilderMissingRoleFileDoesNotBreakCompleteness(t *testing.T) {
-	// A missing role file does not break completeness:
-	// binary on PATH + integration current -> UsableBuilder is true, Failures() is 0,
-	// plan-executor check is SevWarn.
 	env := &fakeEnv{
-		herdrVer:      "0.9.0",
 		daemonRunning: true,
 		lookPaths: map[string]string{
 			"claude": "/usr/bin/claude",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"claude": {Installed: true, Detail: "current (v9)"},
 		},
 		homeDir:       "/fake/home",
 		existingFiles: map[string]bool{}, // role file missing
@@ -496,13 +223,9 @@ func TestDoctorHomePathFailureReportsErrorWithoutFix(t *testing.T) {
 	// A failure resolving home directory should report SevWarn with detail
 	// explaining home could not be resolved, Fix empty, ProbeFailed true.
 	env := &fakeEnv{
-		herdrVer:      "0.9.0",
 		daemonRunning: true,
 		lookPaths: map[string]string{
 			"claude": "/usr/bin/claude",
-		},
-		intStatus: map[string]herdr.IntegrationState{
-			"claude": {Installed: true, Detail: "current (v9)"},
 		},
 		homeErr: errors.New("cannot determine user home"),
 	}
@@ -670,27 +393,20 @@ func TestDoctorOmitsModelSuffixWhenUnpinned(t *testing.T) {
 func newFakeEnvForKind(t *testing.T, kind string) *fakeEnv {
 	t.Helper()
 	return &fakeEnv{
-		herdrVer:      herdr.MinVersion,
 		daemonRunning: true,
 		lookPaths:     map[string]string{kind: "/usr/bin/" + kind},
-		intStatus: map[string]herdr.IntegrationState{
-			kind: {Installed: true, Detail: "current (v9)"},
-		},
-		homeDir: "/fake/home",
+		homeDir:       "/fake/home",
 	}
 }
 
-// agyEnv is an agy machine in good order: binary on PATH, integration
-// installed, three role files present and pinning inherit. Tests perturb
-// one thing at a time from here.
+// agyEnv is an agy machine in good order: binary on PATH, three role files
+// present and pinning inherit. Tests perturb one thing at a time from here.
 func agyEnv(t *testing.T) *fakeEnv {
 	t.Helper()
 	home := "/home/u"
 	env := &fakeEnv{
-		herdrVer:      "0.9.0",
 		homeDir:       home,
 		lookPaths:     map[string]string{"agy": "/home/fuad/.local/bin/agy"},
-		intStatus:     map[string]herdr.IntegrationState{"antigravity-cli": {Installed: true, Detail: "current (v3)"}},
 		existingFiles: map[string]bool{},
 		fileContents:  map[string]string{},
 		versions:      map[string]string{"/home/fuad/.local/bin/agy": "1.2.1"},
@@ -721,7 +437,7 @@ func TestDoctorAgyVersionFloor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			env := agyEnv(t) // step 4's helper: paths, integration, three role files pinning inherit
+			env := agyEnv(t) // step 4's helper: paths and three role files pinning inherit
 			env.versions = map[string]string{"/home/fuad/.local/bin/agy": tc.version}
 			env.versionErr = tc.err
 			report := Run(context.Background(), env, []string{"agy"})
@@ -739,9 +455,7 @@ func TestDoctorAgyVersionFloor(t *testing.T) {
 func TestDoctorNoVersionRowWithoutAFloor(t *testing.T) {
 	for _, kind := range []string{"claude", "opencode"} {
 		env := &fakeEnv{
-			herdrVer:  "0.9.0",
 			lookPaths: map[string]string{kind: "/usr/bin/" + kind},
-			intStatus: map[string]herdr.IntegrationState{kind: {Installed: true}},
 		}
 		report := Run(context.Background(), env, []string{kind})
 		if c := findCheck(report, kind, "version"); c != nil {
@@ -781,10 +495,8 @@ func TestDoctorClaudeRoleNeverWarnsOnAPin(t *testing.T) {
 	// edit: claude's Role.ExpectModel is "" (spec §3.2), so neither the
 	// tier-pin branch nor the ship-drift check (round 2, #91/#94) fires here.
 	env := &fakeEnv{
-		herdrVer:      "0.9.0",
 		homeDir:       "/home/u",
 		lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
-		intStatus:     map[string]herdr.IntegrationState{"claude": {Installed: true}},
 		existingFiles: map[string]bool{"/home/u/.claude/agents/plan-executor.md": true},
 		fileContents:  map[string]string{"/home/u/.claude/agents/plan-executor.md": "---\nmodel: opus\n---\n"},
 	}
@@ -944,10 +656,8 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 		t.Helper()
 		home := "/home/u"
 		env := &fakeEnv{
-			herdrVer:      "0.9.0",
 			homeDir:       home,
 			lookPaths:     map[string]string{"codex": "/usr/bin/codex"},
-			intStatus:     map[string]herdr.IntegrationState{"codex": {Installed: true}},
 			existingFiles: map[string]bool{},
 			fileContents:  map[string]string{},
 			versions:      map[string]string{"/usr/bin/codex": "0.155.1"},
@@ -1089,7 +799,7 @@ func TestUsageChecks(t *testing.T) {
 // folds relay.ProbeServers' server rows in this way, without Run knowing
 // anything about servers.json or the network).
 func TestExtraChecksAppended(t *testing.T) {
-	env := &fakeEnv{herdrVer: "0.9.0", lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
+	env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
 	extra := []Check{
 		{Group: "", Name: "servers", Severity: SevOK, Detail: "zen: enrolled as laptop"},
 	}
@@ -1264,14 +974,14 @@ func TestDoctorReleaseCheck(t *testing.T) {
 	}{
 		{
 			name:         "no cache: not checked",
-			env:          fakeEnv{herdrVer: "0.9.0"},
+			env:          fakeEnv{},
 			wantSeverity: SevOK,
 			wantDetail:   "not checked",
 		},
 		{
 			name: "unparseable running side: not checked",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "(devel)", releaseLatest: "v0.7.0",
+				releaseRunning: "(devel)", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindLocalBuild,
 			},
 			wantSeverity: SevOK,
@@ -1280,7 +990,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "unparseable latest side: not checked",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "not-a-tag",
+				releaseRunning: "v0.6.0", releaseLatest: "not-a-tag",
 				releaseOK: true, releaseKind: release.KindGoInstall,
 			},
 			wantSeverity: SevOK,
@@ -1289,7 +999,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "unknown install kind: not checked",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindUnknown,
 			},
 			wantSeverity: SevOK,
@@ -1298,7 +1008,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "local build: nothing to update to",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.7.0-8-gbd8aed0", releaseLatest: "v0.8.0",
+				releaseRunning: "v0.7.0-8-gbd8aed0", releaseLatest: "v0.8.0",
 				releaseOK: true, releaseKind: release.KindLocalBuild,
 			},
 			wantSeverity: SevOK,
@@ -1307,7 +1017,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "latest not newer: current",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.7.0", releaseLatest: "v0.7.0",
+				releaseRunning: "v0.7.0", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindGoInstall,
 			},
 			wantSeverity: SevOK,
@@ -1316,7 +1026,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "behind a plugin release: re-run the fetch",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindPluginRelease,
 			},
 			wantSeverity: SevWarn,
@@ -1326,7 +1036,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "behind a plugin source build: re-run the build",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindPluginSource,
 			},
 			wantSeverity: SevWarn,
@@ -1336,7 +1046,7 @@ func TestDoctorReleaseCheck(t *testing.T) {
 		{
 			name: "behind a go install: go install",
 			env: fakeEnv{
-				herdrVer: "0.9.0", releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
+				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
 				releaseOK: true, releaseKind: release.KindGoInstall,
 			},
 			wantSeverity: SevWarn,

@@ -16,7 +16,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/transcript"
@@ -341,18 +340,14 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 // hands off here right after the DONE gate; the pane path never runs for a
 // headless endpoint and this never runs for a pane one.
 //
-// Order mirrors the pane path: refresh the planner, halt on the round cap,
-// then decide. A report file finishes the round whatever the process did
-// (the report is the contract). Otherwise: a gated candidate is switched
-// with its process killed; a live process is left alone, its budget the
-// only thing that can halt it; a process that exited is logged with its
-// code and log tail and the builder is switched, up to max_switches. No
-// round open means idle -- never BROKEN -- and a process lingering with no
+// Order: halt on the round cap, then decide. A report file finishes the round
+// whatever the process did (the report is the contract). Otherwise: a gated
+// candidate is switched with its process killed; a live process is left alone,
+// its budget the only thing that can halt it; a process that exited is logged
+// with its code and log tail and the builder is switched, up to max_switches.
+// No round open means idle -- never BROKEN -- and a process lingering with no
 // round is a stray relay stops.
-func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
-	if planner, ok := FindAgent(agents, b.Planner); ok {
-		b.Planner = refreshEndpoint(b.Planner, planner)
-	}
+func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Round > b.RoundCap {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: hit the round cap of %d", b.Name, b.RoundCap))
 	}
@@ -389,7 +384,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
 		}
-		return deliverAndSettle(ctx, rt, tx, b, agents)
+		return deliverAndSettle(ctx, rt, tx, b)
 	}
 
 	// A queued round (#285) has no process and no clocks: nothing to
@@ -449,7 +444,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if err != nil {
 			return next, err
 		}
-		next, err = deliverAndSettle(ctx, rt, tx, next, agents)
+		next, err = deliverAndSettle(ctx, rt, tx, next)
 		if err != nil {
 			return next, err
 		}
@@ -505,14 +500,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		// The process is alive; the progress clock (#135) replaces #252's
 		// stream-only rule: the tree and the stream are both signals, and a
-		// stall is quiet on both. sampleSignals gets no agents -- a headless
-		// builder is not in herdr's list, so it can never be "blocked". The
-		// read is gated on the interval (#135 follow-up): a tick inside it
-		// samples nothing.
+		// stall is quiet on both. The read is gated on the interval (#135
+		// follow-up): a tick inside it samples nothing.
 		if progressDue(next, now, rt.Policy.ProgressInterval()) {
-			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next, nil))
+			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
 		}
-		return deliverAndSettle(ctx, rt, tx, next, agents)
+		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
 	// Exited. The exit code is read once, from the stream's trailer.
@@ -547,7 +540,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		next.Builder = clearProcess(next.Builder)
 		next.StalledSince = time.Time{}
-		return deliverAndSettle(ctx, rt, tx, next, agents)
+		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
 	// Exited without a report.
@@ -716,12 +709,10 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) 
 const statusTailLines = 3
 
 // headlessStatus is what `relay status` says about a headless endpoint: the
-// status word that sits where a pane's herdr status sits, and the process
-// details. Idle between rounds; otherwise a live Alive check -- the same
-// cost class as the herdr list pane rows pay -- then, for an exited
-// process, the trailer's code. No Runner means relay cannot say. A live
-// process whose stream has gone quiet (binding.StalledSince, #252) reads
-// "stalled <age>" in place of "working".
+// status word and the process details. Idle between rounds; otherwise a live
+// Alive check, then, for an exited process, the trailer's code. No Runner
+// means relay cannot say. A live process whose stream has gone quiet
+// (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
 func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *HeadlessInfo) {
 	e := b.Builder
 	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}

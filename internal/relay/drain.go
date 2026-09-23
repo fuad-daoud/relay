@@ -34,11 +34,10 @@ type DrainResult struct {
 }
 
 // Drain runs one poll over one planner's bindings (spec
-// docs/specs/2026-09-21-planner-channel-design.md §3.4-§3.6,
-// docs/specs/2026-09-22-drop-herdr-design.md §4.5): for each binding whose
-// planner is st.Planner and which is not remote-owned, it pushes the oldest
-// pending planner payload (confirming only after the push succeeds), then
-// pushes a state event on selected state transitions.
+// docs/specs/2026-09-21-planner-channel-design.md §3.4-§3.6, #303 §4.5): for
+// each binding whose planner is st.Planner and which is not remote-owned, it
+// pushes the oldest pending planner payload (confirming only after the push
+// succeeds), then pushes a state event on selected state transitions.
 func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResult, error) {
 	if st.Planner == "" {
 		return DrainResult{}, fmt.Errorf("drain: empty planner")
@@ -100,7 +99,7 @@ func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResu
 				slog.Info("channel push failed; entry stays pending", "binding", b.Name, "round", entry.Round, "error", err)
 			} else {
 				if err := rt.Store.WithLock(func(tx *store.Tx) error {
-					return tx.ConfirmIndex(b.Name, idx)
+					return tx.ConfirmIndex(b.Name, idx, "channel")
 				}); err != nil {
 					return res, err
 				}
@@ -142,11 +141,11 @@ func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResu
 	return res, nil
 }
 
-// isChannelState reports whether s is one of the three states worth a push
-// (spec §3.6): needs_you, broken, orphaned.
+// isChannelState reports whether s is one of the states worth a push
+// (spec §3.6): needs_you and broken.
 func isChannelState(s store.State) bool {
 	switch s {
-	case store.StateNeedsYou, store.StateBroken, store.StateOrphaned:
+	case store.StateNeedsYou, store.StateBroken:
 		return true
 	default:
 		return false
@@ -161,7 +160,7 @@ func stateEventContent(b store.Binding) string {
 	if b.Halt != "" {
 		reason = " -- " + b.Halt
 	}
-	return fmt.Sprintf("%s round %d: %s%s\nrun relay status --name %s, then answer, unavailable, or stop.",
+	return fmt.Sprintf("%s round %d: %s%s\nrun relay status --name %s, then send or stop.",
 		b.Name, b.Round, channelStateLabel(b.State), reason, b.Name)
 }
 
@@ -171,8 +170,6 @@ func channelStateLabel(s store.State) string {
 		return "NEEDS YOU"
 	case store.StateBroken:
 		return "BROKEN"
-	case store.StateOrphaned:
-		return "ORPHANED"
 	default:
 		return strings.ToUpper(string(s))
 	}

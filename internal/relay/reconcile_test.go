@@ -10,81 +10,61 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/git"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/hooks"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
-func builderAgent(status string) herdr.Agent {
-	return herdr.Agent{
-		Name: "webshop-builder",
-		Kind: "agy", Status: status, CWD: "/repo", PaneID: "w2:p4",
-		Title: "webshop-builder",
-	}
-}
-
-// sentBinding puts a binding one Send into round 1, with a working builder.
-func sentBinding(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
+// closeOnMarkerUnderLock calls closeOnMarker the way Reconcile does: inside
+// the store lock, with the binding's current log.
+func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool) {
 	t.Helper()
-	rt, _ := seedBound(t, f)
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	f.prompts = nil
-	return rt, b
+	out, closed, _ := closeOnMarkerUnderLockGating(t, rt, b)
+	return out, closed
 }
 
-// sentBindingWithBuilderSession is sentBinding but the builder pane is
-// spawned with a known session id recorded on the binding, which the
-// broken-recovery tests need to exercise the session-id match.
-func sentBindingWithBuilderSession(t *testing.T, f *fakeHerdr, sessionID string) (Runtime, store.Binding) {
-	t.Helper()
-	f.agents = []herdr.Agent{
-		plannerAgent(),
-		{Kind: "agy", Status: herdr.StatusWorking, PaneID: "w2:p4", Session: herdr.Session{Value: sessionID}},
-	}
-	f.newPane = "w2:p4"
-	rt := newRuntime(t, f)
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err = rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	f.prompts = nil
-	return rt, b
-}
-
-// reconcile wraps Reconcile with the state lock a daemon would hold across
-// the whole read-reconcile-write, since Reconcile itself takes a *store.Tx
-// rather than locking on its own.
-func reconcile(t *testing.T, rt Runtime, b store.Binding, agents []herdr.Agent) (store.Binding, error) {
+// closeOnMarkerUnderLockGating is closeOnMarkerUnderLock plus the gating
+// return, for the gate lifecycle tests (#132).
+func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool, bool) {
 	t.Helper()
 	var out store.Binding
+	var closed, gating bool
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		out, err = Reconcile(context.Background(), rt, tx, b, agents)
+		entries, err := tx.ReadLog(b.Name)
+		if err != nil {
+			return err
+		}
+		out, closed, gating, _, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
 		return err
 	})
-	return out, err
+	if err != nil {
+		t.Fatalf("closeOnMarker: %v", err)
+	}
+	return out, closed, gating
 }
 
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("touch %s: %v", path, err)
+	}
+}
+
+// TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path (#184):
+// once refreshEndpoint has run, drainSession renders whatever the builder's
+// own session record holds since the last tick into the round's log, the
+// way reconcileHeadless drains a headless stream.
+// TestReconcileWaitsOutNudgeGraceBeforeScraping is the regression test for a
+// scrape that raced the builder: relay nudged on one tick and scraped on the
+// next, two seconds later, then advanced the round -- so the builder's real
+// report was written to an abandoned round's path and never relayed.
+// TestReconcileSkipsPausedPausedBinding, TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession
+// and TestBindRacesSessionLookupAndReconcileRecovers are gone with the pane
+// builder itself (#303; closed-list items 1 and 6): there is no builder pane,
+// no session cursor to drain and no agent list to compare a session against.
+// Their headless equivalents live in headless_test.go.
 func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
@@ -93,9 +73,8 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -123,17 +102,11 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	}
 }
 
-// TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path (#184):
-// once refreshEndpoint has run, drainSession renders whatever the builder's
-// own session record holds since the last tick into the round's log, the
-// way reconcileHeadless drains a headless stream.
-// TestReconcileWaitsOutNudgeGraceBeforeScraping is the regression test for a
-// scrape that raced the builder: relay nudged on one tick and scraped on the
-// next, two seconds later, then advanced the round -- so the builder's real
-// report was written to an abandoned round's path and never relayed.
+// TestReconcileQueuesReportInsideStartGrace pins the marker's status
+// independence for the first seconds of a round: the marker closes the round
+// even though very little time has passed since the process started.
 func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
 	clock.Advance(5 * time.Second)
@@ -141,17 +114,13 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.Round != 2 {
 		t.Errorf("round = %d, want 2 after a report", got.Round)
-	}
-	if len(f.prompts) != 0 {
-		t.Fatalf("expected zero prompts when the marker is present, got %+v", f.prompts)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
@@ -162,26 +131,15 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	}
 }
 
-func TestReconcileIgnoresWorkingBuilder(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 1 || len(f.prompts) != 0 {
-		t.Errorf("a working builder must be left alone: round=%d prompts=%+v", got.Round, f.prompts)
-	}
-}
+// TestReconcileIgnoresWorkingBuilder asserted the round against herdr's
+// builder status. There is no status to consult (#303; closed-list item 6);
+// the headless equivalent -- a live process with no marker is left alone --
+// is TestReconcileHeadlessAliveWaits in headless_test.go.
 
 // TestReconcileSkipsPaused: Reconcile returns immediately for a PAUSED
-// binding, exactly as it does for DONE. A stale builder pane left in herdr's
-// list must not mark it broken and must not be nudged.
+// binding, exactly as it does for DONE.
 func TestReconcileSkipsPaused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	b.State = store.StatePaused
 	b.Builder = store.Endpoint{Kind: "agy", Mode: store.ModeHeadless} // pause cleared the identity
 	b.RoundStartedAt = time.Time{}
@@ -189,52 +147,20 @@ func TestReconcileSkipsPaused(t *testing.T) {
 		t.Fatalf("save paused: %v", err)
 	}
 
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.State != store.StatePaused {
 		t.Errorf("State = %s, want paused", got.State)
 	}
-	if !got.BuilderMissingSince.IsZero() {
-		t.Errorf("BuilderMissingSince = %v, want zero", got.BuilderMissingSince)
-	}
-	if len(f.prompts) != 0 {
-		t.Errorf("a paused binding must not be nudged: %+v", f.prompts)
+	if got.Round != b.Round {
+		t.Errorf("Round = %d, want it untouched at %d", got.Round, b.Round)
 	}
 }
 
-func TestReconcileNeverTreatsUnknownAsDone(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatalf("write report: %v", err)
-	}
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusUnknown)}
-
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.Round != 1 {
-		t.Error("herdr documents that unknown does not prove completion; the round must not advance")
-	}
-	if _, pending, _ := rt.Store.PendingForPlanner("webshop"); pending {
-		t.Error("nothing may be queued off an unknown status")
-	}
-}
-
-// TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession covers the case where an
-// agent is inspected before any session has been reported or recorded, so there is
-// nothing yet to backfill and pane plus kind is the whole identity. Unlike
-// TestReconcileUnbreaksSessionlessBuilderAndBackfillsSession (which exercises the
-// path where herdr already reports a session to backfill), this exercises recovery
-// during the pre-session window (e.g. freshly spawned idle agy builder).
 func TestReconcileDiffCapture(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
 		diffResult: git.Diff{
@@ -254,10 +180,8 @@ func TestReconcileDiffCapture(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-
 	// First tick
-	bAfter, err := reconcile(t, rt, b, agents)
+	bAfter, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile 1: %v", err)
 	}
@@ -317,7 +241,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 	}
 
 	// Second tick: should not append duplicate diff entry
-	_, err = reconcile(t, rt, bAfter, agents)
+	_, err = reconcile(t, rt, bAfter)
 	if err != nil {
 		t.Fatalf("Reconcile 2: %v", err)
 	}
@@ -339,8 +263,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 func TestQueueReportRecordsCommitFacts(t *testing.T) {
 	closeRound := func(t *testing.T, fg *fakeGit, head string) (store.Binding, []store.LogEntry) {
 		t.Helper()
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Git = fg
 		b.RoundBaselineTree = "tree-start"
 		b.RoundBaselineHead = head
@@ -352,8 +275,7 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		got, err := reconcile(t, rt, b, agents)
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -436,26 +358,10 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 	})
 }
 
-func TestReconcileRefreshesPlannerEndpoint(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+// TestReconcileRefreshesPlannerEndpoint refreshed a planner pane id from
+// herdr's agent list. Both halves are gone (#303; closed-list items 6 and 8):
+// there is no agent list and Planner.PaneID is written by nothing.
 
-	moved := plannerAgent()
-	moved.PaneID = "w9:p2" // same session, new pane
-
-	out, err := reconcile(t, rt, b, []herdr.Agent{moved, builderAgent(herdr.StatusWorking)})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if out.Planner.PaneID != "w9:p2" {
-		t.Fatalf("planner pane = %q, want w9:p2", out.Planner.PaneID)
-	}
-}
-
-// TestBindRacesSessionLookupAndReconcileRecovers reproduces #20 end to end: the
-// builder is spawned, the post-spawn session lookup loses its race with the
-// agent's own registration, herdr flickers and the binding is flagged BROKEN --
-// and relay recovers it by itself rather than stranding a working builder.
 // TestQueueReportRecordsRusage: a headless round's report entry gets
 // Rusage from rt.Runner.Rusage when the runner has one, and stays nil
 // when it does not (#244, #216).
@@ -463,7 +369,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 	setup := func(t *testing.T) (Runtime, store.Binding, *fakeRunner) {
 		t.Helper()
 		fr := newFakeRunner()
-		rt, b := seedHeadless(t, &fakeHerdr{}, fr)
+		rt, b := seedHeadless(t, fr)
 		b.Builder.PID = 9001
 		b.Builder.StartedAt = 1_700_000_000
 		if err := rt.Store.Save(b); err != nil {
@@ -526,8 +432,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 
 func TestQueueReport_RoundClosedTree(t *testing.T) {
 	t.Run("ordinary close", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		fg := &fakeGit{
 			snapshotTreeID: "tree-end-ordinary",
 			diffResult: git.Diff{
@@ -547,8 +452,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		got, err := reconcile(t, rt, b, agents)
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -561,8 +465,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 	})
 
 	t.Run("retry path", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		fg := &fakeGit{
 			snapshotTreeID: "tree-snapshot-should-not-be-used",
 		}
@@ -593,8 +496,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		got, err := reconcile(t, rt, b, agents)
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -607,8 +509,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 	})
 
 	t.Run("non-git tree", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Git = nil
 		b.RoundBaselineTree = "tree-start"
 		b.RoundClosedTree = "stale-tree-from-round-3"
@@ -622,8 +523,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 		}
 		touch(t, rt.Store.DonePath(b.Name, b.Round))
 
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		got, err := reconcile(t, rt, b, agents)
+		got, err := reconcile(t, rt, b)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -636,77 +536,12 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 	})
 }
 
-func TestEffectiveStatus(t *testing.T) {
-	cases := []struct {
-		name      string
-		epSession string
-		aSession  string
-		status    string
-		want      string
-	}{
-		{name: "same session passes idle", epSession: "s1", aSession: "s1", status: herdr.StatusIdle, want: herdr.StatusIdle},
-		{name: "same session passes done", epSession: "s1", aSession: "s1", status: herdr.StatusDone, want: herdr.StatusDone},
-		{name: "same session passes working", epSession: "s1", aSession: "s1", status: herdr.StatusWorking, want: herdr.StatusWorking},
-		{name: "same session passes blocked", epSession: "s1", aSession: "s1", status: herdr.StatusBlocked, want: herdr.StatusBlocked},
-		{name: "differing session maps idle to working", epSession: "s1", aSession: "s2", status: herdr.StatusIdle, want: herdr.StatusWorking},
-		{name: "differing session maps done to working", epSession: "s1", aSession: "s2", status: herdr.StatusDone, want: herdr.StatusWorking},
-		{name: "differing session maps working to working", epSession: "s1", aSession: "s2", status: herdr.StatusWorking, want: herdr.StatusWorking},
-		{name: "differing session maps blocked to blocked", epSession: "s1", aSession: "s2", status: herdr.StatusBlocked, want: herdr.StatusBlocked},
-		{name: "empty recorded session passes idle", epSession: "", aSession: "s2", status: herdr.StatusIdle, want: herdr.StatusIdle},
-		{name: "empty recorded session passes done", epSession: "", aSession: "s2", status: herdr.StatusDone, want: herdr.StatusDone},
-		{name: "empty live session passes idle", epSession: "s1", aSession: "", status: herdr.StatusIdle, want: herdr.StatusIdle},
-		{name: "empty live session passes done", epSession: "s1", aSession: "", status: herdr.StatusDone, want: herdr.StatusDone},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ep := store.Endpoint{SessionID: tc.epSession}
-			a := herdr.Agent{Status: tc.status, Session: herdr.Session{Value: tc.aSession}}
-			if got := effectiveStatus(ep, a); got != tc.want {
-				t.Errorf("effectiveStatus() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// closeOnMarkerUnderLock calls closeOnMarker the way Reconcile does: inside
-// the store lock, with the binding's current log.
-func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool) {
-	t.Helper()
-	out, closed, _ := closeOnMarkerUnderLockGating(t, rt, b)
-	return out, closed
-}
-
-// closeOnMarkerUnderLockGating is closeOnMarkerUnderLock plus the gating
-// return, for the gate lifecycle tests (#132).
-func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool, bool) {
-	t.Helper()
-	var out store.Binding
-	var closed, gating bool
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		entries, err := tx.ReadLog(b.Name)
-		if err != nil {
-			return err
-		}
-		out, closed, gating, _, err = closeOnMarker(context.Background(), rt, tx, b, entries, "")
-		return err
-	})
-	if err != nil {
-		t.Fatalf("closeOnMarker: %v", err)
-	}
-	return out, closed, gating
-}
-
-func touch(t *testing.T, path string) {
-	t.Helper()
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatalf("touch %s: %v", path, err)
-	}
-}
+// TestEffectiveStatus mapped a live herdr agent's status through the
+// binding's recorded session (#303; closed-list item 6): both the agent list
+// and the session cursor are gone.
 
 func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -734,18 +569,14 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: "+rt.Store.ReportPath("webshop", 1)) {
 		t.Errorf("payload = %q", pending.Payload)
 	}
-	if len(f.reads) != 0 {
-		t.Errorf("a marked close never reads the terminal: %+v", f.reads)
-	}
 }
 
 // TestCloseOnMarkerWithoutReportIsNoreport pins §4.1: the builder said it was
 // done, so relay closes on that and says the report is missing, instead of
 // waiting for idle and scraping a worse artefact. Mutation: fall through to
-// scrapeReport -> f.reads is non-empty and the note is "scraped".
+// scrapeReport -> the note is "scraped".
 func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
-	f := &fakeHerdr{readOut: "some terminal text"}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	touch(t, rt.Store.DonePath("webshop", 1))
 
 	got, closed := closeOnMarkerUnderLock(t, rt, b)
@@ -763,17 +594,13 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 	if !strings.Contains(pending.Payload, want) {
 		t.Errorf("payload = %q, want it to contain %q", pending.Payload, want)
 	}
-	if len(f.reads) != 0 {
-		t.Errorf("no scrape on a marker-only close: %+v", f.reads)
-	}
 	if _, err := os.Stat(rt.Store.ReportPath("webshop", 1)); err == nil {
 		t.Error("relay must not write a report file of its own on a noreport close")
 	}
 }
 
 func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -796,27 +623,22 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 }
 
 // TestReconcileClosesOnMarkerWhileBuilderStillWorking pins §4.2: the marker
-// is checked every tick, before herdr's status is consulted. Mutation: move
-// the closeOnMarker call inside the idle branch -> this fails because the
-// builder is reported working.
+// is checked every tick, before the builder is consulted at all. Mutation:
+// move the closeOnMarker call behind a live-process check -> this fails
+// because the process below is alive (an unscripted pid is alive forever).
 func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
-	agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusWorking)}
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.Round != 2 {
-		t.Errorf("round = %d, want 2: the marker closes the round regardless of status", got.Round)
-	}
-	if len(f.prompts) != 0 {
-		t.Errorf("no nudge on a marked round: %+v", f.prompts)
+		t.Errorf("round = %d, want 2: the marker closes the round regardless of the process", got.Round)
 	}
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found || pending.Note != "" {
@@ -827,34 +649,41 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 // TestReconcileReportWithoutMarkerIsNotAClose pins §4.3: a report on disk is
 // not evidence the builder is finished. Mutation: gate on the report instead
 // of the marker -> the round advances on the first tick.
-// TestReconcileQuiescentWithReportClosesUnmarked pins the fallback: after the
-// nudge and a still screen, the report that exists is delivered with the
-// omission named, never scraped over. Mutation: drop the "unmarked" note ->
-// fails; scrape instead of queueing the report -> the body check fails.
-// TestReconcileQuiescentWithoutReportStillScrapes is the regression pin for
-// the scrape path: no report and no marker after quiescence is exactly what
-// it was before the marker existed.
-// TestReconcileScrapedBodyIsNeverTailParsed pins #221: a scraped body is a
-// terminal capture, never the builder's own report file, so queueReport must
-// not call parseReportTail on it regardless of whether the text looks like a
-// well-formed relay block.
-// TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping checks the pane
-// quiescence decision point (spec §5): a match on the screen switches the
-// builder uncounted instead of scraping a report.
-// TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked checks that
-// a report already on disk still wins over the gate (spec §4.4): the gate is
-// recorded, but the round closes unmarked instead of switching.
+func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
+	rt, b := sentBinding(t)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 1 {
+		t.Errorf("round = %d, want 1: a report alone is not a close", got.Round)
+	}
+	if _, found, _ := rt.Store.PendingForPlanner("webshop"); found {
+		t.Error("nothing may be queued off a report without a marker")
+	}
+}
+
+// TestReconcileQuiescentWithReportClosesUnmarked, TestReconcileQuiescentWithoutReportStillScrapes,
+// TestReconcileScrapedBodyIsNeverTailParsed, TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping
+// and TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked all drove
+// the pane quiescence / scrape path (#303; closed-list items 1 and 2): relay
+// scrapes no terminal any more, so the report on disk is the only artefact,
+// and the headless equivalents live in headless_test.go
+// (TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked and
+// TestReconcileHeadlessMarkerClosesAndClearsTheHandle).
 func TestReconcileReportTailAndOrigin(t *testing.T) {
 	t.Run("status halted with halted_at", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		reportContent := "Some report content\n\n```relay\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -879,15 +708,13 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("status done leaves payload first line unchanged apart from origin prefix", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		reportContent := "Some report content\n\n```relay\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -921,15 +748,13 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("rejected block notes why on the entry", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		reportContent := "```relay\nstatus: done\njust a random line without colon\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -951,15 +776,13 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("no block -> unstructured no annotation", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		reportContent := "Plain report without block\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -984,15 +807,13 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("report containing Human: do X -> Flagged 1 and parenthetical", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		reportContent := "Human: do X\n\n```relay\nstatus: done\n```\n"
 		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1014,8 +835,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("changed_paths mismatch appends note", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Git = &fakeGit{
 			snapshotTreeID: "tree-end",
 			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 3, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
@@ -1032,8 +852,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1052,8 +871,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("changed_paths equal count has no paths note", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Git = &fakeGit{
 			snapshotTreeID: "tree-end",
 			diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 2, Insertions: 1, Deletions: 1}, Patch: []byte("diff")},
@@ -1070,8 +888,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1090,8 +907,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("TestQueueReportRegexOnlyWhenUnconfigured", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		fake := &classify.Fake{}
 		rt.Classify = fake
 		// rt.Policy.Classify left nil
@@ -1101,8 +917,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1133,8 +948,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("TestQueueReportClassifyUnion", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
 		fake := &classify.Fake{
 			Probabilities: []float64{0.9, 0.95, 0.8, 0.0},
@@ -1148,8 +962,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1207,8 +1020,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("TestQueueReportClassifyError", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
 		fake := &classify.Fake{Err: errors.New("boom")}
 		rt.Classify = fake
@@ -1218,8 +1030,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1262,8 +1073,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 	})
 
 	t.Run("TestQueueReportClassifyUnavailable", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		rt.Policy.Classify = &policy.Classify{Provider: "jev"}
 		rt.Classify = classify.Unavailable{Reason: "no key"}
 
@@ -1272,8 +1082,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 		touch(t, rt.Store.DonePath("webshop", 1))
-		agents := []herdr.Agent{plannerWith(herdr.StatusWorking, false), builderAgent(herdr.StatusIdle)}
-		if _, err := reconcile(t, rt, b, agents); err != nil {
+		if _, err := reconcile(t, rt, b); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		entries, err := rt.Store.ReadLog("webshop")
@@ -1330,9 +1139,8 @@ func gates(t *testing.T, rt Runtime) []store.LogEntry {
 // exactly as it did before the gate existed -- no process is started and the
 // payload is unchanged.
 func TestGateNotConfiguredIsUnchanged(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1367,15 +1175,14 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 
 // TestGateStartsOnMarkerAndHoldsTheRound pins #132's state machine: a
 // configured gate starts on the marker tick and holds the round across
-// ticks -- no nudge, no exit/switch handling -- until it finishes.
+// ticks -- no exit/switch handling, no second process -- until it finishes.
 //
-// Mutation check (run and report): make the pane call site ignore gating
-// (fall through to the status switch instead of returning early); this test
-// fails because the second tick's nudge reaches fakeHerdr; restore; passes.
+// Mutation check (run and report): make the close path ignore gating (fall
+// through to the marker close instead of returning early); this test fails
+// because the second tick's round has advanced and a second process started.
 func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -1388,8 +1195,7 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -1433,17 +1239,15 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 		t.Fatalf("no report entry while the gate is running: %+v", pending)
 	}
 
-	// Second tick: the gate is still alive. Even though the builder itself
-	// would otherwise be idle long enough to nudge, gating must hold the
-	// round untouched. fakeRunner.Start stamps StartedAt from a real epoch
+	// Second tick: the gate is still alive. Gating must hold the round
+	// untouched. fakeRunner.Start stamps StartedAt from a real epoch
 	// unrelated to the fake clock, so it is realigned here -- otherwise the
 	// elapsed-since-start arithmetic in gateStep would see it as already far
 	// past any timeout.
 	got.GateRun.StartedAt = clock.Now().Unix()
 	fr.script(fr.handles[0].PID, true)
 	clock.Advance(31 * time.Second)
-	agents2 := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusIdle)}
-	got2, err := reconcile(t, rt, got, agents2)
+	got2, err := reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
@@ -1452,9 +1256,6 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 	}
 	if len(fr.specs) != 1 {
 		t.Fatalf("Start calls after second tick = %d, want still 1", len(fr.specs))
-	}
-	if len(f.prompts) != 0 {
-		t.Errorf("no nudge while the gate runs: %+v", f.prompts)
 	}
 	if len(exits(t, rt)) != 0 {
 		t.Errorf("no exit handling while the gate runs: %+v", exits(t, rt))
@@ -1468,9 +1269,8 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 // round with a gate=pass annotation, a Gate record on the entry, and the
 // gate's payload line.
 func TestGatePassClosesWithAnnotation(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	if err := rt.Store.Save(b); err != nil {
@@ -1523,9 +1323,8 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 // round with gate=fail, and the payload carries the log's last
 // gateTailLines non-empty lines, not the first.
 func TestGateFailAddsTail(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	if err := rt.Store.Save(b); err != nil {
@@ -1584,9 +1383,8 @@ func TestGateFailAddsTail(t *testing.T) {
 // TestGateTimeoutKills pins #132: a gate that outlives its timeout is
 // killed and the round closes with gate=timeout.
 func TestGateTimeoutKills(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -1650,8 +1448,7 @@ func TestGateTimeoutKills(t *testing.T) {
 // with no Runner cannot hang the round -- it closes this tick with a
 // gate=error annotation instead.
 func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = nil
 	b.Gate = "make check"
 	if err := rt.Store.Save(b); err != nil {
@@ -1709,7 +1506,7 @@ func gateRecordFor(t *testing.T, rt Runtime, name string, round int) *store.Gate
 // second (after the fake runner is told the process exited) closes the round
 // with gate=fail. It returns the binding Reconcile returned and the failing
 // record, and fails the test if the round did not close on the gate.
-func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner, logBody string, agents []herdr.Agent) (store.Binding, *store.GateRecord) {
+func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner, logBody string) (store.Binding, *store.GateRecord) {
 	t.Helper()
 	round := b.Round
 	if err := os.WriteFile(rt.Store.ReportPath(b.Name, round), []byte("done"), 0o644); err != nil {
@@ -1717,7 +1514,7 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 	}
 	touch(t, rt.Store.DonePath(b.Name, round))
 
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("reconcile (start gate, round %d): %v", round, err)
 	}
@@ -1731,7 +1528,7 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 	fr.script(pid, false)
 	fr.exit(pid, 2)
 
-	got, err = reconcile(t, rt, got, agents)
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("reconcile (close gate, round %d): %v", round, err)
 	}
@@ -1746,18 +1543,16 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 // budget stages round N+1 as a repair plan, hands it to the builder exactly as
 // Send would, and logs `repair k/M` on the new round's plan entry.
 func TestRegateFailOpensRepairRound(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	b.Regate = 2
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
-	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
 
 	if got.Round != 2 {
 		t.Fatalf("Round = %d, want 2", got.Round)
@@ -1813,18 +1608,16 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 // budget is spent, the next failing gate ends the loop with NEEDS YOU instead
 // of another repair round.
 func TestRegateBoundHaltsNeedsYou(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	b.Regate = 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
-	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
 	if got.State != store.StateActive || got.RepairCount != 1 {
 		t.Fatalf("after the first failure: state=%q repairs=%d, want active/1", got.State, got.RepairCount)
 	}
@@ -1834,7 +1627,7 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 
 	// Round 2's gate fails with different content, so the stall bound cannot
 	// fire: the count bound must.
-	got, _ = failRoundWithGate(t, rt, got, fr, "FAIL github.com/example/other-pkg\n", agents)
+	got, _ = failRoundWithGate(t, rt, got, fr, "FAIL github.com/example/other-pkg\n")
 
 	if got.State != store.StateNeedsYou {
 		t.Fatalf("State = %q, want needs_you", got.State)
@@ -1854,25 +1647,23 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 // a second identical failure -- same content modulo the clock -- means the
 // repair changed nothing that mattered, so the loop ends early.
 func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	b.Regate = 5
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
 	got, _ := failRoundWithGate(t, rt, b, fr,
-		"2026-09-21T14:29:00Z FAIL github.com/example/pkg2 0.02s\n", agents)
+		"2026-09-21T14:29:00Z FAIL github.com/example/pkg2 0.02s\n")
 	if got.State != store.StateActive {
 		t.Fatalf("after the first failure: state = %q, want active (a repair started)", got.State)
 	}
 
 	got, _ = failRoundWithGate(t, rt, got, fr,
-		"2026-09-21T14:31:07Z FAIL github.com/example/pkg2 9.99s\n", agents)
+		"2026-09-21T14:31:07Z FAIL github.com/example/pkg2 9.99s\n")
 
 	if got.State != store.StateNeedsYou {
 		t.Fatalf("State = %q, want needs_you", got.State)
@@ -1888,18 +1679,16 @@ func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
 // TestRegatePassResetsCount pins #132 part 2's reset: a passing gate clears
 // the repair bookkeeping, so the next failing gate gets a fresh budget.
 func TestRegatePassResetsCount(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	b.Regate = 2
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
-	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
 	if got.RepairCount != 1 || got.LastGateSig == "" {
 		t.Fatalf("after the first failure: repairs=%d sig=%q, want 1 and non-empty", got.RepairCount, got.LastGateSig)
 	}
@@ -1910,7 +1699,7 @@ func TestRegatePassResetsCount(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 2))
 
-	got, err := reconcile(t, rt, got, agents)
+	got, err := reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("reconcile (start gate, round 2): %v", err)
 	}
@@ -1924,7 +1713,7 @@ func TestRegatePassResetsCount(t *testing.T) {
 	fr.script(pid, false)
 	fr.exit(pid, 0)
 
-	got, err = reconcile(t, rt, got, agents)
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("reconcile (close gate, round 2): %v", err)
 	}
@@ -1946,17 +1735,15 @@ func TestRegatePassResetsCount(t *testing.T) {
 // TestNoRegateUnchanged pins the off switch (#132 part 2): Regate 0 is
 // exactly today's behaviour -- the failure is reported, nothing is re-sent.
 func TestNoRegateUnchanged(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	b.Gate = "make check"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
 
-	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n", agents)
+	got, _ := failRoundWithGate(t, rt, b, fr, "FAIL github.com/example/pkg2\n")
 
 	if got.Round != 2 {
 		t.Fatalf("Round = %d, want 2", got.Round)
@@ -1967,8 +1754,8 @@ func TestNoRegateUnchanged(t *testing.T) {
 	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err == nil {
 		t.Error("no round-2 plan may be staged when regate is 0")
 	}
-	if len(f.prompts) != 0 {
-		t.Errorf("prompts = %d, want none with regate 0", len(f.prompts))
+	if got := len(runnerOf(t, rt).specs); got != 1 {
+		t.Errorf("processes started = %d, want 1 (the gate only, nothing re-sent)", got)
 	}
 
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
@@ -1987,8 +1774,7 @@ func TestNoRegateUnchanged(t *testing.T) {
 // start -- it clears the repair bookkeeping and, when --regate is given, sets
 // the binding's budget.
 func TestSendResetsRepairBookkeeping(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	b.RepairCount = 1
 	b.LastGateSig = "x"
 	if err := rt.Store.Save(b); err != nil {
@@ -2022,41 +1808,20 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 	}
 }
 
-// roundReportEntry is webshop's queued report entry for round. It is the
-// non-e2e form of e2e_test.go's reportEntry, which is behind the e2e tag.
-func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
-	t.Helper()
-	entries, err := rt.Store.ReadLog("webshop")
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	for _, e := range entries {
-		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
-			return e
-		}
-	}
-	t.Fatalf("no report entry for round %d", round)
-	return store.LogEntry{}
-}
+// TestReportEntryCarriesPaneSession and TestReportEntryNoSessionIsNil named
+// the session herdr reported for a pane builder (#303; closed-list items 6
+// and 8). The headless equivalent -- the report entry of a closed headless
+// round names the stream's session -- is TestReportEntryCarriesHeadlessSession
+// in headless_test.go.
 
-// TestReportEntryCarriesPaneSession pins #147: a pane builder's report entry
-// names the session herdr reports for it, refreshed onto the endpoint on the
-// tick that closes the round.
-// TestReportEntryNoSessionIsNil pins #147's never-guess rule: a pane whose
-// agent reports no session leaves BuilderSession nil, and the entry's JSON
-// carries no builder_session key.
-// TestReconcilePaneStampsStall pins #135's pane path: a pane builder that has
-// been working with an unchanged tree, screen and round for longer than
-// stall_after_ms is stamped StalledSince, and the daemon raises one
-// builder_stalled hook event and one advisory notice. The stall is an
-// observation: the process is untouched and the binding stays ACTIVE.
 // TestReconcileNeedsYouGoesStale pins #135's stale path: a binding that has
-// been NEEDS YOU past stale_after_ms is stamped from its halt time, fires one
-// binding_stale event and one notice, and a second tick adds neither. A human
-// Send clears the stamp and the notification bookkeeping.
+// been NEEDS YOU past stale_after_ms is stamped from its halt time and fires
+// one binding_stale event; a second tick adds neither. The herdr notification
+// beside the event is gone (#303, closed-list item 4), so the event itself is
+// what this test now pins. A human Send clears the stamp and the notification
+// bookkeeping.
 func TestReconcileNeedsYouGoesStale(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
 
@@ -2068,8 +1833,7 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agents := []herdr.Agent{plannerAgent(), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2086,15 +1850,9 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	if stale != 1 {
 		t.Fatalf("got %d binding_stale events, want 1: %+v", stale, disp.getEvents())
 	}
-	if len(f.notices) != 1 {
-		t.Fatalf("got %d notices, want 1: %v", len(f.notices), f.notices)
-	}
-	if !strings.Contains(f.notices[0], "NEEDS YOU") {
-		t.Errorf("notice = %q, want it to name the wait", f.notices[0])
-	}
 
 	// A second tick is not a second episode.
-	got2, err := reconcile(t, rt, got, agents)
+	got2, err := reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("Reconcile (second tick): %v", err)
 	}
@@ -2109,9 +1867,6 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	}
 	if stale2 != 1 {
 		t.Errorf("got %d binding_stale events after a second tick, want 1", stale2)
-	}
-	if len(f.notices) != 1 {
-		t.Errorf("got %d notices after a second tick, want 1: %v", len(f.notices), f.notices)
 	}
 
 	// A human send is a fresh attempt: the stale stamp and its notification
@@ -2145,10 +1900,9 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 // Mutation check (run and report): delete the wantVerify block from
 // Reconcile's close path and this fails on addDetachedWorktreeCalls.
 func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
 	fg := &fakeGit{headCommitID: "head1"}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	rt.Runner = fr
 	rt.Git = fg
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
@@ -2171,8 +1925,7 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2230,11 +1983,14 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 		t.Errorf("consult state = %q, want running", consult.State)
 	}
 
-	// The report was delivered as today: nothing pends for the planner.
+	// The report was queued for the planner: with no live claim it waits for
+	// `relay pull`, which is the whole delivery route since #303.
 	if pending, found, err := rt.Store.PendingForPlanner("webshop"); err != nil {
 		t.Fatal(err)
-	} else if found {
-		t.Errorf("report must have been delivered, still pending: %+v", pending)
+	} else if !found {
+		t.Error("the closed round's report must be queued for the planner")
+	} else if pending.Kind != store.KindReport {
+		t.Errorf("pending kind = %q, want report", pending.Kind)
 	}
 }
 
@@ -2242,9 +1998,8 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 // where the closed round's gate log is, because seeing the gate's own output
 // is the point of running verify after the gate.
 func TestVerifyGateLogIsPassed(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	rt.Git = &fakeGit{headCommitID: "head1"}
 	rt.NewID = func() string { return verifyConsultID }
@@ -2259,10 +2014,8 @@ func TestVerifyGateLogIsPassed(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-
 	// First tick starts the gate and holds the round open.
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2273,7 +2026,7 @@ func TestVerifyGateLogIsPassed(t *testing.T) {
 	// The gate exits 0; the next tick closes the round and starts the reviewer.
 	fr.script(fr.handles[0].PID, false)
 	fr.exit(fr.handles[0].PID, 0)
-	got, err = reconcile(t, rt, got, agents)
+	got, err = reconcile(t, rt, got)
 	if err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
@@ -2302,9 +2055,8 @@ const candidateSetWithoutReviewerJSON = `[
 // round with no reviewer candidate closes normally, logs one "verify skipped:"
 // note, starts nothing, and leaves no throwaway worktree behind.
 func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	rt.Runner = fr
 	fg := &fakeGit{headCommitID: "head1"}
 	rt.Git = fg
@@ -2319,8 +2071,7 @@ func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
+	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -2381,13 +2132,12 @@ func retiredEntries(t *testing.T, rt Runtime, name string) []store.LogEntry {
 // left exactly as it is; a second tick adds none; a remote binding is
 // untouched; and a PAUSED pane binding is retired too.
 func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	legacy := store.Binding{
 		Name: "pane", CWD: "/repo", Round: 2, State: store.StateActive,
 		Worktree: "/wt/pane", Branch: "relay/pane",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
 		Builder: store.Endpoint{PaneID: "w2:p4", Kind: "agy"}, // Mode "" = pre-#303 pane
 	}
 	paused := legacy
@@ -2396,7 +2146,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 	paused.Builder.Mode = store.ModePane
 	remote := store.Binding{
 		Name: "api", CWD: "/repo", Round: 1, State: store.StateActive,
-		Planner: store.Endpoint{PaneID: "w2:p3"},
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
 		Builder: store.Endpoint{Kind: "claude", Mode: store.ModeRemote, Server: "contabo"},
 	}
 	for _, b := range []store.Binding{legacy, paused, remote} {
@@ -2405,7 +2155,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 		}
 	}
 
-	got, err := reconcile(t, rt, legacy, []herdr.Agent{plannerAgent()})
+	got, err := reconcile(t, rt, legacy)
 	if err != nil {
 		t.Fatalf("Reconcile legacy: %v", err)
 	}
@@ -2424,7 +2174,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 	}
 
 	// A second tick adds nothing: the binding is DONE now.
-	if _, err := reconcile(t, rt, got, []herdr.Agent{plannerAgent()}); err != nil {
+	if _, err := reconcile(t, rt, got); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if n := len(retiredEntries(t, rt, "pane")); n != 1 {
@@ -2432,7 +2182,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 	}
 
 	// A PAUSED pane binding is retired too.
-	gotPaused, err := reconcile(t, rt, paused, []herdr.Agent{plannerAgent()})
+	gotPaused, err := reconcile(t, rt, paused)
 	if err != nil {
 		t.Fatalf("Reconcile paused: %v", err)
 	}
@@ -2445,7 +2195,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 
 	// A remote binding is never a legacy pane binding: it is left alone, not
 	// retired.
-	remoteGot, err := reconcile(t, rt, remote, []herdr.Agent{plannerAgent()})
+	remoteGot, err := reconcile(t, rt, remote)
 	if err != nil {
 		t.Fatalf("Reconcile remote: %v", err)
 	}
@@ -2462,4 +2212,21 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 	if n := len(retiredEntries(t, rt, "api")); n != 0 {
 		t.Errorf("remote retired entries = %d, want 0", n)
 	}
+}
+
+// roundReportEntry is webshop's queued report entry for round. It is the
+// non-e2e form of e2e_test.go's reportEntry, which is behind the e2e tag.
+func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
+	t.Helper()
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Round == round && e.Direction == store.DirToPlanner && e.Kind == store.KindReport {
+			return e
+		}
+	}
+	t.Fatalf("no report entry for round %d", round)
+	return store.LogEntry{}
 }

@@ -19,8 +19,7 @@ import (
 func splitModel(t *testing.T, width, height int, rows ...relay.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st, Herdr: fh}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relay.Runtime{Store: st}}, Options{Interval: time.Second})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -150,7 +149,7 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 	planner := relay.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
-		PlannerPane: "w1:p1", PlannerKind: "claude", PlannerStatus: "working",
+		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 	}
 	head = stripANSI(strings.Join(m.paneHead(&planner), "\n"))
 	if !strings.Contains(head, "planner") {
@@ -324,39 +323,6 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 // not answer still renders its rows and marks the footer once -- without the
 // error text itself, the way the refresh marker works (list_test.go) -- and
 // a report whose HerdrError is empty adds no marker.
-func TestFooterMarksHerdrUnreachable(t *testing.T) {
-	rows := []relay.BindingStatus{
-		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "unknown"},
-	}
-
-	// A report with an empty HerdrError adds no footer marker.
-	m := splitModel(t, 140, 40, rows...)
-	if strings.Contains(stripANSI(m.footerView()), "herdr unreachable") {
-		t.Errorf("empty HerdrError must not mark the footer: %q", m.footerView())
-	}
-
-	// The same model receiving a report whose HerdrError is set marks the
-	// footer without the error text, and keeps rendering the rows.
-	res, _ := m.Update(statusMsg{report: relay.Report{
-		HerdrError: "no herdr server",
-		Bindings:   rows,
-	}})
-	m = res.(Model)
-	f := stripANSI(m.footerView())
-	if !strings.Contains(f, "! herdr unreachable") {
-		t.Errorf("footer must mark herdr unreachable: %q", f)
-	}
-	if strings.Contains(f, "no herdr server") {
-		t.Errorf("the error text itself must not be shown in the footer: %q", f)
-	}
-	if strings.Contains(f, "refresh failed") {
-		t.Errorf("a degraded report is not a refresh failure: %q", f)
-	}
-	if !strings.Contains(stripANSI(m.View()), "api") {
-		t.Errorf("rows must still render, got:\n%s", m.View())
-	}
-}
-
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	rows := threeRows()
 	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}

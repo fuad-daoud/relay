@@ -4,13 +4,13 @@ import (
 	"sort"
 
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // ConsultRolesTooLong returns, sorted, the consult roles for which
-// bindingName + "-" + role + "-" + <8 hex> would exceed herdr's agent-name
-// limit and so be refused at `relay ask`. It is pure, and empty when every
-// consult role fits or bindingName is empty.
+// bindingName + "-" + role + "-" + <8 hex> would exceed the agent-name limit
+// and so be refused at `relay ask`. It is pure, and empty when every consult
+// role fits or bindingName is empty.
 //
 // It backs the advisory note printed after a successful bind, add or fork:
 // a binding that can build but cannot take a consult role is still
@@ -24,7 +24,7 @@ func ConsultRolesTooLong(bindingName string) []string {
 		}
 		// A consult agent name is <binding>-<role>-<8 hex>: one separator on
 		// each side of the role, plus the 8-hex id.
-		if len(bindingName)+1+len(role.Name)+1+8 > herdr.MaxAgentNameLen {
+		if len(bindingName)+1+len(role.Name)+1+8 > store.MaxAgentNameLen {
 			tooLong = append(tooLong, role.Name)
 		}
 	}

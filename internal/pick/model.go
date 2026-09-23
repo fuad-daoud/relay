@@ -28,7 +28,7 @@ type verbDoneMsg struct {
 	err  error
 }
 
-// Model is the whole picker: one of four screens at a time. Every herdr
+// Model is the whole picker: one of four screens at a time. Every terminal
 // and store call runs in a tea.Cmd and comes back as a message, so Update
 // is pure and tests drive it with messages.
 type Model struct {

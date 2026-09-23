@@ -37,8 +37,7 @@ func TestTabOrderStartsWithPlan(t *testing.T) {
 
 func TestFetchPlanLive(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -75,10 +74,8 @@ func TestFetchPlanLive(t *testing.T) {
 
 func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
 	rt := relay.Runtime{
 		Store: st,
-		Herdr: fh,
 	}
 
 	cmd := fetchStatus(context.Background(), plannerSource{rt}, scopeLive, "")
@@ -97,8 +94,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 
 func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -141,8 +137,7 @@ func TestFetchReportScrapedPayloadDoesNotTouchPath(t *testing.T) {
 
 func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "emptybinding"
 
 	b := newTestBinding(name)
@@ -170,8 +165,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 // round must show that round's report, not a later round's.
 func TestFetchReportTakesRound(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -208,8 +202,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 // a log for reads as prose, not as an error, and must never reach herdr.
 func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	cmd := fetchDiff(context.Background(), plannerSource{rt}, "webshop", 0)
 	msg := cmd()
@@ -228,8 +221,7 @@ func TestFetchDiffRoundZero(t *testing.T) {
 
 func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -254,8 +246,7 @@ func TestFetchDiffRoundNoStoredPatch(t *testing.T) {
 
 func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -309,8 +300,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 // than dumping the whole binding log.
 func TestFetchLogFiltersRound(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -342,8 +332,7 @@ func TestFetchLogFiltersRound(t *testing.T) {
 
 func TestFetchForRouting(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	b := newTestBinding(name)
@@ -372,8 +361,7 @@ func TestFetchForRouting(t *testing.T) {
 // that agent, not replay a name that may no longer resolve.
 func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	logPath := filepath.Join(t.TempDir(), "002-builder.log")
 	if err := os.WriteFile(logPath, []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
@@ -399,15 +387,11 @@ func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
 	if tMsg.content.body != "a\nb\nc\nd\ne" {
 		t.Errorf("body = %q, want the whole log regardless of the lines argument", tMsg.content.body)
 	}
-	if fh.readCalls != 0 {
-		t.Errorf("a headless builder has no pane to read: readCalls = %d", fh.readCalls)
-	}
 }
 
 func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 	name := "webshop"
 
 	logPath := filepath.Join(t.TempDir(), "002-builder.log")
@@ -446,8 +430,7 @@ func TestFetchTerminalHeadlessReturnsWholeLog(t *testing.T) {
 
 func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
 	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless}
@@ -468,15 +451,11 @@ func TestFetchTerminalHeadlessIdleAndMissingLog(t *testing.T) {
 	if !strings.HasPrefix(tMsg.content.empty, "log not written yet: ") || !strings.Contains(tMsg.content.empty, b.Builder.LogPath) {
 		t.Errorf("missing log: empty = %q", tMsg.content.empty)
 	}
-	if fh.readCalls != 0 {
-		t.Errorf("readCalls = %d, want 0", fh.readCalls)
-	}
 }
 
 func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	b := newTestBinding("webshop")
 	b.Round = 3 // round 2 closed; nothing sent yet
@@ -501,9 +480,6 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	if tMsg.content.body != "Bash go test ./...\n  -> ok: ok\nrelay-exit:0" {
 		t.Errorf("body = %q", tMsg.content.body)
 	}
-	if fh.readCalls != 0 {
-		t.Errorf("readCalls = %d, want 0", fh.readCalls)
-	}
 }
 
 // TestFetchTerminalRemoteBuilder pins the #303 remote branch: a remote
@@ -511,8 +487,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 // otherwise a single line naming the server.
 func TestFetchTerminalRemoteBuilder(t *testing.T) {
 	st := store.New(t.TempDir())
-	fh := newFakeHerdr(t)
-	rt := relay.Runtime{Store: st, Herdr: fh}
+	rt := relay.Runtime{Store: st}
 
 	logPath := st.BuilderLogPath("webshop", 2)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -536,9 +511,6 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 	}
 	if !msg.content.transcript {
 		t.Error("transcript = false, want true for a rendered round log")
-	}
-	if fh.readCalls != 0 {
-		t.Errorf("a remote builder has no local pane: readCalls = %d", fh.readCalls)
 	}
 
 	// No local log for the round: the single line naming the server.

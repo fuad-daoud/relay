@@ -231,7 +231,7 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		if b.Planner.SessionID != "" {
 			id, perr := tx.UpsertPlanner(db.Planner{
 				// b.PlannerID is the relay planner record's own id
-				// (docs/specs/2026-09-22-drop-herdr-design.md §3.5). Nothing
+				// (#303 §3.5). Nothing
 				// writes the field yet -- step 1b sets it at bind/add/fork --
 				// so today this is always "" and the natural-key path below
 				// behaves exactly as before.

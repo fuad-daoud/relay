@@ -1,13 +1,13 @@
  relay   1 bindings                                                                                                                   14:02 
 
  ACTIVE  1                        │ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  round 1   ACTIVE                                              
-▎  xxxxxxxxxxxxxxxxxxxxxxxxxxxxr1 │ planner                                                                                                 
-▎  working                        │ builder       agy       working                                                                         
+▎  xxxxxxxxxxxxxxxxxxxxxxxxxxxxr1 │ planner                 route                                                                           
+▎  working                        │ builder  agy       working                                                                              
 ▎  agy                            │ tree                                                                                                    
                                   │                                                                                                         
                                   │  plan    report    terminal    diff    log                                                              
                                   │ ──────────────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────
-                                  │  · captured 0s ago · 2 lines                                                                            
+                                  │ remote · captured 0s ago · 2 lines                                                                      
                                   │                                                                                                         
                                   │ $ go test ./...                                                                                         
                                   │ ok      github.com/fuad-daoud/relay/internal/ui    1.2s                                                 

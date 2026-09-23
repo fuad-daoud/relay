@@ -77,12 +77,22 @@ func landBinding(t *testing.T, rt Runtime, mutate func(*store.Binding)) store.Bi
 	return b
 }
 
+// noExec is a seam that would fail if Land ever reached it: the sub-tests
+// here assert on git calls only.
+func noExec(context.Context, string, string, ...string) (int, string, error) {
+	return 0, "", errors.New("unexpected exec")
+}
+
+// noGate is the landBinding mutation for the sub-tests that assert on git
+// calls only: a binding with no gate never reaches the exec seam.
+func noGate(b *store.Binding) { b.Gate = "" }
+
 // TestLandRebasesGatesPushesLogs is the whole land sequence in one place:
 // fetch, rebase onto origin/<base>, the gate on the rebased tree, the remote
 // branch check, the push, and the log entry -- with the PR only printed,
 // since no gh is on PATH.
 func TestLandRebasesGatesPushesLogs(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	b := landBinding(t, rt, nil)
@@ -182,8 +192,11 @@ func TestLandRebasesGatesPushesLogs(t *testing.T) {
 
 // TestLandDirtyRefusesBeforeAnyGit: a dirty worktree is refused before a
 // single git command runs, and before the gate.
+
+// TestLandDirtyRefusesBeforeAnyGit: a dirty worktree is refused before a
+// single git command runs, and before the gate.
 func TestLandDirtyRefusesBeforeAnyGit(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	fg := &fakeGit{dirtyResult: true}
 	rt.Git = fg
 	b := landBinding(t, rt, nil)
@@ -212,8 +225,11 @@ func TestLandDirtyRefusesBeforeAnyGit(t *testing.T) {
 
 // TestLandConflictAbortsExit3: a conflicting rebase names every path, stops
 // before the gate and the push, and writes nothing.
+
+// TestLandConflictAbortsExit3: a conflicting rebase names every path, stops
+// before the gate and the push, and writes nothing.
 func TestLandConflictAbortsExit3(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	fg := &fakeGit{rebaseConflicts: []string{"a.go", "b.go"}}
 	rt.Git = fg
 	b := landBinding(t, rt, nil)
@@ -247,8 +263,11 @@ func TestLandConflictAbortsExit3(t *testing.T) {
 
 // TestLandGateFailNothingPushed is the ordering rule: the gate runs on the
 // rebased tree, so a failing gate leaves origin untouched.
+
+// TestLandGateFailNothingPushed is the ordering rule: the gate runs on the
+// rebased tree, so a failing gate leaves origin untouched.
 func TestLandGateFailNothingPushed(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	landBinding(t, rt, nil)
@@ -275,8 +294,11 @@ func TestLandGateFailNothingPushed(t *testing.T) {
 
 // TestLandPRWithGh: with gh on PATH and --pr, the PR is created and its URL
 // recorded; the gate still ran first.
+
+// TestLandPRWithGh: with gh on PATH and --pr, the PR is created and its URL
+// recorded; the gate still ran first.
 func TestLandPRWithGh(t *testing.T) {
-	rt := newRuntime(t, &fakeHerdr{})
+	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
 	landBinding(t, rt, nil)
@@ -334,9 +356,13 @@ func TestLandPRWithGh(t *testing.T) {
 // TestLandForceWithLeaseOnReland: a branch already on origin was rewritten by
 // the rebase, so its push needs the lease; --merge does not rewrite it and
 // does not.
+
+// TestLandForceWithLeaseOnReland: a branch already on origin was rewritten by
+// the rebase, so its push needs the lease; --merge does not rewrite it and
+// does not.
 func TestLandForceWithLeaseOnReland(t *testing.T) {
 	t.Run("a rebase relands with the lease", func(t *testing.T) {
-		rt := newRuntime(t, &fakeHerdr{})
+		rt := newRuntime(t)
 		fg := &fakeGit{remoteBranchExists: true}
 		rt.Git = fg
 		b := landBinding(t, rt, noGate)
@@ -358,7 +384,7 @@ func TestLandForceWithLeaseOnReland(t *testing.T) {
 	})
 
 	t.Run("--merge is not rewritten, so no lease", func(t *testing.T) {
-		rt := newRuntime(t, &fakeHerdr{})
+		rt := newRuntime(t)
 		fg := &fakeGit{remoteBranchExists: true}
 		rt.Git = fg
 		b := landBinding(t, rt, noGate)
@@ -391,13 +417,6 @@ func TestLandForceWithLeaseOnReland(t *testing.T) {
 
 // noExec is a seam that would fail if Land ever reached it: the sub-tests
 // here assert on git calls only.
-func noExec(context.Context, string, string, ...string) (int, string, error) {
-	return 0, "", errors.New("unexpected exec")
-}
-
-// noGate is the landBinding mutation for the sub-tests that assert on git
-// calls only: a binding with no gate never reaches the exec seam.
-func noGate(b *store.Binding) { b.Gate = "" }
 
 // TestLandRefusals covers every state land refuses outright, and the two
 // escapes that turn a refusal into a land: --onto for a binding that recorded
@@ -449,7 +468,7 @@ func TestLandRefusals(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rt := newRuntime(t, &fakeHerdr{})
+			rt := newRuntime(t)
 			fg := &fakeGit{}
 			rt.Git = fg
 			landBinding(t, rt, c.mutate)
@@ -468,7 +487,7 @@ func TestLandRefusals(t *testing.T) {
 	}
 
 	t.Run("--onto unblocks a binding with no base ref", func(t *testing.T) {
-		rt := newRuntime(t, &fakeHerdr{})
+		rt := newRuntime(t)
 		fg := &fakeGit{}
 		rt.Git = fg
 		landBinding(t, rt, func(b *store.Binding) { b.BaseRef = ""; b.Gate = "" })
@@ -486,7 +505,7 @@ func TestLandRefusals(t *testing.T) {
 	})
 
 	t.Run("--force unblocks an open round", func(t *testing.T) {
-		rt := newRuntime(t, &fakeHerdr{})
+		rt := newRuntime(t)
 		fg := &fakeGit{}
 		rt.Git = fg
 		landBinding(t, rt, func(b *store.Binding) { b.RoundStartedAt = baseTime; b.Gate = "" })
@@ -503,6 +522,10 @@ func TestLandRefusals(t *testing.T) {
 // TestLandNoGateSaysSo pins the two no-gate words: a binding with no gate
 // reports "none", and --no-gate reports "skipped", so a skipped gate never
 // reads as a passing one.
+
+// TestLandNoGateSaysSo pins the two no-gate words: a binding with no gate
+// reports "none", and --no-gate reports "skipped", so a skipped gate never
+// reads as a passing one.
 func TestLandNoGateSaysSo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -515,7 +538,7 @@ func TestLandNoGateSaysSo(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rt := newRuntime(t, &fakeHerdr{})
+			rt := newRuntime(t)
 			rt.Git = &fakeGit{}
 			landBinding(t, rt, func(b *store.Binding) { b.Gate = c.gate })
 			ex := &landExecStub{codes: []int{0}}
@@ -538,6 +561,15 @@ func TestLandNoGateSaysSo(t *testing.T) {
 
 // TestLandTextIsHonestAboutWhatItDid: the printed line never calls a merge a
 // rebase, and always says how the gate went.
+
+// TestLandRefusals covers every state land refuses outright, and the two
+// escapes that turn a refusal into a land: --onto for a binding that recorded
+// no base branch, and --force for a binding with a round still open.
+// TestLandNoGateSaysSo pins the two no-gate words: a binding with no gate
+// reports "none", and --no-gate reports "skipped", so a skipped gate never
+// reads as a passing one.
+// TestLandTextIsHonestAboutWhatItDid: the printed line never calls a merge a
+// rebase, and always says how the gate went.
 func TestLandTextIsHonestAboutWhatItDid(t *testing.T) {
 	rebased := LandResult{Branch: "relay/x", Base: "main", Rebased: true, GateResult: "pass", Pushed: true, PRCommand: "gh pr create"}
 	if got, want := LandText(rebased), "landed relay/x -> main (rebased; gate pass; pushed)\n  open the PR: gh pr create"; got != want {
@@ -549,6 +581,10 @@ func TestLandTextIsHonestAboutWhatItDid(t *testing.T) {
 		t.Errorf("LandText = %q, want %q", got, want)
 	}
 }
+
+// TestRealExecCapturesAndLogs pins the default seam's contract: the combined
+// output comes back, a non-zero exit is a code rather than an error, and a
+// named log path receives the same bytes.
 
 // TestRealExecCapturesAndLogs pins the default seam's contract: the combined
 // output comes back, a non-zero exit is a code rather than an error, and a

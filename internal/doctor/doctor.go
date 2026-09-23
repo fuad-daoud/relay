@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
@@ -45,7 +44,7 @@ func (s Severity) String() string {
 // never prose, and is empty when Severity is SevOK.
 type Check struct {
 	Group    string // "" for global rows, else the harness kind
-	Name     string // "herdr", "daemon", "binary", "integration", "plan-executor"
+	Name     string // "daemon", "binary", "plugin", "plan-executor"
 	Severity Severity
 	Detail   string // what was actually found
 	Fix      string // the command that fixes it
@@ -59,9 +58,10 @@ type Check struct {
 // Report is every check, in render order, plus the derived verdict.
 type Report struct {
 	Checks []Check
-	// UsableBuilder is true when at least one checked kind has both its binary
-	// on PATH and its integration installed. It is meaningless in adopted mode,
-	// where the binary is deliberately not probed, so nothing reads it there.
+	// UsableBuilder is true when at least one checked kind has its binary on
+	// PATH: the kind came from a candidate that parsed, or from a binding's
+	// recorded builder. It is meaningless in adopted mode, where the binary is
+	// deliberately not probed, so nothing reads it there.
 	UsableBuilder bool
 
 	// NoCandidates and BuilderRefusal are verdict inputs the caller sets
@@ -151,10 +151,9 @@ type runConfig struct {
 	stateRoot     string
 }
 
-// WithAdopted scopes the per-kind checks to an adopted pane: the user launched
-// that agent themselves, so its binary and role are none of relay's business,
-// but its integration still decides whether a round can be observed to finish.
-// Global rows are unaffected.
+// WithAdopted scopes the per-kind checks to an adopted builder: the user
+// launched that agent themselves, so its binary and role are none of relay's
+// business. Global rows are unaffected.
 func WithAdopted(adopted bool) RunOption {
 	return func(cfg *runConfig) {
 		cfg.adopted = adopted
@@ -427,49 +426,9 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 
 	var checks []Check
 
-	// 1. herdr probe
-	herdrVer, err := env.HerdrVersion(ctx)
-	if err != nil {
-		checks = append(checks, Check{
-			Group:       "",
-			Name:        "herdr",
-			Severity:    SevFail,
-			Detail:      err.Error(),
-			Fix:         "",
-			ProbeFailed: true,
-		})
-	} else {
-		atLeast, semErr := semverAtLeast(herdrVer, herdr.MinVersion)
-		if semErr != nil {
-			checks = append(checks, Check{
-				Group:    "",
-				Name:     "herdr",
-				Severity: SevFail,
-				Detail:   fmt.Sprintf("unparseable version %q", herdrVer),
-				Fix:      "",
-			})
-		} else if !atLeast {
-			checks = append(checks, Check{
-				Group:    "",
-				Name:     "herdr",
-				Severity: SevFail,
-				Detail:   fmt.Sprintf("%s (below floor %s)", herdrVer, herdr.MinVersion),
-				Fix:      "",
-			})
-		} else {
-			checks = append(checks, Check{
-				Group:    "",
-				Name:     "herdr",
-				Severity: SevOK,
-				Detail:   fmt.Sprintf("%s (floor %s)", herdrVer, herdr.MinVersion),
-				Fix:      "",
-			})
-		}
-	}
-
-	// Relay's own install and release state (#293), right beside the herdr
-	// probe and for the same reason: it is unconditional. There is nothing to
-	// opt into -- it reads one small file and never touches the network.
+	// 1. Relay's own install and release state (#293): unconditional. There
+	// is nothing to opt into -- it reads one small file and never touches the
+	// network.
 	checks = append(checks, releaseCheck(env))
 
 	// 2. daemon probe
@@ -501,9 +460,6 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		})
 	}
 
-	// Query integration status
-	intStatusMap, intStatusErr := env.IntegrationStatus(ctx)
-
 	usableBuilder := false
 
 	// Per-kind checks
@@ -534,6 +490,10 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 				Detail:   binPath,
 				Fix:      "",
 			})
+			// A candidate for this kind parsed (it is why the kind is in
+			// scope) and its binary runs here, which is all #303 §4.8 means
+			// by a usable builder.
+			usableBuilder = true
 
 			if known && h.MinVersion != "" {
 				// A harness with a floor is held to it before its roles are checked:
@@ -570,81 +530,6 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			}
 		}
 
-		// Integration check
-		target := kind
-		if known && h.Integration != "" {
-			target = h.Integration
-		}
-
-		kindHasInstalledIntegration := false
-
-		if intStatusErr != nil {
-			checks = append(checks, Check{
-				Group:       kind,
-				Name:        "integration",
-				Severity:    SevWarn,
-				Detail:      fmt.Sprintf("integration status unavailable: %v", intStatusErr),
-				Fix:         "",
-				ProbeFailed: true,
-			})
-		} else {
-			state, found := intStatusMap[target]
-			if !found {
-				if !known {
-					checks = append(checks, Check{
-						Group:    kind,
-						Name:     "integration",
-						Severity: SevOK,
-						Detail:   fmt.Sprintf("not checked -- herdr has no integration for kind %q", kind),
-						Fix:      "",
-					})
-				} else {
-					checks = append(checks, Check{
-						Group:       kind,
-						Name:        "integration",
-						Severity:    SevWarn,
-						Detail:      fmt.Sprintf("could not read herdr integration status for %s", target),
-						Fix:         "",
-						ProbeFailed: true,
-					})
-				}
-			} else if !state.Installed {
-				checks = append(checks, Check{
-					Group:    kind,
-					Name:     "integration",
-					Severity: SevFail,
-					Detail:   "not installed -- this binding will report `unknown` forever and never finish a round",
-					Fix:      fmt.Sprintf("herdr integration install %s", target),
-				})
-			} else if state.Outdated {
-				kindHasInstalledIntegration = true
-				checks = append(checks, Check{
-					Group:    kind,
-					Name:     "integration",
-					Severity: SevWarn,
-					Detail:   state.Detail,
-					Fix:      fmt.Sprintf("herdr integration install %s", target),
-				})
-			} else {
-				kindHasInstalledIntegration = true
-				detail := state.Detail
-				if detail == "" {
-					detail = "current"
-				}
-				checks = append(checks, Check{
-					Group:    kind,
-					Name:     "integration",
-					Severity: SevOK,
-					Detail:   detail,
-					Fix:      "",
-				})
-			}
-		}
-
-		if kindHasInstalledIntegration {
-			usableBuilder = true
-		}
-
 		// #256: opencode 2.x runs a shared background service; note it even
 		// for an adopted pane, since the service is per-user, not per-binding.
 		if kind == "opencode" {
@@ -678,16 +563,6 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			// the user's own agent, so that path stays quiet.
 			if kind == "opencode" && cfg.stateRoot != "" {
 				checks = append(checks, opencodeAllowlistCheck(env, cfg.stateRoot))
-			}
-		}
-	}
-
-	// Second pass: if UsableBuilder is true, demote every integration: not installed row
-	// from SevFail to SevWarn.
-	if usableBuilder {
-		for i := range checks {
-			if checks[i].Name == "integration" && checks[i].Severity == SevFail {
-				checks[i].Severity = SevWarn
 			}
 		}
 	}

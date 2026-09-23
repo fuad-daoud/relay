@@ -1,10 +1,10 @@
 // Package planner owns relay's planner identity (#303 step 1a): the records
 // that say which harness process and session a planner is, the rules that
 // mint and validate their ids and names, and the lookups every other verb
-// resolves a planner through. Nothing here talks to herdr, and planner.go
+// resolves a planner through. Nothing here launches a process, and planner.go
 // does no I/O at all: a Record is a value, and the rules over it are pure.
 //
-// The design is docs/specs/2026-09-22-drop-herdr-design.md §3.1, §3.4, §3.5
+// The design is #303 §3.1, §3.4, §3.5
 // and §4.1–§4.4. Records live under $XDG_STATE_HOME/relay/planners, one JSON
 // file per record (registry.go), and are ingested into relay's sqlite
 // `planner` table by id.

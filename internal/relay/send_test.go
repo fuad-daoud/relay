@@ -12,29 +12,9 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/store"
 )
-
-// seedBound binds webshop on the agy test candidate, headless (#303): the
-// runtime gets a fakeRunner, and no herdr agent is added for the builder --
-// there is none.
-func seedBound(t *testing.T, f *fakeHerdr) (Runtime, store.Binding) {
-	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
-	rt.Runner = newFakeRunner()
-
-	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
-	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	return rt, b
-}
 
 func writePlan(t *testing.T, body string) string {
 	t.Helper()
@@ -51,9 +31,14 @@ func writePlan(t *testing.T, body string) string {
 // writes to its own record from here on.
 // The role is selected with --agent at launch (#85); the plan prompt is
 // the plan prompt, on round 1 as on every other.
+// TestPromptRetryReportsANonStallFailureAsItself and
+// TestPromptRetryReportsASecondStallAsAStall are gone with the pane delivery
+// path itself (#303, closed-list item 1): promptWithRetry typed into a pane,
+// and there is no pane to type into any more. The headless equivalent -- a
+// process that cannot start -- is startRound's ErrRunnerUnavailable and the
+// spawn-failed switch, both covered in headless_test.go.
 func TestSendLogsThePlan(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -68,51 +53,12 @@ func TestSendLogsThePlan(t *testing.T) {
 		t.Fatalf("log = %+v", entries)
 	}
 	if !entries[1].Confirmed {
-		t.Error("an outbound plan is confirmed the moment herdr accepts it")
-	}
-}
-
-// TestPromptRetryReportsANonStallFailureAsItself keeps the second failure
-// honest: the retry can fail for an unrelated reason -- the builder became
-// blocked between the two attempts, say -- and calling that a stall sends the
-// human looking at the wrong thing.
-func TestPromptRetryReportsANonStallFailureAsItself(t *testing.T) {
-	f := &fakeHerdr{stalls: 1, promptErr: herdr.ErrAgentBlocked}
-	rt, _ := seedBound(t, f)
-
-	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text", "")
-	if err == nil {
-		t.Fatal("a failing retry must surface an error")
-	}
-	if !errors.Is(err, herdr.ErrAgentBlocked) {
-		t.Errorf("the real cause must survive the wrap, got %v", err)
-	}
-	if strings.Contains(err.Error(), "stalled twice") {
-		t.Errorf("a non-stall retry failure must not be reported as a stall: %v", err)
-	}
-	if !strings.Contains(err.Error(), "failed on retry") {
-		t.Errorf("error = %v, want it to name the retry", err)
-	}
-}
-
-// TestPromptRetryReportsASecondStallAsAStall is the other branch: two genuine
-// stalls stay labelled as such, and relay never fires a third time.
-func TestPromptRetryReportsASecondStallAsAStall(t *testing.T) {
-	f := &fakeHerdr{stalls: 2}
-	rt, _ := seedBound(t, f)
-
-	err := promptWithRetry(context.Background(), rt, "webshop-builder", "text", "")
-	if err == nil || !strings.Contains(err.Error(), "stalled twice") {
-		t.Fatalf("err = %v, want a stalled-twice error", err)
-	}
-	if len(f.prompts) != 0 {
-		t.Errorf("neither attempt was accepted, so nothing may be recorded: %+v", f.prompts)
+		t.Error("an outbound plan is confirmed the moment the process is started")
 	}
 }
 
 func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeID: "tree-abc123", headCommitID: "head-abc123"}
 	rt.Git = fg
 
@@ -144,8 +90,7 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 }
 
 func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# test plan"), SendOptions{}); err != nil {
@@ -161,8 +106,7 @@ func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
 }
 
 func TestSendBaselineFailureTolerated(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeErr: errors.New("git broken")}
 	rt.Git = fg
 
@@ -199,13 +143,12 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
 func TestSendRefusesPaused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo", Worktree: "/wt/webshop", Branch: "relay/webshop",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{Kind: "agy"}, // pause cleared the pane id
+		Planner: store.Endpoint{SessionID: "sess-architect", Kind: "claude"},
+		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
 		Round:   2, State: store.StatePaused,
 	}
 	if err := rt.Store.Save(b); err != nil {
@@ -222,14 +165,13 @@ func TestSendRefusesPaused(t *testing.T) {
 	if entries, _ := rt.Store.ReadLog("webshop"); len(entries) != 0 {
 		t.Errorf("no plan may be staged: log = %+v", entries)
 	}
-	if len(f.prompts) != 0 {
-		t.Errorf("no prompt may be sent: %+v", f.prompts)
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("no process may be started: %d specs", got)
 	}
 }
 
 func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
 	if err := rt.Store.Save(b); err != nil {
@@ -259,8 +201,7 @@ func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
 }
 
 func TestSendChangedTreeBetweenRounds(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
 	if err := rt.Store.Save(b); err != nil {
@@ -326,8 +267,7 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 // an unconsumed pending report is still returned by Pull after a Send with drift.
 // An unconfirmed drift entry would shadow the report in pendingForPlanner.
 func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := queuedBinding(t, f) // queues an unconfirmed report for round 1
+	rt, b := queuedBinding(t) // queues an unconfirmed report for round 1
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
 	if err := rt.Store.Save(b); err != nil {
@@ -361,8 +301,7 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 }
 
 func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	if b.RoundClosedTree != "" {
 		t.Fatalf("expected round 1 RoundClosedTree to be empty, got %q", b.RoundClosedTree)
 	}
@@ -390,8 +329,7 @@ func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
 }
 
 func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-closed"
 	if err := rt.Store.Save(b); err != nil {
@@ -450,18 +388,17 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 }
 
 func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
 	fr := newFakeRunner()
 	// Create an agy candidate without extra_args so TierYolo adds --dangerously-skip-permissions cleanly
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 	rt.Runner = fr
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name:        "webshop",
-		Candidate:   "agy/test/m",
-		PlannerPane: "w2:p3",
-		CWD:         "/repo",
-		Headless:    true,
+		Name:      "webshop",
+		Candidate: "agy/test/m",
+		PlannerID: testPlannerName,
+		CWD:       "/repo",
+		Headless:  true,
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -546,9 +483,8 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 }
 
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 
 	src := writePlan(t, "# do default")
 	res, err := Send(context.Background(), rt, "webshop", src, SendOptions{})
@@ -619,9 +555,8 @@ func endProcess(t *testing.T, rt Runtime, b store.Binding) {
 // reports the launch it would use -- the harness binary first -- without
 // starting anything.
 func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, f, fr)
+	rt, _ := seedHeadless(t, fr)
 
 	d, err := SendDryRun(context.Background(), rt, "webshop", writePlan(t, "# do the thing"), SendOptions{})
 	if err != nil {
@@ -645,8 +580,7 @@ func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
 // TestSendDryRunGateNote pins the advisory gate note: a rate-limited candidate
 // still dry-runs, but the note says the daemon would switch after the start.
 func TestSendDryRunGateNote(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 
 	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -671,12 +605,11 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 	type dryRunCase struct {
 		name  string
 		opts  SendOptions
-		setup func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string)
+		setup func(t *testing.T) (Runtime, *fakeRunner, string, string)
 	}
 
-	broken := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-		f := &fakeHerdr{}
-		rt, _ := seedBound(t, f)
+	broken := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedBound(t)
 		b, err := rt.Store.Load("webshop")
 		if err != nil {
 			t.Fatal(err)
@@ -685,11 +618,10 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
 		}
-		return rt, f, nil, "webshop", writePlan(t, "# x")
+		return rt, nil, "webshop", writePlan(t, "# x")
 	}
-	capped := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-		f := &fakeHerdr{}
-		rt, _ := seedBound(t, f)
+	capped := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedBound(t)
 		b, err := rt.Store.Load("webshop")
 		if err != nil {
 			t.Fatal(err)
@@ -698,38 +630,34 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
 		}
-		return rt, f, nil, "webshop", writePlan(t, "# x")
+		return rt, nil, "webshop", writePlan(t, "# x")
 	}
-	headlessBusy := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-		f := &fakeHerdr{}
+	headlessBusy := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
 		fr := newFakeRunner()
-		rt, _ := seedHeadless(t, f, fr)
+		rt, _ := seedHeadless(t, fr)
 		// Prime a live process: unscripted, the fake reports it alive forever.
 		if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 			t.Fatalf("prime Send: %v", err)
 		}
-		return rt, f, fr, "webshop", writePlan(t, "# two")
+		return rt, fr, "webshop", writePlan(t, "# two")
 	}
-	headlessNoRunner := func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-		f := &fakeHerdr{}
-		rt, _ := seedHeadless(t, f, newFakeRunner())
+	headlessNoRunner := func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+		rt, _ := seedHeadless(t, newFakeRunner())
 		rt.Runner = nil
-		return rt, f, nil, "webshop", writePlan(t, "# x")
+		return rt, nil, "webshop", writePlan(t, "# x")
 	}
 
 	// The missing-plan case's path is fixed once: the error text names the
 	// file, and t.TempDir() mints a new directory on every call.
 	missingPlan := filepath.Join(t.TempDir(), "nope.md")
 	cases := []dryRunCase{
-		{"missing plan file", SendOptions{}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-			f := &fakeHerdr{}
-			rt, _ := seedBound(t, f)
-			return rt, f, nil, "webshop", missingPlan
+		{"missing plan file", SendOptions{}, func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+			rt, _ := seedBound(t)
+			return rt, nil, "webshop", missingPlan
 		}},
-		{"unknown binding", SendOptions{}, func(t *testing.T) (Runtime, *fakeHerdr, *fakeRunner, string, string) {
-			f := &fakeHerdr{}
-			rt, _ := seedBound(t, f)
-			return rt, f, nil, "ghost", writePlan(t, "# x")
+		{"unknown binding", SendOptions{}, func(t *testing.T) (Runtime, *fakeRunner, string, string) {
+			rt, _ := seedBound(t)
+			return rt, nil, "ghost", writePlan(t, "# x")
 		}},
 		{"broken binding", SendOptions{}, broken},
 		{"round cap", SendOptions{}, capped},
@@ -739,8 +667,8 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rtDry, fDry, frDry, nameDry, fileDry := c.setup(t)
-			rtSend, _, _, nameSend, fileSend := c.setup(t)
+			rtDry, frDry, nameDry, fileDry := c.setup(t)
+			rtSend, _, nameSend, fileSend := c.setup(t)
 
 			nBefore, err := rtDry.Store.ReadLog(nameDry)
 			if err != nil {
@@ -749,7 +677,6 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 			planPath := rtDry.Store.PlanPath(nameDry, 1)
 			_, statBefore := os.Stat(planPath)
 			planExisted := statBefore == nil
-			promptsBefore := len(fDry.prompts)
 			specsBefore := 0
 			if frDry != nil {
 				specsBefore = len(frDry.specs)
@@ -768,9 +695,6 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 			}
 
 			// The dry run wrote nothing.
-			if len(fDry.prompts) != promptsBefore {
-				t.Errorf("dry run prompted: %+v", fDry.prompts[promptsBefore:])
-			}
 			if frDry != nil && len(frDry.specs) != specsBefore {
 				t.Errorf("dry run started a process: %+v", frDry.specs[specsBefore:])
 			}
@@ -847,8 +771,7 @@ func TestRenderDryRunShape(t *testing.T) {
 // TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
 // wins, and a plain Send takes policy.json verify.default.
 func TestVerifyPolicyDefault(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {

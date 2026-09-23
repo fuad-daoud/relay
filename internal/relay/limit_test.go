@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/ledger"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -202,28 +201,6 @@ func TestMatchLimit(t *testing.T) {
 // gateOnLimitSetup is TestReconcileHeadlessGatedKillsAndSwitches's own setup
 // (two-provider set, headless bind on agy/other/m, the three-builder order,
 // one Send), without the Unavailable call gateOnLimit is meant to replace.
-func gateOnLimitSetup(t *testing.T, f *fakeHerdr, fr *fakeRunner) (Runtime, store.Binding) {
-	t.Helper()
-	f.agents = []herdr.Agent{plannerAgent()}
-	rt := newRuntime(t, f)
-	rt.Runner = fr
-	rt.Candidates = candidateSet(t, testTwoProviderJSON)
-	rt.Policy = orderOf("builder", "agy/other/m", testClaudeRef, testOpencodeRef)
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "agy/other/m", PlannerPane: "w2:p3", CWD: "/repo", Headless: true,
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	return rt, b
-}
-
 // gateHeadless runs gateOnLimit on b inside the lock, the way switchHeadless
 // runs switchBuilder.
 func gateHeadless(t *testing.T, rt Runtime, b store.Binding, text string, closeOld bool) (store.Binding, LimitMatch, bool, error) {
@@ -253,9 +230,8 @@ const gateFixtureLine = "Individual quota reached. Please upgrade your subscript
 
 func TestGateOnLimit(t *testing.T) {
 	t.Run("match, no report", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := gateOnLimitSetup(t, f, fr)
+		rt, b := gateOnLimitSetup(t, fr)
 		rt = at(rt, time.Minute)
 
 		got, m, handled, err := gateHeadless(t, rt, b, gateFixtureLine, false)
@@ -305,9 +281,8 @@ func TestGateOnLimit(t *testing.T) {
 	})
 
 	t.Run("no match", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := gateOnLimitSetup(t, f, fr)
+		rt, b := gateOnLimitSetup(t, fr)
 
 		got, m, handled, err := gateHeadless(t, rt, b, "boom: out of tokens", false)
 		if err != nil {
@@ -331,9 +306,8 @@ func TestGateOnLimit(t *testing.T) {
 	})
 
 	t.Run("match with a report on disk", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := gateOnLimitSetup(t, f, fr)
+		rt, b := gateOnLimitSetup(t, fr)
 		rt = at(rt, time.Minute)
 		reportPath := rt.Store.ReportPath("webshop", 1)
 		if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
@@ -370,9 +344,8 @@ func TestGateOnLimit(t *testing.T) {
 	})
 
 	t.Run("not switchable", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := gateOnLimitSetup(t, f, fr)
+		rt, b := gateOnLimitSetup(t, fr)
 		b.BuilderCandidate = ""
 
 		got, m, handled, err := gateHeadless(t, rt, b, gateFixtureLine, false)
@@ -394,9 +367,8 @@ func TestGateOnLimit(t *testing.T) {
 	})
 
 	t.Run("ledger write failure", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := gateOnLimitSetup(t, f, fr)
+		rt, b := gateOnLimitSetup(t, fr)
 		rt.LedgerPath = t.TempDir() // a directory, so ledger.Save fails
 
 		_, _, handled, err := gateHeadless(t, rt, b, gateFixtureLine, false)

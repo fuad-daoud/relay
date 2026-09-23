@@ -53,15 +53,15 @@ var stdoutStat = os.Stdout.Stat
 // Run renders relay's state until the user quits or ctx is cancelled.
 // It never mutates state.
 //
-// Preconditions:  stdout is a character device; rt.Herdr and rt.Store non-nil.
+// Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
 // Errors:         startup failures only. Refresh failures never escape.
 func Run(ctx context.Context, rt relay.Runtime, opts Options) error {
 	if notTTY() {
 		return pipeRefusal(opts.PipeHint)
 	}
-	if rt.Herdr == nil || rt.Store == nil {
-		return errors.New("runtime requires Herdr and Store")
+	if rt.Store == nil {
+		return errors.New("runtime requires Store")
 	}
 	return RunSource(ctx, plannerSource{rt}, opts)
 }

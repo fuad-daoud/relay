@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/store"
 )
 
@@ -44,15 +43,14 @@ func kinds(t *testing.T, rt Runtime, name string) []store.Kind {
 }
 
 func TestBindPicksFirstUngatedInOrder(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
 	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
 	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -79,14 +77,13 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 }
 
 func TestBindResolvedReturnsTheResolution(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
 	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
@@ -103,8 +100,7 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 }
 
 func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
 	// testClaudeRef's provider ("test") is shared by all three candidates in
@@ -114,13 +110,10 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	}
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: "", PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if !errors.Is(err, ErrAllGated) {
 		t.Fatalf("err = %v, want ErrAllGated", err)
-	}
-	if len(f.starts) != 0 {
-		t.Errorf("starts = %+v, want none", f.starts)
 	}
 	if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound", err)
@@ -128,14 +121,13 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 }
 
 func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
-	f := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p4"}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
 	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo",
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -156,17 +148,18 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 // initial Bind (Candidate: testAgyRef, explicit) already writes a leading
 // pick entry, so this checks the entry the resume itself adds, not the
 // total count.
+
+// TestResumeRebindLogsPickAtCurrentRound mirrors
+// TestResumeAllowsRebindWhenSessionlessBuilderPaneIsGone. seedBound's own
+// initial Bind (Candidate: testAgyRef, explicit) already writes a leading
+// pick entry, so this checks the entry the resume itself adds, not the
+// total count.
 func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, _ := seedBound(t, f)
+	rt, _ := seedBound(t)
 	before := picks(t, rt, "webshop")
 
-	// Pane w2:p4 no longer holds anything.
-	f.agents = []herdr.Agent{plannerAgent()}
-	f.newPane = "w2:p7"
-
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "webshop", Candidate: testAgyRef, PlannerPane: "w2:p3", CWD: "/repo", Resume: true,
+		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo", Resume: true,
 	})
 	if err != nil {
 		t.Fatalf("Bind resume: %v", err)
@@ -186,13 +179,12 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 }
 
 func TestAddLogsPick(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p9"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 	rt.Policy = orderOf("builder", testAgyRef)
 
 	res, err := Add(context.Background(), rt, AddOptions{
-		Name: "frontend", Candidate: "", PlannerPane: "w2:p3", Repo: addRepo(t),
+		Name: "frontend", Candidate: "", PlannerID: testPlannerName, Repo: addRepo(t),
 	})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
@@ -211,9 +203,8 @@ func TestAddLogsPick(t *testing.T) {
 }
 
 func TestForkInheritedLogsSource(t *testing.T) {
-	fh := &fakeHerdr{agents: []herdr.Agent{plannerAgent()}, newPane: "w2:p5"}
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fh, fg, nil)
+	rt := newForkRuntime(t, fg, nil)
 	srcCWD := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
 		t.Fatal(err)
@@ -221,7 +212,7 @@ func TestForkInheritedLogsSource(t *testing.T) {
 	seedFourRoundBinding(t, rt, "source", srcCWD)
 
 	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", Candidate: "", PlannerPane: "w2:p3",
+		Source: "source", Round: 2, NewName: "alt", Candidate: "", PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
@@ -257,13 +248,12 @@ func TestForkInheritedLogsSource(t *testing.T) {
 }
 
 func TestAskLogsPickBeforeAsk(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedForAsk(t, f)
+	rt, b := seedForAsk(t)
 
 	qPath := writeQuestion(t, "what do you think?")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: qPath, Name: b.Name, PlannerPane: "w2:p3",
+		Role: "reviewer", File: qPath, Name: b.Name, PlannerID: testPlannerName,
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -291,10 +281,13 @@ func TestAskLogsPickBeforeAsk(t *testing.T) {
 // TestStrandedAskLogsNoPick checks the delta a stranded ask adds, not the
 // total: seedForAsk's own seedBound already writes a leading pick entry for
 // the builder bind.
+
+// TestStrandedAskLogsNoPick checks the delta a stranded ask adds, not the
+// total: seedForAsk's own seedBound already writes a leading pick entry for
+// the builder bind.
 func TestStrandedAskLogsNoPick(t *testing.T) {
-	f := &fakeHerdr{}
 	fr := newFakeRunner()
-	rt, b := seedForAsk(t, f)
+	rt, b := seedForAsk(t)
 	rt.Runner = fr
 	before := picks(t, rt, "webshop")
 	fr.startErr = errors.New("process start: exit 1")
@@ -302,7 +295,7 @@ func TestStrandedAskLogsNoPick(t *testing.T) {
 	qPath := writeQuestion(t, "what do you think?")
 
 	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: qPath, Name: b.Name, PlannerPane: "w2:p3",
+		Role: "reviewer", File: qPath, Name: b.Name, PlannerID: testPlannerName,
 	})
 	if err == nil {
 		t.Fatal("expected an error from a stranded ask")

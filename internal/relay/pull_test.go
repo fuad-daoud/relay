@@ -2,67 +2,64 @@ package relay
 
 import (
 	"context"
-	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relay/internal/herdr"
-	"github.com/fuad-daoud/relay/internal/store"
 )
 
-func TestPullReturnsAndConfirmsHeldPayload(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := queuedBinding(t, f)
-	f.prompts = nil
+// TestPullReturnsAndMarksDelivered is the surviving half of the old pull
+// test: Pull hands back the oldest pending payload and confirms it.
+func TestPullReturnsAndMarksDelivered(t *testing.T) {
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	payload, found, err := Pull(context.Background(), rt, b.Name)
-	if err != nil || !found {
-		t.Fatalf("Pull: found=%v err=%v", found, err)
+	payload, found, err := Pull(context.Background(), rt, "webshop")
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
 	}
-	if !strings.Contains(payload, "001-report.md") {
-		t.Errorf("payload = %q", payload)
+	if !found || payload == "" {
+		t.Fatalf("Pull found=%v payload=%q, want the queued report", found, payload)
 	}
-	if len(f.prompts) != 0 {
-		t.Error("pull must never inject; it returns the payload for stdout")
-	}
-
-	if _, pending, _ := rt.Store.PendingForPlanner(b.Name); pending {
-		t.Error("pull must confirm the entry, or the daemon will deliver it twice")
+	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || still {
+		t.Errorf("Pull must confirm what it returns (still pending=%v err=%v)", still, err)
 	}
 }
 
+// TestPullWithNothingPending: nothing queued reads as nothing to print.
 func TestPullWithNothingPending(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := seedBound(t, f)
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
+	if _, _, err := Pull(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("first Pull: %v", err)
+	}
 
-	if _, found, err := Pull(context.Background(), rt, b.Name); err != nil || found {
-		t.Fatalf("found=%v err=%v, want false/nil", found, err)
+	payload, found, err := Pull(context.Background(), rt, "webshop")
+	if err != nil {
+		t.Fatalf("second Pull: %v", err)
+	}
+	if found || payload != "" {
+		t.Errorf("second Pull = (%q, %v), want nothing pending", payload, found)
 	}
 }
 
-// TestReconcileClearsHeldAfterPull covers the state a pull leaves behind: it
-// claims the payload without delivering it, so nothing else clears Held and
-// `relay status` kept showing HELD for a binding with nothing pending.
-func TestReconcileClearsHeldAfterPull(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, seeded := queuedBinding(t, f)
+// TestPullMarksDeliveredRoutePull is the plan's required case for §5.4:
+// `relay pull` marks the entry delivered with route=pull, which is what the
+// background wait's pull half does for a tools-mode planner.
+func TestPullMarksDeliveredRoutePull(t *testing.T) {
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	// Reload: Bind returns its pre-save copy, which carries no round cap yet.
-	b, err := rt.Store.Load(seeded.Name)
+	if _, _, err := Pull(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("ReadLog: %v", err)
 	}
-	b.State = store.StateHeld
-
-	if _, found, err := Pull(context.Background(), rt, b.Name); err != nil || !found {
-		t.Fatalf("Pull: found=%v err=%v", found, err)
+	last := entries[len(entries)-1]
+	if !last.Confirmed {
+		t.Error("the entry must be confirmed")
 	}
-
-	agents := []herdr.Agent{plannerWith(herdr.StatusIdle, false), builderAgent(herdr.StatusWorking)}
-	got, err := reconcile(t, rt, b, agents)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if got.State != store.StateActive {
-		t.Errorf("state = %s, want active once the pull left nothing pending", got.State)
+	if last.Route != "pull" {
+		t.Errorf("Route = %q, want pull", last.Route)
 	}
 }

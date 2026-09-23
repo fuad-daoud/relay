@@ -12,7 +12,6 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/git"
 	"github.com/fuad-daoud/relay/internal/harness"
-	"github.com/fuad-daoud/relay/internal/herdr"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/store"
@@ -610,29 +609,17 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt := Runtime{Store: st, Herdr: &fakeHerdr{}, Now: time.Now}
-	agents := []herdr.Agent{
-		{
-			Session: herdr.Session{Value: "sess1"},
-			PaneID:  "p1",
-			Status:  herdr.StatusIdle,
-			Focused: true,
-		},
-	}
-
+	rt := Runtime{Store: st, Now: time.Now}
 	var got store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
 		var err error
-		got, err = deliverAndSettle(ctx, rt, tx, b, agents)
+		got, err = deliverAndSettle(ctx, rt, tx, b)
 		return err
 	})
 	if err != nil {
 		t.Fatalf("deliverAndSettle: %v", err)
 	}
 
-	if got.State == store.StateHeld {
-		t.Fatalf("state was set to Held for owned binding: %v", got.State)
-	}
 	if got.State != store.StateActive {
 		t.Fatalf("state changed: got %v, want %v", got.State, store.StateActive)
 	}
@@ -698,14 +685,13 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 		Store:  st,
 		Git:    fGit,
 		Runner: fr,
-		Herdr:  &fakeHerdr{},
 		Now:    time.Now,
 	}
 
 	var reconciled store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
 		var err error
-		reconciled, err = Reconcile(ctx, rt, tx, b, nil)
+		reconciled, err = Reconcile(ctx, rt, tx, b)
 		return err
 	})
 	if err != nil {

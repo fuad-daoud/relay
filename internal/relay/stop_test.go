@@ -57,9 +57,8 @@ func TestStopDecisionTable(t *testing.T) {
 // would switch the builder and charge the round.
 func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 	t.Run("no report", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, b := sentHeadless(t, f, fr)
+		rt, b := sentHeadless(t, fr)
 		h := handleOf(b.Builder)
 
 		res, err := Stop(context.Background(), rt, "webshop", StopOptions{})
@@ -108,9 +107,8 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 	})
 
 	t.Run("with a report on disk", func(t *testing.T) {
-		f := &fakeHerdr{}
 		fr := newFakeRunner()
-		rt, _ := sentHeadless(t, f, fr)
+		rt, _ := sentHeadless(t, fr)
 		reportPath := rt.Store.ReportPath("webshop", 1)
 		if err := os.WriteFile(reportPath, []byte("I stopped where I was\n"), 0o644); err != nil {
 			t.Fatalf("write report: %v", err)
@@ -135,8 +133,7 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 
 func TestStopNothingToStop(t *testing.T) {
 	t.Run("no open round", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		b.RoundStartedAt = time.Time{}
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -147,8 +144,7 @@ func TestStopNothingToStop(t *testing.T) {
 	})
 
 	t.Run("done", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		b.State = store.StateDone
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -160,8 +156,7 @@ func TestStopNothingToStop(t *testing.T) {
 	})
 
 	t.Run("paused", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		b.State = store.StatePaused
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -173,8 +168,7 @@ func TestStopNothingToStop(t *testing.T) {
 	})
 
 	t.Run("remote", func(t *testing.T) {
-		f := &fakeHerdr{}
-		rt, b := sentBinding(t, f)
+		rt, b := sentBinding(t)
 		b.Builder.Mode = store.ModeRemote
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -187,8 +181,7 @@ func TestStopNothingToStop(t *testing.T) {
 }
 
 func TestSendClearsStopRequest(t *testing.T) {
-	f := &fakeHerdr{}
-	rt, b := sentBinding(t, f)
+	rt, b := sentBinding(t)
 	b.StopRequestedAt = baseTime
 	b.StopGraceMS = 300000
 	if err := rt.Store.Save(b); err != nil {

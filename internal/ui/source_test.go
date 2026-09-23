@@ -16,7 +16,7 @@ import (
 // planner.
 func TestPlannerSourceResolvesEveryKey(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st, Herdr: newFakeHerdr(t)}
+	rt := relay.Runtime{Store: st}
 	src := plannerSource{rt: rt}
 
 	if _, err := src.Status(context.Background()); err != nil {
@@ -95,7 +95,7 @@ func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 // the runtime itself, so scope all reads the planner's own database (§2).
 func TestPlannerSourceBaseIsRuntime(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relay.Runtime{Store: st, Herdr: newFakeHerdr(t)}
+	rt := relay.Runtime{Store: st}
 
 	if base := (plannerSource{rt: rt}).Base(); base.Store != rt.Store {
 		t.Fatalf("Base().Store != the runtime's store")

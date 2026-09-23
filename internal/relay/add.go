@@ -19,10 +19,7 @@ type AddOptions struct {
 	// resolved record's id afterwards. Empty means "resolve this session's
 	// planner" (§4.3).
 	PlannerID string
-	// PlannerPane is $HERDR_PANE_ID when set; optional. It only fills the
-	// pane delivery path's Planner.PaneID.
-	PlannerPane string
-	Repo        string // the repository the worktree is cut from; the caller's cwd
+	Repo      string // the repository the worktree is cut from; the caller's cwd
 
 	// CWD binds the peer to a directory the human already prepared instead of
 	// creating a worktree. It is the escape hatch for a non-git tree; relay
@@ -104,7 +101,7 @@ type AddResult struct {
 //
 // Errors: ErrGitRequired, store.ErrCWDTaken, git.ErrBranchExists,
 //
-//	or a wrapped herdr failure.
+//	or a wrapped git failure.
 func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if opts.Server != "" {
 		return addRemote(ctx, rt, opts)
@@ -122,7 +119,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 	}
 	// Refuse here, not just inside resolveBuilder: Add cuts its worktree before
-	// that runs, and a name herdr would refuse must not leave a worktree
+	// that runs, and a name relay would refuse must not leave a worktree
 	// behind. The composed name is discarded -- resolveBuilder recomputes it.
 	if _, err := builderAgentName(opts.Name); err != nil {
 		return AddResult{}, err
@@ -140,25 +137,11 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		return AddResult{}, err
 	}
 
-	plannerEP := store.Endpoint{}
-	if haveRec {
-		opts.PlannerID = rec.ID
-		plannerEP = recordEndpoint(rec, opts.PlannerPane)
-	} else {
-		// A Runtime with no planner registry: the pane is the identity.
-		if opts.PlannerPane == "" {
-			return AddResult{}, ErrNoPlannerSession
-		}
-		agents, err := rt.Herdr.ListAgents(ctx)
-		if err != nil {
-			return AddResult{}, fmt.Errorf("list agents: %w", err)
-		}
-		a, ok := FindAgent(agents, store.Endpoint{PaneID: opts.PlannerPane})
-		if !ok {
-			return AddResult{}, fmt.Errorf("no planner agent in pane %s", opts.PlannerPane)
-		}
-		plannerEP = endpointOf(a)
+	if !haveRec {
+		return AddResult{}, ErrNoPlannerSession
 	}
+	opts.PlannerID = rec.ID
+	plannerEP := recordEndpoint(rec)
 	if plannerEP.TranscriptLocator == "" {
 		plannerEP.TranscriptLocator = plannerLocator(rt, plannerEP.Kind, plannerEP.SessionID)
 	}
@@ -284,21 +267,20 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	bindOpts := BindOptions{
-		Name:        opts.Name,
-		Candidate:   c.Ref().String(),
-		PlannerID:   opts.PlannerID,
-		PlannerPane: plannerEP.PaneID,
-		CWD:         cwd,
-		Headless:    opts.Headless,
-		Tier:        string(tier),
-		AllowYolo:   opts.AllowYolo,
+		Name:      opts.Name,
+		Candidate: c.Ref().String(),
+		PlannerID: opts.PlannerID,
+		CWD:       cwd,
+		Headless:  opts.Headless,
+		Tier:      string(tier),
+		AllowYolo: opts.AllowYolo,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
 	// call would report HowExplicit and lose the real How/Position/Skipped
 	// this function resolved above -- res, from the pre-worktree resolution,
 	// is what the pick entry and AddResult.Resolution must carry.
-	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name, plannerEP.PaneID)
+	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name)
 	if err != nil {
 		rollback()
 		return AddResult{}, err
@@ -345,8 +327,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		return nil
 	}); err != nil {
 		rollback()
-		return AddResult{}, fmt.Errorf("add failed after starting builder in pane %s (close it yourself): %w",
-			builder.PaneID, err)
+		return AddResult{}, fmt.Errorf("add failed after choosing builder %s: %w",
+			builder.Kind, err)
 	}
 
 	if stored, err := rt.Store.Load(b.Name); err == nil {

@@ -29,16 +29,15 @@ func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 		MaxTier: "yolo",
 	}
 	_, url, fp, enroll, srvStore, runner := newServerWithContext(t, srvCtx, srvCancel, pol)
-	rt, _, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	if _, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	}); err != nil {
 		t.Fatalf("relay.Add: %v", err)
 	}
@@ -84,16 +83,15 @@ func TestServedBuilderDefaultsToHarness(t *testing.T) {
 
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 	_, url, fp, enroll, srvStore, runner := newServerWithContext(t, srvCtx, srvCancel, policy.Policy{})
-	rt, _, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	if _, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
 	}); err != nil {
 		t.Fatalf("relay.Add: %v", err)
 	}
@@ -141,7 +139,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 	srv, url, fp, enroll, srvStore, runner := newServerWithContext(t, srvCtx, srvCancel, policy.Policy{MaxTier: "yolo"})
-	rt, _, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	rt.Policy = policy.Policy{MaxTier: "yolo"}
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
@@ -159,11 +157,10 @@ func TestRemoteTierOverWire(t *testing.T) {
 	}
 
 	res, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
-		Tier:        "edit",
+		Name:   "api",
+		Server: "zen",
+		Repo:   repo,
+		Tier:   "edit",
 	})
 	if err != nil {
 		t.Fatalf("relay.Add: %v", err)
@@ -275,19 +272,18 @@ func TestRemoteTierAboveServerMax(t *testing.T) {
 
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 	_, url, fp, enroll, srvStore, _ := newServerWithContext(t, srvCtx, srvCancel, policy.Policy{MaxTier: "edit"})
-	rt, _, kp := newClient(t, url, fp)
+	rt, kp := newClient(t, url, fp)
 	rt.Policy = policy.Policy{MaxTier: "yolo"}
 	pubLine := remote.MarshalPublic(kp.Public, "test client")
 	owner := enroll(pubLine)
 	repo := newRepo(t)
 
 	_, err := relay.Add(ctx, rt, relay.AddOptions{
-		Name:        "api",
-		Server:      "zen",
-		Repo:        repo,
-		PlannerPane: "p1",
-		Tier:        "yolo",
-		AllowYolo:   true,
+		Name:      "api",
+		Server:    "zen",
+		Repo:      repo,
+		Tier:      "yolo",
+		AllowYolo: true,
 	})
 	if !errors.Is(err, relay.ErrTierAboveMax) {
 		t.Fatalf("relay.Add err = %v, want ErrTierAboveMax", err)

@@ -100,8 +100,12 @@ type LogEntry struct {
 	Payload     string     `json:"payload,omitempty"`
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 	Confirmed   bool       `json:"confirmed"`
-	Note        string     `json:"note,omitempty"`
-	Late        bool       `json:"late,omitempty"`
+	// Route is how a planner-bound entry was delivered: "channel",
+	// "deliverer:<kind>" or "pull" (#303 §4.6). Empty on an entry that is
+	// still pending, and on every entry written before the field existed.
+	Route string `json:"route,omitempty"`
+	Note  string `json:"note,omitempty"`
+	Late  bool   `json:"late,omitempty"`
 	// Tier is the permission tier the round was sent at, on plan entries (#141).
 	Tier string `json:"tier,omitempty"`
 
@@ -165,8 +169,8 @@ type LogEntry struct {
 	Classify *ClassifyRecord `json:"classify,omitempty"`
 
 	// BuilderSession names the harness session that built the round, on
-	// report entries (#147). Nil when neither herdr nor the round's stream
-	// named one -- never guessed.
+	// report entries (#147). Nil when the round's stream named none --
+	// never guessed.
 	BuilderSession *BuilderSession `json:"builder_session,omitempty"`
 }
 
@@ -248,10 +252,10 @@ func (s *Store) PendingForPlanner(name string) (LogEntry, bool, error) {
 	return e, found, err
 }
 
-// ConfirmIndex marks the entry at idx as delivered, acquiring the state lock
-// for the operation.
-func (s *Store) ConfirmIndex(name string, idx int) error {
-	return s.WithLock(func(tx *Tx) error { return tx.ConfirmIndex(name, idx) })
+// ConfirmIndex marks the entry at idx as delivered by route, acquiring the
+// state lock for the operation.
+func (s *Store) ConfirmIndex(name string, idx int, route string) error {
+	return s.WithLock(func(tx *Tx) error { return tx.ConfirmIndex(name, idx, route) })
 }
 
 // Tx methods provide locked access to the log. All assume the lock is held.
@@ -279,9 +283,9 @@ func (t *Tx) PendingForPlanner(name string) (LogEntry, int, bool, error) {
 }
 
 // ConfirmIndex rewrites the log under the held lock, marking the entry at idx
-// delivered.
-func (t *Tx) ConfirmIndex(name string, idx int) error {
-	return t.s.confirmIndex(name, idx)
+// delivered by route.
+func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
+	return t.s.confirmIndex(name, idx, route)
 }
 
 // Unexported methods implement the actual logic, assuming the lock is held
@@ -430,16 +434,16 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 	return LogEntry{}, 0, false, nil
 }
 
-// confirmIndex marks one entry as delivered by rewriting the log. The log is
-// small and append-only, so a full rewrite is simpler and safer than in-place
-// mutation.
+// confirmIndex marks one entry as delivered by route, rewriting the log. The
+// log is small and append-only, so a full rewrite is simpler and safer than
+// in-place mutation.
 //
 // It takes an index rather than re-deriving "the entry we must have meant"
 // because the pair it replaced -- pendingForPlanner and confirmLatest -- agreed
 // only by both scanning for the newest unconfirmed entry. That coupling was
 // implicit and survived exactly as long as nobody edited one of them. Callers
 // hold the state lock across both calls, so the index is stable.
-func (s *Store) confirmIndex(name string, idx int) error {
+func (s *Store) confirmIndex(name string, idx int, route string) error {
 	entries, err := s.readLog(name)
 	if err != nil {
 		return err
@@ -454,6 +458,9 @@ func (s *Store) confirmIndex(name string, idx int) error {
 	now := time.Now().UTC()
 	entries[idx].Confirmed = true
 	entries[idx].DeliveredAt = &now
+	if route != "" {
+		entries[idx].Route = route
+	}
 
 	var buf []byte
 	for _, e := range entries {

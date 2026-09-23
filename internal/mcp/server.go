@@ -41,9 +41,15 @@ var metaKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // Server is relay mcp's JSON-RPC 2.0 loop over stdio. It implements
 // relay.Pusher via Push, so cmd/relay can hand it straight to relay.Drain.
 type Server struct {
-	Verbs        Verbs
-	Version      string    // serverInfo.version
-	Instructions string    // defaults to Instructions when empty
+	Verbs   Verbs
+	Version string // serverInfo.version
+	// Mode picks the instructions text when Instructions is empty (#303
+	// §4.5): channel mode hears events, tools mode gets reports from the
+	// background wait's `relay pull`.
+	Mode Mode
+	// Instructions overrides the mode's text when non-empty. Tests use it;
+	// cmd/relay leaves it empty so the mode decides.
+	Instructions string
 	Log          io.Writer // stderr; nil -> discard
 	// OnInitialized is called once, after notifications/initialized. The
 	// command wires the poll loop start here so nothing is pushed before
@@ -182,7 +188,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) {
 func (s *Server) initializeResult() map[string]any {
 	instructions := s.Instructions
 	if instructions == "" {
-		instructions = Instructions
+		instructions = InstructionsFor(s.Mode)
 	}
 	return map[string]any{
 		"protocolVersion": ProtocolVersion,
@@ -237,7 +243,18 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 			return ToolResult{}, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
 		res, err := s.Verbs.Send(ctx, a)
-		return toolResultFrom(res, err)
+		out, rpcErr := toolResultFrom(res, err)
+		if rpcErr != nil || err != nil || a.DryRun {
+			return out, rpcErr
+		}
+		// #303 §4.5: in tools mode nothing is pushed, so the send result
+		// ends with the background wait the model must start and end its
+		// turn on. In channel mode the event arrives by itself and the
+		// result carries no such line.
+		if s.Mode == ModeTools {
+			return appendWaitCommand(out, a.Name, budgetOf(res)), nil
+		}
+		return out, nil
 
 	case "done":
 		var a DoneArgs

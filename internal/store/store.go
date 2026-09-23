@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,7 +25,11 @@ var ErrNotFound = errors.New("binding not found")
 var ErrCWDTaken = errors.New("working tree already bound")
 
 const (
-	maxNameLen      = 32
+	// MaxAgentNameLen is the cap ValidName enforces. 32 is the
+	// agent-name limit the pre-#303 integration imposed (#303 §2). It is
+	// named for what it counts, not for that integration: no name relay
+	// already wrote becomes invalid.
+	MaxAgentNameLen = 32
 	bindingFileMode = 0o644
 	bindingDirMode  = 0o755
 	defaultRoundCap = 20
@@ -49,13 +54,12 @@ const (
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow external
 	// call turns every other caller's wait into a failure. The longest hold is
-	// Reconcile's critical section on the scrape fallback path, which can make
-	// one herdr agent read (30s), two git calls for round diff capture (10s
-	// snapshot + 10s diff), and one herdr agent prompt to deliver (30s). 90s is
-	// that 80s worst case plus 10s headroom; if client timeouts change, this
-	// must change with them. Ask spawns its consult between two short critical
-	// sections on purpose, so its herdr calls do not count here; keep it that
-	// way.
+	// Reconcile's critical section on the report-close path, which can make two
+	// git calls for round diff capture (10s snapshot + 10s diff) and one
+	// deliverer call (30s). 90s is that worst case plus headroom; if client
+	// timeouts change, this must change with them. Ask spawns its consult
+	// between two short critical sections on purpose, so its external calls do
+	// not count here; keep it that way.
 	lockAcquireLimit = 90 * time.Second
 )
 
@@ -92,14 +96,14 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "relay"), nil
 }
 
-// ValidName enforces herdr's agent-name rule, since binding names become agent
-// names: lowercase letter first, then up to 31 of [a-z0-9_-].
+// ValidName enforces relay's binding-name rule: lowercase letter first, then
+// up to 31 more of [a-z0-9_-].
 func ValidName(name string) error {
 	if name == "" {
 		return errors.New("binding name is empty")
 	}
-	if len(name) > maxNameLen {
-		return fmt.Errorf("binding name %q exceeds %d characters", name, maxNameLen)
+	if len(name) > MaxAgentNameLen {
+		return fmt.Errorf("binding name %q exceeds %d characters", name, MaxAgentNameLen)
 	}
 	if name[0] < 'a' || name[0] > 'z' {
 		return fmt.Errorf("binding name %q must start with a lowercase letter", name)
@@ -246,9 +250,8 @@ func (s *Store) FindingsPath(name string, round int, id string) string {
 
 // ConsultStreamPath is where a headless consult's raw stdout -- the
 // harness's streamed JSON, one event per line, and the supervisor's
-// relay-exit trailer -- is appended. A headless consult has no pane for
-// herdr to hold its output, so it carries its own stream, exactly as a
-// headless builder round does (#99, #168).
+// relay-exit trailer -- is appended. A headless consult carries its own
+// stream, exactly as a headless builder round does (#99, #168).
 // Layout: <binding dir>/NNN-<id>-consult.jsonl
 func (s *Store) ConsultStreamPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "consult", ".jsonl")
@@ -465,6 +468,17 @@ func (s *Store) load(name string) (Binding, error) {
 		return Binding{}, fmt.Errorf("decode binding %q: %w", name, err)
 	}
 
+	// States this version no longer has still load (#303 §1): a held payload
+	// was a pane delivery in flight, and orphaned meant the planner's session
+	// had gone. Both are simply active again -- the entry is pending and a
+	// route will take it -- so an old bind.json keeps working instead of
+	// being refused.
+	switch b.State {
+	case "held", "orphaned":
+		slog.Debug("legacy binding state mapped to active", "binding", name, "state", string(b.State))
+		b.State = StateActive
+	}
+
 	return b, nil
 }
 
@@ -581,13 +595,12 @@ func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availa
 // §4), beside ledger.json and availability.json.
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }
 
-// ChannelsDir is where relay mcp's claim files live, one per planner pane
+// ChannelsDir is where relay mcp's claim files live, one per planner
 // (docs/specs/2026-09-21-planner-channel-design.md §3.2).
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
 // PlannersDir is where relay's planner records live: one JSON file per record,
-// named <id>.json (docs/specs/2026-09-22-drop-herdr-design.md §3.1). Created
-// mode 0700 by the first write.
+// named <id>.json (#303 §3.1). Created mode 0700 by the first write.
 func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
 
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it

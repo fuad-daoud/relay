@@ -25,8 +25,7 @@ func seedDone(t *testing.T, rt Runtime, name, cwd string) {
 }
 
 func TestGCClearsOnlyDoneBindings(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
 	live := store.Binding{
@@ -68,8 +67,7 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 }
 
 func TestGCDryRunChangesNothing(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
 	got, err := GC(context.Background(), rt, GCOptions{DryRun: true})
@@ -85,8 +83,7 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 }
 
 func TestGCArchivesByDefault(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 	if err := rt.Store.AppendLog("finished", store.LogEntry{
 		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true,
@@ -111,8 +108,7 @@ func TestGCArchivesByDefault(t *testing.T) {
 
 func TestGCWorktreeTeardown(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	seedDone(t, rt, "ordinary", "/repo-ordinary")
@@ -173,8 +169,7 @@ func TestGCWorktreeTeardown(t *testing.T) {
 
 func TestGCAfterDoneReportsGone(t *testing.T) {
 	fg := &fakeGit{dirtyResult: false}
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	wt := t.TempDir()
@@ -223,8 +218,7 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 
 func TestGCWorktreeDryRun(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	seedDone(t, rt, "ordinary", "/repo-ordinary")
@@ -277,8 +271,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 
 func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	wt := t.TempDir()
@@ -326,8 +319,7 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 }
 
 func TestGCDeleteRemovesTheDirectory(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
 	got, err := GC(context.Background(), rt, GCOptions{Delete: true})
@@ -356,8 +348,7 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 
 func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 	fg := &fakeGit{}
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 	rt.Git = fg
 
 	missingWT := filepath.Join(t.TempDir(), "nonexistent-worktree")
@@ -399,8 +390,7 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 // TestGCIgnoresPaused: gc sweeps only DONE, so a paused binding -- worktree
 // released but the binding very much alive -- survives it untouched.
 func TestGCIgnoresPaused(t *testing.T) {
-	f := &fakeHerdr{}
-	rt := newRuntime(t, f)
+	rt := newRuntime(t)
 
 	b := store.Binding{
 		Name: "parked", CWD: "/repo-parked", Worktree: "/wt/parked",
