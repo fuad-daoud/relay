@@ -16,6 +16,16 @@ import (
 // minInterval keeps a misconfigured interval from spinning the tick.
 const minInterval = 500 * time.Millisecond
 
+// releaseRetryAfter is how long a failed release fetch is left alone before the
+// daemon tries again (#371 §4.10): an endpoint that is down must be asked once
+// an hour, not once a tick.
+const releaseRetryAfter = time.Hour
+
+// ErrReexec reports that Run stopped because a new relay binary is ready and
+// the caller should exec into it (#371). It is not a failure: the process
+// keeps its pid and its children through the exec.
+var ErrReexec = errors.New("relay daemon: re-exec onto a new binary")
+
 // Daemon ticks on its interval and advances every binding. It is the only
 // reason relay needs a background process: the inbound leg happens after the
 // planner's turn has ended, when no model is running to notice.
@@ -27,6 +37,16 @@ type Daemon struct {
 	// changed and returns the Runtime the tick should use. Nil (the
 	// default) keeps today's behaviour: rt is used as given.
 	refresh func(Runtime) Runtime
+
+	// upgrade, when set, runs after every completed tick and only while ctx
+	// is live. True means a new binary passed its preflight, and Run returns
+	// ErrReexec so the caller can exec into it (#371 §4.5). Nil (the default)
+	// keeps today's behaviour: the daemon never re-execs.
+	upgrade func(ctx context.Context) bool
+
+	// releaseRetryAt is when a release fetch that failed may be tried again.
+	// The zero time means "no failure to back off from" (#371 §4.10).
+	releaseRetryAt time.Time
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -48,6 +68,14 @@ func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 	return d
 }
 
+// WithUpgrade installs a post-tick hook that decides whether to re-exec onto a
+// new binary. nil (the default) keeps today's behaviour: no re-exec.
+// Returns d for chaining.
+func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
+	d.upgrade = f
+	return d
+}
+
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on
 // the next interval rather than killing the daemon, because a transient
 // failure must not drop every binding on the floor.
@@ -63,8 +91,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-ticker.C:
-			if err := d.Tick(ctx); err != nil {
+			// The tick runs under WithoutCancel, so a cancel mid-tick lets
+			// that tick finish rather than tearing a reconcile in half
+			// (#371 §4.5). Run then returns nil: it never starts another
+			// tick after cancellation, and never lets the upgrade hook
+			// re-exec from under a shutting-down daemon.
+			tctx := context.WithoutCancel(ctx)
+			if err := d.Tick(tctx); err != nil {
 				slog.Error("relay tick failed", "err", err)
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			if d.upgrade != nil && d.upgrade(ctx) {
+				return ErrReexec
 			}
 		}
 	}
@@ -124,7 +164,8 @@ func (d *Daemon) Tick(ctx context.Context) error {
 // The common path is one small file read -- a fresh cache ends it there, so a
 // 2s tick stays cheap. A stale cache costs one bracketed HTTP GET, and every
 // failure of that GET is swallowed and logged at debug: an offline machine
-// saves nothing, writes no wrong answer, and simply retries next tick.
+// saves nothing, writes no wrong answer, and waits out a one-hour backoff
+// before trying again (#371 §4.10).
 func (d *Daemon) refreshRelease(ctx context.Context) {
 	if d.rt.Fetcher == nil {
 		return
@@ -141,6 +182,12 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		now = d.rt.Now
 	}
 
+	// A failed fetch backs off for an hour (#371 §4.10), so a down endpoint
+	// is asked once an hour instead of on every tick.
+	if now().Before(d.releaseRetryAt) {
+		return
+	}
+
 	cached, ok, err := release.Load(root)
 	if err != nil {
 		slog.Debug("release check: read cache", "err", err)
@@ -153,7 +200,8 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 	tag, err := d.rt.Fetcher.Latest(ctx)
 	if err != nil {
 		// Save nothing: a wrong or empty answer in the cache would read as
-		// truth for a whole day.
+		// truth for a whole day. The next attempt waits out the backoff.
+		d.releaseRetryAt = now().Add(releaseRetryAfter)
 		slog.Debug("release check: fetch", "err", err)
 		return
 	}
@@ -164,7 +212,9 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		Source:    release.Source(),
 	}); err != nil {
 		slog.Debug("release check: save cache", "err", err)
+		return
 	}
+	d.releaseRetryAt = time.Time{}
 }
 
 // armedFires collects every fire-mode edge left armed across every binding:

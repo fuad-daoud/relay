@@ -60,9 +60,14 @@ release:
 
 # mkdir + install rather than `install -D`: -D is a GNU extension and the
 # install(1) that ships with macOS does not have it.
+#
+# The install lands on $(BIN).new and renames it into place: a rename within a
+# directory is atomic, so a running daemon never sees a half-written binary and
+# can pick the new one up (#371).
 install: build
 	mkdir -p $(dir $(BIN))
-	install -m755 relay $(BIN)
+	install -m755 relay $(BIN).new
+	mv -f $(BIN).new $(BIN)
 
 ifeq ($(UNAME_S),Darwin)
 

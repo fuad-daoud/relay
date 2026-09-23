@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/release"
 	"github.com/fuad-daoud/relay/internal/store"
 )
@@ -16,6 +17,11 @@ import (
 type Env interface {
 	// DaemonRunning reports whether a relay daemon holds the lock.
 	DaemonRunning(ctx context.Context) (bool, error)
+	// DaemonInfo reads the daemon's own record (daemon.json): the version,
+	// executable and identity of the running image, and any binary it refused
+	// (#371). A missing record is (zero, false, nil) and means a daemon older
+	// than #371.
+	DaemonInfo() (store.DaemonInfo, bool, error)
 	// LookPath resolves an executable on PATH.
 	LookPath(binary string) (string, error)
 	// HomePath joins a home-relative path, and Stat reports whether it exists.
@@ -25,6 +31,11 @@ type Env interface {
 	// Used to report facts about an installed role definition; a read error
 	// is never itself a check failure.
 	ReadFile(path string) ([]byte, error)
+	// LoadManifest reads the role manifest (#371 §4.10): a home-relative
+	// definition path to the lowercase hex sha256 relay last wrote there. A
+	// missing manifest is an empty map; a malformed one is an error this
+	// package treats as "nothing recorded".
+	LoadManifest() (map[string]string, error)
 	// BinaryVersion runs `<path> --version` and returns the first field of
 	// its trimmed stdout, so a harness with a version floor can be held to it
 	// (spec §4.4). path came from LookPath.
@@ -74,6 +85,15 @@ func (e *realEnv) DaemonRunning(ctx context.Context) (bool, error) {
 	return e.store.DaemonRunning()
 }
 
+// DaemonInfo reads daemon.json from the state root. A nil store is "no record",
+// exactly as a missing file is.
+func (e *realEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
+	if e.store == nil {
+		return store.DaemonInfo{}, false, nil
+	}
+	return e.store.ReadDaemonInfo()
+}
+
 func (e *realEnv) LookPath(binary string) (string, error) {
 	return exec.LookPath(binary)
 }
@@ -93,6 +113,17 @@ func (e *realEnv) Stat(path string) error {
 
 func (e *realEnv) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
+}
+
+// LoadManifest reads the role manifest from relay's state root, composed
+// through store.DefaultRoot the same way ReleaseState composes the release
+// cache path (#42, #371 §3).
+func (e *realEnv) LoadManifest() (map[string]string, error) {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, err
+	}
+	return harness.ReadManifest(harness.ManifestPath(root))
 }
 
 func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error) {

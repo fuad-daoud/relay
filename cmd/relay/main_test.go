@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1089,5 +1090,104 @@ func TestStatusNotice(t *testing.T) {
 					c.running, c.latest, c.ok, c.kind, got, c.want)
 			}
 		})
+	}
+}
+
+func TestWithEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		key  string
+		val  string
+		want []string
+	}{
+		{
+			name: "appends when absent",
+			in:   []string{"A=1"},
+			key:  "K", val: "v",
+			want: []string{"A=1", "K=v"},
+		},
+		{
+			name: "replaces an existing key in place",
+			in:   []string{"A=1", "K=old", "B=2"},
+			key:  "K", val: "v",
+			want: []string{"A=1", "K=v", "B=2"},
+		},
+		{
+			name: "collapses duplicates",
+			in:   []string{"K=one", "A=1", "K=two"},
+			key:  "K", val: "v",
+			want: []string{"K=v", "A=1"},
+		},
+		{
+			name: "a value that merely starts with the key is left alone",
+			in:   []string{"KEEP=1"},
+			key:  "K", val: "v",
+			want: []string{"KEEP=1", "K=v"},
+		},
+		{
+			name: "nil env appends",
+			in:   nil,
+			key:  "K", val: "v",
+			want: []string{"K=v"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := withEnv(tc.in, tc.key, tc.val)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("withEnv(%v, %q, %q) = %v, want %v", tc.in, tc.key, tc.val, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDaemonPreflightOpensNothing covers §4.4: --preflight validates config and
+// returns before the lock, the DB (which would migrate) or any process. The
+// state root must be left with neither relay.db nor daemon.lock.
+func TestDaemonPreflightOpensNothing(t *testing.T) {
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	stdout, _, runErr := captureOutput(t, func() error {
+		return cmdDaemon([]string{"--preflight"})
+	})
+	if runErr != nil {
+		t.Fatalf("cmdDaemon --preflight: %v", runErr)
+	}
+	if !strings.HasPrefix(string(stdout), "ok ") {
+		t.Errorf("--preflight stdout = %q, want it to start with %q", stdout, "ok ")
+	}
+
+	root := filepath.Join(stateHome, "relay")
+	for _, name := range []string{"relay.db", ".daemon.lock"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s present after --preflight (stat err %v); preflight must open nothing", name, err)
+		}
+	}
+}
+
+// TestDaemonPreflightFailsOnBadConfig covers §4.4's failure half: a config
+// error goes to stderr and comes back as a non-nil error (exit 1 at the CLI),
+// and still opens nothing.
+func TestDaemonPreflightFailsOnBadConfig(t *testing.T) {
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	relayDir := filepath.Join(configHome, "relay")
+	if err := os.MkdirAll(relayDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(relayDir, "policy.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
+	}
+
+	if err := cmdDaemon([]string{"--preflight"}); err == nil {
+		t.Fatal("cmdDaemon --preflight with a malformed policy.json: err = nil, want an error")
 	}
 }

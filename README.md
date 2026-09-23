@@ -55,6 +55,15 @@ cd relay
 make install        # builds and installs ~/.local/bin/relay
 ```
 
+To install the built binary by hand, use the same two commands `make install`
+does. The rename is atomic within the directory, so a running daemon never sees
+a half-written file:
+
+```
+install -m755 relay ~/.local/bin/relay.new
+mv -f ~/.local/bin/relay.new ~/.local/bin/relay
+```
+
 `make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
 `go test -count=1 ./...` — and `make install` runs it first.
 
@@ -63,6 +72,19 @@ To run the reconciler as a background service:
 ```
 make service        # systemd user unit on Linux, LaunchAgent on macOS
 ```
+
+### Upgrading
+
+A running daemon moves onto a newly installed binary by itself within a few
+seconds, and a round in flight is not interrupted: builders, gates and consults
+run in their own systemd scopes and survive the restart. A daemon started
+before this release needs one manual restart to start following upgrades —
+`make service`, or `systemctl --user restart relay.service`. `relay doctor`
+shows what the daemon is running. The daemon also refreshes the role
+definitions relay wrote for each harness on every start, and leaves a file you
+edited alone; a planner session's `relay mcp` notices the upgrade too -- it
+appends a line to every tool result saying to reconnect it (`/mcp`), so the
+session loads the new server without a restart.
 
 ### The Claude Code plugin
 
@@ -132,13 +154,16 @@ On a clean machine, set up prerequisites and preflight with `relay init` and
    (or, with one candidate, `relay bind`).
 
 To write these files by hand instead, install the role definitions into each
-harness on `PATH` (the plugin does this for you at install and update):
+harness on `PATH` — the daemon refreshes unmodified definitions on every start
+and upgrade, a file you edited is kept, and `relay agent install --force`
+replaces it:
 ```
 relay agent install
 ```
-One line per file says `wrote`, `kept (identical)` or `kept (differs;
---force to overwrite)`. Pass `--kind` to name a harness that is not on
-`PATH` yet, `--role` for one definition, `--dry-run` to look first.
+One line per file says `wrote`, `updated (unchanged since relay wrote it)`,
+`kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
+name a harness that is not on `PATH` yet, `--role` for one definition,
+`--dry-run` to look first.
 This writes `plan-executor`, `researcher`, `reviewer` and `architect`
 for every kind; `relay agent print --kind <k> --role <r>` still emits
 one to stdout.

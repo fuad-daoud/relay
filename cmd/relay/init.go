@@ -28,7 +28,10 @@ func cmdInit(args []string) error {
 		return err
 	}
 
-	env := harness.OSInstallEnv()
+	env, err := agentInstallEnv()
+	if err != nil {
+		return err
+	}
 
 	files, err := setup.Plan(env)
 	if err != nil {

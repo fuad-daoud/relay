@@ -606,6 +606,84 @@ func TestTickSurvivesAPanickingReconcile(t *testing.T) {
 	}
 }
 
+// TestTickBacksOffAfterAFailedReleaseFetch pins §4.10's backoff: one failed
+// fetch stops the daemon asking again for an hour, and once the hour has
+// passed it asks again.
+//
+// Mutation: drop the `now().Before(d.releaseRetryAt)` early return and the
+// second Tick fetches, so calls reaches 2 early.
+func TestTickBacksOffAfterAFailedReleaseFetch(t *testing.T) {
+	releaseStateRoot(t)
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	ff := &fakeFetcher{err: errors.New("504 gateway timeout")}
+	rt, _ := sentBinding(t)
+	rt.Fetcher = ff
+	rt.Now = func() time.Time { return now }
+
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if ff.calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1 on the failing tick", ff.calls)
+	}
+
+	now = now.Add(30 * time.Minute)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick (inside the backoff): %v", err)
+	}
+	if ff.calls != 1 {
+		t.Errorf("fetch calls = %d, want 1 inside the backoff window", ff.calls)
+	}
+
+	now = now.Add(31 * time.Minute) // 61 minutes after the failure
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick (after the backoff): %v", err)
+	}
+	if ff.calls != 2 {
+		t.Errorf("fetch calls = %d, want 2 once the hour has passed", ff.calls)
+	}
+}
+
+// TestRefreshReleaseSuccessClearsTheBackoff pins the other half of §4.10's
+// contract: a successful save clears the retry deadline, so the next failure
+// backs off from its own moment.
+func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
+	root := releaseStateRoot(t)
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	ff := &fakeFetcher{err: errors.New("network is unreachable")}
+	rt, _ := sentBinding(t)
+	rt.Fetcher = ff
+	rt.Now = func() time.Time { return now }
+
+	d := NewDaemon(rt, time.Second)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if d.releaseRetryAt.IsZero() {
+		t.Fatal("a failed fetch must set the retry deadline")
+	}
+
+	now = now.Add(releaseRetryAfter + time.Minute)
+	ff.err = nil
+	ff.tag = "v0.9.0"
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick (after the backoff): %v", err)
+	}
+	if !d.releaseRetryAt.IsZero() {
+		t.Errorf("releaseRetryAt = %v after a successful fetch, want the zero time", d.releaseRetryAt)
+	}
+	cached, ok, err := release.Load(root)
+	if err != nil || !ok {
+		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)
+	}
+	if cached.Latest != "v0.9.0" {
+		t.Errorf("cache latest = %q, want v0.9.0", cached.Latest)
+	}
+}
+
 // TestBackfillLeavesDoneBindingsAlone pins the DONE guard in
 // backfillPlannerID: a finished binding is history, and a tick must not
 // rewrite it even when its planner session now has a record.

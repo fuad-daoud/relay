@@ -6,7 +6,21 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/store"
 )
+
+// agentInstallEnv is the InstallEnv `relay agent install` uses -- and the same
+// one the daemon's once-per-image role refresh uses (#371 §4.10): the OS-backed
+// env with the role manifest at <state root>/agents-manifest.json. The state
+// root is composed here through store.DefaultRoot, the one path relay's state
+// always resolves through (CLAUDE.md, #42).
+func agentInstallEnv() (harness.InstallEnv, error) {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, err
+	}
+	return harness.OSInstallEnvAt(root), nil
+}
 
 func cmdAgent(args []string) error {
 	const usage = `usage: relay agent print   --kind <agy|claude|opencode> [--role <plan-executor|researcher|reviewer|architect>]
@@ -78,7 +92,12 @@ func cmdAgentInstall(args []string) error {
 		DryRun: *dryRun,
 	}
 
-	results, err := harness.Install(harness.OSInstallEnv(), opts)
+	env, err := agentInstallEnv()
+	if err != nil {
+		return err
+	}
+
+	results, err := harness.Install(env, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay: %v\n", err)
 		return exitCodeErr{code: 2}

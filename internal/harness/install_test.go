@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,14 @@ type fakeInstallEnv struct {
 	mkdirErr    error
 	writes      map[string][]byte
 	writeErrFor map[string]error
+
+	// manifest is the role manifest (#371 §4.10): what LoadManifest returns
+	// and what SaveManifest stores. manifestErr makes LoadManifest fail,
+	// saveErr makes SaveManifest fail; saves counts the calls.
+	manifest    map[string]string
+	manifestErr error
+	saveErr     error
+	saves       int
 }
 
 func (e *fakeInstallEnv) LookPath(binary string) (string, error) {
@@ -64,6 +73,25 @@ func (e *fakeInstallEnv) WriteFile(path string, data []byte) error {
 	return nil
 }
 
+func (e *fakeInstallEnv) LoadManifest() (map[string]string, error) {
+	if e.manifestErr != nil {
+		return nil, e.manifestErr
+	}
+	if e.manifest == nil {
+		e.manifest = make(map[string]string)
+	}
+	return e.manifest, nil
+}
+
+func (e *fakeInstallEnv) SaveManifest(m map[string]string) error {
+	e.saves++
+	if e.saveErr != nil {
+		return e.saveErr
+	}
+	e.manifest = m
+	return nil
+}
+
 func freshEnv() *fakeInstallEnv {
 	return &fakeInstallEnv{
 		home:        "/home/u",
@@ -71,6 +99,7 @@ func freshEnv() *fakeInstallEnv {
 		files:       make(map[string][]byte),
 		writes:      make(map[string][]byte),
 		writeErrFor: make(map[string]error),
+		manifest:    make(map[string]string),
 	}
 }
 
@@ -434,6 +463,525 @@ func TestInstallUnreadableCountsAsDiffers(t *testing.T) {
 	}
 }
 
+// olderArchitectDoc is the exact bytes of the architect.claude.md definition
+// from commit 9b837e64 of this repository: an older shipped copy whose sha256
+// scripts/agents-shipped.sh recorded under "architect.claude.md". It is what an
+// existing install with no role manifest has on disk (#371 round 3 §7 step 3).
+const olderArchitectDoc = `---
+name: architect
+description: >-
+  Use this agent when you need to design the architecture for a new feature or
+  system, including interface definitions, data structures, component contracts,
+  file paths, and high-level pseudocode. This agent should be invoked before any
+  implementation work begins. It is the planner half of a relay handoff: it
+  produces the ordered implementation plan a builder executes, and never writes
+  implementation code itself.
+---
+
+You are a seasoned Software Architect with 20 years of experience designing large-scale distributed systems. Your expertise spans domain-driven design, microservices architecture, interface design, and system decomposition. You think in terms of contracts, boundaries, and abstractions. You are meticulous about separation of concerns and believe that well-designed interfaces are the foundation of maintainable systems.
+
+## Core Mission
+
+Design the complete architecture for features or systems by producing interface definitions, data structures, component contracts, file paths, and high-level logic in pseudocode. You define WHAT gets built and HOW components connect — never HOW they are implemented internally.
+
+## Strict Boundaries
+
+**You WILL:**
+- Define interfaces, type signatures, and method contracts
+- Design data structures with field-level specifications
+- Specify file paths and module organization
+- Write high-level pseudocode describing component interactions and logic flow
+- Define error types and error handling contracts
+- Specify dependency injection requirements and constructor signatures
+- Define event/message schemas if applicable
+- Break the plan into strictly ordered, actionable implementation steps
+
+**You WILL NOT:**
+- Write actual implementation code in any programming language
+- Include function bodies, algorithms, or concrete logic
+- Make technology-specific implementation choices (e.g., specific libraries)
+- Write database queries, ORM configurations, or SQL
+- Implement business logic beyond pseudocode flow descriptions
+- Write tests or test cases
+
+## Output Structure
+
+Every architectural plan must follow this exact structure:
+
+### 1. System Overview
+A concise paragraph describing the feature/system, its purpose, and how it fits into the broader application context.
+
+### 2. File Structure
+A tree representation of all new files and directories to be created, with brief annotations explaining each file's responsibility.
+
+### 3. Data Structures & Type Definitions
+For each data structure, provide:
+- The type/interface name
+- Every field with its type and a description of its purpose
+- Validation constraints (required/optional, min/max, format requirements)
+- Relationships to other data structures
+
+### 4. Interface Definitions & Component Contracts
+For each interface/contract, provide:
+- The interface name and its single responsibility
+- Every method signature including parameter types and return types
+- Error types that each method may produce
+- Preconditions and postconditions for each method
+- Dependencies required by the implementing component
+
+### 5. High-Level Pseudocode
+Describe the logical flow of the system using structured pseudocode. Focus on:
+- Orchestration between components
+- Decision points and branching logic
+- Data transformation pipelines
+- Error handling flows
+- State transitions
+
+### 6. Error Handling Strategy
+Define:
+- Error categories and their hierarchy
+- Which errors are recoverable vs. non-recoverable
+- Error propagation contracts between layers
+- Logging and observability requirements
+
+### 7. Ordered Implementation Steps
+Break the plan into strictly ordered, actionable steps. Each step must:
+- Have a clear, single deliverable
+- List dependencies on previous steps
+- Reference the specific interfaces/data structures being implemented
+- Be small enough to be completed in a single focused session
+- Include verification criteria (how to know the step is done correctly)
+
+## Quality Standards
+
+- Every public interface must have a clearly stated single responsibility
+- Data structures must be complete — no placeholder fields or TODO types
+- All error states must be explicitly modeled
+- File paths must follow the project's existing conventions (check CLAUDE.md or project structure for guidance)
+- Pseudocode must be detailed enough that a developer could implement from it without ambiguity
+- Steps must be ordered such that dependencies are always built before dependents
+
+## Self-Verification Checklist
+
+Before finalizing any architectural plan, verify:
+1. Are all interfaces defined with complete method signatures?
+2. Are all data structures fully specified with types and constraints?
+3. Does the file structure cover every artifact mentioned?
+4. Are error states explicitly enumerated?
+5. Is the implementation order correct (dependencies first)?
+6. Have I avoided writing any implementation code?
+7. Could a developer unfamiliar with the system implement this plan?
+
+If any answer is "no," revise before presenting the plan.
+`
+
+// TestInstallRecognizesOlderShippedBlob is §7 step 3's first row: a definition
+// whose bytes are an older shipped blob, with no manifest at all, is refreshed
+// -- the upgrade path an existing install needs (#371 round 3 §1). Every
+// install that predates round 2 has no manifest, so this row is the whole point.
+//
+// Mutation: drop the ShippedBefore clause from installOne's third case and this
+// test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
+func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
+	const path = ".claude/agents/architect.md"
+	const full = "/home/u/.claude/agents/architect.md"
+	if !ShippedBefore("architect.claude.md", docSHA([]byte(olderArchitectDoc))) {
+		t.Fatal("the fixture sha is not in agents/shipped.sha256; regenerate the fixture")
+	}
+	shipped, err := AgentDoc("architect", "claude")
+	if err != nil {
+		t.Fatalf("AgentDoc: %v", err)
+	}
+
+	env := freshEnv()
+	env.files[full] = []byte(olderArchitectDoc)
+	// No manifest: a machine that predates round 2 entirely.
+
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != OutcomeUpdated {
+		t.Fatalf("results = %+v, want one OutcomeUpdated", results)
+	}
+	if !bytes.Equal(env.files[full], shipped) {
+		t.Error("the older shipped copy was not refreshed with the shipped definition")
+	}
+	if got := env.manifest[path]; got != docSHA(shipped) {
+		t.Errorf("manifest[%s] = %q, want the shipped sha", path, got)
+	}
+	if env.saves != 1 {
+		t.Errorf("manifest saves = %d, want 1", env.saves)
+	}
+
+	// The same decision under DryRun reports without writing.
+	dry := freshEnv()
+	dry.files[full] = []byte(olderArchitectDoc)
+	dryResults, err := Install(dry, InstallOptions{Kind: "claude", Role: "architect", DryRun: true})
+	if err != nil {
+		t.Fatalf("Install(DryRun): %v", err)
+	}
+	if len(dryResults) != 1 || dryResults[0].Outcome != OutcomeWouldUpdate {
+		t.Fatalf("DryRun results = %+v, want one OutcomeWouldUpdate", dryResults)
+	}
+	if len(dry.writes) != 0 {
+		t.Errorf("DryRun wrote %v", dry.writes)
+	}
+}
+
+// TestInstallKeepsAnArbitraryEdit is §7 step 3's second row: bytes that are no
+// version relay ever shipped are the user's own, and stay.
+func TestInstallKeepsAnArbitraryEdit(t *testing.T) {
+	const full = "/home/u/.claude/agents/architect.md"
+	env := freshEnv()
+	env.files[full] = []byte("---\nname: architect\n---\nmy own architect\n")
+
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "architect"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != OutcomeKeptDiffers {
+		t.Fatalf("results = %+v, want one OutcomeKeptDiffers", results)
+	}
+	if len(env.writes) != 0 {
+		t.Errorf("Install wrote %v, want no write", env.writes)
+	}
+}
+
+// TestInstallManifestDecisions covers §5's decision table row by row, over the
+// role manifest (#371 §4.10): what lands, and what the manifest records.
+func TestInstallManifestDecisions(t *testing.T) {
+	shipped, err := AgentDoc("researcher", "claude")
+	if err != nil {
+		t.Fatalf("AgentDoc: %v", err)
+	}
+	const path = ".claude/agents/researcher.md"
+	const full = "/home/u/.claude/agents/researcher.md"
+	// An older relay release wrote these bytes and recorded their sha.
+	older := []byte("---\nmodel: haiku\n---\nan older relay copy\n")
+	// The user's own edit: never in the manifest under this sha.
+	edited := []byte("---\nmodel: sonnet\n---\nthe user's own copy\n")
+	// Identical under DocEqual's trailing-whitespace rule, not byte-identical.
+	identical := append(append([]byte(nil), shipped...), []byte("\n\n")...)
+
+	tests := []struct {
+		name         string
+		existing     []byte // nil = the file is absent
+		manifest     map[string]string
+		force        bool
+		dryRun       bool
+		wantOutcome  InstallOutcome
+		wantManifest map[string]string
+		wantWrote    bool
+	}{
+		{
+			name:         "missing file is written and recorded",
+			wantOutcome:  OutcomeWrote,
+			wantManifest: map[string]string{path: docSHA(shipped)},
+			wantWrote:    true,
+		},
+		{
+			name:         "missing file under DryRun only reports",
+			dryRun:       true,
+			wantOutcome:  OutcomeWouldWrite,
+			wantManifest: map[string]string{},
+		},
+		{
+			name:         "identical records the bytes on disk",
+			existing:     identical,
+			wantOutcome:  OutcomeKeptIdentical,
+			wantManifest: map[string]string{path: docSHA(identical)},
+		},
+		{
+			name:         "differing but unchanged since relay wrote it is updated",
+			existing:     older,
+			manifest:     map[string]string{path: docSHA(older)},
+			wantOutcome:  OutcomeUpdated,
+			wantManifest: map[string]string{path: docSHA(shipped)},
+			wantWrote:    true,
+		},
+		{
+			name:         "differing but unchanged since relay wrote it under DryRun only reports",
+			existing:     older,
+			manifest:     map[string]string{path: docSHA(older)},
+			dryRun:       true,
+			wantOutcome:  OutcomeWouldUpdate,
+			wantManifest: map[string]string{path: docSHA(older)},
+		},
+		{
+			name:         "edited by the user is kept",
+			existing:     edited,
+			manifest:     map[string]string{path: docSHA(older)},
+			wantOutcome:  OutcomeKeptDiffers,
+			wantManifest: map[string]string{path: docSHA(older)},
+		},
+		{
+			name:         "a path not in the manifest is kept",
+			existing:     edited,
+			wantOutcome:  OutcomeKeptDiffers,
+			wantManifest: map[string]string{},
+		},
+		{
+			name:         "edited by the user with Force is overwritten and recorded",
+			existing:     edited,
+			manifest:     map[string]string{path: docSHA(older)},
+			force:        true,
+			wantOutcome:  OutcomeOverwrote,
+			wantManifest: map[string]string{path: docSHA(shipped)},
+			wantWrote:    true,
+		},
+		{
+			name:         "edited by the user with Force under DryRun only reports",
+			existing:     edited,
+			manifest:     map[string]string{path: docSHA(older)},
+			force:        true,
+			dryRun:       true,
+			wantOutcome:  OutcomeWouldOverwrite,
+			wantManifest: map[string]string{path: docSHA(older)},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := freshEnv()
+			if tc.existing != nil {
+				env.files[full] = tc.existing
+			}
+			env.manifest = tc.manifest
+
+			results, err := Install(env, InstallOptions{
+				Kind:   "claude",
+				Role:   "researcher",
+				Force:  tc.force,
+				DryRun: tc.dryRun,
+			})
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("results = %d, want 1", len(results))
+			}
+			if got := results[0].Outcome; got != tc.wantOutcome {
+				t.Errorf("outcome = %v, want %v", got, tc.wantOutcome)
+			}
+			if !reflect.DeepEqual(env.manifest, tc.wantManifest) {
+				t.Errorf("manifest = %v, want %v", env.manifest, tc.wantManifest)
+			}
+			if tc.wantWrote && !bytes.Equal(env.files[full], shipped) {
+				t.Errorf("file on disk = %q, want the shipped definition", env.files[full])
+			}
+			if tc.dryRun {
+				if len(env.writes) != 0 {
+					t.Errorf("DryRun wrote %v", env.writes)
+				}
+				if env.saves != 0 {
+					t.Errorf("DryRun saved the manifest %d times, want 0", env.saves)
+				}
+			}
+		})
+	}
+}
+
+// TestInstallUpdatesDefinitionUnchangedSinceRelayWroteIt is §5's third row on
+// its own: the bytes on disk are exactly what relay last wrote, so a newer
+// shipped definition refreshes them and records the new sha.
+//
+// Mutation: make the `manifest[path] == docSHA(existing)` row always false and
+// this test fails -- OutcomeKeptDiffers instead of OutcomeUpdated.
+func TestInstallUpdatesDefinitionUnchangedSinceRelayWroteIt(t *testing.T) {
+	shipped, err := AgentDoc("researcher", "claude")
+	if err != nil {
+		t.Fatalf("AgentDoc: %v", err)
+	}
+	const path = ".claude/agents/researcher.md"
+	const full = "/home/u/.claude/agents/researcher.md"
+	older := []byte("---\nmodel: haiku\n---\nan older relay copy\n")
+
+	env := freshEnv()
+	env.files[full] = older
+	env.manifest = map[string]string{path: docSHA(older)}
+
+	results, err := Install(env, InstallOptions{Kind: "claude", Role: "researcher"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != OutcomeUpdated {
+		t.Fatalf("results = %+v, want one OutcomeUpdated", results)
+	}
+	if !bytes.Equal(env.files[full], shipped) {
+		t.Errorf("file = %q, want the shipped definition refreshed", env.files[full])
+	}
+	if got := env.manifest[path]; got != docSHA(shipped) {
+		t.Errorf("manifest[%s] = %q, want the shipped sha", path, got)
+	}
+	if env.saves != 1 {
+		t.Errorf("manifest saves = %d, want 1", env.saves)
+	}
+}
+
+// TestInstallSavesManifestOnce pins §4's rule: one save per Install call, with
+// every written path recorded, never one save per file.
+func TestInstallSavesManifestOnce(t *testing.T) {
+	env := freshEnv()
+
+	results, err := Install(env, InstallOptions{Kind: "claude"})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("results = %d, want 4", len(results))
+	}
+	if env.saves != 1 {
+		t.Errorf("manifest saves = %d, want 1", env.saves)
+	}
+	if len(env.manifest) != 4 {
+		t.Errorf("manifest = %v, want one entry per written definition", env.manifest)
+	}
+	for _, r := range results {
+		shipped, err := AgentDoc(r.Role, "claude")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s): %v", r.Role, err)
+		}
+		if got := env.manifest[r.Path]; got != docSHA(shipped) {
+			t.Errorf("manifest[%s] = %q, want the shipped sha", r.Path, got)
+		}
+	}
+}
+
+// TestInstallReportsManifestLoadErrorOnce pins §3: a malformed manifest is an
+// error Install reports once, and the definitions still land -- the manifest is
+// treated as empty rather than blocking the install.
+func TestInstallReportsManifestLoadErrorOnce(t *testing.T) {
+	env := freshEnv()
+	env.manifestErr = errors.New("decode role manifest: unexpected end of JSON input")
+
+	results, err := Install(env, InstallOptions{Kind: "claude"})
+	if err == nil {
+		t.Fatal("Install = nil error, want the manifest error reported")
+	}
+	if !strings.Contains(err.Error(), "decode role manifest") {
+		t.Errorf("Install error = %v, want it to name the manifest", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("results = %d, want 4: a corrupt manifest must not block the install", len(results))
+	}
+	for _, r := range results {
+		if r.Outcome != OutcomeWrote {
+			t.Errorf("%s/%s outcome = %v, want %v", r.Kind, r.Role, r.Outcome, OutcomeWrote)
+		}
+	}
+}
+
+// TestInstallReportsManifestSaveError keeps the results when only the record of
+// them failed: the definitions landed, and the caller reports the error once.
+func TestInstallReportsManifestSaveError(t *testing.T) {
+	env := freshEnv()
+	env.saveErr = errors.New("read-only file system")
+
+	results, err := Install(env, InstallOptions{Kind: "claude"})
+	if err == nil {
+		t.Fatal("Install = nil error, want the manifest save error reported")
+	}
+	if !strings.Contains(err.Error(), "read-only file system") {
+		t.Errorf("Install error = %v, want the save error", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("results = %d, want 4", len(results))
+	}
+}
+
+// TestReadWriteManifestRoundTrip pins the manifest file itself (#371 §3):
+// missing is empty, a write is one atomic 0644 file with no temp left behind,
+// and malformed JSON is an error.
+func TestReadWriteManifestRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := ManifestPath(dir)
+
+	if got := filepath.Base(path); got != manifestFileName {
+		t.Errorf("ManifestPath base = %q, want %q", got, manifestFileName)
+	}
+
+	empty, err := ReadManifest(path)
+	if err != nil {
+		t.Fatalf("ReadManifest(missing): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ReadManifest(missing) = %v, want an empty map", empty)
+	}
+
+	want := map[string]string{
+		".claude/agents/plan-executor.md": "0123456789abcdef",
+		".claude/agents/researcher.md":    "fedcba9876543210",
+	}
+	if err := WriteManifest(path, want); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	got, err := ReadManifest(path)
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ReadManifest = %v, want %v", got, want)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("manifest mode = %o, want 0644", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != manifestFileName {
+		t.Errorf("state root holds %v, want only %s", entries, manifestFileName)
+	}
+
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := ReadManifest(path); err == nil {
+		t.Error("ReadManifest(malformed) = nil error, want an error")
+	}
+}
+
+func TestOSInstallEnvWriteFileReplacesAndLeavesNoTempFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	env := OSInstallEnv()
+
+	dir := filepath.Join(home, "agents")
+	if err := env.MkdirAll(dir); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	path := filepath.Join(dir, "researcher.md")
+
+	if err := env.WriteFile(path, []byte("one")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := env.WriteFile(path, []byte("two")); err != nil {
+		t.Fatalf("WriteFile (replace): %v", err)
+	}
+
+	data, err := env.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "two" {
+		t.Errorf("content = %q, want %q", data, "two")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "researcher.md" {
+		t.Errorf("directory holds %v, want only researcher.md (no temp file left behind)", entries)
+	}
+}
+
 func TestDocEqual(t *testing.T) {
 	shipped, err := AgentDoc("plan-executor", "claude")
 	if err != nil {
@@ -494,6 +1042,14 @@ func TestInstallResultLine(t *testing.T) {
 		{
 			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeKeptDiffers},
 			want: "kept (differs; --force to overwrite)  ~/.claude/agents/researcher.md",
+		},
+		{
+			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeUpdated},
+			want: "updated (unchanged since relay wrote it)  ~/.claude/agents/researcher.md",
+		},
+		{
+			res:  InstallResult{Kind: "claude", Role: "researcher", Path: ".claude/agents/researcher.md", Outcome: OutcomeWouldUpdate},
+			want: "would update  ~/.claude/agents/researcher.md",
 		},
 		{
 			res:  InstallResult{Path: ".gemini/config/agents/reviewer.md", Outcome: OutcomeError, Err: "read-only"},

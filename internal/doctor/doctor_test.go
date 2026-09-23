@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/release"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // shippedDoc returns the exact bytes this relay ships for role/kind, so a
@@ -30,6 +31,11 @@ func shippedDoc(t *testing.T, role, kind string) string {
 type fakeEnv struct {
 	daemonRunning bool
 	daemonErr     error
+	// daemonInfo* are what DaemonInfo reports: the record, whether it exists,
+	// and an optional read error (#371).
+	daemonInfo    store.DaemonInfo
+	daemonInfoOK  bool
+	daemonInfoErr error
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
 	fileContents  map[string]string // path -> content; absent reads as empty
@@ -47,6 +53,11 @@ type fakeEnv struct {
 	releaseLatest  string
 	releaseOK      bool
 	releaseKind    release.Kind
+
+	// manifest is what LoadManifest returns (#371 §4.10): a home-relative
+	// definition path to the sha relay last wrote there. nil reads as no
+	// manifest recorded.
+	manifest map[string]string
 }
 
 func (f *fakeEnv) DaemonRunning(ctx context.Context) (bool, error) {
@@ -54,6 +65,13 @@ func (f *fakeEnv) DaemonRunning(ctx context.Context) (bool, error) {
 		return false, f.daemonErr
 	}
 	return f.daemonRunning, nil
+}
+
+func (f *fakeEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
+	if f.daemonInfoErr != nil {
+		return store.DaemonInfo{}, false, f.daemonInfoErr
+	}
+	return f.daemonInfo, f.daemonInfoOK, nil
 }
 
 func (f *fakeEnv) LookPath(binary string) (string, error) {
@@ -111,6 +129,12 @@ func (f *fakeEnv) Command(ctx context.Context, bin string, args ...string) ([]by
 
 func (f *fakeEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return f.releaseRunning, f.releaseLatest, f.releaseOK, f.releaseKind
+}
+
+// LoadManifest satisfies doctor.Env (#371 §4.10): the recorded manifest, or
+// nil for a machine that has none.
+func (f *fakeEnv) LoadManifest() (map[string]string, error) {
+	return f.manifest, nil
 }
 
 func findCheck(report Report, group, name string) *Check {
@@ -172,6 +196,88 @@ func TestDoctorUnknownKindDegradesWithoutFailing(t *testing.T) {
 	if report.Failures() != 0 {
 		t.Errorf("an unknown kind must not fail doctor, got %d failures", report.Failures())
 	}
+}
+
+// TestDoctorRolesRow covers §4.10's role-staleness row: stale when the daemon
+// would write or update a definition, OK with the "differs from every copy
+// relay has shipped (kept as your edit)" detail when the user's own edit is
+// being kept, and OK when everything is current. A harness whose binary is not
+// on PATH gets no row, because it gets no other per-harness row either.
+func TestDoctorRolesRow(t *testing.T) {
+	claudeRoles := []string{"plan-executor", "researcher", "reviewer", "architect"}
+	relPath := func(role string) string { return ".claude/agents/" + role + ".md" }
+
+	envFor := func(contents map[string]string) *fakeEnv {
+		existing := map[string]bool{}
+		files := map[string]string{}
+		for role, content := range contents {
+			p := "/fake/home/" + relPath(role)
+			existing[p] = true
+			files[p] = content
+		}
+		return &fakeEnv{
+			daemonRunning: true,
+			lookPaths:     map[string]string{"claude": "/usr/bin/claude"},
+			homeDir:       "/fake/home",
+			existingFiles: existing,
+			fileContents:  files,
+		}
+	}
+
+	t.Run("stale", func(t *testing.T) {
+		rep := Run(context.Background(), envFor(nil), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevWarn {
+			t.Errorf("severity = %v, want SevWarn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "role definitions are stale") {
+			t.Errorf("detail = %q, want it to say the definitions are stale", c.Detail)
+		}
+		if c.Fix != "relay agent install" {
+			t.Errorf("fix = %q, want relay agent install", c.Fix)
+		}
+	})
+
+	t.Run("user edited is kept", func(t *testing.T) {
+		contents := map[string]string{}
+		for _, role := range claudeRoles {
+			contents[role] = "---\nmodel: haiku\n---\nmine\n"
+		}
+		rep := Run(context.Background(), envFor(contents), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevOK || c.Detail != "differs from every copy relay has shipped (kept as your edit)" {
+			t.Errorf("row = %+v, want OK with detail %q", *c, "differs from every copy relay has shipped (kept as your edit)")
+		}
+	})
+
+	t.Run("current", func(t *testing.T) {
+		contents := map[string]string{}
+		for _, role := range claudeRoles {
+			contents[role] = shippedDoc(t, role, "claude")
+		}
+		rep := Run(context.Background(), envFor(contents), []string{"claude"})
+		c := findCheck(rep, "claude", "roles")
+		if c == nil {
+			t.Fatal("claude has its binary on PATH, so it needs a roles row")
+		}
+		if c.Severity != SevOK || c.Detail != "up to date" {
+			t.Errorf("row = %+v, want OK and up to date", *c)
+		}
+	})
+
+	t.Run("binary off PATH has no row", func(t *testing.T) {
+		env := &fakeEnv{lookPaths: map[string]string{}}
+		rep := Run(context.Background(), env, []string{"claude"})
+		if c := findCheck(rep, "claude", "roles"); c != nil {
+			t.Errorf("roles row %+v, want none when the binary is off PATH", *c)
+		}
+	})
 }
 
 func TestDoctorAdoptedBindingSurvivesMissingBinary(t *testing.T) {
@@ -1146,5 +1252,92 @@ func TestReleaseFix(t *testing.T) {
 				t.Errorf("releaseFix(%q, %q, %q, %q) = %q, want %q", tc.kind, tc.latest, tc.goos, tc.goarch, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDoctorDaemonVersionStates covers the four states of §4.8's daemon row
+// while the daemon is running (#371): no record, a refused binary, a version
+// behind the CLI, and equal.
+func TestDoctorDaemonVersionStates(t *testing.T) {
+	tests := []struct {
+		name         string
+		info         store.DaemonInfo
+		ok           bool
+		wantSeverity Severity
+		wantDetail   string
+		wantFix      string
+	}{
+		{
+			name:         "missing record",
+			ok:           false,
+			wantSeverity: SevWarn,
+			wantDetail:   "running, but started before relay recorded its version: it will not follow upgrades until restarted once",
+			wantFix:      "systemctl --user restart relay.service, or make service",
+		},
+		{
+			name: "refused binary",
+			info: store.DaemonInfo{
+				Version:      "v1",
+				Exe:          "/usr/local/bin/relay",
+				ReexecFailed: &store.ReexecFailure{Reason: "policy.json: unknown field"},
+			},
+			ok:           true,
+			wantSeverity: SevWarn,
+			wantDetail:   "runs v1; the relay binary at /usr/local/bin/relay failed preflight (policy.json: unknown field) and was not loaded",
+			wantFix:      "fix the error above; the daemon retries when the file changes",
+		},
+		{
+			name:         "version differs",
+			info:         store.DaemonInfo{Version: "v1"},
+			ok:           true,
+			wantSeverity: SevOK,
+			wantDetail:   "runs v1; switching to v2 within seconds",
+		},
+		{
+			name:         "equal",
+			info:         store.DaemonInfo{Version: "v2"},
+			ok:           true,
+			wantSeverity: SevOK,
+			wantDetail:   "running v2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &fakeEnv{daemonRunning: true, daemonInfo: tc.info, daemonInfoOK: tc.ok, releaseRunning: "v2"}
+			c := findCheck(Run(context.Background(), env, nil), "", "daemon")
+			if c == nil {
+				t.Fatal("no daemon row in the report")
+			}
+			if c.Severity != tc.wantSeverity {
+				t.Errorf("severity = %v, want %v", c.Severity, tc.wantSeverity)
+			}
+			if !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", c.Detail, tc.wantDetail)
+			}
+			if tc.wantFix != "" && !strings.Contains(c.Fix, tc.wantFix) {
+				t.Errorf("fix = %q, want it to contain %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
+}
+
+// TestDoctorDaemonRowsUnchanged pins the two rows #371 keeps byte-identical: a
+// stopped daemon and a failed probe.
+func TestDoctorDaemonRowsUnchanged(t *testing.T) {
+	stopped := findCheck(Run(context.Background(), &fakeEnv{daemonRunning: false}, nil), "", "daemon")
+	if stopped == nil {
+		t.Fatal("no daemon row for a stopped daemon")
+	}
+	if stopped.Severity != SevWarn || stopped.Detail != "not running" || stopped.Fix != "relay daemon" {
+		t.Errorf("stopped daemon row = %+v, want Warn / not running / relay daemon", *stopped)
+	}
+
+	failed := findCheck(Run(context.Background(), &fakeEnv{daemonErr: errors.New("nope")}, nil), "", "daemon")
+	if failed == nil {
+		t.Fatal("no daemon row for a failed probe")
+	}
+	if failed.Severity != SevWarn || failed.Detail != "probe error: nope" || failed.Fix != "relay daemon" || !failed.ProbeFailed {
+		t.Errorf("probe error row = %+v, want Warn / probe error: nope / relay daemon / ProbeFailed", *failed)
 	}
 }

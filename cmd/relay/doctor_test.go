@@ -474,12 +474,23 @@ func TestPolicyExample(t *testing.T) {
 type stubDoctorEnv struct {
 	daemonRun bool
 	daemonErr error
-	lookPaths map[string]string
-	statErr   error // nil means every role file exists
+	// daemonInfo/daemonInfoOK satisfy doctor.Env (#371). The zero value here
+	// means "no record", which is what a test that does not set them is
+	// exercising; the silent-machine fixture records a matching version.
+	daemonInfo   store.DaemonInfo
+	daemonInfoOK bool
+	lookPaths    map[string]string
+	statErr      error // nil means every role file exists
 }
 
 func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
 	return s.daemonRun, s.daemonErr
+}
+
+// DaemonInfo satisfies doctor.Env (#371): the recorded daemon state, or "no
+// record" when daemonInfoOK is false.
+func (s *stubDoctorEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
+	return s.daemonInfo, s.daemonInfoOK, nil
 }
 func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
 	if p, ok := s.lookPaths[binary]; ok {
@@ -499,6 +510,12 @@ func (s *stubDoctorEnv) Stat(path string) error {
 // "no usable cache": the release row is SevOK/not checked and cannot mask one.
 func (s *stubDoctorEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return "", "", false, release.KindUnknown
+}
+
+// LoadManifest satisfies doctor.Env (#371 §4.10): these stubs record no
+// manifest, so the role-staleness row reads every definition as "would write".
+func (s *stubDoctorEnv) LoadManifest() (map[string]string, error) {
+	return nil, nil
 }
 
 // ReadFile satisfies doctor.Env. These tests assert on severities and fix
@@ -563,8 +580,9 @@ func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
 
 func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 	env := &stubDoctorEnv{
-		daemonRun: true,
-		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		daemonRun:    true,
+		daemonInfoOK: true, // a running daemon with a recorded, matching version
+		lookPaths:    map[string]string{"claude": "/usr/bin/claude"},
 	}
 	rep := doctor.Run(context.Background(), env, []string{"claude"})
 	if lines := bindWarningLines(rep); len(lines) != 0 {

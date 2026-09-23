@@ -51,6 +51,11 @@ type Server struct {
 	// cmd/relay leaves it empty so the mode decides.
 	Instructions string
 	Log          io.Writer // stderr; nil -> discard
+	// Notice, when non-nil and returning a non-empty string, is appended as
+	// one more text content block to every tools/call result (#371 §4.10):
+	// it is how a planner session's relay mcp says the daemon has moved on
+	// to a newer relay than this server. nil, or "", changes nothing.
+	Notice func() string
 	// OnInitialized is called once, after notifications/initialized. The
 	// command wires the poll loop start here so nothing is pushed before
 	// the client has acknowledged initialize.
@@ -221,7 +226,23 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 		s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: rpcErr})
 		return
 	}
-	s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: result})
+	s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: s.withNotice(result)})
+}
+
+// withNotice appends the upgrade notice as one more text content block on a
+// tool result (#371 §4.10). It runs on a verb error's ToolResult too, because
+// that is how the model reads a failure. A nil Notice and a notice that reads
+// as "" both leave the result exactly as it is without one.
+func (s *Server) withNotice(r ToolResult) ToolResult {
+	if s.Notice == nil {
+		return r
+	}
+	notice := s.Notice()
+	if notice == "" {
+		return r
+	}
+	r.Content = append(r.Content, Content{Type: "text", Text: notice})
+	return r
 }
 
 func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage) (ToolResult, *RPCError) {

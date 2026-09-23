@@ -43,9 +43,15 @@ func (f *fakeVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
 // wrote to out.
 func runServer(t *testing.T, verbs Verbs, requests []string) []byte {
 	t.Helper()
+	return runServerWith(t, &Server{Verbs: verbs, Version: "0.6.0-test"}, requests)
+}
+
+// runServerWith is runServer over a caller-built Server, for the tests that
+// need a Notice (#371 §4.10) or another field runServer leaves zero.
+func runServerWith(t *testing.T, srv *Server, requests []string) []byte {
+	t.Helper()
 	pr, pw := io.Pipe()
 	var out bytes.Buffer
-	srv := &Server{Verbs: verbs, Version: "0.6.0-test"}
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(context.Background(), pr, &out) }()
@@ -315,5 +321,95 @@ func TestServerPushEmitsNotificationAndDropsBadKey(t *testing.T) {
 	}
 	if note.Params.Meta["binding"] != "judge" {
 		t.Errorf("meta must keep the identifier key, got %+v", note.Params.Meta)
+	}
+}
+
+// TestServerAppendsNoticeToToolResults pins §4.10: when Notice returns text it
+// is one more text content block on the tool result, on a verb error's result
+// exactly as on a success.
+func TestServerAppendsNoticeToToolResults(t *testing.T) {
+	const notice = "note: relay was upgraded to v0.8.0; this session's relay MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
+
+	srv := &Server{
+		Verbs: &fakeVerbs{
+			statusFn: func(context.Context, StatusArgs) (any, error) {
+				return map[string]string{"state": "running"}, nil
+			},
+			doneFn: func(context.Context, DoneArgs) (any, error) {
+				return nil, errors.New("no binding")
+			},
+		},
+		Version: "0.7.0",
+		Notice:  func() string { return notice },
+	}
+
+	out := runServerWith(t, srv, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"done","arguments":{"name":"webshop"}}}`,
+	})
+	lines := splitLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("responses = %d, want 2: %s", len(lines), out)
+	}
+
+	for i, wantIsError := range []bool{false, true} {
+		resp := decodeResponse(t, lines[i])
+		if resp.Error != nil {
+			t.Fatalf("response %d carried a JSON-RPC error: %+v", i+1, resp.Error)
+		}
+		result, ok := resp.Result.(map[string]any)
+		if !ok {
+			t.Fatalf("result %d = %#v, want an object", i+1, resp.Result)
+		}
+		content, ok := result["content"].([]any)
+		if !ok {
+			t.Fatalf("content %d = %#v, want an array", i+1, result["content"])
+		}
+		if len(content) != 2 {
+			t.Fatalf("content blocks = %d, want 2 (the result plus the notice): %#v", len(content), content)
+		}
+		block, ok := content[1].(map[string]any)
+		if !ok {
+			t.Fatalf("notice block = %#v, want an object", content[1])
+		}
+		if block["type"] != "text" || block["text"] != notice {
+			t.Errorf("notice block = %#v, want {type: text, text: %q}", block, notice)
+		}
+		if gotErr, _ := result["isError"].(bool); gotErr != wantIsError {
+			t.Errorf("result %d isError = %v, want %v", i+1, gotErr, wantIsError)
+		}
+	}
+}
+
+// TestServerNoticeNilOrEmptyIsUnchanged pins the other half of §4.10: a nil
+// Notice and one that returns "" both leave the tool result byte-identical to
+// what the server wrote before notices existed.
+func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
+	verbs := func() Verbs {
+		return &fakeVerbs{statusFn: func(context.Context, StatusArgs) (any, error) {
+			return map[string]string{"state": "running"}, nil
+		}}
+	}
+	req := []string{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}`}
+
+	noNotice := runServer(t, verbs(), req)
+	emptyNotice := runServerWith(t, &Server{
+		Verbs:   verbs(),
+		Version: "0.6.0-test",
+		Notice:  func() string { return "" },
+	}, req)
+
+	if !bytes.Equal(noNotice, emptyNotice) {
+		t.Errorf("a Notice that returns \"\" changed the output:\n%s\nvs\n%s", noNotice, emptyNotice)
+	}
+
+	resp := decodeResponse(t, splitLines(noNotice)[0])
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want an object", resp.Result)
+	}
+	content, _ := result["content"].([]any)
+	if len(content) != 1 {
+		t.Errorf("content blocks = %d, want 1: %#v", len(content), content)
 	}
 }
