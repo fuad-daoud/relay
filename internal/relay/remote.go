@@ -954,19 +954,29 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	name := b.Name
 
 	// 1. Fetch report, diff, log and write via temp-and-rename.
+	//
+	// A stopped round may have no report file: the builder was killed before
+	// it wrote one, and catchUp writes the stopped payload instead (below).
+	// A 404 on a round that was not stopped still halts, as it always has.
+	haveReport := false
 	rcReport, err := rt.Remote.RoundFile(ctx, server, name, n, "report")
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == 404 {
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", name, server, n))
+			if view.Stopped == "" {
+				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", name, server, n))
+			}
+		} else {
+			slog.Warn("fetch report failed", "server", server, "name", name, "round", n, "err", err)
+			return b, nil
 		}
-		slog.Warn("fetch report failed", "server", server, "name", name, "round", n, "err", err)
-		return b, nil
-	}
-	defer rcReport.Close()
-	if err := writeTempAndRename(rt.Store.ReportPath(name, n), rcReport); err != nil {
-		slog.Warn("write report failed", "path", rt.Store.ReportPath(name, n), "err", err)
-		return b, nil
+	} else {
+		defer rcReport.Close()
+		if err := writeTempAndRename(rt.Store.ReportPath(name, n), rcReport); err != nil {
+			slog.Warn("write report failed", "path", rt.Store.ReportPath(name, n), "err", err)
+			return b, nil
+		}
+		haveReport = true
 	}
 
 	diffDownloaded := false
@@ -1136,13 +1146,18 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		entries = append(entries, diffEntry)
 	}
 	reportPath := rt.Store.ReportPath(name, n)
-	payload := fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, reportPath)
+	payload := ""
+	note := ""
+	if view.Stopped != "" {
+		payload, note = stopPayload(view.Stopped, n, " on "+server, reportPath, haveReport)
+	} else {
+		payload = fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, reportPath)
+	}
 	if line := DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
 	}
-	note := ""
 	if view.DirtyCommit != "" {
-		note = fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n)
+		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relay/%s/round-%d", name, n))
 	}
 	var u *usage.Usage = view.Usage
 	if u == nil {
@@ -1154,6 +1169,16 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u, view.Rusage)
 	if err != nil {
 		return b, err
+	}
+	if view.Stopped != "" {
+		// After queueReport, the same order closeStopped uses, so the entry is
+		// filed under the round that was stopped (#344).
+		if err := tx.AppendLog(name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner,
+			Kind: store.KindStop, Note: "stopped/" + view.Stopped, Confirmed: true,
+		}); err != nil {
+			return next, err
+		}
 	}
 
 	// 6. Mark idle; the caller (reconcileRemote or SyncRemote) decides

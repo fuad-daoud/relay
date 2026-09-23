@@ -754,9 +754,46 @@ func TestDoneRefusesQueuedRound(t *testing.T) {
 	if err := json.Unmarshal(body, &errBody); err != nil {
 		t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
 	}
-	wantMsg := fmt.Sprintf("round %d is queued; unbind to drop it", 1)
+	wantMsg := fmt.Sprintf("round %d is queued; relay stop to drop it from the queue, or unbind", 1)
 	if errBody.Message != wantMsg {
 		t.Errorf("error message = %q, want %q", errBody.Message, wantMsg)
+	}
+}
+
+// TestStopDropsQueued pins #344's queued wire stop: with the cap taken, a
+// second owner's queued round stops with 200 as "dequeued" rather than being
+// refused, and the server's queue census no longer lists it.
+func TestStopDropsQueued(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) { cfg.MaxBuilders = 1 })
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+	if viewB := decodeView(t, bodyB); viewB.RoundState != remote.RoundQueued {
+		t.Fatalf("B round_state = %q, want queued", viewB.RoundState)
+	}
+
+	resp, body := doSigned(t, env.ts, ownerB.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	view := decodeView(t, body)
+	if view.Stopped != "dequeued" {
+		t.Errorf("stopped = %q, want dequeued", view.Stopped)
+	}
+	if view.RoundState != remote.RoundClosed {
+		t.Errorf("round_state = %q, want closed", view.RoundState)
+	}
+
+	c, err := env.srv.census()
+	if err != nil {
+		t.Fatalf("census: %v", err)
+	}
+	if len(c.Queued) != 0 {
+		t.Errorf("census.Queued = %+v, want empty", c.Queued)
 	}
 }
 

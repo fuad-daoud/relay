@@ -64,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bindings/{name}", s.handleGetBinding)
 	mux.HandleFunc("POST /v1/bindings/{name}/done", s.handleDone)
 	mux.HandleFunc("POST /v1/bindings/{name}/unbind", s.handleUnbind)
+	mux.HandleFunc("POST /v1/bindings/{name}/stop", s.handleStop)
 	mux.HandleFunc("POST /v1/bindings/{name}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/bindings/{name}/rounds", s.handleStartRound)
 	mux.HandleFunc("GET /v1/bindings/{name}/rounds/{n}/files/{kind}", s.handleRoundFile)
@@ -102,7 +103,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Transports:    []string{"git-bundle"},
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop}
 		who.BuilderTier = string(relay.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

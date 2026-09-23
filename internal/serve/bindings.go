@@ -267,7 +267,7 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, "round is open")
 		return
 	case remote.RoundQueued:
-		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is queued; unbind to drop it", b.Round))
+		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, fmt.Sprintf("round %d is queued; relay stop to drop it from the queue, or unbind", b.Round))
 		return
 	}
 
@@ -317,6 +317,58 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleStop ends the binding's open round on the server, leaving the binding
+// in place (#344). An idle or already-closed binding is 409 nothing_to_stop, a
+// halted one is 409 round_halted (message is the binding's Halt), and another
+// client's binding is 404 -- the states the verbs around it refuse, plus
+// nothing_to_stop.
+func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	caller := callerOf(r)
+	name := r.PathValue("name")
+
+	b, rt, err := s.loadBinding(caller, name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+		return
+	}
+	if !Allowed(caller, "stop", b) {
+		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+		return
+	}
+
+	entries, _ := rt.Store.ReadLog(name)
+	switch relay.RoundStateOf(b, entries) {
+	case remote.RoundIdle, remote.RoundClosed:
+		writeErr(w, http.StatusConflict, remote.CodeNothingToStop, relay.ErrNothingToStop.Error())
+		return
+	case remote.RoundNeedsYou:
+		writeErr(w, http.StatusConflict, remote.CodeRoundHalted, b.Halt)
+		return
+	}
+
+	if _, err := relay.Stop(r.Context(), rt, name, relay.StopOptions{}); err != nil {
+		if errors.Is(err, relay.ErrNothingToStop) {
+			writeErr(w, http.StatusConflict, remote.CodeNothingToStop, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "", err.Error())
+		return
+	}
+
+	if reloaded, err := rt.Store.Load(name); err == nil {
+		b = reloaded
+	}
+	entries, _ = rt.Store.ReadLog(name)
+	writeJSON(w, http.StatusOK, relay.ServedView(b, entries))
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {

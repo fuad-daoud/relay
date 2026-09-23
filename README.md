@@ -838,8 +838,14 @@ relay stop webshop               # end the round now
 - **`stop` then `pause`** is the sequence for parking a binding between
   rounds: `stop` ends the round, and `pause` then releases the worktree.
 - **Send and the round close clear the request**, so a stop never outlives
-  the round it was made for. `stop` refuses a remote binding (`relay done`
-  ends one) and a binding that is already `DONE` or `PAUSED`.
+  the round it was made for. `stop` refuses a binding that is already `DONE`
+  or `PAUSED`.
+
+A remote binding's round is stopped on its server, and the binding stays: on
+both sides only the round ends. A round still queued on the server is dropped
+from the queue instead, since there is no process to kill. A server that
+predates this refuses the request with a pointer to `relay unbind webshop`,
+which stops the round and drops the binding.
 
 ### Landing a branch
 

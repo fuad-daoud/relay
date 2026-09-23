@@ -490,3 +490,23 @@ func (c *Client) Resume(ctx context.Context, server, name string) (remote.Bindin
 	}
 	return view, nil
 }
+
+// Stop asks the server to stop the binding's open round and returns the
+// binding's view after the stop.
+func (c *Client) Stop(ctx context.Context, server, name string) (remote.BindingView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	path := fmt.Sprintf("/v1/bindings/%s/stop", url.PathEscape(name))
+	resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
+	if err != nil {
+		return remote.BindingView{}, err
+	}
+	defer resp.Body.Close()
+
+	var view remote.BindingView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return remote.BindingView{}, fmt.Errorf("decode binding view: %w", err)
+	}
+	return view, nil
+}

@@ -306,6 +306,36 @@ func TestServedViewDiffFacts(t *testing.T) {
 	}
 }
 
+// TestServedViewStopped pins #344: the view names how the closed round was
+// stopped, read from the KindStop entry closeStopped writes for that round,
+// and leaves the field empty when the only stop entry names an earlier round.
+func TestServedViewStopped(t *testing.T) {
+	b := store.Binding{
+		Name:  "api",
+		State: store.StateActive,
+		Round: 3,
+		Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 1},
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Kind: store.KindStop, Note: "stopped/killed"},
+		{Round: 2, Kind: store.KindStop, Note: "stopped/killed"},
+	}
+	if view := ServedView(b, entries); view.Stopped != "killed" {
+		t.Fatalf("Stopped = %q, want killed", view.Stopped)
+	}
+
+	// The same entry on an earlier round leaves the field empty.
+	if view := ServedView(b, entries[:1]); view.Stopped != "" {
+		t.Fatalf("Stopped = %q with only an earlier round's stop entry, want empty", view.Stopped)
+	}
+
+	// No stop entry at all: still empty.
+	if view := ServedView(b, nil); view.Stopped != "" {
+		t.Fatalf("Stopped = %q with no stop entry, want empty", view.Stopped)
+	}
+}
+
 // TestServedViewCarriesClosedRoundUsage checks that the view ships the
 // closed round's usage the way it ships ReportOutcome (#216): from the
 // newest KindReport entry for Serve.ClosedRound, and only from it.

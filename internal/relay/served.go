@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
@@ -114,6 +115,22 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 			}
 		}
 	}
+	// stopped is how the closed round was stopped: the newest KindStop entry
+	// for ClosedRound whose note names one ("stopped/killed" or
+	// "stopped/dequeued"). A close any other way writes no such entry, and
+	// the field stays "" (#344).
+	var stopped string
+	if b.Serve != nil && b.Serve.ClosedRound > 0 {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == b.Serve.ClosedRound && entries[i].Kind == store.KindStop {
+				stopped = strings.TrimPrefix(entries[i].Note, "stopped/")
+				if stopped == entries[i].Note {
+					stopped = ""
+				}
+				break
+			}
+		}
+	}
 	var ackedRound int
 	var closedRound int
 	if b.Serve != nil {
@@ -130,6 +147,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		ResultCommit:   resultCommit,
 		DirtyCommit:    dirtyCommit,
 		ReportOutcome:  reportOutcome,
+		Stopped:        stopped,
 		DiffNote:       diffNote,
 		DiffCommits:    diffCommits,
 		DiffTree:       diffTree,

@@ -74,6 +74,8 @@ type fakeRemote struct {
 	unbindErr         error
 	resumeResp        remote.BindingView
 	resumeErr         error
+	stopResp          remote.BindingView
+	stopErr           error
 
 	onCreateBinding func()
 	onUnbind        func()
@@ -157,6 +159,11 @@ func (f *fakeRemote) Unbind(ctx context.Context, server, name string) error {
 func (f *fakeRemote) Resume(ctx context.Context, server, name string) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("Resume:%s:%s", server, name))
 	return f.resumeResp, f.resumeErr
+}
+
+func (f *fakeRemote) Stop(ctx context.Context, server, name string) (remote.BindingView, error) {
+	f.calls = append(f.calls, fmt.Sprintf("Stop:%s:%s", server, name))
+	return f.stopResp, f.stopErr
 }
 
 type fakeTransport struct {
@@ -1879,7 +1886,7 @@ func TestDoneRemoteForwardsFirst(t *testing.T) {
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	_, err := Done(ctx, rt, "api")
-	if err == nil || !strings.Contains(err.Error(), "round 1 is running on zen; wait for it, or relay unbind api to stop it and drop the binding") {
+	if err == nil || !strings.Contains(err.Error(), "round 1 is running on zen; relay stop api to stop it and keep the binding, or relay unbind api to drop it") {
 		t.Fatalf("Done err = %v, want the round-open refusal", err)
 	}
 	if err != nil && strings.Contains(err.Error(), "--force") {
@@ -2635,6 +2642,165 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Fatalf("fakeRemote calls = %v, want none: SyncRemote must not touch the network for a skipped binding", fr.calls)
+	}
+}
+
+// stoppedRoundRemote is a remote whose closed round 1 the server says was
+// stopped. Its report, diff, log and stream files all answer 404: a stopped
+// builder that wrote nothing. dirtyCommit rides the view when non-empty.
+func stoppedRoundRemote(stopped, dirtyCommit string) *fakeRemote {
+	return &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			Stopped: stopped, DirtyCommit: dirtyCommit,
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+		},
+	}
+}
+
+// TestCatchUpStoppedNoReport pins #344: a closed round the server says was
+// stopped, with no report file, closes the client's round instead of halting
+// the binding, queues the stopped payload, and files the stopped KindStop
+// entry for the stopped round.
+//
+// Mutation check: make the report-404 halt ignore view.Stopped and this fails
+// on the binding halting.
+func TestCatchUpStoppedNoReport(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Remote: stoppedRoundRemote("killed", ""), Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State == store.StateNeedsYou {
+		t.Fatalf("binding halted (%s); a stopped close must not halt", got.Halt)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2: the round closed", got.Round)
+	}
+
+	pending, found, err := st.PendingForPlanner("api")
+	if err != nil || !found {
+		t.Fatalf("report must be pending: found=%v err=%v", found, err)
+	}
+	wantText := "Builder was stopped (killed) for round 1 on zen; no report was written."
+	if !strings.Contains(pending.Payload, wantText) {
+		t.Errorf("payload = %q, want it to carry %q", pending.Payload, wantText)
+	}
+	if !strings.Contains(pending.Note, "noreport stopped") {
+		t.Errorf("note = %q, want noreport stopped", pending.Note)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStop := false
+	for _, e := range entries {
+		if e.Kind == store.KindStop && e.Round == 1 && e.Note == "stopped/killed" {
+			foundStop = true
+		}
+	}
+	if !foundStop {
+		t.Errorf("no stopped/killed KindStop entry for round 1: %+v", entries)
+	}
+}
+
+// TestCatchUpStoppedWithReport is TestCatchUpStoppedNoReport with a report
+// file on the server: the payload names it and the note says stopped, not
+// noreport stopped.
+func TestCatchUpStoppedWithReport(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := stoppedRoundRemote("killed", "")
+	fr.roundFileFunc = func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+		if kind == "report" {
+			return io.NopCloser(strings.NewReader("I stopped where I was\n")), nil
+		}
+		return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	pending, found, err := st.PendingForPlanner("api")
+	if err != nil || !found {
+		t.Fatalf("report must be pending: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(pending.Payload, ". Report: ") {
+		t.Errorf("payload = %q, want it to name the report", pending.Payload)
+	}
+	if !strings.Contains(pending.Note, "stopped") {
+		t.Errorf("note = %q, want it to say stopped", pending.Note)
+	}
+	if strings.Contains(pending.Note, "noreport") {
+		t.Errorf("note = %q, must not say noreport when the report was on disk", pending.Note)
+	}
+}
+
+// TestCatchUpNotStoppedNoReportHalts is the regression guard: a round the
+// server does not say was stopped, with no report file, halts exactly as it
+// did before #344.
+func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Remote: stoppedRoundRemote("", ""), Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you: a reportless close that was not stopped must halt", got.State)
+	}
+	if !strings.Contains(got.Halt, "closed round 1 without a report file") {
+		t.Errorf("Halt = %q, want the existing reportless-close text", got.Halt)
+	}
+}
+
+// TestCatchUpStoppedDirtyNote pins #344's note join: a stopped round that
+// also carried uncommitted work keeps both facts, where the dirty clause used
+// to replace the note.
+func TestCatchUpStoppedDirtyNote(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Remote: stoppedRoundRemote("killed", "c0ffee"), Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	pending, found, err := st.PendingForPlanner("api")
+	if err != nil || !found {
+		t.Fatalf("report must be pending: found=%v err=%v", found, err)
+	}
+	if !strings.Contains(pending.Note, "stopped") {
+		t.Errorf("note = %q, want it to say stopped", pending.Note)
+	}
+	if !strings.Contains(pending.Note, "uncommitted work at") {
+		t.Errorf("note = %q, want it to carry the uncommitted-work clause too", pending.Note)
 	}
 }
 
