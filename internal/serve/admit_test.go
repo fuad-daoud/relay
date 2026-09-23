@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -548,6 +549,47 @@ func TestUnbindDropsQueued(t *testing.T) {
 	}
 	if len(env.runner.specs) != specsBefore {
 		t.Errorf("specs after tick = %d, want unchanged at %d (nothing left to admit)", len(env.runner.specs), specsBefore)
+	}
+}
+
+// TestWireUnbindStopsRunningRound pins #331's premise for the wire verb the
+// hints now name: POST /v1/bindings/{name}/unbind has no running-round guard
+// and no --force, yet it does stop a running remote round -- the server's
+// builder process is killed and the binding is archived out of the owner's
+// live store.
+func TestWireUnbindStopsRunningRound(t *testing.T) {
+	env := setupTestEnv(t)
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+	if view := decodeView(t, body); view.RoundState != remote.RoundRunning {
+		t.Fatalf("round_state = %q, want running", view.RoundState)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	pid := b.Builder.PID
+	if pid == 0 {
+		t.Fatal("builder PID = 0, want a running process")
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/unbind", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unbind status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+
+	env.runner.mu.Lock()
+	alive := env.runner.alive[pid]
+	env.runner.mu.Unlock()
+	if alive {
+		t.Errorf("builder pid %d still alive after unbind, want killed", pid)
+	}
+
+	if _, err := rt.Store.Load("api"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Load after unbind: err = %v, want ErrNotFound", err)
 	}
 }
 

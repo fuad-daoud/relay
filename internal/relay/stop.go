@@ -76,7 +76,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 
 		// Refusals first: nothing has changed yet.
 		if b.Builder.Remote() {
-			return fmt.Errorf("binding %q is remote; relay done ends a remote round", name)
+			return fmt.Errorf("binding %q is remote and relay stop cannot reach its round; wait for it, or relay unbind %s to stop it and drop the binding", name, name)
 		}
 		if b.State == store.StateDone {
 			return fmt.Errorf("binding %q is done; nothing to stop", name)

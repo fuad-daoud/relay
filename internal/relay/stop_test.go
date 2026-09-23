@@ -180,6 +180,44 @@ func TestStopNothingToStop(t *testing.T) {
 	})
 }
 
+// TestStopRemoteNamesUnbind pins #331's stop half: a remote binding's stop
+// refusal must name a verb that works. The old text pointed at `relay done`,
+// which refuses a running round, so the hint was circular. The owner's
+// `relay unbind` (local, no --force) does stop the round and drop the
+// binding.
+func TestStopRemoteNamesUnbind(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundStartedAt = baseTime
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
+
+	_, err := Stop(ctx, rt, "api", StopOptions{})
+	if err == nil {
+		t.Fatal("Stop: want a refusal for a remote binding")
+	}
+	if !strings.Contains(err.Error(), "relay unbind api") {
+		t.Errorf("err = %q, want it to name relay unbind api", err)
+	}
+	if strings.Contains(err.Error(), "relay done") {
+		t.Errorf("err = %q, must not name relay done: done refuses a running round", err)
+	}
+	if strings.Contains(err.Error(), "--force") {
+		t.Errorf("err = %q, must not name --force: the local unbind has no such flag", err)
+	}
+
+	got, lerr := st.Load("api")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if got.State != b.State || got.Round != b.Round {
+		t.Errorf("binding changed by a refused stop: state=%s round=%d, want state=%s round=%d", got.State, got.Round, b.State, b.Round)
+	}
+}
+
 func TestSendClearsStopRequest(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.StopRequestedAt = baseTime

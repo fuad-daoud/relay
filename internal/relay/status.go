@@ -783,7 +783,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			if derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name); derr != nil {
 				var httpErr *client.HTTPError
 				if errors.As(derr, &httpErr) && httpErr.Status == 409 {
-					return fmt.Errorf("round %d is running on %s; wait or relay unbind --force", b.Round, b.Builder.Server)
+					return fmt.Errorf("round %d is running on %s; wait for it, or relay unbind %s to stop it and drop the binding", b.Round, b.Builder.Server, b.Name)
 				}
 				if errors.Is(derr, client.ErrUnreachable) {
 					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
