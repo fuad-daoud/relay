@@ -95,7 +95,7 @@ func TestServeFlagDefaults(t *testing.T) {
 // TestServeFlagMaxBuilders pins #285's flag: --max-builders parses into
 // serveFlags.maxBuilders, which cmdServeRun assigns straight to
 // serve.Config.MaxBuilders. This only exercises flag parsing -- no server
-// starts, no herdr, no systemd (this package's TestMain isolates HOME,
+// starts, no harness, no systemd (this package's TestMain isolates HOME,
 // XDG_CONFIG_HOME and XDG_STATE_HOME already).
 func TestServeFlagMaxBuilders(t *testing.T) {
 	fs, sf := serveFlagSet()
@@ -157,7 +157,7 @@ func TestScopeFromPolicy(t *testing.T) {
 // (PickServedCandidate -> Gates) calls rt.Now(), so a runtime without a
 // clock panics before relay serve ever listens. It must build the runtime
 // the way cmdServeRun does and call relay.ServedBuilderTier on it -- no
-// shell-outs, no herdr, nothing outside t.TempDir().
+// shell-outs, no harness, nothing outside t.TempDir().
 func TestServeTierRuntimeHasClock(t *testing.T) {
 	root := t.TempDir()
 
@@ -200,7 +200,7 @@ func TestServeAdminConfigHasRunnerAndClock(t *testing.T) {
 
 // TestServeUIRefusesUninitialisedRoot: relay serve ui resolves its root
 // like the other admin verbs, so an uninitialised --state dir fails before
-// any tty check (CI-safe: no tty, no herdr) and creates nothing.
+// any tty check (CI-safe: no tty, no harness) and creates nothing.
 func TestServeUIRefusesUninitialisedRoot(t *testing.T) {
 	dir := t.TempDir()
 	err := cmdServeUI([]string{"--state", dir})
@@ -234,7 +234,7 @@ func TestServeStatusRefusesUninitialisedRoot(t *testing.T) {
 
 // TestServeGatesRefusesUninitialisedRoot: relay serve gates resolves its root
 // like the other admin verbs, so an uninitialised --state dir fails at
-// adminRoot before anything else can run. CI-safe: it reaches no herdr.
+// adminRoot before anything else can run. CI-safe: it reaches no harness.
 func TestServeGatesRefusesUninitialisedRoot(t *testing.T) {
 	dir := t.TempDir()
 	err := cmdServeGates([]string{"--state", dir})

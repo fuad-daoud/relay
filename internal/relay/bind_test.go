@@ -223,12 +223,12 @@ func TestBindRejectsBadFeature(t *testing.T) {
 	}
 }
 
-// TestBindRefusesABuilderNameHerdrWouldRefuse pins #64: a 25-character binding
+// TestBindRefusesAnOverlongBuilderName pins #64: a 25-character binding
 // name passes the store's own limit but builds a 33-character agent name, and
 // Bind must refuse it before anything is started or any binding saved. #303
-// deleted herdr.ErrInvalidAgentName with the herdr client, so the wrapped
+// deleted the pane client's ErrInvalidAgentName with it, so the wrapped
 // error is store.ValidName's own text.
-func TestBindRefusesABuilderNameHerdrWouldRefuse(t *testing.T) {
+func TestBindRefusesAnOverlongBuilderName(t *testing.T) {
 	rt := newRuntime(t)
 
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
@@ -1596,8 +1596,8 @@ func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 	}
 }
 
-func TestBindHeadlessStillRefusesANameHerdrWouldRefuse(t *testing.T) {
-	// The agent name is validated even though no herdr agent is started:
+func TestBindHeadlessStillRefusesAnOverlongName(t *testing.T) {
+	// The agent name is validated even though no agent is started:
 	// the name is what status, log and a later pane-mode rebind identify
 	// the builder by, and the limit must not depend on the mode.
 	rt := newRuntime(t)

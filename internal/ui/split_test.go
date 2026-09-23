@@ -319,10 +319,6 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 }
 
-// TestFooterMarksHerdrUnreachable: a report that degraded because herdr did
-// not answer still renders its rows and marks the footer once -- without the
-// error text itself, the way the refresh marker works (list_test.go) -- and
-// a report whose HerdrError is empty adds no marker.
 func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	rows := threeRows()
 	rows[0].Headless = &relay.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}

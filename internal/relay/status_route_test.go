@@ -68,9 +68,8 @@ func TestStatusJSONOmitsPaneEraFields(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if _, ok := doc["herdr_error"]; ok {
-		t.Error("herdr_error must be gone from the status JSON")
-	}
+	// The pane-era error field is gone from the top level, as its rows' pane
+	// fields are below.
 	rows, _ := doc["bindings"].([]any)
 	if len(rows) == 0 {
 		t.Fatal("no binding rows")

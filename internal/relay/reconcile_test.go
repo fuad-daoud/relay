@@ -131,7 +131,7 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	}
 }
 
-// TestReconcileIgnoresWorkingBuilder asserted the round against herdr's
+// TestReconcileIgnoresWorkingBuilder asserted the round against a pane's
 // builder status. There is no status to consult (#303; closed-list item 6);
 // the headless equivalent -- a live process with no marker is left alone --
 // is TestReconcileHeadlessAliveWaits in headless_test.go.
@@ -359,7 +359,7 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 }
 
 // TestReconcileRefreshesPlannerEndpoint refreshed a planner pane id from
-// herdr's agent list. Both halves are gone (#303; closed-list items 6 and 8):
+// the agent list. Both halves are gone (#303; closed-list items 6 and 8):
 // there is no agent list and Planner.PaneID is written by nothing.
 
 // TestQueueReportRecordsRusage: a headless round's report entry gets
@@ -536,7 +536,7 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 	})
 }
 
-// TestEffectiveStatus mapped a live herdr agent's status through the
+// TestEffectiveStatus mapped a live pane agent's status through the
 // binding's recorded session (#303; closed-list item 6): both the agent list
 // and the session cursor are gone.
 
@@ -1809,14 +1809,14 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 }
 
 // TestReportEntryCarriesPaneSession and TestReportEntryNoSessionIsNil named
-// the session herdr reported for a pane builder (#303; closed-list items 6
+// the session the pane client reported for a pane builder (#303; closed-list items 6
 // and 8). The headless equivalent -- the report entry of a closed headless
 // round names the stream's session -- is TestReportEntryCarriesHeadlessSession
 // in headless_test.go.
 
 // TestReconcileNeedsYouGoesStale pins #135's stale path: a binding that has
 // been NEEDS YOU past stale_after_ms is stamped from its halt time and fires
-// one binding_stale event; a second tick adds neither. The herdr notification
+// one binding_stale event; a second tick adds neither. The notification
 // beside the event is gone (#303, closed-list item 4), so the event itself is
 // what this test now pins. A human Send clears the stamp and the notification
 // bookkeeping.

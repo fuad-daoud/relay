@@ -18,8 +18,8 @@
     <string>2s</string>
   </array>
 
-  <!-- The daemon execs `herdr` by PATH lookup, and a LaunchAgent inherits no
-       login shell PATH, so it has to be named here. -->
+  <!-- The daemon execs the harness CLIs by PATH lookup, and a LaunchAgent
+       inherits no login shell PATH, so it has to be named here. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

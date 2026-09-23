@@ -131,8 +131,8 @@ func TestDaemonBackfillsPlannerID(t *testing.T) {
 }
 
 // TestTickSurfacesListAgentsFailure guarded the resilience contract at the
-// boundary where the daemon actually talks to herdr; #303 deleted that
-// boundary (closed-list item 6: the herdr client and its agent list). The
+// boundary where the daemon actually talked to a pane; #303 deleted that
+// boundary (closed-list item 6: the pane client and its agent list). The
 // daemon's one list call is now the store's, so the same contract is pinned
 // there: a tick whose binding list fails is visible to the caller.
 func TestTickSurfacesListAgentsFailure(t *testing.T) {
@@ -206,7 +206,7 @@ func TestNewDaemonFloorsInterval(t *testing.T) {
 // TestTickIgnoresBindingUnboundMidTick covers the window between Tick's
 // binding list and its per-binding load: a `relay unbind` landing in it is
 // normal use, not a failure, and must not be logged as one. #303 deleted
-// fakeHerdr's onList hook, which is what used to interpose the unbind inside
+// the old fake's onList hook, which is what used to interpose the unbind inside
 // the tick, so the test drives tickOne -- the exact function holding the
 // guard -- directly.
 func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {

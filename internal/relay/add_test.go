@@ -25,7 +25,7 @@ func addRepo(t *testing.T) string {
 }
 
 // refusedAdd asserts a refusal cut no worktree and started no process: #303
-// replaced the old "no tab, no start" herdr assertions with the runner's own
+// replaced the old "no tab, no start" pane assertions with the runner's own
 // process list, since a local builder is a process relay runs.
 func refusedAdd(t *testing.T, rt Runtime, fg *fakeGit) {
 	t.Helper()
@@ -259,7 +259,7 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
 	}
 	refusedAdd(t, rt, fg)
-	// #303 deleted herdr.ErrInvalidAgentName with the herdr client; the same
+	// #303 deleted the pane client's ErrInvalidAgentName with it; the same
 	// refusal is now store.ValidName's own text, wrapped by builderAgentName
 	// with the length budget in it.
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {

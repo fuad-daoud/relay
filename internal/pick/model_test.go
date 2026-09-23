@@ -53,7 +53,7 @@ func TestEmptyListEndsOnResultScreenWithNothingToPick(t *testing.T) {
 
 func TestStatusErrorEndsOnResultScreen(t *testing.T) {
 	m := newModel(context.Background(), relay.Runtime{}, Options{Verb: VerbUnbind})
-	m, _ = update(t, m, statusMsg{err: errors.New("herdr: connection refused")})
+	m, _ = update(t, m, statusMsg{err: errors.New("harness: connection refused")})
 	if m.screen != screenResult || m.result.err == nil {
 		t.Fatalf("screen=%v err=%v", m.screen, m.result.err)
 	}

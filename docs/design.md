@@ -1,5 +1,7 @@
 # Relay — automated planner↔builder handoff across agent harnesses
 
+Superseded in part by `docs/specs/2026-09-22-drop-herdr-design.md` (#303).
+
 Date: 2026-09-04
 Status: **historical record.** This is the design as approved before relay was
 built, kept because it explains *why* the pieces are shaped the way they are.

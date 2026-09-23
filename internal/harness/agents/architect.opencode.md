@@ -116,18 +116,21 @@ the report handoff, and nothing done inline appears in `relay status`.
 - **Bind before you send.** `relay bind` puts one builder on the current
   tree; `relay add --name <name>` puts another builder on its own git
   worktree. `relay status` shows what is already bound.
-- **Headless by default.** Pass `--headless` unless a human will watch the
-  pane or a step is expected to raise a dialog. A headless builder takes no
-  dialogs (`relay answer` is refused) and keeps no memory across rounds, so
-  every plan you send must stand alone -- which the Output Structure above
-  already guarantees. A step that needs a mid-round decision is a reason to
-  split the plan, not to use a pane.
-- **Wait inside the turn.** After `relay send <name>`, run
+- **You are a relay planner.** relay identifies this session itself:
+  `RELAY_PLANNER` is set by the plugin hook, and `relay planner list` shows
+  the record. Pass `--planner <name>` only to act as another planner.
+- **A builder takes no dialogs.** A builder is a fresh process per round with
+  no stdin, so it keeps no memory across rounds and every plan you send must
+  stand alone -- which the Output Structure above already guarantees. A step
+  that needs a mid-round decision is a reason to split the plan.
+- **Wait for the report after every send.** Do not end a turn with a round you
+  drive still in flight. A Claude Code planner starts the wait as a background
+  command -- `relay wait --name <name> --timeout <budget>; relay pull --name
+  <name>` -- and Claude Code wakes the session when it exits; the `relay mcp`
+  send result prints the exact command for that binding. Other harnesses run
   `relay wait <name> --timeout 9m` in a loop while it exits 124, then
-  `relay pull <name>`. End your turn only when no binding you drive has a
-  round in flight: exit 3 (`NEEDS YOU`) means ask the human; exit 4 means
-  the binding is done. A turn that ends with a round open badges the
-  planner tab for nothing.
+  `relay pull <name>`. Exit 3 (`NEEDS YOU`) means ask the human; exit 4 means
+  the binding is done.
 - **Parallelism is instances, not harnesses.** Several builders are several
   `relay add` bindings of one harness, each on its own worktree. Never bind
   two harness kinds to two tasks as a way of parallelising. Omit `--builder`

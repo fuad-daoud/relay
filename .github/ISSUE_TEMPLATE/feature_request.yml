@@ -5,10 +5,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        relay deliberately makes no judgements — it moves files, types prompts,
-        and reports what herdr sees. Whether a report is good, whether work is
-        done, whether a question needs a human: those stay with the planner.
-        Proposals that ask relay to decide something are likely out of scope.
+        relay deliberately makes no judgements — it moves files between a
+        planner and a builder, and reports what each round did. Whether a report
+        is good, whether work is done, whether a question needs a human: those
+        stay with the planner. Proposals that ask relay to decide something are
+        likely out of scope.
 
   - type: textarea
     id: problem

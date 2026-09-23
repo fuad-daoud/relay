@@ -9,7 +9,7 @@ import (
 // TestShowSectionFlagsConflict pins `relay show`'s section-flag rules:
 // none given defaults to plan, exactly one wins, more than one is a usage
 // error. showSectionFlags is a pure function, so this never executes the
-// subcommand -- CI has no herdr.
+// subcommand -- CI launches no harness.
 func TestShowSectionFlagsConflict(t *testing.T) {
 	section, err := showSectionFlags(false, false, false, false, false, false)
 	if err != nil {

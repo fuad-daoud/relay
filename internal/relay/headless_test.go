@@ -17,7 +17,7 @@ import (
 )
 
 // The headless fixtures (#303 step 3): a local builder is a process relay runs
-// per round, so every test here drives it through fakeRunner, and no herdr
+// per round, so every test here drives it through fakeRunner, and no pane
 // agent or pane appears anywhere.
 
 // sentHeadless is seedHeadless plus one Send: round 1 open, one process
@@ -2367,7 +2367,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 	if len(fr.kills) != 0 {
 		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
 	}
-	// #303 deleted the "switched builder to X" herdr notification; the switch
+	// #303 deleted the "switched builder to X" notification; the switch
 	// log entry beside it survives and is what the human reads.
 	sw := switches(t, rt)
 	if len(sw) != 1 || !strings.Contains(sw[0].Note, testClaudeRef) {
@@ -2459,7 +2459,7 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 // stall_after_ms is stamped StalledSince = the stream's last activity, and
 // nothing else happens. The second case is the mutation target: with the
 // stream only 5m quiet the comparison must not fire, so inverting it (or
-// comparing `<` for `>=`) makes both cases fail. The herdr notice beside the
+// comparing `<` for `>=`) makes both cases fail. The notice beside the
 // stamp is gone (#303, closed-list item 4); the stamp itself and the
 // builder_stalled hook event are what survive.
 func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {

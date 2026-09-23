@@ -19,11 +19,6 @@ const (
 	mcpTestPlannerB = "pl_ccccccccdddd"
 )
 
-// stubHerdr implements relay.Herdr with no-op stubs. relay.Status calls
-// ListAgents unconditionally, so every RelayVerbs test needs a non-nil
-// Herdr even when the binding under test never reaches a live pane; every
-// other method here is unused by the paths these tests exercise.
-
 // stubRunner implements relay.Runner with no-op stubs, for a headless
 // binding whose PID is 0 (Alive is never actually called on that path, but
 // Runtime.Runner must be non-nil or sendPreflight refuses before it gets
@@ -151,7 +146,7 @@ func TestMCPStatusFiltersByPlanner(t *testing.T) {
 }
 
 // TestRelayVerbsSendDryRunHeadless exercises Send's real forwarding into
-// relay.SendDryRun: a headless binding needs no herdr at all (only
+// relay.SendDryRun: a headless binding needs no harness at all (only
 // Store, Candidates and Runner), so this runs against the real function,
 // not a seam.
 func TestRelayVerbsSendDryRunHeadless(t *testing.T) {
