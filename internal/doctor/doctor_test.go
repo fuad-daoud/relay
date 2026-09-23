@@ -1024,26 +1024,6 @@ func TestDoctorReleaseCheck(t *testing.T) {
 			wantDetail:   "v0.7.0 is current",
 		},
 		{
-			name: "behind a plugin release: re-run the fetch",
-			env: fakeEnv{
-				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindPluginRelease,
-			},
-			wantSeverity: SevWarn,
-			wantDetail:   "v0.6.0 is behind v0.7.0",
-			wantFix:      "sh scripts/plugin-fetch.sh",
-		},
-		{
-			name: "behind a plugin source build: re-run the build",
-			env: fakeEnv{
-				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",
-				releaseOK: true, releaseKind: release.KindPluginSource,
-			},
-			wantSeverity: SevWarn,
-			wantDetail:   "v0.6.0 is behind v0.7.0",
-			wantFix:      "sh scripts/plugin-build.sh",
-		},
-		{
 			name: "behind a go install: go install",
 			env: fakeEnv{
 				releaseRunning: "v0.6.0", releaseLatest: "v0.7.0",

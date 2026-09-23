@@ -13,7 +13,7 @@ import (
 // TestHistoryUsageFlagsConflict pins the two usage errors `relay history`
 // rejects before ever touching the database: --archived with --live
 // together, and an --outcome outside db's enum. validateHistoryFlags is a
-// pure function, so this never executes the subcommand -- CI has no herdr.
+// pure function, so this never executes the subcommand -- CI launches no harness.
 func TestHistoryUsageFlagsConflict(t *testing.T) {
 	if err := validateHistoryFlags(false, false, ""); err != nil {
 		t.Errorf("validateHistoryFlags(false, false, \"\") = %v, want nil", err)

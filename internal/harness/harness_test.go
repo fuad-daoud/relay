@@ -198,7 +198,7 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		body := definitionBody(t, h.Kind, string(doc))
-		for _, want := range []string{"## Handing off", "relay send", "--headless", "relay unavailable"} {
+		for _, want := range []string{"## Handing off", "relay send", "RELAY_PLANNER", "relay unavailable"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}

@@ -199,7 +199,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 // TestFetchTerminalNonCurrentPaneRoundIsEmptyProse pins #183: a plain pane
 // builder's terminal only ever shows the binding's live screen, which
 // only ever belongs to its current round; a past round it never captured
-// a log for reads as prose, not as an error, and must never reach herdr.
+// a log for reads as prose, not as an error, and must never reach a pane.
 func TestFetchDiffRoundZero(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relay.Runtime{Store: st}
@@ -356,10 +356,10 @@ func TestFetchForRouting(t *testing.T) {
 	}
 }
 
-// A spawned builder records an AgentName that herdr can forget across a server
-// restart. fetchTerminal has already located the live agent, so it must address
-// that agent, not replay a name that may no longer resolve.
-func TestFetchTerminalHeadlessReadsTheLogNotHerdr(t *testing.T) {
+// A spawned builder records an AgentName that a pane could forget across a
+// server restart. fetchTerminal has already located the live agent, so it must
+// address that agent, not replay a name that may no longer resolve.
+func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relay.Runtime{Store: st}
 

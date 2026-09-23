@@ -78,7 +78,7 @@ func TestHitRegionsStack(t *testing.T) {
 
 func TestHitShiftsUnderAnErrorBlock(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.err = errors.New("herdr: connection refused")
+	m.err = errors.New("harness: connection refused")
 	e := m.errorRows()
 	if e < 1 {
 		t.Fatal("fixture needs an error block")

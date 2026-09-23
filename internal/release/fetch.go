@@ -49,8 +49,8 @@ func Source() string {
 }
 
 // NewHTTPFetcher reads the GitHub releases API. The endpoint is overridable
-// with RELAY_RELEASE_API, matching plugin-fetch.sh's RELAY_RELEASE_BASE_URL,
-// so tests and air-gapped installs can point it elsewhere.
+// with RELAY_RELEASE_API, so tests and air-gapped installs can point it
+// elsewhere.
 func NewHTTPFetcher(endpoint string, timeout time.Duration) Fetcher {
 	if endpoint == "" {
 		endpoint = Source()

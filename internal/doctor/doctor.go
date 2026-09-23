@@ -405,10 +405,6 @@ func releaseCheck(env Env) Check {
 // reaches a Fix: both are SevOK.
 func releaseFix(kind release.Kind) string {
 	switch kind {
-	case release.KindPluginRelease:
-		return "sh scripts/plugin-fetch.sh"
-	case release.KindPluginSource:
-		return "sh scripts/plugin-build.sh"
 	case release.KindGoInstall:
 		return "go install github.com/fuad-daoud/relay/cmd/relay@latest"
 	}

@@ -2,8 +2,9 @@ package release
 
 import "testing"
 
-// TestDetectTable is §4.1's six rules, in order. Swap the first two rules and
-// the plugin-release row fails.
+// TestDetectTable is the classification, in order. A binary that sits next to
+// an old plugin manifest is no longer special: with no manifest input it
+// reads as the kind it otherwise is.
 func TestDetectTable(t *testing.T) {
 	tests := []struct {
 		name string
@@ -11,24 +12,7 @@ func TestDetectTable(t *testing.T) {
 		want Kind
 	}{
 		{
-			// Both plugin variants leave ./relay beside the manifest; only the
-			// release variant's version is exactly the manifest's.
-			name: "plugin release: version is exactly v<manifest>",
-			in:   Inputs{Version: "v0.7.0", ExeDir: "/plugins/relay", ManifestVersion: "0.7.0"},
-			want: KindPluginRelease,
-		},
-		{
-			name: "plugin source: manifest present, version is a describe",
-			in:   Inputs{Version: "v0.7.0-8-gbd8aed0", ExeDir: "/plugins/relay", ManifestVersion: "0.7.0"},
-			want: KindPluginSource,
-		},
-		{
-			name: "plugin source: manifest present, version is (devel)",
-			in:   Inputs{Version: "(devel)", ExeDir: "/plugins/relay", ManifestVersion: "0.7.0"},
-			want: KindPluginSource,
-		},
-		{
-			name: "go install: the module supplied the version, no manifest",
+			name: "go install: the module supplied the version",
 			in:   Inputs{Version: "v0.7.0", ExeDir: "/home/fuad/go/bin", FromModule: true},
 			want: KindGoInstall,
 		},
@@ -52,6 +36,13 @@ func TestDetectTable(t *testing.T) {
 			name: "local build: dirty describe",
 			in:   Inputs{Version: "v0.6.0-2-gddf3d4f-dirty", ExeDir: "/worktrees/relay-update"},
 			want: KindLocalBuild,
+		},
+		{
+			// An old plugin install left ./relay beside a manifest; with the
+			// manifest input gone nothing distinguishes it, so it claims nothing.
+			name: "old plugin install: a clean tag claims nothing",
+			in:   Inputs{Version: "v0.7.0", ExeDir: "/plugins/relay"},
+			want: KindUnknown,
 		},
 		{
 			name: "otherwise: a clean tag with no other evidence claims nothing",

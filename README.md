@@ -5,25 +5,21 @@
 
 Site: [relay-site.fuad-daoud.com](https://relay-site.fuad-daoud.com) (source in [fuad-daoud/relay-site](https://github.com/fuad-daoud/relay-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
-`relay` automates the plan/report handoff between two AI coding agent panes
-running under [herdr](https://github.com/herdrdev/herdr), a terminal workspace
-manager for coding agents. A human talks to a **planner** agent; the planner
-hands work to a **builder** agent; relay moves the files between them so the
-human never copy-pastes a plan or a report by hand.
+`relay` automates the plan/report handoff between two AI coding agents. A
+human talks to a **planner** agent; the planner hands work to a **builder**
+agent; relay moves the files between them so the human never copy-pastes a
+plan or a report by hand. Builders are headless or remote processes, and
+relay no longer integrates with herdr.
 
-Relay makes no judgements. It moves files, types prompts, and watches herdr's
-live agent state — whether a report is good, whether a question needs a
-human, whether the work is done, is a decision that stays with the planner
-(or the human) at every step.
+Relay makes no judgements. It moves files, starts builders, and reports what
+each round did — whether a report is good, whether a question needs a human,
+whether the work is done, is a decision that stays with the planner (or the
+human) at every step.
 
 ## Requirements
 
-- **[herdr](https://github.com/herdrdev/herdr) 0.8.2 or newer, on `PATH`.**
-  This is a hard runtime dependency, not an integration: herdr owns the panes,
-  and every single thing relay observes or controls goes through the `herdr`
-  CLI. relay is useless without it.
-- **Two agent harnesses that herdr can drive** — one for the planner, one for
-  the builder. relay knows how to start `opencode`, `claude`, `agy` and `codex`; you tell it
+- **Two agent harnesses** — one for the planner, one for the builder. relay
+  knows how to start `opencode`, `claude`, `agy` and `codex`; you tell it
   which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relay works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
@@ -31,55 +27,6 @@ human, whether the work is done, is a decision that stays with the planner
   binary.
 
 ## Install
-
-### As a herdr plugin
-
-If you already run herdr 0.8.2 or newer, install relay as a plugin and skip the
-manual binary and service setup:
-
-    herdr plugin install fuad-daoud/relay
-
-That downloads the release binary matching the plugin manifest and verifies its
-checksum. To build from source instead, which needs a Go toolchain:
-
-    herdr plugin install fuad-daoud/relay/from-source
-
-Either way you get:
-
-- a `relay` overlay pane running `relay ui`, opened by the `open-ui` action
-- three popup pickers -- `pick-done`, `pick-unbind`, `pick-answer` -- each
-  an action that opens `relay <verb> --pick` in a popup: choose the binding
-  from a list, and for `answer`, read the builder's dialog and type the
-  answer there
-- an `install-service` action that installs the binary to `~/.local/bin/relay`
-  and registers the daemon with systemd or launchd
-- a startup check that tells you if the reconciler is not running
-
-Bind the reader and the pickers to keys in herdr's `config.toml`:
-
-    [[keys.command]]
-    key = "prefix+r"
-    type = "plugin_action"
-    command = "fuad-daoud.relay.open-ui"
-    description = "open relay"
-
-    [[keys.command]]
-    key = "prefix+a"
-    type = "plugin_action"
-    command = "fuad-daoud.relay.pick-answer"
-    description = "answer the blocked builder"
-
-`pick-done` and `pick-unbind` bind the same way. A picker exits 0 when the
-verb ran, 1 when you cancelled, nothing was listed, or the verb failed; the
-result stays on screen until you press a key, then the popup closes.
-
-herdr does not sandbox plugins, and its install preview lists the commands that
-will run but not their contents. The scripts are `scripts/plugin-*.sh` in this
-repository -- read them before installing.
-
-Until you run `install-service`, the plugin's binary and any `relay` already on
-your `PATH` are two binaries sharing one state directory. Running it makes the
-plugin's binary the `PATH` binary and removes the skew.
 
 Prebuilt binaries for Linux and macOS (amd64 and arm64) are attached to every
 [release](https://github.com/fuad-daoud/relay/releases); unpack one and put
@@ -105,8 +52,23 @@ make install        # builds and installs ~/.local/bin/relay
 `make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
 `go test -count=1 ./...` — and `make install` runs it first.
 
-To run the reconciler as a background service, see
-[Running the daemon](#running-the-daemon).
+To run the reconciler as a background service:
+
+```
+make service        # systemd user unit on Linux, LaunchAgent on macOS
+```
+
+### The Claude Code plugin
+
+A Claude Code planner installs relay as a plugin. The plugin provides the
+`relay mcp` MCP server and a `SessionStart` hook that runs
+`relay planner init`, so relay knows which planner session is calling:
+
+    /plugin marketplace add fuad-daoud/relay
+    /plugin install relay@relay
+
+See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
+the planner.
 
 ## First run on a clean machine
 
@@ -142,14 +104,11 @@ On a clean machine, set up prerequisites and preflight with `relay init` and
    ```
    relay doctor
    ```
-   Doctor inspects herdr, the background daemon, each harness binary on `PATH`, herdr integrations, and the builder role files.
-4. Run the literal fix commands `relay doctor` prints for any missing items, such as installing a harness integration:
-   ```
-   herdr integration install claude
-   ```
+   Doctor inspects the background daemon, each harness binary on `PATH`, the relay plugin and its hook in Claude Code, and the builder role files.
+4. Run the literal fix commands `relay doctor` prints for any missing items.
 5. Re-run `relay doctor` to confirm `0 failures`.
 6. Start the daemon (e.g. `relay daemon &` or `make service`).
-7. Bind your first agent from inside a herdr planner pane:
+7. Bind your first agent from the planner session:
    ```
    relay bind --builder claude/anthropic/sonnet
    ```
@@ -183,8 +142,7 @@ agy copy pins a tier or differs from what relay ships, and names the
 codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
 with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
 every codex builder's research sub-agents and `relay doctor` warns when
-that pin drifts. Pane builders also need `herdr integration install
-codex`.
+that pin drifts.
 
 Then write `~/.config/relay/candidates.json` (see [Candidates](#candidates))
 and check it with `relay candidates`. If more than one candidate serves
@@ -202,10 +160,10 @@ On a clean machine, seed your configuration first (see
 relay init                        # write candidates.json and policy.json, install the role definitions
 ```
 
-From inside the planner's herdr pane, in the repository you want worked on:
+From the planner session, in the repository you want worked on:
 
 ```
-relay bind --builder claude/anthropic/sonnet     # open a builder tab and bind it to this tree
+relay bind --builder claude/anthropic/sonnet     # start a builder on this tree
 relay send --file plan.md         # hand it the plan; the builder starts working
 relay status                      # watch the round
 relay wait                        # block until the round closes or needs you
@@ -215,39 +173,35 @@ relay done <name>                 # stop relaying when you are satisfied
 
 The builder writes `NNN-report.md` when it has finished and then creates an
 empty `NNN-done` as its last action; relay closes the round on that marker.
-A builder that goes idle without the marker is nudged once, then its report
-is delivered flagged `unmarked` (or its terminal scraped if there is no
-report at all).
+A builder that exits without the marker still closes the round, and relay
+delivers its report flagged `unmarked`.
 
-`relay bind` reads the planner's pane from `$HERDR_PANE_ID`, which herdr sets
-inside every pane it manages, so it has to be run from inside one.
+`relay bind` identifies the calling planner through `RELAY_PLANNER`, which
+the relay plugin's `SessionStart` hook exports, or through the harness
+process the `relay mcp` server shares with the session. Run
+`relay planner list` to see the planners relay knows.
 
 ## Command surface
 
-- `relay bind [--name N] [--builder CANDIDATE|PANE_ID] [--headless] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
-  — start a binding between the calling planner pane (read from
-  `$HERDR_PANE_ID`) and a builder. `--builder` is a candidate token unless
-  it contains `:` and no `/`, in which case it is treated as a herdr pane id and that pane
-  is **adopted** instead of spawned. A name that already exists is refused
-  rather than reused: only `bind.json` would be rewritten, so a fresh round 1
-  would collide with the previous session's round log. `--resume --name N`
-  re-points that existing binding's planner side at the calling pane without
-  touching the builder; `relay unbind N` is the other way out.
-  `--headless` makes the builder a process relay runs itself, one fresh
-  process per round, instead of a pane it watches (see "Headless builders"
-  below). It cannot adopt a pane and cannot be added to an existing binding
-  with `--resume`: a binding's shape is fixed when it is created.
+- `relay bind [--name N] [--builder CANDIDATE] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
+  — start a binding between the calling planner and a builder. `--builder` is
+  a candidate token. A name that already exists is refused rather than reused:
+  only `bind.json` would be rewritten, so a fresh round 1 would collide with
+  the previous session's round log. `--resume --name N` re-points that
+  existing binding's planner side at the calling planner without touching the
+  builder; `relay unbind N` is the other way out. `--headless` is accepted and
+  ignored with a one-line stderr note: headless is the only local mode (see
+  "Headless builders" below).
 - `relay send [NAME|--name N] --file PATH [--dry-run]` — stage the file as the current round's
-  plan and hand it to the builder: typed into its pane, or, for a headless
-  binding, as the prompt of a fresh process started in the binding's tree.
+  plan and hand it to the builder as the prompt of a fresh process started in
+  the binding's tree.
   A headless binding whose previous round's process is still running refuses
   the send; wait for its report or `relay done` it.
   `--dry-run` checks every precondition a send would and prints what it would
   do, writing nothing: no plan staged, no log entry, no prompt, no process
   started. A precondition that fails is the same error `relay send` gives, exit
-  1, with nothing written. A pane binding names the located pane, a headless
-  one the exact command line it would run, and a remote one the server and
-  branch without contacting it:
+  1, with nothing written. A local binding names the exact command line it
+  would run, and a remote one the server and branch without contacting it:
   ```
   would send round 5 to api-auth
     builder   headless agy/google/gemini-3.8-flash-high
@@ -260,8 +214,8 @@ inside every pane it manages, so it has to be run from inside one.
               Your working tree is: /home/me/.worktrees/api-auth
   ```
 - `relay pull [NAME|--name N]` — print the newest pending payload to stdout and
-  mark it delivered, without typing into any pane. This is the safe way for
-  the planner to fetch a report mid-turn.
+  mark it delivered. This is how a planner fetches a report directly, and what
+  the background wait's `relay pull` uses.
 - `relay diff [NAME|--name N] [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
@@ -273,23 +227,7 @@ inside every pane it manages, so it has to be run from inside one.
   turn a `path:line: comment` comments file into a follow-up plan, one task per
   anchored comment quoting its hunk from the round's diff. Not destructive, so
   it falls back to the CWD's binding like `diff`. See "Reviewing a round" below.
-- `relay answer NAME|--name N (--keys K | --choice N | --text S)` — answer a
-  builder that's blocked at a dialog, via `send-keys` rather than a typed
-  prompt (herdr refuses `agent prompt` against a blocked agent). The binding
-  is **required**: answering types a key into a live dialog, so relay will not
-  guess which builder you meant. relay also re-checks that herdr still reports
-  the builder `blocked` and refuses otherwise, because herdr's screen detection
-  can false-positive and the gap between the notice and your answer is
-  unbounded. If you genuinely mean to type into a running agent, that is
-  `herdr agent send-keys <pane> <keys>`, not relay.
-  `--pick` instead of a name opens a popup-friendly picker: the blocked
-  builders in a list (skipped when there is exactly one), the dialog text
-  above, one input line below; a number is a `--choice`, `enter`/`esc`/`tab`/
-  `up`/`down`/`space` are `--keys`, anything else is `--text`.
-  A headless builder takes no dialogs; `answer` is refused and points at the
-  round's log.
-- `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, both
-  panes' live herdr status, the last relayed event, anything pending, and for a nudged builder how long its terminal has been quiet against the grace after which relay scrapes it. Rows are attention-first -- NEEDS YOU, HELD, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relay ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
+- `relay status [NAME|--name N] [--json] [--all]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relay ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the planner's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (see `.viewed` below).
   `--json` also carries fields the prose above does not spell out:
   ```
@@ -302,7 +240,7 @@ inside every pane it manages, so it has to be run from inside one.
   unread      true when the binding's newest report is newer than its .viewed stamp
               (or there is no stamp and a report exists)
   ```
-- `relay log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten. `late` on an entry means herdr reported the prompt stalled but the screen showed it had landed, so it was not re-sent.
+- `relay log NAME [--round N] [--after N] [--json] [--follow]` — the binding's append-only round log. Every entry carries a 1-based `seq`, monotonic within the binding and never rewritten; `--round N` shows one round, `--after N` shows only entries with a greater `seq`, `--json` prints one compact JSON object per line (NDJSON, `seq` included), and `--follow` keeps printing new entries until the binding is DONE or gone. A file written before `seq` existed reads back with `seq` equal to the line number, so nothing is rewritten.
   A hook or script that has already seen up to a known `seq` asks only for the rest:
   ```bash
   last_seq=$(relay status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
@@ -315,25 +253,26 @@ inside every pane it manages, so it has to be run from inside one.
 - `relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]` —
   tokens and cost across bindings, archived ones included.
 - `relay wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D]` — block
-  until the round closes or the binding needs you, reading relay's own state only
-  (never herdr). Exit 0: closed on the marker, stdout is the report path. 2: closed
-  without it (`unmarked`, `scraped`, `noreport` — verify before trusting), report
+  until the round closes or the binding needs you, reading relay's own state only.
+  Exit 0: closed on the marker, stdout is the report path. 2: closed
+  without it (`unmarked`, `noreport` — verify before trusting), report
   path or `-`. 3: needs you, stdout is one line saying what it is waiting on. 4:
   the binding is DONE or was unbound. 5: closed, but the builder's report says
   halted or blocked -- read it before sending again; stdout is the report path.
   6: the round has no plan entry -- it was never sent, so nothing is in flight;
   stdout says so. 124: `--timeout` (default 10m) elapsed. `--any` waits on several and prints the
-  winner's name first. A pane planner that does not want the report typed afterwards
-  runs `relay wait N && relay pull N`.
+  winner's name first. A Claude Code planner runs `relay wait N; relay pull N` as a
+  background command and ends its turn: Claude Code wakes the session when the
+  command exits (see [Claude Code plugin](#claude-code-plugin)).
 - `relay ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
   of bindings grouped by state beside a pane showing the selected binding's
   report, terminal, diff or log; narrower terminals get the list-then-detail
   flow. `--dashboard` opens on the dashboard screen (`d` reaches it from the
   fleet).
-- `relay add --name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` — attach an
+- `relay add --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
-  `--headless` applies as for `bind`.
+  `--headless` is accepted and ignored, as for `bind`.
   `relay add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
@@ -345,12 +284,12 @@ inside every pane it manages, so it has to be run from inside one.
   and defaults to the branch's last path segment, lowercased and reduced to
   the characters a binding name accepts. The binding records
   `existing_branch: true`, and relay never deletes a branch it did not
-  create. Works with `--headless` and with `--server`; not with `--cwd`.
+  create. Works with `--server`; not with `--cwd`.
   For a `--server` binding the server's own `refs/heads/relay/<name>` ref is
   kept in the repository beside the adopted branch: every closed round
   absorbs it and fast-forwards `B` to it, and relay deletes neither.
   `relay fork --branch` is not available yet.
-- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--headless] [--cwd DIR] [--feature LABEL]` —
+- `relay fork <source> --round R --new-name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
@@ -371,9 +310,9 @@ inside every pane it manages, so it has to be run from inside one.
 
 - `relay gc [--dry-run] [--delete]` — clear every binding the planner marked
   `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relay gc --archive` is accepted as a no-op).
-- `relay daemon [--interval D] [--held-grace D]` — the long-running reconciler; this is what
-  the service unit runs. A held payload is injected into a focused planner once its input
-  box is empty or its screen has been quiet for `--held-grace` (default 60s).
+- `relay daemon [--interval D]` — the long-running reconciler; this is what the
+  service unit runs. It reconciles builders, queues reports for the planner
+  and syncs remote bindings.
 - `relay serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N]` — run the remote-builder server (listener + daemon).
 - `relay serve init|enroll|clients|revoke|fingerprint|status|gates|available|unavailable|gc|unbind` — server administration, on the server host.
 - `relay serve gates [--state DIR]` — list the gates on the server's own ledger.
@@ -459,9 +398,9 @@ remains the tool for shell pipes and scripts (`watch -n2 relay status` for a
 ticker); `relay ui` is the interactive sibling that lets you inspect substance
 instead of just state.
 
-It is strictly **read-only**: it never mutates state, never types into panes,
-and never appends to round logs. It holds the state lock only for the duration
-of a read, exactly as `relay status` does.
+It is strictly **read-only**: it never mutates state and never appends to
+round logs. It holds the state lock only for the duration of a read, exactly
+as `relay status` does.
 
 At 110 columns or more, a rail of bindings grouped by state sits beside a
 pane showing the selected binding's plan, report, terminal, diff or log
@@ -469,7 +408,7 @@ pane showing the selected binding's plan, report, terminal, diff or log
 terminals get the list-then-detail flow. The pane's five tabs:
 - **plan** — the round's own plan file, first in the order (#183).
 - **report** — that round's planner-bound report or question payload.
-- **terminal** — recent live terminal output from the builder agent's pane.
+- **terminal** — recent live terminal output from the builder's log.
 - **diff** — the captured git patch from the round.
 - **log** — the formatted append-only round log, scoped to the round.
 
@@ -480,12 +419,6 @@ error: the report and diff tabs say so ("round N is open; report arrives
 when it closes", "diff is captured when round N closes") rather than
 showing stale content.
 
-For a claude pane builder the terminal tab is the round's own transcript:
-the daemon renders the harness's session record
-(`~/.claude/projects/*/<session>.jsonl`) into `NNN-builder.log` from the
-moment the round was sent, so the tab scrolls, follows the tail and is
-styled exactly as a headless builder's. opencode and agy pane builders
-keep the live screen capture (#184).
 
 ### `relay ui`'s dashboard: every round, filtered and regrouped
 
@@ -550,35 +483,12 @@ about an archived round is still moving. A database relay cannot open
 shows `no database: <err>` in the rail and the scope stays on `live`;
 `relay ui` never exits over it.
 
-### Panes are yours, always
-
-relay never opens, closes or kills a pane except the one builder pane it spawns
-for you at `bind`, and the one it closes when you ask for it with `relay pause`
-(below). The one process it stops is a *headless* builder it started
-itself (below). For pane builders:
-
-- `done` and `unbind` leave the builder running. Its terminal is often the only
-  record of *why* a round went wrong, and throwing that away automatically is
-  worse than leaving a process up.
-- a `BROKEN`, `ORPHANED` or timed-out binding is flagged and reported, never
-  cleaned up. relay stops relaying and waits for you.
-- closing builder panes when you are finished with them is a manual step, and
-  worth remembering: an idle opencode builder holds roughly 800 MB.
-
-### Where the builder appears
-
-Every agent relay spawns as a pane -- builders from `bind`, `add`, `fork` and
-consults from `ask` -- opens in its own herdr tab in the planner's workspace,
-labelled with the agent's name, without moving focus. There is no split option:
-side-by-side panes stop being readable at two or three builders, and tabs scale.
-
 ### Headless builders
 
-`relay bind --headless` (also `add --headless`, `fork --headless`) makes the
-builder a process instead of a pane. Nothing is opened at bind. Each
+A builder is a process relay runs, one fresh process per round; each
 `relay send` starts the harness's non-interactive form -- `agy -p …`,
-`claude -p …`, `opencode run …` -- in the binding's tree with the same prompt a
-pane builder would be typed, writes the harness's streamed JSON events to
+`claude -p …`, `opencode run …` -- in the binding's tree with the round's
+prompt, writes the harness's streamed JSON events to
 `~/.local/state/relay/<name>/NNN-builder.jsonl` and its stderr to
 `NNN-builder.log`, both beside the round's plan and report, and returns.
 The daemon renders the stream into the `.log` as it grows -- one line per
@@ -598,11 +508,11 @@ created `NNN-done`, then exited non-zero, has done its job. A process that
 exits with a report but no marker closes the round too, flagged `unmarked`;
 one that exits with neither is the "exited without a report" case below.
 
-What is different from a pane builder:
+What this means in practice:
 
-- **No dialogs.** The process runs with stdin closed. `relay answer` is refused.
-  If a harness needs permission prompts answered, use a pane builder or its
-  `--dangerously-skip-permissions`/`--auto` extra arg in `candidates.json`.
+- **No dialogs.** The process runs with stdin closed. If a harness needs
+  permission prompts answered, put its `--dangerously-skip-permissions`/`--auto`
+  extra arg in `candidates.json`.
 - **No memory across rounds.** Every round is a fresh process. relay plans
   already carry their own context (worktree table, conventions, "stop rather
   than improvise"); headless makes that a hard requirement.
@@ -611,18 +521,14 @@ What is different from a pane builder:
   `relay ui`'s terminal tab shows the log file.
 - **Exit without a report** is logged as an `exit` entry (exit code and the
   log's last 20 lines) and the daemon switches builders, up to `max_switches`
-  (a switch caused by a rate-limit gate is not counted), exactly as a
-  vanished pane does; then `NEEDS YOU`. The one exception is a builder whose
+  (a switch caused by a rate-limit gate is not counted); then
+  `NEEDS YOU`. The one exception is a builder whose
   supervisor died with the daemon itself (a systemd restart, `kill -9` of
   the process tree): relay tells that apart from a real builder death and
   relaunches the same candidate on the same round instead, uncounted.
 - **`done` and `unbind` stop the process** if a round is running. A stop that
   fails is reported, and the binding is still done or unbound. The round budget
-  never kills anything, for headless as for panes: it flags `NEEDS YOU` and
-  leaves the process alone. To end a round without losing it, `relay stop`
-  first (below): it asks the builder to commit and report, and the round
-  closes on its marker. `done` and `unbind` still act immediately; `--grace`
-  exists only on `stop`.
+  never kills anything: it flags `NEEDS YOU` and leaves the process alone.
 - **`relay unavailable`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
 - **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
@@ -631,9 +537,7 @@ What is different from a pane builder:
   so a kill, `relay done`/`unbind`, a `relay stop`, or a mid-round switch
   stops the agent for real -- before the fix, the client process died but the
   agent session kept running inside the shared service, still editing the
-  worktree relay had already switched away from. An *interactive* (pane)
-  opencode builder still shares the service, so keep concurrent opencode
-  panes on one machine to two or three. `relay doctor` notes the shared
+  worktree relay had already switched away from. `relay doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
   `~/.config/opencode/service.json` exists.
 
@@ -661,9 +565,8 @@ automatic halt. Killing a stalled builder stays the human's decision -- `relay
 done`, `relay unbind`, or `relay stop`.
 
 The signals are the working tree (its fingerprint is `HEAD` plus `git status
---porcelain`, hashed -- no diff, no snapshot) and the builder's output: a pane
-builder's screen, or a headless builder's stream file (`NNN-builder.jsonl`)
-mtime. Each signal keeps the time it last changed, and the daemon samples at
+--porcelain`, hashed -- no diff, no snapshot) and the builder's output: the
+builder's stream file (`NNN-builder.jsonl`) mtime. Each signal keeps the time it last changed, and the daemon samples at
 most once every `progress_interval_ms` (default thirty seconds).
 
 - **`stalled <age>`** -- no signal has moved for `stall_after_ms` (default
@@ -671,23 +574,22 @@ most once every `progress_interval_ms` (default thirty seconds).
   label replaces `working` in `relay status` and `relay ui`; a stalled binding
   is still `ACTIVE` with `relay wait` still waiting. The label clears when a
   signal moves again or the process exits, and the daemon fires one
-  `builder_stalled` hook event and one notification per episode and none when
-  it clears.
+  `builder_stalled` hook event per episode and none when it clears.
 - **`exploring <age>`** -- the output or screen is changing but the tree has
   not for `explore_after_ms` (default twenty minutes). A label only: some plans
   are read-heavy, so it fires no hook event and no notification.
-- **`stale <age>`** -- a `NEEDS YOU` or `HELD` binding has sat unacted for
+- **`stale <age>`** -- a `NEEDS YOU` binding has sat unacted for
   `stale_after_ms` (default four hours). The age is measured from the halt, or
   from the newest log entry when the binding has none. The word follows the
   state word in `relay status`, joins the card in `relay ui`, and puts the row
   first inside its attention group; the daemon fires one `binding_stale` hook
-  event and one notification per episode.
+  event per episode.
 
-A binding with no readable signal at all -- no git, no pane and no stream --
-is never labelled.
+A binding with no readable signal at all -- no git and no stream -- is never
+labelled.
 
-When a round stops -- exit without the marker, a quiescent pane, or the
-round budget -- relay scans the builder's last output for the harness's
+When a round stops -- exit without the marker or the round budget -- relay
+scans the builder's last output for the harness's
 rate-limit text and records a `rate_limited` gate (`source relay`, the
 matched line) on a match, parsing the line's own reset time when it names
 one (`Resets in 2h48m52s`, `resets 7pm`) or using `limit_gate_default_ms`
@@ -696,7 +598,7 @@ unavailable` still overrides; `relay available` undoes a false positive.
 
 ### Remote builders: the server
 
-`relay serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI panes.
+`relay serve` runs a remote-builder server: an HTTPS listener over enrolled clients and an autonomous daemon loop that runs headless builders on the server host without a local planner or GUI.
 
 On a fresh server host, the first run looks like:
 1. `relay serve init --host <hostname>` generates a server private key and self-signed certificate, printing the SHA-256 fingerprint that clients pin.
@@ -714,15 +616,15 @@ On the server machine, the admin can inspect enrolled clients and all owners' ac
 - `relay serve clients` lists enrolled clients and their revocation status.
 - `relay serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 
-What `relay serve` does not do: it runs no planner, opens no tmux/herdr panes, and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
+What `relay serve` does not do: it runs no planner and provides no administrative verbs over the network (administration happens on the server host). Tenants are protected from each other over the wire and from a passive network, but not from the server admin or from each other at the OS level where all builders run under the same unix user. Tenant isolation by unix user or container is tracked in #204.
 
 ### Remote builders: the client
 
 A remote binding is an ordinary binding whose builder runs on someone else's
-machine, over a signed, pinned HTTPS connection instead of a local pane or
-process. It has no worktree and no pane of its own: `relay send` ships a
-bundle of your branch's history instead of typing into a terminal, and the
-daemon polls the server for the round's state the same way it polls a pane.
+machine, over a signed, pinned HTTPS connection instead of a local process.
+It has no worktree of its own: `relay send` ships a bundle of your branch's
+history alongside the plan, and the daemon polls the server for the round's
+state the same way it polls a local builder.
 
 Set up once per machine:
 1. `relay client init` generates this client's ed25519 keypair (in
@@ -754,7 +656,7 @@ relay status                              # round state comes from the server, p
 
 What comes back as `relay/<name>`: the result of a closed round is fetched
 into your repository's own `refs/heads/relay/<name>` branch -- fast-forward
-only, exactly like a pane builder's worktree branch. If the round closed with
+only, exactly like a local builder's worktree branch. If the round closed with
 uncommitted changes on the server, they land on a side ref,
 `refs/relay/<name>/round-<N>`, whose parent is that round's commit on
 `relay/<name>`; the report names it. If that fast-forward collides with a
@@ -768,18 +670,17 @@ file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
 round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
-is add-only, never bound to an existing directory); `relay answer` ("remote
-builders take no dialogs" -- there is no pane to send keys into); `relay ask`
+is add-only, never bound to an existing directory); `relay ask`
 ("consults are local-only"); `relay fork` from a remote source ("fork across
 servers is not supported"); and `relay bind --resume --rebind` (or
-`--builder`/`--headless`) against a remote binding ("cannot change a remote
+`--builder`) against a remote binding ("cannot change a remote
 builder; unbind and add" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relay done` and `relay unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
 the server is treated as already gone, and proceeds).
 
 What `status` and `doctor` show: `relay status` and `relay ui` name a
-remote binding's builder by its server (`zen`, not a pane id), with the
+remote binding's builder by its server (`zen`), with the
 last round state the daemon observed there (`running`, `idle`, `closed`,
 `needs_you`, `unreachable`, `cert`) in the status column -- read from the
 store, never over the network, so it costs nothing extra. `relay status`,
@@ -799,11 +700,9 @@ notifies once. It never kills anything — a builder working a real stage of a
 plan runs for hours, so the budget is a runaway guard, not a progress estimate.
 The default is 24 hours; `relay bind --timeout 2h` sets it per binding.
 
-When a builder goes idle without writing its report file, relay nudges it once.
-Relay abandons a round only when the builder's terminal has been still for the
-grace period, falling back to a labeled scrape of the builder's terminal. If the
-screen moves, the grace resets: a builder waiting on subagents is therefore no
-longer mistaken for a finished one.
+A headless builder that exits without writing its report file still closes the
+round, and relay delivers its report flagged `unmarked`. Nothing is scraped and
+nothing is guessed.
 
 ### Running several builders at once
 
@@ -823,12 +722,11 @@ Each peer is an ordinary binding: its own round counter, round log, captured
 diffs and budget. `relay status` lists them all, and every verb that acts on a
 binding takes `--name`.
 
-Every mutating verb (`bind`, `add`, `fork`, `send`, `answer`, `done`, `unbind`)
-ends by listing, on stderr, every *other* binding that is waiting on a human —
-a blocked dialog, a halt, a dead builder, a lost planner — with how long and
-the verb that resolves it, e.g. `waiting on you: api round 4 blocked 23m --
-Do you want to proceed? > 1. Yes  (relay answer --name api)`. The exit code is
-unchanged; it is a reminder, not a refusal.
+Every mutating verb (`bind`, `add`, `fork`, `send`, `done`, `unbind`) ends by
+listing, on stderr, every *other* binding that is waiting on a human — a halt,
+a dead builder, a lost planner — with how long and the verb that resolves it,
+e.g. `waiting on you: api round 4 halted 23m -- relay status --name api`. The
+exit code is unchanged; it is a reminder, not a refusal.
 
 Relay does not sequence them and does not merge their trees. The planner
 decides how many builders it needs, which run in parallel and which wait, and
@@ -839,9 +737,9 @@ round history through a chosen round and starts at the round after it. A peer
 starts at round 1 with an empty log, because it is not a continuation of
 anything.
 
-Headless builders are the cheap way to run several: no tab per builder, no
-idle harness holding memory. `relay add --name api --headless` gives a peer its
-own worktree and no pane.
+Headless builders are the cheap way to run several: no terminal per builder,
+no idle harness holding memory. `relay add --name api` gives a peer its own
+worktree and a fresh process per round.
 
 ### Edges (triggers)
 
@@ -893,12 +791,12 @@ relay fork webshop --round 2 --new-name webshop-alt
 
 `relay pause` is the third lifecycle state between ACTIVE and DONE. It
 releases what an idle binding is holding — its worktree on disk and its
-builder pane in memory (an idle opencode pane is roughly 800 MB) — while
-keeping the branch and the round log. `relay bind --resume --name <n>` brings
-it back at the same path on the same branch.
+builder process — while keeping the branch and the round log.
+`relay bind --resume --name <n>` brings it back at the same path on the same
+branch.
 
 ```
-relay pause webshop            # release the worktree and close the builder pane
+relay pause webshop            # release the worktree
 relay pause webshop --commit   # commit everything on the binding branch first, then release
 relay bind --resume --name webshop   # restore the worktree and spawn a fresh builder
 ```
@@ -911,55 +809,32 @@ relay bind --resume --name webshop   # restore the worktree and spawn a fresh bu
   prints the commit's short sha.
 - **The branch is never removed** and neither is the log; pausing keeps the
   record and the commits, exactly as `done` does.
-- **Pane bindings**: pause closes the paused binding's builder pane. This is
-  the third place relay closes a pane (see **Panes are yours, always**), and it
-  happens only because you asked for the pause. A headless binding has no pane
-  and none is closed; a pane that is already gone or that herdr refuses to close
-  is not an error — relay says so and names `herdr pane close <id>`.
+- **Nothing is closed**: a paused binding's builder is a process, and pause
+  simply releases the worktree; there is no terminal to close.
 - **Resume rebinds**: a paused binding has no builder identity left, so
   `bind --resume` implies `--rebind` and starts a fresh builder on the candidate
   order (or a fresh headless endpoint). The round number is unchanged and the
   log records `resumed`.
 - **Remote and `--cwd` bindings are refused**: a remote binding has no local
-  worktree or pane (`relay done` ends it), and a `--cwd` binding drives a tree
+  worktree (`relay done` ends it), and a `--cwd` binding drives a tree
   relay did not create, so there is nothing to release.
 - **`gc` leaves PAUSED alone** — it sweeps only `DONE`. `relay unbind` works on
   a paused binding when you want it gone; use `--archive` to keep the log.
 
 ### Stopping a round
 
-`relay stop` ends an open round on purpose, so the work in it is not lost.
-Instead of killing the builder, it types a wrap-up prompt into the pane
-through the same delivery path as a plan:
-
-> relay: stop requested by the planner. Finish the step you are in if it is
-> seconds away, otherwise stop where you are. Commit what should be kept on
-> the current branch. Write your report to `<report>` saying exactly which
-> steps completed and where you stopped, then create `<marker>`. Do not start
-> anything new.
-
-The builder's report and marker then close the round exactly as they always
-do, and the report's note gains `stopped`. `relay status` shows
-`stopping 23s of 5m0s` while the request is in flight.
+`relay stop` ends an open round on purpose. The builder runs with no stdin, so
+there is nothing to ask it: `relay stop` kills the process and closes the round
+without a report (`noreport stopped`).
 
 ```
-relay stop webshop               # ask for a wrap-up; close on the marker
-relay stop webshop --grace 15m   # allow longer before the pane is abandoned
-relay stop webshop --now         # skip the prompt: abandon the pane at once
+relay stop webshop               # end the round now
 ```
 
-- **Grace** defaults to 5m. If it elapses with no marker, relay does not kill
-  the pane: the binding goes `NEEDS YOU` with `builder did not stop within
-  5m0s; close its pane yourself, then relay done or send`, and closing it
-  stays your call. `--now` abandons at once, without prompting.
-- **Headless bindings have no stdin**, so `relay stop` kills the process now
-  and closes the round without a report (`noreport stopped`) instead of
-  taking the exit-without-report path, which would switch builders: a stop is
-  not a failure, so it never charges a switch and never excludes a candidate.
-  A wrap-up *process* for headless builders is deferred.
+- **A stop is not a failure**, so it never charges a switch and never excludes
+  a candidate, unlike an exit-without-report.
 - **`stop` then `pause`** is the sequence for parking a binding between
-  rounds: `stop` ends the round without losing it, and `pause` then releases
-  the worktree and the pane.
+  rounds: `stop` ends the round, and `pause` then releases the worktree.
 - **Send and the round close clear the request**, so a stop never outlives
   the round it was made for. `stop` refuses a remote binding (`relay done`
   ends one) and a binding that is already `DONE` or `PAUSED`.
@@ -1027,13 +902,12 @@ stamp its mtime after a successful print of a live binding, and `status`'s
 else in the directory. `relay done` stops relaying and, when the binding's worktree is clean and
 no round is open, removes the worktree so its branch can be checked out
 in the main repo (`removed worktree ... (branch relay/x is free to check
-out)`); a dirty tree or an open pane round is kept and `relay gc` retries
+out)`); a dirty tree or an open round is kept and `relay gc` retries
 when it is clean. The binding directory itself is never removed by `done`
 — the log is the record of what the planner actually told the builder.
 `relay bind --resume <name>` puts a removed worktree back on the same
 branch at the same path; a DONE binding may then be rebound with
-`--rebind`, since the old builder pane cannot work in the recreated
-directory (`bind` names it so you can close it).
+`--rebind`, since the old builder cannot work in the recreated directory.
 
 relay deletes a branch in **zero** places: not at `unbind`, `gc`, `done`, nor
 on an add rollback. The one exception is a `relay/<name>` branch `add --server`
@@ -1064,9 +938,6 @@ Snapshot tree objects created during round diff capture are written directly to
 git's object database unreferenced. They never alter repository refs, branches,
 or the working index, and they are reclaimed automatically by the repository's
 own `git gc`.
-
-Neither command closes a pane — the builder's terminal stays where it is, for
-you to read and close yourself.
 
 **What a binding records.** Beyond its round history and live state, a fresh
 `bind`, `add` or `fork` fills in four more facts about the binding: which
@@ -1171,7 +1042,7 @@ values : outcome reported|halted|exited|switched|done_no_report|open
          report  done|halted|blocked|deferred|unstructured
          gate    pass|fail|timeout|error
          basis   measured|estimated|unknown
-         mode    pane|headless|remote
+         mode    pane|headless|remote   (pane: history only)
          archived true|false
          since/until 24h|7d|YYYY-MM-DD
          by      none|binding|repo|feature|builder|harness|provider|model|day|outcome
@@ -1227,7 +1098,7 @@ report text here
 you choose. Neither resolves the current directory for you: a bare `relay done` once ended a live
 loop by accident, and the recovery is `relay bind --resume --name <name>`.
 `--pick` is explicit for the same reason -- a bare verb never opens a picker,
-so the planner agent, whose pane is also a terminal, can never fall into one.
+so a planner agent can never fall into one.
 And because a popup takes focus the instant it opens, `Enter` on a binding
 that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 -- and only `y` proceeds; any other key returns to the list.
@@ -1235,8 +1106,7 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 ## Status line
 
 `relay statusline` shows this planner's live bindings, one row each, under
-the Claude Code prompt; it shows nothing outside herdr, nothing on error, and
-never probes herdr.
+the Claude Code prompt; it shows nothing on error and never probes a builder.
 
 Add this to `~/.claude/settings.json`:
 
@@ -1244,9 +1114,9 @@ Add this to `~/.claude/settings.json`:
 "statusLine": { "type": "command", "command": "relay statusline", "refreshInterval": 1 }
 ```
 
-Two preconditions: `relay` must be on the `PATH` of the Claude Code process,
-and Claude Code must be started inside a herdr pane, so `HERDR_PANE_ID` is
-inherited.
+One precondition: `relay` must be on the `PATH` of the Claude Code process.
+The planner session is identified by `RELAY_PLANNER`, which the relay plugin's
+hook exports.
 
 Claude Code renders a few cells less than `COLUMNS`; relay subtracts 4 by
 default (measured on the fullscreen TUI). If the right-hand `age · STATE`
@@ -1259,7 +1129,7 @@ cells before Claude Code's `…`:
 
 Each row is `○ name  rN · builder · what relay is waiting on  …  age · STATE`,
 where `builder` is the harness segment of the candidate token, and `age` is
-time since the last plan, report, question or answer crossed.
+time since the last plan, report or question crossed.
 
 ## Candidates
 
@@ -1301,7 +1171,7 @@ Candidates are configured in `$XDG_CONFIG_HOME/relay/candidates.json` (default `
 - `tier` — default permission tier for this candidate: `harness`, `read`, `edit`, `yolo`. Optional; defaults to role default in policy, else `harness`.
 - `denial_patterns` — regexes that replace the harness default denial patterns for this candidate when detecting permission-blocked exits. Optional.
 - `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
-- `dialog_patterns` — extra regexes appended to the harness defaults, matched against the builder's visible screen only when herdr reports its status as `unknown`; a match refuses `send` as blocked; extend-only.
+- `dialog_patterns` — extra regexes appended to the harness defaults, matched against a runner's output to detect a blocking dialog; a match refuses `send` as blocked; extend-only.
 
 A file that does not validate stops every relay command with a message naming the entry; a missing file is zero candidates.
 
@@ -1359,8 +1229,7 @@ binding's log as a `pick` entry, so `relay log` shows it later:
 picked claude/anthropic/sonnet for builder: order #2; skipped agy/google/gemini-3.8-flash-high (rate-limited until 20:28)
 ```
 
-`relay candidates` prints the configured tokens with their roles. A
-`--builder` value containing `:` and no `/` is a herdr pane id to adopt.
+`relay candidates` prints the configured tokens with their roles.
 
 ### Policy
 
@@ -1514,16 +1383,14 @@ kind's role coverage once at startup.
 A builder relay spawned can be replaced by the daemon while a round is
 open, in two cases:
 
-- its pane is gone for 30 seconds (a detection flicker shorter than
-  that clears itself);
+- its process exits without writing a report;
 - you gate its provider with `relay unavailable` -- which is how you
   tell relay a running builder hit its limit. The command names the
   bindings the daemon will switch.
 
 The daemon resolves `builder` again through `policy.json` order and the
 ledger (an omitted token, so the order applies even to a builder you
-named), closes the replaced pane if it is still open, starts the pick
-beside the planner in the **same** tree, and hands it the **same**
+named), starts the pick in the **same** tree, and hands it the **same**
 round's plan. The round number does not change; the round clock
 restarts. The new builder inherits whatever the old one left in the
 tree. A `switch` entry in the log says what was tried and why:
@@ -1542,10 +1409,9 @@ the next candidate. The halt always states its reason, even on a round
 that has already notified once; a `relay send` re-send resets the
 round's switch budget, since the human asked for another attempt.
 
-Adopted builders (bound by pane id) are never switched; a builder
-gone between rounds is `BROKEN` as before -- `relay bind --resume`.
-
-An **adopted** pane (bind by pane id, or `--resume`) needs no candidate: you launched that agent yourself, so it is already in whatever role you put it in. relay selects a role only for agents it starts, with `--agent` on the launch line.
+A builder gone between rounds is `BROKEN` as before: `relay bind --resume`
+starts a fresh one. relay selects a role for every builder it starts, with
+`--agent` on the launch line.
 
 `aliases.json` from earlier versions is no longer read.
 
@@ -1604,10 +1470,9 @@ When forking a binding (`relay fork`), if `--tier` is omitted, the new binding i
 
 For consults (`relay ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
 
-### Headless vs. pane builder tiers
+### Per-round tiers
 
-- **Pane builders**: A pane builder is a persistent terminal process spawned when the binding is created. Its CLI flags are fixed at spawn. Passing `--tier` to `relay send` on a pane binding is refused because an active interactive harness cannot be re-flagged mid-flight. To change the tier of a pane builder, re-bind it with `relay bind --resume --rebind --tier <tier>`.
-- **Headless builders**: Headless builders execute a new process for each round. A round may temporarily override the tier using `relay send --tier <tier> [--allow-yolo]`. The round override takes precedence during that round, and is automatically reset to the binding's default tier when the round completes.
+Every builder runs a new process for each round, so a round may temporarily override the tier with `relay send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
 ### Permission-blocked exits
 
@@ -1678,11 +1543,10 @@ round's report entry.
 A round's report entry also carries its **builder session**, `builder_session`
 in the JSON that `relay log --json` and `relay show --json` print: the harness
 session that built the closed round, so a report read two rounds later can
-still name the session that wrote it. For a headless builder it is the session
-the round's stream announced in its first event; for a pane builder it is
-herdr's session for the pane. It is absent when neither named one -- relay
-never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is
-what `ask --round` (coming) resumes.
+still name the session that wrote it. It is the session the round's stream
+announced in its first event. It is absent when the harness named none -- relay
+never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is what
+`ask --round` resumes.
 
 ### Verify
 
@@ -1746,8 +1610,8 @@ file is written for the builder rather than by the planner: it names the failed
 round's acceptance check and the original plan, and carries the last 200
 non-empty lines of `NNN-gate.log`, instructing the builder to fix ONLY what the
 check reports and to halt and report if no code change can fix it. The hand-off
-is exactly a send's -- a fresh process for a headless binding, a prompt for a
-pane -- and the new round's plan entry is logged with `repair k/M`.
+is exactly a send's -- a fresh builder process -- and the new round's plan
+entry is logged with `repair k/M`.
 
 Two bounds end the loop with `NEEDS YOU` instead of another repair round:
 
@@ -1770,38 +1634,34 @@ question. Unlike a builder, it is not persistent, does not advance the round,
 and does not count against the one-writer-per-tree rule: it is a separate
 record on the binding, not a binding of its own.
 
-The planner runs, from its own pane:
+The planner runs, from its own session:
 
 ```
 relay ask --role reviewer --file q.md webshop
 ```
 
-relay stages the question, opens a tab in the planner's workspace, and starts the
-role there. The consult reads the staged question, writes its findings to a
+relay stages the question and starts the role. The consult reads the staged question, writes its findings to a
 file, and replies with only that path. Findings land under the binding's state
 directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —
 and relay queues them to the planner like any other report, once the file
 exists. That file's existence is the only completion gate: relay makes no
 judgements about what the findings say.
 
-`relay ask --headless` runs the consult as a one-shot process instead of a
-pane: relay starts the harness in its print form and the consult's **final
-message** becomes the findings, which relay writes to the same
-`NNN-<id>-findings.md` and queues to the planner exactly as a pane consult's
-file is. Use it where there is no pane to open — resuming a closed round's
-builder session, or running a verifier at round close. Because there is no
-pane, the process is the only thing relay can observe: it is killed at the
+A consult is a one-shot process: relay starts the harness in its print form,
+and the consult's **final message** becomes the findings, which relay writes
+to `NNN-<id>-findings.md` and queues to the planner (`--headless` is accepted
+and ignored). The same form resumes a closed round's builder session and runs
+a verifier at round close. The process is the only thing relay can observe: it is killed at the
 consult timeout (10m), and a process that exits without a final message is
 reported silent with its exit code and the stream to read. The resolved tier
-still gates the pick, exactly as for a pane consult: at `read`, claude and agy
+still gates the pick: at `read`, claude and agy
 can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
 and codex cannot honour `read` and are refused.
 
 While consults are running, `relay status` appends ` +Nc` to the binding's row
 — only when non-zero, so a healthy binding looks no different. A finished
-consult's pane stays open until you run `relay reap [NAME] [--dry-run]`, which
-closes the panes of finished consults and drops their records. Terminal ones
-are a reap chore, not work in flight, so the count does not include them.
+consult's record is dropped once its findings have been queued. Terminal
+consults are not work in flight, so the count does not include them.
 
 `relay agent install` writes the reviewer definition with the other
 roles; to install just this one:
@@ -1824,8 +1684,8 @@ copy differs from it (on claude and opencode the copy is yours to edit, and
 doctor leaves it alone). relay cannot observe writes; it reports what is in a tree
 and no more. Note also that `reviewer` is deliberately not the `researcher`
 role: `researcher` is dispatched by a builder's own plan-executor and returns
-findings in-band to it, while a reviewer runs in its own relay pane and hands
-back a file path.
+findings in-band to it, while a reviewer runs as its own relay consult and
+hands back a file path.
 
 ### Round usage
 
@@ -1843,13 +1703,13 @@ provenance:
 
 `unknown` is an answer, not a failure. Where each figure comes from:
 
-| harness | headless | pane |
-|---|---|---|
-| claude | the round's stream (`measured`) | `~/.claude/projects/<cwd>/` transcripts inside the round's window (`estimated`) |
-| agy | the round's stream (`estimated`) | agy keeps no usage record (`unknown`) |
-| opencode | the round's stream (`measured`) | `opencode.db` through `sqlite3` (`measured`); `relay doctor` says if `sqlite3` is missing |
+| harness | headless |
+|---|---|
+| claude | the round's stream (`measured`) |
+| agy | the round's stream (`estimated`) |
+| opencode | the round's stream (`measured`) |
 
-A binding on `--cwd` shares the planner's directory, so its pane rounds
+A binding on `--cwd` shares the planner's directory, so its rounds
 are `unknown` (`shared cwd`) rather than counting the planner's spend.
 
 `prices.json` is `{"as_of": "YYYY-MM-DD", "source": "...", "models":
@@ -1876,9 +1736,8 @@ While a round is running, `relay status` and `relay ui` show a `live`
 figure read from the harness's record on each refresh, and
 `relay statusline` appends `live $0.02 · 41k tok` to the row. On
 `status --json` it is carried as `live_usage`. The live figure is
-estimated (`~$`) unless the harness reports dollars per step (opencode);
-agy in a pane keeps no usage record, so it has none. It is never recorded
-and never added to `spend`. Across bindings:
+estimated (`~$`) unless the harness reports dollars per step (opencode).
+It is never recorded and never added to `spend`. Across bindings:
 
 ```
 relay tab [--since 7d|24h|2026-09-01] [--by binding|model|provider] [--json]
@@ -1946,7 +1805,7 @@ has no verified resume form, and `relay ask --round` refuses it by name.
 ## The planner: architect
 
 relay ships one more definition it never launches: `architect`, the planner's
-persona. The planner is the session you drive -- the pane you run `relay bind`
+persona. The planner is the session you drive -- the one you run `relay bind`
 and `relay ask` from -- and relay does not pick its harness or start it. What
 relay provides is the definition, so the same architect runs on any kind:
 
@@ -1963,13 +1822,13 @@ claude   --agent architect --model opus
 opencode --agent architect -m openrouter/deepseek/deepseek-v4-pro
 ```
 
-**Wait inside the turn.** After `relay send`, the planner runs
-`relay wait <name> --timeout 9m` (looping while it exits 124) and then
-`relay pull <name>`, and ends its turn only when no binding has a round in
-flight. herdr then badges the planner's tab once, when the planner is
-actually finished, instead of after every round the daemon typed a report
-into it (#182). The daemon's typed delivery remains the fallback for a
-planner that is idle when a report lands.
+**Wait for the report after every send.** In Claude Code the planner starts
+`relay wait <name> --timeout <budget>; relay pull <name>` as a **background**
+command and ends its turn: Claude Code wakes the session when the command exits,
+and the `relay mcp` send result prints the exact command for that binding. Other
+harnesses run `relay wait <name> --timeout 9m` in a loop while it exits 124,
+then `relay pull <name>`, and end their turn only when no binding has a round in
+flight.
 
 The architect designs and never implements: it produces a system overview,
 file structure, data structures, interface contracts, pseudocode, an error
@@ -1990,55 +1849,25 @@ some candidate would load, and no candidate loads the planner.
 
 - **ACTIVE** — someone is working (planner or builder), nothing needs a human
   yet.
-- **NEEDS YOU** — relay has stopped and a person must act. Covers a blocked
-  builder (answer its dialog), a dead builder pane, a lost planner pane, a
-  round that ran past its timeout, and a binding that hit its round cap.
-- **HELD** — a payload is ready for the planner, but the planner pane is
-  focused, so relay is holding it rather than typing into it. `relay status`
-  shows the hold's clock on the `pending` line: how long the planner's screen
-  has been quiet against `--held-grace`, or that the clock has not started
-  because the screen could not be read.
-- **PAUSED** — `relay pause` released the binding's worktree and builder pane
-  between rounds; the branch and the round log stay, and `relay bind --resume`
+- **NEEDS YOU** — relay has stopped and a person must act. Covers a dead
+  builder process, a round that ran past its timeout, and a binding that hit
+  its round cap.
+- **PAUSED** — `relay pause` released the binding's worktree between rounds;
+  the branch and the round log stay, and `relay bind --resume`
   restores it. Nothing needs a human, and `gc` leaves it alone.
 - **DONE** — the planner declared the work verified via `relay done`, and
   relaying has stopped deliberately, not because anything went wrong: unlike
   NEEDS YOU, nothing needs a human here. `Reconcile` returns immediately for
-  a done binding — no reports are queued, no dialogs captured, no timeouts
-  flagged. The binding and its round log stay on disk (`relay log <name>`
+  a done binding — no reports are queued and no timeouts are flagged. The binding and its round log stay on disk (`relay log <name>`
   still works as an audit trail) until `relay unbind` or `relay gc` removes them;
   a clean worktree is released at `done` so the branch is free to review.
 
-The daemon raises one "all rounds finished" toast (sound done) per planner
-when the planner is idle and none of its bindings has a round open, a payload
-pending or a switch due.
-
-## The anti-clobber rule
-
-`herdr agent prompt` types text into a pane and presses Enter. Since relay
-cannot see what a human has half-typed, it treats a focused planner pane as
-unsafe to inject into: it holds the payload and sends one herdr notification
-(not one per tick) instead of typing over the human. A held payload leaves the
-hold three ways: your focus moves to another pane, so the daemon delivers on
-its next tick; the planner's input box is seen empty (claude only today), so
-there is nothing to clobber; or the planner's visible screen has not changed
-for `--held-grace`, in which case an abandoned draft gets the payload appended
-— accepted on purpose, since it beats a payload that never arrives. `relay
-pull` bypasses this entirely — it prints the payload to stdout instead of
-injecting it, so it's safe to run from inside the focused planner pane at any
-time.
-
-None of this applies to an opencode planner: relay pushes its payloads
-straight to opencode's own API instead of typing them into its pane, so
-there is nothing to clobber and no HELD state. Every other planner is still
-typed.
-
 ## Running the daemon
 
-`relay daemon` is the reconciler: it polls herdr, queues reports back to the
-planner, captures blocking dialogs, and flags stalled rounds. Nothing else
-needs it running — the CLI works on its own — but without it, reports are only
-delivered when you run `relay pull` by hand.
+`relay daemon` is the reconciler: it watches builders, queues reports back to
+the planner, and flags stalled rounds. Nothing else needs it running — the CLI
+works on its own — but without it, reports are only delivered when you run
+`relay pull` by hand.
 
 You can just run `relay daemon` in any spare terminal. To have it start with
 your session:
@@ -2053,40 +1882,11 @@ On Linux that installs `dist/relay.service` to
 `dist/com.github.fuad-daoud.relay.plist.in` into `~/Library/LaunchAgents/` and
 loads it, logging to `~/Library/Logs/relay.log`.
 
-Both run `relay daemon` outside any herdr-managed pane, so it starts with none
-of the `HERDR_*` environment variables herdr injects into a pane it manages.
-The cheap way to confirm this is fine before trusting the service: if
-`relay status` works from a plain terminal (not inside a herdr pane), the
-daemon will work there too, since both resolve the running herdr session the
-same way.
-
 Only one daemon runs at a time. `relay daemon` takes an exclusive lock on
 `$XDG_STATE_HOME/relay/.daemon.lock` and refuses to start if another one holds
 it, so starting a second by hand next to the service is an error rather than
 two reconcilers racing. `relay daemon --check` exits 0 if a daemon is running
 and 1 if not, printing nothing.
-
-### Events vs polling
-
-`relay daemon` still polls herdr's binding-wide state every `--interval`, but
-on startup it also tries to open one subscription on herdr's socket
-(`$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`) covering every pane
-it has bound. A pane status change, exit or close pushed over that
-subscription wakes reconcile for that one binding immediately, instead of
-waiting up to `--interval` for the next poll to notice; the file tick still
-runs on schedule for everything else (drift, stale clocks, stall detection),
-just against the cached snapshot the events keep current rather than a fresh
-`herdr agent list` every time. A pane bound after startup (a fresh `relay
-bind`/`relay add`) is picked up automatically: the next tick notices it is
-missing from the subscription and resubscribes with the full pane list.
-
-When no socket is reachable -- no `HERDR_SOCKET_PATH` and no default socket,
-an older herdr that predates the events protocol, a permission error, or
-`relay serve`'s stub Herdr -- the daemon logs it once at startup and polls
-exactly as it always has; nothing else changes. If the stream drops after a
-successful subscription, the daemon falls back to polling immediately (the
-cache is not trusted once the stream is known to be gone) while it retries
-the subscription in the background with a doubling backoff, capped at 30s.
 
 ## Lifecycle hooks
 
@@ -2139,58 +1939,17 @@ Each matching webhook POSTs in its own goroutine with a 5-second timeout and nev
 
 ## Setting up your agent harnesses
 
-### herdr lifecycle integrations
-
-relay reads lifecycle state (`idle` / `working` / `blocked` / `done` /
-`unknown`) from herdr, which learns it from a hook each harness installs. Check
-what herdr can install with `herdr integration install --help`; the hooks land
-in the harness's own config directory, for example:
-
-```
-opencode   ~/.config/opencode/plugins/herdr-agent-state.js
-claude     ~/.claude/hooks/herdr-agent-state.sh
-agy        ~/.gemini/config/hooks/herdr-agent-state.sh
-```
-
-Without a harness's integration, herdr falls back to heuristic screen
-detection and reports `unknown`. relay never treats `unknown` as done, so such
-a binding stalls rather than misbehaving — but it does stall. A binding whose
-builder reports no session id also never self-heals from `BROKEN`, since
-recovery requires matching the same herdr session (see below).
-
-### Sidebar tokens
-
-relay tags each pane builder's pane with three display tokens --
-`relay` (binding), `relay_round` (`007`), `relay_state`
-(`active|held|needs-you|done`) -- refreshed by the daemon within a tick
-of any change and cleared when the binding is done or unbound.
-Headless and remote builders have no pane and no tokens. Show them in
-herdr's sidebar with:
-
-```toml
-[ui.sidebar.agents]
-rows = [
-  ["state_icon", "workspace", "tab"],
-  [{ token = "$relay", bold = true }, { token = "$relay_round", dim = true },
-   { token = "$relay_state", rules = [
-       { equals = "needs-you", fg = "#f55", bold = true },
-       { equals = "held",      fg = "#fc0" },
-       { equals = "done",      dim = true } ] }],
-]
-```
-
-Toasts carry a sound class: `request` when a builder is blocked at a
-dialog or a binding halts, `done` when a held report is ready and once
-when all of a planner's rounds have finished, `none` for a mid-round
-switch.
+A harness needs nothing installed beyond its own binary on `PATH` and the role
+definitions relay installs (`relay agent install`). relay starts each builder
+as a non-interactive process and reads the round from the harness's own stream,
+so there is no lifecycle hook to install for it.
 
 ### opencode permission allowlist
 
 relay stages plans and reports under `~/.local/state/relay/<binding>/`, outside
 the repo the builder is working in, so a fresh opencode builder blocks on an
-"Access external directory" dialog on its first round. relay handles it — the
-daemon captures the dialog and the planner answers with `relay answer` — but to
-skip it entirely, add this to `~/.config/opencode/opencode.jsonc`:
+"Access external directory" dialog on its first round. To skip it entirely, add
+this to `~/.config/opencode/opencode.jsonc`:
 
 ```jsonc
 "permission": {
@@ -2209,20 +1968,14 @@ relay doctor warns when this entry is missing (row external_directory under open
 
 ## Recovering a broken binding
 
-If relay cannot find the builder — a detection flicker, a restarted agent — the
-binding goes `BROKEN` and relaying stops. It clears itself only when the **same
-herdr session id** reappears, never on a pane-id match alone: a pane you closed
-and reused for something else must never start receiving plans meant for a
-builder. Spawned builders record their session id at `bind` on a best-effort
-basis, so a harness reporting none simply never self-heals, which is the safe
-direction.
-
-If the builder is gone, point the binding at a new builder:
+If the builder's process dies without a report, relay switches to the next
+candidate or, when none serves the binding, goes `NEEDS YOU` — see "Headless
+builders". A binding whose builder is gone between rounds is `BROKEN` and
+relaying stops until you point it at a new builder:
 
 ```bash
-relay bind --resume --name N --rebind                                       # spawn a fresh builder, picked by policy order
-relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # spawn a fresh builder, naming it
-relay bind --resume --name N --builder w2:p4        # adopt an existing pane
+relay bind --resume --name N --rebind                                       # start a fresh builder, picked by policy order
+relay bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
@@ -2239,76 +1992,86 @@ use `relay unbind N` and bind fresh.
 
 A headless binding is never `BROKEN` for lack of a process: between rounds
 there is none. If its process died mid-round the daemon already switched or
-halted it (see "Headless builders"). To move a headless binding to a fresh
-process by hand, `relay send` the staged plan again once `relay status` shows
-the builder `exited`; `--resume --headless` is refused, so changing a pane
-binding into a headless one is `relay unbind` and a fresh `relay bind --headless`.
+halted it (see "Headless builders"). To move a binding to a fresh process by
+hand, `relay send` the staged plan again once `relay status` shows the builder
+`exited`.
 
 ## Platform support
 
 **Linux and macOS.** Both are exercised in CI, on the Go 1.22 floor and on
 current stable.
 
-Windows is not supported. The blocker is not really relay — state locking is
-behind a build tag and could be implemented there — but herdr, which relay
-cannot work without. The tree still cross-compiles for `windows/amd64` (CI
-checks it), and relay will refuse at runtime with a clear error rather than
-running without a state lock.
+Windows is not supported. State locking is behind a build tag
+(`internal/store/lock_unix.go`) and could be implemented there, but the
+harnesses and process supervision relay relies on are unix-shaped. The tree
+still cross-compiles for `windows/amd64` (CI checks it), and relay will refuse
+at runtime with a clear error rather than running without a state lock.
 
 ## Claude Code plugin
 
-A Claude Code planner can attach relay as an MCP server instead of running
-`relay wait` in a loop:
+The relay plugin gives a Claude Code planner two things: the `relay mcp` MCP
+server (`relay` from `PATH`), and a `SessionStart` hook that runs
+`relay planner init`. The hook exports `RELAY_PLANNER` and tells the model its
+planner name. Install it once per machine:
 
     /plugin marketplace add fuad-daoud/relay
     /plugin install relay@relay
 
-That installs `relay mcp` as an MCP server (`relay` from `PATH`, like the
-daemon service). Launch with the channel research preview enabled so the
-`status`, `send`, `answer`, `done` tools are joined by pushed events instead
-of typed pane injection:
+Then launch Claude Code normally:
+
+    claude --agent architect --model opus
+
+**The background wait is the default.** After each `relay send`, the planner
+runs
+
+    relay wait --name <n> --timeout <budget>; relay pull --name <n>
+
+as a background Bash command and ends its turn. Claude Code wakes the session
+when the command exits, and its output is the report (or the reason the round
+stopped). The `relay mcp` send result prints that exact command for the
+binding, so the model does not have to remember it. Act on the pull output
+after every exit except `WaitTimeout`; on a timeout, run `relay status --name
+<n>` and start the wait again if the round is still running.
+
+**The channel is an opt-in upgrade.** With the channel enabled, reports,
+consult answers and edge artifacts arrive as `<channel source="relay">` events
+the moment the daemon has them, instead of being fetched by the wait. Turn it
+on by launching with the development flag, which asks for confirmation at
+every start:
 
     claude --agent architect --model opus --dangerously-load-development-channels plugin:relay@relay
 
-Two modes, detected automatically from how Claude Code was launched
-(`relay mcp --mode channel|tools` overrides the detection):
+During the research preview `--channels` only registers plugins on an
+Anthropic-curated allowlist, and relay is not on it. A Team or Enterprise admin
+can instead add `{"marketplace": "relay", "plugin": "relay"}` under
+`allowedChannelPlugins` (with `channelsEnabled: true`) in managed settings,
+which replaces Anthropic's list for that org and makes plain
+`--channels plugin:relay@relay` work. Without either, `relay mcp` runs in
+tools mode: the tools work and nothing is pushed, which is the background wait
+above.
 
-- **channel mode** (`--channels` or `--dangerously-load-development-channels`
-  on the command line): `relay mcp` claims this pane's mailbox, so the
-  daemon yields to it, and drains the mailbox once a second -- every report,
-  consult answer, ask result and edge artifact arrives as a
-  `<channel source="relay">` event the moment the daemon has it, and
-  `needs_you`, `broken`, `orphaned` arrive once each per episode. HELD never
-  happens for a planner in this mode.
-- **tools mode** (neither flag; a plain `claude` launch): the four tools
-  work, but nothing is pushed -- reports still arrive by being typed into
-  the pane, exactly as without the plugin. `relay mcp` writes no claim in
-  this mode, so pane delivery is never blocked by a channel that cannot
-  receive anything.
-
-A dead or absent `relay mcp` degrades to pane delivery within one daemon
-tick either way: the mailbox stays pending until confirmed, so nothing is
-lost.
-
-See `docs/specs/2026-09-21-planner-channel-design.md` for the full mechanism.
+**How reports arrive.** relay identifies the planner session itself -- the
+plugin's hook registers it, and `relay planner list` shows the records -- so no
+verb has to guess who is calling. A report then reaches the planner by exactly
+one of four routes: the background wait (the Claude Code default), the channel
+(opt-in, above), a deliverer for a harness that has one (opencode), or
+`relay pull` by hand. Nothing is ever typed into a terminal.
 
 ## Design
 
 [`docs/design.md`](docs/design.md) is the architecture document written before
-relay was built. It explains why the CLI and the daemon are split, why delivery
-holds on a focused pane, and what was deliberately left out. It is a historical
-record, not maintained against the code.
+relay was built. It explains why the CLI and the daemon are split and what was
+deliberately left out. It is a historical record, not maintained against the
+code.
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
 stdlib-only, write the test, and make sure `make check` passes.
 
-`make e2e` runs one relay round -- bind, send, reconcile, delivery -- against
-a private herdr session it creates and deletes, with two shell scripts
-standing in for the agents. It needs `herdr` on PATH and skips otherwise; it
-is not part of `make check` and does not run in CI. `RELAY_E2E_KEEP=1` leaves
-the session up for a look.
+`make e2e` runs one headless relay round end to end -- planner init, bind,
+send, delivery -- with a fake harness binary on `PATH`. It runs in CI and is not
+part of `make check`.
 
 ## License
 

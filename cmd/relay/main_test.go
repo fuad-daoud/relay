@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 // all the server administration verbs, not just the original eight: `relay
 // serve ui`, `gates`, `available` and `unavailable` exist in
 // cmd/relay/serve.go's sub-usage but were missing here. `relay help` only
-// prints a constant string, so this reaches no herdr and touches no state.
+// prints a constant string, so this reaches no harness and touches no state.
 func TestHelpListsServeVerbs(t *testing.T) {
 	stdout, _, runErr := captureOutput(t, func() error {
 		return run([]string{"help"})
@@ -57,7 +57,7 @@ func TestHelpListsServeVerbs(t *testing.T) {
 // lookup then fails on the empty name ("relay: : binding not found").
 //
 // The check runs before any runtime is built, so this test touches neither
-// the state directory nor herdr.
+// the state directory nor a harness.
 func TestBindResumeWithoutNameIsRejected(t *testing.T) {
 	err := run([]string{"bind", "--resume", "webshop"})
 	if err == nil {
@@ -69,7 +69,7 @@ func TestBindResumeWithoutNameIsRejected(t *testing.T) {
 }
 
 // TestSendDryRunRequiresFile pins that `relay send --dry-run` without a plan
-// file is refused before a runtime is built, so a CI runner with no herdr
+// file is refused before a runtime is built, so a CI runner with no harness
 // still fails on the missing flag rather than on the environment.
 func TestSendDryRunRequiresFile(t *testing.T) {
 	err := run([]string{"send", "--dry-run", "--name", "x"})
@@ -83,7 +83,7 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 
 // TestAskRoundNeedsAQuestion pins that `relay ask --round` without a question
 // is refused before a runtime is built: a round ask takes --file or -q, and a
-// CI runner with no herdr must fail on the missing flag, not on the
+// CI runner with no harness must fail on the missing flag, not on the
 // environment.
 func TestAskRoundNeedsAQuestion(t *testing.T) {
 	err := run([]string{"ask", "--round", "1", "x"})
@@ -98,7 +98,7 @@ func TestAskRoundNeedsAQuestion(t *testing.T) {
 // TestSendRegateNegativeIsRejected pins #132 part 2's flag validation. The
 // flag's -1 default means "not given", so a negative value the human typed is
 // a bad value, not an omission: it exits 2, and the check runs before any
-// runtime is built, so this touches neither the state directory nor herdr.
+// runtime is built, so this touches neither the state directory nor a harness.
 func TestSendRegateNegativeIsRejected(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"send", "--regate", "-1", "--file", "plan.md"})
@@ -118,7 +118,7 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 
 // TestSendVerifyAndNoVerifyAreExclusive pins #144's flag pair: like add's
 // --branch/--cwd, the refusal happens in validation, before newRuntime, so it
-// reaches neither the state directory nor herdr.
+// reaches neither the state directory nor a harness.
 func TestSendVerifyAndNoVerifyAreExclusive(t *testing.T) {
 	_, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"send", "--verify", "--no-verify", "--file", "plan.md"})
@@ -156,7 +156,7 @@ func TestStopRefusesToGuessTheBinding(t *testing.T) {
 // TestLandRefusesToGuessTheBinding pins #136: land pushes, so a bare `relay
 // land` must refuse rather than act on whichever binding owns the cwd. The
 // check runs before any runtime is built, so this test touches neither the
-// state directory nor herdr, and a CI runner with no herdr still fails on the
+// state directory nor a harness, and a CI runner with no harness still fails on the
 // missing name, not on the environment.
 func TestLandRefusesToGuessTheBinding(t *testing.T) {
 	err := run([]string{"land"})
@@ -173,7 +173,7 @@ func TestLandRefusesToGuessTheBinding(t *testing.T) {
 
 // TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
 // bad value, not an omission, so it exits 2. The check runs before any runtime
-// is built, so this touches neither the state directory nor herdr.
+// is built, so this touches neither the state directory nor a harness.
 func TestExplicitBindingNeverGuesses(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -297,7 +297,7 @@ func TestDiffCommand(t *testing.T) {
 	}
 
 	// #143: a successful `diff` stamps the binding's .viewed sidecar.
-	// Store-only -- reaches no herdr.
+	// Store-only -- reaches no harness.
 	if _, ok := s.ViewedAt("webshop"); !ok {
 		t.Fatal("diff must stamp .viewed on a successful print")
 	}
@@ -341,7 +341,7 @@ func TestDiffCommand(t *testing.T) {
 
 // TestDiffAnchorsCommand pins `relay diff --anchors`: it store-only seeds a
 // binding and a round 1 diff the way TestDiffCommand does, so it reaches no
-// herdr, and asserts the printed patch carries the path:line gutter
+// a harness, and asserts the printed patch carries the path:line gutter
 // internal/patch's Annotate produces.
 func TestDiffAnchorsCommand(t *testing.T) {
 	tempHome := t.TempDir()
@@ -378,7 +378,7 @@ func TestDiffAnchorsCommand(t *testing.T) {
 }
 
 // TestReviewRequiresFile pins that `relay review` without --file is refused
-// before a runtime is built, so a CI runner with no herdr still fails on the
+// before a runtime is built, so a CI runner with no harness still fails on the
 // missing flag rather than on the environment.
 func TestReviewRequiresFile(t *testing.T) {
 	err := run([]string{"review", "--name", "webshop"})
@@ -614,7 +614,7 @@ func TestHooksConfigHome(t *testing.T) {
 // --assume-dead must be defined on the bind flag set. If it were not, parsing
 // would fail with "flag provided but not defined" and never reach the --name
 // check -- which runs before any runtime is built, so this test touches
-// neither the state directory nor herdr.
+// neither the state directory nor a harness.
 func TestAddHelp(t *testing.T) {
 	err := run([]string{"add", "-h"})
 	if !errors.Is(err, errHelpShown) {
@@ -631,7 +631,7 @@ func TestAddValidation(t *testing.T) {
 }
 
 // TestAddBranchWithCwdIsRefusedBeforeRuntime pins the flag-pair refusal: it
-// happens in validation, before newRuntime, so it reaches no herdr.
+// happens in validation, before newRuntime, so it reaches no harness.
 func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
 	err := run([]string{"add", "--branch", "x", "--cwd", "/tmp"})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
@@ -645,10 +645,9 @@ func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
 
 // TestAddBranchDerivesName pins that a branch alone is enough for the name to
 // be derived: with no relay planner for this session the run stops on the
-// no-planner error, before any herdr call, so the derived name is never
+// no-planner error, before any harness call, so the derived name is never
 // printed and no builder is reached.
 func TestAddBranchDerivesName(t *testing.T) {
-	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("RELAY_PLANNER", "")
 	t.Setenv("CLAUDECODE", "")
 
@@ -859,7 +858,7 @@ func TestFilterReportRejectsAnUnknownName(t *testing.T) {
 }
 
 // scopeReport is the whole of the status/watch DONE rule, tested as a pure
-// function: a test that ran cmdStatus would need a real herdr on PATH, which
+// function: a test that ran cmdStatus would need a real harness on PATH, which
 // CI does not have and which made the first version of this test pass only on
 // the dev machine.
 func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
@@ -914,7 +913,7 @@ func TestParseFor(t *testing.T) {
 
 // TestBindRejectsTabFlag pins #79: placement is not a per-bind decision any
 // more, so the old --tab spelling must be an unknown flag, not a silent no-op.
-// It fails in parseFlags, before newRuntime, so it never reaches herdr.
+// It fails in parseFlags, before newRuntime, so it never reaches a harness.
 func TestBindRejectsTabFlag(t *testing.T) {
 	for _, args := range [][]string{
 		{"bind", "--tab"},
@@ -930,7 +929,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 }
 
 // TestBindRebindNeedsResume pins #92: --rebind only means something on a
-// resume. It is refused before newRuntime, so no herdr is reached.
+// resume. It is refused before newRuntime, so no harness is reached.
 func TestBindRebindNeedsResume(t *testing.T) {
 	err := run([]string{"bind", "--rebind", "--name", "x"})
 	if err == nil || !strings.Contains(err.Error(), "--rebind") || !strings.Contains(err.Error(), "--resume") {
@@ -940,7 +939,7 @@ func TestBindRebindNeedsResume(t *testing.T) {
 
 // TestPickRejectsAName pins spec §3: --pick chooses the binding, so naming
 // one as well is a usage error. Each case fails before newRuntime, so no
-// herdr is reached.
+// a harness is reached.
 func TestPickRejectsAName(t *testing.T) {
 	for _, args := range [][]string{
 		{"done", "--pick", "x"},
@@ -958,8 +957,8 @@ func TestPickRejectsAName(t *testing.T) {
 // TestPickRejectsAnswerFlags: the answer comes from the screen, so --keys,
 // --choice and --text have nothing to apply to. Fails before newRuntime.
 // TestBindHeadlessConflictsFailBeforeNewRuntime pins headless spec §6: the
-// two flag conflicts are usage errors, refused before relay talks to herdr.
-// CI runners have no herdr binary, so reaching newRuntime would be a
+// two flag conflicts are usage errors, refused before relay talks to a harness.
+// CI runners have no harness binary, so reaching newRuntime would be a
 // different failure with a different message.
 func TestBuilderWhere(t *testing.T) {
 	if got := builderWhere(store.Endpoint{PaneID: "w2:p4"}); got != "w2:p4" {
@@ -973,7 +972,7 @@ func TestBuilderWhere(t *testing.T) {
 // TestBindHeadlessFlagIsNoOp is a rule test: --headless is the default and
 // only local mode since #303, so bind/add/fork accept it and print one
 // stderr note. It tests the pure flag-handling helper, not a subcommand:
-// CI runners have no herdr, so no test may run a subcommand that reaches it.
+// CI runners have no harness and no network, so no test may run a subcommand that reaches either.
 func TestBindHeadlessFlagIsNoOp(t *testing.T) {
 	if got := headlessNoOpLines(false); got != nil {
 		t.Errorf("headlessNoOpLines(false) = %v, want nil", got)
@@ -990,7 +989,7 @@ func TestBindHeadlessFlagIsNoOp(t *testing.T) {
 // TestStatusNotice is §4.6: exactly one line when the cached check proves
 // relay is behind, and "" for every row the doctor's release table reports as
 // SevOK. It is the pure function only -- no subcommand runs, because CI
-// runners have no herdr.
+// runners launch no harness.
 func TestStatusNotice(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1000,14 +999,6 @@ func TestStatusNotice(t *testing.T) {
 		kind    release.Kind
 		want    string
 	}{
-		{
-			name:    "behind a plugin release",
-			running: "v0.6.0",
-			latest:  "v0.7.0",
-			ok:      true,
-			kind:    release.KindPluginRelease,
-			want:    "relay v0.6.0 is behind v0.7.0 -- run relay doctor",
-		},
 		{
 			name:    "behind a go install",
 			running: "v0.6.0",
@@ -1021,7 +1012,7 @@ func TestStatusNotice(t *testing.T) {
 			running: "v0.6.0",
 			latest:  "v0.7.0",
 			ok:      false,
-			kind:    release.KindPluginRelease,
+			kind:    release.KindGoInstall,
 			want:    "",
 		},
 		{
@@ -1070,7 +1061,7 @@ func TestStatusNotice(t *testing.T) {
 			running: "v0.7.0-8-gbd8aed0",
 			latest:  "v0.7.0",
 			ok:      true,
-			kind:    release.KindPluginSource,
+			kind:    release.KindGoInstall,
 			want:    "",
 		},
 		{

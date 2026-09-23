@@ -10,7 +10,7 @@ import (
 
 type sentKeys struct{ Target, Keys string }
 
-// testBinding is a bound, active binding whose builder herdr knows by name.
+// testBinding is a bound, active binding with a named builder.
 func testBinding(name string) store.Binding {
 	return store.Binding{
 		Name:             name,
@@ -24,8 +24,8 @@ func testBinding(name string) store.Binding {
 }
 
 // testRuntime seeds a store with the given bindings and returns a runtime
-// over it and the fake herdr. Now is set because relay.Answer stamps its log
-// entry with it; a nil clock panics.
+// over it. Now is set because the verb stamps its log entry with it; a nil
+// clock panics.
 func testRuntime(t *testing.T, bindings ...store.Binding) relay.Runtime {
 	t.Helper()
 	st := store.New(t.TempDir())

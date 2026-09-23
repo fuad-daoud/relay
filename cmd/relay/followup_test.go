@@ -8,7 +8,7 @@ import (
 // TestAskHeadlessFlagIsNoOp is a rule test: every consult is headless since
 // #303, so `relay ask --headless` is accepted and ignored, and the note says
 // so. It is a pure-function test, so it never runs a subcommand that reaches
-// herdr (CI has none).
+// harness (CI has none).
 func TestAskHeadlessFlagIsNoOp(t *testing.T) {
 	if got := askHeadlessNoOpLines(false); got != nil {
 		t.Errorf("askHeadlessNoOpLines(false) = %v, want nil", got)

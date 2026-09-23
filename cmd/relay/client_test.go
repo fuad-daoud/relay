@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestClientUsageOnNoArgs pins the no-args usage line; CI has no herdr
+// TestClientUsageOnNoArgs pins the no-args usage line; CI launches no harness
 // binary, so this test must never reach cmdClient's callers that do (it
 // doesn't -- `relay client` alone dispatches nothing).
 func TestClientUsageOnNoArgs(t *testing.T) {
@@ -29,7 +29,7 @@ func TestClientUsageOnNoArgs(t *testing.T) {
 // TestClientAddServerFlagExclusivityExits2 pins that --fingerprint and --ca
 // refuse each other before anything is saved or any server is contacted:
 // the exclusivity check runs before ValidateEntry and before any network
-// call, so this never reaches herdr or the wire either.
+// call, so this never reaches a harness or the wire either.
 func TestClientAddServerFlagExclusivityExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"client", "add-server", "zen", "https://zen:7777", "--fingerprint", "sha256:aa", "--ca", "system"})

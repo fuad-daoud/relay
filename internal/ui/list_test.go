@@ -357,7 +357,7 @@ func TestListScreenThreeStates(t *testing.T) {
 	}
 
 	// 2. Model receiving only a failing statusMsg renders cannot-reach line and NOT "no bindings"
-	res, _ := m.Update(statusMsg{err: errors.New("herdr connection refused")})
+	res, _ := m.Update(statusMsg{err: errors.New("harness connection refused")})
 	m = res.(Model)
 	view = m.View()
 	if !strings.Contains(view, "status unavailable — see the error above") {
@@ -391,7 +391,7 @@ func TestListScreenThreeStates(t *testing.T) {
 	if !strings.Contains(view, "webshop") {
 		t.Errorf("failing poll after successful one must keep showing last good list, got:\n%s", view)
 	}
-	if strings.Contains(view, "cannot reach herdr") {
+	if strings.Contains(view, "cannot reach the daemon") {
 		t.Errorf("failing poll after successful one must NOT revert to cannot-reach, got:\n%s", view)
 	}
 	if strings.Contains(view, "no bindings") {
@@ -428,16 +428,16 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 		}
 	}
 
-	// 2. Full text of herdr protocol mismatch message is present, containing "herdr server stop"
-	protocolMismatchMsg := "client protocol 22 is newer than server protocol 20; restart the Herdr server\n" +
-		"before using this command. Stop the old server to use the new version.\n" +
-		"Stopping exits pane processes.\n" +
-		"Run `HERDR_SOCKET_PATH=... herdr server stop`, then restart Herdr with the\n" +
+	// 2. A multi-line error renders in full, its last line included
+	multiLineMsg := "client protocol 22 is newer than server protocol 20; restart the daemon\n" +
+		"before using this command. Stop the old process to use the new version.\n" +
+		"Stopping exits running processes.\n" +
+		"Run `relay daemon --stop`, then restart relay with the\n" +
 		"same socket override."
-	m.err = errors.New(protocolMismatchMsg)
+	m.err = errors.New(multiLineMsg)
 	view = m.View()
-	if !strings.Contains(view, "herdr server stop") {
-		t.Errorf("expected 'herdr server stop' in listView output, got:\n%s", view)
+	if !strings.Contains(view, "same socket override") {
+		t.Errorf("expected the last line of a multi-line error in listView output, got:\n%s", view)
 	}
 
 	// 3. Error of more than maxErrorLines (8) lines is capped at maxErrorLines and ends with "…"

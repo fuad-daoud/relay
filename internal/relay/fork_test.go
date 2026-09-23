@@ -26,7 +26,7 @@ func (r *recordHookDispatcher) Dispatch(ctx context.Context, event hooks.Event) 
 }
 
 // newForkRuntime is newRuntime with the fork tests' Git and hook dispatcher:
-// a local builder is headless (#303), so there is no herdr dependency left to
+// a local builder is headless (#303), so there is no pane dependency left to
 // thread through, and fg may be nil for the tests that prove --cwd needs no
 // git.
 func newForkRuntime(t *testing.T, fg *fakeGit, hd hooks.Dispatcher) Runtime {
@@ -539,7 +539,7 @@ func TestForkRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 	if got := len(runnerOf(t, rt).specs); got != 0 {
 		t.Errorf("a refused name must start no process, got %d", got)
 	}
-	// #303 deleted herdr.ErrInvalidAgentName with the herdr client; the
+	// #303 deleted the pane client's ErrInvalidAgentName with it; the
 	// refusal is now store.ValidName's own text, wrapped by
 	// builderAgentName with the length budget in it.
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {

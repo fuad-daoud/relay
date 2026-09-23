@@ -13,7 +13,7 @@ import (
 
 // seedLogStore saves a binding with n entries under the package's temp state
 // root (TestMain moved XDG_STATE_HOME there), so `run` reads it back. cmdLog
-// touches the store only, never herdr, so this is safe where no herdr exists.
+// touches the store only, never a harness, so this is safe where none exists.
 func seedLogStore(t *testing.T, name string, state store.State, n int) *store.Store {
 	t.Helper()
 	root, err := store.DefaultRoot()

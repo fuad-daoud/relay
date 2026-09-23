@@ -194,7 +194,7 @@ func TestValidName(t *testing.T) {
 			t.Errorf("ValidName(%q) = %v, want nil", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "1abc", "Upjo", "has space", "way-too-long-a-binding-name-for-herdr"} {
+	for _, bad := range []string{"", "1abc", "Upjo", "has space", "way-too-long-a-binding-name-for-a-pane"} {
 		if err := ValidName(bad); err == nil {
 			t.Errorf("ValidName(%q) = nil, want error", bad)
 		}

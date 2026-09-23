@@ -43,11 +43,11 @@ func TestWaitingLine(t *testing.T) {
 
 	t.Run("blocked with a sub-hour age", func(t *testing.T) {
 		w := Waiting{
-			Name: "e2e-herdr", Round: 4, Cause: "blocked",
+			Name: "e2e-round", Round: 4, Cause: "blocked",
 			Line: "Do you want to proceed? > 1. Yes", Since: now.Add(-23 * time.Minute),
-			Hint: "relay answer --name e2e-herdr",
+			Hint: "relay answer --name e2e-round",
 		}
-		want := "waiting on you: e2e-herdr round 4 blocked 23m -- Do you want to proceed? > 1. Yes  (relay answer --name e2e-herdr)"
+		want := "waiting on you: e2e-round round 4 blocked 23m -- Do you want to proceed? > 1. Yes  (relay answer --name e2e-round)"
 		if got := WaitingLine(w, now); got != want {
 			t.Errorf("WaitingLine =\n%q\nwant\n%q", got, want)
 		}

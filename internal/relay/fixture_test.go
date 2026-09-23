@@ -10,14 +10,14 @@ import (
 )
 
 // This file holds the internal/relay test fixtures (#303 step 3). Before
-// #303 every one of them seeded its world through fakeHerdr and
+// #303 every one of them seeded its world through a fake pane client and
 // BindOptions.PlannerPane; both are gone, so each fixture now builds on
-// newRuntime's planner registry and on the store. No herdr type appears here
+// newRuntime's planner registry and on the store. No pane type appears here
 // at all: a local builder is a headless process relay runs, and the tests
 // drive it through fakeRunner.
 
 // seedBound binds webshop on the agy test candidate, headless (#303): the
-// runtime gets a fakeRunner, and no herdr agent is added for the builder --
+// runtime gets a fakeRunner, and no pane agent is added for the builder --
 // there is none.
 func seedBound(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()

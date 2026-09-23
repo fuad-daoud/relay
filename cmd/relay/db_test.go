@@ -10,7 +10,7 @@ import (
 )
 
 // TestFormatStats pins the exact lines `relay db stats` prints over a
-// literal db.Stats, never opening a database: CI has no herdr and this must
+// literal db.Stats, never opening a database: CI launches no harness and this must
 // not execute a subcommand that reaches it (it doesn't -- formatStats is a
 // pure function).
 func TestFormatStats(t *testing.T) {
@@ -76,7 +76,7 @@ func TestFormatStatsEmptyNewest(t *testing.T) {
 
 // TestFormatBackfillLine pins `relay db backfill`'s per-source lines as
 // pure functions of a literal ingest.Stats, never running the subcommand:
-// CI has no herdr, and backfill's own loop reaches store.Store and
+// CI launches no harness, and backfill's own loop reaches store.Store and
 // internal/relay's runtime, so only the formatters are tested here.
 func TestFormatBackfillLine(t *testing.T) {
 	stats := ingest.Stats{Rounds: 3, Events: 9, Artifacts: 7, TranscriptRecords: 9, Skipped: 1}

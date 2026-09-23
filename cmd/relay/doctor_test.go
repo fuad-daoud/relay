@@ -224,7 +224,7 @@ func TestPolicyChecks(t *testing.T) {
 // naming the daemon-restart risk, in addition to its builders census text on
 // the ok row; Scopes:true gets no such warning row; a server that is not
 // queue-aware (a pre-queue server) carries no builders text at all. Pure
-// over a hand-built []relay.ServerProbe -- no herdr, no network.
+// over a hand-built []relay.ServerProbe -- no harness, no network.
 //
 // Mutation check: drop the `!p.Builders.Scopes` guard in serverChecks and
 // the contabo warning row (Scopes:true) reappears, failing this test.

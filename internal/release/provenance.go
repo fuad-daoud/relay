@@ -6,11 +6,9 @@ import "strings"
 type Kind string
 
 const (
-	KindPluginRelease Kind = "plugin-release" // scripts/plugin-fetch.sh
-	KindPluginSource  Kind = "plugin-source"  // scripts/plugin-build.sh
-	KindGoInstall     Kind = "go-install"
-	KindLocalBuild    Kind = "local-build"
-	KindUnknown       Kind = "unknown"
+	KindGoInstall  Kind = "go-install"
+	KindLocalBuild Kind = "local-build"
+	KindUnknown    Kind = "unknown"
 )
 
 // Inputs is every fact Detect reads. The caller gathers them; Detect
@@ -20,27 +18,18 @@ type Inputs struct {
 	// Version is buildVersion(): a git describe, a module version, or "(devel)".
 	Version string
 	// ExeDir is filepath.Dir of the resolved executable path. Detect does not
-	// read it -- it records where ManifestVersion was read from, so a caller
-	// can see at a glance which directory the classification is about.
+	// read it -- it records where the executable lives, so a caller can see
+	// at a glance which directory the classification is about.
 	ExeDir string
-	// ManifestVersion is the version in the plugin manifest beside the
-	// executable, "" when
-	// that file is absent -- the marker of a plugin install, since both
-	// plugin variants leave ./relay beside the manifest.
-	ManifestVersion string
 	// FromModule is true when debug.ReadBuildInfo gave the version, i.e.
 	// there was no ldflags stamp.
 	FromModule bool
 }
 
-// Detect classifies the install. Pure.
+// Detect classifies the install. Pure. A binary that sits next to an old
+// plugin manifest is no longer special: with no manifest input it reads as
+// the kind it otherwise is.
 func Detect(in Inputs) Kind {
-	if in.ManifestVersion != "" {
-		if in.Version == "v"+in.ManifestVersion {
-			return KindPluginRelease
-		}
-		return KindPluginSource
-	}
 	if in.FromModule {
 		return KindGoInstall
 	}

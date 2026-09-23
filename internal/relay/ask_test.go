@@ -72,11 +72,11 @@ func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.Builder
 	}
 }
 
-// TestAskRefusesAConsultNameHerdrWouldRefuse pins #64: a 15-character binding
+// TestAskRefusesAnOverlongConsultName pins #64: a 15-character binding
 // name builds a 33-character consult agent name, and Ask must refuse it before
 // the reservation is written or the question staged -- nothing on disk, no
 // pane split, no consult recorded.
-func TestAskRefusesAConsultNameHerdrWouldRefuse(t *testing.T) {
+func TestAskRefusesAnOverlongConsultName(t *testing.T) {
 	rt, _ := seedForAsk(t)
 
 	// seedBound fixes the binding name at "webshop", so seed a second binding

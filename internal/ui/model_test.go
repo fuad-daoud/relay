@@ -121,7 +121,7 @@ func TestStatusMsgErrorPreservesReport(t *testing.T) {
 	m.report = initialReport
 	m.statusInFlight = true
 
-	testErr := errors.New("transient herdr failure")
+	testErr := errors.New("transient harness failure")
 	res, _ := m.Update(statusMsg{err: testErr})
 	updated := res.(Model)
 

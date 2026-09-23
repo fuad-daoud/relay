@@ -31,12 +31,10 @@ check:
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
 
-# e2e runs one relay round against a private, detached herdr session with
-# scripted agents (docs/specs/2026-09-12-e2e-real-herdr-design.md). Local
-# only: it needs herdr on PATH and skips otherwise. Not part of check.
+# e2e runs one headless relay round end to end (internal/e2e/headless_test.go).
+# CI runs it; it needs no session manager on PATH and is not part of check.
 e2e:
-	go vet -tags e2e ./internal/relay
-	go test -tags e2e -count=1 -run TestE2E ./internal/relay -v
+	go test ./internal/e2e/ -run TestHeadlessE2E -count=1
 
 # jev runs the classifier fixtures against the real TypeSafe endpoint
 # (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs
@@ -53,12 +51,10 @@ release:
 	@test -n "$(VERSION)" || { echo "VERSION is required (e.g. make release VERSION=0.1.0)" >&2; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty" >&2; exit 1; }
 	@test "$$(git branch --show-current)" = "main" || { echo "not on main branch" >&2; exit 1; }
-	sed 's/^version = ".*"/version = "$(VERSION)"/' herdr-plugin.toml > herdr-plugin.toml.tmp && mv herdr-plugin.toml.tmp herdr-plugin.toml
-	sed 's/^version = ".*"/version = "$(VERSION)"/' from-source/herdr-plugin.toml > from-source/herdr-plugin.toml.tmp && mv from-source/herdr-plugin.toml.tmp from-source/herdr-plugin.toml
 	sed 's/^  "version": ".*",$$/  "version": "$(VERSION)",/' claude-plugin/.claude-plugin/plugin.json > claude-plugin/.claude-plugin/plugin.json.tmp && mv claude-plugin/.claude-plugin/plugin.json.tmp claude-plugin/.claude-plugin/plugin.json
 	sed 's/"version": "[^"]*"/"version": "$(VERSION)"/' .claude-plugin/marketplace.json > .claude-plugin/marketplace.json.tmp && mv .claude-plugin/marketplace.json.tmp .claude-plugin/marketplace.json
 	$(MAKE) check
-	git commit -m "chore(release): v$(VERSION)" herdr-plugin.toml from-source/herdr-plugin.toml claude-plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
+	git commit -m "chore(release): v$(VERSION)" claude-plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
 	git tag -a v$(VERSION) -m "v$(VERSION)"
 	@echo "git push && git push origin v$(VERSION)"
 

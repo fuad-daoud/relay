@@ -17,7 +17,7 @@ import (
 )
 
 // The headless fixtures (#303 step 3): a local builder is a process relay runs
-// per round, so every test here drives it through fakeRunner, and no herdr
+// per round, so every test here drives it through fakeRunner, and no pane
 // agent or pane appears anywhere.
 
 // sentHeadless is seedHeadless plus one Send: round 1 open, one process
@@ -969,6 +969,71 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 	}
 	if pending.Note != "unmarked" || !strings.Contains(pending.Payload, "exited (code 1)") {
 		t.Errorf("note=%q payload=%q, want an unmarked close naming the exit code", pending.Note, pending.Payload)
+	}
+}
+
+// TestHeadlessMarkerWrittenBetweenChecksClosesMarked pins the check-then-check
+// race (#328): the marker is absent when closeOnMarker reads it, then the
+// process writes it and exits before the liveness check observes the exit. The
+// re-check in the exited branch must close the round through the marker path,
+// so the report's note is the marked one (""), not "unmarked".
+func TestHeadlessMarkerWrittenBetweenChecksClosesMarked(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The race inside one tick: Alive creates the marker, then reports the
+	// process dead.
+	fr.onAlive = func() {
+		fr.onAlive = nil
+		if err := os.WriteFile(rt.Store.DonePath("webshop", 1), nil, 0o644); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+	}
+	fr.script(b.Builder.PID, false)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2 (the marker closed the round)", got.Round)
+	}
+	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	if perr != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+	}
+	if pending.Note != "" {
+		t.Errorf("note = %q, want empty (closed by marker, not unmarked)", pending.Note)
+	}
+}
+
+// TestHeadlessExitWithReportNoMarkerStillUnmarked pins that the fix leaves the
+// old path intact: an exited process with a report and still no marker is
+// closed "unmarked", exactly as before.
+func TestHeadlessExitWithReportNoMarkerStillUnmarked(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 1)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Errorf("round = %d, want 2", got.Round)
+	}
+	pending, found, perr := rt.Store.PendingForPlanner("webshop")
+	if perr != nil || !found {
+		t.Fatalf("PendingForPlanner: found=%v err=%v", found, perr)
+	}
+	if pending.Note != "unmarked" {
+		t.Errorf("note = %q, want unmarked", pending.Note)
 	}
 }
 
@@ -2367,7 +2432,7 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 	if len(fr.kills) != 0 {
 		t.Errorf("closeOld=false must not kill: %+v", fr.kills)
 	}
-	// #303 deleted the "switched builder to X" herdr notification; the switch
+	// #303 deleted the "switched builder to X" notification; the switch
 	// log entry beside it survives and is what the human reads.
 	sw := switches(t, rt)
 	if len(sw) != 1 || !strings.Contains(sw[0].Note, testClaudeRef) {
@@ -2459,7 +2524,7 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 // stall_after_ms is stamped StalledSince = the stream's last activity, and
 // nothing else happens. The second case is the mutation target: with the
 // stream only 5m quiet the comparison must not fire, so inverting it (or
-// comparing `<` for `>=`) makes both cases fail. The herdr notice beside the
+// comparing `<` for `>=`) makes both cases fail. The notice beside the
 // stamp is gone (#303, closed-list item 4); the stamp itself and the
 // builder_stalled hook event are what survive.
 func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {

@@ -1789,18 +1789,6 @@ func TestStatusRowQueuedText(t *testing.T) {
 	}
 }
 
-// TestStatusDegradesWhenHerdrUnreachable pins the degrade contract (#, spec
-// §7.4): a failed ListAgents must not fail the report. The report carries
-// every row, carries the herdr error as data, and marks every pane endpoint
-// it could not look up as unknown -- not gone, because relay did not ask
-// and must not claim absence.
-// TestStatusHerdrErrorEmptyOnSuccess pins that an *answered* lookup -- even
-// an answered empty agent list -- leaves HerdrError empty and the absent
-// word gone, not unknown.
-// TestRenderStatusHerdrHeader pins the `relay status` header: a report that
-// carried a herdr error opens with the unreachable line, then the ordinary
-// body; a report that did not renders byte-identical to today.
-
 // TestStatusShowsStopping pins #138: a stop in flight shows
 // "stopping <elapsed> of <grace>" as the builder's status, overriding
 // whatever the builder itself reports, and carries the stop bookkeeping as
@@ -1832,9 +1820,6 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
-	}
-	if _, ok := decoded["herdr_error"]; ok {
-		t.Errorf("empty HerdrError must be omitted from JSON, got %s", raw)
 	}
 
 	bindings, ok := decoded["bindings"].([]any)
