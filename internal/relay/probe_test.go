@@ -244,6 +244,67 @@ func TestProbeCandidateRunErrorKeepsTTFT(t *testing.T) {
 	}
 }
 
+func TestProbeCandidateReportsHarnessError(t *testing.T) {
+	// codex writes the real reason to stdout as a JSON event; the stderr
+	// tail ends with an unrelated stdin note. The probe must report the
+	// harness's own message, not the tail.
+	const codexCandidate = `[
+  {"harness":"codex","provider":"test","model":"m","roles":["builder"]}
+]`
+	set := candidateSet(t, codexCandidate)
+	c, err := set.Lookup(candidate.Ref{Harness: "codex", Provider: "test", Model: "m"})
+	if err != nil {
+		t.Fatalf("lookup codex candidate: %v", err)
+	}
+
+	rt, now := probeRuntime(t, codexCandidate)
+	fake := &fakeExec{
+		now:    now,
+		total:  900 * time.Millisecond,
+		runErr: errors.New("exit status 1: Reading additional input from stdin..."),
+		scripts: [][]fakeLine{{
+			{at: 100 * time.Millisecond, line: `{"type":"thread.started","thread_id":"t"}`},
+			{at: 200 * time.Millisecond, line: `{"type":"turn.started"}`},
+			{at: 300 * time.Millisecond, line: `{"type":"error","message":"You've hit your usage limit."}`},
+			{at: 400 * time.Millisecond, line: `{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`},
+		}},
+	}
+
+	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+
+	want := "You've hit your usage limit. [exit status 1]"
+	if got.Err != want {
+		t.Errorf("Err = %q, want %q", got.Err, want)
+	}
+	if strings.Contains(got.Err, "stdin") {
+		t.Errorf("Err = %q, must not carry the stderr tail", got.Err)
+	}
+}
+
+func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
+
+	rt, now := probeRuntime(t, testCandidatesJSON)
+	const quota = "opencode: weekly limit reached"
+	fake := &fakeExec{
+		now:   now,
+		total: 300 * time.Millisecond,
+		scripts: [][]fakeLine{{
+			{at: 100 * time.Millisecond, line: `{"type":"error","error":{"message":"opencode: weekly limit reached"}}`},
+		}},
+	}
+
+	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+
+	if got.Err != quota {
+		t.Errorf("Err = %q, want %q", got.Err, quota)
+	}
+	if got.Err == "no model output" {
+		t.Errorf("Err = %q, want the harness's own message", got.Err)
+	}
+}
+
 func TestProbeCandidateNoKnownRole(t *testing.T) {
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}

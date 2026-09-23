@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/candidate"
@@ -113,11 +114,18 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 
 	start := rt.Now()
 	var (
-		ttft int64
-		seen bool
+		ttft       int64
+		seen       bool
+		harnessErr string
 	)
 
 	runErr := x.Run(pctx, dir, argv, func(line []byte) {
+		// The harness's own fatal error message is collected even after the
+		// first output, so the last one wins: a harness can emit output and
+		// then fail.
+		if msg, ok := transcript.ErrorText(c.Harness, line); ok {
+			harnessErr = msg
+		}
 		if seen {
 			return
 		}
@@ -135,13 +143,29 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 		TotalMS: rt.Now().Sub(start).Milliseconds(),
 	}
 	switch {
+	case runErr != nil && harnessErr != "":
+		// The harness's own reason, with the exit status kept for context:
+		// the real message is on stdout, not in stderr.
+		r.Err = probeErrText(harnessErr + " [" + exitWord(runErr) + "]")
 	case runErr != nil:
 		r.Err = probeErrText(runErr.Error())
+	case !seen && harnessErr != "":
+		r.Err = probeErrText(harnessErr)
 	case !seen:
 		r.Err = "no model output"
 	}
 
 	return r
+}
+
+// exitWord is the exit-status head of a run error: everything up to its
+// first colon ("exit status 1"), or the whole text when it has none.
+func exitWord(err error) string {
+	s := err.Error()
+	if i := strings.Index(s, ":"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // probeErrText bounds an error's text to the 300 bytes a sample carries, so
