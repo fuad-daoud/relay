@@ -67,6 +67,17 @@ A Claude Code planner installs relay as a plugin. The plugin provides the
     /plugin marketplace add fuad-daoud/relay
     /plugin install relay@relay
 
+The plugin ships with relay's releases. Claude Code caches an installed plugin
+by version, so after upgrading relay, update the plugin to match (`relay
+doctor` warns when they differ):
+
+    claude plugin marketplace update relay && claude plugin update relay@relay
+
+A change under `claude-plugin/` that is not released yet never reaches an
+installed plugin this way -- `update` sees the same version and skips it. To
+try one, reinstall: `claude plugin uninstall relay@relay && claude plugin
+install relay@relay`.
+
 See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
 the planner.
 
