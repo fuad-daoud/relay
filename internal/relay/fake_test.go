@@ -185,6 +185,17 @@ type fakeGit struct {
 	repoFactsErr       error
 	repoFactsCalls     []repoFactsCall
 
+	// identityName/identityEmail/identityErr configure Identity (#335).
+	// Most tests build fakeGit as a bare struct literal, so an unset pair
+	// with identityUnset false returns the test defaults below -- what a
+	// developer's own repo would resolve -- and every remote-add test keeps
+	// passing without setting an identity. identityUnset true means "both
+	// keys really are unset", which addRemote must refuse.
+	identityName  string
+	identityEmail string
+	identityErr   error
+	identityUnset bool
+
 	// tags is what ListTags returns; ListTagsErr makes it fail.
 	tags        map[string]string
 	listTagsErr error
@@ -438,6 +449,18 @@ func (f *fakeGit) RepoFacts(ctx context.Context, dir string) (originURL, commonD
 		commonDir = dir + "/.git"
 	}
 	return f.repoFactsOrigin, commonDir, nil
+}
+
+// Identity returns the configured identity, or the defaults when no
+// identity was configured at all (see the field comment above).
+func (f *fakeGit) Identity(ctx context.Context, dir string) (name, email string, err error) {
+	if f.identityErr != nil {
+		return "", "", f.identityErr
+	}
+	if f.identityName == "" && f.identityEmail == "" && !f.identityUnset {
+		return "Test User", "test@example.com", nil
+	}
+	return f.identityName, f.identityEmail, nil
 }
 
 // TreeFingerprint returns the next configured fingerprint; the last repeats

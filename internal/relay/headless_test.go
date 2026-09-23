@@ -56,6 +56,33 @@ func TestRoundBudgetIsTheBindingsRoundTimeout(t *testing.T) {
 	}
 }
 
+// TestBuilderEnv pins builderEnv's contract (#335): no identity on the
+// binding is nil (a local binding, or one made before the identity existed),
+// a half identity is nil too, and a full one is exactly the four GIT_*
+// values a commit reads, in order.
+func TestBuilderEnv(t *testing.T) {
+	if got := builderEnv(store.Binding{}); got != nil {
+		t.Errorf("builderEnv(no Serve) = %v, want nil", got)
+	}
+	if got := builderEnv(store.Binding{Serve: &store.ServeFacts{AuthorName: "Ada Lovelace"}}); got != nil {
+		t.Errorf("builderEnv(no email) = %v, want nil", got)
+	}
+
+	got := builderEnv(store.Binding{Serve: &store.ServeFacts{
+		AuthorName:  "Ada Lovelace",
+		AuthorEmail: "ada@example.com",
+	}})
+	want := []string{
+		"GIT_AUTHOR_NAME=Ada Lovelace",
+		"GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=Ada Lovelace",
+		"GIT_COMMITTER_EMAIL=ada@example.com",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("builderEnv = %v, want %v", got, want)
+	}
+}
+
 func TestHeadlessLaunchPerKind(t *testing.T) {
 	role, _ := harness.RoleByName("builder")
 	set := candidateSet(t, testCandidatesJSON)

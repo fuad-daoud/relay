@@ -49,6 +49,15 @@ type WhoAmI struct {
 	Builders *BuildersView `json:"builders,omitempty"`
 }
 
+// GitIdentity is a client's git identity (#335): the name and email its own
+// commits would use, which the server runs a binding's builders as. Both
+// values are required when the struct is present, 1-256 bytes with no
+// newline, carriage return, NUL, < or >.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 // CreateBindingRequest holds the parameters for creating a new binding on the server.
 type CreateBindingRequest struct {
 	Name           string `json:"name"`        // required; store name rules apply on the server
@@ -58,6 +67,10 @@ type CreateBindingRequest struct {
 	RoundCap       int    `json:"round_cap,omitempty"`
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
 	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
+
+	// Author is the client's git identity; the server runs this binding's
+	// builders as it (#335). nil means an old client that sent none.
+	Author *GitIdentity `json:"author,omitempty"`
 }
 
 // TagRef is one tag a client ships beside a round's bundle, so a server

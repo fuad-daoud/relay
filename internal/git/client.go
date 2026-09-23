@@ -1057,6 +1057,46 @@ func (c *Client) RepoFacts(ctx context.Context, dir string) (originURL, commonDi
 	return originURL, commonDir, nil
 }
 
+// Identity reports the git identity dir's repository would commit as: the
+// effective user.name and user.email `git config --get` resolves, which
+// includes global and system config (from anywhere the caller runs, and
+// from the repository itself) (#335).
+//
+// Preconditions:  dir exists.
+// Postconditions: the repository is unchanged. An unset key is ("", nil):
+// `git config --get` exits 1 with no output for a key that is not set,
+// which is a fact about the machine, not a failure -- the caller decides
+// whether a missing identity is fatal, and for a remote builder it is.
+//
+// Errors: ErrNotRepo (dir is not a git work tree), ErrGitUnavailable,
+// context.DeadlineExceeded, or a wrapped git failure.
+func (c *Client) Identity(ctx context.Context, dir string) (name, email string, err error) {
+	get := func(key string) (string, error) {
+		out, gerr := c.run(ctx, dir, nil, "config", "--get", key)
+		if gerr != nil {
+			if errors.Is(gerr, ErrNotRepo) || errors.Is(gerr, ErrGitUnavailable) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", gerr
+			}
+			var exitErr *exec.ExitError
+			if errors.As(gerr, &exitErr) && exitErr.ExitCode() == 1 {
+				return "", nil
+			}
+			return "", gerr
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+
+	name, err = get("user.name")
+	if err != nil {
+		return "", "", err
+	}
+	email, err = get("user.email")
+	if err != nil {
+		return "", "", err
+	}
+	return name, email, nil
+}
+
 // NormalizeOriginURL puts an origin remote URL into one comparable form, so
 // the same repository reached over SSH and HTTPS groups as one (spec §3
 // decision 6). Recognised forms:

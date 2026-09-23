@@ -73,8 +73,18 @@ func addOwner(t *testing.T, env *testEnv, label string) ownerEnv {
 
 // sendRound creates binding name for the given owner and starts round 1 on
 // it with plan, returning the round-start response exactly as the client
-// would see it.
+// would see it. No git identity rides on the create request (sendRoundAs
+// with nil does the same thing); the tests that care about #335 call
+// sendRoundAs directly.
 func sendRound(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID, headSHA, name, plan string) (*http.Response, []byte) {
+	t.Helper()
+	return sendRoundAs(t, env, kp, clientDir, repoID, headSHA, name, plan, nil)
+}
+
+// sendRoundAs is sendRound with the client's git identity carried on the
+// create request (#335), so a test can drive what the server stores and what
+// the builder it starts runs with.
+func sendRoundAs(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID, headSHA, name, plan string, author *remote.GitIdentity) (*http.Response, []byte) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -82,6 +92,7 @@ func sendRound(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID,
 		Name:       name,
 		RepoID:     repoID,
 		BaseCommit: headSHA,
+		Author:     author,
 	})
 	resp, body := doSigned(t, env.ts, kp, "POST", "/v1/bindings", createBody, "application/json")
 	if resp.StatusCode != http.StatusCreated {
@@ -104,6 +115,132 @@ func sendRound(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoID,
 
 	formBytes, ct := makeRoundForm(t, 1, plan, bundleBytes)
 	return doSigned(t, env.ts, kp, "POST", "/v1/bindings/"+name+"/rounds", formBytes, ct)
+}
+
+// startedSpecs copies the runner's specs under its mutex, so a test can read
+// what a round started without racing the handler that started it.
+func startedSpecs(env *testEnv) []relay.ProcSpec {
+	env.runner.mu.Lock()
+	defer env.runner.mu.Unlock()
+	return append([]relay.ProcSpec(nil), env.runner.specs...)
+}
+
+// TestRoundSpawnCarriesAuthorEnv pins #335's last hop: the round a binding's
+// stored author starts runs the builder with that identity in its
+// environment, so every commit it makes is the client's. A binding with no
+// author gets no GIT_* additions at all.
+func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
+	authorEnv := []string{
+		"GIT_AUTHOR_NAME=Ada Lovelace",
+		"GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=Ada Lovelace",
+		"GIT_COMMITTER_EMAIL=ada@example.com",
+	}
+
+	t.Run("author set", func(t *testing.T) {
+		env := setupTestEnv(t)
+		author := &remote.GitIdentity{Name: "Ada Lovelace", Email: "ada@example.com"}
+		resp, body := sendRoundAs(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan", author)
+		requireCreated(t, resp, body, "api")
+
+		specs := startedSpecs(env)
+		if len(specs) == 0 {
+			t.Fatal("round started no process")
+		}
+		for _, want := range authorEnv {
+			found := false
+			for _, got := range specs[0].Env {
+				if got == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("spec.Env = %v, want it to contain %q", specs[0].Env, want)
+			}
+		}
+	})
+
+	t.Run("no author", func(t *testing.T) {
+		env := setupTestEnv(t)
+		resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan")
+		requireCreated(t, resp, body, "api")
+
+		specs := startedSpecs(env)
+		if len(specs) == 0 {
+			t.Fatal("round started no process")
+		}
+		if len(specs[0].Env) != 0 {
+			t.Errorf("spec.Env = %v, want nil or empty for a binding with no author", specs[0].Env)
+		}
+	})
+}
+
+// TestCreateBindingStoresAuthor pins #335's wire-to-store half: the git
+// identity a client sends on the create request lands on the owner's
+// ServeFacts, which is what the builder environment reads later.
+func TestCreateBindingStoresAuthor(t *testing.T) {
+	env := setupTestEnv(t)
+
+	author := &remote.GitIdentity{Name: "Ada Lovelace", Email: "ada@example.com"}
+	resp, body := sendRoundAs(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan", author)
+	requireCreated(t, resp, body, "api")
+
+	b, err := env.runtime(t).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load api: %v", err)
+	}
+	if b.Serve == nil {
+		t.Fatal("binding has no ServeFacts")
+	}
+	if b.Serve.AuthorName != "Ada Lovelace" || b.Serve.AuthorEmail != "ada@example.com" {
+		t.Errorf("ServeFacts author = %q <%q>, want Ada Lovelace <ada@example.com>",
+			b.Serve.AuthorName, b.Serve.AuthorEmail)
+	}
+}
+
+// TestCreateBindingRejectsBadAuthor pins #335's validation: a malformed
+// author is a 400 invalid and stores nothing, so a value that could forge a
+// line in the builder's environment never reaches the store.
+func TestCreateBindingRejectsBadAuthor(t *testing.T) {
+	env := setupTestEnv(t)
+
+	cases := []struct {
+		name  string
+		email string
+	}{
+		{"", "a@b"},
+		{"Ada", ""},
+		{"Ada\nX", "a@b"},
+		{"Ada", "<a@b>"},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%q/%q", tc.name, tc.email), func(t *testing.T) {
+			createBody, err := json.Marshal(remote.CreateBindingRequest{
+				Name:       "api",
+				RepoID:     env.repoID,
+				BaseCommit: env.headSHA,
+				Author:     &remote.GitIdentity{Name: tc.name, Email: tc.email},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, string(body))
+			}
+			var werr remote.ErrorBody
+			if err := json.Unmarshal(body, &werr); err != nil {
+				t.Fatalf("unmarshal error body: %v; body: %s", err, string(body))
+			}
+			if werr.Code != remote.CodeInvalid {
+				t.Errorf("error code = %q, want %q", werr.Code, remote.CodeInvalid)
+			}
+			if _, lerr := env.runtime(t).Store.Load("api"); !errors.Is(lerr, store.ErrNotFound) {
+				t.Errorf("Load api err = %v, want store.ErrNotFound", lerr)
+			}
+		})
+	}
 }
 
 // closeRound writes round 1's report and completion marker for name, and

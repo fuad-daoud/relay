@@ -220,8 +220,10 @@ func cmdDoctor(args []string) error {
 	// reachable and enrolled, not enrolled (with the line to give the
 	// admin), unreachable, or a changed certificate. No servers.json ->
 	// no rows.
+	hasServers := false
 	var extraChecks []doctor.Check
 	if servers, serversErr := client.LoadServers(client.ServersPath(configDir)); serversErr == nil && len(servers) > 0 {
+		hasServers = true
 		_, pubPath := client.KeyPaths(configDir)
 		enrollLine := ""
 		if raw, rerr := os.ReadFile(pubPath); rerr == nil {
@@ -249,6 +251,22 @@ func cmdDoctor(args []string) error {
 			ProbeFailed: true,
 		})
 	}
+	// #335: a remote builder commits as the client, so a repo whose effective
+	// user.name/user.email is unset makes `relay add --server` refuse. The row
+	// exists only where a server is configured and the cwd is inside a repo; a
+	// git failure (no repo, no git) is not established, so it is no row.
+	identity := doctor.GitIdentityInput{HasServers: hasServers}
+	if rt.Git != nil {
+		if wd, wdErr := os.Getwd(); wdErr == nil {
+			if name, email, identErr := rt.Git.Identity(context.Background(), wd); identErr == nil {
+				identity.InRepo, identity.Name, identity.Email = true, name, email
+			}
+		}
+	}
+	if c, ok := doctor.GitIdentityCheck(identity); ok {
+		rep.Checks = insertGlobalCheck(rep.Checks, c)
+	}
+
 	if rt.Candidates.Len() == 0 {
 		rep.NoCandidates = true
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{

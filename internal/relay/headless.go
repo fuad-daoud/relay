@@ -81,6 +81,26 @@ func roundBudget(b store.Binding) time.Duration {
 	return time.Duration(b.RoundTimeoutMS) * time.Millisecond
 }
 
+// builderEnv is the environment a binding's headless builder runs with: the
+// client's git identity, so a commit the builder makes is authored and
+// committed as the client rather than as the server's OS user (#335). Pure.
+//
+// nil when the binding carries no identity -- a local binding, an old
+// client's, or one created before #335 -- which leaves the builder with
+// whatever identity the server's environment already resolved.
+func builderEnv(b store.Binding) []string {
+	if b.Serve == nil || b.Serve.AuthorName == "" || b.Serve.AuthorEmail == "" {
+		return nil
+	}
+	name, email := b.Serve.AuthorName, b.Serve.AuthorEmail
+	return []string{
+		"GIT_AUTHOR_NAME=" + name,
+		"GIT_AUTHOR_EMAIL=" + email,
+		"GIT_COMMITTER_NAME=" + name,
+		"GIT_COMMITTER_EMAIL=" + email,
+	}
+}
+
 // headlessLaunch renders the argv for one headless round: the candidate's
 // binary, then its print form with the prompt, the budget, the round's
 // working tree and the binding's state directory filled in (headless spec
@@ -141,6 +161,7 @@ func startRound(ctx context.Context, rt Runtime, b store.Binding, prompt string)
 	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
 	spec := ProcSpec{
 		Dir: b.CWD, Argv: argv,
+		Env:        builderEnv(b),
 		LogPath:    logPath,
 		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
 	}

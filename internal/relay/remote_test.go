@@ -763,6 +763,77 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	}
 }
 
+// TestAddRemoteSendsGitAuthor pins #335's client half: the identity the
+// client's repo resolves rides on the CreateBindingRequest, so the server can
+// run this binding's builders as the client.
+func TestAddRemoteSendsGitAuthor(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+		identityName:  "Ada Lovelace",
+		identityEmail: "ada@example.com",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+	if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"}); err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	author := fr.createBindingReq.Author
+	if author == nil {
+		t.Fatal("CreateBindingRequest.Author = nil, want the client's git identity")
+	}
+	if author.Name != "Ada Lovelace" || author.Email != "ada@example.com" {
+		t.Errorf("CreateBindingRequest.Author = %+v, want Ada Lovelace <ada@example.com>", author)
+	}
+}
+
+// TestAddRemoteRefusesWithoutGitIdentity pins #335's refusal: a repo with no
+// user.email resolves no identity, so `add --server` fails with
+// ErrNoGitIdentity before it touches the server -- no CreateBinding call, no
+// local binding, no branch.
+func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+		identityName:  "Ada Lovelace",
+		// identityEmail left unset: the fake's default identity applies only
+		// when neither field is set.
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+	_, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if !errors.Is(err, ErrNoGitIdentity) {
+		t.Fatalf("Add err = %v, want ErrNoGitIdentity", err)
+	}
+	if !strings.Contains(err.Error(), "git config user.email") {
+		t.Errorf("Add err = %v, want it to mention git config user.email", err)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
+	}
+	if _, lerr := st.Load("api"); !errors.Is(lerr, store.ErrNotFound) {
+		t.Fatalf("st.Load(api) err = %v, want store.ErrNotFound (nothing may be saved)", lerr)
+	}
+}
+
 // TestAddRemoteTwicePerRepo pins #100: a remote binding's CWD is the repo its
 // branch is cut from, not a working tree it drives, so two remote bindings
 // may share one repo the same way two `relay add` worktrees do. (Mutation
