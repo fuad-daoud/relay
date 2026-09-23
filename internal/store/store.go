@@ -397,6 +397,15 @@ func (t *Tx) Archive(name string) (string, error) {
 // Unexported methods implement the actual logic, assuming lock is held via Tx.
 
 func (s *Store) save(b Binding) error {
+	// A binding written by a newer relay is read-only for this binary: its
+	// rewrite would erase every field this relay does not know (#372). The
+	// check comes first, so a refusal leaves not even a directory or a temp
+	// file behind.
+	if b.Format > BindingFormat {
+		return &ErrNewerFormat{Kind: "binding", Name: b.Name, Have: b.Format, Know: BindingFormat}
+	}
+	b.Format = storedFormat(BindingFormat)
+
 	if err := ValidName(b.Name); err != nil {
 		return err
 	}

@@ -67,6 +67,12 @@ type SessionRef struct {
 // keys on (§3.1). Its JSON names are the file's field names and the db's
 // source.
 type Record struct {
+	// Format is the on-disk format this record was written at (#372): 0 (a
+	// missing key) is format 1, today's shape, and from 2 on the number is
+	// written. write refuses to overwrite a Format it does not know, so a
+	// newer relay's fields survive an older binary's rewrite.
+	Format int `json:"format,omitempty"`
+
 	ID                string       `json:"id"`
 	Name              string       `json:"name"`
 	HarnessKind       string       `json:"harness_kind"`

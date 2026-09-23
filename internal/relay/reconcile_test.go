@@ -2338,3 +2338,30 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 	t.Fatalf("no report entry for round %d", round)
 	return store.LogEntry{}
 }
+
+// TestReconcileLeavesAnUnknownStateAlone pins #372 R1's unknown-state rule: a
+// state this relay does not define was written by a newer relay, so Reconcile
+// returns the binding unchanged and drives nothing -- even a written report
+// and done marker are left for the newer relay.
+func TestReconcileLeavesAnUnknownStateAlone(t *testing.T) {
+	rt, b := sentBinding(t)
+	fr := rt.Runner.(*fakeRunner)
+	if err := os.WriteFile(rt.Store.ReportPath(b.Name, 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath(b.Name, 1))
+	started, killed := len(fr.specs), len(fr.kills)
+
+	b.State = store.State("frozen")
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !store.SameBinding(got, b) {
+		t.Errorf("Reconcile changed an unknown-state binding:\n got %+v\nwant %+v", got, b)
+	}
+	if len(fr.specs) != started || len(fr.kills) != killed {
+		t.Errorf("Reconcile called the runner for an unknown-state binding: specs %d->%d, kills %d->%d",
+			started, len(fr.specs), killed, len(fr.kills))
+	}
+}

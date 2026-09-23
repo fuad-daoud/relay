@@ -1,0 +1,15 @@
+format 1
+created_at
+cwd
+format
+harness_kind
+host_pid
+host_started_at
+id
+name
+seen_at
+session_id
+sessions[].from
+sessions[].session_id
+sessions[].to
+transcript_locator

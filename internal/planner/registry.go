@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // lockFileName is the registry's lock, held for every read-modify-write. It
@@ -509,6 +511,14 @@ func (r *FileRegistry) forget(id string, inUse func(id string) bool) error {
 // write puts one record on disk: a temp file in the registry root, then a
 // rename, so a crash never leaves a truncated record.
 func (r *FileRegistry) write(rec Record) error {
+	// A record written by a newer relay is read-only for this binary: its
+	// rewrite would erase every field this relay does not know (#372). The
+	// check comes first, so a refusal writes nothing at all.
+	if rec.Format > PlannerFormat {
+		return &store.ErrNewerFormat{Kind: "planner record", Name: rec.Name, Have: rec.Format, Know: PlannerFormat}
+	}
+	rec.Format = storedFormat(PlannerFormat)
+
 	if err := os.MkdirAll(r.Root, 0o700); err != nil {
 		return fmt.Errorf("planner: create registry root: %w", err)
 	}

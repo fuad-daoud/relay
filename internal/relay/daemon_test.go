@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -731,4 +732,68 @@ func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
 	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {
 		t.Errorf("plannerless binding back-filled with %q; nothing names its planner", got.PlannerID)
 	}
+}
+
+// TestTickSkipsANewerFormatBinding pins #372 R1's daemon rule: a binding
+// written by a newer relay is left alone -- no reconcile, no save -- so its
+// file keeps every field this binary cannot understand.
+//
+// The fixture's planner session names newRuntime's seeded record, so an
+// unguarded tick would back-fill PlannerID and save, changing the bytes.
+func TestTickSkipsANewerFormatBinding(t *testing.T) {
+	rt := newRuntime(t)
+	fr := rt.Runner.(*fakeRunner)
+
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive,
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Format:  store.BindingFormat + 1,
+	}
+	if err := os.MkdirAll(rt.Store.Dir(b.Name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"format": 2`)) {
+		t.Fatalf("the fixture must carry format 2, got:\n%s", raw)
+	}
+	path := filepath.Join(rt.Store.Dir(b.Name), "bind.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, after) {
+		t.Errorf("Tick rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Tick started %d processes for a newer-format binding", len(fr.specs))
+	}
+
+	// The skip must be visible: a silent skip would leave a human with no
+	// reason why the binding stopped moving. Dropping the tickOne check
+	// leaves the warning unlogged, so this is what the guard's own mutation
+	// check catches.
+	wanted := "binding webshop is format 2; this relay knows 1; leaving it to a newer relay"
+	for _, r := range h.snapshot() {
+		if r.Message == wanted {
+			return
+		}
+	}
+	t.Errorf("Tick did not log %q; captured %d records", wanted, len(h.snapshot()))
 }
