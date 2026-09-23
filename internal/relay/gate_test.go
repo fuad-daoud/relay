@@ -1,8 +1,11 @@
 package relay
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -85,6 +88,85 @@ func TestTailLines(t *testing.T) {
 		got := tailLines(filepath.Join(t.TempDir(), "absent.log"), 5)
 		if got != nil {
 			t.Fatalf("tailLines() = %v, want nil", got)
+		}
+	})
+
+	t.Run("skips the rusage trailer line", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "gate.log")
+		content := "a\nb\n\nrelay-rusage:cpu_usec=1 mem_peak=2\n\nrelay-exit:2\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"a", "b", "relay-exit:2"}
+		got := tailLines(path, 3)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("tailLines() = %v, want %v", got, want)
+		}
+	})
+}
+
+// TestGateStepScopesTheGate pins #313: the gate starts in its own
+// relay-gate-* scope, using the template's GateCPUQuota as its CPUQuota, and
+// with no scope at all when the runtime has no template.
+func TestGateStepScopesTheGate(t *testing.T) {
+	runGate := func(t *testing.T, rt Runtime, b store.Binding) {
+		t.Helper()
+		if err := rt.Store.WithLock(func(tx *store.Tx) error {
+			_, _, _, err := gateStep(context.Background(), rt, tx, b)
+			return err
+		}); err != nil {
+			t.Fatalf("gateStep: %v", err)
+		}
+	}
+
+	t.Run("template with a gate quota", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+		b.Gate = "make check"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		runGate(t, rt, b)
+
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		spec := fr.specs[0]
+		if spec.Scope == nil {
+			t.Fatal("gate spec.Scope = nil, want a scope from the template")
+		}
+		wantUnit := "relay-gate-local-" + b.Name + "-" + strconv.Itoa(b.Round)
+		if spec.Scope.Unit != wantUnit {
+			t.Errorf("Scope.Unit = %q, want %q", spec.Scope.Unit, wantUnit)
+		}
+		if spec.Scope.CPUQuota != "300%" {
+			t.Errorf("Scope.CPUQuota = %q, want the gate quota 300%%", spec.Scope.CPUQuota)
+		}
+		if spec.Scope.GateCPUQuota != "" {
+			t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)
+		}
+	})
+
+	t.Run("nil template", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		b.Gate = "make check"
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		runGate(t, rt, b)
+
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		if fr.specs[0].Scope != nil {
+			t.Errorf("Scope = %+v, want nil when rt.Scope is nil", fr.specs[0].Scope)
 		}
 	})
 }

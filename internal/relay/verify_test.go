@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // relayBlock wraps body in the fenced block a report or a findings file ends
@@ -102,5 +105,65 @@ func TestParseVerdict(t *testing.T) {
 
 	if v, _ := parseVerdict(nil); v != "unstructured" {
 		t.Errorf("parseVerdict(nil) = %q, want unstructured", v)
+	}
+}
+
+// TestVerifyConsultScope pins #313: the verify reviewer runs in its own
+// relay-verify-* scope, with the template's CPUQuota and the gate quota left
+// behind in the template.
+func TestVerifyConsultScope(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Git = &fakeGit{headCommitID: "head1"}
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
+	rt.NewID = func() string { return verifyConsultID }
+	rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+
+	b.RoundVerify = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var consult *store.Consult
+	for i := range got.Consults {
+		if got.Consults[i].Role == verifyRole {
+			consult = &got.Consults[i]
+		}
+	}
+	if consult == nil {
+		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	}
+
+	// specs[0] is the builder's own process; the verify consult is second.
+	if len(fr.specs) != 2 {
+		t.Fatalf("Start calls = %d, want the builder's plus one verify consult", len(fr.specs))
+	}
+	spec := fr.specs[1]
+	if spec.Scope == nil {
+		t.Fatal("verify spec.Scope = nil, want a scope from the template")
+	}
+	if !strings.HasPrefix(spec.Scope.Unit, "relay-verify-local-webshop-1-") {
+		t.Errorf("Scope.Unit = %q, want it to start relay-verify-local-webshop-1-", spec.Scope.Unit)
+	}
+	if !strings.HasSuffix(spec.Scope.Unit, consult.ID) {
+		t.Errorf("Scope.Unit = %q, want it to end with the consult id %q", spec.Scope.Unit, consult.ID)
+	}
+	if spec.Scope.CPUQuota != "150%" {
+		t.Errorf("Scope.CPUQuota = %q, want the template's 150%%, not the gate quota", spec.Scope.CPUQuota)
+	}
+	if spec.Scope.GateCPUQuota != "" {
+		t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)
 	}
 }

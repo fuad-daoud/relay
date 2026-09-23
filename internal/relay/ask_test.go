@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1187,4 +1188,65 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 	if pending.Kind != store.KindFindings || pending.Path != c.FindingsPath {
 		t.Errorf("entry = %s path=%q, want findings at %q", pending.Kind, pending.Path, c.FindingsPath)
 	}
+}
+
+// TestAskScopesBothConsultPaths pins #313: both consult paths run in a
+// relay-consult-* scope drawn from the same template as a round, with the
+// template's CPUQuota -- never its GateCPUQuota.
+func TestAskScopesBothConsultPaths(t *testing.T) {
+	template := func() *ScopeSpec {
+		return &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+	}
+
+	assertConsultScope := func(t *testing.T, spec ProcSpec, c store.Consult) {
+		t.Helper()
+		if spec.Scope == nil {
+			t.Fatal("consult spec.Scope = nil, want a scope from the template")
+		}
+		wantUnit := "relay-consult-local-webshop-" + strconv.Itoa(c.Round) + "-" + c.ID
+		if spec.Scope.Unit != wantUnit {
+			t.Errorf("Scope.Unit = %q, want %q", spec.Scope.Unit, wantUnit)
+		}
+		if spec.Scope.CPUQuota != "150%" {
+			t.Errorf("Scope.CPUQuota = %q, want the template's 150%%, not the gate quota", spec.Scope.CPUQuota)
+		}
+		if spec.Scope.GateCPUQuota != "" {
+			t.Errorf("Scope.GateCPUQuota = %q, want it zeroed", spec.Scope.GateCPUQuota)
+		}
+	}
+
+	t.Run("headless consult", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, _ := seedForAsk(t)
+		rt.Runner = fr
+		rt.Scope = template()
+
+		res, err := Ask(context.Background(), rt, AskOptions{
+			Role: "reviewer", File: writeQuestion(t, "review it"), Name: "webshop", PlannerID: testPlannerName,
+		})
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		assertConsultScope(t, fr.specs[0], res.Consult)
+	})
+
+	t.Run("session consult", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, _ := seedForAsk(t)
+		rt.Runner = fr
+		rt.Scope = template()
+		seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+		res, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: "why X?", Name: "webshop"})
+		if err != nil {
+			t.Fatalf("Ask --round: %v", err)
+		}
+		if len(fr.specs) != 1 {
+			t.Fatalf("specs = %+v, want one Start", fr.specs)
+		}
+		assertConsultScope(t, fr.specs[0], res.Consult)
+	})
 }

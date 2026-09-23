@@ -26,7 +26,22 @@ type ScopeSpec struct {
 	MemoryMax string // "" = omit
 	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
 	TasksMax  int    // 0 = omit
+
+	// GateCPUQuota is the gate's own CPU ceiling (#313), template only. It is
+	// set on Runtime.Scope from policy, and read only by scopeFor when it
+	// builds a gate's spec: scopeFor copies the template, moves this value
+	// into CPUQuota, and always returns a spec with GateCPUQuota zeroed. The
+	// local Runner (proc.ScopeArgv) never reads it, so a spec handed to Start
+	// must have it empty.
+	GateCPUQuota string
 }
+
+// RusageTrailerPrefix is the prefix of the rusage line the supervisor appends
+// inside a scoped spawn, right before the exit trailer (#216, #313). relay
+// cannot import internal/proc (proc imports relay), so relay keeps its own
+// copy of proc.RusageTrailer; internal/proc's tests pin the two equal. A
+// payload tail (gate.go tailLines) skips lines carrying this prefix.
+const RusageTrailerPrefix = "relay-rusage:"
 
 // ProcRusage is what the supervisor measured for the round's cgroup.
 type ProcRusage struct {

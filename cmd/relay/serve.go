@@ -204,6 +204,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relay.ScopeSpec {
 		}
 		spec.MemoryMax = sc.MemoryMax
 		spec.CPUQuota = sc.CPUQuota
+		spec.GateCPUQuota = sc.GateCPUQuota
 		spec.TasksMax = sc.TasksMax
 	}
 	return spec
@@ -211,20 +212,27 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relay.ScopeSpec {
 
 // scopeStatusText is the startup line's scopes word for a resolved spec:
 // "on (slice relay.slice, 200%)", "on (200%)", "on (slice relay.slice)",
-// "on", or "off" for nil (#285, #295).
+// "on", or "off" for nil (#285, #295). A spec carrying a gate quota (#313)
+// gains ", gate <quota>" inside the parentheses: "on (slice relay.slice,
+// 200%, gate 300%)".
 func scopeStatusText(sc *relay.ScopeSpec) string {
-	switch {
-	case sc == nil:
+	if sc == nil {
 		return "off"
-	case sc.Slice != "" && sc.CPUQuota != "":
-		return fmt.Sprintf("on (slice %s, %s)", sc.Slice, sc.CPUQuota)
-	case sc.CPUQuota != "":
-		return fmt.Sprintf("on (%s)", sc.CPUQuota)
-	case sc.Slice != "":
-		return fmt.Sprintf("on (slice %s)", sc.Slice)
-	default:
+	}
+	var parts []string
+	if sc.Slice != "" {
+		parts = append(parts, "slice "+sc.Slice)
+	}
+	if sc.CPUQuota != "" {
+		parts = append(parts, sc.CPUQuota)
+	}
+	if sc.GateCPUQuota != "" {
+		parts = append(parts, "gate "+sc.GateCPUQuota)
+	}
+	if len(parts) == 0 {
 		return "on"
 	}
+	return "on (" + strings.Join(parts, ", ") + ")"
 }
 
 func serveAdminConfig(root string) serve.Config {
