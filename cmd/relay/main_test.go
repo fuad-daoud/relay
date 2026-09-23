@@ -1008,6 +1008,14 @@ func TestStatusNotice(t *testing.T) {
 			want:    "relay v0.6.0 is behind v0.7.0 -- run relay doctor",
 		},
 		{
+			name:    "behind a release binary",
+			running: "v0.8.0",
+			latest:  "v0.9.0",
+			ok:      true,
+			kind:    release.KindRelease,
+			want:    "relay v0.8.0 is behind v0.9.0 -- run relay doctor",
+		},
+		{
 			name:    "no usable cache",
 			running: "v0.6.0",
 			latest:  "v0.7.0",

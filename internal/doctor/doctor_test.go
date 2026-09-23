@@ -3,8 +3,10 @@ package doctor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -964,6 +966,14 @@ func TestOpencodeAllowlistRow(t *testing.T) {
 	}
 }
 
+// releaseArchiveFix builds the KindRelease fix text the way doctor.releaseFix
+// does, from this platform's own URLs, so the table row below passes on any
+// platform.
+func releaseArchiveFix(latest string) string {
+	archive, checksums := release.AssetURLs(latest, runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("download %s, check it against %s, and replace this relay binary with the one inside", archive, checksums)
+}
+
 // TestDoctorReleaseCheck walks §4.5's table through fakeEnv: every row, the
 // Fix for each install variant, and the standing promise that a stale relay
 // is a warning, never a failure.
@@ -1036,6 +1046,27 @@ func TestDoctorReleaseCheck(t *testing.T) {
 			wantDetail:   "v0.6.0 is behind v0.7.0",
 			wantFix:      "go install github.com/fuad-daoud/relay/cmd/relay@latest",
 		},
+		{
+			// The release row's fix is built from this platform's own URLs,
+			// exactly the way doctor.releaseFix builds it.
+			name: "behind a release binary: archive and checksums",
+			env: fakeEnv{
+				releaseRunning: "v0.8.0", releaseLatest: "v0.9.0",
+				releaseOK: true, releaseKind: release.KindRelease,
+			},
+			wantSeverity: SevWarn,
+			wantDetail:   "v0.8.0 is behind v0.9.0",
+			wantFix:      releaseArchiveFix("v0.9.0"),
+		},
+		{
+			name: "release binary at the latest tag: current",
+			env: fakeEnv{
+				releaseRunning: "v0.9.0", releaseLatest: "v0.9.0",
+				releaseOK: true, releaseKind: release.KindRelease,
+			},
+			wantSeverity: SevOK,
+			wantDetail:   "v0.9.0 is current",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1058,6 +1089,61 @@ func TestDoctorReleaseCheck(t *testing.T) {
 			}
 			if c.Fix != tc.wantFix {
 				t.Errorf("release fix = %q, want %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
+}
+
+// TestReleaseFix is the pure fix-text table: the release row is the literal
+// string with the linux/amd64 URLs written out in full, and the kinds with no
+// update path return "".
+func TestReleaseFix(t *testing.T) {
+	tests := []struct {
+		name   string
+		kind   release.Kind
+		latest string
+		goos   string
+		goarch string
+		want   string
+	}{
+		{
+			name:   "release names the archive and checksums",
+			kind:   release.KindRelease,
+			latest: "v0.9.0",
+			goos:   "linux",
+			goarch: "amd64",
+			want:   "download https://github.com/fuad-daoud/relay/releases/download/v0.9.0/relay_v0.9.0_linux_amd64.tar.gz, check it against https://github.com/fuad-daoud/relay/releases/download/v0.9.0/checksums.txt, and replace this relay binary with the one inside",
+		},
+		{
+			name:   "go install keeps its command",
+			kind:   release.KindGoInstall,
+			latest: "v0.9.0",
+			goos:   "linux",
+			goarch: "amd64",
+			want:   "go install github.com/fuad-daoud/relay/cmd/relay@latest",
+		},
+		{
+			name:   "unknown has no fix",
+			kind:   release.KindUnknown,
+			latest: "v0.9.0",
+			goos:   "linux",
+			goarch: "amd64",
+			want:   "",
+		},
+		{
+			name:   "local build has no fix",
+			kind:   release.KindLocalBuild,
+			latest: "v0.9.0",
+			goos:   "linux",
+			goarch: "amd64",
+			want:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := releaseFix(tc.kind, tc.latest, tc.goos, tc.goarch); got != tc.want {
+				t.Errorf("releaseFix(%q, %q, %q, %q) = %q, want %q", tc.kind, tc.latest, tc.goos, tc.goarch, got, tc.want)
 			}
 		})
 	}

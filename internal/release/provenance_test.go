@@ -54,6 +54,38 @@ func TestDetectTable(t *testing.T) {
 			in:   Inputs{ExeDir: "/usr/local/bin"},
 			want: KindUnknown,
 		},
+		{
+			// The release stamp plus a clean tag: what release.yml builds.
+			name: "release: stamped clean tag",
+			in:   Inputs{Version: "v0.9.0", ExeDir: "/usr/local/bin", Distribution: "release"},
+			want: KindRelease,
+		},
+		{
+			// A stamp on a build inside a checkout is not a release; it is a
+			// local build by the unchanged rule 3.
+			name: "release stamp with a describe suffix is a local build",
+			in:   Inputs{Version: "v0.9.0-3-gabc1234", ExeDir: "/worktrees/relay", Distribution: "release"},
+			want: KindLocalBuild,
+		},
+		{
+			name: "release stamp on (devel) is a local build",
+			in:   Inputs{Version: "(devel)", ExeDir: "/worktrees/relay", Distribution: "release"},
+			want: KindLocalBuild,
+		},
+		{
+			// An unrecognised distribution value falls through to the
+			// existing rules, so a clean tag claims nothing.
+			name: "unknown distribution value claims nothing",
+			in:   Inputs{Version: "v0.9.0", ExeDir: "/usr/local/bin", Distribution: "homebrew"},
+			want: KindUnknown,
+		},
+		{
+			// Rule 1 comes first: the module supplied the version, so the
+			// distribution stamp does not make it a release.
+			name: "go install wins over the release stamp",
+			in:   Inputs{Version: "v0.9.0", ExeDir: "/home/fuad/go/bin", FromModule: true, Distribution: "release"},
+			want: KindGoInstall,
+		},
 	}
 
 	for _, tc := range tests {
