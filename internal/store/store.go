@@ -50,6 +50,11 @@ const (
 	// separate file from lockFileName: sharing one would mean the daemon held
 	// the state lock forever and no other command could read anything.
 	daemonLockFileName = ".daemon.lock"
+	// daemonInfoFileName is the daemon's own record of what it runs (#371):
+	// the version, the executable and its identity, written at image start
+	// and removed on a clean shutdown. A missing file with the lock held
+	// means "a daemon older than #371".
+	daemonInfoFileName = "daemon.json"
 	lockRetryDelay     = 50 * time.Millisecond
 
 	// lockAcquireLimit must exceed the longest possible hold, or a slow external

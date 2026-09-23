@@ -39,6 +39,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/serve"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/ui"
+	"github.com/fuad-daoud/relay/internal/upgrade"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=v1.2.3".
@@ -1756,6 +1757,17 @@ func cmdStatus(args []string) error {
 		fmt.Println(notice)
 	}
 
+	// #371: the daemon's own version state, read from its record rather than
+	// probed. A read error prints nothing: a status must never fail because a
+	// sidecar file could not be read.
+	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
+		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
+			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
+				fmt.Println(notice)
+			}
+		}
+	}
+
 	fmt.Print(relay.RenderStatus(rep))
 	return nil
 }
@@ -2232,14 +2244,35 @@ func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	interval := fs.Duration("interval", 2*time.Second, "poll interval")
 	check := fs.Bool("check", false, "exit 0 if a daemon is running, 1 if not; print nothing")
+	// --preflight is internal: the daemon runs a candidate binary's own
+	// --preflight before re-exec'ing into it (#371 §4.4). It stays out of
+	// the usage text and the README, so it is defined but not printed.
+	preflight := fs.Bool("preflight", false, "validate the runtime configuration and exit (internal)")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: relay daemon [--interval D] [--check]")
+	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
+		if *preflight {
+			// §4.4: the error on stderr, exit 1. Returning rather than
+			// os.Exit keeps the path a plain function call a test can make.
+			fmt.Fprintf(os.Stderr, "relay: %v\n", err)
+			return exitCodeErr{code: 1}
+		}
 		return err
 	}
+	if *preflight {
+		// newRuntime read and validated config only: it took no lock,
+		// opened no DB (which would migrate), started no process and made no
+		// network call, and this returns before the DB open below.
+		fmt.Printf("ok %s\n", buildVersion())
+		return nil
+	}
+
 	// Nowhere else: a CLI one-shot (any other command) must not relaunch a
 	// builder it merely happens to observe as "exited, code unknown" (#244).
 	rt.StartedAt = time.Now()
@@ -2255,16 +2288,50 @@ func cmdDaemon(args []string) error {
 	// here -- a later probe failure is the runner's one-line warning (§3.1).
 	slog.Info(fmt.Sprintf("scopes=%s", scopeStatusText(rt.Scope)))
 
+	// The reaper is built before anything can spawn a child, so it sees only
+	// processes inherited from the previous image across a re-exec. A child
+	// started after this point is never in its set (#371 §4.6).
+	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
+
+	// Capture the executable and its identity once, before any replacement
+	// can land. A failure disables re-exec with a warning; the daemon runs on
+	// regardless (#371 §4.7, §6).
+	exe, exeErr := upgrade.ResolveExe()
+	exeID, idErr := upgrade.ExeIdentity(exe)
+	reexecOK := exeErr == nil && idErr == nil
+	if !reexecOK {
+		reason := exeErr
+		if reason == nil {
+			reason = idErr
+		}
+		slog.Warn("re-exec disabled", "err", reason)
+	}
+
 	// The database is opened only here (and by `relay db *`): the daemon
 	// is the process that writes it every tick; `relay serve`'s state root
 	// is its own and stays out of scope. An open failure never blocks the
 	// daemon from starting -- every ingest call site treats DB == nil like
 	// a machine with no database.
+	//
+	// Closing is explicit rather than a bare defer: the re-exec path closes
+	// the DB itself before syscall.Exec, and the deferred pass must then do
+	// nothing. *db.DB.Close is not idempotent.
+	var dbClosed bool
+	closeDB := func() {
+		if dbClosed || rt.DB == nil {
+			return
+		}
+		dbClosed = true
+		if cerr := rt.DB.Close(); cerr != nil {
+			slog.Warn("relay daemon: close db", "err", cerr)
+		}
+	}
+	defer closeDB()
+
 	if d, derr := openDB(rt.Store.DBPath()); derr != nil {
 		slog.Warn("relay daemon: db unavailable; ingest disabled", "err", derr)
 	} else {
 		rt.DB = d
-		defer d.Close()
 	}
 
 	configDir, err := userConfigRoot()
@@ -2296,7 +2363,28 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+	// DaemonLock.Close is already idempotent (it nils its file), so the
+	// explicit close on the re-exec path and this defer cannot double-close
+	// into an error that matters.
 	defer lock.Close()
+
+	// daemon.json: what this image runs. Written under the lock, so its
+	// presence with the lock held means a #371 daemon; removed on a clean
+	// shutdown, kept across a re-exec (#371 §4.7).
+	info := store.DaemonInfo{
+		Version:    buildVersion(),
+		PID:        os.Getpid(),
+		StartedAt:  time.Now(),
+		Exe:        exe,
+		ExeID:      exeID,
+		ReexecFrom: os.Getenv("RELAY_REEXEC_FROM"),
+	}
+	if werr := rt.Store.WriteDaemonInfo(info); werr != nil {
+		slog.Warn("relay daemon: daemon.json not written", "err", werr)
+	}
+	if info.ReexecFrom != "" {
+		slog.Info("re-exec'd", "from", info.ReexecFrom, "to", info.Version)
+	}
 
 	hooksCfg, err := resolveHooksConfig()
 	if err != nil {
@@ -2307,8 +2395,124 @@ func cmdDaemon(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The watcher and its hook are the daemon's whole upgrade decision
+	// (#371 §4.3): debounce the new identity over two ticks, preflight it,
+	// then either re-exec or refuse and record the refusal.
+	up := &upgrade.Watcher{
+		Path:    exe,
+		Started: exeID,
+		Stat:    upgrade.ExeIdentity,
+		Preflight: func(ctx context.Context, path string) error {
+			out, perr := exec.CommandContext(ctx, path, "daemon", "--preflight").CombinedOutput()
+			if perr == nil {
+				return nil
+			}
+			if line := firstLine(string(out)); line != "" {
+				return errors.New(line)
+			}
+			return perr
+		},
+	}
+
+	hook := func(ctx context.Context) bool {
+		// Children inherited from the previous image are reaped here, once
+		// per tick: nothing else will ever wait for them (#371 §4.6).
+		reaper.Reap()
+		if !reexecOK {
+			return false
+		}
+
+		prev := up.Refused()
+		decision := up.Check(ctx)
+		if !sameFileID(up.Refused(), prev) {
+			if up.Refused() == nil {
+				info.ReexecFailed = nil
+			} else {
+				info.ReexecFailed = &store.ReexecFailure{
+					ExeID:  *up.Refused(),
+					At:     time.Now(),
+					Reason: decision.Reason,
+				}
+			}
+			if werr := rt.Store.WriteDaemonInfo(info); werr != nil {
+				slog.Warn("relay daemon: daemon.json not written", "err", werr)
+			}
+		}
+
+		switch decision.Action {
+		case upgrade.Refused:
+			// Check reports Refused only when the identity changed, so this
+			// is the one warning per refused build.
+			slog.Warn("new relay binary refused", "exe", exe, "reason", decision.Reason)
+		case upgrade.Reexec:
+			slog.Info("re-exec onto new binary", "exe", exe)
+			return true
+		}
+		return false
+	}
+
 	slog.Info("relay daemon starting", "interval", *interval)
-	return relay.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).Run(ctx)
+	err = relay.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook).Run(ctx)
+	if errors.Is(err, relay.ErrReexec) {
+		// Close explicitly what must not survive the exec -- the DB, the
+		// signal context and the lock -- rather than relying on CLOEXEC
+		// (#371 §4.7).
+		closeDB()
+		stop()
+		_ = lock.Close()
+
+		env := withEnv(os.Environ(), "RELAY_REEXEC_FROM", buildVersion())
+		execErr := reexec(exe, append([]string{exe}, os.Args[1:]...), env)
+		// Only reached when the exec itself failed: a non-zero exit lets
+		// systemd's Restart=on-failure start the new binary anyway.
+		return fmt.Errorf("re-exec %s: %w", exe, execErr)
+	}
+
+	// A clean shutdown removes the record; the re-exec path above must not.
+	_ = rt.Store.RemoveDaemonInfo()
+	return err
+}
+
+// sameFileID reports whether two identity pointers name the same file. Both
+// nil is "no refusal"; one nil is a change.
+func sameFileID(a, b *store.FileID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// firstLine is the first non-empty line of s, for a preflight failure's
+// reason. It is what daemon.json and the log record, not the whole stderr.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// withEnv sets key=val in env, replacing every existing KEY= entry (collapsing
+// duplicates) or appending when none is present. It is how the re-exec passes
+// the previous version on without duplicating an inherited value. Pure.
+func withEnv(env []string, key, val string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	set := false
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			if !set {
+				out = append(out, prefix+val)
+				set = true
+			}
+			continue
+		}
+		out = append(out, e)
+	}
+	if !set {
+		out = append(out, prefix+val)
+	}
+	return out
 }
 
 // bindingArg picks the binding name out of a --name flag and whatever

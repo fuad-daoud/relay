@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/classify"
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/release"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // shippedDoc returns the exact bytes this relay ships for role/kind, so a
@@ -30,6 +31,11 @@ func shippedDoc(t *testing.T, role, kind string) string {
 type fakeEnv struct {
 	daemonRunning bool
 	daemonErr     error
+	// daemonInfo* are what DaemonInfo reports: the record, whether it exists,
+	// and an optional read error (#371).
+	daemonInfo    store.DaemonInfo
+	daemonInfoOK  bool
+	daemonInfoErr error
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
 	fileContents  map[string]string // path -> content; absent reads as empty
@@ -54,6 +60,13 @@ func (f *fakeEnv) DaemonRunning(ctx context.Context) (bool, error) {
 		return false, f.daemonErr
 	}
 	return f.daemonRunning, nil
+}
+
+func (f *fakeEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
+	if f.daemonInfoErr != nil {
+		return store.DaemonInfo{}, false, f.daemonInfoErr
+	}
+	return f.daemonInfo, f.daemonInfoOK, nil
 }
 
 func (f *fakeEnv) LookPath(binary string) (string, error) {
@@ -1146,5 +1159,92 @@ func TestReleaseFix(t *testing.T) {
 				t.Errorf("releaseFix(%q, %q, %q, %q) = %q, want %q", tc.kind, tc.latest, tc.goos, tc.goarch, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDoctorDaemonVersionStates covers the four states of §4.8's daemon row
+// while the daemon is running (#371): no record, a refused binary, a version
+// behind the CLI, and equal.
+func TestDoctorDaemonVersionStates(t *testing.T) {
+	tests := []struct {
+		name         string
+		info         store.DaemonInfo
+		ok           bool
+		wantSeverity Severity
+		wantDetail   string
+		wantFix      string
+	}{
+		{
+			name:         "missing record",
+			ok:           false,
+			wantSeverity: SevWarn,
+			wantDetail:   "running, but started before relay recorded its version: it will not follow upgrades until restarted once",
+			wantFix:      "systemctl --user restart relay.service, or make service",
+		},
+		{
+			name: "refused binary",
+			info: store.DaemonInfo{
+				Version:      "v1",
+				Exe:          "/usr/local/bin/relay",
+				ReexecFailed: &store.ReexecFailure{Reason: "policy.json: unknown field"},
+			},
+			ok:           true,
+			wantSeverity: SevWarn,
+			wantDetail:   "runs v1; the relay binary at /usr/local/bin/relay failed preflight (policy.json: unknown field) and was not loaded",
+			wantFix:      "fix the error above; the daemon retries when the file changes",
+		},
+		{
+			name:         "version differs",
+			info:         store.DaemonInfo{Version: "v1"},
+			ok:           true,
+			wantSeverity: SevOK,
+			wantDetail:   "runs v1; switching to v2 within seconds",
+		},
+		{
+			name:         "equal",
+			info:         store.DaemonInfo{Version: "v2"},
+			ok:           true,
+			wantSeverity: SevOK,
+			wantDetail:   "running v2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &fakeEnv{daemonRunning: true, daemonInfo: tc.info, daemonInfoOK: tc.ok, releaseRunning: "v2"}
+			c := findCheck(Run(context.Background(), env, nil), "", "daemon")
+			if c == nil {
+				t.Fatal("no daemon row in the report")
+			}
+			if c.Severity != tc.wantSeverity {
+				t.Errorf("severity = %v, want %v", c.Severity, tc.wantSeverity)
+			}
+			if !strings.Contains(c.Detail, tc.wantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", c.Detail, tc.wantDetail)
+			}
+			if tc.wantFix != "" && !strings.Contains(c.Fix, tc.wantFix) {
+				t.Errorf("fix = %q, want it to contain %q", c.Fix, tc.wantFix)
+			}
+		})
+	}
+}
+
+// TestDoctorDaemonRowsUnchanged pins the two rows #371 keeps byte-identical: a
+// stopped daemon and a failed probe.
+func TestDoctorDaemonRowsUnchanged(t *testing.T) {
+	stopped := findCheck(Run(context.Background(), &fakeEnv{daemonRunning: false}, nil), "", "daemon")
+	if stopped == nil {
+		t.Fatal("no daemon row for a stopped daemon")
+	}
+	if stopped.Severity != SevWarn || stopped.Detail != "not running" || stopped.Fix != "relay daemon" {
+		t.Errorf("stopped daemon row = %+v, want Warn / not running / relay daemon", *stopped)
+	}
+
+	failed := findCheck(Run(context.Background(), &fakeEnv{daemonErr: errors.New("nope")}, nil), "", "daemon")
+	if failed == nil {
+		t.Fatal("no daemon row for a failed probe")
+	}
+	if failed.Severity != SevWarn || failed.Detail != "probe error: nope" || failed.Fix != "relay daemon" || !failed.ProbeFailed {
+		t.Errorf("probe error row = %+v, want Warn / probe error: nope / relay daemon / ProbeFailed", *failed)
 	}
 }

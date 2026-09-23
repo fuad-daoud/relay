@@ -16,6 +16,11 @@ import (
 type Env interface {
 	// DaemonRunning reports whether a relay daemon holds the lock.
 	DaemonRunning(ctx context.Context) (bool, error)
+	// DaemonInfo reads the daemon's own record (daemon.json): the version,
+	// executable and identity of the running image, and any binary it refused
+	// (#371). A missing record is (zero, false, nil) and means a daemon older
+	// than #371.
+	DaemonInfo() (store.DaemonInfo, bool, error)
 	// LookPath resolves an executable on PATH.
 	LookPath(binary string) (string, error)
 	// HomePath joins a home-relative path, and Stat reports whether it exists.
@@ -72,6 +77,15 @@ func (e *realEnv) DaemonRunning(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	return e.store.DaemonRunning()
+}
+
+// DaemonInfo reads daemon.json from the state root. A nil store is "no record",
+// exactly as a missing file is.
+func (e *realEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
+	if e.store == nil {
+		return store.DaemonInfo{}, false, nil
+	}
+	return e.store.ReadDaemonInfo()
 }
 
 func (e *realEnv) LookPath(binary string) (string, error) {

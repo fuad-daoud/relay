@@ -16,6 +16,11 @@ import (
 // minInterval keeps a misconfigured interval from spinning the tick.
 const minInterval = 500 * time.Millisecond
 
+// ErrReexec reports that Run stopped because a new relay binary is ready and
+// the caller should exec into it (#371). It is not a failure: the process
+// keeps its pid and its children through the exec.
+var ErrReexec = errors.New("relay daemon: re-exec onto a new binary")
+
 // Daemon ticks on its interval and advances every binding. It is the only
 // reason relay needs a background process: the inbound leg happens after the
 // planner's turn has ended, when no model is running to notice.
@@ -27,6 +32,12 @@ type Daemon struct {
 	// changed and returns the Runtime the tick should use. Nil (the
 	// default) keeps today's behaviour: rt is used as given.
 	refresh func(Runtime) Runtime
+
+	// upgrade, when set, runs after every completed tick and only while ctx
+	// is live. True means a new binary passed its preflight, and Run returns
+	// ErrReexec so the caller can exec into it (#371 §4.5). Nil (the default)
+	// keeps today's behaviour: the daemon never re-execs.
+	upgrade func(ctx context.Context) bool
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -48,6 +59,14 @@ func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 	return d
 }
 
+// WithUpgrade installs a post-tick hook that decides whether to re-exec onto a
+// new binary. nil (the default) keeps today's behaviour: no re-exec.
+// Returns d for chaining.
+func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
+	d.upgrade = f
+	return d
+}
+
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on
 // the next interval rather than killing the daemon, because a transient
 // failure must not drop every binding on the floor.
@@ -63,8 +82,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-ticker.C:
-			if err := d.Tick(ctx); err != nil {
+			// The tick runs under WithoutCancel, so a cancel mid-tick lets
+			// that tick finish rather than tearing a reconcile in half
+			// (#371 §4.5). Run then returns nil: it never starts another
+			// tick after cancellation, and never lets the upgrade hook
+			// re-exec from under a shutting-down daemon.
+			tctx := context.WithoutCancel(ctx)
+			if err := d.Tick(tctx); err != nil {
 				slog.Error("relay tick failed", "err", err)
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			if d.upgrade != nil && d.upgrade(ctx) {
+				return ErrReexec
 			}
 		}
 	}

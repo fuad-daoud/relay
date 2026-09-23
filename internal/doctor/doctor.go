@@ -421,6 +421,56 @@ func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 
 // Run executes every check for the given kinds against env.
 // kinds is the caller's choice of scope; Run does not discover it.
+// daemonCheck builds the daemon row while the daemon is running (#371 §4.8).
+// Four states: no record (a daemon older than #371, which will not follow an
+// upgrade until restarted), a binary the daemon refused, a version behind the
+// CLI (transient during a re-exec), and equal.
+func daemonCheck(env Env) Check {
+	cli, _, _, _ := env.ReleaseState()
+	info, ok, err := env.DaemonInfo()
+	if err != nil {
+		// An unreadable record is "no record": the daemon runs, and the safe
+		// answer is the one that tells a human to restart once.
+		ok = false
+	}
+
+	switch {
+	case !ok:
+		return Check{
+			Group:    "",
+			Name:     "daemon",
+			Severity: SevWarn,
+			Detail:   "running, but started before relay recorded its version: it will not follow upgrades until restarted once",
+			Fix:      "systemctl --user restart relay.service, or make service",
+		}
+	case info.ReexecFailed != nil:
+		return Check{
+			Group:    "",
+			Name:     "daemon",
+			Severity: SevWarn,
+			Detail: fmt.Sprintf("runs %s; the relay binary at %s failed preflight (%s) and was not loaded",
+				info.Version, info.Exe, info.ReexecFailed.Reason),
+			Fix: "fix the error above; the daemon retries when the file changes",
+		}
+	case info.Version != cli:
+		return Check{
+			Group:    "",
+			Name:     "daemon",
+			Severity: SevOK,
+			Detail:   fmt.Sprintf("runs %s; switching to %s within seconds", info.Version, cli),
+			Fix:      "",
+		}
+	default:
+		return Check{
+			Group:    "",
+			Name:     "daemon",
+			Severity: SevOK,
+			Detail:   fmt.Sprintf("running %s", info.Version),
+			Fix:      "",
+		}
+	}
+}
+
 // Run never returns an error -- a failed probe becomes a Check saying so.
 func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report {
 	var cfg runConfig
@@ -455,13 +505,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			Fix:      "relay daemon",
 		})
 	} else {
-		checks = append(checks, Check{
-			Group:    "",
-			Name:     "daemon",
-			Severity: SevOK,
-			Detail:   "running",
-			Fix:      "",
-		})
+		checks = append(checks, daemonCheck(env))
 	}
 
 	usableBuilder := false

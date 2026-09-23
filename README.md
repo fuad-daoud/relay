@@ -55,6 +55,15 @@ cd relay
 make install        # builds and installs ~/.local/bin/relay
 ```
 
+To install the built binary by hand, use the same two commands `make install`
+does. The rename is atomic within the directory, so a running daemon never sees
+a half-written file:
+
+```
+install -m755 relay ~/.local/bin/relay.new
+mv -f ~/.local/bin/relay.new ~/.local/bin/relay
+```
+
 `make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
 `go test -count=1 ./...` — and `make install` runs it first.
 
@@ -63,6 +72,16 @@ To run the reconciler as a background service:
 ```
 make service        # systemd user unit on Linux, LaunchAgent on macOS
 ```
+
+### Upgrading
+
+A running daemon moves onto a newly installed binary by itself within a few
+seconds, and a round in flight is not interrupted: builders, gates and consults
+run in their own systemd scopes and survive the restart. A daemon started
+before this release needs one manual restart to start following upgrades —
+`make service`, or `systemctl --user restart relay.service`. `relay doctor`
+shows what the daemon is running, and a planner session reconnects its MCP
+server once it is told to.
 
 ### The Claude Code plugin
 

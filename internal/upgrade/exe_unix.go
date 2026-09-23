@@ -1,0 +1,33 @@
+//go:build unix
+
+package upgrade
+
+import (
+	"errors"
+	"os"
+	"syscall"
+
+	"github.com/fuad-daoud/relay/internal/store"
+)
+
+// ExeIdentity identifies the file at path by device and inode, with size and
+// mtime, so a rewrite through a fresh inode (install's rename) changes it and a
+// no-op stat does not.
+func ExeIdentity(path string) (store.FileID, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return store.FileID{}, err
+	}
+
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return store.FileID{}, errors.New("upgrade: no stat_t for " + path)
+	}
+
+	return store.FileID{
+		Dev:     uint64(st.Dev),
+		Ino:     uint64(st.Ino),
+		Size:    info.Size(),
+		ModTime: info.ModTime(),
+	}, nil
+}
