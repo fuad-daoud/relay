@@ -3,7 +3,11 @@ package relay
 import (
 	"bytes"
 	"log/slog"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 // captureLog routes slog's default logger into a buffer for one test. The
@@ -17,8 +21,25 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// settleTick is one daemon tick's deliverAndSettle over a binding, under the
-// state lock the daemon would hold, returning the binding to persist.
-// nudgedBinding drives one binding through the nudge: plan sent, builder
-// idle past startGrace, no report on disk. It returns the binding after the
-// nudge tick and the clock the caller advances between later ticks.
+func TestReconcileLogsHaltOncePerRound(t *testing.T) {
+	buf := captureLog(t)
+	rt, b := sentBinding(t)
+	b.RoundTimeoutMS = int((30 * time.Minute).Milliseconds())
+	b.RoundStartedAt = baseTime.Add(-31 * time.Minute)
+
+	for i := 0; i < 3; i++ {
+		var err error
+		if b, err = reconcile(t, rt, b); err != nil {
+			t.Fatalf("tick %d: %v", i+1, err)
+		}
+	}
+	if b.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", b.State)
+	}
+	if n := strings.Count(buf.String(), `msg="binding halted"`); n != 1 {
+		t.Fatalf("binding halted logged %d times across three halted ticks, want 1:\n%s", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "has run past") {
+		t.Errorf("halt line must carry the reason:\n%s", buf.String())
+	}
+}

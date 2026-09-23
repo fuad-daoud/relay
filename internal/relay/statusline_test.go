@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"os"
 	"regexp"
 	"strings"
@@ -354,4 +355,244 @@ func TestWaitingReportOutcome(t *testing.T) {
 			t.Errorf("waiting = %q, want 'report in'", got)
 		}
 	})
+}
+
+func statuslineFixture(now time.Time) Report {
+	return Report{
+		Bindings: []BindingStatus{
+			{
+				Name:             "api",
+				Round:            3,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+				LastPayload: &LastEvent{
+					TS:        now.Add(-12 * time.Minute),
+					Kind:      store.KindPlan,
+					Direction: store.DirToBuilder,
+				},
+			},
+			{
+				Name:             "client",
+				Round:            1,
+				Display:          "NEEDS YOU",
+				BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+				LastPayload: &LastEvent{
+					TS:   now.Add(-4 * time.Minute),
+					Kind: store.KindPlan,
+				},
+			},
+			{
+				Name:             "docs",
+				Round:            2,
+				Display:          "PAUSED",
+				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+				LastPayload: &LastEvent{
+					TS:        now.Add(-23 * time.Second),
+					Kind:      store.KindReport,
+					Direction: store.DirToPlanner,
+				},
+			},
+		},
+	}
+}
+
+func TestRenderStatusLineAt80(t *testing.T) {
+	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
+	lines := splitLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	for i, line := range lines {
+		if w := width(line); w != 80 {
+			t.Errorf("line %d width = %d, want 80; line = %q", i, w, stripSGR(line))
+		}
+	}
+
+	plain0 := stripSGR(lines[0])
+	if !strings.HasPrefix(plain0, "○ api     r3 · agy · plan sent") {
+		t.Errorf("line 0 prefix mismatch: %q", plain0)
+	}
+	if !strings.HasSuffix(plain0, " 12m · ACTIVE") {
+		t.Errorf("line 0 suffix mismatch: %q", plain0)
+	}
+
+	plain1 := stripSGR(lines[1])
+	if !strings.HasPrefix(plain1, "● client  r1 · opencode · plan sent") {
+		t.Errorf("line 1 prefix mismatch: %q", plain1)
+	}
+	if !strings.HasSuffix(plain1, " 4m · NEEDS YOU") {
+		t.Errorf("line 1 suffix mismatch: %q", plain1)
+	}
+
+	plain2 := stripSGR(lines[2])
+	if !strings.HasPrefix(plain2, "○ docs    r2 · agy · report in") {
+		t.Errorf("line 2 prefix mismatch: %q", plain2)
+	}
+	if !strings.HasSuffix(plain2, " 23s · PAUSED") {
+		t.Errorf("line 2 suffix mismatch: %q", plain2)
+	}
+}
+
+func TestRenderStatusLineTruncatesAt40(t *testing.T) {
+	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 40)
+	lines := splitLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	for i, line := range lines {
+		if w := width(line); w != 40 {
+			t.Errorf("line %d width = %d, want 40; line = %q", i, w, stripSGR(line))
+		}
+	}
+
+	plain2 := stripSGR(lines[2])
+	if !strings.Contains(plain2, "…") {
+		t.Errorf("line 2 expected to contain '…': %q", plain2)
+	}
+
+	suffixes := []string{" 12m · ACTIVE", " 4m · NEEDS YOU", " 23s · PAUSED"}
+	for i, line := range lines {
+		plain := stripSGR(line)
+		if !strings.HasSuffix(plain, suffixes[i]) {
+			t.Errorf("line %d suffix mismatch: %q, want suffix %q", i, plain, suffixes[i])
+		}
+	}
+}
+
+func TestRenderStatusLineZeroColumnsIs80(t *testing.T) {
+	out0 := RenderStatusLine(statuslineFixture(baseTime), baseTime, 0)
+	out80 := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
+	if out0 != out80 {
+		t.Errorf("output for columns 0 does not match columns 80:\nout0:\n%s\nout80:\n%s", out0, out80)
+	}
+}
+
+func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
+	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 20)
+	lines := splitLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	plain0 := stripSGR(lines[0])
+	want := "○ api  r3 · agy · plan sent · 12m · ACTIVE"
+	if plain0 != want {
+		t.Errorf("line 0 = %q, want %q", plain0, want)
+	}
+}
+
+func TestRenderStatusLineColours(t *testing.T) {
+	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
+	lines := splitLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+
+	if !strings.Contains(lines[0], "\x1b[38;5;245m○\x1b[0m") {
+		t.Errorf("line 0 missing dim dot: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "\x1b[38;5;42mACTIVE\x1b[0m") {
+		t.Errorf("line 0 missing active display colour: %q", lines[0])
+	}
+
+	if !strings.Contains(lines[1], "\x1b[1;38;5;214m●\x1b[0m") {
+		t.Errorf("line 1 missing needs you dot: %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "\x1b[1;38;5;214mNEEDS YOU\x1b[0m") {
+		t.Errorf("line 1 missing needs you display colour: %q", lines[1])
+	}
+
+	if strings.Count(lines[2], "\x1b[") != 2 {
+		t.Errorf("line 2 should contain exactly 2 escape sequences (the dot only), got %d: %q", strings.Count(lines[2], "\x1b["), lines[2])
+	}
+}
+
+func setupPlannerStatusStore(t *testing.T) Runtime {
+	t.Helper()
+	rt := newRuntime(t)
+	bindings := []store.Binding{
+		{
+			Name:             "zeta",
+			CWD:              "/a",
+			PlannerID:        testClaimPlanner,
+			Builder:          store.Endpoint{Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "alpha",
+			CWD:              "/b",
+			PlannerID:        testClaimPlanner,
+			Builder:          store.Endpoint{Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "other",
+			CWD:              "/c",
+			PlannerID:        otherClaimPlanner,
+			Builder:          store.Endpoint{Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateActive,
+		},
+		{
+			Name:             "finished",
+			CWD:              "/d",
+			PlannerID:        testClaimPlanner,
+			Builder:          store.Endpoint{Kind: "agy"},
+			BuilderCandidate: testAgyRef,
+			Round:            1,
+			State:            store.StateDone,
+		},
+	}
+	for _, b := range bindings {
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatalf("Save(%s): %v", b.Name, err)
+		}
+	}
+	return rt
+}
+
+func TestPlannerStatusFiltersToOnePlanner(t *testing.T) {
+	rt := setupPlannerStatusStore(t)
+	ctx := context.Background()
+
+	rep, err := PlannerStatus(ctx, rt, testClaimPlanner)
+	if err != nil {
+		t.Fatalf("PlannerStatus: %v", err)
+	}
+	if len(rep.Bindings) != 2 {
+		t.Fatalf("got %d bindings, want 2", len(rep.Bindings))
+	}
+	if rep.Bindings[0].Name != "alpha" || rep.Bindings[1].Name != "zeta" {
+		t.Errorf("got bindings [%s, %s], want [alpha, zeta]", rep.Bindings[0].Name, rep.Bindings[1].Name)
+	}
+	for i, b := range rep.Bindings {
+		if b.PlannerID != testClaimPlanner {
+			t.Errorf("row %d PlannerID = %q, want %q", i, b.PlannerID, testClaimPlanner)
+		}
+	}
+
+	repOther, err := PlannerStatus(ctx, rt, otherClaimPlanner)
+	if err != nil {
+		t.Fatalf("PlannerStatus(other): %v", err)
+	}
+	if len(repOther.Bindings) != 1 || repOther.Bindings[0].Name != "other" {
+		t.Errorf("got %d bindings for the other planner, want only 'other'", len(repOther.Bindings))
+	}
+}
+
+func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
+	rt := setupPlannerStatusStore(t)
+	ctx := context.Background()
+
+	rep, err := PlannerStatus(ctx, rt, "")
+	if err != nil {
+		t.Fatalf("PlannerStatus: %v", err)
+	}
+	if len(rep.Bindings) != 0 {
+		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
+	}
 }

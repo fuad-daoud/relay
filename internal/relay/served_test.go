@@ -584,3 +584,130 @@ func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
 		t.Fatalf("DirtyCommit changed on git error: got %q, want empty", res.Serve.DirtyCommit)
 	}
 }
+
+func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:    "api",
+		Owner:   "client1",
+		State:   store.StateActive,
+		Round:   1,
+		CWD:     t.TempDir(),
+		Planner: store.Endpoint{SessionID: "sess1", PaneID: "p1"},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("api", store.LogEntry{
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindReport,
+		Payload:   "the report",
+		Confirmed: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := Runtime{Store: st, Now: time.Now}
+	var got store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, err = deliverAndSettle(ctx, rt, tx, b)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("deliverAndSettle: %v", err)
+	}
+
+	if got.State != store.StateActive {
+		t.Fatalf("state changed: got %v, want %v", got.State, store.StateActive)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 || entries[0].Confirmed {
+		t.Fatalf("payload was confirmed: %+v", entries)
+	}
+}
+
+func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fr := newFakeRunner()
+	expectedSHA := "commit-1234567890"
+	fGit := &fakeGit{
+		refSHA: map[string]string{
+			"refs/heads/relay/api": expectedSHA,
+		},
+	}
+
+	wtDir := t.TempDir()
+	bareDir := t.TempDir()
+
+	b := store.Binding{
+		Name:     "api",
+		Owner:    "client1",
+		State:    store.StateActive,
+		Round:    1,
+		RoundCap: 10,
+		CWD:      wtDir,
+		Builder:  store.Endpoint{Mode: store.ModeHeadless, PID: 1234},
+		Branch:   "relay/api",
+		Worktree: wtDir,
+		Serve: &store.ServeFacts{
+			BareRepo: bareDir,
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	// Round 1 plan entry
+	if err := st.AppendLog("api", store.LogEntry{
+		Round:     1,
+		Direction: store.DirToBuilder,
+		Kind:      store.KindPlan,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write report and marker
+	if err := os.WriteFile(st.ReportPath("api", 1), []byte("report\n```relay\nstatus: done\n```\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.DonePath("api", 1), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := Runtime{
+		Store:  st,
+		Git:    fGit,
+		Runner: fr,
+		Now:    time.Now,
+	}
+
+	var reconciled store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		var err error
+		reconciled, err = Reconcile(ctx, rt, tx, b)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if reconciled.Round != 2 {
+		t.Fatalf("Round: got %d, want 2", reconciled.Round)
+	}
+	if reconciled.Serve == nil {
+		t.Fatal("Serve is nil")
+	}
+	if reconciled.Serve.ClosedRound != 1 {
+		t.Fatalf("Serve.ClosedRound: got %d, want 1", reconciled.Serve.ClosedRound)
+	}
+	if reconciled.Serve.ResultCommit != expectedSHA {
+		t.Fatalf("Serve.ResultCommit: got %q, want %q", reconciled.Serve.ResultCommit, expectedSHA)
+	}
+}

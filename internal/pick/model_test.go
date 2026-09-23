@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relay/internal/relay"
+	"github.com/fuad-daoud/relay/internal/store"
 )
 
 func key(s string) tea.KeyMsg {
@@ -90,6 +91,157 @@ func TestCtrlCCancelsFromAnyScreen(t *testing.T) {
 	m, _ = update(t, m, rowsMsg())
 	m, cmd := update(t, m, key("ctrl+c"))
 	wantQuit(t, m, cmd, ErrCancelled)
+}
+
+func TestEnterRunsDoneAndShowsItsText(t *testing.T) {
+	rt := testRuntime(t, testBinding("webshop"))
+	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+
+	m, _ = update(t, m, key("enter"))
+	m, cmd := update(t, m, key("y"))
+	if m.screen != screenResult || !m.result.pending {
+		t.Fatalf("enter should move to a pending result screen: screen=%v pending=%v", m.screen, m.result.pending)
+	}
+	if cmd == nil {
+		t.Fatal("enter returned no command")
+	}
+	m, _ = update(t, m, cmd())
+	if m.result.pending || m.result.err != nil {
+		t.Fatalf("result: pending=%v err=%v", m.result.pending, m.result.err)
+	}
+	if m.result.text != relay.DoneText("webshop", relay.DoneResult{}) {
+		t.Fatalf("text = %q, want DoneText", m.result.text)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil || b.State != store.StateDone {
+		t.Fatalf("binding after done: state=%v err=%v", b.State, err)
+	}
+	m, quit := update(t, m, key("enter"))
+	wantQuit(t, m, quit, nil)
+}
+
+func TestEnterRunsUnbindWithArchive(t *testing.T) {
+	rt := testRuntime(t, testBinding("webshop"))
+	m := newModel(context.Background(), rt, Options{Verb: VerbUnbind, Archive: true})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+
+	m, _ = update(t, m, key("enter"))
+	m, cmd := update(t, m, key("y"))
+	m, _ = update(t, m, cmd())
+	if m.result.err != nil {
+		t.Fatalf("unbind: %v", m.result.err)
+	}
+	if !contains(m.result.text, "archived webshop to ") {
+		t.Fatalf("text = %q, want the archive line", m.result.text)
+	}
+	if _, err := rt.Store.Load("webshop"); err == nil {
+		t.Fatal("binding still loads after unbind")
+	}
+}
+
+func TestVerbErrorShowsAndExitsOne(t *testing.T) {
+	rt := testRuntime(t) // no binding named webshop
+	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+	m, _ = update(t, m, key("enter"))
+	m, cmd := update(t, m, key("y"))
+	m, _ = update(t, m, cmd())
+	if m.result.err == nil {
+		t.Fatal("done on a missing binding should fail")
+	}
+	m, quit := update(t, m, key("x"))
+	wantQuit(t, m, quit, ErrVerbFailed)
+}
+
+func TestKeysAreIgnoredWhileTheVerbRuns(t *testing.T) {
+	rt := testRuntime(t, testBinding("webshop"))
+	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+	m, _ = update(t, m, key("enter"))
+	m, _ = update(t, m, key("y"))
+	m, cmd := update(t, m, key("enter"))
+	if cmd != nil {
+		t.Fatal("a key during a pending verb must not quit or re-run")
+	}
+	if m.outcome != nil {
+		t.Fatalf("outcome set early: %v", m.outcome)
+	}
+}
+
+func TestEnterOnLiveRowAsksBeforeDone(t *testing.T) {
+	rt := testRuntime(t, testBinding("webshop"))
+	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+
+	m, cmd := update(t, m, key("enter"))
+	if m.screen != screenConfirm {
+		t.Fatalf("enter on an ACTIVE row: screen=%v, want screenConfirm", m.screen)
+	}
+	if cmd != nil {
+		t.Fatal("moving to the confirm screen must not run the verb")
+	}
+	if m.confirm.Name != "webshop" {
+		t.Fatalf("confirm holds %q, want webshop", m.confirm.Name)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil || b.State != store.StateActive {
+		t.Fatalf("binding touched before confirm: state=%v err=%v", b.State, err)
+	}
+}
+
+func TestAnyKeyButYReturnsToTheList(t *testing.T) {
+	rt := testRuntime(t, testBinding("a"), testBinding("b"))
+	m := newModel(context.Background(), rt, Options{Verb: VerbDone})
+	m, _ = update(t, m, rowsMsg(row("a", "ACTIVE", "working"), row("b", "ACTIVE", "working")))
+	m, _ = update(t, m, key("down"))
+	m, _ = update(t, m, key("enter"))
+	if m.screen != screenConfirm {
+		t.Fatalf("screen=%v, want screenConfirm", m.screen)
+	}
+	for _, k := range []string{"enter", "n", "esc", "Y"} {
+		mm, cmd := update(t, m, key(k))
+		if mm.screen != screenList {
+			t.Errorf("%q on confirm: screen=%v, want screenList", k, mm.screen)
+		}
+		if cmd != nil {
+			t.Errorf("%q on confirm returned a command; want none", k)
+		}
+		if mm.cursor != 1 {
+			t.Errorf("%q on confirm moved the cursor to %d, want 1", k, mm.cursor)
+		}
+		if mm.outcome != nil {
+			t.Errorf("%q on confirm set outcome %v; the picker must stay open", k, mm.outcome)
+		}
+	}
+	for _, name := range []string{"a", "b"} {
+		b, err := rt.Store.Load(name)
+		if err != nil || b.State != store.StateActive {
+			t.Fatalf("%s touched by a cancelled confirm: state=%v err=%v", name, b.State, err)
+		}
+	}
+}
+
+func TestUnbindOnDoneRowRunsWithoutConfirm(t *testing.T) {
+	done := testBinding("old")
+	done.State = store.StateDone
+	rt := testRuntime(t, done)
+	m := newModel(context.Background(), rt, Options{Verb: VerbUnbind})
+	m, _ = update(t, m, rowsMsg(row("old", "DONE", "idle")))
+	m, cmd := update(t, m, key("enter"))
+	if m.screen != screenResult || !m.result.pending {
+		t.Fatalf("enter on a DONE row should move straight to a pending result: screen=%v pending=%v", m.screen, m.result.pending)
+	}
+	if cmd == nil {
+		t.Fatal("enter on a DONE row returned no command")
+	}
+	m, _ = update(t, m, cmd())
+	if m.result.err != nil {
+		t.Fatalf("unbind: %v", m.result.err)
+	}
+	if _, err := rt.Store.Load("old"); err == nil {
+		t.Fatal("binding still loads after unbind")
+	}
 }
 
 func TestConfirmViewNamesTheBindingItsStateAndRound(t *testing.T) {

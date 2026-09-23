@@ -1800,3 +1800,74 @@ func TestStatusRowQueuedText(t *testing.T) {
 // TestRenderStatusHerdrHeader pins the `relay status` header: a report that
 // carried a herdr error opens with the unreachable line, then the ordinary
 // body; a report that did not renders byte-identical to today.
+
+// TestStatusShowsStopping pins #138: a stop in flight shows
+// "stopping <elapsed> of <grace>" as the builder's status, overriding
+// whatever the builder itself reports, and carries the stop bookkeeping as
+// data for the statusline consumer.
+// TestStatusHidesStoppingAfterGrace pins the fix for the "stopping" label
+// surviving an abandoned stop: once the grace has elapsed and the binding
+// went NEEDS YOU (stopDecision no longer says stopWait), the NEEDS YOU line
+// already says why, so BuilderStatus must not still read
+// "stopping <elapsed> of <grace>".
+// TestStatusJSONCarriesStructuredFields guards the statusline interface: Last
+// and Pending must serialise as JSON objects with typed fields, not as
+// rendered prose the consumer would have to regex apart.
+func TestStatusJSONCarriesStructuredFields(t *testing.T) {
+	rt, b := queuedBinding(t)
+	b.State = store.StateActive
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := decoded["herdr_error"]; ok {
+		t.Errorf("empty HerdrError must be omitted from JSON, got %s", raw)
+	}
+
+	bindings, ok := decoded["bindings"].([]any)
+	if !ok || len(bindings) != 1 {
+		t.Fatalf("bindings = %#v", decoded["bindings"])
+	}
+	row, ok := bindings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("row is not a JSON object: %#v", bindings[0])
+	}
+
+	pending, ok := row["pending"].(map[string]any)
+	if !ok {
+		t.Fatalf("pending must be a JSON object, not prose, got %#v", row["pending"])
+	}
+	if _, ok := pending["round"].(float64); !ok {
+		t.Errorf("pending.round missing or not numeric: %#v", pending)
+	}
+	if _, ok := pending["kind"].(string); !ok {
+		t.Errorf("pending.kind missing or not a string: %#v", pending)
+	}
+
+	last, ok := row["last"].(map[string]any)
+	if !ok {
+		t.Fatalf("last must be a JSON object, not prose, got %#v", row["last"])
+	}
+	if _, ok := last["round"].(float64); !ok {
+		t.Errorf("last.round missing or not numeric: %#v", last)
+	}
+	if _, ok := last["direction"].(string); !ok {
+		t.Errorf("last.direction missing or not a string: %#v", last)
+	}
+}
+
+// TestStatusRowBranch: the worktree branch reaches the row; a --cwd
+// binding (no branch) leaves it empty.
