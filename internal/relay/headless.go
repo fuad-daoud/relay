@@ -176,6 +176,9 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
 //
+// It is the round's prologue -- CPU assignment, candidate lookup, argv -- and
+// the spawn itself is startProcess, which resumeRound shares (#370).
+//
 // Preconditions:  b.Builder.Headless(); no live process on the endpoint
 // (Send checks with Runner.Alive first); rt.Runner non-nil.
 // Postconditions: on success PID, StartedAt and LogPath describe the new
@@ -201,6 +204,30 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
+	return startProcess(ctx, rt, tx, b, argv, c)
+}
+
+// spawnFailure marks an error that came from Runner.Start refusing to launch
+// the process. Its text is its wrapped error's, so startRound's error reads
+// exactly as it always did; the type is what lets the lost builder's resume
+// branch tell "this harness would not start" -- worth one fresh attempt
+// (#370) -- from "this candidate cannot be rendered", which a fresh attempt
+// would fail the same way.
+type spawnFailure struct{ err error }
+
+func (e spawnFailure) Error() string { return e.err.Error() }
+func (e spawnFailure) Unwrap() error { return e.err }
+
+// startProcess is the spawn half of a headless round, shared by startRound
+// and resumeRound (#370): argv is the complete command line, already built by
+// the caller, and c is the candidate it was built for. It does the
+// bookkeeping a new process needs -- the stream cursor, the ProcSpec with its
+// scope, Runner.Start, the spawn-failure ledger record, the Watched mark --
+// and returns the endpoint carrying the new PID, StartedAt and LogPath.
+//
+// Preconditions: rt.Runner non-nil (both callers check it before building
+// argv); argv is a complete command line. Postconditions: as startRound's.
+func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate) (store.Binding, error) {
 	if b.Builder.StreamRound != b.Round {
 		// A new round is a new stream file; a mid-round switch (same
 		// round) keeps rendering the file both processes append to.
@@ -220,7 +247,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
-		return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
+		return b, spawnFailure{fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)}
 	}
 	// This daemon has now seen the process alive (#370): every successful
 	// Start made from a reconcile path marks its handle, so a later tick
@@ -230,6 +257,47 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	b.Builder.StartedAt = h.StartedAt.Unix()
 	b.Builder.LogPath = logPath
 	return b, nil
+}
+
+// resumeRound continues the round's builder in the session it announced
+// before it was lost to a daemon restart (#370, spec §4.10): it resolves the
+// candidate exactly as startRound does, rebuilds the round's Launch for the
+// same candidate and tier, renders its argv through ResumeBuild -- which
+// appends the harness's resume selector -- and hands that to startProcess.
+//
+// It has startRound's pre- and postconditions. ErrResumeUnsupported comes
+// back wrapped and unchanged, so the caller can fall back to a fresh
+// relaunch.
+func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, sessionID, prompt string) (store.Binding, error) {
+	if rt.Runner == nil {
+		return b, ErrRunnerUnavailable
+	}
+	ref, err := candidate.ParseRef(b.BuilderCandidate)
+	if err != nil {
+		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
+	}
+	h, ok := harness.Lookup(c.Harness)
+	if !ok {
+		return b, fmt.Errorf("unknown harness kind %q", c.Harness)
+	}
+	role, _ := harness.RoleByName("builder")
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, effectiveTier(b))
+	if err != nil {
+		return b, err
+	}
+	if l.PromptAt < 0 {
+		return b, fmt.Errorf("harness %q has no print form", c.Harness)
+	}
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), b.CWD, rt.Store.Dir(b.Name))
+	if err != nil {
+		return b, err
+	}
+	argv := append([]string{h.Binary}, sel...)
+	return startProcess(ctx, rt, tx, b, argv, c)
 }
 
 // drainStream brings the round's builder log up to date with its stream
@@ -654,23 +722,54 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt
-		relaunched, err := startRound(ctx, rt, tx, b, text)
+		// Read the round's session before anything clears it (#370): the
+		// old process announced it on its stream, and startProcess -- which
+		// the fresh relaunch calls -- clears StreamSessionID, because a new
+		// process begins a new session.
+		sess := b.Builder.StreamSessionID
+		var (
+			next store.Binding
+			err  error
+			how  = "relaunched"
+		)
+		if sess != "" {
+			next, err = resumeRound(ctx, rt, tx, b, sess, text)
+			switch {
+			case err == nil:
+				how = "resumed session " + sess
+			case errors.Is(err, harness.ErrResumeUnsupported):
+				// codex, and any kind relay cannot resume: the fresh
+				// relaunch is round 1's behaviour and needs no note.
+				next, err = startRound(ctx, rt, tx, b, text)
+			default:
+				var sf spawnFailure
+				if errors.As(err, &sf) {
+					// The harness would not start with the resume
+					// selector. One fresh attempt, then the halt below if
+					// that fails too (spec §6).
+					slog.Warn("resume failed; relaunching fresh", "binding", b.Name, "round", b.Round, "session", sess, "err", err)
+					next, err = startRound(ctx, rt, tx, b, text)
+				}
+			}
+		} else {
+			next, err = startRound(ctx, rt, tx, b, text)
+		}
 		if err != nil {
 			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}
-		b = relaunched
+		b = next
 		// The round's budget clock survives the restart (#370, spec §4.3):
 		// the interruption is relay's, so it must not buy the round more
 		// time than it had.
 		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
-			Note: fmt.Sprintf("relaunched builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
-				rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
+			Note: fmt.Sprintf("%s builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
+				how, rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
 		}); err != nil {
 			return b, err
 		}
-		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, "relaunched "+b.BuilderCandidate+" (lost to a daemon restart)")
+		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, how+" "+b.BuilderCandidate+" (lost to a daemon restart)")
 		b.State = store.StateActive
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil

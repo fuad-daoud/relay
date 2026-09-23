@@ -1665,6 +1665,239 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
 	}
 }
 
+// TestReconcileHeadlessLostToDaemonRestartResumesSession pins #370's R3 half
+// (spec §4.10): a builder lost to a restart whose round announced a session
+// is continued in that session -- claude --resume <id> on the round's own
+// builder-grade argv -- instead of being started fresh. It is still not
+// counted, and the round's budget clock still survives.
+//
+// Mutation check: drop the `sess != ""` branch and this fails: the second
+// Start carries no --resume and the note says "relaunched".
+func TestReconcileHeadlessLostToDaemonRestartResumesSession(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedClaudeHeadless(t, fr)
+	const sess = "sess-lost-1"
+	b.Builder.StreamSessionID = sess
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
+	rt.Watched = NewWatched()                           // and it has seen nothing yet: this builder is lost
+	fr.script(b.Builder.PID, false)                     // exited; no exit() set: code unknown
+	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
+	keep := b.RoundStartedAt
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2 (the resume)", len(fr.specs))
+	}
+	resume := fr.specs[1].Argv
+	if resume[0] != "claude" {
+		t.Errorf("resume argv[0] = %q, want claude", resume[0])
+	}
+	if !containsArg(resume, "--resume", sess) {
+		t.Errorf("resume argv = %v, want --resume %s", resume, sess)
+	}
+	// The full builder launch argv: the same model and agent the round ran
+	// with, not a bare print form.
+	if !containsArg(resume, "--model", "m") || !containsArg(resume, "--agent", "plan-executor") {
+		t.Errorf("resume argv = %v, want the round's --model and --agent", resume)
+	}
+	if !anyArgContains(resume, interruptedNote(rt.StartedAt)) {
+		t.Errorf("resume argv = %v, want its prompt to carry the interrupted note %q", resume, interruptedNote(rt.StartedAt))
+	}
+	if !got.RoundStartedAt.Equal(keep) {
+		t.Errorf("RoundStartedAt = %s, want the pre-resume value %s: resuming must not restart the round's clock",
+			got.RoundStartedAt, keep)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
+	}
+	if got.Builder.PID != fr.handles[1].PID || got.State != store.StateActive {
+		t.Errorf("after resume: pid=%d state=%s, want the new handle %d and active", got.Builder.PID, got.State, fr.handles[1].PID)
+	}
+
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "resumed session "+sess+" builder (lost to a daemon restart") {
+		t.Fatalf("switch entries = %+v, want one starting %q", sw, "resumed session "+sess+" builder")
+	}
+	data, err := os.ReadFile(b.Builder.LogPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", b.Builder.LogPath, err)
+	}
+	if !strings.Contains(string(data), "resumed session "+sess) {
+		t.Errorf("builder log = %q, want the resume marker", string(data))
+	}
+}
+
+// TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh pins the
+// unsupported fallback (spec §6): codex has no verified resume form, so a lost
+// codex builder is relaunched fresh, with the round 1 note, and never carries
+// a resume selector.
+//
+// Mutation check: drop the ErrResumeUnsupported fallback and this fails: the
+// binding halts instead of starting a second process.
+func TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh(t *testing.T) {
+	const codexCandidatesJSON = `[
+	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
+	]`
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, codexCandidatesJSON)
+	rt.Runner = fr
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "codex/openai/gpt-5.6-terra", PlannerID: testPlannerName,
+		CWD: "/repo", Headless: true, Tier: "edit",
+	}); err != nil {
+		t.Fatalf("Bind --headless: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Builder.StreamSessionID = "thread-lost-1"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
+	rt.Watched = NewWatched()
+	fr.script(b.Builder.PID, false) // exited; no exit() set: code unknown
+	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2 (the fresh relaunch)", len(fr.specs))
+	}
+	fresh := fr.specs[1].Argv
+	for _, arg := range fresh {
+		switch arg {
+		case "--resume", "--conversation", "--session":
+			t.Errorf("fresh argv = %v, want no resume selector: codex cannot resume", fresh)
+		}
+	}
+	if !anyArgContains(fresh, interruptedNote(rt.StartedAt)) {
+		t.Errorf("fresh argv = %v, want its prompt to carry the interrupted note", fresh)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0 (not counted)", got.RoundSwitches)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "relaunched builder (lost to a daemon restart") {
+		t.Fatalf("switch entries = %+v, want the fresh relaunch note", sw)
+	}
+}
+
+// TestReconcileHeadlessLostToDaemonRestartWithoutSessionRelaunchesFresh pins
+// the other side of the session test (#370, spec §4.3): a lost builder whose
+// round never announced a session has nothing to resume, so it takes round
+// 1's fresh relaunch and the note names the relaunch.
+func TestReconcileHeadlessLostToDaemonRestartWithoutSessionRelaunchesFresh(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	if b.Builder.StreamSessionID != "" {
+		t.Fatalf("fixture announces session %q, want none: this test pins the no-session path", b.Builder.StreamSessionID)
+	}
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
+	rt.Watched = NewWatched()
+	fr.script(b.Builder.PID, false)
+	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2 (the fresh relaunch)", len(fr.specs))
+	}
+	if got.BuilderCandidate != testAgyRef || got.RoundSwitches != 0 {
+		t.Errorf("candidate=%q switches=%d, want the same candidate and no count", got.BuilderCandidate, got.RoundSwitches)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "relaunched builder (lost to a daemon restart") {
+		t.Fatalf("switch entries = %+v, want the fresh relaunch note", sw)
+	}
+}
+
+// anyArgContains reports whether any element of argv contains substring s.
+// A harness whose print form does not put the prompt first (codex's "exec")
+// still has exactly one element carrying the handoff text; this finds it
+// without pinning the index.
+func anyArgContains(argv []string, s string) bool {
+	for _, arg := range argv {
+		if strings.Contains(arg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestReconcileHeadlessLostToDaemonRestartResumeSpawnFailsFallsBackFresh pins
+// spec §6's spawn failure: the resume is attempted first, its Start fails, and
+// one fresh relaunch follows -- not a halt. Two Start calls, and the note
+// names the relaunch.
+//
+// Mutation check: drop the spawnFailure fallback and this fails: the binding
+// halts after the first Start and no fresh argv is ever started.
+func TestReconcileHeadlessLostToDaemonRestartResumeSpawnFailsFallsBackFresh(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedClaudeHeadless(t, fr)
+	const sess = "sess-lost-1"
+	b.Builder.StreamSessionID = sess
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
+	rt.Watched = NewWatched()
+	fr.script(b.Builder.PID, false)
+	// Only the resume's Start fails; fakeRunner runs onStart before it reads
+	// startErr, so the second call clears it and the fresh relaunch spawns.
+	fr.startErr = errors.New("boom: resume refused")
+	starts := 0
+	fr.onStart = func() {
+		starts++
+		if starts == 2 {
+			fr.startErr = nil
+		}
+	}
+	rt = withClock(rt, &fakeClock{now: baseTime.Add(10 * time.Minute)})
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if starts != 2 {
+		t.Fatalf("Start calls = %d, want 2: the resume attempt, then the fresh relaunch", starts)
+	}
+	// The first Start is the Send that opened the round; the failed resume
+	// records no spec, so the one after it is the fresh relaunch.
+	if len(fr.specs) != 2 {
+		t.Fatalf("specs = %d, want 2: the round's own start and the fresh relaunch", len(fr.specs))
+	}
+	fresh := fr.specs[1].Argv
+	for _, arg := range fresh {
+		switch arg {
+		case "--resume":
+			t.Errorf("fresh argv = %v, want no resume selector after a failed resume", fresh)
+		}
+	}
+	if got.Builder.PID != fr.handles[1].PID || got.RoundSwitches != 0 {
+		t.Errorf("pid=%d switches=%d, want the fresh handle %d and no count", got.Builder.PID, got.RoundSwitches, fr.handles[1].PID)
+	}
+	sw := switches(t, rt)
+	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "relaunched builder (lost to a daemon restart") {
+		t.Fatalf("switch entries = %+v, want the fresh relaunch note", sw)
+	}
+}
+
 func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
