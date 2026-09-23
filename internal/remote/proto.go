@@ -221,6 +221,13 @@ const FeatureQueue = "queue"
 // POST /v1/bindings/{name}/stop advertises (#344).
 const FeatureStop = "stop"
 
+// FeatureBuilder is the WhoAmI.Features token a server that accepts the
+// "candidate" multipart form value on POST /v1/bindings/{name}/rounds
+// advertises (#318). The field is a canonical candidate token that persists as
+// the binding's builder from that round on; absent or "" means keep the
+// binding's builder.
+const FeatureBuilder = "builder"
+
 // ErrorBody represents a JSON error response returned by the server.
 type ErrorBody struct {
 	Code    Code   `json:"error"`

@@ -103,7 +103,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		Transports:    []string{"git-bundle"},
 	}
 	if rt, err := s.runtime(caller); err == nil {
-		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop}
+		who.Features = []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder}
 		who.BuilderTier = string(relay.ServedBuilderTier(rt))
 		who.MaxTier = string(rt.Policy.MaxTierOrDefault())
 		c, _ := s.census()

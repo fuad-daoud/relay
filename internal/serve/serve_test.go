@@ -489,8 +489,8 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	if len(who.Features) != 3 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue || who.Features[2] != remote.FeatureStop {
-		t.Fatalf("Features = %v, want [%s %s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop)
+	if len(who.Features) != 4 || who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue || who.Features[2] != remote.FeatureStop || who.Features[3] != remote.FeatureBuilder {
+		t.Fatalf("Features = %v, want [%s %s %s %s]", who.Features, remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder)
 	}
 	if who.Builders == nil || who.Builders.Cap <= 0 {
 		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
@@ -2909,5 +2909,210 @@ func TestCandidatesView(t *testing.T) {
 	}
 	if pickCount != 1 {
 		t.Errorf("pickCount = %d, want exactly 1", pickCount)
+	}
+}
+
+// setupBuilderEnv is setupTestEnv with two builder candidates, so a round can
+// be moved from one to the other (#318).
+func setupBuilderEnv(t *testing.T) *testEnv {
+	t.Helper()
+	return setupTestEnv(t, func(c *Config) {
+		body := `[
+			{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]},
+			{"harness":"opencode","provider":"anthropic","model":"haiku","roles":["builder"]}
+		]`
+		path := filepath.Join(t.TempDir(), "candidates.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		set, err := candidate.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Candidates = set
+	})
+}
+
+// roundFormCandidate is makeRoundForm with the optional "candidate" field
+// (#318).
+func roundFormCandidate(t *testing.T, round int, plan string, bundleBytes []byte, candidate string) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("round", strconv.Itoa(round)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	if candidate != "" {
+		if err := mw.WriteField("candidate", candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(bundleBytes) > 0 {
+		part, err := mw.CreateFormFile("bundle", "bundle.bundle")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(bundleBytes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
+// TestRoundStartWithCandidateChangesTheBuilder pins (#318): a POST carrying a
+// candidate moves the served binding to it, and the pick is recorded under the
+// round.
+func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
+	env := setupBuilderEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+		Candidate:  "claude/anthropic/haiku",
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	outRef := "refs/relay/api/out"
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snap body: %v", err)
+	}
+
+	formBytes, ct := roundFormCandidate(t, 1, "# Round 1 Plan", bundleBytes, "opencode/anthropic/haiku")
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("start round status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+	var view remote.BindingView
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatalf("unmarshal view: %v", err)
+	}
+	if view.Candidate != "opencode/anthropic/haiku" {
+		t.Errorf("view.Candidate = %q, want opencode/anthropic/haiku", view.Candidate)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.BuilderCandidate != "opencode/anthropic/haiku" {
+		t.Errorf("BuilderCandidate = %q, want opencode/anthropic/haiku", b.BuilderCandidate)
+	}
+	if b.Builder.Kind != "opencode" {
+		t.Errorf("Builder.Kind = %q, want opencode", b.Builder.Kind)
+	}
+
+	entries, err := rt.Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Round == 1 && e.Kind == store.KindPick && strings.Contains(e.Note, "opencode/anthropic/haiku") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no round 1 pick entry naming the new candidate: %+v", entries)
+	}
+}
+
+// TestRoundStartUnknownCandidateRefusesBeforeAbsorb pins (#318): a bad token is
+// 422 invalid and the outbound ref does not move -- validation runs before the
+// bundle is absorbed.
+func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
+	env := setupBuilderEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+		Candidate:  "claude/anthropic/haiku",
+	})
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create binding status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	outRef := "refs/relay/api/out"
+
+	// A new client commit, so an absorb during the request would move the ref.
+	if err := os.WriteFile(filepath.Join(env.clientDir, "file.txt"), []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, env.clientDir, "add", "file.txt")
+	runGit(t, env.clientDir, "commit", "-m", "second commit")
+	secondSHA, ok, err := env.gitClient.RefSHA(ctx, env.clientDir, "HEAD")
+	if err != nil || !ok {
+		t.Fatalf("second head: %v, ok=%v", err, ok)
+	}
+	if err := env.gitClient.UpdateRef(ctx, env.clientDir, outRef, secondSHA, ""); err != nil {
+		t.Fatalf("updateRef client out: %v", err)
+	}
+	snap, err := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	bundleBytes, err := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+	if err != nil {
+		t.Fatalf("read snap body: %v", err)
+	}
+
+	// Seed the server's out ref (the bundle's objects must exist there), then
+	// rewind it to the base commit: an absorb during the refused request would
+	// visibly move it to secondSHA.
+	if _, err := env.transport.Absorb(ctx, b.Serve.BareRepo, remote.ContentTypeGitBundle, bytes.NewReader(bundleBytes), []string{outRef}); err != nil {
+		t.Fatalf("seed server out ref: %v", err)
+	}
+	if err := env.gitClient.UpdateRef(ctx, b.Serve.BareRepo, outRef, env.headSHA, secondSHA); err != nil {
+		t.Fatalf("rewind server out ref: %v", err)
+	}
+
+	formBytes, ct := roundFormCandidate(t, 1, "# Round 1 Plan", bundleBytes, "bogus/nope/x")
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("start round status = %d, want 422; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if errBody.Code != remote.CodeInvalid {
+		t.Errorf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
+	}
+
+	got, ok, err := env.gitClient.RefSHA(ctx, b.Serve.BareRepo, outRef)
+	if err != nil || !ok {
+		t.Fatalf("server out ref: %v, ok=%v", err, ok)
+	}
+	if got != env.headSHA {
+		t.Errorf("server out ref = %q, want it unmoved at %q", got, env.headSHA)
 	}
 }

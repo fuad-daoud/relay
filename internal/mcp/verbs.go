@@ -98,6 +98,7 @@ func (v *RelayVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	opts := relay.SendOptions{
 		Tier:      a.Tier,
 		AllowYolo: false,
+		Builder:   a.Builder,
 		Regate:    a.Regate,
 		Verify:    a.Verify,
 	}

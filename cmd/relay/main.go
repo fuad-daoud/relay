@@ -1317,6 +1317,7 @@ func cmdSend(args []string) error {
 	file := fs.String("file", "", "path to the plan file to hand the builder")
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	builder := fs.String("builder", "", "candidate harness/provider/model to run this round and later ones on; refused while a round is open")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
@@ -1358,6 +1359,7 @@ func cmdSend(args []string) error {
 	opts := relay.SendOptions{
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
+		Builder:   *builder,
 		Regate:    regateOpt,
 		Verify:    verifyOpt,
 	}
@@ -1376,6 +1378,9 @@ func cmdSend(args []string) error {
 		return err
 	}
 
+	if res.Pick != "" {
+		fmt.Println(res.Pick)
+	}
 	if res.Drift != "" {
 		fmt.Println(res.Drift)
 	}

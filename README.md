@@ -1499,6 +1499,8 @@ For consults (`relay ask`), tier resolves from the candidate's `tier`, policy `t
 
 Every builder runs a new process for each round, so a round may temporarily override the tier with `relay send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
+`relay send --builder <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relay stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relay add --builder`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
+
 ### Permission-blocked exits
 
 When a headless builder exits without producing a report file, relay inspects the tail of its stdout/stderr log against the harness's default denial patterns (or the candidate's `denial_patterns` if configured).

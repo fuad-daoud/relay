@@ -276,8 +276,10 @@ func (c *Client) GetBinding(ctx context.Context, server, name string) (remote.Bi
 
 // StartRound begins a round on the server, spooling the multipart form (plan,
 // tags + bundle). tags is the client's tag list shipped as data beside the
-// bundle (#242); nil or empty omits the field entirely.
-func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier string, tags []remote.TagRef) (remote.BindingView, error) {
+// bundle (#242); nil or empty omits the field entirely. candidate is a
+// canonical candidate token for the round and every later one (#318); "" omits
+// the field, which leaves the binding's builder unchanged.
+func (c *Client) StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef) (remote.BindingView, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -302,6 +304,11 @@ func (c *Client) StartRound(ctx context.Context, server, name string, round int,
 	if tier != "" {
 		if err := mw.WriteField("tier", tier); err != nil {
 			return remote.BindingView{}, fmt.Errorf("write tier field: %w", err)
+		}
+	}
+	if candidate != "" {
+		if err := mw.WriteField("candidate", candidate); err != nil {
+			return remote.BindingView{}, fmt.Errorf("write candidate field: %w", err)
 		}
 	}
 	if len(tags) > 0 {
