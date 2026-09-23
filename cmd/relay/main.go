@@ -270,6 +270,12 @@ func noteRegateNoGate(b store.Binding) {
 }
 
 func run(args []string) error {
+	// Every verb captures, before it does anything else (#349): an agy planner
+	// runs relay constantly (send, wait, pull, status), and whichever verb it
+	// happens to run after an agy restart is the one that refreshes the
+	// session's agentapi credentials.
+	captureAgyEnv()
+
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		return errUsagePrinted
@@ -452,21 +458,49 @@ func opencodeDBPath() string {
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 }
 
-// newDeliverers builds Runtime.Deliverers: an OpencodeDeliverer keyed by
-// "opencode" when sqlite3 is on PATH, nil otherwise (docs/specs/2026-09-22-opencode-delivery-design.md).
-// No sqlite3 means the deliverer could never confirm a delivery, so an
-// opencode planner's reports stay pending for relay pull.
+// captureAgyEnv persists the calling agy session's agentapi credentials, when
+// the environment carries them (#349). It runs for every verb rather than a
+// chosen list, and it costs nothing when ANTIGRAVITY_* is absent.
+//
+// Both failures are deliberately silent: capture is best-effort and must never
+// change a command's exit code or output, so a root relay cannot resolve, a
+// directory it cannot write, and an environment with nothing to capture all
+// end the same way -- nothing written, nothing printed.
+func captureAgyEnv() {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return
+	}
+	_, _ = relay.CaptureAgyCreds(os.Getenv, store.New(root).AgyCredsDir(), time.Now().UTC())
+}
+
+// newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
+// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
+// (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
+// opencode deliverer could never confirm a delivery, so an opencode planner's
+// reports stay pending for relay pull. agy needs no external tool: it reads the
+// captured credential file and runs agy itself, and reports its own failure as
+// OutcomeUnavailable.
 func newDeliverers() map[string]relay.PlannerDeliverer {
+	deliverers := map[string]relay.PlannerDeliverer{}
+	// store.DefaultRoot has already succeeded once in newRuntime; the guard is
+	// only for the shape of the function, and a root relay cannot resolve means
+	// every verb has failed long before a delivery is attempted.
+	if root, err := store.DefaultRoot(); err == nil {
+		deliverers["agy"] = &relay.AgyDeliverer{
+			Exec:     binEnvExec{},
+			CredsDir: store.New(root).AgyCredsDir(),
+		}
+	}
 	if _, err := exec.LookPath("sqlite3"); err != nil {
-		return nil
+		return deliverers
 	}
-	return map[string]relay.PlannerDeliverer{
-		"opencode": &relay.OpencodeDeliverer{
-			Exec:      binExec{},
-			StateFile: opencodeStateFile(),
-			DBPath:    opencodeDBPath(),
-		},
+	deliverers["opencode"] = &relay.OpencodeDeliverer{
+		Exec:      binExec{},
+		StateFile: opencodeStateFile(),
+		DBPath:    opencodeDBPath(),
 	}
+	return deliverers
 }
 
 // newRuntime constructs the production runtime; aliases.json is never read (#80).

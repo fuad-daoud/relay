@@ -5,9 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+// agyConversation is a valid agy conversation id: the lower-case 8-4-4-4-12
+// hex UUID shape Detect accepts (#349).
+const agyConversation = "0f0e0d0c-0b0a-4998-8877-665544332211"
 
 // envFunc turns a map into the func(string) string Detect and Resolve read.
 func envFunc(m map[string]string) func(string) string {
@@ -35,6 +40,9 @@ func TestResolveOrder(t *testing.T) {
 	// <ULID>.json, and a flag naming that id resolves it by id -- a ULID is
 	// uppercase and so can never be a valid (lowercase) name.
 	legacy := mustCreate(t, reg, record("01M3252956S27X5G5MPVM77PJ7", "legacy", "claude", "sess-c", 103))
+	// #349: an agy planner registers under its conversation id, which is what
+	// Detect reports as SessionID, with no host pid at all.
+	agyRec := mustCreate(t, reg, record("pl_cccccccccccc", "agy-plane", "agy", agyConversation, 0))
 
 	claudeAt := func(pid int, session string) map[string]string {
 		return map[string]string{
@@ -131,6 +139,17 @@ func TestResolveOrder(t *testing.T) {
 				ProcStart: procStartFails(),
 			},
 			wantID:  beta.ID,
+			wantRes: ResolutionSession,
+		},
+		{
+			name: "an agy conversation id resolves through the session step",
+			in: ResolveInput{
+				Env:       envFunc(map[string]string{"ANTIGRAVITY_CONVERSATION_ID": agyConversation}),
+				PPID:      999,
+				ProcStart: procStartAt(0),
+				Now:       testNow,
+			},
+			wantID:  agyRec.ID,
 			wantRes: ResolutionSession,
 		},
 		{
@@ -274,6 +293,71 @@ func TestDetectOnlyClaude(t *testing.T) {
 		if !ok || ident.HostPID != 42 {
 			t.Errorf("Detect with CLAUDE_PID=%q = %+v (ok %v), want HostPID 42", pid, ident, ok)
 		}
+	}
+}
+
+// TestDetectAgy pins Detect's agy rule (#349): a valid
+// ANTIGRAVITY_CONVERSATION_ID is an agy ident with no host pid, anything else
+// is not detected, and CLAUDECODE still wins when both are set.
+func TestDetectAgy(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want Ident
+		ok   bool
+	}{
+		{
+			name: "a valid conversation id is agy with no host pid",
+			env:  map[string]string{"ANTIGRAVITY_CONVERSATION_ID": agyConversation},
+			want: Ident{Kind: "agy", SessionID: agyConversation, HostPID: 0},
+			ok:   true,
+		},
+		{
+			name: "claude wins when both are set",
+			env: map[string]string{
+				"CLAUDECODE":                  "1",
+				"CLAUDE_CODE_SESSION_ID":      "sess-a",
+				"ANTIGRAVITY_CONVERSATION_ID": agyConversation,
+			},
+			want: Ident{Kind: "claude", SessionID: "sess-a", HostPID: 4242},
+			ok:   true,
+		},
+		{
+			name: "a malformed id is not detected",
+			env:  map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "not-a-uuid"},
+		},
+		{
+			name: "an upper-case UUID is not detected",
+			env:  map[string]string{"ANTIGRAVITY_CONVERSATION_ID": strings.ToUpper(agyConversation)},
+		},
+		{
+			name: "a truncated UUID is not detected",
+			env:  map[string]string{"ANTIGRAVITY_CONVERSATION_ID": "0f0e0d0c-0b0a-4998-8877-66554433221"},
+		},
+		{
+			name: "an empty id is not detected",
+			env:  map[string]string{"ANTIGRAVITY_CONVERSATION_ID": ""},
+		},
+		{
+			name: "no variables at all",
+			env:  map[string]string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ident, ok := Detect(envFunc(tc.env), 4242)
+			if ok != tc.ok {
+				t.Fatalf("Detect ok = %v, want %v", ok, tc.ok)
+			}
+			if ident != tc.want {
+				t.Errorf("Detect = %+v, want %+v", ident, tc.want)
+			}
+		})
+	}
+
+	if _, ok := Detect(nil, 42); ok {
+		t.Error("Detect(nil) reported a harness")
 	}
 }
 
