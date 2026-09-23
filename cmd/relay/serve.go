@@ -125,6 +125,9 @@ func cmdServe(args []string) error {
        relay serve revoke <id> [--state <dir>]
        relay serve fingerprint [--state <dir>]
        relay serve status [--state <dir>]
+       relay serve log --owner <label|id> <name> [--round N] [--after N] [--json] [--follow] [--state <dir>]
+       relay serve show --owner <label|id> <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]
+       relay serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner] [--json] [--state <dir>]
        relay serve gates [--state <dir>]
        relay serve available <provider|token> [--state <dir>]
        relay serve unavailable <token> [--for D] [--reason S] [--state <dir>]
@@ -150,6 +153,12 @@ func cmdServe(args []string) error {
 		return cmdServeFingerprint(args[1:])
 	case "status":
 		return cmdServeStatus(args[1:])
+	case "log":
+		return cmdServeLog(args[1:])
+	case "show":
+		return cmdServeShow(args[1:])
+	case "tab":
+		return cmdServeTab(args[1:])
 	case "gates":
 		return cmdServeGates(args[1:])
 	case "available":
@@ -617,6 +626,195 @@ func cmdServeStatus(args []string) error {
 
 	fmt.Print(serve.RenderAdminStatus(owners, builders))
 	return nil
+}
+
+// cmdServeLog prints one owner's binding log from the server (#216): the
+// read-only counterpart of `relay log`. It resolves the owner with the same
+// resolver `serve unbind` uses, builds that owner's runtime, and renders
+// through the same printLog the client verb uses, so the output reads exactly
+// like a client's. It stamps nothing -- the .viewed sidecar is the owner's,
+// not the admin's -- and creates nothing.
+func cmdServeLog(args []string) error {
+	const usage = "usage: relay serve log --owner <label|id> <name> [--round N] [--after N] [--json] [--follow] [--state <dir>]"
+
+	fs := flag.NewFlagSet("relay serve log", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
+	owner := fs.String("owner", "", "client label or id")
+	round := fs.Int("round", 0, "show only this round (default: all rounds)")
+	after := fs.Int("after", 0, "show only entries with a Seq greater than this (0 = all)")
+	asJSON := fs.Bool("json", false, "one compact JSON object per line (NDJSON)")
+	follow := fs.Bool("follow", false, "keep printing new entries until the binding is DONE or removed")
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if *owner == "" || fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+	name := fs.Arg(0)
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := serve.New(serveAdminConfig(root))
+	if err != nil {
+		return err
+	}
+
+	rt, _, err := serve.AdminOwnerRuntime(srv, *owner)
+	if err != nil {
+		if errors.Is(err, serve.ErrNoSuchClient) {
+			fmt.Fprintf(os.Stderr, "relay serve log: no such client: %s\n", *owner)
+		} else if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "relay serve log: %s/%s: binding not found\n", *owner, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "relay serve log: %v\n", err)
+		}
+		return exitCodeErr{code: 1}
+	}
+
+	if err := printLog(rt, name, *round, *after, *asJSON, *follow, false); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "relay serve log: %s/%s: binding not found\n", *owner, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "relay serve log: %v\n", err)
+		}
+		return exitCodeErr{code: 1}
+	}
+	return nil
+}
+
+// cmdServeShow prints one owner's round from the server (#216): the read-only
+// counterpart of `relay show`. It reads live bindings only -- opening the
+// database would create it, and the database belongs to the client that ran
+// the work, not to the server admin's read -- and prefixes the stderr header
+// with the owner's label so the reader can see whose round it is.
+func cmdServeShow(args []string) error {
+	const usage = "usage: relay serve show --owner <label|id> <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]"
+
+	fs := flag.NewFlagSet("relay serve show", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
+	owner := fs.String("owner", "", "client label or id")
+	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
+	plan := fs.Bool("plan", false, "show the plan (default)")
+	report := fs.Bool("report", false, "show the report")
+	diff := fs.Bool("diff", false, "show the round's captured diff")
+	drift := fs.Bool("drift", false, "show the round's drift patch")
+	logSection := fs.Bool("log", false, "show the round's log entries")
+	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
+	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if *owner == "" || fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+	name := fs.Arg(0)
+
+	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript)
+	if serr != nil {
+		fmt.Fprintln(os.Stderr, "relay serve show: "+serr.Error())
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := serve.New(serveAdminConfig(root))
+	if err != nil {
+		return err
+	}
+
+	rt, label, err := serve.AdminOwnerRuntime(srv, *owner)
+	if err != nil {
+		if errors.Is(err, serve.ErrNoSuchClient) {
+			fmt.Fprintf(os.Stderr, "relay serve show: no such client: %s\n", *owner)
+		} else if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "relay serve show: %s/%s: binding not found (serve show reads live bindings only)\n", *owner, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "relay serve show: %v\n", err)
+		}
+		return exitCodeErr{code: 1}
+	}
+
+	opts := relay.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
+	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "relay serve show: %s/%s: binding not found (serve show reads live bindings only)\n", *owner, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "relay serve show: %v\n", err)
+		}
+		return exitCodeErr{code: 1}
+	}
+	return nil
+}
+
+// cmdServeTab sums recorded usage across owners from the server (#216). With
+// --owner it sums that owner's bindings; without it sums every owner, and the
+// binding group is "<label>/<name>" while --by owner groups by label. It is
+// the spec's "`relay tab --by owner` on the server", scoped to this verb.
+func cmdServeTab(args []string) error {
+	const usage = "usage: relay serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner] [--json] [--state <dir>]"
+
+	fs := flag.NewFlagSet("relay serve tab", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
+	owner := fs.String("owner", "", "client label or id (default: every owner)")
+	since := fs.String("since", "", "only rounds closed after this: 24h, 7d, or YYYY-MM-DD (default: all)")
+	by := fs.String("by", "binding", "group rows by binding, model, provider or owner")
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	_ = fs.String("state", "", "state directory")
+	if err := fs.Parse(args); err != nil {
+		return exitCodeErr{code: 2}
+	}
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, usage)
+		return exitCodeErr{code: 2}
+	}
+
+	cut, err := relay.ParseSince(*since, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+
+	root, err := adminRoot(fs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := serve.New(serveAdminConfig(root))
+	if err != nil {
+		return err
+	}
+
+	entries, err := serve.AdminTabEntries(srv, *owner, cut, func(msg string) {
+		fmt.Fprintf(os.Stderr, "relay serve tab: skip %s\n", msg)
+	})
+	if err != nil {
+		if errors.Is(err, serve.ErrNoSuchClient) {
+			fmt.Fprintf(os.Stderr, "relay serve tab: no such client: %s\n", *owner)
+		} else if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "relay serve tab: %s: binding not found\n", *owner)
+		} else {
+			fmt.Fprintf(os.Stderr, "relay serve tab: %v\n", err)
+		}
+		return exitCodeErr{code: 1}
+	}
+
+	return renderTabReport(entries, *by, cut, *asJSON)
 }
 
 // cmdServeGates lists the gates on the server-wide ledger: `relay serve

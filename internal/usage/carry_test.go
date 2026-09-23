@@ -55,7 +55,7 @@ func TestParseCachedFeedsOnlyAppendedBytes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
-	r := New(nil, dir)
+	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
 	if got, _ := r.Peek(ctx, src); len(got) != 3 {
 		t.Fatalf("first Peek: %d samples, want 3", len(got))
@@ -85,7 +85,7 @@ func TestParseCachedPartialLineWaits(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
-	r := New(nil, dir)
+	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
 	if got, _ := r.Peek(ctx, src); len(got) != 3 {
 		t.Fatalf("first Peek: %d samples, want 3", len(got))
@@ -115,7 +115,7 @@ func TestParseCachedTruncatedFileResets(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1), stepFinish(1, 1))
-	r := New(nil, dir)
+	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
 	if got, _ := r.Peek(ctx, src); len(got) != 5 {
 		t.Fatalf("first Peek: %d samples, want 5", len(got))
@@ -139,7 +139,7 @@ func TestParseCachedUnchangedFileIsNoRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
 	writeLines(t, path, stepFinish(1, 1), stepFinish(1, 1))
-	r := New(nil, dir)
+	r := New()
 	src := Source{Harness: "opencode", Mode: ModeHeadless, Provider: "p", Model: "m", StreamPath: path}
 	if got, _ := r.Peek(ctx, src); len(got) != 2 {
 		t.Fatalf("first Peek: %d samples, want 2", len(got))
@@ -174,7 +174,7 @@ func TestClaudeCarryDedupesAcrossFeeds(t *testing.T) {
 	path := filepath.Join(dir, "s.jsonl")
 	line := `{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":5}}}`
 	writeLines(t, path, line)
-	r := New(nil, dir)
+	r := New()
 	src := Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path}
 	if got, _ := r.Peek(ctx, src); len(got) != 1 {
 		t.Fatalf("first Peek: %d samples, want 1", len(got))

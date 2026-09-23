@@ -65,6 +65,40 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
+func TestServeLogWithoutOwnerExits2(t *testing.T) {
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "log", "some-binding"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("expected nothing on stdout, got %q", string(stdout))
+	}
+	if !strings.Contains(string(stderr), "--owner") {
+		t.Errorf("expected mention of --owner on stderr, got %q", string(stderr))
+	}
+}
+
+func TestServeShowWithoutOwnerExits2(t *testing.T) {
+	stdout, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "show", "some-binding"})
+	})
+
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("expected exit code 2, got %v", runErr)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("expected nothing on stdout, got %q", string(stdout))
+	}
+	if !strings.Contains(string(stderr), "--owner") {
+		t.Errorf("expected mention of --owner on stderr, got %q", string(stderr))
+	}
+}
+
 func TestServeFlagDefaults(t *testing.T) {
 	fs, sf := serveFlagSet()
 

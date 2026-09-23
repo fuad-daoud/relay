@@ -50,16 +50,13 @@ type Reader interface {
 // them (#234): the cache maps a StreamPath to its parse state, so Peek on
 // every ui tick parses the appended bytes only. Not persisted.
 type reader struct {
-	exec  Exec
-	home  string
 	mu    *sync.Mutex
 	cache map[string]*streamCache
 }
 
-// New returns the production reader. exec may be nil (sqlite3 absent);
-// home is the user's home directory.
-func New(exec Exec, home string) Reader {
-	return reader{exec: exec, home: home, mu: &sync.Mutex{}, cache: map[string]*streamCache{}}
+// New returns the production reader.
+func New() Reader {
+	return reader{mu: &sync.Mutex{}, cache: map[string]*streamCache{}}
 }
 
 func (r reader) Read(ctx context.Context, src Source) ([]Sample, string) {

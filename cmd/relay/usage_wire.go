@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	// usagepkg: package main already has a package-level const named
@@ -23,11 +22,6 @@ func newUsageReader(configDir string) (usagepkg.Reader, usagepkg.Prices) {
 		// once, on stderr, and run on the embedded default.
 		fmt.Fprintf(os.Stderr, "relay: %v (using built-in prices)\n", err)
 	}
-	var sqlite usagepkg.Exec
-	if _, err := exec.LookPath("sqlite3"); err == nil {
-		sqlite = binExec{}
-	}
-	home, _ := os.UserHomeDir()
-	reader := usagepkg.New(sqlite, home)
+	reader := usagepkg.New()
 	return reader, prices
 }

@@ -130,6 +130,35 @@ func TestTabRowsByModelAndProvider(t *testing.T) {
 	}
 }
 
+// TestTabRowsByOwner groups by the entry's Owner label: the server-side
+// `relay serve tab --by owner` grouping (#216). The client refuses the flag
+// (cmdTab); this pins relay's half, and the ErrBadBy text naming owner.
+func TestTabRowsByOwner(t *testing.T) {
+	e1 := tabEntry("api", 1*time.Hour, store.KindReport, "anthropic", "claude-sonnet-5", 0.50, usage.Measured)
+	e1.Owner = "alice"
+	e2 := tabEntry("api", 2*time.Hour, store.KindReport, "anthropic", "claude-sonnet-5", 0.25, usage.Measured)
+	e2.Owner = "alice"
+	e3 := tabEntry("web", 3*time.Hour, store.KindReport, "google", "gemini-3.8-flash-high", 0, usage.Unknown)
+	e3.Owner = "bob"
+
+	rows, total, err := TabRows([]TabEntry{e1, e2, e3}, "owner", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Group != "alice" || rows[1].Group != "bob" {
+		t.Fatalf("owner rows = %+v, want alice then bob", rows)
+	}
+	if rows[0].Spend.Rounds != 2 || rows[0].Spend.Measured != 0.75 {
+		t.Errorf("alice = %+v", rows[0].Spend)
+	}
+	if total.Rounds != 3 {
+		t.Errorf("total = %+v", total)
+	}
+	if _, _, err := TabRows(nil, "day", time.Time{}); !errors.Is(err, ErrBadBy) || !strings.Contains(err.Error(), "owner") {
+		t.Errorf("bad --by: %v, want ErrBadBy naming owner", err)
+	}
+}
+
 func TestTabRowsUnknownModelGroup(t *testing.T) {
 	e := TabEntry{Binding: "x", Entry: store.LogEntry{TS: tabNow, Kind: store.KindReport, Usage: &usage.Usage{Cost: usage.Cost{Basis: usage.Unknown}}}}
 	rows, _, _ := TabRows([]TabEntry{e}, "model", time.Time{})
@@ -241,5 +270,66 @@ func TestRenderTabStepColumns(t *testing.T) {
 	}
 	if got := stepsCell(lines[3]); got != "10" || !strings.Contains(lines[3], "1.50") {
 		t.Errorf("total row = %q, want steps 10 and calls/st 1.50", lines[3])
+	}
+}
+
+// TestTabEntriesLiveAndArchived pins the gather half `relay tab` and
+// `relay serve tab` share: a live binding's log and an archived binding's log
+// both contribute entries, an unreadable archive is a warning rather than a
+// failure, and a cut newer than the archive's own stamp skips the archive
+// whole. Store-only: no harness, no network.
+func TestTabEntriesLiveAndArchived(t *testing.T) {
+	s := store.New(t.TempDir())
+
+	if err := s.Save(store.Binding{Name: "live", CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save live: %v", err)
+	}
+	if err := s.AppendLog("live", store.LogEntry{TS: tabNow, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Usage: &usage.Usage{Harness: "h", Provider: "anthropic", Model: "claude-sonnet-5", Samples: 1}}); err != nil {
+		t.Fatalf("AppendLog live: %v", err)
+	}
+
+	if err := s.Save(store.Binding{Name: "old", CWD: t.TempDir(), Round: 1, State: store.StateActive}); err != nil {
+		t.Fatalf("Save old: %v", err)
+	}
+	if err := s.AppendLog("old", store.LogEntry{TS: tabNow, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
+		Usage: &usage.Usage{Harness: "h", Provider: "google", Model: "gemini-3.8-flash-high", Samples: 1}}); err != nil {
+		t.Fatalf("AppendLog old: %v", err)
+	}
+	if _, err := s.Archive("old"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	rt := Runtime{Store: s, Now: func() time.Time { return tabNow }}
+	var warnings []string
+	warn := func(msg string) { warnings = append(warnings, msg) }
+
+	entries, err := TabEntries(rt, time.Time{}, warn)
+	if err != nil {
+		t.Fatalf("TabEntries: %v", err)
+	}
+	got := map[string]int{}
+	for _, e := range entries {
+		got[e.Binding]++
+	}
+	if got["live"] != 1 || got["old"] != 1 {
+		t.Errorf("entries by binding = %v, want one each for live and old", got)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none", warnings)
+	}
+
+	archives, err := s.ListArchives()
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("ListArchives = %v, %v, want exactly one archive", archives, err)
+	}
+	// A cut past the archive's stamp skips it: every entry in it predates
+	// the archive itself.
+	entries, err = TabEntries(rt, archives[0].At.Add(time.Second), warn)
+	if err != nil {
+		t.Fatalf("TabEntries with cut: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Binding != "live" {
+		t.Errorf("entries with a cut past the archive = %+v, want only live's", entries)
 	}
 }

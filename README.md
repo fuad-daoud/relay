@@ -632,6 +632,9 @@ On a fresh server host, the first run looks like:
 
 On the server machine, the admin can inspect enrolled clients and all owners' active bindings:
 - `relay serve status` displays active bindings across all owners, sorted by owner label.
+- `relay serve log --owner <label|id> <name>` prints that owner's binding log, with `relay log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
+- `relay serve show --owner <label|id> <name>` prints one round's plan, report, diff, drift, log or transcript, with `relay show`'s flags. Read-only, and it reads live bindings only: it never opens the database, so a non-live binding reads as "binding not found".
+- `relay serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and without it for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.
 - `relay serve clients` lists enrolled clients and their revocation status.
 - `relay serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 
