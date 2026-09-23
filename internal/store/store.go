@@ -591,6 +591,11 @@ func (s *Store) LedgerPath() string { return filepath.Join(s.root, "ledger.json"
 // binding history; history.Load migrates an older install's file in place.
 func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availability.json") }
 
+// LatencyPath is the per-candidate latency history (#324 part 1): time to
+// first output per candidate, beside availability.json. It is a record, not
+// a policy -- nothing in the pick order reads it.
+func (s *Store) LatencyPath() string { return filepath.Join(s.root, "latency.json") }
+
 // DBPath is relay's sqlite database file (docs/specs/2026-09-20-persistence-design.md
 // §4), beside ledger.json and availability.json.
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relay.db") }

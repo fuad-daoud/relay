@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/harness"
 	"github.com/fuad-daoud/relay/internal/history"
 	"github.com/fuad-daoud/relay/internal/hooks"
+	"github.com/fuad-daoud/relay/internal/latency"
 	diffpatch "github.com/fuad-daoud/relay/internal/patch"
 	"github.com/fuad-daoud/relay/internal/pick"
 	"github.com/fuad-daoud/relay/internal/policy"
@@ -81,7 +82,7 @@ Commands:
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
-  candidates   list the configured harness/provider/model candidates
+  candidates   list the configured harness/provider/model candidates [--probe]
   policy       show, per role, which candidate relay would pick right now and why
   planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
   unavailable  record a provider rate limit: relay unavailable <token> [--for D] [--reason S]
@@ -516,6 +517,7 @@ func newRuntime() (relay.Runtime, error) {
 		Candidates:       candidates,
 		LedgerPath:       st.LedgerPath(),
 		AvailabilityPath: st.AvailabilityPath(),
+		LatencyPath:      st.LatencyPath(),
 		Policy:           pol,
 		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
@@ -673,8 +675,12 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 
 func cmdCandidates(args []string) error {
 	fs := flag.NewFlagSet("candidates", flag.ContinueOnError)
+	probe := fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if !*probe && len(fs.Args()) > 0 {
+		return fmt.Errorf("usage: relay candidates [--probe [token...]]")
 	}
 
 	rt, err := newRuntime()
@@ -682,7 +688,49 @@ func cmdCandidates(args []string) error {
 		return err
 	}
 
-	fmt.Print(relay.FormatCandidates(rt.Candidates, relay.Gates(rt)))
+	if *probe {
+		host, _ := os.Hostname()
+		tokens := fs.Args()
+		n := len(tokens)
+		if n == 0 {
+			n = rt.Candidates.Len()
+		}
+		fmt.Fprintf(os.Stderr, "probing %d candidate(s) from %s, one at a time\n", n, host)
+
+		width := 0
+		if len(tokens) > 0 {
+			for _, tok := range tokens {
+				if len(tok) > width {
+					width = len(tok)
+				}
+			}
+		} else {
+			for _, ref := range rt.Candidates.Refs() {
+				if len(ref) > width {
+					width = len(ref)
+				}
+			}
+		}
+
+		_, err := relay.Probe(context.Background(), rt, lineExec{}, tokens, host, func(r relay.ProbeResult) {
+			fmt.Println(relay.FormatProbe(r, width))
+		})
+		return err
+	}
+
+	h, err := latency.Load(rt.LatencyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relay: could not read latency: %v\n", err)
+		h = latency.History{}
+	}
+	h = h.Prune(rt.Now())
+
+	lat := make(map[string]latency.Summary)
+	for _, ref := range rt.Candidates.Refs() {
+		lat[ref] = h.Summary(ref)
+	}
+
+	fmt.Print(relay.FormatCandidatesLatency(rt.Candidates, relay.Gates(rt), lat))
 	return nil
 }
 

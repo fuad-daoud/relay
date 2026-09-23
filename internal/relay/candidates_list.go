@@ -6,15 +6,24 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/harness"
+	"github.com/fuad-daoud/relay/internal/latency"
 	"github.com/fuad-daoud/relay/internal/ledger"
 )
 
-// FormatCandidates renders the configured candidates for `relay candidates`:
-// one line per token, sorted, with the roles it serves and any extra args in
-// brackets, and -- when gated -- a trailing note naming why and until when.
-// It is a listing, not a check -- zero candidates prints the same sentence
-// the bind refusal uses, so the planner learns the file name once.
+// FormatCandidates renders the configured candidates without latency: the
+// listing FormatCandidatesLatency prints when no probe history is loaded.
 func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
+	return FormatCandidatesLatency(set, gates, nil)
+}
+
+// FormatCandidatesLatency renders the configured candidates for `relay
+// candidates`: one line per token, sorted, with the roles it serves and any
+// extra args in brackets, and -- when gated -- a trailing note naming why and
+// until when. A token with successful probes in lat also carries its p50 time
+// to first output, so the planner can see what a candidate costs to start. It
+// is a listing, not a check -- zero candidates prints the same sentence the
+// bind refusal uses, so the planner learns the file name once.
+func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; write ~/.config/relay/candidates.json (see README \"Candidates\")\n"
 	}
@@ -44,6 +53,9 @@ func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
 		}
 		if len(c.ExtraArgs) > 0 {
 			sb.WriteString("   [" + strings.Join(c.ExtraArgs, " ") + "]")
+		}
+		if s, ok := lat[ref]; ok && s.N > 0 {
+			sb.WriteString(fmt.Sprintf("   ttft p50 %s (n=%d, 30d)", probeMS(s.TTFTP50MS), s.N))
 		}
 		h, _ := harness.Lookup(c.Harness)
 		if flag := h.ExtraArgsPermissionFlag(c.ExtraArgs); flag != "" {
