@@ -359,12 +359,8 @@ func statsOutcome(R *store.LogEntry, stop, exit bool) string {
 // dropped and the model cut at its first "#", the effort suffix, exactly as
 // refKey cuts a candidate token. Both paths therefore agree on one builder key.
 func statsUsageKey(u *usage.Usage) string {
-	model := u.Model
-	if i := strings.IndexByte(model, '#'); i >= 0 {
-		model = model[:i]
-	}
 	parts := make([]string, 0, 3)
-	for _, p := range []string{u.Harness, u.Provider, model} {
+	for _, p := range []string{u.Harness, u.Provider, modelSansEffort(u.Model)} {
 		if p != "" {
 			parts = append(parts, p)
 		}
@@ -632,11 +628,7 @@ func refKey(tok string) string {
 	if err != nil {
 		return "unknown"
 	}
-	model := ref.Model
-	if i := strings.IndexByte(model, '#'); i >= 0 {
-		model = model[:i]
-	}
-	return ref.Harness + "/" + ref.Provider + "/" + model
+	return ref.Harness + "/" + ref.Provider + "/" + modelSansEffort(ref.Model)
 }
 
 // providerOfToken returns the provider of a candidate token, or "unknown" when
