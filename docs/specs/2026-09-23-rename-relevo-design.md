@@ -79,9 +79,9 @@ every miss" claim no longer hold.
 3. Restore `olderArchitectDoc` from HEAD.
 4. `gofmt -w`, then `scripts/agents-shipped.sh --write`.
 
-A trial on `7e607ea`:
+Trials on `7e607ea` and, after roles S1 merged, on `eedf154`:
 
-- 509 paths changed; build and vet were clean.
+- 509 and then 527 paths changed; build and vet were clean.
 - Left to do by hand:
   - two UI golden sets (`-update`: the title is one column wider);
   - `TestCardLinesShapes`, where `relevo/api` no longer fits the rail, so the
@@ -92,7 +92,34 @@ A trial on `7e607ea`:
 **Re-runnable by design.** Any branch that lands first (for example roles S1) is
 absorbed by re-running the script on the rebased tree, not by merging.
 
-## 3. R2: `relevo migrate` and legacy reads
+## 3. R2 and R3: legacy reads, the guard, and `relevo migrate`
+
+**Revised 2026-09-24 after R2's research.** These supersede the text below where
+they differ:
+
+- **Rounds.** The work is split into R2 and R3. R2 covers `internal/legacy`, the
+  legacy readers, the `dist` embed package, the doctor row, and a guard in `run()`
+  that refuses every verb except help, version, doctor and migrate on an
+  unmigrated install. The guard replaces the daemon-only refusal: any verb, the
+  plugin hook included, would otherwise create the new root and block migrate.
+  R3 is `relevo migrate`. The guard and planner side become R4.
+- **Worktrees live inside the state root** (`<state>/.worktrees/<name>`), and so do
+  a server's bare repos and worktrees. After the move, migrate:
+  - rewrites the old-root prefix byte for byte in every `*.json`/`*.jsonl` under
+    the new root (a textual replace of the JSON string prefix, so #372's shapes are
+    untouched);
+  - rewrites the same prefix in every TEXT column of the DB (`binding.cwd`,
+    `worktree`, `archive_path`, and others);
+  - runs `git -C <repo> worktree repair <worktree>` for every binding whose
+    worktree exists.
+- **Units.** Migrate manages only the client daemon unit (`relay.service` / the
+  launchd plist). It refuses while a serve daemon is alive on a root it would move.
+  The serve unit belongs to whoever deployed it (servers/contabo).
+- **Explicit roots.** `--state-from DIR --state-to DIR` runs the same move, rewrite
+  and repair on an explicit pair. contabo's serve data is `--state
+  /srv/data/relay-serve`.
+- **Open work.** Migrate refuses while any binding is `active`, `needs_you` or
+  `broken`, or any consult is running.
 
 **`relevo migrate [--dry-run] [--keep-old-binary]`** is one ordered procedure. Each
 step is reported, and every step either succeeds or leaves a state that re-running

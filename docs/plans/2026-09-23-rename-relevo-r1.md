@@ -12,8 +12,8 @@ markers, MCP server name and ledger source all move from `relay` to `relevo`.
 this one**.
 
 The planner cut branch `rename-relevo` from `origin/main` and committed
-`scripts/rename-relevo.sh` as its only commit. A trial of the same script on
-`7e607ea` gave a tree where build, vet, tests, gofmt, tidy, plugin-version,
+`scripts/rename-relevo.sh` as its only commit. Trials of the same script on
+`7e607ea` and on `eedf154` (after roles S1, #383, merged; 527 paths) gave a tree where build, vet, tests, gofmt, tidy, plugin-version,
 shellcheck, the script tests and e2e all pass, after exactly the fixes in step 3.
 
 **Stop rather than improvise.** If a step can't be done as written, or the
@@ -105,8 +105,8 @@ fixes:
   padding shifts.
   - Run `go test ./internal/ui/ ./internal/ui/dash/ -run TestGoldenViews -update`.
   - Then run `git diff --word-diff -- internal/ui/testdata internal/ui/dash/testdata`
-    and confirm every change is `relay`→`relevo` or whitespace alignment on the
-    same line. Anything else means halt.
+    and confirm every change is `relay`→`relevo` (including branch names such
+    as `relevo/atlas`) or whitespace alignment on the same line. Anything else means halt.
 - **3b. `TestCardLinesShapes`** (`internal/ui/rail_test.go`, the `headless`
   fixture, about lines 33-35 and 54). `relevo/api` no longer fits the rail width
   and renders as `relevo/ap`. Change the fixture's `Branch: "relevo/api"` to
@@ -127,8 +127,11 @@ git grep -nIE '(RELAY|Relay)([^a-z]|$)|(^|[^A-Za-z]|\\[nt])relay([^a-z]|$)' -- .
   ':!scripts/rename-relevo.sh' ':!internal/harness/agents/shipped.sha256'
 ```
 
-The only expected hits are in `internal/harness/install_test.go`, inside the
-`olderArchitectDoc` literal (spec §1, kept item 5). Report any other hit. **Do not
+The only expected hits are:
+
+- `internal/harness/install_test.go`, inside the `olderArchitectDoc` literal (spec
+  §1, kept item 5);
+- `README.md`'s `relay-site.fuad-daoud.com` hostname (spec §1, kept item 4). Report any other hit. **Do not
 fix it by hand.**
 
 **Step 5: full check.**
