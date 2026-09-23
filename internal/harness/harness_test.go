@@ -155,6 +155,21 @@ func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 	}
 }
 
+// Every kind's builder definition must ask its builder to report any git
+// surgery it did to its own branch (#216): a rebase or reset the plan did not
+// call for is invisible otherwise.
+func TestPlanExecutorReportsGitSurgeryOnEveryKind(t *testing.T) {
+	for _, h := range All() {
+		doc, err := AgentDoc("plan-executor", h.Kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(plan-executor, %s): %v", h.Kind, err)
+		}
+		if !strings.Contains(string(doc), "Git surgery on your branch:") {
+			t.Errorf("%s plan-executor does not require the report to name git surgery on the branch (#216)", h.Kind)
+		}
+	}
+}
+
 // The architect is the planner's definition: relay ships it so the
 // planner session can be started with --agent architect on any kind, but
 // relay never launches it, so it is a Role row and not a roleTable entry.
