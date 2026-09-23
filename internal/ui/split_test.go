@@ -473,6 +473,7 @@ func TestCompactIgnoresResize(t *testing.T) {
 }
 
 func TestHeaderGatesAndClock(t *testing.T) {
+	t.Cleanup(relay.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView())

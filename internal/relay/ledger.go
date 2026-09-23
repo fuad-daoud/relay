@@ -291,13 +291,44 @@ func GateKindText(k ledger.Kind) string {
 	}
 }
 
-// GateUntilText renders Until as "until HH:MM" in local time, or
+// gateClock is the "now" GateTimeText compares a gate time against. Tests
+// override it and restore it with t.Cleanup.
+var gateClock = time.Now
+
+// SetGateClock replaces the clock gate times are formatted against and
+// returns a func that restores the previous one. For tests that render at a
+// fixed time, in this package and others (internal/ui); production never
+// calls it. Not safe to use from parallel tests.
+func SetGateClock(now func() time.Time) (restore func()) {
+	prev := gateClock
+	gateClock = now
+	return func() { gateClock = prev }
+}
+
+// GateTimeText renders a gate time in local time: the clock time alone when
+// it falls on today's local date, the date as well otherwise, so a gate
+// hours or days out never reads as later today.
+func GateTimeText(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	lt, ln := t.Local(), gateClock().Local()
+	if lt.Year() == ln.Year() && lt.Month() == ln.Month() && lt.Day() == ln.Day() {
+		return lt.Format("15:04")
+	}
+	if lt.Year() == ln.Year() {
+		return lt.Format("Jan 2 15:04")
+	}
+	return lt.Format("2006-01-02 15:04")
+}
+
+// GateUntilText renders Until as "until <gate time>" in local time, or
 // "until cleared" for a zero Until.
 func GateUntilText(until time.Time) string {
 	if until.IsZero() {
 		return "until cleared"
 	}
-	return "until " + until.Local().Format("15:04")
+	return "until " + GateTimeText(until)
 }
 
 // gatedNote is the one advisory line bind, add, fork and ask print after a
@@ -309,7 +340,7 @@ func gatedNote(rt Runtime, token string) string {
 		if g.Token != token {
 			continue
 		}
-		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), g.Since.Local().Format("15:04"), GateUntilText(g.Until))
+		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
 		if g.Note != "" {
 			part += ": " + g.Note
 		}
