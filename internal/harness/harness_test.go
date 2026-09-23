@@ -218,6 +218,32 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	}
 }
 
+// #323. The measured levers (scripted mechanical work, fenced deletions,
+// locations not searches) are part of the shipped planner on every kind.
+func TestArchitectCarriesLatencyGuidance(t *testing.T) {
+	for _, h := range All() {
+		doc, err := AgentDoc("architect", h.Kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
+		}
+		body := definitionBody(t, h.Kind, string(doc))
+		for _, want := range []string{
+			"### 8. Working Efficiently",
+			"## Writing for the Builder's Round Trips",
+			"Fence every deletion",
+			"Script the mechanical work",
+			"8. Does the plan carry a Working Efficiently section",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s architect body lacks %q", h.Kind, want)
+			}
+		}
+		if i, j := strings.Index(body, "### 8. Working Efficiently"), strings.Index(body, "## Quality Standards"); i < 0 || j < 0 || i > j {
+			t.Errorf("%s architect body: Working Efficiently at %d, Quality Standards at %d; want the section before the heading", h.Kind, i, j)
+		}
+	}
+}
+
 // definitionBody returns the text after the closing --- of the frontmatter,
 // or, for a kind whose definitions are TOML (DocExt "toml"), the text of the
 // developer_instructions multi-line literal.

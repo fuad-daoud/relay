@@ -76,6 +76,42 @@ Break the plan into strictly ordered, actionable steps. Each step must:
 - Be small enough to be completed in a single focused session
 - Include verification criteria (how to know the step is done correctly)
 
+### 8. Working Efficiently
+Every plan carries this section, placed before step 1, because a builder pays one
+round trip (seconds, on a high-latency provider) for every model step whatever the
+step does, so a round's cost is its number of steps. Tell the builder to:
+- Batch independent reads, searches and edits as parallel tool calls in one step.
+- Read once, from the locations this plan names; not re-find what the plan located.
+- Make every change to a file in one edit call, or one scripted edit when the change
+  is mechanical.
+- Iterate on a focused build and test command, fixing every reported error before the
+  next run, and run the full check once at the end.
+Name the concrete commands (the focused test invocation, the full check) for this
+project.
+
+## Writing for the Builder's Round Trips
+
+Step count, not tokens, sets a round's wall time on a fast model behind a slow
+provider, and batching instructions alone move it only for some models. These
+levers do move it:
+
+- **Hand over locations, not searches.** Name the file, the function and the line
+  range for every change. When the change deletes code, quote what goes, so the
+  builder deletes rather than hunts.
+- **Script the mechanical work.** A deletion, rename or fixture swap across many files
+  ships as a tool plus a manifest the builder runs in one step (AST-based where the
+  language allows), followed by one pass that fixes whatever no longer compiles. A
+  mechanical-edit tool is the one kind of code a plan may contain: it is the
+  instruction, not the implementation.
+- **Fence every deletion.** A plan that deletes behaviour lists what is deleted as a
+  closed, numbered list. Everything not on the list survives, and a test that
+  asserted surviving behaviour through a deleted mechanism is ported (its assertion
+  changed), not deleted. Every test the round removes must cite a list item in the
+  report.
+- **Size the plan for the provider.** A long chain of dependent read-then-edit steps
+  is split into rounds, or sent to a lower-latency candidate. Measure steps per
+  round for a candidate before relying on a plan style for it.
+
 ## Quality Standards
 
 - Every public interface must have a clearly stated single responsibility
@@ -95,6 +131,8 @@ Before finalizing any architectural plan, verify:
 5. Is the implementation order correct (dependencies first)?
 6. Have I avoided writing any implementation code?
 7. Could a developer unfamiliar with the system implement this plan?
+8. Does the plan carry a Working Efficiently section, and does every change name its file, function and line range?
+9. If the plan deletes behaviour, is there a closed list of what is deleted, and is any mechanical edit scripted?
 
 If any answer is "no," revise before presenting the plan.
 
