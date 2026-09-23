@@ -65,9 +65,11 @@ func probeTier(kind string) (harness.Tier, error) {
 
 // ProbeCandidate runs one candidate's harness once, headless, at the most
 // restrictive tier the harness can honour (probeTier), in a fresh temp
-// directory, and measures how long it takes to produce its first model output
-// (#324 part 1). Failures are data: they come back in Err, never as a returned
-// error, so one broken candidate cannot hide the rest of the listing.
+// directory that is `git init`ed like a real round's worktree, because codex
+// refuses to run outside a git repository, and measures how long it takes to
+// produce its first model output (#324 part 1). Failures are data: they come
+// back in Err, never as a returned error, so one broken candidate cannot hide
+// the rest of the listing.
 func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Candidate, host string) ProbeResult {
 	ref := c.Ref().String()
 
@@ -99,14 +101,21 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}
 	}
 
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	// codex refuses to run outside a git repository, so the probe runs in a
+	// fresh git repo, like a real round's worktree. The git call stays outside
+	// the timed window: neither TTFTMS nor TotalMS includes it.
+	if err := x.Run(pctx, dir, []string{"git", "init", "-q"}, nil); err != nil {
+		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText("git init: " + err.Error())}
+	}
+
 	start := rt.Now()
 	var (
 		ttft int64
 		seen bool
 	)
-
-	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
 
 	runErr := x.Run(pctx, dir, argv, func(line []byte) {
 		if seen {

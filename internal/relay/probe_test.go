@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -33,14 +34,22 @@ type fakeExec struct {
 	scripts [][]fakeLine
 	total   time.Duration
 	runErr  error
+	gitErr  error
 
-	calls int
-	dirs  []string
-	argvs [][]string
-	now   *time.Time
+	calls    int
+	dirs     []string
+	argvs    [][]string
+	gitCalls [][]string
+	now      *time.Time
 }
 
 func (f *fakeExec) Run(_ context.Context, dir string, argv []string, onLine func(line []byte)) error {
+	if len(argv) > 0 && argv[0] == "git" {
+		f.dirs = append(f.dirs, dir)
+		f.gitCalls = append(f.gitCalls, argv)
+		return f.gitErr
+	}
+
 	f.dirs = append(f.dirs, dir)
 	f.argvs = append(f.argvs, argv)
 
@@ -149,11 +158,44 @@ func TestProbeCandidateMeasuresFirstOutput(t *testing.T) {
 	if strings.Contains(argv, "--auto") {
 		t.Errorf("argv = %q, must not carry opencode's yolo flag --auto", argv)
 	}
+	if len(fake.gitCalls) != 1 || !reflect.DeepEqual(fake.gitCalls[0], []string{"git", "init", "-q"}) {
+		t.Errorf("gitCalls = %v, want exactly one [git init -q]", fake.gitCalls)
+	}
+	if len(fake.dirs) != 2 || fake.dirs[0] != fake.dirs[1] {
+		t.Errorf("dirs = %v, want the git init and the harness in the same dir", fake.dirs)
+	}
 	if fake.dirs[0] == "" {
 		t.Errorf("argv ran with an empty dir")
 	}
 	if _, err := os.Stat(fake.dirs[0]); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("dir %s still exists after return (err=%v), want removed", fake.dirs[0], err)
+	}
+}
+
+func TestProbeCandidateGitInitFailureRunsNoHarness(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
+
+	rt, now := probeRuntime(t, testCandidatesJSON)
+	fake := &fakeExec{
+		now:    now,
+		total:  900 * time.Millisecond,
+		gitErr: errors.New("no git"),
+		scripts: [][]fakeLine{{
+			{at: 600 * time.Millisecond, line: `{"type":"text","part":{"text":"ok"}}`},
+		}},
+	}
+
+	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+
+	if !strings.HasPrefix(got.Err, "git init: ") || !strings.Contains(got.Err, "no git") {
+		t.Errorf("Err = %q, want it to start with %q and contain %q", got.Err, "git init: ", "no git")
+	}
+	if fake.calls != 0 {
+		t.Errorf("harness ran %d times, want 0", fake.calls)
+	}
+	if got.TTFTMS != 0 {
+		t.Errorf("TTFTMS = %d, want 0", got.TTFTMS)
 	}
 }
 
