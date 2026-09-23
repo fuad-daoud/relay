@@ -608,6 +608,13 @@ func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") 
 // named <id>.json (#303 §3.1). Created mode 0700 by the first write.
 func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
 
+// AgyCredsDir is where the captured agy agentapi credentials live, one 0600
+// JSON file per conversation id (#349): <root>/planners/.agy. It sits inside
+// planners/ rather than beside it because the credentials belong to a planner
+// session, and it is dot-prefixed so the planner registry's list -- which skips
+// directories and dot-prefixed names -- never reads it as a record.
+func (s *Store) AgyCredsDir() string { return filepath.Join(s.PlannersDir(), ".agy") }
+
 // WorktreeDir is where relay keeps the worktrees it creates. Like ArchiveDir it
 // is dot-prefixed, which is exactly what keeps list() from walking into it and
 // trying to read a working tree as a binding.

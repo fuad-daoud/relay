@@ -2090,8 +2090,16 @@ above.
 plugin's hook registers it, and `relay planner list` shows the records -- so no
 verb has to guess who is calling. A report then reaches the planner by exactly
 one of four routes: the background wait (the Claude Code default), the channel
-(opt-in, above), a deliverer for a harness that has one (opencode), or
+(opt-in, above), a deliverer for a harness that has one (opencode, agy), or
 `relay pull` by hand. Nothing is ever typed into a terminal.
+
+An agy planner runs `relay planner init` once inside agy, with no flags: relay
+detects the session from agy's own environment, so nothing has to be exported by
+hand. Every relay command that planner runs refreshes the session's local
+agentapi credentials, which relay keeps 0600 under its state directory and never
+prints. A report relay pushes through those credentials wakes the idle agy
+session, so an agy planner is woken by a report rather than polling for it --
+and that wake-up costs one turn of the agy session.
 
 ## Design
 
