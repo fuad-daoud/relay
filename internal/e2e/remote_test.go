@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relay/internal/candidate"
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/policy"
 	"github.com/fuad-daoud/relay/internal/relay"
 	"github.com/fuad-daoud/relay/internal/remote"
@@ -166,6 +167,23 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Key
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	st := store.New(t.TempDir())
 
+	// `relay add --server` resolves the caller's planner before it contacts
+	// the server and records it on the client binding. Export one the way a
+	// real planner session does, so the client runtime resolves a record
+	// instead of failing the add with ErrNoPlannerSession.
+	reg := &planner.FileRegistry{Root: st.PlannersDir(), Now: time.Now}
+	prec, err := reg.Create(planner.Record{
+		ID:          "pl_eeeeeeeeeeee",
+		Name:        "e2e-planner",
+		HarnessKind: "claude",
+		SessionID:   "sess-e2e",
+		CWD:         "/repo",
+	})
+	if err != nil {
+		t.Fatalf("create planner record: %v", err)
+	}
+	t.Setenv("RELAY_PLANNER", prec.Name)
+
 	candDir := t.TempDir()
 	candPath := filepath.Join(candDir, "candidates.json")
 	candJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
@@ -181,6 +199,7 @@ func newClient(t *testing.T, url, fingerprint string) (relay.Runtime, remote.Key
 		Git:              gitClient,
 		Store:            st,
 		Candidates:       cSet,
+		Planners:         reg,
 		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
 		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
 		Now:              time.Now,

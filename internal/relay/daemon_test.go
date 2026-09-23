@@ -562,3 +562,26 @@ func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 		t.Errorf("ACTIVE binding PlannerID = %q, want pl_aaaaaaaacccc", got.PlannerID)
 	}
 }
+
+// TestBackfillLeavesPlannerlessBindingsAlone pins the Planner.SessionID guard
+// in backfillPlannerID: a non-DONE binding with no id and an empty
+// Planner.SessionID -- the shape a remote binding written before the add
+// fix has -- names no session for the registry to look up, so a tick leaves it
+// exactly as it was. relay never guesses a planner for it.
+func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
+	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	if _, err := reg.Create(planner.Record{
+		ID:          "pl_aaaaaaaacccc",
+		Name:        "architect-1",
+		HarnessKind: "claude",
+		SessionID:   "sess-remote",
+		CWD:         "/repo",
+	}); err != nil {
+		t.Fatalf("create planner record: %v", err)
+	}
+
+	b := store.Binding{Name: "api", State: store.StateActive}
+	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {
+		t.Errorf("plannerless binding back-filled with %q; nothing names its planner", got.PlannerID)
+	}
+}

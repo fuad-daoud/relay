@@ -16,11 +16,32 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relay/internal/git"
+	"github.com/fuad-daoud/relay/internal/planner"
 	"github.com/fuad-daoud/relay/internal/remote"
 	"github.com/fuad-daoud/relay/internal/remote/client"
 	"github.com/fuad-daoud/relay/internal/store"
 	"github.com/fuad-daoud/relay/internal/usage"
 )
+
+// addRemotePlanner is the planner registry the hand-built Runtimes in this
+// file need: `add --server` resolves the caller's planner before it contacts
+// the server (the fix that gives a remote binding its PlannerID), so an Add
+// with Server set and no registry is the hard ErrNoPlannerSession. It holds
+// the same record newRuntime seeds, on its own temp dir, and exports it as
+// $RELAY_PLANNER the way a real planner session does, so the Runtime below
+// resolves it without a --planner flag.
+func addRemotePlanner(t *testing.T) *planner.FileRegistry {
+	t.Helper()
+	t.Setenv("RELAY_PLANNER", testPlannerName)
+	reg, _ := testPlannerRegistry(t, planner.Record{
+		ID:          testPlannerID,
+		Name:        testPlannerName,
+		HarnessKind: "claude",
+		SessionID:   "sess-architect",
+		CWD:         "/repo",
+	})
+	return reg
+}
 
 type fakeRemote struct {
 	calls []string
@@ -445,10 +466,11 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	_ = origCreateBranch
 	// We wrap CreateBranch call via the custom tracker
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
@@ -491,6 +513,142 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 	}
 }
 
+// TestAddRemoteRecordsPlanner pins the fix: `add --server` resolves the
+// caller's planner before it contacts the server, and records it on the
+// client-side binding exactly as the local path does -- PlannerID is the
+// record's id, Planner carries the record's kind and session. Before the fix
+// the binding was written with PlannerID "" and a zero planner, so
+// planner-filtered status hid it and the channel route could not key on it.
+func TestAddRemoteRecordsPlanner(t *testing.T) {
+	ctx := context.Background()
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	rt.Remote = &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+
+	res, err := Add(ctx, rt, AddOptions{
+		Name:      "api",
+		Server:    "zen",
+		Repo:      "/fake/repo",
+		PlannerID: testPlannerName,
+	})
+	if err != nil {
+		t.Fatalf("Add --server: %v", err)
+	}
+	if res.Binding.PlannerID != testPlannerID {
+		t.Errorf("res.Binding.PlannerID = %q, want %q", res.Binding.PlannerID, testPlannerID)
+	}
+
+	stored, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.PlannerID != testPlannerID {
+		t.Errorf("stored PlannerID = %q, want the record's %q", stored.PlannerID, testPlannerID)
+	}
+	if stored.Planner.Kind != "claude" {
+		t.Errorf("stored Planner.Kind = %q, want claude", stored.Planner.Kind)
+	}
+	if stored.Planner.SessionID != "sess-architect" {
+		t.Errorf("stored Planner.SessionID = %q, want sess-architect", stored.Planner.SessionID)
+	}
+}
+
+// TestAddRemoteNoPlannerIsHardError pins §4.3 for the remote path: with
+// nothing resolving -- no --planner, no $RELAY_PLANNER, no host and no
+// detectable session -- `add --server` fails with exactly the local path's
+// no-planner text, before any binding is created on the server.
+func TestAddRemoteNoPlannerIsHardError(t *testing.T) {
+	t.Setenv("RELAY_PLANNER", "")
+	t.Setenv("CLAUDECODE", "")
+
+	ctx := context.Background()
+	rt := newRuntime(t)
+	rt.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt.Remote = fr
+
+	_, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if err == nil {
+		t.Fatal("Add --server with no resolvable planner must fail")
+	}
+	if err.Error() != ErrNoPlannerSession.Error() {
+		t.Errorf("err = %q, want exactly %q", err.Error(), ErrNoPlannerSession.Error())
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding before the hard error", fr.calls)
+		}
+	}
+}
+
+// TestStatusShowsRemoteBindingForItsPlanner pins the status half of the fix:
+// the remote binding's row carries the client planner's id, which is the field
+// cmd/relay's filterReportPlanner keys on, so a planner-filtered `relay
+// status` keeps it. Before the fix the row's PlannerID was "" and the filter
+// dropped it.
+func TestStatusShowsRemoteBindingForItsPlanner(t *testing.T) {
+	ctx := context.Background()
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	rt.Remote = &fakeRemote{
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+
+	if _, err := Add(ctx, rt, AddOptions{
+		Name:      "api",
+		Server:    "zen",
+		Repo:      "/fake/repo",
+		PlannerID: testPlannerName,
+	}); err != nil {
+		t.Fatalf("Add --server: %v", err)
+	}
+
+	rep, err := Status(ctx, rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	// The filter the CLI applies keeps every row whose PlannerID is the
+	// calling planner's; the remote binding must survive it.
+	kept := 0
+	var keptName string
+	for _, b := range rep.Bindings {
+		if b.Name == "api" && b.PlannerID != testPlannerID {
+			t.Fatalf("remote row PlannerID = %q, want %q", b.PlannerID, testPlannerID)
+		}
+		if b.PlannerID == testPlannerID {
+			kept++
+			keptName = b.Name
+		}
+	}
+	if kept != 1 || keptName != "api" {
+		t.Fatalf("planner-filtered rows = %d (%q), want just the remote binding api", kept, keptName)
+	}
+}
+
 // TestAddRemoteTierPreTierServerRefused pins ErrServerPreTier: a server that
 // does not advertise FeatureTier refuses --tier before any binding is
 // created there (#141 remote half).
@@ -507,7 +665,7 @@ func TestAddRemoteTierPreTierServerRefused(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
 
 	_, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -544,7 +702,7 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 			Tier:      "edit",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
 
 	res, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -586,7 +744,7 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 			Candidate: "claude/anthropic/haiku",
 		},
 	}
-	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
 
 	if _, err := Add(ctx, rt, AddOptions{
 		Name:   "api",
@@ -624,10 +782,11 @@ func TestAddRemoteTwicePerRepo(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	if _, err := Add(ctx, rt, AddOptions{Name: "e2e2", Server: "zen", Repo: "/fake/repo"}); err != nil {
@@ -642,10 +801,11 @@ func TestAddRemoteRefusesCWD(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	rt := Runtime{
-		Store:  st,
-		Git:    &fakeGit{},
-		Remote: &fakeRemote{},
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      &fakeGit{},
+		Remote:   &fakeRemote{},
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
@@ -678,10 +838,11 @@ func TestAddRemoteServerConflict(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
@@ -721,10 +882,11 @@ func TestAddRemoteCleansUpServerOnSaveFailure(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
@@ -757,10 +919,11 @@ func TestAddRemoteBranchExistsUnbindsServer(t *testing.T) {
 		},
 	}
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
@@ -801,7 +964,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 			rootCommitSHA: "2222222222222222222222222222222222222222",
 		}
 		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
-		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
 
 		got, err := Add(ctx, rt, AddOptions{
 			Name: "x", Branch: "feature/x", Server: "zen", Repo: "/fake/repo",
@@ -835,7 +998,7 @@ func TestAddRemoteExistingBranch(t *testing.T) {
 			rootCommitSHA: "2222222222222222222222222222222222222222",
 		}
 		fr := &fakeRemote{createBindingResp: remote.BindingView{Name: "x"}}
-		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
 
 		// Same provocation as TestAddRemoteCleansUpLocalBranchOnSaveFailure:
 		// the lock file exists, then the state root goes read-only, so the
@@ -899,10 +1062,11 @@ func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
 	}
 
 	rt := Runtime{
-		Store:  st,
-		Git:    fg,
-		Remote: fr,
-		Now:    time.Now,
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
 	}
 
 	opts := AddOptions{
