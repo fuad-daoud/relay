@@ -6,7 +6,7 @@ import "context"
 // LaunchAgent on macOS. Name is the systemd unit name or the launchd label;
 // Path is the absolute unit file (systemd) or plist (launchd).
 type Unit struct {
-	Name string // "relay.service" | "relevo.service" | launchd label
+	Name string // "relay.service" | "relevo.service" | launchd label // name-guard: legacy
 	Path string // absolute unit file (systemd) or plist (launchd)
 }
 

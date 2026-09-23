@@ -15,7 +15,7 @@ import (
 )
 
 // ClientUnits is the pair of user-level client services `relevo migrate`
-// swaps: the relay-era unit and the relevo-era unit it becomes. Platform is
+// swaps: the relay-era unit and the relevo-era unit it becomes. Platform is // name-guard: legacy
 // the GOOS they belong to; a platform with no units leaves both zero, so every
 // function here is a no-op on it.
 type ClientUnits struct {
@@ -45,7 +45,7 @@ type UnitOptions struct {
 
 // DefaultClientUnits resolves the old and the new client unit paths for goos.
 // configHome is $XDG_CONFIG_HOME, where systemd keeps user units; home is
-// $HOME, where launchd keeps LaunchAgents. Every relay-era spelling comes from
+// $HOME, where launchd keeps LaunchAgents. Every relay-era spelling comes from // name-guard: legacy
 // internal/legacy, the only home of the old names.
 func DefaultClientUnits(goos, configHome, home string) ClientUnits {
 	switch goos {
@@ -111,7 +111,7 @@ func (o UnitOptions) newUnitContent() ([]byte, error) {
 
 // StopOld stops the old client service when it is installed and running, and
 // reports what it found. An installed but inactive unit is left alone: a host
-// with an installed-but-inactive, disabled relay.service (contabo) must not
+// with an installed-but-inactive, disabled relay.service (contabo) must not // name-guard: legacy
 // get a relevo daemon nobody asked for. An absent unit file is a skipped step
 // and a zero OldUnit.
 //
@@ -240,7 +240,7 @@ func SwapClient(ctx context.Context, o UnitOptions, old OldUnit) ([]Step, error)
 	return steps, nil
 }
 
-// RemoveOldBinary removes the old `relay` binary that sits beside the running
+// RemoveOldBinary removes the old `relay` binary that sits beside the running // name-guard: legacy
 // relevo, unless --keep-old-binary is given. A sibling that is absent, is not
 // a regular file, or is the running binary itself is a skipped step. A dry run
 // reports the removal without making it.
@@ -272,12 +272,12 @@ func RemoveOldBinary(exe string, keep, dryRun bool) (Step, error) {
 	return Step{Name: "old-binary", Detail: fmt.Sprintf("removed %s", sibling)}, nil
 }
 
-// RenameSliceValue replaces the exact JSON string value `"relay.slice"` with
+// RenameSliceValue replaces the exact JSON string value `"relay.slice"` with // name-guard: legacy
 // `"relevo.slice"` in <configDir>/policy.json. serve.scope.slice holds
-// "relay.slice" on the laptop and on contabo, where the old 6G slice is
+// "relay.slice" on the laptop and on contabo, where the old 6G slice is // name-guard: legacy
 // retired and relevo.slice replaces it (#292 §3 step 6).
 //
-// Only the quoted value changes, so `"relay.slicer"` is left alone. The write
+// Only the quoted value changes, so `"relay.slicer"` is left alone. The write // name-guard: legacy
 // is atomic and keeps the file's mode; an unchanged or absent file is
 // untouched, mtime included. A dry run reports the step only.
 func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
@@ -291,10 +291,10 @@ func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
 		return Step{Name: "rename-slice", Detail: fmt.Sprintf("read %s: %v", path, err)}, err
 	}
 
-	oldSeq := []byte(`"` + legacy.Slice + `"`) // "relay.slice"
+	oldSeq := []byte(`"` + legacy.Slice + `"`) // "relay.slice" // name-guard: legacy
 	newSeq := []byte(`"relevo.slice"`)
 	if !bytes.Contains(data, oldSeq) {
-		return Step{Name: "rename-slice", Detail: "no relay.slice in policy.json", Skipped: true}, nil
+		return Step{Name: "rename-slice", Detail: "no relay.slice in policy.json", Skipped: true}, nil // name-guard: legacy
 	}
 
 	if dryRun {

@@ -96,7 +96,7 @@ func knownSource(s string) bool {
 // Other rather than rejected, so a ledger written by a newer relevo survives a
 // rollback (#372 §4.2). Malformed JSON is still an error.
 //
-// An entry recorded before the rename carries Source "relay": Load reads it as
+// An entry recorded before the rename carries Source "relay": Load reads it as // name-guard: legacy
 // relevo's own, rewriting the source to "relevo" before the knownKind and
 // knownSource test, so a pre-cutover rate-limit gate keeps gating instead of
 // lapsing into Other (#292 §1). A later Save then writes "relevo", which is the

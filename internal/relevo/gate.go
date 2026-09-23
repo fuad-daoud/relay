@@ -189,7 +189,7 @@ func gateLine(rec store.GateRecord, tail []string) string {
 // when it cannot be read; never an error (the log is a convenience). Lines
 // carrying the rusage trailer are skipped (#313): any scoped spawn prints one
 // before its exit trailer, and it is not gate output. A pre-rename log's
-// relay-rusage: line is skipped the same way (#292 §1).
+// relay-rusage: line is skipped the same way (#292 §1). // name-guard: legacy
 func tailLines(path string, n int) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {

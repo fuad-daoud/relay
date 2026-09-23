@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func copyFixture(t *testing.T, src, dst string) {
@@ -163,7 +165,7 @@ func TestPeekMissingStream(t *testing.T) {
 }
 
 // TestStreamClosedLegacyTrailer pins #292 §1: a stream whose last line is the
-// old relay-exit: marker counts as closed, so a pre-rename round's cost is
+// old relay-exit: marker counts as closed, so a pre-rename round's cost is // name-guard: legacy
 // read with its measured figures instead of "stream still open".
 func TestStreamClosedLegacyTrailer(t *testing.T) {
 	dir := t.TempDir()
@@ -171,9 +173,9 @@ func TestStreamClosedLegacyTrailer(t *testing.T) {
 		body string
 		want bool
 	}{
-		"legacy trailer":       {"hello\nrelay-exit:3\n", true},
-		"legacy no newline":    {"relay-exit:0", true},
-		"legacy not last":      {"relay-exit:3\nmore output\n", false},
+		"legacy trailer":       {"hello\n" + legacy.ExitTrailer + "3\n", true},
+		"legacy no newline":    {legacy.ExitTrailer + "0", true},
+		"legacy not last":      {legacy.ExitTrailer + "3\nmore output\n", false},
 		"new trailer":          {"hello\nrelevo-exit:3\n", true},
 		"no trailer":           {"hello\n", false},
 		"empty last line only": {"\n", false},

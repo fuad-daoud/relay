@@ -11,6 +11,10 @@ agent; relevo moves the files between them so the human never copy-pastes a
 plan or a report by hand. Builders are headless or remote processes, and
 relevo no longer integrates with herdr.
 
+<!-- name-guard: off -->
+relevo is Spanish for relay (the changeover in a relay race); it was called relay until v0.12.0.
+<!-- name-guard: on -->
+
 Relevo makes no judgements. It moves files, starts builders, and reports what
 each round did — whether a report is good, whether a question needs a human,
 whether the work is done, is a decision that stays with the planner (or the
@@ -86,6 +90,8 @@ edited alone; a planner session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
+<!-- name-guard: off -->
+
 ### Upgrading from relay
 
 relay was renamed relevo in v0.12.0. A machine that ran relay keeps its state,
@@ -104,6 +110,8 @@ its old `relay.service` (or LaunchAgent) and the old `relay` binary until
    ```
 5. Run `relevo agent install`.
 6. Restart planner sessions.
+
+<!-- name-guard: on -->
 
 ### The Claude Code plugin
 

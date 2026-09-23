@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -107,8 +108,8 @@ func TestParseRusageTrailer(t *testing.T) {
 		"mem only":         {"relevo-rusage:mem_peak=1024", relevo.ProcRusage{PeakMemBytes: 1024}, true},
 		"unknown key":      {"relevo-rusage:cpu_usec=1000 foo=bar", relevo.ProcRusage{CPUMS: 1}, true},
 		"malformed number": {"relevo-rusage:cpu_usec=notanumber", relevo.ProcRusage{}, true},
-		"legacy prefix":    {"relay-rusage:cpu_usec=12345 mem_peak=1048576", relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}, true},
-		"legacy cpu only":  {"relay-rusage:cpu_usec=5000", relevo.ProcRusage{CPUMS: 5}, true},
+		"legacy prefix":    {legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576", relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}, true},
+		"legacy cpu only":  {legacy.RusageTrailer + "cpu_usec=5000", relevo.ProcRusage{CPUMS: 5}, true},
 		"wrong prefix":     {"something-else:cpu_usec=1000", relevo.ProcRusage{}, false},
 	}
 	for name, c := range cases {

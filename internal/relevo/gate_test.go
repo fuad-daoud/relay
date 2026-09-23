@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -105,16 +106,16 @@ func TestTailLines(t *testing.T) {
 		}
 	})
 
-	// #292 §1: a pre-rename gate log's relay-rusage: line is skipped too. The
-	// relay-exit: line is gate output, and stays, exactly as relevo-exit: does.
+	// #292 §1: a pre-rename gate log's relay-rusage: line is skipped too. The // name-guard: legacy
+	// relay-exit: line is gate output, and stays, exactly as relevo-exit: does. // name-guard: legacy
 	t.Run("skips the legacy rusage trailer line", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "gate.log")
-		content := "a\nb\n\nrelay-rusage:cpu_usec=1 mem_peak=2\n\nrelay-exit:2\n"
+		content := "a\nb\n\n" + legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" + legacy.ExitTrailer + "2\n"
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"a", "b", "relay-exit:2"}
+		want := []string{"a", "b", legacy.ExitTrailer + "2"}
 		got := tailLines(path, 3)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("tailLines() = %v, want %v", got, want)

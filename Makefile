@@ -24,6 +24,7 @@ check:
 	fi; \
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
+	sh scripts/check-name.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck scripts/*.sh; \
 	else \

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // Mode is how the builder ran.
@@ -84,11 +85,11 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 const exitTrailer = "relevo-exit:"
 
 // legacyExitTrailer is legacy.ExitTrailer: the same line a stream written
-// before the rename ends in (#292 §1). Copied rather than imported, exactly
-// as exitTrailer is, so this package keeps its independence from relevo's
-// process model; TestExitTrailerMatchesUsage in internal/proc pins both
-// copies equal.
-const legacyExitTrailer = "relay-exit:"
+// before the rename ends in (#292 §1). Taken from legacy rather than copied,
+// so the old name lives in one place; TestExitTrailerMatchesUsage in
+// internal/proc still pins it, and legacy is a stdlib-only leaf, so this
+// package keeps its independence from relevo's process model.
+const legacyExitTrailer = legacy.ExitTrailer
 
 // ExitTrailerForTest exposes exitTrailer so internal/relevo can pin it to
 // proc.ExitTrailer; nothing else calls it.
@@ -106,7 +107,7 @@ const tailProbe = 256
 
 // streamClosed reports whether path's last non-empty line is the exit
 // trailer -- the harness has exited and its final event is on disk. A stream
-// written before the rename ends in the relay-exit: form instead, which
+// written before the rename ends in the relay-exit: form instead, which // name-guard: legacy
 // closes the same way (#292 §1).
 func streamClosed(path string) bool {
 	f, err := os.Open(path)

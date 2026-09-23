@@ -122,7 +122,7 @@ func firstNonEmptyLine(s string) string {
 // "relevo-rusage:cpu_usec=<n> mem_peak=<n>".
 const RusageTrailer = "relevo-rusage:"
 
-// ParseRusageTrailer parses a RusageTrailer line, or the relay-rusage: line a
+// ParseRusageTrailer parses a RusageTrailer line, or the relay-rusage: line a // name-guard: legacy
 // pre-rename stream carries (#292 §1): whichever prefix matches is stripped,
 // and behaviour for the new prefix is unchanged. Fields are space-separated
 // key=value; either may be absent (that field stays zero); unknown keys are

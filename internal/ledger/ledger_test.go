@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 func TestExpired(t *testing.T) {
@@ -35,12 +37,12 @@ func TestExpired(t *testing.T) {
 }
 
 // TestLoadReadsLegacySource pins #292 §1: an entry recorded before the rename
-// carries "source":"relay" and must read as relevo's own, not as an unknown
+// carries "source":"relay" and must read as relevo's own, not as an unknown // name-guard: legacy
 // source preserved in Other. A Save then writes "relevo".
 func TestLoadReadsLegacySource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ledger.json")
-	doc := `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relay"}]}`
+	doc := `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"` + legacy.LedgerSource + `"}]}`
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func TestLoadReadsLegacySource(t *testing.T) {
 		t.Fatalf("Entries = %+v, want the one pre-rename entry read as relevo's", l.Entries)
 	}
 	if len(l.Other) != 0 {
-		t.Fatalf("Other = %+v, want empty: a relay source must not be kept raw", l.Other)
+		t.Fatalf("Other = %+v, want empty: a relay source must not be kept raw", l.Other) // name-guard: legacy
 	}
 	if got := l.Entries[0].Source; got != "relevo" {
 		t.Errorf("Source = %q, want \"relevo\"", got)
@@ -69,8 +71,8 @@ func TestLoadReadsLegacySource(t *testing.T) {
 	if !strings.Contains(string(raw), `"source": "relevo"`) {
 		t.Errorf("saved ledger = %s, want the source rewritten to \"relevo\"", raw)
 	}
-	if strings.Contains(string(raw), `"source": "relay"`) {
-		t.Errorf("saved ledger = %s, want no relay source left", raw)
+	if strings.Contains(string(raw), `"source": "`+legacy.LedgerSource+`"`) {
+		t.Errorf("saved ledger = %s, want no relay source left", raw) // name-guard: legacy
 	}
 }
 

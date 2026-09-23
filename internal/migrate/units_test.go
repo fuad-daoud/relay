@@ -57,7 +57,7 @@ func linuxUnitOptions(t *testing.T, configHome string, svc *recServices) (UnitOp
 }
 
 // TestDefaultClientUnits pins the four paths to the legacy names, so a
-// misspelled relay-era file name cannot slip through a platform branch.
+// misspelled relay-era file name cannot slip through a platform branch. // name-guard: legacy
 func TestDefaultClientUnits(t *testing.T) {
 	configHome := "/cfg"
 	home := "/home/u"
@@ -140,7 +140,7 @@ func TestStopOldAndSwapClientLinuxHappyPath(t *testing.T) {
 }
 
 // TestSwapClientInstalledButInactive is the contabo case: an installed,
-// inactive, disabled relay.service is not stopped and not replaced by an
+// inactive, disabled relay.service is not stopped and not replaced by an // name-guard: legacy
 // enabled relevo.service -- but the new file is installed and the old one
 // retired, so a re-run does not keep finding it.
 func TestSwapClientInstalledButInactive(t *testing.T) {
@@ -317,7 +317,7 @@ func TestRemoveOldBinary(t *testing.T) {
 		exe := filepath.Join(dir, "relevo")
 		mustWrite(t, exe, "relevo")
 		sibling := filepath.Join(dir, legacy.Binary)
-		mustWrite(t, sibling, "relay")
+		mustWrite(t, sibling, legacy.Binary)
 
 		step, err := RemoveOldBinary(exe, false, false)
 		if err != nil {
@@ -357,7 +357,7 @@ func TestRemoveOldBinary(t *testing.T) {
 		exe := filepath.Join(dir, "relevo")
 		mustWrite(t, exe, "relevo")
 		sibling := filepath.Join(dir, legacy.Binary)
-		mustWrite(t, sibling, "relay")
+		mustWrite(t, sibling, legacy.Binary)
 
 		step, err := RemoveOldBinary(exe, true, false)
 		if err != nil {
@@ -386,13 +386,13 @@ func TestRemoveOldBinary(t *testing.T) {
 	})
 }
 
-// TestRenameSliceValue rewrites only the quoted relay.slice value, leaves
+// TestRenameSliceValue rewrites only the quoted relay.slice value, leaves // name-guard: legacy
 // every other byte alone, and touches nothing when there is nothing to change.
 func TestRenameSliceValue(t *testing.T) {
 	t.Run("rewrites", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "policy.json")
-		before := `{"serve":{"scope":{"slice":"relay.slice","mem":"6G"}}}`
+		before := `{"serve":{"scope":{"slice":"` + legacy.Slice + `","mem":"6G"}}}`
 		mustWrite(t, path, before)
 
 		step, err := RenameSliceValue(dir, false)
@@ -411,7 +411,7 @@ func TestRenameSliceValue(t *testing.T) {
 	t.Run("untouched without the value", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "policy.json")
-		before := `{"serve":{"scope":{"slice":"relay.slicer"}}}`
+		before := `{"serve":{"scope":{"slice":"relay.slicer"}}}` // name-guard: legacy
 		mustWrite(t, path, before)
 
 		old := time.Now().Add(-time.Hour).Truncate(time.Second)
@@ -452,7 +452,7 @@ func TestRenameSliceValue(t *testing.T) {
 	t.Run("dry run", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "policy.json")
-		before := `{"slice":"relay.slice"}`
+		before := `{"slice":"` + legacy.Slice + `"}`
 		mustWrite(t, path, before)
 
 		step, err := RenameSliceValue(dir, true)

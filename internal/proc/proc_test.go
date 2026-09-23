@@ -283,7 +283,7 @@ func TestExitCodeReadsOnlyATrailingRelevoExitLine(t *testing.T) {
 }
 
 // TestExitCodeReadsLegacyTrailer pins #292 §1: a log a pre-rename supervisor
-// wrote ends in relay-exit:<n> and reads exactly like the new form.
+// wrote ends in relay-exit:<n> and reads exactly like the new form. // name-guard: legacy
 func TestExitCodeReadsLegacyTrailer(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
@@ -315,7 +315,7 @@ func TestExitCodeReadsLegacyTrailer(t *testing.T) {
 // stream (#142) and carries its own copy of the prefix so internal/usage
 // stays free of the process model. This is the only place that pins the
 // two equal: proc imports relevo, so the pin cannot live in relevo's tests.
-// #292 §1 adds the relay-era copy, pinned to legacy.ExitTrailer here too.
+// #292 §1 adds the relay-era copy, pinned to legacy.ExitTrailer here too. // name-guard: legacy
 func TestExitTrailerMatchesUsage(t *testing.T) {
 	if usage.ExitTrailerForTest() != ExitTrailer {
 		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
@@ -358,7 +358,7 @@ func TestRusageTrailerPrefixMatchesProc(t *testing.T) {
 }
 
 // TestRusageReadsLegacyTrailer pins #292 §1: a pre-rename stream's
-// relay-rusage: line is found by the backward scan and parsed the same way.
+// relay-rusage: line is found by the backward scan and parsed the same way. // name-guard: legacy
 func TestRusageReadsLegacyTrailer(t *testing.T) {
 	r := New()
 	dir := t.TempDir()

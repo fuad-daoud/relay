@@ -22,52 +22,52 @@ func TestRenameCheck(t *testing.T) {
 		wantFix    string
 	}{
 		{
-			name:       "no relay-era state",
+			name:       "no relay-era state", // name-guard: legacy
 			st:         legacy.Status{},
 			wantSev:    SevOK,
-			wantDetail: "no relay-era state",
+			wantDetail: "no relay-era state", // name-guard: legacy
 			wantFix:    "",
 		},
 		{
 			name:       "unmigrated state",
 			st:         legacy.Status{OldState: true},
 			wantSev:    SevFail,
-			wantDetail: "relay-era state at /old/state has not been migrated",
+			wantDetail: "relay-era state at /old/state has not been migrated", // name-guard: legacy
 			wantFix:    "relevo migrate --dry-run && relevo migrate",
 		},
 		{
 			name:       "unmigrated config",
 			st:         legacy.Status{OldConfig: true},
 			wantSev:    SevFail,
-			wantDetail: "relay-era state at /old/config has not been migrated",
+			wantDetail: "relay-era state at /old/config has not been migrated", // name-guard: legacy
 			wantFix:    "relevo migrate --dry-run && relevo migrate",
 		},
 		{
 			name:       "unmigrated both, state first",
 			st:         legacy.Status{OldState: true, OldConfig: true},
 			wantSev:    SevFail,
-			wantDetail: "relay-era state at /old/state, /old/config has not been migrated",
+			wantDetail: "relay-era state at /old/state, /old/config has not been migrated", // name-guard: legacy
 			wantFix:    "relevo migrate --dry-run && relevo migrate",
 		},
 		{
 			name:       "stale state",
 			st:         legacy.Status{OldState: true, NewState: true},
 			wantSev:    SevWarn,
-			wantDetail: "/old/state exists beside /new/state: an old relay binary or plugin recreated it",
+			wantDetail: "/old/state exists beside /new/state: an old relay binary or plugin recreated it", // name-guard: legacy
 			wantFix:    "ls -la /old/state",
 		},
 		{
 			name:       "stale config",
 			st:         legacy.Status{OldConfig: true, NewConfig: true},
 			wantSev:    SevWarn,
-			wantDetail: "/old/config exists beside /new/config: an old relay binary or plugin recreated it",
+			wantDetail: "/old/config exists beside /new/config: an old relay binary or plugin recreated it", // name-guard: legacy
 			wantFix:    "ls -la /old/config",
 		},
 		{
 			name:       "stale both, state pair reported",
 			st:         legacy.Status{OldState: true, NewState: true, OldConfig: true, NewConfig: true},
 			wantSev:    SevWarn,
-			wantDetail: "/old/state exists beside /new/state: an old relay binary or plugin recreated it",
+			wantDetail: "/old/state exists beside /new/state: an old relay binary or plugin recreated it", // name-guard: legacy
 			wantFix:    "ls -la /old/state",
 		},
 		{
@@ -77,22 +77,22 @@ func TestRenameCheck(t *testing.T) {
 			name:       "unmigrated wins over stale",
 			st:         legacy.Status{OldState: true, NewState: false, OldConfig: true, NewConfig: true},
 			wantSev:    SevFail,
-			wantDetail: "relay-era state at /old/state has not been migrated",
+			wantDetail: "relay-era state at /old/state has not been migrated", // name-guard: legacy
 			wantFix:    "relevo migrate --dry-run && relevo migrate",
 		},
 		{
 			name:       "unmigrated config wins over stale state",
 			st:         legacy.Status{OldState: true, NewState: true, OldConfig: true, NewConfig: false},
 			wantSev:    SevFail,
-			wantDetail: "relay-era state at /old/config has not been migrated",
+			wantDetail: "relay-era state at /old/config has not been migrated", // name-guard: legacy
 			wantFix:    "relevo migrate --dry-run && relevo migrate",
 		},
 		{
-			// New roots alone are not relay-era state: nothing to report.
+			// New roots alone are not relay-era state: nothing to report. // name-guard: legacy
 			name:       "new roots only",
 			st:         legacy.Status{NewState: true, NewConfig: true},
 			wantSev:    SevOK,
-			wantDetail: "no relay-era state",
+			wantDetail: "no relay-era state", // name-guard: legacy
 			wantFix:    "",
 		},
 	}

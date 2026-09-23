@@ -17,7 +17,7 @@ import (
 )
 
 // cmdMigrate is `relevo migrate` (#292 §3): one ordered cutover that moves the
-// relay-era state and config to their relevo-era names, rewrites the paths
+// relay-era state and config to their relevo-era names, rewrites the paths // name-guard: legacy
 // stored inside them, switches the client service unit, and removes the old
 // binary. Every step is reported, and a re-run resumes from whatever a crash
 // left behind.
@@ -31,7 +31,7 @@ func cmdMigrate(args []string) error {
 	fs := flag.NewFlagSet("relevo migrate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dryRun := fs.Bool("dry-run", false, "report every step without touching anything")
-	keepOld := fs.Bool("keep-old-binary", false, "do not remove the old relay binary beside relevo")
+	keepOld := fs.Bool("keep-old-binary", false, "do not remove the old relay binary beside relevo") // name-guard: legacy
 	stateFrom := fs.String("state-from", "", "migrate only this state root")
 	stateTo := fs.String("state-to", "", "to this state root")
 	if err := fs.Parse(args); err != nil {
@@ -147,7 +147,15 @@ func cmdMigrate(args []string) error {
 			return migrateFailure(err)
 		}
 		printMigrateStep(step, true)
-		step, err = migrate.RenameSliceValue(roots.NewConfig, true)
+		// Nothing has moved yet in a dry run, so the new config root holds no
+		// policy.json to report on. When the old root holds one, report
+		// against that, so the step says what the real run would do (#292 §6).
+		sliceConfig := roots.NewConfig
+		if !migratePathExists(filepath.Join(sliceConfig, "policy.json")) &&
+			migratePathExists(filepath.Join(roots.OldConfig, "policy.json")) {
+			sliceConfig = roots.OldConfig
+		}
+		step, err = migrate.RenameSliceValue(sliceConfig, true)
 		if err != nil {
 			return migrateFailure(err)
 		}
@@ -249,7 +257,7 @@ func printNextSteps() {
 	fmt.Println("next steps:")
 	fmt.Println("  relevo doctor")
 	fmt.Println("  relevo agent install")
-	fmt.Println("  reinstall the planner plugin as relevo (README: Upgrading from relay)")
+	fmt.Println("  reinstall the planner plugin as relevo (README: Upgrading from relay)") // name-guard: legacy
 	fmt.Println("  restart planner sessions")
 }
 

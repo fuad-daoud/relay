@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // TestCmdMigrateFlagPairRule checks that naming only one of --state-from and
@@ -29,7 +31,7 @@ func TestCmdMigrateFlagPairRule(t *testing.T) {
 	}
 }
 
-// TestCmdMigrateDryRun builds a relay-era tree and runs the dry run against
+// TestCmdMigrateDryRun builds a relay-era tree and runs the dry run against // name-guard: legacy
 // it: every step is named, and nothing on disk changes.
 func TestCmdMigrateDryRun(t *testing.T) {
 	root := t.TempDir()
@@ -41,14 +43,16 @@ func TestCmdMigrateDryRun(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("HOME", home)
 
-	oldState := filepath.Join(stateHome, "relay")
-	oldConfig := filepath.Join(configHome, "relay")
+	oldState := filepath.Join(stateHome, legacy.Name)
+	oldConfig := filepath.Join(configHome, legacy.Name)
 	mustMkdir(t, oldState)
 	mustMkdir(t, oldConfig)
-	mustWrite(t, filepath.Join(oldState, "relay.db"), "db")
+	mustWrite(t, filepath.Join(oldState, legacy.DBFile), "db")
 	mustWrite(t, filepath.Join(oldConfig, "candidates.json"), "{}")
+	// The old policy.json holds the pre-rename slice value the real run rewrites.
+	mustWrite(t, filepath.Join(oldConfig, "policy.json"), fmt.Sprintf(`{"slice": %q}`, legacy.Slice))
 	// The old client unit is installed, so stop/install/retire all report.
-	mustWrite(t, filepath.Join(configHome, "systemd", "user", "relay.service"), "[Unit]\n")
+	mustWrite(t, filepath.Join(configHome, "systemd", "user", legacy.ClientUnit), "[Unit]\n")
 
 	before := snapshotTree(t, root)
 
@@ -63,6 +67,15 @@ func TestCmdMigrateDryRun(t *testing.T) {
 		if !strings.Contains(out, name+":") {
 			t.Errorf("dry-run output does not name %q:\n%s", name, out)
 		}
+	}
+
+	// #292 §6: nothing has moved in a dry run, so the slice step must read the
+	// old root's policy.json and report the rename, not "no policy.json".
+	if !strings.Contains(out, "rename-slice: rename") {
+		t.Errorf("dry run does not say rename-slice would rename:\n%s", out)
+	}
+	if strings.Contains(out, "rename-slice: no policy.json") {
+		t.Errorf("dry run says no policy.json though the old root holds one:\n%s", out)
 	}
 
 	if after := snapshotTree(t, root); !equalTrees(before, after) {

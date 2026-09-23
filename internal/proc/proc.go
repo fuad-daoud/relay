@@ -461,7 +461,7 @@ func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 }
 
 // Rusage scans the last few lines of streamPath, from last to first, for the
-// relevo-rusage: trailer, or the relay-rusage: one a pre-rename stream
+// relevo-rusage: trailer, or the relay-rusage: one a pre-rename stream // name-guard: legacy
 // carries (#292 §1); ok is false when none of those lines match (plain
 // spawn, killed supervisor, still running). The scan -- rather than assuming
 // a fixed offset -- is needed because supervisorScript's printf leaves a

@@ -28,6 +28,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/latency"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -91,7 +92,7 @@ Commands:
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
-  migrate   move relay-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
+  migrate   move ` + legacy.Name + `-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
   candidates   list the configured harness/provider/model candidates [--probe]
   policy       show, per role, which candidate relevo would pick right now and why
   roles        list each role's shape, candidates, tier and definitions; roles init writes roles.json
