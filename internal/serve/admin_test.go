@@ -468,6 +468,155 @@ func TestAdminUnbindByLabelAndId(t *testing.T) {
 	}
 }
 
+// TestAdminOwnerRuntimeAndTabEntries covers the two server-side read
+// helpers (#216), reusing TestAdminUnbindByLabelAndId's setup shape: two
+// enrolled owners, each with one binding holding one report entry, plus the
+// two refusal cases -- a shared label, and an owner with no bindings
+// directory at all.
+func TestAdminOwnerRuntimeAndTabEntries(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	s, err := New(Config{Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	alice, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idA := remote.IDOf(alice.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(alice.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	bob, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB := remote.IDOf(bob.Public)
+	if _, err := s.clients.Add("bob", remote.MarshalPublic(bob.Public, "bob"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two clients sharing one label, for the ambiguity case.
+	dup1, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idDup1 := remote.IDOf(dup1.Public)
+	if _, err := s.clients.Add("dup", remote.MarshalPublic(dup1.Public, "dup"), now); err != nil {
+		t.Fatal(err)
+	}
+	dup2, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idDup2 := remote.IDOf(dup2.Public)
+	if _, err := s.clients.Add("dup", remote.MarshalPublic(dup2.Public, "dup"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enrolled, but has never bound anything: no bindings directory.
+	carol, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idCarol := remote.IDOf(carol.Public)
+	if _, err := s.clients.Add("carol", remote.MarshalPublic(carol.Public, "carol"), now); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, o := range []struct {
+		id   remote.ClientID
+		name string
+	}{{idA, "api"}, {idB, "web"}} {
+		rt, err := s.OwnerRuntime(o.id)
+		if err != nil {
+			t.Fatalf("OwnerRuntime: %v", err)
+		}
+		if err := rt.Store.Save(store.Binding{
+			Name: o.name, Owner: string(o.id), CWD: rt.Store.WorktreePath(o.name),
+			State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := rt.Store.AppendLog(o.name, store.LogEntry{
+			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Resolves by label and by id to the same owner and label.
+	byLabel, label, err := AdminOwnerRuntime(s, "alice")
+	if err != nil {
+		t.Fatalf("AdminOwnerRuntime(alice): %v", err)
+	}
+	if label != "alice" {
+		t.Errorf("label = %q, want alice", label)
+	}
+	byID, labelByID, err := AdminOwnerRuntime(s, string(idA))
+	if err != nil {
+		t.Fatalf("AdminOwnerRuntime(id): %v", err)
+	}
+	if labelByID != "alice" {
+		t.Errorf("label by id = %q, want alice", labelByID)
+	}
+	if byLabel.Store.Dir("api") != byID.Store.Dir("api") {
+		t.Errorf("by label resolved to %q, by id to %q", byLabel.Store.Dir("api"), byID.Store.Dir("api"))
+	}
+
+	if _, _, err := AdminOwnerRuntime(s, "dup"); err == nil ||
+		!strings.Contains(err.Error(), "ambiguous") ||
+		!strings.Contains(err.Error(), string(idDup1)) || !strings.Contains(err.Error(), string(idDup2)) {
+		t.Errorf("ambiguous label err = %v, want one naming %s and %s", err, idDup1, idDup2)
+	}
+
+	if _, _, err := AdminOwnerRuntime(s, "nobody"); !errors.Is(err, ErrNoSuchClient) {
+		t.Errorf("unknown owner err = %v, want ErrNoSuchClient", err)
+	}
+
+	// An enrolled owner with no bindings directory: ErrNotFound, and the
+	// directory must still not exist afterwards.
+	carolRoot, err := s.ownerRoot(idCarol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AdminOwnerRuntime(s, "carol"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("owner with no bindings dir err = %v, want store.ErrNotFound", err)
+	}
+	if _, statErr := os.Stat(carolRoot); !os.IsNotExist(statErr) {
+		t.Errorf("AdminOwnerRuntime created %s (stat err %v)", carolRoot, statErr)
+	}
+
+	// Without an owner: every owner's entries, labelled "label/name".
+	entries, err := AdminTabEntries(s, "", time.Time{}, func(string) {})
+	if err != nil {
+		t.Fatalf("AdminTabEntries(all): %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("every-owner entries = %d, want 2", len(entries))
+	}
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.Binding] = e.Owner
+	}
+	if got["alice/api"] != "alice" || got["bob/web"] != "bob" {
+		t.Errorf("every-owner entries = %+v, want label/name bindings with Owner set", got)
+	}
+
+	// With an owner: bare names for that owner only.
+	entries, err = AdminTabEntries(s, "alice", time.Time{}, func(string) {})
+	if err != nil {
+		t.Fatalf("AdminTabEntries(alice): %v", err)
+	}
+	if len(entries) != 1 || entries[0].Binding != "api" || entries[0].Owner != "alice" {
+		t.Errorf("alice entries = %+v, want one bare \"api\" owned by alice", entries)
+	}
+}
+
 func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

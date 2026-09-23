@@ -14,9 +14,12 @@ import (
 )
 
 // TabEntry is one log entry with the binding it came from; cmd/relay
-// collects them from live logs and archives, TabRows sums them.
+// collects them from live logs and archives, TabRows sums them. Owner is the
+// owner's label when the entries come from a server (`relay serve tab`); it
+// is "" on a client.
 type TabEntry struct {
 	Binding string
+	Owner   string
 	Entry   store.LogEntry
 }
 
@@ -39,7 +42,7 @@ var (
 	// internal/histq so the query language can share it; the alias keeps
 	// errors.Is(err, ErrBadSince) true for every caller written before.
 	ErrBadSince = histq.ErrBadSince
-	ErrBadBy    = errors.New("--by wants binding, model or provider")
+	ErrBadBy    = errors.New("--by wants binding, model, provider or owner")
 )
 
 // ParseSince turns "" (zero: no cut), "24h", "7d" or "2026-09-01" into
@@ -48,11 +51,53 @@ var (
 // every existing caller and test in this package keeps using.
 func ParseSince(s string, now time.Time) (time.Time, error) { return histq.ParseSince(s, now) }
 
+// TabEntries gathers the entries `relay tab` sums, from rt's live bindings'
+// logs and then from its archives. An archive older than cut is skipped
+// whole, since every entry in it predates the archive itself. An unreadable
+// archive is reported through warn and skipped, not failed. It is the gather
+// half shared by the client's `relay tab` and the server's `relay serve tab`.
+func TabEntries(rt Runtime, cut time.Time, warn func(string)) ([]TabEntry, error) {
+	var entries []TabEntry
+	live, err := rt.Store.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range live {
+		log, err := rt.Store.ReadLog(b.Name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", b.Name, err)
+		}
+		for _, e := range log {
+			entries = append(entries, TabEntry{Binding: b.Name, Entry: e})
+		}
+	}
+	archives, err := rt.Store.ListArchives()
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range archives {
+		if !cut.IsZero() && a.At.Before(cut) {
+			continue // every entry in it predates the archive itself
+		}
+		log, err := rt.Store.ReadArchivedLog(a.Path)
+		if err != nil {
+			warn(fmt.Sprintf("%s: %v", a.Path, err))
+			continue
+		}
+		for _, e := range log {
+			entries = append(entries, TabEntry{Binding: a.Name, Entry: e})
+		}
+	}
+	return entries, nil
+}
+
 func tabKey(e TabEntry, by string) string {
 	u := e.Entry.Usage
 	switch by {
 	case "binding":
 		return e.Binding
+	case "owner":
+		return e.Owner
 	case "provider":
 		if u.Provider == "" {
 			return "unknown"
@@ -67,11 +112,11 @@ func tabKey(e TabEntry, by string) string {
 }
 
 // TabRows groups report and findings entries that carry usage, from since
-// on (zero: all), by "binding", "model" or "provider", and returns the
-// rows sorted by group and the grand total.
+// on (zero: all), by "binding", "model", "provider" or "owner", and returns
+// the rows sorted by group and the grand total.
 func TabRows(entries []TabEntry, by string, since time.Time) ([]TabRow, usage.Spend, error) {
 	switch by {
-	case "binding", "model", "provider":
+	case "binding", "model", "provider", "owner":
 	default:
 		return nil, usage.Spend{}, fmt.Errorf("%q: %w", by, ErrBadBy)
 	}

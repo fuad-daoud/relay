@@ -300,6 +300,98 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 	return relay.Unbind(ctx, rt, name, true)
 }
 
+// AdminOwnerRuntime resolves owner -- an exact client label or exact client
+// id -- and returns that owner's runtime and label for the server-side read
+// verbs (#216). It resolves through the same resolveOwner every --owner verb
+// uses, so it inherits its errors: ErrNoSuchClient for an unknown owner, and
+// an error naming both ids for a label two clients share. A resolved owner
+// whose bindings directory does not exist is store.ErrNotFound rather than a
+// fresh empty store: Store.WithLock runs MkdirAll on the root, so the check
+// has to come first (#216: the verbs are strictly read-only, and nothing may
+// be created for an owner that has never bound anything).
+func AdminOwnerRuntime(s *Server, owner string) (relay.Runtime, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id, err := s.resolveOwner(owner)
+	if err != nil {
+		return relay.Runtime{}, "", err
+	}
+
+	root, err := s.ownerRoot(id)
+	if err != nil {
+		return relay.Runtime{}, "", err
+	}
+	if _, err := os.Stat(root); err != nil {
+		if os.IsNotExist(err) {
+			return relay.Runtime{}, "", store.ErrNotFound
+		}
+		return relay.Runtime{}, "", err
+	}
+
+	rt, err := s.OwnerRuntime(id)
+	if err != nil {
+		return relay.Runtime{}, "", err
+	}
+	return rt, s.clients.LabelOf(id), nil
+}
+
+// AdminTabEntries gathers every TabEntry `relay serve tab` sums. With an
+// owner it is that owner's entries, Owner set to the label and Binding left
+// as the bare name; without one it walks every owner directory the way
+// AdminStatus does, grouping them as "label/name" under Owner = label so two
+// owners' same-named bindings stay apart. Read-only: each owner directory
+// already exists (that is how it is found), so WithLock's MkdirAll is a
+// no-op and no store is created.
+func AdminTabEntries(s *Server, owner string, cut time.Time, warn func(string)) ([]relay.TabEntry, error) {
+	if owner != "" {
+		rt, label, err := AdminOwnerRuntime(s, owner)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := relay.TabEntries(rt, cut, warn)
+		if err != nil {
+			return nil, err
+		}
+		for i := range entries {
+			entries[i].Owner = label
+		}
+		return entries, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
+	dirs, err := os.ReadDir(bindingsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var out []relay.TabEntry
+	for _, entry := range dirs {
+		id, ok := remote.IDFromDir(entry.Name())
+		if !entry.IsDir() || !ok {
+			continue
+		}
+		ownerPath := filepath.Join(bindingsDir, entry.Name())
+		entries, err := relay.TabEntries(s.runtimeAt(ownerPath), cut, warn)
+		if err != nil {
+			return nil, err
+		}
+		label := s.clients.LabelOf(id)
+		for i := range entries {
+			entries[i].Owner = label
+			entries[i].Binding = label + "/" + entries[i].Binding
+		}
+		out = append(out, entries...)
+	}
+	return out, nil
+}
+
 // resolveOwner finds the one client owner names, by exact label or exact
 // client id. Two clients sharing a label is an error naming both ids rather
 // than a silent pick between them.

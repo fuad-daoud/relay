@@ -1769,6 +1769,16 @@ func cmdLog(args []string) error {
 	if err != nil {
 		return err
 	}
+	return printLog(rt, name, *round, *after, *asJSON, *follow, true)
+}
+
+// printLog is cmdLog's body after flag parsing and newRuntime(): it prints
+// name's entries, applying the --round filter, JSON-encoded when asJSON is
+// set, and follows new entries until the binding is DONE or removed when
+// follow is set. markViewed guards the #143 .viewed stamp: `relay log` stamps
+// and the read-only `relay serve log` must not, because the stamp is the
+// owner's, not the admin's.
+func printLog(rt relay.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
 	// A binding that does not exist is named at once, the way every other
 	// command reports it; only a binding that disappears mid-follow (below)
 	// ends the loop quietly.
@@ -1779,30 +1789,32 @@ func cmdLog(args []string) error {
 	// emit applies the --round filter, so the initial batch and every
 	// followed entry render identically.
 	emit := func(e store.LogEntry) {
-		if *round != 0 && e.Round != *round {
+		if round != 0 && e.Round != round {
 			return
 		}
-		if *asJSON {
+		if asJSON {
 			_ = json.NewEncoder(os.Stdout).Encode(e)
 			return
 		}
 		fmt.Println(relay.LogLine(e))
 	}
 
-	entries, err := rt.Store.ReadLogAfter(name, *after)
+	entries, err := rt.Store.ReadLogAfter(name, after)
 	if err != nil {
 		return err
 	}
-	last := *after
+	last := after
 	for _, e := range entries {
 		emit(e)
 		last = e.Seq
 	}
 
-	if !*follow {
+	if !follow {
 		// #143: a successful print is what "viewed" means; the stamp is
 		// best-effort and must never fail a read command.
-		_ = rt.Store.MarkViewed(name, time.Now())
+		if markViewed {
+			_ = rt.Store.MarkViewed(name, time.Now())
+		}
 		return nil
 	}
 
@@ -1813,12 +1825,16 @@ func cmdLog(args []string) error {
 		if ctx.Err() != nil {
 			// Interrupted: what was already printed is the answer, and the
 			// stamp is #143's the same as any other exit.
-			_ = rt.Store.MarkViewed(name, time.Now())
+			if markViewed {
+				_ = rt.Store.MarkViewed(name, time.Now())
+			}
 			return nil
 		}
 		return err
 	}
-	_ = rt.Store.MarkViewed(name, time.Now())
+	if markViewed {
+		_ = rt.Store.MarkViewed(name, time.Now())
+	}
 	return nil
 }
 

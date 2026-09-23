@@ -84,6 +84,19 @@ func cmdShow(args []string) error {
 		return err
 	}
 
+	opts := relay.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
+	return printShow(rt, opts, true, true, "")
+}
+
+// printShow is cmdShow's body after section resolution, moved verbatim.
+// allowDB=false means a non-live binding returns store.ErrNotFound instead
+// of opening (and so creating) the database: `relay serve show` reads live
+// bindings only. markViewed guards the #143 .viewed stamp the same way
+// printLog's does. headerPrefix is prepended to the stderr header, which is
+// how `relay serve show` names the owner it read from.
+func printShow(rt relay.Runtime, opts relay.ShowOptions, markViewed, allowDB bool, headerPrefix string) error {
+	name := opts.Name
+
 	// A live binding needs no database at all; only open one -- and only
 	// fail on it -- once we know the binding is not live
 	// (docs/specs/2026-09-20-persistence-design.md §4: "show on a live
@@ -93,6 +106,9 @@ func cmdShow(args []string) error {
 	if _, loadErr := rt.Store.Load(name); loadErr != nil {
 		if !errors.Is(loadErr, store.ErrNotFound) {
 			return loadErr
+		}
+		if !allowDB {
+			return fmt.Errorf("%s: %w", name, store.ErrNotFound)
 		}
 		d, dbErr := openDB(rt.Store.DBPath())
 		if dbErr != nil {
@@ -107,30 +123,29 @@ func cmdShow(args []string) error {
 	// #143: a successful print is what "viewed" means, for a live binding
 	// only -- there is no .viewed sidecar for a database-only (archived)
 	// binding to stamp. Best-effort: never fails the read.
-	markViewed := func() {
-		if live {
+	stampViewed := func() {
+		if markViewed && live {
 			_ = rt.Store.MarkViewed(name, time.Now())
 		}
 	}
 
-	opts := relay.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
 	res, err := relay.Show(context.Background(), rt, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relay show: %v\n", err)
 		return exitCodeErr{code: 1}
 	}
 
-	if *asJSON {
+	if opts.JSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {
 			return err
 		}
-		markViewed()
+		stampViewed()
 		return nil
 	}
 
-	header := fmt.Sprintf("%s round %d of %d · %s", res.Name, res.Round, res.Rounds, res.Section)
+	header := fmt.Sprintf("%s%s round %d of %d · %s", headerPrefix, res.Name, res.Round, res.Rounds, res.Section)
 	if res.Archived {
 		header += " · archived " + res.ArchivedAt.Format("2006-01-02")
 	}
@@ -138,7 +153,7 @@ func cmdShow(args []string) error {
 
 	if res.Missing {
 		fmt.Printf("no %s for round %d\n", res.Section, res.Round)
-		markViewed()
+		stampViewed()
 		return nil
 	}
 
@@ -146,7 +161,7 @@ func cmdShow(args []string) error {
 		for _, e := range res.Events {
 			fmt.Println(relay.LogLine(e))
 		}
-		markViewed()
+		stampViewed()
 		return nil
 	}
 
@@ -155,6 +170,6 @@ func cmdShow(args []string) error {
 		text += "\n"
 	}
 	fmt.Print(text)
-	markViewed()
+	stampViewed()
 	return nil
 }

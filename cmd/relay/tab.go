@@ -27,6 +27,12 @@ func cmdTab(args []string) error {
 	if len(fs.Args()) != 0 {
 		return fmt.Errorf("usage: relay tab [--since 7d] [--by binding|model|provider] [--json]")
 	}
+	// --by owner is the server-side grouping (`relay serve tab --by owner`):
+	// a client's entries have no owner to group by (#216).
+	if *by == "owner" {
+		fmt.Fprintln(os.Stderr, `"owner": --by owner is for relay serve tab`)
+		return exitCodeErr{code: 1}
+	}
 	now := time.Now().UTC()
 	cut, err := relay.ParseSince(*since, now)
 	if err != nil {
@@ -37,47 +43,28 @@ func cmdTab(args []string) error {
 	if err != nil {
 		return err
 	}
-	var entries []relay.TabEntry
-	live, err := rt.Store.List()
+	entries, err := relay.TabEntries(rt, cut, func(msg string) {
+		fmt.Fprintf(os.Stderr, "relay tab: skip %s\n", msg)
+	})
 	if err != nil {
 		return err
 	}
-	for _, b := range live {
-		log, err := rt.Store.ReadLog(b.Name)
-		if err != nil {
-			return fmt.Errorf("%s: %w", b.Name, err)
-		}
-		for _, e := range log {
-			entries = append(entries, relay.TabEntry{Binding: b.Name, Entry: e})
-		}
-	}
-	archives, err := rt.Store.ListArchives()
-	if err != nil {
-		return err
-	}
-	for _, a := range archives {
-		if !cut.IsZero() && a.At.Before(cut) {
-			continue // every entry in it predates the archive itself
-		}
-		log, err := rt.Store.ReadArchivedLog(a.Path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "relay tab: skip %s: %v\n", a.Path, err)
-			continue
-		}
-		for _, e := range log {
-			entries = append(entries, relay.TabEntry{Binding: a.Name, Entry: e})
-		}
-	}
+	return renderTabReport(entries, *by, cut, *asJSON)
+}
 
-	rows, total, err := relay.TabRows(entries, *by, cut)
+// renderTabReport is cmdTab's tail: it sums the gathered entries through
+// relay.TabRows and prints the report, as JSON when asJSON is set. The server
+// verb `relay serve tab` renders through the same tail.
+func renderTabReport(entries []relay.TabEntry, by string, cut time.Time, asJSON bool) error {
+	rows, total, err := relay.TabRows(entries, by, cut)
 	if err != nil {
 		return err
 	}
-	rep := relay.TabReport{By: *by, Rows: rows, Total: total}
+	rep := relay.TabReport{By: by, Rows: rows, Total: total}
 	if !cut.IsZero() {
 		rep.Since = &cut
 	}
-	if *asJSON {
+	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
