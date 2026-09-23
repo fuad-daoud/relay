@@ -245,6 +245,10 @@ func cmdDoctor(args []string) error {
 		doctor.WithUsage(pricesPath, opencodeConfigured),
 		doctor.WithExtraChecks(extraChecks),
 		doctor.WithStateRoot(stateRoot))
+	// #370: whether a restart right now would kill anything, read from the
+	// cgroup every running local process actually sits in. One call, placed
+	// directly after the daemon row.
+	rep.Checks = insertRestartRow(rep.Checks, restartCheck(rt))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",

@@ -360,6 +360,65 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	}
 }
 
+// TestHeadlessConsultNoTrailerIsSilentDespiteText pins #370, spec §4.5: a
+// consult whose stream already holds assistant text but that was killed before
+// writing its exit trailer is Silent with a note naming the missing trailer,
+// and the findings file is not written -- partial text is never delivered as
+// findings, whether the daemon's restart killed it or anything else did.
+//
+// Mutation check: move FinalText back before the trailer check and this fails:
+// the partial text becomes a findings file and the record is Done.
+func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
+	// run leaves an assistant message on the stream and kills the process
+	// without a trailer, then ticks the consults.
+	run := func(t *testing.T, rt Runtime, fr *fakeRunner, c store.Consult) store.Binding {
+		t.Helper()
+		if err := os.WriteFile(c.Endpoint.LogPath, claudeStream(t, "PARTIAL FINDINGS"), 0o644); err != nil {
+			t.Fatalf("write stream: %v", err)
+		}
+		fr.script(c.Endpoint.PID, false) // exited; no exit() set: killed before the trailer
+		return tickConsults(t, rt)
+	}
+
+	assertSilent := func(t *testing.T, c store.Consult, b store.Binding, wants ...string) {
+		t.Helper()
+		if b.Consults[0].State != store.ConsultSilent {
+			t.Fatalf("state = %q, want silent", b.Consults[0].State)
+		}
+		note := b.Consults[0].Note
+		if !strings.Contains(note, "exit trailer") {
+			t.Errorf("note = %q, want it to name the missing exit trailer", note)
+		}
+		for _, want := range wants {
+			if !strings.Contains(note, want) {
+				t.Errorf("note = %q, want it to contain %q", note, want)
+			}
+		}
+		if !strings.Contains(note, c.Endpoint.LogPath) {
+			t.Errorf("note = %q, want it to point at the partial output %s", note, c.Endpoint.LogPath)
+		}
+		if _, err := os.Stat(c.FindingsPath); err == nil {
+			t.Error("a consult with no exit trailer must write no findings file")
+		}
+	}
+
+	t.Run("lost to a daemon restart", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, c := seedHeadlessConsult(t, fr)
+		rt.StartedAt = baseTime
+		rt.Watched = NewWatched()
+		b := run(t, rt, fr, c)
+		assertSilent(t, c, b, "lost to a daemon restart before it finished", "no exit trailer")
+	})
+
+	t.Run("killed by anything else", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, c := seedHeadlessConsult(t, fr)
+		b := run(t, rt, fr, c)
+		assertSilent(t, c, b, "ended without an exit trailer (killed before it finished)")
+	})
+}
+
 // TestVerifyVerdictParsedOntoFindingsAndBinding pins #144's verdict path: a
 // verify consult whose findings end with `verdict: rejected` records the
 // verdict and its two reasons on the findings entry and on the binding, names

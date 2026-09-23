@@ -299,6 +299,9 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		}
 		return fail("spawn failed: " + brief(err))
 	}
+	// The daemon has now seen the reviewer alive (#370, spec §4.2): a later
+	// tick never judges it lost to its own restart.
+	rt.Watched.Mark(handle.PID, handle.StartedAt.Unix())
 
 	consult.Endpoint = store.Endpoint{
 		AgentName: consult.Endpoint.AgentName,

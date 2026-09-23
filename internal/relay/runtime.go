@@ -174,6 +174,12 @@ type Runtime struct {
 	// the daemon does not know when it itself started.
 	StartedAt time.Time
 
+	// Watched is the daemon's in-memory record of the processes it has seen
+	// alive (#370). Only `relay daemon` sets one (relay.NewWatched); a nil
+	// *Watched has seen nothing, which is exactly the #244 rule, so every
+	// CLI one-shot keeps its old behaviour.
+	Watched *Watched
+
 	// Roles checks whether a harness kind's shipped role files are present
 	// on disk, so a candidate whose harness has none installed is gated
 	// before it is picked (#238). Nil means no check, so tests that do not

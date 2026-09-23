@@ -6,6 +6,7 @@ import (
 	"github.com/fuad-daoud/relay/internal/usage"
 
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path"
@@ -941,5 +942,101 @@ func TestStartDoesNotMutateCallerEnv(t *testing.T) {
 	}
 	if full := caller[:cap(caller)]; !reflect.DeepEqual(full, before) {
 		t.Errorf("caller's Env backing array = %v, want %v (Start must copy, not append in place)", full, before)
+	}
+}
+
+// fakeProbeRunner returns a Runner whose scope probe is a counter and whose
+// clock starts at a fixed instant the test can advance. It exercises
+// scopesUsable, the extracted method holding the retry rule, so no
+// systemd-run is needed (#370 §4.7).
+func fakeProbeRunner(fail *bool) (*Runner, *int, *time.Time) {
+	calls := 0
+	now := time.Unix(1_700_000_000, 0)
+	r := New()
+	r.probe = func(context.Context, string) error {
+		calls++
+		if *fail {
+			return errors.New("systemd-run: failed to start transient scope unit: Permission denied")
+		}
+		return nil
+	}
+	r.now = func() time.Time { return now }
+	return r, &calls, &now
+}
+
+// TestScopesUsableRetriesAfterAFailure pins #370 §4.7's retry rule: a failed
+// probe is not retried on an immediate Start, is retried once
+// ScopeReprobeAfter has passed, and a success is sticky -- later Starts never
+// probe again. Dropping the time condition makes this test's "not re-probed
+// immediately" assertion fail (calls would be 2).
+func TestScopesUsableRetriesAfterAFailure(t *testing.T) {
+	fail := true
+	r, calls, now := fakeProbeRunner(&fail)
+	ctx := context.Background()
+	const slice = "relay.slice"
+
+	if r.scopesUsable(ctx, slice) {
+		t.Fatal("a failed probe must leave scopes unusable")
+	}
+	if *calls != 1 {
+		t.Fatalf("probe calls after the first Start = %d, want 1", *calls)
+	}
+
+	// An immediate Start is inside the retry window: no probe, still unscoped.
+	if r.scopesUsable(ctx, slice) {
+		t.Fatal("still inside the retry window: scopes must stay unusable")
+	}
+	if *calls != 1 {
+		t.Fatalf("probe calls after a Start inside the window = %d, want 1 (must not re-probe)", *calls)
+	}
+
+	// Advance past the window with the probe now succeeding: the next Start
+	// re-probes, succeeds, and runs scoped.
+	fail = false
+	*now = now.Add(ScopeReprobeAfter)
+	if !r.scopesUsable(ctx, slice) {
+		t.Fatal("the re-probe after ScopeReprobeAfter succeeded; scopes must be usable")
+	}
+	if *calls != 2 {
+		t.Fatalf("probe calls after the re-probe = %d, want 2", *calls)
+	}
+
+	// Success is sticky: even far in the future, later Starts never probe.
+	*now = now.Add(24 * time.Hour)
+	if !r.scopesUsable(ctx, slice) {
+		t.Fatal("a successful probe must stay sticky")
+	}
+	if *calls != 2 {
+		t.Fatalf("probe calls after success = %d, want 2 (success is sticky)", *calls)
+	}
+}
+
+// TestScopesUsableProbesOncePerFailure pins #370 §4.7's warn-once rule through
+// the probe count: a failure is taken, and warned about, once, not once per
+// Start. internal/proc installs no slog handler in its tests (checked: no
+// test in this package captures slog), so the count of probes -- exactly the
+// number of warnings -- is what is asserted here.
+func TestScopesUsableProbesOncePerFailure(t *testing.T) {
+	fail := true
+	r, calls, now := fakeProbeRunner(&fail)
+	ctx := context.Background()
+	const slice = "relay.slice"
+
+	// One failure, then ten Starts inside the window: one probe, one warning.
+	r.scopesUsable(ctx, slice)
+	for i := 0; i < 10; i++ {
+		r.scopesUsable(ctx, slice)
+	}
+	if *calls != 1 {
+		t.Fatalf("probe calls after a failure and 10 Starts in the window = %d, want 1 (one warning, not one per Start)", *calls)
+	}
+
+	// Past the window: a second failure is taken -- a second warning -- and
+	// the Starts that follow it inside the new window are silent again.
+	*now = now.Add(ScopeReprobeAfter)
+	r.scopesUsable(ctx, slice)
+	r.scopesUsable(ctx, slice)
+	if *calls != 2 {
+		t.Fatalf("probe calls after a second failure and one Start = %d, want 2 (one warning per failure)", *calls)
 	}
 }

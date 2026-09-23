@@ -101,6 +101,12 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					"binding", b.Name, "consult", c.ID, "pid", c.Endpoint.PID, "err", err)
 				alive = true
 			}
+			if err == nil && alive {
+				// A sighting (#370, spec §4.2): this daemon now knows the
+				// consult is running, so its own restart is never blamed for
+				// this process later.
+				rt.Watched.Mark(c.Endpoint.PID, c.Endpoint.StartedAt)
+			}
 
 			if alive {
 				if now.Sub(c.SpawnedAt) >= consultTimeout {
@@ -117,14 +123,25 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				continue
 			}
 
-			// Exited. The stream carries the process's final message and the
-			// supervisor's exit trailer.
+			// Exited. The exit trailer is read before the stream's final
+			// message (#370, spec §4.5): a process that wrote no trailer was
+			// killed before it finished, so whatever text its stream already
+			// holds is partial and is never delivered as findings.
+			code, ok := rt.Runner.ExitCode(ctx, handleOf(c.Endpoint), c.Endpoint.LogPath)
+			if !ok {
+				note := "ended without an exit trailer (killed before it finished); partial output: " + c.Endpoint.LogPath
+				if lostToRestart(rt, c.Endpoint.PID, c.Endpoint.StartedAt) {
+					note = "lost to a daemon restart before it finished (no exit trailer); partial output: " + c.Endpoint.LogPath
+				}
+				var ferr error
+				if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent, note); ferr != nil {
+					return b, ferr
+				}
+				continue
+			}
+			codeText := strconv.Itoa(code)
 			stream, _ := os.ReadFile(c.Endpoint.LogPath)
 			text := transcript.FinalText(c.Endpoint.Kind, stream)
-			codeText := "unknown"
-			if code, ok := rt.Runner.ExitCode(ctx, handleOf(c.Endpoint), c.Endpoint.LogPath); ok {
-				codeText = strconv.Itoa(code)
-			}
 
 			if text == "" {
 				var ferr error

@@ -2,9 +2,13 @@
 set -eu
 
 # Asserts the checked-in systemd unit template's [Service] keys (spec
-# 2026-09-13-headless-recovery §4.1). Headless builders are children of the
-# daemon and share its cgroup, so the unit must not cap memory, and an
-# OOM-killed builder must not take the daemon down with it.
+# 2026-09-13-headless-recovery §4.1). Builders, gates and consults run in
+# their own relay-*.scope units and survive a restart of this unit (#370);
+# they share this unit's cgroup only when scopes are unavailable, so the unit
+# still must not cap memory, and an OOM-killed builder must not take the
+# daemon down (`OOMPolicy=continue`).
+#
+# The script also asserts StartLimitIntervalSec=0 (#370).
 #
 # Usage: relay-service-template_test.sh [path-to-template]
 # Defaults to the repo's dist/relay.service.
@@ -27,5 +31,16 @@ if grep -q '^OOMPolicy=' "$template" && ! grep -q '^OOMPolicy=continue$' "$templ
 	echo "FAIL: $template sets an OOMPolicy other than continue"; fail=1
 fi
 
+# #370 §4.9: systemd's default start limit (5 starts in 10s) left the daemon
+# down until reset-failed. Exactly one StartLimitIntervalSec=0, in [Unit].
+limit_line=$(grep -n '^StartLimitIntervalSec=0$' "$template" | head -1 | cut -d: -f1) || limit_line=
+if [ "$(grep -c '^StartLimitIntervalSec=0$' "$template")" -ne 1 ]; then
+	echo "FAIL: $template must set StartLimitIntervalSec=0 exactly once"; fail=1
+fi
+service_line=$(grep -n '^\[Service\]$' "$template" | head -1 | cut -d: -f1) || service_line=
+if [ -z "$limit_line" ] || [ -z "$service_line" ] || [ "$limit_line" -ge "$service_line" ]; then
+	echo "FAIL: $template must set StartLimitIntervalSec=0 in [Unit], before [Service]"; fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "ok: $template has no MemoryMax and OOMPolicy=continue"
+echo "ok: $template has no MemoryMax, OOMPolicy=continue, and StartLimitIntervalSec=0 in [Unit]"
