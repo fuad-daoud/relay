@@ -1748,6 +1748,13 @@ func cmdStatus(args []string) error {
 	if notice := statusNotice(running, latest, ok, kind); notice != "" {
 		fmt.Println(notice)
 	}
+	// #370: one line above the rows only when a daemon restart right now would
+	// kill a process running outside its own scope. The same computation
+	// doctor's restart row makes -- cheap, one small file read per running
+	// process. JSON output above stays notice-free.
+	if notice := restartNotice(restartCheck(rt)); notice != "" {
+		fmt.Println(notice)
+	}
 
 	fmt.Print(relay.RenderStatus(rep))
 	return nil

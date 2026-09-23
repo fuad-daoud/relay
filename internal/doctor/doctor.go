@@ -54,6 +54,10 @@ type Check struct {
 	// opposed to establishing that something is wrong. The bind-time preflight
 	// skips these, because there is nothing the user can act on.
 	ProbeFailed bool
+	// Unsafe is how many running processes sit outside their own scope, set
+	// only on the restart row (#370 §4.8). It exists so `relay status` can
+	// print the count without parsing Detail.
+	Unsafe int
 }
 
 // Report is every check, in render order, plus the derived verdict.

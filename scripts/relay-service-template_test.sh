@@ -27,5 +27,16 @@ if grep -q '^OOMPolicy=' "$template" && ! grep -q '^OOMPolicy=continue$' "$templ
 	echo "FAIL: $template sets an OOMPolicy other than continue"; fail=1
 fi
 
+# #370 §4.9: systemd's default start limit (5 starts in 10s) left the daemon
+# down until reset-failed. Exactly one StartLimitIntervalSec=0, in [Unit].
+limit_line=$(grep -n '^StartLimitIntervalSec=0$' "$template" | head -1 | cut -d: -f1) || limit_line=
+if [ "$(grep -c '^StartLimitIntervalSec=0$' "$template")" -ne 1 ]; then
+	echo "FAIL: $template must set StartLimitIntervalSec=0 exactly once"; fail=1
+fi
+service_line=$(grep -n '^\[Service\]$' "$template" | head -1 | cut -d: -f1) || service_line=
+if [ -z "$limit_line" ] || [ -z "$service_line" ] || [ "$limit_line" -ge "$service_line" ]; then
+	echo "FAIL: $template must set StartLimitIntervalSec=0 in [Unit], before [Service]"; fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "ok: $template has no MemoryMax and OOMPolicy=continue"
+echo "ok: $template has no MemoryMax, OOMPolicy=continue, and StartLimitIntervalSec=0 in [Unit]"

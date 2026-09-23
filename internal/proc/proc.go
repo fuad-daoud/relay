@@ -77,19 +77,40 @@ if [ -n "$want" ]; then
 fi
 printf '\nrelay-exit:%s\n' "$rc"`
 
+// probeState is the scope probe's verdict (#295, #370 §4.7).
+type probeState int
+
+const (
+	probeUnknown probeState = iota // never probed
+	probeOK                        // scopes work; sticky
+	probeFailed                    // the last probe failed
+)
+
+// ScopeReprobeAfter is how long a failed scope probe is trusted before a
+// scoped Start retries it (#370 §4.7). One transient failure -- a user manager
+// still coming up, a full /run -- costs at most this long, not the daemon's
+// whole life.
+const ScopeReprobeAfter = 5 * time.Minute
+
 // Runner is the local relay.Runner.
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
 
-	// probeOnce guards the lazy scope probe (#295): the first Start with a
-	// scoped spec probes systemd-run, and every later Start reuses that
-	// verdict. A Runner that is never asked for a scope never probes.
-	probeOnce sync.Once
-	// scopesOK is the verdict of that one probe: true means scopes work and
-	// scoped specs are launched as scopes, false means every later Start
-	// drops the scope and spawns plainly.
-	scopesOK bool
+	// probeMu guards the scope probe state below (#370 §4.7). The probe runs
+	// on the first scoped Start and, after a failure, on the first scoped
+	// Start at least ScopeReprobeAfter later; a success is sticky. A Runner
+	// never asked for a scope never probes.
+	probeMu sync.Mutex
+	// scopes is the probe's verdict, and scopesFailedAt when it failed.
+	scopes         probeState
+	scopesFailedAt time.Time
+	// probe runs the scope probe; nil means ProbeScopes. It exists so tests
+	// can exercise the retry rule without a real systemd-run.
+	probe func(ctx context.Context, slice string) error
+	// now is the probe's clock; nil means time.Now. Tests set it so they can
+	// step across ScopeReprobeAfter without waiting.
+	now func() time.Time
 
 	// pinOnce guards the lazy pin probe (#314): the first Start whose scope
 	// carries an AllowedCPUs pool probes systemd-run with that property, and
@@ -112,6 +133,45 @@ func (r *Runner) grace() time.Duration {
 		return r.KillGrace
 	}
 	return DefaultKillGrace
+}
+
+// scopesUsable reports whether a scoped spawn may run in its own scope right
+// now (#370 §4.7): the probe is taken when the verdict is unknown, or when a
+// failure is at least ScopeReprobeAfter old. A success is sticky, so a Runner
+// probes once for its lifetime on a host where scopes work; a failure is
+// logged exactly once, when it is taken, so a Start inside the retry window is
+// silent.
+func (r *Runner) scopesUsable(ctx context.Context, slice string) bool {
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+
+	now := r.nowTime()
+	retry := r.scopes == probeFailed && now.Sub(r.scopesFailedAt) >= ScopeReprobeAfter
+	if r.scopes == probeUnknown || retry {
+		probe := r.probe
+		if probe == nil {
+			probe = ProbeScopes
+		}
+		if err := probe(ctx, slice); err != nil {
+			r.scopes = probeFailed
+			r.scopesFailedAt = now
+			slog.Warn("scopes unavailable; builders will run in this process's cgroup", "err", err)
+		} else {
+			if retry {
+				slog.Info("scopes available again; builders will run in their own scopes")
+			}
+			r.scopes = probeOK
+		}
+	}
+	return r.scopes == probeOK
+}
+
+// nowTime is the probe clock: the injected one in tests, else time.Now.
+func (r *Runner) nowTime() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 // buildArgv builds the argv Start execs: bin run under supervisorScript,
@@ -167,24 +227,15 @@ func (r *Runner) Start(ctx context.Context, spec relay.ProcSpec) (relay.ProcHand
 	}
 	defer streamf.Close()
 
-	// The scope probe is lazy and runs at most once per Runner (#295): a
-	// local CLI verb has no eager startup probe (cmd/relay/serve.go's served
-	// path keeps its own), so the verdict is taken here on the first scoped
-	// Start. A host where systemd-run is missing or refuses gets one warning
-	// and unscoped builders, exactly as before. Start took spec by value, so
+	// The scope probe is lazy and re-runnable (#295, #370 §4.7): a local CLI
+	// verb has no eager startup probe (cmd/relay/serve.go's served path keeps
+	// its own), so the verdict is taken here on the first scoped Start. A
+	// failed probe is retried on the first scoped Start at least
+	// ScopeReprobeAfter later, so one transient failure no longer costs the
+	// daemon's whole life; a success is sticky. Start took spec by value, so
 	// clearing Scope here never mutates the caller's struct.
-	if spec.Scope != nil {
-		r.probeOnce.Do(func() {
-			if err := ProbeScopes(ctx, spec.Scope.Slice); err != nil {
-				slog.Warn("scopes unavailable; builders will run in this process's cgroup", "err", err)
-				r.scopesOK = false
-				return
-			}
-			r.scopesOK = true
-		})
-		if !r.scopesOK {
-			spec.Scope = nil // local copy; the caller's spec is not mutated
-		}
+	if spec.Scope != nil && !r.scopesUsable(ctx, spec.Scope.Slice) {
+		spec.Scope = nil // local copy; the caller's spec is not mutated
 	}
 
 	// The pin probe is lazy and runs at most once per Runner (#314), like the
