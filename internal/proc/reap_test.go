@@ -5,9 +5,58 @@ package proc
 import (
 	"os"
 	"os/exec"
+	"reflect"
 	"testing"
 	"time"
 )
+
+// TestWithoutPID covers the pure exclusion that keeps ps's own pid out of the
+// inherited set (#371 §4.6).
+func TestWithoutPID(t *testing.T) {
+	tests := []struct {
+		name string
+		pids []int
+		pid  int
+		want []int
+	}{
+		{"removes a match", []int{4, 7, 9}, 7, []int{4, 9}},
+		{"removes every match", []int{7, 4, 7}, 7, []int{4}},
+		{"leaves a non-member alone", []int{4, 9}, 7, []int{4, 9}},
+		{"empty set", nil, 7, nil},
+		{"removes the only pid", []int{7}, 7, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := withoutPID(tt.pids, tt.pid); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("withoutPID(%v, %d) = %v, want %v", tt.pids, tt.pid, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInheritedReaperDropsANonChild covers the drop half of the reap contract:
+// a pid in the set that is not our child (os.Getppid() never is) is dropped and
+// never reported as reaped, so a second Reap has nothing left to try.
+func TestInheritedReaperDropsANonChild(t *testing.T) {
+	r := &InheritedReaper{pids: []int{os.Getppid()}}
+
+	if reaped := r.Reap(); len(reaped) != 0 {
+		t.Errorf("Reap() = %v, want nothing for a pid that is not our child", reaped)
+	}
+	if again := r.Reap(); len(again) != 0 {
+		t.Errorf("second Reap() = %v, want nothing because the pid was dropped", again)
+	}
+}
+
+// TestScanChildrenPSExcludesItself runs the darwin path on Linux: an empty
+// procRoot forces scanPS, which starts ps as a child of this process. With no
+// other children running, the only candidate is ps itself, and the result must
+// be empty. Without the exclusion, ps's own pid is in the set.
+func TestScanChildrenPSExcludesItself(t *testing.T) {
+	if got := scanChildren(os.Getpid(), ""); len(got) != 0 {
+		t.Errorf("scanChildren(self, \"\") = %v, want nothing (ps must not list itself into the set)", got)
+	}
+}
 
 // TestInheritedReaperReapsAnInheritedChild covers §4.6: a child started before
 // the reaper is constructed is inherited, and Reap must collect it.

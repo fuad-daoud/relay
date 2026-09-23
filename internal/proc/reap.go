@@ -65,12 +65,33 @@ func scanProcRoot(self int, procRoot string) ([]int, bool) {
 }
 
 func scanPS(self int) []int {
-	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=").Output()
+	cmd := exec.Command("ps", "-A", "-o", "pid=,ppid=")
+	out, err := cmd.Output()
 	if err != nil {
 		slog.Debug("reaper: ps", "err", err)
 		return nil
 	}
-	return ParsePSChildren(string(out), self)
+	// ps runs as a child of this process, so ps lists itself with ppid ==
+	// self and ParsePSChildren puts its own pid in the set. Exclude it: it is
+	// not an inherited child, and leaving it in would let the kernel hand a
+	// future child that reuses the pid to Wait4 instead of its exec.Cmd.
+	psPID := 0
+	if cmd.Process != nil {
+		psPID = cmd.Process.Pid
+	}
+	return withoutPID(ParsePSChildren(string(out), self), psPID)
+}
+
+// withoutPID returns pids with every occurrence of pid removed. It is pure, so
+// the exclusion of ps's own pid is table-tested without starting a process.
+func withoutPID(pids []int, pid int) []int {
+	var kept []int
+	for _, p := range pids {
+		if p != pid {
+			kept = append(kept, p)
+		}
+	}
+	return kept
 }
 
 // Reap waits, without blocking, on every inherited pid and returns the pids it
@@ -84,9 +105,11 @@ func (r *InheritedReaper) Reap() []int {
 
 	var reaped, kept []int
 	for _, pid := range r.pids {
-		if reap(pid) {
+		gotReaped, drop := reap(pid)
+		if gotReaped {
 			reaped = append(reaped, pid)
-		} else {
+		}
+		if !drop {
 			kept = append(kept, pid)
 		}
 	}
@@ -94,13 +117,15 @@ func (r *InheritedReaper) Reap() []int {
 	return reaped
 }
 
-// reap reports whether pid should be dropped: true when it was reaped or is
-// not ours any more, false while it is still running.
-func reap(pid int) bool {
+// reap reports whether pid was reaped and whether it should be dropped. It
+// returns (true, true) when Wait4 collected pid, (false, true) when pid is no
+// longer ours (ECHILD, or another error), and (false, false) while pid is
+// still running.
+func reap(pid int) (reaped, drop bool) {
 	var ws syscall.WaitStatus
 	wpid, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
 	if wpid == pid {
-		return true
+		return true, true
 	}
 	if err != nil {
 		// ECHILD means it was never ours, or has already been reaped.
@@ -109,7 +134,7 @@ func reap(pid int) bool {
 		if !errors.Is(err, syscall.ECHILD) {
 			slog.Debug("reaper: wait4", "pid", pid, "err", err)
 		}
-		return true
+		return false, true
 	}
-	return wpid != 0
+	return false, false
 }
