@@ -283,6 +283,20 @@ func probeMS(ms int64) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
+// ProbeNameWidth is the column width FormatProbe is given: the longest name
+// among the results about to print (A1 §4.4, round 3 F2). cmdCandidates used
+// to size this column from the tokens, which FormatProbe no longer prints.
+// An empty slice is width 0.
+func ProbeNameWidth(names []string) int {
+	width := 0
+	for _, name := range names {
+		if len(name) > width {
+			width = len(name)
+		}
+	}
+	return width
+}
+
 // FormatProbe renders one probe result as a line, without a trailing
 // newline: the time to first output and the total on success, or the error,
 // with the TTFT appended when output was seen before the failure. A1 §4.4:

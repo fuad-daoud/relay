@@ -273,11 +273,15 @@ func Gates(rt Runtime) []ledger.Gate {
 	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
 	gates = append(gates, rolesMissingGates(rt)...)
 
-	// A1 §4.4: every gate also carries the candidate's short name, so the
-	// gates block and `relevo serve gates` can print it. The token stays the
-	// gate's identity; NameOf never fails.
+	// A1 §4.4, round 3 F3: every gate carries the candidate's short name
+	// when the set holds its token, so the gates block and `relevo serve
+	// gates` can print it. A token no longer configured leaves Name empty
+	// and the renderers fall back to printing the token. The token stays the
+	// gate's identity.
 	for i := range gates {
-		gates[i].Name = rt.Candidates.NameOf(gates[i].Token)
+		if name, ok := rt.Candidates.NameFor(gates[i].Token); ok {
+			gates[i].Name = name
+		}
 	}
 	return gates
 }

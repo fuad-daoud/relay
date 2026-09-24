@@ -294,8 +294,20 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 		BuilderCandidate: "agy/test/gone",
 		Round:            1, State: store.StateActive,
 	})
-	if gone.BuilderName != "agy/test/gone" {
-		t.Errorf("BuilderName for an unconfigured token = %q, want the token", gone.BuilderName)
+	// Round 3 F3: a token no longer configured leaves BuilderName empty, so
+	// the name field never carries a token. The renderers print the token.
+	if gone.BuilderName != "" {
+		t.Errorf("BuilderName for an unconfigured token = %q, want empty", gone.BuilderName)
+	}
+	raw, err = json.Marshal(gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "builder_name") {
+		t.Errorf("JSON = %s, want no builder_name key for a retired token", raw)
+	}
+	if out := RenderStatus(Report{Bindings: []BindingStatus{gone}}); !strings.Contains(out, "`agy/test/gone`") {
+		t.Errorf("RenderStatus =\n%s\nwant it printing the retired token", out)
 	}
 
 	none := statusRowForTest(t, rt, store.Binding{

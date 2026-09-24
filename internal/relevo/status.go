@@ -332,7 +332,6 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
-		BuilderName:      rt.Candidates.NameOf(b.BuilderCandidate),
 		Role:             b.Role,
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
@@ -342,6 +341,13 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		PlannerKind:      b.Planner.Kind,
 		PlannerID:        b.PlannerID,
 		BuilderKind:      b.Builder.Kind, BuilderStatus: agentUnknown,
+	}
+
+	// A1 §4.4, round 3 F3: BuilderName is set only when the set actually
+	// holds the token. A retired token leaves the field empty, and
+	// RenderStatus falls back to printing the token itself.
+	if name, ok := rt.Candidates.NameFor(b.BuilderCandidate); ok {
+		row.BuilderName = name
 	}
 
 	// #374: a custom builder definition is named on the row -- and so in

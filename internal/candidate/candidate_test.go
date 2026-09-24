@@ -680,3 +680,28 @@ func TestNameOf(t *testing.T) {
 		t.Errorf("(*Set)(nil).NameOf = %q, want the token back", got)
 	}
 }
+
+// TestNameFor pins round 3 F3's NameFor: ok is true only when the set holds
+// the token. A known token gives its name; an unknown one and a nil set give
+// "", false, so a caller can leave a name field empty.
+func TestNameFor(t *testing.T) {
+	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
+	set, _, err := Parse("candidates.json", []byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	name, ok := set.NameFor("claude/anthropic/sonnet")
+	if !ok || name != "sonnet" {
+		t.Errorf("NameFor(known) = %q, %v, want sonnet, true", name, ok)
+	}
+
+	if name, ok := set.NameFor("claude/anthropic/opus"); ok || name != "" {
+		t.Errorf("NameFor(unknown) = %q, %v, want \"\", false", name, ok)
+	}
+
+	var nilSet *Set
+	if name, ok := nilSet.NameFor("claude/anthropic/sonnet"); ok || name != "" {
+		t.Errorf("(*Set)(nil).NameFor = %q, %v, want \"\", false", name, ok)
+	}
+}

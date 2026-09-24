@@ -154,6 +154,22 @@ func (s *Set) NameOf(token string) string {
 	return c.Name
 }
 
+// NameFor returns the name of the candidate whose canonical token is token.
+// ok reports whether the set holds that token: it is false for a token no
+// longer configured, and for a nil set (A1 §4.4, round 3 F3). A caller uses
+// it to leave a name field unset rather than carry a token in it. NameOf
+// stays the never-failing display form.
+func (s *Set) NameFor(token string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	c, ok := s.byRef[token]
+	if !ok {
+		return "", false
+	}
+	return c.Name, true
+}
+
 // Names returns every candidate's name, sorted.
 func (s *Set) Names() []string {
 	if s == nil {

@@ -197,8 +197,8 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 
 	got := FormatCandidatesLatencyFor(reg, set, nil, nil)
 	// claude's entry takes "m" first, so opencode's becomes "opencode-m".
-	want := "m" + strings.Repeat(" ", 11) + testFaint("claude/test/m  ") + "  builder, reviewer\n" +
-		"opencode-m" + strings.Repeat(" ", 2) + testFaint("opencode/test/m") + "  (no role)\n"
+	want := "m" + strings.Repeat(" ", 11) + "claude/test/m  " + "  builder, reviewer\n" +
+		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no role)\n"
 	if got != want {
 		t.Errorf("FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
 	}

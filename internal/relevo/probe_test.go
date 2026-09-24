@@ -405,6 +405,18 @@ func TestFormatProbe(t *testing.T) {
 	}
 }
 
+// TestProbeNameWidth pins round 3 F2: the probe column is sized from the
+// names FormatProbe prints, and an empty list is width 0.
+func TestProbeNameWidth(t *testing.T) {
+	if got := ProbeNameWidth(nil); got != 0 {
+		t.Errorf("ProbeNameWidth(nil) = %d, want 0", got)
+	}
+	names := []string{"m", "gemini-3.8-flash-high", "agy-m"}
+	if got, want := ProbeNameWidth(names), len("gemini-3.8-flash-high"); got != want {
+		t.Errorf("ProbeNameWidth(%v) = %d, want %d", names, got, want)
+	}
+}
+
 // TestProbeUnknownNameRunsNothing pins A1 §4.2: an unknown candidate name is
 // refused before anything runs.
 func TestProbeUnknownNameRunsNothing(t *testing.T) {

@@ -555,19 +555,23 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 	}
 
 	d := DryRun{
-		Name:          pf.b.Name,
-		Round:         pf.b.Round,
-		Mode:          dryRunMode(pf.b),
-		Candidate:     pf.b.BuilderCandidate,
-		CandidateName: rt.Candidates.NameOf(pf.b.BuilderCandidate),
-		Where:         dryRunWhere(pf),
-		PlanPath:      pf.planPath,
-		PlanFrom:      absoluteOr(file),
-		PlanBytes:     int64(len(pf.body)),
-		ReportPath:    pf.reportPath,
-		DonePath:      pf.donePath,
-		Tier:          string(pf.tier),
-		PromptHead:    promptHead(pf.prompt),
+		Name:       pf.b.Name,
+		Round:      pf.b.Round,
+		Mode:       dryRunMode(pf.b),
+		Candidate:  pf.b.BuilderCandidate,
+		Where:      dryRunWhere(pf),
+		PlanPath:   pf.planPath,
+		PlanFrom:   absoluteOr(file),
+		PlanBytes:  int64(len(pf.body)),
+		ReportPath: pf.reportPath,
+		DonePath:   pf.donePath,
+		Tier:       string(pf.tier),
+		PromptHead: promptHead(pf.prompt),
+	}
+	// A1 §4.4, round 3 F3: CandidateName is set only when the set holds the
+	// token; otherwise the text falls back to printing Candidate.
+	if name, ok := rt.Candidates.NameFor(pf.b.BuilderCandidate); ok {
+		d.CandidateName = name
 	}
 	if pf.gate != nil {
 		d.GateNote = dryRunGateNote(pf.gate)

@@ -85,11 +85,13 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 		if err != nil {
 			continue
 		}
-		// A1 §4.4: the candidate's short name leads the row, with the token
-		// faint behind it so the line still carries the identity the rest of
-		// relevo uses. The name and the token size their columns separately.
-		sb.WriteString(fmt.Sprintf("%-*s  %s  %s",
-			nameWidth, set.NameOf(ref), faint(padWidth(ref, tokWidth)), rolesFor(c)))
+		// A1 §4.4, round 3 F1: the candidate's short name leads the row and
+		// the token follows it as plain text in its own column, two spaces
+		// apart like the other columns. `relevo config` is read through a
+		// pipe, so the block must carry no SGR escapes. The name and the
+		// token size their columns separately.
+		sb.WriteString(fmt.Sprintf("%-*s  %-*s  %s",
+			nameWidth, set.NameOf(ref), tokWidth, ref, rolesFor(c)))
 		if withTier && c.Tier != "" {
 			sb.WriteString("   tier: " + c.Tier)
 		}
@@ -109,13 +111,6 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 		sb.WriteString("\n")
 	}
 	return sb.String()
-}
-
-// faint renders s in the dim grey the status line uses, for a value a reader
-// should see second (A1 §4.4: the token behind the candidate's name). Padding
-// belongs inside the escapes, so a column still measures what it prints.
-func faint(s string) string {
-	return ansiDim + s + ansiReset
 }
 
 // mergeGateTexts renders one token's gates as the parts of the unavailable:

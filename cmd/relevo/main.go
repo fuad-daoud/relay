@@ -881,25 +881,25 @@ func cmdCandidates(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "probing %d candidate(s) from %s, one at a time\n", n, host)
 
-		// The column is sized from the resolved canonical tokens, not argv:
-		// FormatProbe prints the token Probe resolved (A1 §4.2).
-		width := 0
+		// The column is sized from the names FormatProbe prints, not from
+		// argv: Probe resolves each argument and FormatProbe prints the
+		// resolved candidate's short name (A1 §4.4, round 3 F2).
+		var names []string
 		if len(tokens) > 0 {
 			for _, tok := range tokens {
-				if c, err := rt.Candidates.Resolve(tok); err == nil {
-					tok = c.Ref().String()
+				c, err := rt.Candidates.Resolve(tok)
+				if err != nil {
+					names = append(names, tok)
+					continue
 				}
-				if len(tok) > width {
-					width = len(tok)
-				}
+				names = append(names, rt.Candidates.NameOf(c.Ref().String()))
 			}
 		} else {
 			for _, ref := range rt.Candidates.Refs() {
-				if len(ref) > width {
-					width = len(ref)
-				}
+				names = append(names, rt.Candidates.NameOf(ref))
 			}
 		}
+		width := relevo.ProbeNameWidth(names)
 
 		_, err := relevo.Probe(context.Background(), rt, lineExec{}, tokens, host, func(r relevo.ProbeResult) {
 			fmt.Println(relevo.FormatProbe(r, width))
