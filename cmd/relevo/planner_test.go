@@ -339,3 +339,96 @@ func TestListAlignsLongValues(t *testing.T) {
 		}
 	}
 }
+
+// TestListShowsChat is the #386 chat column: a claude planner's row names the
+// chat the way its own harness does, a planner with nothing readable shows "-",
+// and --json carries the same two fields. It writes a synthetic transcript and
+// uses claude records only, so the test spawns nothing and reaches no network.
+func TestListShowsChat(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
+		"{\"type\":\"bridge-session\",\"bridgeSessionId\":\"cse_01ABCDEF\"}\n"
+	if err := os.WriteFile(transcript, []byte(content), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	cwd := t.TempDir()
+	for _, rec := range []planner.Record{
+		{
+			ID: "pl_aaaaaaaaaaaa", Name: "alpha", HarnessKind: "claude",
+			SessionID: "sess-alpha", CWD: cwd, TranscriptLocator: transcript,
+		},
+		{
+			ID: "pl_bbbbbbbbbbbb", Name: "beta", HarnessKind: "claude",
+			SessionID: "sess-beta", CWD: cwd,
+		},
+	} {
+		if _, err := reg.Create(rec); err != nil {
+			t.Fatalf("Create(%s): %v", rec.Name, err)
+		}
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	if err != nil {
+		t.Fatalf("planner list: %v", err)
+	}
+
+	rows := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(rows) != 3 {
+		t.Fatalf("planner list printed %d lines, want a header and two rows:\n%s", len(rows), stdout)
+	}
+	if !strings.Contains(rows[0], "chat") {
+		t.Errorf("header %q does not name the chat column", rows[0])
+	}
+
+	rowFor := func(name string) string {
+		for _, row := range rows[1:] {
+			if strings.HasPrefix(row, name) {
+				return row
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", name, stdout)
+		return ""
+	}
+
+	wantChat := "my chat · https://claude.ai/code/session_01ABCDEF"
+	if got := rowFor("alpha"); !strings.Contains(got, wantChat) {
+		t.Errorf("alpha's row %q does not contain %q", got, wantChat)
+	}
+	beta := rowFor("beta")
+	if fields := strings.Fields(beta); len(fields) < 2 || fields[1] != "-" {
+		t.Errorf("beta's chat cell is not \"-\" in row %q", beta)
+	}
+
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "list", "--json"}) })
+	if err != nil {
+		t.Fatalf("planner list --json: %v", err)
+	}
+	var views []map[string]any
+	if err := json.Unmarshal(stdout, &views); err != nil {
+		t.Fatalf("decode --json: %v\n%s", err, stdout)
+	}
+	if len(views) != 2 {
+		t.Fatalf("--json printed %d records, want 2", len(views))
+	}
+	if got := views[0]["chat_label"]; got != "my chat" {
+		t.Errorf("alpha chat_label = %v, want %q", got, "my chat")
+	}
+	if got := views[0]["chat_link"]; got != "https://claude.ai/code/session_01ABCDEF" {
+		t.Errorf("alpha chat_link = %v, want the claude.ai url", got)
+	}
+	if _, ok := views[1]["chat_label"]; ok {
+		t.Errorf("beta should carry no chat_label, got %v", views[1]["chat_label"])
+	}
+	if _, ok := views[1]["chat_link"]; ok {
+		t.Errorf("beta should carry no chat_link, got %v", views[1]["chat_link"])
+	}
+}
