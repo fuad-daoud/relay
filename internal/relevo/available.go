@@ -24,6 +24,8 @@ const (
 // refuses a subject relevo knows nothing about (#301). Pure: the caller
 // passes the configured set (possibly nil) and the already-pruned ledger.
 //
+//	subject is a configured candidate name:
+//	  provider := that candidate's provider
 //	subject parses as a candidate token (candidate.ParseRef succeeds):
 //	  provider := ref.Provider
 //	  known if set != nil and set.Lookup(ref) succeeds,
@@ -38,6 +40,16 @@ const (
 //	     or if l has a RateLimited entry whose Subject == provider
 //	  otherwise: return an error wrapping ErrUnknownProvider
 func ResolveClearSubject(set *candidate.Set, l ledger.Ledger, subject string) (provider string, err error) {
+	// A name is a candidate, and clears that candidate's provider (A1
+	// §4.2). A provider name is never also a candidate name (candidate
+	// names must not equal a configured provider), so this cannot shadow
+	// the bare-provider branch below.
+	if candidate.IsName(subject) {
+		if c, rerr := set.Resolve(subject); rerr == nil {
+			return c.Ref().Provider, nil
+		}
+	}
+
 	if ref, perr := candidate.ParseRef(subject); perr == nil {
 		provider = ref.Provider
 		if set != nil {

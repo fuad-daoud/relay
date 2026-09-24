@@ -135,3 +135,33 @@ func TestSuggestProvider(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveClearSubjectName pins A1 §4.2: `gate --clear <name>` clears that
+// candidate's provider, and a bare provider still clears the provider.
+func TestResolveClearSubjectName(t *testing.T) {
+	set := candidateSet(t, testTwoProviderJSON)
+
+	for _, tt := range []struct {
+		subject string
+		want    string
+	}{
+		{"m", "test"},
+		{"agy-m", "other"},
+	} {
+		provider, err := ResolveClearSubject(set, ledger.Ledger{}, tt.subject)
+		if err != nil {
+			t.Fatalf("ResolveClearSubject(%s): %v", tt.subject, err)
+		}
+		if provider != tt.want {
+			t.Errorf("ResolveClearSubject(%s) = %q, want %q", tt.subject, provider, tt.want)
+		}
+	}
+
+	provider, err := ResolveClearSubject(set, ledger.Ledger{}, "other")
+	if err != nil {
+		t.Fatalf("ResolveClearSubject(other): %v", err)
+	}
+	if provider != "other" {
+		t.Errorf("ResolveClearSubject(other) = %q, want other", provider)
+	}
+}

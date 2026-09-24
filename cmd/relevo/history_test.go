@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
 )
@@ -185,5 +186,42 @@ func TestGroupJSONShape(t *testing.T) {
 	}
 	if string(empty) != "[]" {
 		t.Errorf("Marshal(nil groups) = %s, want []", empty)
+	}
+}
+
+// TestHistoryJSONHasBuilderName pins A1 §4.4: each `relevo history --json`
+// row keeps every token field where it always was and gains the candidate's
+// short name beside the token.
+func TestHistoryJSONHasBuilderName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[{"harness":"agy","provider":"antigravity","model":"opus","roles":["builder"]}]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+
+	token := "agy/antigravity/opus"
+	rows := []db.RoundRow{{BindingName: "api-auth", Number: 3, BuilderCandidate: &token}}
+
+	raw, err := json.Marshal(historyJSONRows(rows, set))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	// DeriveNames gives agy/antigravity/opus the name "opus".
+	if got := decoded[0]["BuilderName"]; got != "opus" {
+		t.Errorf("BuilderName = %v, want opus", got)
+	}
+	if got := decoded[0]["BindingName"]; got != "api-auth" {
+		t.Errorf("BindingName = %v, want the embedded row's field", got)
+	}
+	if got := decoded[0]["BuilderCandidate"]; got != token {
+		t.Errorf("BuilderCandidate = %v, want the token", got)
 	}
 }

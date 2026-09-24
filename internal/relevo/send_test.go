@@ -717,24 +717,25 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 // labelled lines, in order, with the 1024-based size.
 func TestRenderDryRunShape(t *testing.T) {
 	d := DryRun{
-		Name:       "api-auth",
-		Round:      5,
-		Mode:       "headless",
-		Candidate:  "agy/google/gemini-3.8-flash-high",
-		Where:      "/usr/bin/agy -p",
-		PlanPath:   "/home/p/.local/state/relevo/api-auth/005-plan.md",
-		PlanFrom:   "./plan.md",
-		PlanBytes:  4198,
-		ReportPath: "/home/p/.local/state/relevo/api-auth/005-report.md",
-		DonePath:   "/home/p/.local/state/relevo/api-auth/005-done",
-		Tier:       "yolo",
+		Name:          "api-auth",
+		Round:         5,
+		Mode:          "headless",
+		Candidate:     "agy/google/gemini-3.8-flash-high",
+		CandidateName: "gemini-3.8-flash-high",
+		Where:         "/usr/bin/agy -p",
+		PlanPath:      "/home/p/.local/state/relevo/api-auth/005-plan.md",
+		PlanFrom:      "./plan.md",
+		PlanBytes:     4198,
+		ReportPath:    "/home/p/.local/state/relevo/api-auth/005-report.md",
+		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
+		Tier:          "yolo",
 		PromptHead: []string{
 			`relevo: round 5 · to builder "api-auth" · from the planner (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
 		},
 	}
 	want := `would send round 5 to api-auth
-  builder   headless agy/google/gemini-3.8-flash-high
+  builder   headless gemini-3.8-flash-high
   where     /usr/bin/agy -p
   tier      yolo
   plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
@@ -833,8 +834,8 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send --builder: %v", err)
 	}
-	if !strings.Contains(res.Pick, testClaudeRef) || !strings.Contains(res.Pick, "policy bypassed") {
-		t.Errorf("res.Pick = %q, want a pick line for %s with policy bypassed", res.Pick, testClaudeRef)
+	if !strings.Contains(res.Pick, "claude-m") || !strings.Contains(res.Pick, "policy bypassed") {
+		t.Errorf("res.Pick = %q, want a pick line naming claude-m with policy bypassed", res.Pick)
 	}
 
 	stored, err := rt.Store.Load("webshop")

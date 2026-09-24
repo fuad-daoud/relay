@@ -152,9 +152,9 @@ func TestLoadValidation(t *testing.T) {
 			wantSubstring: `reviewer.definitions.claude.requires[0]: bad name "Bad"`,
 		},
 		{
-			name:          "bad candidate token",
-			body:          `{"builder": {"candidates": ["not-a-token"]}}`,
-			wantSubstring: "builder.candidates[0]:",
+			name:          "bad candidate entry",
+			body:          `{"builder": {"candidates": ["A/b"]}}`,
+			wantSubstring: `builder.candidates[0]: "A/b": want a candidate name or harness/provider/model`,
 		},
 		{
 			name:          "duplicate candidate",
@@ -297,5 +297,18 @@ func TestLoadNewWriterAccepted(t *testing.T) {
 	}
 	if row.Shape == nil || *row.Shape != "writer" {
 		t.Errorf("my-writer shape = %v, want \"writer\"", row.Shape)
+	}
+}
+
+// TestLoadAcceptsNameCandidates pins A1 §4.2's validation rule for roles.json:
+// a candidate name, even one that is not a token, validates.
+func TestLoadAcceptsNameCandidates(t *testing.T) {
+	for _, body := range []string{
+		`{"builder": {"candidates": ["sonnet"]}}`,
+		`{"builder": {"candidates": ["a"]}}`,
+	} {
+		if _, err := Load(writeRoles(t, body)); err != nil {
+			t.Errorf("Load(%s) = %v, want no error", body, err)
+		}
 	}
 }

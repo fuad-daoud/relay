@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/histq"
@@ -112,6 +113,10 @@ type HistoryOptions struct {
 	Limit int
 	// Query is the -q text; Filter parses it before applying the flags.
 	Query string
+	// Names resolves a candidate filter given as a name to its canonical
+	// token, so `history --candidate <name>` matches stored rounds (A1 §4.2).
+	// A nil set leaves a name filter as typed.
+	Names *candidate.Set
 	// By is the --by axis; it overrides a by: in Query the same way every
 	// other flag does.
 	By string
@@ -227,6 +232,15 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 		}
 	}
 
+	// A candidate filter given as a name resolves to its canonical token, so
+	// the stored rounds match; an unresolved value is left as typed, and
+	// matches no rounds, as today (A1 §4.2).
+	if o.Names != nil && f.Candidate != "" && !strings.Contains(f.Candidate, "/") {
+		if c, err := o.Names.Resolve(f.Candidate); err == nil {
+			f.Candidate = c.Ref().String()
+		}
+	}
+
 	f.Limit = o.Limit
 	return f, notes, nil
 }
@@ -247,15 +261,18 @@ func axisList() string {
 //
 // started local time (in loc); the binding name, padded to 12 and
 // truncated with "…" past it; the round number as "rN"; the builder
-// candidate, padded to 40; the outcome, padded to 14; commits ("+N
-// commits", "-" when nil); tree state ("-" when nil); cost ("$0.42",
-// "~$0.42" when the basis is estimated, "unknown" when the basis is
-// unknown, "-" when there is no cost at all); "(archived)" appended when
+// candidate's short name (A1 §4.4), padded to 24; the outcome, padded to
+// 14; commits ("+N commits", "-" when nil); tree state ("-" when nil); cost
+// ("$0.42", "~$0.42" when the basis is estimated, "unknown" when the basis
+// is unknown, "-" when there is no cost at all); "(archived)" appended when
 // the binding is archived.
-func HistoryLine(r db.RoundRow, loc *time.Location) string {
+//
+// names maps a stored token to the candidate's short name, or is nil to
+// print the token as stored.
+func HistoryLine(r db.RoundRow, loc *time.Location, names func(string) string) string {
 	started := r.StartedAt.In(loc).Format("2006-01-02 15:04")
 	nameCol := padTrunc(r.BindingName, 12)
-	candidateCol := padWidth(derefStr(r.BuilderCandidate), 40)
+	candidateCol := padWidth(candidateName(r.BuilderCandidate, names), 24)
 	outcomeCol := padWidth(r.Outcome, 14)
 
 	commits := "-"
@@ -280,16 +297,27 @@ func HistoryLine(r db.RoundRow, loc *time.Location) string {
 
 // FormatHistory renders rows one HistoryLine per line (the caller controls
 // order via Filter.Newest), or "no rounds" when rows is empty.
-func FormatHistory(rows []db.RoundRow, loc *time.Location) string {
+func FormatHistory(rows []db.RoundRow, loc *time.Location, names func(string) string) string {
 	if len(rows) == 0 {
 		return "no rounds\n"
 	}
 	var sb strings.Builder
 	for _, r := range rows {
-		sb.WriteString(HistoryLine(r, loc))
+		sb.WriteString(HistoryLine(r, loc, names))
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// candidateName is a stored candidate token as a row prints it: the short
+// name when names resolves it, the token itself otherwise (A1 §4.4). A nil
+// names prints the token, so every pre-A1 caller reads as it always did.
+func candidateName(token *string, names func(string) string) string {
+	tok := derefStr(token)
+	if names == nil {
+		return tok
+	}
+	return names(tok)
 }
 
 // FormatGroups renders the `relevo history --by` table: one row per group,
@@ -298,7 +326,11 @@ func FormatHistory(rows []db.RoundRow, loc *time.Location) string {
 // nil-basis-safe money and carries a " (N unknown)" suffix when the group
 // holds rows the sum cannot trust. An empty view prints "no rounds", as
 // FormatHistory does (docs/specs/2026-09-21-dashboard-design.md §5).
-func FormatGroups(groups []histq.GroupRow, by histq.Axis, loc *time.Location) string {
+//
+// A1 §4.4: with by == builder the leading column prints the candidate's
+// short name through names (nil leaves the key as stored). The group key and
+// every sum stay the token.
+func FormatGroups(groups []histq.GroupRow, by histq.Axis, loc *time.Location, names func(string) string) string {
 	if len(groups) == 0 {
 		return "no rounds\n"
 	}
@@ -315,8 +347,12 @@ func FormatGroups(groups []histq.GroupRow, by histq.Axis, loc *time.Location) st
 		if g.Unknown > 0 {
 			cost += fmt.Sprintf(" (%d unknown)", g.Unknown)
 		}
+		key := g.Key
+		if by == histq.AxisBuilder && names != nil {
+			key = names(g.Key)
+		}
 		fmt.Fprintf(&sb, "%s  %6d  %8d  %6d  %7d  %6s  %5s  %-10s\n",
-			padTrunc(g.Key, 40), g.Rounds, g.Reported, g.Halted, g.Commits,
+			padTrunc(key, 40), g.Rounds, g.Reported, g.Halted, g.Commits,
 			usage.ShortTokens(g.Tokens), cost, g.Last.In(loc).Format("2006-01-02"))
 	}
 	return sb.String()

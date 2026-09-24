@@ -472,6 +472,60 @@ func TestExplainResolution(t *testing.T) {
 	}
 }
 
+// TestPickTextUsesNamesStoredNoteUnchanged pins A1 §4.4: the note
+// ExplainResolution renders -- the KindPick entry `relevo log` reads, and
+// what the outcome and stats parsers match -- keeps every candidate token,
+// byte-identical to its pre-A1 text, while PickText, the line a human reads,
+// names each candidate.
+func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	ref, err := candidate.ParseRef(testClaudeRef)
+	if err != nil {
+		t.Fatalf("ParseRef(%q): %v", testClaudeRef, err)
+	}
+	claude, err := set.Lookup(ref)
+	if err != nil {
+		t.Fatalf("Lookup(%q): %v", testClaudeRef, err)
+	}
+
+	until := baseTime.Add(10 * time.Minute)
+	untilText := GateUntilText(until)
+
+	res := Resolution{
+		How:       HowOrder,
+		Position:  2,
+		Candidate: claude,
+		Skipped: []Skip{
+			{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until},
+			{Token: testOpencodeRef, Kind: ledger.RateLimited},
+		},
+	}
+
+	// The pre-A1 golden, every candidate named by its token.
+	stored := "picked claude/test/m for builder: order #2; skipped " +
+		testAgyRef + " (spawn failed " + untilText + "), " +
+		testOpencodeRef + " (rate-limited until cleared)"
+	if got := ExplainResolution("builder", res); got != stored {
+		t.Errorf("ExplainResolution() = %q, want the pre-A1 golden %q", got, stored)
+	}
+	if note := pickEntry(baseTime, 1, "builder", res).Note; note != stored {
+		t.Errorf("stored pick note = %q, want the pre-A1 golden %q", note, stored)
+	}
+
+	// PickText names each candidate: DeriveNames gives testCandidatesJSON's
+	// entries agy-m, claude-m and m.
+	want := "picked claude-m for builder: order #2; skipped " +
+		"agy-m (spawn failed " + untilText + "), m (rate-limited until cleared)"
+	if got := PickText("builder", res, set); got != want {
+		t.Errorf("PickText() = %q, want %q", got, want)
+	}
+
+	// Without a set the line reads exactly as the stored note does.
+	if got := PickText("builder", res, nil); got != stored {
+		t.Errorf("PickText(nil set) = %q, want %q", got, stored)
+	}
+}
+
 func TestCandidateKind(t *testing.T) {
 	rt := Runtime{
 		Candidates: candidateSet(t, testCandidatesJSON),
@@ -544,5 +598,35 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
 		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo config agents --kind")
+	}
+}
+
+// TestResolveRoleByName pins A1 §4.2: an explicit candidate may be named by
+// its short name, and the refusals name the candidate by that name.
+func TestResolveRoleByName(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+
+	res, err := resolveCandidate(set, policy.Policy{}, nil, "claude-m", "builder")
+	if err != nil {
+		t.Fatalf("resolveCandidate(claude-m): %v", err)
+	}
+	if got := res.Token(); got != testClaudeRef {
+		t.Errorf("Token() = %q, want %q", got, testClaudeRef)
+	}
+	if res.How != HowExplicit {
+		t.Errorf("How = %q, want %q", res.How, HowExplicit)
+	}
+
+	_, err = resolveCandidate(set, policy.Policy{}, nil, "agy-m", "reviewer")
+	if !errors.Is(err, ErrRoleNotServed) {
+		t.Fatalf("resolveCandidate(agy-m, reviewer) err = %v, want ErrRoleNotServed", err)
+	}
+	if !strings.Contains(err.Error(), `candidate "agy-m" does not serve role "reviewer"`) {
+		t.Errorf("err = %q, want it to name the candidate by its short name", err.Error())
+	}
+
+	_, err = resolveCandidate(set, policy.Policy{}, nil, "nope", "builder")
+	if !errors.Is(err, candidate.ErrUnknownCandidate) {
+		t.Errorf("resolveCandidate(nope) err = %v, want ErrUnknownCandidate", err)
 	}
 }

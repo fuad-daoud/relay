@@ -53,11 +53,12 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	// #374 §2.3: file mode lists the row's tokens as written. Legacy mode
 	// lists the resolved Ranked list instead, so a role served only by
 	// candidates no order names still shows them, marked (unlisted).
+	// A1 §4.4: both print each candidate's short name.
 	b.WriteString("\n  candidates  ")
 	if reg.Source() == roles.SourceLegacy {
-		b.WriteString(legacyCandidates(role.Ranked))
+		b.WriteString(legacyCandidates(reg, role.Ranked))
 	} else {
-		b.WriteString(fileCandidates(role.Candidates))
+		b.WriteString(fileCandidates(reg, role))
 	}
 
 	for _, kind := range sortedDefinitionKinds(role.Definitions) {
@@ -75,29 +76,46 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 }
 
 // legacyCandidates renders a role's ranked list for the legacy candidates
-// line: bare tokens in order, a token whose Position is 0 -- listed by no
-// order entry -- suffixed " (unlisted)", and "(none)" when the list is empty.
-func legacyCandidates(ranked []roles.Ranked) string {
+// line: each candidate's short name in order (A1 §4.4), a token whose
+// Position is 0 -- listed by no order entry -- suffixed " (unlisted)", and
+// "(none)" when the list is empty.
+func legacyCandidates(reg *roles.Registry, ranked []roles.Ranked) string {
 	if len(ranked) == 0 {
 		return "(none)"
 	}
-	tokens := make([]string, 0, len(ranked))
+	names := make([]string, 0, len(ranked))
 	for _, r := range ranked {
+		name := reg.NameOf(r.Token)
 		if r.Position == 0 {
-			tokens = append(tokens, r.Token+" (unlisted)")
+			names = append(names, name+" (unlisted)")
 		} else {
-			tokens = append(tokens, r.Token)
+			names = append(names, name)
 		}
 	}
-	return strings.Join(tokens, ", ")
+	return strings.Join(names, ", ")
 }
 
-// fileCandidates renders a role's candidates as written, or "(none)".
-func fileCandidates(candidates []string) string {
-	if len(candidates) == 0 {
+// fileCandidates renders a role's candidates as written: each entry the role
+// resolved prints its candidate's short name (A1 §4.4), and an entry that did
+// not resolve stays raw with " (unknown)", because that is the finding.
+// "(none)" when the list is empty.
+func fileCandidates(reg *roles.Registry, role roles.Role) string {
+	if len(role.Candidates) == 0 {
 		return "(none)"
 	}
-	return strings.Join(candidates, ", ")
+	byPosition := make(map[int]string, len(role.Ranked))
+	for _, r := range role.Ranked {
+		byPosition[r.Position] = r.Token
+	}
+	parts := make([]string, 0, len(role.Candidates))
+	for i, entry := range role.Candidates {
+		if tok, ok := byPosition[i+1]; ok {
+			parts = append(parts, reg.NameOf(tok))
+			continue
+		}
+		parts = append(parts, entry+" (unknown)")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // sortedDefinitionKinds returns a role's resolved definition kinds, sorted, so

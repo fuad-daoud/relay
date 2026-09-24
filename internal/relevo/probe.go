@@ -31,9 +31,13 @@ const (
 	probePrompt = "relevo latency probe: reply with the single word ok. Do not use any tools."
 )
 
-// ProbeResult is one probe's outcome. It is latency.Sample itself, so the
-// recorded shape and the printed shape can never drift.
-type ProbeResult = latency.Sample
+// ProbeResult is one probe's outcome: the recorded latency.Sample plus the
+// candidate's short name (A1 §4.4), which FormatProbe prints. Only the sample
+// is recorded -- a name is a display alias, and the token stays the identity.
+type ProbeResult struct {
+	latency.Sample
+	Name string
+}
 
 // LineExec is the process seam Probe runs a candidate's harness through.
 // cmd/relevo implements it with os/exec; tests implement it with a script, so
@@ -106,23 +110,23 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 		}
 	}
 	if !known {
-		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: "no known role"}
+		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: "no known role"}, Name: c.Name}
 	}
 
 	dir, err := os.MkdirTemp("", "relevo-probe-")
 	if err != nil {
-		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}
+		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 	defer os.RemoveAll(dir)
 
 	tier, err := probeTier(c.Harness)
 	if err != nil {
-		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}
+		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 
 	argv, err := headlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir)
 	if err != nil {
-		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}
+		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
@@ -132,7 +136,7 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 	// fresh git repo, like a real round's worktree. The git call stays outside
 	// the timed window: neither TTFTMS nor TotalMS includes it.
 	if err := x.Run(pctx, dir, []string{"git", "init", "-q"}, nil); err != nil {
-		return ProbeResult{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText("git init: " + err.Error())}
+		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText("git init: " + err.Error())}, Name: c.Name}
 	}
 
 	start := rt.Now()
@@ -159,11 +163,14 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 	})
 
 	r := ProbeResult{
-		At:      start.UTC(),
-		Token:   ref,
-		Host:    host,
-		TTFTMS:  ttft,
-		TotalMS: rt.Now().Sub(start).Milliseconds(),
+		Sample: latency.Sample{
+			At:      start.UTC(),
+			Token:   ref,
+			Host:    host,
+			TTFTMS:  ttft,
+			TotalMS: rt.Now().Sub(start).Milliseconds(),
+		},
+		Name: c.Name,
 	}
 	switch {
 	case runErr != nil && harnessErr != "":
@@ -223,11 +230,9 @@ func Probe(ctx context.Context, rt Runtime, x LineExec, tokens []string, host st
 		}
 	} else {
 		for _, token := range tokens {
-			parsed, err := candidate.ParseRef(token)
-			if err != nil {
-				return nil, err
-			}
-			c, err := rt.Candidates.Lookup(parsed)
+			// The argument may be a candidate name or a canonical token
+			// (A1 §4.2).
+			c, err := rt.Candidates.Resolve(token)
 			if err != nil {
 				return nil, err
 			}
@@ -262,7 +267,7 @@ func recordLatency(rt Runtime, r ProbeResult) {
 		if err != nil {
 			return err
 		}
-		return latency.SaveKV(rt.Latency, h.Prune(rt.Now()).Append(r))
+		return latency.SaveKV(rt.Latency, h.Prune(rt.Now()).Append(r.Sample))
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record latency: %v\n", err)
@@ -278,15 +283,35 @@ func probeMS(ms int64) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
+// ProbeNameWidth is the column width FormatProbe is given: the longest name
+// among the results about to print (A1 §4.4, round 3 F2). cmdCandidates used
+// to size this column from the tokens, which FormatProbe no longer prints.
+// An empty slice is width 0.
+func ProbeNameWidth(names []string) int {
+	width := 0
+	for _, name := range names {
+		if len(name) > width {
+			width = len(name)
+		}
+	}
+	return width
+}
+
 // FormatProbe renders one probe result as a line, without a trailing
 // newline: the time to first output and the total on success, or the error,
-// with the TTFT appended when output was seen before the failure.
+// with the TTFT appended when output was seen before the failure. A1 §4.4:
+// the candidate is named by its short name, or by its token when the result
+// carries no name.
 func FormatProbe(r ProbeResult, width int) string {
+	label := r.Name
+	if label == "" {
+		label = r.Token
+	}
 	if r.Err == "" {
-		return fmt.Sprintf("%-*s  ttft %s  total %s", width, r.Token, probeMS(r.TTFTMS), probeMS(r.TotalMS))
+		return fmt.Sprintf("%-*s  ttft %s  total %s", width, label, probeMS(r.TTFTMS), probeMS(r.TotalMS))
 	}
 
-	out := fmt.Sprintf("%-*s  error: %s", width, r.Token, r.Err)
+	out := fmt.Sprintf("%-*s  error: %s", width, label, r.Err)
 	if r.TTFTMS > 0 {
 		out += "  (ttft " + probeMS(r.TTFTMS) + ")"
 	}

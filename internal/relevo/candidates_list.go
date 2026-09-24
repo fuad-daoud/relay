@@ -69,10 +69,13 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 	}
 
 	refs := set.Refs()
-	width := 0
+	nameWidth, tokWidth := 0, 0
 	for _, ref := range refs {
-		if len(ref) > width {
-			width = len(ref)
+		if n := set.NameOf(ref); len(n) > nameWidth {
+			nameWidth = len(n)
+		}
+		if len(ref) > tokWidth {
+			tokWidth = len(ref)
 		}
 	}
 	var sb strings.Builder
@@ -82,7 +85,13 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 		if err != nil {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("%-*s  %s", width, ref, rolesFor(c)))
+		// A1 §4.4, round 3 F1: the candidate's short name leads the row and
+		// the token follows it as plain text in its own column, two spaces
+		// apart like the other columns. `relevo config` is read through a
+		// pipe, so the block must carry no SGR escapes. The name and the
+		// token size their columns separately.
+		sb.WriteString(fmt.Sprintf("%-*s  %-*s  %s",
+			nameWidth, set.NameOf(ref), tokWidth, ref, rolesFor(c)))
 		if withTier && c.Tier != "" {
 			sb.WriteString("   tier: " + c.Tier)
 		}

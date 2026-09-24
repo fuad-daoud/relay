@@ -18,6 +18,29 @@ import (
 	"github.com/fuad-daoud/relevo/internal/stats"
 )
 
+// historyJSONRow is one `relevo history --json` row: db.RoundRow's fields
+// plus the candidate's short name beside the token (A1 §4.4). The embedded
+// struct keeps every token field where it always was.
+type historyJSONRow struct {
+	db.RoundRow
+	BuilderName string `json:"BuilderName,omitempty"`
+}
+
+// historyJSONRows wraps each row with its candidate's short name as set
+// resolves it. A token the set no longer holds stays as the name, exactly as
+// the text listing renders it (Set.NameOf never errors).
+func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
+	out := make([]historyJSONRow, len(rows))
+	for i, r := range rows {
+		row := historyJSONRow{RoundRow: r}
+		if r.BuilderCandidate != nil {
+			row.BuilderName = set.NameOf(*r.BuilderCandidate)
+		}
+		out[i] = row
+	}
+	return out
+}
+
 const historyUsage = `usage: relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S]
                      [--harness K] [--provider P] [--model M] [--candidate T]
                      [--outcome O] [--since D] [--until D] [--archived|--live]
@@ -154,7 +177,7 @@ func cmdHistory(args []string) error {
 	harness := fs.String("harness", "", "filter to this builder harness")
 	provider := fs.String("provider", "", "filter to this builder provider")
 	model := fs.String("model", "", "filter to this builder model")
-	candidateTok := fs.String("candidate", "", "filter to this harness/provider/model candidate token")
+	candidateTok := fs.String("candidate", "", "filter to this candidate name or harness/provider/model token")
 	outcome := fs.String("outcome", "", "filter to this round outcome: "+strings.Join(historyOutcomeValues, ", "))
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	until := fs.String("until", "", "only rounds started before this: 24h, 7d, or YYYY-MM-DD")
@@ -264,6 +287,7 @@ func cmdHistory(args []string) error {
 		Provider:  *provider,
 		Model:     *model,
 		Candidate: *candidateTok,
+		Names:     rt.Candidates,
 		Outcome:   *outcome,
 		Since:     *since,
 		Until:     *until,
@@ -314,7 +338,7 @@ func cmdHistory(args []string) error {
 		if *asJSON {
 			return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, *withRows))
 		}
-		fmt.Print(relevo.FormatGroups(groups, axis, time.Local))
+		fmt.Print(relevo.FormatGroups(groups, axis, time.Local, rt.Candidates.NameOf))
 		return nil
 	}
 
@@ -322,9 +346,9 @@ func cmdHistory(args []string) error {
 		if rows == nil {
 			rows = []db.RoundRow{}
 		}
-		return json.NewEncoder(os.Stdout).Encode(rows)
+		return json.NewEncoder(os.Stdout).Encode(historyJSONRows(rows, rt.Candidates))
 	}
-	fmt.Print(relevo.FormatHistory(rows, time.Local))
+	fmt.Print(relevo.FormatHistory(rows, time.Local, rt.Candidates.NameOf))
 	return nil
 }
 

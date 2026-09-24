@@ -569,6 +569,15 @@ func newRuntime() (relevo.Runtime, error) {
 		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
 
+	if !d.Newer() {
+		// A1's migration: write a name for every stored candidate. Names are
+		// derived in memory by candidate.Parse either way, so a failure here
+		// is a warning, never a refusal to start.
+		if _, err := cs.EnsureCandidateNames(); err != nil {
+			slog.Warn("candidate names not written to config", "err", err)
+		}
+	}
+
 	L, err := cs.Load()
 	if err != nil {
 		return relevo.Runtime{}, err
@@ -805,11 +814,12 @@ func noteConsultRolesTooLong(reg *roles.Registry, name string) {
 // notePick prints why relevo chose the candidate it spawned. Silent for
 // an explicit token (the planner already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
-func notePick(role string, res relevo.Resolution) {
+// A1 §4.4: the line names the candidate by its short name.
+func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {
 	if res.How == "" || res.How == relevo.HowExplicit {
 		return
 	}
-	fmt.Fprintln(os.Stderr, relevo.ExplainResolution(role, res))
+	fmt.Fprintln(os.Stderr, relevo.PickText(role, res, rt.Candidates))
 }
 
 // roleOrBuilder is the role name a flag value means: "builder" for "", else
@@ -872,20 +882,25 @@ func cmdCandidates(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "probing %d candidate(s) from %s, one at a time\n", n, host)
 
-		width := 0
+		// The column is sized from the names FormatProbe prints, not from
+		// argv: Probe resolves each argument and FormatProbe prints the
+		// resolved candidate's short name (A1 §4.4, round 3 F2).
+		var names []string
 		if len(tokens) > 0 {
 			for _, tok := range tokens {
-				if len(tok) > width {
-					width = len(tok)
+				c, err := rt.Candidates.Resolve(tok)
+				if err != nil {
+					names = append(names, tok)
+					continue
 				}
+				names = append(names, rt.Candidates.NameOf(c.Ref().String()))
 			}
 		} else {
 			for _, ref := range rt.Candidates.Refs() {
-				if len(ref) > width {
-					width = len(ref)
-				}
+				names = append(names, rt.Candidates.NameOf(ref))
 			}
 		}
+		width := relevo.ProbeNameWidth(names)
 
 		_, err := relevo.Probe(context.Background(), rt, lineExec{}, tokens, host, func(r relevo.ProbeResult) {
 			fmt.Println(relevo.FormatProbe(r, width))
@@ -1013,7 +1028,16 @@ func gateUnavailable(token, forFlag, reason string) error {
 		return err
 	}
 
-	provider, err := relevo.Unavailable(rt, token, until, reason)
+	// The argument may be a candidate name or a token. It is resolved here,
+	// first, so the ledger and every server the bindings name see the
+	// canonical token, never the raw argument (A1 §4.2).
+	c, err := rt.Candidates.Resolve(token)
+	if err != nil {
+		return err
+	}
+	canonical := c.Ref().String()
+
+	provider, err := relevo.Unavailable(rt, canonical, until, reason)
 	if err != nil {
 		return err
 	}
@@ -1037,7 +1061,7 @@ func gateUnavailable(token, forFlag, reason string) error {
 		}
 	}
 
-	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, token, reason) {
+	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, canonical, reason) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 
@@ -1175,7 +1199,7 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in config policy order[builder]")
+	builderAlias := fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	rebind := fs.Bool("rebind", false,
@@ -1338,25 +1362,25 @@ func runBind(f bindFlags) error {
 	if f.resume && (f.builder != "" || f.rebind) {
 		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), b.BuilderCandidate)
+			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
 		}
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
 			"  relevo send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
 		noteRegateNoGate(b)
-		notePick(roleName, res)
+		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
-		b.Name, b.Planner.PaneID, builderWhere(b.Builder), b.BuilderCandidate, b.Round)
+		b.Name, b.Planner.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
 	noteRegateNoGate(b)
 	if n := relevo.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(roleName, res)
+	notePick(rt, roleName, res)
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relevo chose, so the note would warn about a name the human did not pick
 	// here.
@@ -1449,7 +1473,7 @@ func runFork(f bindFlags) error {
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick("builder", res.Resolution)
+	notePick(rt, "builder", res.Resolution)
 	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
@@ -1519,23 +1543,23 @@ func runAdd(f bindFlags) error {
 
 	switch {
 	case res.Binding.Builder.Remote():
-		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.Server)
+		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), res.Binding.Builder.Server)
 		if res.Binding.Tier != "" {
 			fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
 		} else {
 			fmt.Printf("  tier server's choice (pre-tier server)\n")
 		}
 	case res.Binding.Builder.Headless():
-		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
+		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate))
 	default:
 		fmt.Printf("added %s: builder %s in %s\n",
-			res.Binding.Name, res.Binding.BuilderCandidate, builderWhere(res.Binding.Builder))
+			res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 	}
 	noteRegateNoGate(res.Binding)
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(roleOrBuilder(f.role), res.Resolution)
+	notePick(rt, roleOrBuilder(f.role), res.Resolution)
 	switch {
 	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
 		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
@@ -1674,7 +1698,7 @@ func cmdSend(args []string) error {
 	file := fs.String("file", "", "path to the plan file to hand the builder")
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	builder := fs.String("builder", "", "candidate harness/provider/model to run this round and later ones on; refused while a round is open")
+	builder := fs.String("builder", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a round is open")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
@@ -1749,7 +1773,7 @@ func cmdSend(args []string) error {
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in config roles")
-	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in config policy order[<role>]")
+	cand := fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
@@ -1812,7 +1836,7 @@ func cmdAsk(args []string) error {
 	if n := relevo.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(*role, res.Resolution)
+	notePick(rt, *role, res.Resolution)
 	return nil
 }
 

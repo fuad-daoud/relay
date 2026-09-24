@@ -111,9 +111,14 @@ func RenderDryRun(d DryRun) string {
 }
 
 // dryRunBuilderLine is the builder line's value: the mode and candidate, with
-// the advisory gate note in parentheses when one applies.
+// the advisory gate note in parentheses when one applies. A1 §4.4: the
+// candidate's short name is printed when it has one.
 func dryRunBuilderLine(d DryRun) string {
-	line := d.Mode + " " + d.Candidate
+	candidate := d.Candidate
+	if d.CandidateName != "" {
+		candidate = d.CandidateName
+	}
+	line := d.Mode + " " + candidate
 	if d.GateNote != "" {
 		line += "  (" + d.GateNote + ")"
 	}

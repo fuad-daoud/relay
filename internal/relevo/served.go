@@ -227,10 +227,9 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
 		return res.Candidate.Ref().String(), res.Candidate.Harness
 	}
 	if token != "" {
-		if ref, err := candidate.ParseRef(token); err == nil {
-			if c, err := rt.Candidates.Lookup(ref); err == nil {
-				return c.Ref().String(), c.Harness
-			}
+		// The token may be a candidate name or a canonical token (A1 §4.2).
+		if c, err := rt.Candidates.Resolve(token); err == nil {
+			return c.Ref().String(), c.Harness
 		}
 	}
 	return token, ""

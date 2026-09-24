@@ -54,10 +54,14 @@ type Role struct {
 	// Builtin is true for a role relevo's own table defines.
 	Builtin bool
 	// Candidates is the role's tokens as written: order[R] in legacy mode
-	// (nil when absent), the row's candidates in file mode.
+	// (nil when absent), the row's candidates in file mode. In file mode an
+	// entry may be a candidate name or a canonical token.
 	Candidates []string
 	// Ranked is Candidates filtered to what this machine can run, in order.
 	Ranked []Ranked
+	// Resolved is Ranked's canonical tokens, in order: what Serves compares
+	// a reference against in file mode.
+	Resolved []string
 	// Ordered is true when the role has a preference order to resolve with.
 	Ordered bool
 	// Definitions is the resolved definition per harness kind, for the kinds
@@ -102,6 +106,8 @@ func Build(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
 
 // buildLegacy derives the roles from policy.json's order and candidates.json's
 // roles, reproducing relevo's rankedList and tier chain exactly (#374 §5.2).
+// An order entry may be a candidate name or a canonical token: both go through
+// Set.Resolve, and Ranked keeps the canonical token.
 func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 	byName := builtins()
 	names := harness.RoleNames()
@@ -116,22 +122,19 @@ func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 		for i, tok := range order {
 			// The position counts skipped tokens too, as "order #N" does
 			// today: dropping an entry must not renumber the ones after it.
-			ref, err := candidate.ParseRef(tok)
-			if err != nil {
-				continue
-			}
-			c, err := set.Lookup(ref)
+			c, err := set.Resolve(tok)
 			if err != nil {
 				continue
 			}
 			if !c.Serves(name) {
 				continue
 			}
-			if seen[tok] {
+			key := c.Ref().String()
+			if seen[key] {
 				continue
 			}
-			seen[tok] = true
-			role.Ranked = append(role.Ranked, Ranked{Token: tok, Position: i + 1})
+			seen[key] = true
+			role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1})
 		}
 		for _, c := range set.ForRole(name) {
 			if seen[c.Ref().String()] {
@@ -139,6 +142,7 @@ func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 			}
 			role.Ranked = append(role.Ranked, Ranked{Token: c.Ref().String(), Position: 0})
 		}
+		role.Resolved = canonicalTokens(role.Ranked)
 		byName[name] = role
 	}
 
@@ -154,7 +158,9 @@ func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 // buildFile merges the file's rows into the built-ins, then ranks every role's
 // candidates. In file mode roles.json is the only place candidates are
 // assigned: a built-in row the file omits has no candidates and an empty
-// Ranked (#374 §5.3).
+// Ranked (#374 §5.3). An entry may be a candidate name or a canonical token:
+// both go through Set.Resolve, and Ranked keeps the canonical token. Two
+// entries that resolve to the same token keep the first.
 func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
 	byName := builtins()
 	names := append([]string(nil), harness.RoleNames()...)
@@ -213,20 +219,24 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 	for name, role := range byName {
 		role.Ordered = true
 		role.Ranked = nil
+		seen := make(map[string]bool, len(role.Candidates))
 		for i, tok := range role.Candidates {
-			ref, err := candidate.ParseRef(tok)
+			c, err := set.Resolve(tok)
 			if err != nil {
-				continue
-			}
-			if _, err := set.Lookup(ref); err != nil {
 				// Tolerated here; round 3's `relevo config` warns about it.
 				continue
 			}
-			if _, ok := role.Definitions[ref.Harness]; !ok {
+			key := c.Ref().String()
+			if seen[key] {
 				continue
 			}
-			role.Ranked = append(role.Ranked, Ranked{Token: ref.String(), Position: i + 1})
+			if _, ok := role.Definitions[c.Harness]; !ok {
+				continue
+			}
+			seen[key] = true
+			role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1})
 		}
+		role.Resolved = canonicalTokens(role.Ranked)
 		byName[name] = role
 	}
 
@@ -238,6 +248,15 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		set:    set,
 		pol:    pol,
 	}, nil
+}
+
+// canonicalTokens returns a ranked list's canonical tokens, in order.
+func canonicalTokens(ranked []Ranked) []string {
+	toks := make([]string, 0, len(ranked))
+	for _, r := range ranked {
+		toks = append(toks, r.Token)
+	}
+	return toks
 }
 
 // customDefinition reports whether kind has to be installed by hand for d:
@@ -293,14 +312,15 @@ func (r *Registry) Spec(name, kind string) (harness.RoleSpec, error) {
 
 // Serves reports whether name can run ref on ref's harness kind. It is false
 // when the role has no definition for that kind, and otherwise:
-//   - in file mode, when ref is in the role's candidates;
+//   - in file mode, when ref's canonical token is in the role's resolved list,
+//     which is what a name or a token entry resolved to;
 //   - in legacy mode, when the candidate is configured and lists the role.
 func (r *Registry) Serves(name string, ref candidate.Ref) bool {
 	if _, err := r.Spec(name, ref.Harness); err != nil {
 		return false
 	}
 	if r.source == SourceFile {
-		for _, tok := range r.roles[name].Candidates {
+		for _, tok := range r.roles[name].Resolved {
 			if tok == ref.String() {
 				return true
 			}
@@ -343,6 +363,17 @@ func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
 	return r.pol.TierFor(name)
 }
 
+// NameOf returns the short name (A1 §4.4) of the candidate whose canonical
+// token is token, delegating to the registry's own set. It returns token
+// unchanged when the registry has no set or holds no such candidate, and
+// never errors. Display only: everything that decides stays on the token.
+func (r *Registry) NameOf(token string) string {
+	if r == nil || r.set == nil {
+		return token
+	}
+	return r.set.NameOf(token)
+}
+
 // Source returns where the registry's roles came from: SourceFile or
 // SourceLegacy.
 func (r *Registry) Source() string {
@@ -354,6 +385,7 @@ func copyRole(role Role) Role {
 	out := role
 	out.Candidates = append([]string(nil), role.Candidates...)
 	out.Ranked = append([]Ranked(nil), role.Ranked...)
+	out.Resolved = append([]string(nil), role.Resolved...)
 	if role.Definitions != nil {
 		out.Definitions = make(map[string]Definition, len(role.Definitions))
 		for kind, d := range role.Definitions {

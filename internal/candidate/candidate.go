@@ -49,6 +49,10 @@ func (r Ref) String() string {
 
 // Candidate describes one concrete way to fill a role.
 type Candidate struct {
+	// Name is the candidate's short name (cockpit A1 §3.1): unique among
+	// candidates, at most 24 characters, and never containing "/". It is
+	// optional in stored JSON: a missing name is derived at parse time.
+	Name          string   `json:"name,omitempty"`
 	Harness       string   `json:"harness"`
 	Provider      string   `json:"provider"`
 	Model         string   `json:"model"`
@@ -94,11 +98,15 @@ func (c Candidate) Serves(role string) bool {
 // canonical reference strings.
 type Set struct {
 	byRef map[string]Candidate
+	// byName maps every candidate's name to its canonical token. Parse fills
+	// it, so every candidate in a parsed set has exactly one entry.
+	byName map[string]string
 }
 
 func newSet() *Set {
 	return &Set{
-		byRef: make(map[string]Candidate),
+		byRef:  make(map[string]Candidate),
+		byName: make(map[string]string),
 	}
 }
 
@@ -106,9 +114,73 @@ func newSet() *Set {
 func (s *Set) Lookup(ref Ref) (Candidate, error) {
 	c, ok := s.byRef[ref.String()]
 	if !ok {
-		return Candidate{}, fmt.Errorf("candidate %q not found (configured: %v): %w", ref.String(), s.Refs(), ErrUnknownCandidate)
+		return Candidate{}, fmt.Errorf("candidate %q not found (configured: %s): %w", ref.String(), strings.Join(s.Names(), ", "), ErrUnknownCandidate)
 	}
 	return c, nil
+}
+
+// Resolve takes a user string to a candidate (cockpit A1 §3.1): a string
+// containing "/" is parsed as a token and looked up by its triple; anything
+// else is looked up by name. An unknown string errors with the known names
+// listed, wrapping ErrUnknownCandidate.
+func (s *Set) Resolve(str string) (Candidate, error) {
+	if s == nil {
+		return Candidate{}, fmt.Errorf("unknown candidate %q (no candidates configured): %w", str, ErrUnknownCandidate)
+	}
+	if strings.Contains(str, "/") {
+		ref, err := ParseRef(str)
+		if err != nil {
+			return Candidate{}, err
+		}
+		return s.Lookup(ref)
+	}
+	if key, ok := s.byName[str]; ok {
+		return s.byRef[key], nil
+	}
+	return Candidate{}, fmt.Errorf("unknown candidate %q (known: %s): %w", str, strings.Join(s.Names(), ", "), ErrUnknownCandidate)
+}
+
+// NameOf returns the name of the candidate whose canonical token is token, or
+// token unchanged when the set does not hold it (including a nil set). It
+// never errors.
+func (s *Set) NameOf(token string) string {
+	if s == nil {
+		return token
+	}
+	c, ok := s.byRef[token]
+	if !ok {
+		return token
+	}
+	return c.Name
+}
+
+// NameFor returns the name of the candidate whose canonical token is token.
+// ok reports whether the set holds that token: it is false for a token no
+// longer configured, and for a nil set (A1 §4.4, round 3 F3). A caller uses
+// it to leave a name field unset rather than carry a token in it. NameOf
+// stays the never-failing display form.
+func (s *Set) NameFor(token string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	c, ok := s.byRef[token]
+	if !ok {
+		return "", false
+	}
+	return c.Name, true
+}
+
+// Names returns every candidate's name, sorted.
+func (s *Set) Names() []string {
+	if s == nil {
+		return nil
+	}
+	names := make([]string, 0, len(s.byName))
+	for n := range s.byName {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ForRole returns every candidate configured to serve the given role, sorted
@@ -195,6 +267,11 @@ func LoadWithWarnings(path string) (*Set, []string, error) {
 // every message. name is the file path when LoadWithWarnings calls it, so an
 // existing message is unchanged; internal/config passes the stored section's
 // file name. It returns the same warnings LoadWithWarnings documents.
+//
+// Every entry gets a name: an explicit one kept verbatim when valid, else the
+// deterministic one DeriveNames computes. A skipped entry (unknown harness or
+// role) still takes part in DeriveNames, so the names of the others do not
+// shift when it is fixed.
 func Parse(name string, data []byte) (*Set, []string, error) {
 	var entries []Candidate
 	if err := json.Unmarshal(data, &entries); err != nil {
@@ -203,10 +280,24 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 
 	set := newSet()
 	seen := make(map[string]int)
+	seenNames := make(map[string]int)
 	base := filepath.Base(name)
 	var warnings []string
+	names := DeriveNames(entries)
+
+	providers := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.Provider != "" {
+			providers[e.Provider] = true
+		}
+	}
 
 	for i, c := range entries {
+		if c.Name != "" && !IsName(c.Name) {
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: name %q: want ^[a-z0-9][a-z0-9.-]{0,23}$", name, i, c.Name)
+		}
+		c.Name = names[i]
+
 		if c.Harness == "" || c.Provider == "" || c.Model == "" {
 			return nil, nil, fmt.Errorf("candidates %s: candidate %d: harness, provider and model are required", name, i)
 		}
@@ -260,7 +351,15 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 			return nil, nil, fmt.Errorf("candidates %s: candidate %d: duplicate candidate %s at index %d and %d", name, i, key, first, i)
 		}
 		seen[key] = i
+		if first, exists := seenNames[c.Name]; exists {
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: duplicate name %q at index %d and %d", name, i, c.Name, first, i)
+		}
+		seenNames[c.Name] = i
+		if providers[c.Name] {
+			return nil, nil, fmt.Errorf("candidates %s: candidate %d: name %q is also a provider name", name, i, c.Name)
+		}
 		set.byRef[key] = c
+		set.byName[c.Name] = key
 	}
 
 	return set, warnings, nil
