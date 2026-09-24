@@ -2376,3 +2376,62 @@ func TestStatusDoesNotTakeIndexLock(t *testing.T) {
 		t.Fatalf("Dirty while .git/index.lock is held: %v", err)
 	}
 }
+
+// TestClientRefs covers the two ref helpers the server's settled-binding
+// cleanup uses (#7): create refs, list by prefix, delete one, and delete a
+// missing one.
+func TestClientRefs(t *testing.T) {
+	ctx := context.Background()
+	c := NewClient("git", 0, 0)
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	runGit(t, repo, "commit", "-m", "initial")
+	sha := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	for _, ref := range []string{
+		"refs/relevo/api/out",
+		"refs/relevo/api/round-1",
+		"refs/relevo/other/out",
+	} {
+		if err := c.UpdateRef(ctx, repo, ref, sha, ""); err != nil {
+			t.Fatalf("update-ref %s: %v", ref, err)
+		}
+	}
+
+	got, err := c.ListRefs(ctx, repo, "refs/relevo/api/")
+	if err != nil {
+		t.Fatalf("ListRefs: %v", err)
+	}
+	want := []string{"refs/relevo/api/out", "refs/relevo/api/round-1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("ListRefs = %v, want %v", got, want)
+	}
+
+	if err := c.DeleteRef(ctx, repo, "refs/relevo/api/out"); err != nil {
+		t.Fatalf("DeleteRef existing: %v", err)
+	}
+	got, err = c.ListRefs(ctx, repo, "refs/relevo/api/")
+	if err != nil {
+		t.Fatalf("ListRefs after delete: %v", err)
+	}
+	if strings.Join(got, ",") != "refs/relevo/api/round-1" {
+		t.Fatalf("ListRefs after delete = %v, want [refs/relevo/api/round-1]", got)
+	}
+
+	// A missing ref is success, and deleting it changes nothing.
+	if err := c.DeleteRef(ctx, repo, "refs/relevo/api/out"); err != nil {
+		t.Fatalf("DeleteRef missing: %v", err)
+	}
+
+	// The other binding's ref is untouched.
+	if gotSHA, ok, err := c.RefSHA(ctx, repo, "refs/relevo/other/out"); err != nil || !ok || gotSHA != sha {
+		t.Fatalf("refs/relevo/other/out = (%q, %v, %v), want %q", gotSHA, ok, err, sha)
+	}
+}

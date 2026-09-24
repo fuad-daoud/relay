@@ -39,6 +39,14 @@ type updateRefCall struct {
 	Dir, Ref, NewSHA, OldSHA string
 }
 
+type deleteRefCall struct {
+	Dir, Ref string
+}
+
+type listRefsCall struct {
+	Dir, Prefix string
+}
+
 type commitTreeCall struct {
 	Dir, Tree, Parent, Message string
 }
@@ -161,6 +169,13 @@ type fakeGit struct {
 
 	updateRefCalls []updateRefCall
 	updateRefErr   error
+
+	deleteRefCalls []deleteRefCall
+	deleteRefErr   error
+
+	listRefsCalls  []listRefsCall
+	listRefsResult []string
+	listRefsErr    error
 
 	commitTreeCalls []commitTreeCall
 	commitTreeSHA   string
@@ -393,6 +408,19 @@ func (f *fakeGit) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string
 		f.refSHA[ref] = newSHA
 	}
 	return f.updateRefErr
+}
+
+func (f *fakeGit) DeleteRef(ctx context.Context, dir, ref string) error {
+	f.deleteRefCalls = append(f.deleteRefCalls, deleteRefCall{Dir: dir, Ref: ref})
+	return f.deleteRefErr
+}
+
+func (f *fakeGit) ListRefs(ctx context.Context, dir, prefix string) ([]string, error) {
+	f.listRefsCalls = append(f.listRefsCalls, listRefsCall{Dir: dir, Prefix: prefix})
+	if f.listRefsErr != nil {
+		return nil, f.listRefsErr
+	}
+	return f.listRefsResult, nil
 }
 
 func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {

@@ -723,6 +723,39 @@ func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string)
 	return err
 }
 
+// DeleteRef removes ref from dir's repository, `git update-ref -d <ref>`. A ref
+// that does not exist is not an error: git returns success for it, so the
+// cleanup path can delete the refs it listed without a check-then-delete race.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped
+// git failure -- never for a missing ref.
+func (c *Client) DeleteRef(ctx context.Context, dir, ref string) error {
+	_, err := c.run(ctx, dir, nil, "update-ref", "-d", ref)
+	return err
+}
+
+// ListRefs returns every ref in dir's repository whose name begins with prefix
+// (e.g. "refs/relevo/api/"), one per line of `git for-each-ref --format=%(refname)`.
+// The order is git's own; an empty result is an empty slice, not an error.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped
+// git failure.
+func (c *Client) ListRefs(ctx context.Context, dir, prefix string) ([]string, error) {
+	out, err := c.run(ctx, dir, nil, "for-each-ref", "--format=%(refname)", prefix)
+	if err != nil {
+		return nil, err
+	}
+	var refs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		refs = append(refs, line)
+	}
+	return refs, nil
+}
+
 // ListTags lists dir's tags by short name, each mapped to the commit it points
 // at: an annotated tag is peeled to its commit, a lightweight tag already is
 // one (#242).
