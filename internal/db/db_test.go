@@ -11,6 +11,18 @@ import (
 // errFake is a sentinel Tx callers return to force a rollback in tests.
 var errFake = errors.New("fake failure")
 
+// embeddedVersion is the highest migration this binary embeds. The tests below
+// use it rather than a literal so adding a migration (schema v2, §3.1) does not
+// mean editing every version count.
+func embeddedVersion(t *testing.T) int {
+	t.Helper()
+	v, err := maxEmbedded(migrationFiles)
+	if err != nil {
+		t.Fatalf("maxEmbedded: %v", err)
+	}
+	return v
+}
+
 // seedNewerSchema creates path with a schema_version row above every embedded
 // migration, as a newer relevo would have left it, and returns the table count
 // before this binary opens it.
@@ -49,8 +61,8 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if v != 1 {
-		t.Errorf("Version() = %d, want 1", v)
+	if want := embeddedVersion(t); v != int(want) {
+		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
 	var mode string
@@ -81,16 +93,16 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if v != 1 {
-		t.Errorf("Version() = %d, want 1", v)
+	if want := embeddedVersion(t); v != int(want) {
+		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
 	var count int
 	if err := d2.sqlDB.QueryRow(`SELECT COUNT(*) FROM schema_version`).Scan(&count); err != nil {
 		t.Fatalf("count schema_version: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("schema_version has %d rows, want 1", count)
+	if want := embeddedVersion(t); count != want {
+		t.Errorf("schema_version has %d rows, want %d", count, want)
 	}
 }
 
@@ -111,8 +123,8 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 		t.Fatal("Newer() = false, want true for a schema above this relevo's migrations")
 	}
 	have, know := d.SchemaVersions()
-	if have != 99 || know != 1 {
-		t.Errorf("SchemaVersions() = (%d, %d), want (99, 1)", have, know)
+	if want := embeddedVersion(t); have != 99 || know != want {
+		t.Errorf("SchemaVersions() = (%d, %d), want (99, %d)", have, know, want)
 	}
 
 	var after int
@@ -205,9 +217,32 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 		rows.Close()
 		sqlDB.Close()
 
-		if len(versions) != 1 || versions[1] != 1 {
-			t.Fatalf("iteration %d: schema_version rows = %v, want exactly one version 1", i, versions)
+		if want := embeddedVersion(t); len(versions) != want {
+			t.Fatalf("iteration %d: schema_version rows = %v, want one row per migration (%d)", i, versions, want)
 		}
+		for v := 1; v <= embeddedVersion(t); v++ {
+			if versions[v] != 1 {
+				t.Fatalf("iteration %d: version %d appears %d times, want exactly one", i, v, versions[v])
+			}
+		}
+	}
+}
+
+// TestTxRefusesANewerSchema pins §6: a writer on a schema a newer relevo wrote
+// refuses with ErrNewerSchema instead of downgrading it.
+func TestTxRefusesANewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	seedNewerSchema(t, path)
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	err = d.Tx(func(tx *Tx) error { return nil })
+	if !errors.Is(err, ErrNewerSchema) {
+		t.Fatalf("Tx on a newer schema = %v, want errors.Is(..., ErrNewerSchema)", err)
 	}
 }
 

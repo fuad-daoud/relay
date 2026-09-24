@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -126,6 +127,11 @@ type Runtime struct {
 	// every call site that will (later rounds) must treat nil the same as a
 	// machine with no db.
 	DB *db.DB
+
+	// Config is the database-backed config store newRuntime imports into and
+	// loads from (docs/specs/2026-09-24-db-as-record-design.md). It is nil
+	// only for a runtime built by newRuntimePeek, which opens no database.
+	Config *config.Store
 
 	// Policy is ~/.config/relevo/policy.json: the planner's candidate order
 	// per role (#61 step 2). The zero value means nothing is ordered, so

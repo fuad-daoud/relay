@@ -590,7 +590,15 @@ func LoadWithWarnings(path string) (Policy, []string, error) {
 	if err != nil {
 		return Policy{}, nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return Parse(path, raw)
+}
 
+// Parse validates a policy from data, naming it by name in every message. name
+// is the file path when LoadWithWarnings calls it, so an existing message is
+// unchanged; internal/config passes the stored section's file name. It applies
+// exactly the rules LoadWithWarnings documents.
+func Parse(name string, raw []byte) (Policy, []string, error) {
+	path := name
 	var p Policy
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return Policy{}, nil, fmt.Errorf("%s: %v: %w", path, err, ErrBadPolicy)

@@ -640,16 +640,18 @@ func TestHooksConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
 
-	cfg, err := resolveHooksConfig()
+	hooksMap := map[string][][]string{"state_changed": {{"/bin/true"}}}
+	cfg, err := resolveHooksConfig(hooksMap)
 	if err != nil {
 		t.Fatalf("resolveHooksConfig: %v", err)
 	}
-	wantHooksDir := filepath.Join(configHome, "relevo", "hooks")
-	if cfg.HooksDir != wantHooksDir {
-		t.Fatalf("got HooksDir %q, want %q", cfg.HooksDir, wantHooksDir)
+	wantLog := filepath.Join(tempHome, ".local", "state", "relevo", "hooks.log")
+	if cfg.LogPath != wantLog {
+		t.Fatalf("got LogPath %q, want %q", cfg.LogPath, wantLog)
+	}
+	if !reflect.DeepEqual(cfg.Hooks, hooksMap) {
+		t.Fatalf("got Hooks %#v, want %#v", cfg.Hooks, hooksMap)
 	}
 }
 

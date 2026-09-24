@@ -152,7 +152,8 @@ type RunOption func(*runConfig)
 type runConfig struct {
 	adopted        bool
 	definitions    map[string][]string
-	usagePrices    string
+	usagePrices    []byte
+	usageOn        bool
 	usageOpencode  bool
 	extra          []Check
 	stateRoot      string
@@ -180,10 +181,12 @@ func WithDefinitions(defs map[string][]string) RunOption {
 
 // WithUsage enables the round-usage checks (#142): sqlite3 on PATH when an
 // opencode candidate is configured (relevo confirms a push to an opencode
-// planner through it), and prices.json parsing and age.
-func WithUsage(pricesPath string, opencodeConfigured bool) RunOption {
+// planner through it), and the stored prices body's as_of age. prices is the
+// config section body, nil when the section is absent (#4.9).
+func WithUsage(prices []byte, opencodeConfigured bool) RunOption {
 	return func(cfg *runConfig) {
-		cfg.usagePrices = pricesPath
+		cfg.usagePrices = prices
+		cfg.usageOn = true
 		cfg.usageOpencode = opencodeConfigured
 	}
 }
@@ -774,7 +777,7 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		}
 	}
 
-	if cfg.usagePrices != "" {
+	if cfg.usageOn {
 		checks = append(checks, usageChecks(env, cfg)...)
 	}
 
@@ -802,35 +805,30 @@ func usageChecks(env Env, cfg runConfig) []Check {
 			out = append(out, Check{Name: "sqlite3", Severity: SevOK, Detail: "on PATH; pushes to an opencode planner can be confirmed"})
 		}
 	}
-	if err := env.Stat(cfg.usagePrices); err != nil {
+	if cfg.usagePrices == nil {
 		d := usage.DefaultPrices()
 		out = append(out, Check{Name: "prices", Severity: SevOK,
-			Detail: fmt.Sprintf("no %s; using the embedded default (as_of %s, %d models)", cfg.usagePrices, d.AsOf, len(d.Models))})
-		return out
-	}
-	raw, err := env.ReadFile(cfg.usagePrices)
-	if err != nil {
-		out = append(out, Check{Name: "prices", Severity: SevWarn, Detail: cfg.usagePrices + ": " + err.Error(), ProbeFailed: true})
+			Detail: fmt.Sprintf("no prices configured; using the embedded default (as_of %s, %d models)", d.AsOf, len(d.Models))})
 		return out
 	}
 	var p usage.Prices
-	if err := json.Unmarshal(raw, &p); err != nil {
+	if err := json.Unmarshal(cfg.usagePrices, &p); err != nil {
 		out = append(out, Check{Name: "prices", Severity: SevWarn,
-			Detail: fmt.Sprintf("%s does not validate: %v; rounds estimate from the embedded default", cfg.usagePrices, err),
-			Fix:    "fix the JSON or delete the file"})
+			Detail: fmt.Sprintf("the stored prices body does not validate: %v; rounds estimate from the embedded default", err),
+			Fix:    "fix the prices section"})
 		return out
 	}
 	asOf, err := time.Parse("2006-01-02", p.AsOf)
 	switch {
 	case err != nil:
 		out = append(out, Check{Name: "prices", Severity: SevWarn,
-			Detail: fmt.Sprintf("%s: as_of %q is not YYYY-MM-DD", cfg.usagePrices, p.AsOf), Fix: "set as_of to the date the prices were checked"})
+			Detail: fmt.Sprintf("prices: as_of %q is not YYYY-MM-DD", p.AsOf), Fix: "set as_of to the date the prices were checked"})
 	case time.Since(asOf) > pricesMaxAge:
 		out = append(out, Check{Name: "prices", Severity: SevWarn,
-			Detail: fmt.Sprintf("%s: as_of %s is older than %d days; estimates may be stale", cfg.usagePrices, p.AsOf, int(pricesMaxAge.Hours()/24)),
+			Detail: fmt.Sprintf("prices: as_of %s is older than %d days; estimates may be stale", p.AsOf, int(pricesMaxAge.Hours()/24)),
 			Fix:    "check the providers' pricing pages and update as_of"})
 	default:
-		out = append(out, Check{Name: "prices", Severity: SevOK, Detail: fmt.Sprintf("%s: as_of %s, %d models", cfg.usagePrices, p.AsOf, len(p.Models))})
+		out = append(out, Check{Name: "prices", Severity: SevOK, Detail: fmt.Sprintf("prices: as_of %s, %d models", p.AsOf, len(p.Models))})
 	}
 	return out
 }
@@ -838,13 +836,11 @@ func usageChecks(env Env, cfg runConfig) []Check {
 // ClassifyCheck is the one global doctor row for the classifier. It never
 // fails doctor: regex runs regardless.
 //
-//	!st.Configured                  -> SevOK,   Detail "regex only (no classify block in policy.json)"
-//	Configured, KeySource "env"     -> SevOK,   Detail "<model>; key from TYPESAFE_API_KEY; not passed to builders"
-//	Configured, KeySource "file"    -> SevOK,   Detail "<model>; key from <KeyPath>"
-//	Configured, KeyFileLoose        -> SevWarn, Detail "<model> configured but <KeyPath> is readable by others (mode 0644); ignored",
-//	                                             Fix "chmod 600 <KeyPath>"
-//	Configured, KeySource ""        -> SevWarn, Detail "<model> configured but no key found; the daemon falls back to regex",
-//	                                             Fix "set TYPESAFE_API_KEY for the daemon, or write the key to <KeyPath> (chmod 600)"
+//	!st.Configured                -> SevOK,   Detail "regex only (no classify block in policy.json)"
+//	Configured, KeySource "env"   -> SevOK,   Detail "<model>; key from TYPESAFE_API_KEY; not passed to builders"
+//	Configured, KeySource "db"    -> SevOK,   Detail "<model>; key from the database"
+//	Configured, KeySource ""      -> SevWarn, Detail "<model> configured but no classifier key; the daemon falls back to regex"
+//	                                           Fix "set TYPESAFE_API_KEY for the daemon, or store a key in the database"
 //
 // Name "classify", Group "". No network probe: a bad key is reported by the
 // first round's entry note, not by doctor.
@@ -862,18 +858,13 @@ func ClassifyCheck(st classify.Status) Check {
 	case "env":
 		c.Severity = SevOK
 		c.Detail = fmt.Sprintf("%s; key from TYPESAFE_API_KEY; not passed to builders", st.Model)
-	case "file":
+	case "db":
 		c.Severity = SevOK
-		c.Detail = fmt.Sprintf("%s; key from %s", st.Model, st.KeyPath)
+		c.Detail = fmt.Sprintf("%s; key from the database", st.Model)
 	default:
 		c.Severity = SevWarn
-		if st.KeyFileLoose {
-			c.Detail = fmt.Sprintf("%s configured but %s is readable by others (mode 0%o); ignored", st.Model, st.KeyPath, st.KeyFileMode.Perm())
-			c.Fix = fmt.Sprintf("chmod 600 %s", st.KeyPath)
-		} else {
-			c.Detail = fmt.Sprintf("%s configured but no key found; the daemon falls back to regex", st.Model)
-			c.Fix = fmt.Sprintf("set TYPESAFE_API_KEY for the daemon, or write the key to %s (chmod 600)", st.KeyPath)
-		}
+		c.Detail = fmt.Sprintf("%s configured but no classifier key; the daemon falls back to regex", st.Model)
+		c.Fix = "set TYPESAFE_API_KEY for the daemon, or store a key in the database"
 	}
 	return c
 }

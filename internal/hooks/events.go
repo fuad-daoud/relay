@@ -39,6 +39,9 @@ type Event struct {
 
 // Config configures the hook dispatcher environment.
 type Config struct {
-	HooksDir string // Resolved to ~/.config/relevo/hooks
-	LogPath  string // Resolved to ~/.local/state/relevo/hooks.log
+	// Hooks maps an event type to the argv lists run for it, in order. It is
+	// stored in the config section, not scanned from a directory (#4.4).
+	Hooks map[string][][]string
+	// LogPath is where hook output and failures are appended.
+	LogPath string // Resolved to ~/.local/state/relevo/hooks.log
 }

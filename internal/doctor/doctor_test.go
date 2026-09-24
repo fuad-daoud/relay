@@ -908,7 +908,7 @@ func findUsageCheck(rep Report, name, detailSub string) (Check, bool) {
 func TestUsageChecks(t *testing.T) {
 	t.Run("sqlite3 missing with opencode configured", func(t *testing.T) {
 		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
-		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", true))
+		rep := Run(context.Background(), env, nil, WithUsage(nil, true))
 		c, ok := findUsageCheck(rep, "sqlite3", "")
 		if !ok || c.Severity != SevWarn {
 			t.Errorf("want a warn row for sqlite3: %+v", rep.Checks)
@@ -922,25 +922,24 @@ func TestUsageChecks(t *testing.T) {
 	})
 	t.Run("sqlite3 not needed without opencode", func(t *testing.T) {
 		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
-		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		rep := Run(context.Background(), env, nil, WithUsage(nil, false))
 		if _, ok := findUsageCheck(rep, "sqlite3", ""); ok {
 			t.Error("no opencode candidate: no sqlite3 row")
 		}
 	})
 	t.Run("prices absent is ok, stale is warn, malformed is warn", func(t *testing.T) {
-		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}, fileContents: map[string]string{}}
-		rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+		env := &fakeEnv{lookPaths: map[string]string{}, existingFiles: map[string]bool{}}
+		rep := Run(context.Background(), env, nil, WithUsage(nil, false))
 		if c, ok := findUsageCheck(rep, "prices", "default"); !ok || c.Severity != SevOK {
-			t.Errorf("absent prices.json: want an OK row naming the default: %+v", rep.Checks)
+			t.Errorf("absent prices section: want an OK row naming the default: %+v", rep.Checks)
 		}
-		env.existingFiles["/cfg/prices.json"] = true
-		env.fileContents["/cfg/prices.json"] = `{"as_of":"2020-01-01","models":{}}`
-		rep = Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+
+		rep = Run(context.Background(), env, nil, WithUsage([]byte(`{"as_of":"2020-01-01","models":{}}`), false))
 		if c, ok := findUsageCheck(rep, "prices", "2020-01-01"); !ok || c.Severity != SevWarn {
 			t.Errorf("stale as_of: want a warn row: %+v", rep.Checks)
 		}
-		env.fileContents["/cfg/prices.json"] = `{"models": 5}`
-		rep = Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false))
+
+		rep = Run(context.Background(), env, nil, WithUsage([]byte(`{"models": 5}`), false))
 		if c, ok := findUsageCheck(rep, "prices", "does not validate"); !ok || c.Severity != SevWarn {
 			t.Errorf("malformed: want a warn row: %+v", rep.Checks)
 		}
@@ -958,7 +957,7 @@ func TestExtraChecksAppended(t *testing.T) {
 		{Group: "", Name: "servers", Severity: SevOK, Detail: "zen: enrolled as laptop"},
 	}
 
-	rep := Run(context.Background(), env, nil, WithUsage("/cfg/prices.json", false), WithExtraChecks(extra))
+	rep := Run(context.Background(), env, nil, WithUsage(nil, false), WithExtraChecks(extra))
 
 	if len(rep.Checks) == 0 {
 		t.Fatal("report has no checks")
@@ -1016,12 +1015,11 @@ func TestClassifyCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("configured with file key", func(t *testing.T) {
+	t.Run("configured with db key", func(t *testing.T) {
 		st := classify.Status{
 			Configured: true,
 			Model:      "jev-custom",
-			KeySource:  "file",
-			KeyPath:    "/home/user/.config/relevo/typesafe.key",
+			KeySource:  "db",
 		}
 		c := ClassifyCheck(st)
 		if c.Name != "classify" {
@@ -1030,7 +1028,7 @@ func TestClassifyCheck(t *testing.T) {
 		if c.Severity != SevOK {
 			t.Errorf("Severity = %v, want SevOK", c.Severity)
 		}
-		if !strings.Contains(c.Detail, "jev-custom; key from /home/user/.config/relevo/typesafe.key") {
+		if !strings.Contains(c.Detail, "jev-custom; key from the database") {
 			t.Errorf("Detail = %q", c.Detail)
 		}
 		if c.Fix != "" {
@@ -1043,7 +1041,6 @@ func TestClassifyCheck(t *testing.T) {
 			Configured: true,
 			Model:      "jev-latest",
 			KeySource:  "",
-			KeyPath:    "/home/user/.config/relevo/typesafe.key",
 		}
 		c := ClassifyCheck(st)
 		if c.Name != "classify" {
@@ -1052,35 +1049,11 @@ func TestClassifyCheck(t *testing.T) {
 		if c.Severity != SevWarn {
 			t.Errorf("Severity = %v, want SevWarn", c.Severity)
 		}
-		if !strings.Contains(c.Detail, "jev-latest configured but no key found; the daemon falls back to regex") {
+		if !strings.Contains(c.Detail, "jev-latest configured but no classifier key; the daemon falls back to regex") {
 			t.Errorf("Detail = %q", c.Detail)
 		}
-		if !strings.Contains(c.Fix, "set TYPESAFE_API_KEY for the daemon, or write the key to /home/user/.config/relevo/typesafe.key (chmod 600)") {
+		if !strings.Contains(c.Fix, "set TYPESAFE_API_KEY for the daemon, or store a key in the database") {
 			t.Errorf("Fix = %q", c.Fix)
-		}
-	})
-
-	t.Run("configured with loose key file", func(t *testing.T) {
-		st := classify.Status{
-			Configured:   true,
-			Model:        "jev-latest",
-			KeySource:    "",
-			KeyPath:      "/home/user/.config/relevo/typesafe.key",
-			KeyFileLoose: true,
-			KeyFileMode:  0o644,
-		}
-		c := ClassifyCheck(st)
-		if c.Name != "classify" {
-			t.Errorf("Name = %q, want classify", c.Name)
-		}
-		if c.Severity != SevWarn {
-			t.Errorf("Severity = %v, want SevWarn", c.Severity)
-		}
-		if !strings.Contains(c.Detail, "readable by others") || !strings.Contains(c.Detail, "0644") {
-			t.Errorf("Detail = %q", c.Detail)
-		}
-		if !strings.HasPrefix(c.Fix, "chmod 600 ") {
-			t.Errorf("Fix = %q, want prefix 'chmod 600 '", c.Fix)
 		}
 	})
 }

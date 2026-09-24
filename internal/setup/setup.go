@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -27,17 +25,11 @@ var Defaults = map[string]Default{
 	"codex":    {"openai", "gpt-5.6-terra:high"},
 }
 
-// Files is the starter configuration Plan produced, ready to write.
+// Files is the starter configuration Plan produced, ready to store.
 type Files struct {
 	Kinds      []string // harness kinds found on PATH, in harness.All() order
 	Candidates []byte   // JSON, indented two spaces, trailing newline
 	Policy     []byte   // JSON, indented two spaces, trailing newline
-}
-
-// WriteResult reports where the config files live and which of them landed.
-type WriteResult struct {
-	CandidatesPath, PolicyPath   string
-	WroteCandidates, WrotePolicy bool // false = existed and !force
 }
 
 // Plan builds starter candidates and a policy for every harness binary on PATH,
@@ -88,40 +80,4 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	polJSON = append(polJSON, '\n')
 
 	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON}, nil
-}
-
-// Write lands f under configDir/relevo. Both files are decided before either is
-// written, so a refused pair is never half-written: when force is false and
-// either file exists, neither is written and both Wrote flags stay false.
-func Write(configDir string, f Files, force bool) (WriteResult, error) {
-	dir := filepath.Join(configDir, "relevo")
-	res := WriteResult{
-		CandidatesPath: filepath.Join(dir, "candidates.json"),
-		PolicyPath:     filepath.Join(dir, "policy.json"),
-	}
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return res, err
-	}
-
-	if !force && (fileExists(res.CandidatesPath) || fileExists(res.PolicyPath)) {
-		return res, nil
-	}
-
-	if err := os.WriteFile(res.CandidatesPath, f.Candidates, 0o644); err != nil {
-		return res, err
-	}
-	res.WroteCandidates = true
-
-	if err := os.WriteFile(res.PolicyPath, f.Policy, 0o644); err != nil {
-		return res, err
-	}
-	res.WrotePolicy = true
-
-	return res, nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

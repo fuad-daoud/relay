@@ -150,11 +150,9 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 
 func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Keypair) {
 	t.Helper()
-	cfgDir := t.TempDir()
-	privPath, pubPath := client.KeyPaths(cfgDir)
-	kp, err := client.InitKey(privPath, pubPath)
+	kp, err := remote.Generate()
 	if err != nil {
-		t.Fatalf("InitKey: %v", err)
+		t.Fatalf("remote.Generate: %v", err)
 	}
 
 	servers := client.Servers{

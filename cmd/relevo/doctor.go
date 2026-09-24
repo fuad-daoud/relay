@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ledger"
@@ -25,6 +26,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -271,26 +273,24 @@ func cmdDoctor(args []string) error {
 			opencodeConfigured = true
 		}
 	}
-	configDir, err := userConfigRoot() // the same userConfigRoot() result newRuntime uses
+	L, err := rt.Config.Load()
 	if err != nil {
 		return err
 	}
-	pricesPath := filepath.Join(configDir, "relevo", "prices.json")
 
 	// One doctor row per configured server (remote-builders spec §5.5):
 	// reachable and enrolled, not enrolled (with the line to give the
-	// admin), unreachable, or a changed certificate. No servers.json ->
+	// admin), unreachable, or a changed certificate. No servers section ->
 	// no rows.
 	hasServers := false
 	var extraChecks []doctor.Check
-	if servers, serversErr := client.LoadServers(client.ServersPath(configDir)); serversErr == nil && len(servers) > 0 {
+	if len(L.Servers) > 0 {
 		hasServers = true
-		_, pubPath := client.KeyPaths(configDir)
 		enrollLine := ""
-		if raw, rerr := os.ReadFile(pubPath); rerr == nil {
-			enrollLine = string(raw)
+		if key, kerr := remote.ParsePrivate(L.ClientKey); kerr == nil {
+			enrollLine = client.EnrollLine(key)
 		}
-		extraChecks = serverChecks(relevo.ProbeServers(context.Background(), rt, servers, enrollLine))
+		extraChecks = serverChecks(relevo.ProbeServers(context.Background(), rt, L.Servers, enrollLine))
 	}
 
 	// #236: the opencode branch checks opencode's own external_directory
@@ -312,9 +312,14 @@ func cmdDoctor(args []string) error {
 		extraChecks = append(extraChecks, doctor.RenameCheck(roots, st))
 	}
 
+	pricesBody, _, err := rt.Config.Body(config.Prices)
+	if err != nil {
+		return err
+	}
+
 	rep := doctor.Run(context.Background(), env, kinds,
 		doctor.WithDefinitions(assembleRoleDefinitions(rt.RoleRegistry(), rt.Candidates, kinds)),
-		doctor.WithUsage(pricesPath, opencodeConfigured),
+		doctor.WithUsage(pricesBody, opencodeConfigured),
 		doctor.WithConfigWarnings(rt.ConfigWarnings),
 		doctor.WithExtraChecks(extraChecks),
 		doctor.WithStateRoot(stateRoot))
@@ -389,7 +394,7 @@ func cmdDoctor(args []string) error {
 			return ok
 		})...)
 	}
-	_, st := classify.Resolve(rt.Policy.Classify, configDir, os.Getenv)
+	_, st := classify.Resolve(rt.Policy.Classify, L.Typesafe, os.Getenv)
 	rep.Checks = append(rep.Checks, doctor.ClassifyCheck(st))
 	refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)

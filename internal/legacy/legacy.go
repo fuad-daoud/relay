@@ -151,8 +151,13 @@ func pathExists(path string) (bool, error) {
 // an old root exists and its new one does not. The old root's real state still
 // sits there, and starting relevo beside it would create an empty new root
 // that then blocks migrate.
+//
+// From P2a on, config lives in the relevo state root's database, so a new
+// state root means config is already recorded there: a missing
+// ~/.config/relevo is no longer unmigrated (docs/specs/
+// 2026-09-24-db-as-record-design.md §4.9).
 func (s Status) Unmigrated() bool {
-	return (s.OldState && !s.NewState) || (s.OldConfig && !s.NewConfig)
+	return (s.OldState && !s.NewState) || (s.OldConfig && !s.NewConfig && !s.NewState)
 }
 
 // Stale reports an old root beside its new one: the cutover happened, and

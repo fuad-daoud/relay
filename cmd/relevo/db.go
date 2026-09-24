@@ -18,7 +18,7 @@ import (
 // openDB ensures path's directory exists (Open's precondition) and opens
 // it, migrating as needed.
 func openDB(path string) (*db.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
 	return db.Open(path)

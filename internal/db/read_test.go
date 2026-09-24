@@ -588,8 +588,8 @@ func TestStatsCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if stats.Version != 1 {
-		t.Errorf("Version = %d, want 1", stats.Version)
+	if want := embeddedVersion(t); stats.Version != want {
+		t.Errorf("Version = %d, want %d", stats.Version, want)
 	}
 	if stats.Rows["binding"] != 3 {
 		t.Errorf("Rows[binding] = %d, want 3", stats.Rows["binding"])
