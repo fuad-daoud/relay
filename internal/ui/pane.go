@@ -6,6 +6,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// sep joins a pane head's parts with a faint middle dot. Moved here from
+// rail.go (X2), whose only surviving user is roundPane.paneHead.
+var sep = faintStyle.Render(" · ")
+
 // builderStatusStyle: blocked is the one status a human must notice.
 func builderStatusStyle(status string) lipgloss.Style {
 	if status == "blocked" {

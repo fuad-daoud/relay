@@ -13,6 +13,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
+// The pane's own furniture, in rows. Moved here from layout.go (X1), whose
+// only surviving users are the pane's viewport arithmetic and the round
+// view's geometry.
+const (
+	paneHeadRows = 5 // title, planner, builder, tree, blank
+	tabRows      = 2 // tab bar + rule
+	sourceRows   = 2 // source line + blank
+)
+
 // roundPane is one binding's round detail: its state, its fetch
 // orchestration and its rendering, lifted out of Model (§4.4, §5.1). Model
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,

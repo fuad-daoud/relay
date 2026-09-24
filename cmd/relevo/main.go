@@ -2251,8 +2251,6 @@ func cmdUI(args []string) error {
 		return err
 	}
 
-	here, _ := os.Getwd()
-
 	// Preferences live in the machine database rt.DB holds once openDB
 	// succeeded; a failed open leaves them disabled, as an empty PrefsPath did
 	// (P3b plan §4.4).
@@ -2268,10 +2266,18 @@ func cmdUI(args []string) error {
 			Key:        "ui",
 			LegacyPath: filepath.Join(root, "ui.json"),
 		},
-		Here:      here,
-		Notice:    notice,
-		Dashboard: *dashboard,
+		Notice: notice,
+		Start:  startFor(*dashboard),
 	})
+}
+
+// startFor maps the old --dashboard flag to the command line the shell runs
+// once the first status arrives (X5: the flag itself goes in round 3).
+func startFor(dashboard bool) string {
+	if dashboard {
+		return "rounds"
+	}
+	return ""
 }
 
 // runPick opens the interactive picker for one verb (#15). The three

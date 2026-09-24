@@ -152,7 +152,7 @@ func RunSource(ctx context.Context, src Source, opts Options) error {
 	}
 	model.notice = opts.Notice
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
 	return runResult(ctx, err)
 }

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -17,9 +16,7 @@ import (
 
 // histFixtureDir is the ingest package's own golden fixture -- three
 // rounds (reported, halted, exited) -- reused read-only here exactly as
-// internal/relevo's Show tests reuse it (Task 4's plan: seed a db by
-// ingest.Ingest over a copy packed as a tarball, so the binding is
-// archived and not live).
+// internal/relevo's Show tests reuse it.
 const histFixtureDir = "../ingest/testdata/binding-three-rounds"
 
 var histFixtureBindFiles = map[string]bool{
@@ -30,10 +27,7 @@ var histFixtureBindFiles = map[string]bool{
 
 // seedArchivedHistBinding archives the golden fixture into a record and
 // ingests it as an archive source, so the binding it produces carries
-// ArchivedAt and is never in a live report -- fetchShow and relevo.Show
-// fall through to the db for it by construction. It returns a runtime
-// carrying that db and the one HistoryBinding row relevo.Bindings gives
-// back for it.
+// ArchivedAt and is never in a live report.
 func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBinding) {
 	t.Helper()
 	root := t.TempDir()
@@ -87,51 +81,33 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 	return rt, rows[0]
 }
 
-func histModel(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding) Model {
-	t.Helper()
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.width, m.height, m.ready = 140, 40, true
-	m.scope = scopeAll
-	m.statusLoaded = true
-	m, cmd := m.pointDetailAtHist(h)
-	if cmd != nil {
-		res, _ := m.Update(cmd())
-		m = res.(Model)
-	}
-	return m
-}
-
-// TestPointAtArchivedRowLoadsPlanFromDB pins the hist branch of "enter /
-// re-point on a row" (#183, §5.8): pointing at a hist row sets live false,
-// round the newest (every round closed), and the plan tab's fetch reads
-// the database, not a file.
+// TestPointAtArchivedRowLoadsPlanFromDB pins the hist branch (#183, §5.8):
+// pointing at a hist row sets live false, round the newest (every round
+// closed), and the plan tab's fetch reads the database, not a file.
 func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.width, m.height, m.ready = 140, 40, true
-	m.scope = scopeAll
+	v, cmd := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, 0)
+	rv := v.(roundView)
 
-	m, cmd := m.pointDetailAtHist(h)
-	if m.pane.detail.live {
+	if rv.pane.detail.live {
 		t.Error("live = true, want false for a hist row")
 	}
-	if m.pane.detail.name != "fixture" {
-		t.Errorf("name = %q, want fixture", m.pane.detail.name)
+	if rv.pane.detail.name != "fixture" {
+		t.Errorf("name = %q, want fixture", rv.pane.detail.name)
 	}
-	if m.pane.detail.rounds != 3 || m.pane.detail.round != 3 {
-		t.Errorf("round=%d rounds=%d, want round=3 rounds=3 (every round closed, newest default)", m.pane.detail.round, m.pane.detail.rounds)
+	if rv.pane.detail.rounds != 3 || rv.pane.detail.round != 3 {
+		t.Errorf("round=%d rounds=%d, want round=3 rounds=3", rv.pane.detail.round, rv.pane.detail.rounds)
 	}
-	if m.pane.detail.archivedAt.IsZero() {
+	if rv.pane.detail.archivedAt.IsZero() {
 		t.Error("archivedAt must be set for an archived hist row")
 	}
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the active (plan) tab")
 	}
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
+	tMsg, ok := cmd().(tabMsg)
 	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
+		t.Fatalf("expected tabMsg, got %T", cmd())
 	}
 	if tMsg.t != tabPlan {
 		t.Errorf("t = %v, want tabPlan (the default active tab)", tMsg.t)
@@ -145,56 +121,48 @@ func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 }
 
 // TestArchivedTerminalTabShowsTranscriptRows pins fetchShow's terminal
-// routing (terminal -> ShowTranscript) and the "never tail-following" rule
-// for a hist row's terminal (#183, §5.8): round 2 of the fixture has a
-// builder.log (transcript rows via logOnlyTranscriptRecords, per
-// internal/ingest), so stepping to it and opening the terminal tab renders
-// transcript content, not a live capture. (Round 3, the default newest
-// round, has neither a stream nor a log and would read Missing instead.)
+// routing and the "never tail-following" rule for a hist row's terminal.
 func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
-	m := histModel(t, rt, h)
-	if m.pane.detail.follow {
+	rv := newTestHistRound(t, rt, h, 0)
+	if rv.pane.detail.follow {
 		t.Error("follow = true, want false for a hist row (never tail-following)")
 	}
 
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
-	m = res.(Model)
-	m.pane.tabInFlight = false
-	if m.pane.detail.round != 2 {
-		t.Fatalf("round = %d, want 2", m.pane.detail.round)
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	rv.pane.tabInFlight = false
+	if rv.pane.detail.round != 2 {
+		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
 	}
 
-	res, cmd := m.switchTab(tabTerminal)
-	m = res.(Model)
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the terminal tab")
 	}
-	msg := cmd().(tabMsg)
-	res, _ = m.Update(msg)
-	m = res.(Model)
+	rv = roundMsg(rv, cmd().(tabMsg))
 
-	if m.pane.detail.follow {
+	if rv.pane.detail.follow {
 		t.Error("follow must stay false after loading the terminal tab")
 	}
-	if !m.pane.detail.cache[tabTerminal].transcript {
+	if !rv.pane.detail.cache[tabTerminal].transcript {
 		t.Error("a hist row's terminal tab must render as transcript content")
 	}
-	if m.pane.detail.cache[tabTerminal].body == "" {
+	if rv.pane.detail.cache[tabTerminal].body == "" {
 		t.Error("expected rendered transcript rows, got empty body")
 	}
 }
 
-// TestArchivedMissingDiffIsEmptyProse pins §6: a missing artifact (round 3
-// of the fixture has no diff.patch) renders as tabContent.empty prose, not
-// as an error.
+// TestArchivedMissingDiffIsEmptyProse pins §6: a missing artifact renders
+// as tabContent.empty prose, not as an error.
 func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
-	m := histModel(t, rt, h)
+	rv := newTestHistRound(t, rt, h, 0)
+	rv.pane.tabInFlight = false
 
-	res, cmd := m.switchTab(tabDiff)
-	m = res.(Model)
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	_ = next
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the diff tab")
 	}
@@ -202,8 +170,7 @@ func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 	if msg.content.err != nil {
 		t.Fatalf("unexpected error: %v", msg.content.err)
 	}
-	want := "no diff for round 3"
-	if msg.content.empty != want {
+	if want := "no diff for round 3"; msg.content.empty != want {
 		t.Errorf("empty = %q, want %q", msg.content.empty, want)
 	}
 }
@@ -212,43 +179,40 @@ func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 // archived binding.
 func TestDetailHeaderArchived(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
-	m := histModel(t, rt, h)
+	rv := newTestHistRound(t, rt, h, 0)
 
-	got := m.detailHeader()
+	got := rv.pane.detailHeader()
 	if !strings.HasPrefix(got, "fixture · round 3 of 3 · archived 2026-") {
 		t.Errorf("detailHeader() = %q, want a %q prefix", got, "fixture · round 3 of 3 · archived 2026-")
 	}
 }
 
-// TestArchivedStepRoundRefetches pins round stepping for a hist row
-// (#183): "[" moves detail.round within a closed binding's rounds exactly
-// as it does for a live one, invalidating every tab's cache.
+// TestArchivedStepRoundRefetches pins round stepping for a hist row (#183).
 func TestArchivedStepRoundRefetches(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
-	m := histModel(t, rt, h)
+	rv := newTestHistRound(t, rt, h, 0)
 
 	for tb := tab(0); tb < tabCount; tb++ {
-		m.pane.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
+		rv.pane.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
 	}
-	m.pane.tabInFlight = false
+	rv.pane.tabInFlight = false
 
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
-	m = res.(Model)
-	if m.pane.detail.round != 2 {
-		t.Fatalf("round = %d, want 2", m.pane.detail.round)
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	rv = next.(roundView)
+	if rv.pane.detail.round != 2 {
+		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
 	}
 	for tb := tab(0); tb < tabCount; tb++ {
-		if m.pane.detail.cache[tb].loaded {
+		if rv.pane.detail.cache[tb].loaded {
 			t.Errorf("tab %v cache still loaded after stepping", tb)
 		}
 	}
 	if cmd == nil {
 		t.Fatal("expected a refetch command for the active tab")
 	}
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
+	tMsg, ok := cmd().(tabMsg)
 	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
+		t.Fatalf("expected tabMsg, got %T", cmd())
 	}
 	if tMsg.round != 2 {
 		t.Errorf("fetched round = %d, want 2", tMsg.round)

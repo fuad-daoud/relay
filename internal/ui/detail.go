@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -88,14 +87,4 @@ func wrapBody(body string, width int) string {
 		return body
 	}
 	return lipgloss.NewStyle().Width(width).Render(body)
-}
-
-func (m Model) detailView() string {
-	var b strings.Builder
-	b.WriteString(m.headerView())
-	b.WriteByte('\n')
-	b.WriteString(m.paneView(m.width))
-	b.WriteByte('\n')
-	b.WriteString(m.footerView())
-	return b.String()
 }

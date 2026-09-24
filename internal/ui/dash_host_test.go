@@ -14,12 +14,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
-// keyD is the `d` key, which enters and leaves the dashboard screen.
-func keyD() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}} }
-
-// dashHostModel is splitModel with a database behind the source, so `d` and
-// --dashboard can open the dashboard screen. The db is empty: what these
-// tests read is the host's wiring, not the rows.
+// dashHostModel is splitModel with a database behind the source, so the
+// `:rounds` command line can open the rounds view. The db is empty: what
+// these tests read is the host's wiring, not the rows.
 func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relevo.BindingStatus) Model {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -39,211 +36,187 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relevo
 	return res.(Model)
 }
 
-// drain runs cmds through the model, unwrapping tea.BatchMsg as the
-// bubbletea loop does, until nothing is left. Commands the model returns
-// are drained too, so a save and its prefsSavedMsg do not leak.
-func drain(t *testing.T, m Model, cmds ...tea.Cmd) Model {
+// typeLine types a command line and presses enter, returning the model.
+func typeLine(t *testing.T, m Model, line string) Model {
 	t.Helper()
-	queue := append([]tea.Cmd(nil), cmds...)
-	for len(queue) > 0 {
-		c := queue[0]
-		queue = queue[1:]
-		if c == nil {
-			continue
-		}
-		msg := c()
-		if b, ok := msg.(tea.BatchMsg); ok {
-			queue = append(append([]tea.Cmd(nil), b...), queue...)
-			continue
-		}
-		res, next := m.Update(msg)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = res.(Model)
+	for _, r := range line {
+		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = res.(Model)
-		if next != nil {
-			queue = append(queue, next)
-		}
 	}
-	return m
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(Model)
+	return drain(t, m, cmd)
 }
 
-func TestKeyDEntersAndLeavesDash(t *testing.T) {
+// TestCmdRoundsEntersAndFleetLeaves: the `d` key is gone (X5); `:rounds`
+// opens the rounds view and `:fleet` returns to the fleet.
+func TestCmdRoundsEntersAndFleetLeaves(t *testing.T) {
 	m := dashHostModel(t, 140, 40, Options{}, threeRows()...)
 
-	res, cmd := m.Update(keyD())
-	m = res.(Model)
-	if m.screen != screenDash {
-		t.Fatalf("d: screen = %v, want screenDash", m.screen)
-	}
-	if !m.dashSet {
-		t.Fatal("d: the dashboard model was not built")
-	}
-	if cmd == nil {
-		t.Fatal("d: no first fetch was issued")
-	}
-	m = drain(t, m, cmd)
-	if m.dash.QueryText() != "" {
-		t.Errorf("fresh dashboard query text = %q, want empty", m.dash.QueryText())
+	m = typeLine(t, m, "rounds")
+	if _, ok := m.top().(roundsView); !ok {
+		t.Fatalf(":rounds must open the rounds view, got %T", m.top())
 	}
 
-	res, _ = m.Update(keyD())
-	m = res.(Model)
-	if m.screen != screenList {
-		t.Fatalf("second d: screen = %v, want screenList", m.screen)
-	}
-
-	// esc leaves too, and the model (and its query) is kept.
-	res, _ = m.Update(keyD())
-	m = res.(Model)
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = res.(Model)
-	if m.screen != screenList {
-		t.Fatalf("esc: screen = %v, want screenList", m.screen)
-	}
-	if !m.dashSet {
-		t.Error("esc must not throw the dashboard away")
+	m = typeLine(t, m, "fleet")
+	if _, ok := m.top().(fleetView); !ok {
+		t.Fatalf(":fleet must return to the fleet, got %T", m.top())
 	}
 }
 
-func TestKeyDWithoutDBNotices(t *testing.T) {
+// TestCmdRoundsWithoutDBNotices: `:rounds` with no database is the same
+// refusal the dashboard once showed, and the fleet stays.
+func TestCmdRoundsWithoutDBNotices(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(keyD())
-	m = res.(Model)
-	if m.screen != screenList {
-		t.Errorf("no database: screen = %v, want the fleet screen", m.screen)
+	m = typeLine(t, m, "rounds")
+	if _, ok := m.top().(fleetView); !ok {
+		t.Errorf("no database: top = %T, want the fleet", m.top())
 	}
 	if !strings.Contains(m.notice, "no database") {
-		t.Errorf("no database: notice = %q, want the `a` notice", m.notice)
-	}
-	if m.dashSet {
-		t.Error("no database: the dashboard model must not be built")
+		t.Errorf("no database: notice = %q", m.notice)
 	}
 }
 
-func TestJumpFromDashPointsDetail(t *testing.T) {
-	rows := []relevo.BindingStatus{
-		{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
-	}
+// TestJumpFromDashPushesLiveRound: a JumpMsg naming a live row resolves to
+// a roundOpenMsg and a pushed round view.
+func TestJumpFromDashPushesLiveRound(t *testing.T) {
+	rows := []relevo.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}}
 	m := dashHostModel(t, 140, 40, Options{}, rows...)
-	// The rail is in scope all, as it must be for a hist-only binding to be
-	// visible at all: oldapi is in the database, not the live report.
-	m.scope = scopeAll
-	m.dbRows = []relevo.HistoryBinding{
-		{Name: "oldapi", ID: "h1", Rounds: 4, LastActivity: railNow.Add(-48 * time.Hour)},
+	rv, _, err := newRoundsView(m.env(), "", "")
+	if err != nil {
+		t.Fatalf("newRoundsView: %v", err)
 	}
+	m.stack = append(m.stack, rv)
 
-	res, _ := m.Update(dash.JumpMsg{BindingName: "oldapi", BindingID: "h1", Round: 2})
+	res, cmd := m.Update(dash.JumpMsg{BindingName: "persist", BindingID: "b1", Round: 1})
 	m = res.(Model)
-	if m.scope != scopeAll {
-		t.Errorf("jump to a hist-only binding: scope = %v, want scopeAll", m.scope)
-	}
-	if m.pane.detail.name != "oldapi" {
-		t.Errorf("detail.name = %q, want oldapi", m.pane.detail.name)
-	}
-	if m.pane.detail.round != 2 {
-		t.Errorf("detail.round = %d, want 2", m.pane.detail.round)
-	}
-	if m.pane.detail.live {
-		t.Error("detail.live = true for a hist-only binding")
-	}
-	if m.screen != screenList {
-		t.Errorf("screen = %v, want screenList in split layout", m.screen)
-	}
+	m = drain(t, m, cmd)
 
-	// A jump to the live binding keeps the scope it was on.
-	res, _ = m.Update(dash.JumpMsg{BindingName: "persist", Round: 1})
-	m = res.(Model)
-	if m.scope != scopeAll {
-		t.Errorf("jump to a live binding: scope = %v, want it kept (all)", m.scope)
+	got, ok := m.top().(roundView)
+	if !ok {
+		t.Fatalf("openRound must push a round view, got %T", m.top())
 	}
-	if m.pane.detail.name != "persist" {
-		t.Errorf("detail.name = %q, want persist", m.pane.detail.name)
-	}
-	if m.pane.detail.round != 1 {
-		t.Errorf("detail.round = %d, want 1", m.pane.detail.round)
-	}
-
-	// A name in neither list is a notice and no screen change: empty the
-	// database's rows and ask for a stranger.
-	res, _ = m.Update(dash.JumpMsg{BindingName: "ghost", Round: 1})
-	m = res.(Model)
-	if !strings.Contains(m.notice, "ghost is not in the fleet or the database") {
-		t.Errorf("notice = %q, want the not-in-the-fleet text", m.notice)
+	if got.pane.detail.name != "persist" || got.pane.detail.round != 1 {
+		t.Errorf("detail = %s r%d, want persist r1", got.pane.detail.name, got.pane.detail.round)
 	}
 }
 
-// TestJumpFromDashTurnsScopeAll proves the live-scope half: a hist-only
-// binding jumps only if scope all is turned on first, exactly as `a` does.
-func TestJumpFromDashTurnsScopeAll(t *testing.T) {
-	rows := []relevo.BindingStatus{
-		{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
-	}
-	m := dashHostModel(t, 140, 40, Options{}, rows...)
-	if m.scope != scopeLive {
-		t.Fatalf("setup: scope = %v, want live", m.scope)
-	}
-	m.dbRows = []relevo.HistoryBinding{
-		{Name: "oldapi", ID: "h1", Rounds: 4, LastActivity: railNow.Add(-48 * time.Hour)},
-	}
-
-	res, _ := m.Update(dash.JumpMsg{BindingName: "oldapi", BindingID: "h1", Round: 2})
+// TestJumpFromDashArchivedUsesDatabase replaces the old scope-all jump
+// (X3): a jump to a binding that is not live resolves through
+// relevo.Bindings and pushes an archived round view.
+func TestJumpFromDashArchivedUsesDatabase(t *testing.T) {
+	rt, h := seedArchivedHistBinding(t)
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
-	if m.scope != scopeAll {
-		t.Fatalf("scope = %v, want scopeAll after a jump to a hist-only binding", m.scope)
+	m.statusLoaded = true
+	rv, _, err := newRoundsView(m.env(), "", "")
+	if err != nil {
+		t.Fatalf("newRoundsView: %v", err)
 	}
-	if !m.statusInFlight {
-		t.Error("turning scope all on must refresh the rail")
+	m.stack = append(m.stack, rv)
+
+	res, cmd := m.Update(dash.JumpMsg{BindingName: h.Name, BindingID: h.ID, Round: 2})
+	m = res.(Model)
+	m = drain(t, m, cmd)
+
+	got, ok := m.top().(roundView)
+	if !ok {
+		t.Fatalf("openRound must push a round view, got %T", m.top())
 	}
-	if m.pane.detail.name != "oldapi" || m.pane.detail.round != 2 {
-		t.Errorf("detail = %s r%d, want oldapi r2", m.pane.detail.name, m.pane.detail.round)
+	if got.pane.detail.live {
+		t.Error("detail.live = true for an archived jump")
+	}
+	if got.pane.detail.name != h.Name {
+		t.Errorf("detail.name = %q, want %q", got.pane.detail.name, h.Name)
 	}
 }
 
-func TestOptionsDashboardStartsOnDash(t *testing.T) {
-	m := dashHostModel(t, 140, 40, Options{Dashboard: true}, threeRows()...)
-	if m.screen != screenDash {
-		t.Fatalf("--dashboard: screen = %v, want screenDash after the first statusMsg", m.screen)
+// TestOptionsStartRounds: --dashboard start becomes Options.Start = "rounds".
+func TestOptionsStartRounds(t *testing.T) {
+	rows := threeRows()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
 	}
-	if !m.dashSet {
-		t.Fatal("--dashboard: the dashboard model was not built")
-	}
-}
-
-// TestOptionsDashboardWithoutDBNotices: --dashboard with no database is the
-// same refusal `d` shows, and the fleet screen stays.
-func TestOptionsDashboardWithoutDBNotices(t *testing.T) {
+	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Dashboard: true})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: threeRows()}})
+	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
 	m = res.(Model)
-	if m.screen != screenList {
-		t.Errorf("--dashboard with no database: screen = %v, want the fleet screen", m.screen)
+	m = drain(t, m, cmd)
+
+	if _, ok := m.top().(roundsView); !ok {
+		t.Fatalf("Options.Start = rounds must open the rounds view after the first status, got %T", m.top())
+	}
+	if !m.started {
+		t.Error("the start command must set started")
+	}
+}
+
+// TestOptionsStartRoundsWithoutDBNotices: the start command with no
+// database leaves the fleet and notices.
+func TestOptionsStartRoundsWithoutDBNotices(t *testing.T) {
+	st := store.New(t.TempDir())
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Start: "rounds"})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: threeRows()}})
+	m = res.(Model)
+	m = drain(t, m, cmd)
+
+	if _, ok := m.top().(fleetView); !ok {
+		t.Errorf("no database: top = %T, want the fleet", m.top())
 	}
 	if !strings.Contains(m.notice, "no database") {
 		t.Errorf("notice = %q, want the no-database text", m.notice)
 	}
 }
 
-// TestDashSavePrefsOnChange: a query and a sort change on the dashboard are
-// persisted on the same store Scope is.
-func TestDashSavePrefsOnChange(t *testing.T) {
+// TestColonInsideRoundsFilterIsForwarded pins §5.2 rule 4 over rule 5: while
+// the rounds filter (the dashboard's / editor) is open, the view captures
+// every key, so ':' must reach the filter and must not open the command
+// line. This is the test the R2.13 mutation swaps rules for.
+func TestColonInsideRoundsFilterIsForwarded(t *testing.T) {
+	m := dashHostModel(t, 140, 40, Options{}, threeRows()...)
+	m = typeLine(t, m, "rounds")
+
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = res.(Model)
+	if !m.top().Capturing() {
+		t.Fatal("/ must open the dashboard filter (the view must capture)")
+	}
+
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	m = res.(Model)
+	if m.cmd.open {
+		t.Error(": must be forwarded to the capturing rounds filter, not open the command line")
+	}
+}
+
+// TestRoundsSavePrefsOnChange: a query and a sort change in the rounds view
+// are persisted through prefMsg.
+func TestRoundsSavePrefsOnChange(t *testing.T) {
 	ps := testPrefsStore(t)
 	m := dashHostModel(t, 140, 40, Options{Prefs: ps}, threeRows()...)
-	res, cmd := m.Update(keyD())
-	m = res.(Model)
-	m = drain(t, m, cmd)
+	m = typeLine(t, m, "rounds")
 
-	// Sort: s changes the screen's sort key, and the keypress must save.
-	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	// Sort: s changes the screen's sort key, and the prefMsg must save.
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = res.(Model)
-	if m.dashSort == "" {
-		t.Fatal("s did not record a sort key")
-	}
 	m = drain(t, m, cmd)
-	if got := loadPrefs(ps).DashboardSort; got != m.dashSort {
-		t.Errorf("saved DashboardSort = %q, want %q", got, m.dashSort)
+	gotSort := loadPrefs(ps).DashboardSort
+	if gotSort == "" {
+		t.Fatal("s did not persist a sort key")
 	}
 
 	// Query: / then text then enter.

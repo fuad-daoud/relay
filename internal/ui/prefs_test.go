@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // testPrefsStore is a real t.TempDir() database and a legacy ui.json path, so
@@ -27,7 +29,9 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if got := loadPrefs(ps); got != (prefs{}) {
 		t.Errorf("missing record must load zero prefs, got %+v", got)
 	}
-	want := prefs{Sort: "name", Compact: true, RailCols: 42}
+	// sort, dashboard and dashboard_sort survive (R2.10); compact,
+	// rail_cols and scope are gone (X1–X3).
+	want := prefs{Sort: "name", Dashboard: "harness:agy", DashboardSort: "cost"}
 	if msg := savePrefs(ps, want)(); msg != (prefsSavedMsg{}) {
 		t.Errorf("save returned %v", msg)
 	}
@@ -51,60 +55,42 @@ func TestPrefsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestApplyPrefs(t *testing.T) {
-	m := Model{width: 140, height: 40, sort: true}
-	m = m.applyPrefs(prefs{Sort: "name", Compact: true, RailCols: 40})
-	if m.sort || !m.compact || m.railCols != 40 {
-		t.Errorf("applied: sort %v compact %v rail %d", m.sort, m.compact, m.railCols)
-	}
-	m = m.applyPrefs(prefs{})
-	if !m.sort || m.compact || m.railCols != railDefault {
-		t.Errorf("zero prefs restore defaults: sort %v compact %v rail %d", m.sort, m.compact, m.railCols)
-	}
-	if p := m.prefs(); p != (prefs{Sort: "attention", Compact: false, RailCols: railDefault}) {
-		t.Errorf("prefs() = %+v", p)
-	}
-}
-
-func TestPrefsScopeRoundTrip(t *testing.T) {
+// TestPrefsOldDocumentStillLoads pins §4.6: an old prefs JSON carrying the
+// dropped keys (compact, rail_cols, scope) still decodes, because
+// encoding/json ignores unknown fields.
+func TestPrefsOldDocumentStillLoads(t *testing.T) {
 	ps := testPrefsStore(t)
-	want := prefs{Sort: "attention", Scope: "all"}
-	if msg := savePrefs(ps, want)(); msg != (prefsSavedMsg{}) {
-		t.Errorf("save returned %v", msg)
+	old := []byte(`{"sort":"name","compact":true,"rail_cols":42,"scope":"all","dashboard":"x","dashboard_sort":"cost"}`)
+	if err := os.WriteFile(ps.LegacyPath, old, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got := loadPrefs(ps); got != want {
-		t.Errorf("round trip: %+v, want %+v", got, want)
-	}
-
-	m := Model{}
-	m = m.applyPrefs(want)
-	if m.scope != scopeAll {
-		t.Errorf("applyPrefs(Scope: all): scope = %v, want scopeAll", m.scope)
-	}
-	if p := m.prefs(); p.Scope != "all" {
-		t.Errorf("prefs().Scope = %q, want %q", p.Scope, "all")
+	got := loadPrefs(ps)
+	want := prefs{Sort: "name", Dashboard: "x", DashboardSort: "cost"}
+	if got != want {
+		t.Errorf("old document: %+v, want %+v", got, want)
 	}
 }
 
-func TestPrefsScopeEmptyIsLive(t *testing.T) {
-	m := Model{scope: scopeAll}
-	m = m.applyPrefs(prefs{})
-	if m.scope != scopeLive {
-		t.Errorf("applyPrefs(zero prefs): scope = %v, want scopeLive", m.scope)
+func TestApplyPrefs(t *testing.T) {
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{}}, Options{})
+	m = m.applyPrefs(prefs{Sort: "name"})
+	fv, ok := m.stack[0].(fleetView)
+	if !ok {
+		t.Fatal("the root view must be the fleet")
 	}
-	if p := m.prefs(); p.Scope != "" {
-		t.Errorf("prefs().Scope = %q, want empty (live)", p.Scope)
+	if fv.attention {
+		t.Error("sort name must turn attention off")
+	}
+	m = m.applyPrefs(prefs{})
+	fv = m.stack[0].(fleetView)
+	if !fv.attention {
+		t.Error("zero prefs restore attention")
 	}
 }
 
 func TestPrefsDashboardRoundTrip(t *testing.T) {
 	ps := testPrefsStore(t)
-	want := prefs{
-		Sort:          "attention",
-		RailCols:      railDefault,
-		Dashboard:     "harness:agy since:30d",
-		DashboardSort: "cost",
-	}
+	want := prefs{Sort: "attention", Dashboard: "harness:agy since:30d", DashboardSort: "cost"}
 	if msg := savePrefs(ps, want)(); msg != (prefsSavedMsg{}) {
 		t.Errorf("save returned %v", msg)
 	}
@@ -112,30 +98,35 @@ func TestPrefsDashboardRoundTrip(t *testing.T) {
 		t.Errorf("round trip: %+v, want %+v", got, want)
 	}
 
-	m := Model{}
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{}}, Options{})
 	m = m.applyPrefs(want)
-	if m.dashQuery != "harness:agy since:30d" {
-		t.Errorf("applyPrefs: dashQuery = %q", m.dashQuery)
+	if m.prefs.Dashboard != "harness:agy since:30d" {
+		t.Errorf("applyPrefs: dashboard = %q", m.prefs.Dashboard)
 	}
-	if m.dashSort != "cost" {
-		t.Errorf("applyPrefs: dashSort = %q", m.dashSort)
-	}
-	if p := m.prefs(); p.Dashboard != want.Dashboard || p.DashboardSort != want.DashboardSort {
-		t.Errorf("prefs() = %+v, want the dashboard fields kept", p)
+	if m.prefs.DashboardSort != "cost" {
+		t.Errorf("applyPrefs: dashboard_sort = %q", m.prefs.DashboardSort)
 	}
 }
 
+// TestChangesSaveWhenAStoreIsSet pins the shell's save path: the `s` sort
+// key returns a save command when a store is set, and the prefMsg path
+// saves through the same store.
 func TestChangesSaveWhenAStoreIsSet(t *testing.T) {
+	ps := testPrefsStore(t)
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.opts.Prefs = testPrefsStore(t)
-	for _, r := range []rune{'s', 'c', '>'} {
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		if cmd == nil {
-			t.Errorf("%q must return a save command", r)
-		}
+	m.opts.Prefs = ps
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = drain(t, m, cmd)
+	if got := loadPrefs(ps).Sort; got != "name" {
+		t.Errorf("s must persist the sort pref, got %q", got)
 	}
+
+	// No store: the change applies for the run but nothing is saved (and
+	// nothing panics).
 	m.opts.Prefs = PrefsStore{}
-	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
-		t.Error("no store: no save command")
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = drain(t, m, cmd)
+	if !fleet(m).attention {
+		t.Error("no store: the sort must still have toggled back to attention")
 	}
 }

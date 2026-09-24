@@ -13,14 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-type screen int
-
-const (
-	screenList screen = iota
-	screenDetail
-	screenDash
-)
-
 type tab int
 
 const (
@@ -68,11 +60,6 @@ type tickMsg time.Time
 type statusMsg struct {
 	report relevo.Report
 	err    error
-	// dbRows and dbErr are scope all's addition: dbRows is nil (no error)
-	// in scope live, dbErr is the database's failure to answer when
-	// scope is all (§6 ErrNoDatabase or any other Bindings error).
-	dbRows []relevo.HistoryBinding
-	dbErr  error
 }
 
 // tabMsg carries a row key (BindingStatus.Key()) and round so a late reply
@@ -92,27 +79,16 @@ func unresolvedKey(key string) error {
 	return fmt.Errorf("%s: %w", key, store.ErrNotFound)
 }
 
-// fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. In
-// scope all it also calls relevo.Bindings(ctx, src.Base(), here), carrying
-// its rows or its error alongside the (always live) report -- a database
-// failure never blocks the live report from refreshing. It never returns a
-// partial report alongside a report-level error.
-func fetchStatus(ctx context.Context, src Source, sc scope, here string) tea.Cmd {
+// fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. It
+// never returns a partial report alongside a report-level error. The scope
+// argument and the relevo.Bindings call it carried are gone (X3).
+func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 	return func() tea.Msg {
 		rep, err := src.Status(ctx)
 		if err != nil {
 			return statusMsg{err: err}
 		}
-		msg := statusMsg{report: rep}
-		if sc == scopeAll {
-			rows, berr := relevo.Bindings(ctx, src.Base(), here)
-			if berr != nil {
-				msg.dbErr = berr
-			} else {
-				msg.dbRows = rows
-			}
-		}
-		return msg
+		return statusMsg{report: rep}
 	}
 }
 
