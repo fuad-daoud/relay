@@ -1339,6 +1339,125 @@ func TestUnbindReportsAnAlreadyGoneWorktree(t *testing.T) {
 	}
 }
 
+// worktreeDeletingGit is fakeGit whose RemoveWorktree also deletes the tree,
+// the way real git does, so a test can watch the parent .worktrees/ go once
+// its last tree is gone.
+type worktreeDeletingGit struct {
+	*fakeGit
+}
+
+func (f *worktreeDeletingGit) RemoveWorktree(ctx context.Context, dir, path string, force bool) error {
+	if err := f.fakeGit.RemoveWorktree(ctx, dir, path, force); err != nil {
+		return err
+	}
+	return os.RemoveAll(path)
+}
+
+// TestUnbindTeardownPrunesWorktreeDirs: once the last worktree under
+// .worktrees/ is gone the parents go too, so a finished binding leaves no
+// empty .worktrees/ behind. The fake deletes the tree the way git does.
+// Mutation: drop the prune call and .worktrees survives.
+func TestUnbindTeardownPrunesWorktreeDirs(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("last worktree gone removes .worktrees", func(t *testing.T) {
+		fg := &worktreeDeletingGit{fakeGit: &fakeGit{}}
+		rt := newRuntime(t)
+		rt.Git = fg
+
+		wt := rt.Store.WorktreePath("fork-only")
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		b := store.Binding{
+			Name: "fork-only", CWD: t.TempDir(),
+			Worktree: wt, State: store.StateActive,
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-only", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeRemoved != wt {
+			t.Errorf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
+		}
+		if _, err := os.Stat(rt.Store.WorktreeDir()); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("WorktreeDir %s still exists after the last teardown: %v", rt.Store.WorktreeDir(), err)
+		}
+	})
+
+	t.Run("a sibling worktree keeps .worktrees", func(t *testing.T) {
+		fg := &worktreeDeletingGit{fakeGit: &fakeGit{}}
+		rt := newRuntime(t)
+		rt.Git = fg
+
+		sibling := rt.Store.WorktreePath("sibling")
+		if err := os.MkdirAll(sibling, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		wt := rt.Store.WorktreePath("fork-among")
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		b := store.Binding{
+			Name: "fork-among", CWD: t.TempDir(),
+			Worktree: wt, State: store.StateActive,
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-among", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeRemoved != wt {
+			t.Errorf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
+		}
+		if _, err := os.Stat(rt.Store.WorktreeDir()); err != nil {
+			t.Errorf("WorktreeDir %s was removed though a sibling worktree remains: %v", rt.Store.WorktreeDir(), err)
+		}
+		if _, err := os.Stat(sibling); err != nil {
+			t.Errorf("sibling worktree %s was touched: %v", sibling, err)
+		}
+	})
+
+	t.Run("an already-gone worktree prunes too", func(t *testing.T) {
+		fg := &worktreeDeletingGit{fakeGit: &fakeGit{}}
+		rt := newRuntime(t)
+		rt.Git = fg
+
+		if err := os.MkdirAll(rt.Store.WorktreeDir(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		wt := rt.Store.WorktreePath("fork-gone")
+		b := store.Binding{
+			Name: "fork-gone", CWD: t.TempDir(),
+			Worktree: wt, State: store.StateActive,
+			Planner: store.Endpoint{Kind: "claude", SessionID: "s"}, Builder: store.Endpoint{Mode: store.ModeHeadless},
+		}
+		if err := rt.Store.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := Unbind(ctx, rt, "fork-gone", false)
+		if err != nil {
+			t.Fatalf("Unbind: %v", err)
+		}
+		if res.WorktreeGone != wt {
+			t.Errorf("WorktreeGone = %q, want %q", res.WorktreeGone, wt)
+		}
+		if _, err := os.Stat(rt.Store.WorktreeDir()); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("WorktreeDir %s still exists after the Gone teardown: %v", rt.Store.WorktreeDir(), err)
+		}
+	})
+}
+
 // TestResumeRebindClearsRoundClosedTree: a rebind replaces the builder, so a
 // tree that changed hands says nothing about the new one and RoundClosedTree
 // is cleared.

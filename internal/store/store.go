@@ -701,6 +701,17 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
+// PruneWorktreeDirs removes the parents of relevo's worktrees once they are
+// empty: .worktrees/.verify first, then .worktrees. os.Remove never removes a
+// non-empty directory, so a sibling worktree keeps its parent; every error --
+// not-exist, not-empty -- is ignored. It never logs: the parents of relevo's
+// worktrees go once they are empty; a racing `git worktree add` recreates its
+// parent itself.
+func (s *Store) PruneWorktreeDirs() {
+	_ = os.Remove(filepath.Join(s.WorktreeDir(), ".verify"))
+	_ = os.Remove(s.WorktreeDir())
+}
+
 // archive marks a binding's record archived and removes its directory, so the
 // name frees for a fresh bind while its log and every round file survive as
 // rows. Every round's NNN-* files are sealed into round_file first, ignoring

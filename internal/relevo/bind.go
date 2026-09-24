@@ -670,6 +670,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 	// git classifies a chdir into a missing directory as a missing binary,
 	// which is the wrong diagnosis; the caller knows the path and checks it first.
 	if _, err := os.Stat(b.Worktree); errors.Is(err, os.ErrNotExist) {
+		rt.Store.PruneWorktreeDirs()
 		return worktreeOutcome{Gone: b.Worktree}
 	}
 
@@ -688,6 +689,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 	if err := rt.Git.RemoveWorktree(ctx, b.CWD, b.Worktree, false); err != nil {
 		return worktreeOutcome{Kept: b.Worktree, Reason: brief(err)}
 	}
+	rt.Store.PruneWorktreeDirs()
 	return worktreeOutcome{Removed: b.Worktree}
 }
 
