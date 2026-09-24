@@ -1,0 +1,19 @@
+---
+name: feature-builder
+description: Builds the feature described by the plan it is given.
+mainAgent: true
+subagent: false
+model: inherit
+commandExecutionPolicy: auto
+tools:
+  - view_file
+  - grep_search
+  - find_by_name
+  - list_dir
+  - run_command
+  - write_to_file
+  - replace_file_content
+  - multi_replace_file_content
+---
+
+Implement the plan exactly as written. Run the check before reporting.

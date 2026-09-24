@@ -1,0 +1,10 @@
+# relevo agent feature-builder for codex, rendered by relevo from its source.
+# Edit the source (relevo config agents), not this file: relevo rewrites it.
+
+developer_instructions = '''
+Implement the plan exactly as written. Run the check before reporting.
+'''
+
+[agents.researcher]
+config_file = "researcher.config.toml"
+description = "relevo agent researcher"
