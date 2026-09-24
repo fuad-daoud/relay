@@ -65,6 +65,11 @@ type fakeRemote struct {
 	startRoundRetry     bool
 	roundFileResp       io.ReadCloser
 	roundFileErr        error
+	roundFileFromResp   io.ReadCloser
+	roundFileFromRange  remote.FileRange
+	roundFileFromErr    error
+	roundFileFromFunc   func(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)
+	roundFileFromCalls  []int64
 	roundBundleResp     io.ReadCloser
 	roundBundleErr      error
 	roundFileFunc       func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
@@ -124,6 +129,18 @@ func (f *fakeRemote) RoundFile(ctx context.Context, server, name string, round i
 		return f.roundFileFunc(ctx, server, name, round, kind)
 	}
 	return f.roundFileResp, f.roundFileErr
+}
+
+func (f *fakeRemote) RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error) {
+	f.calls = append(f.calls, fmt.Sprintf("RoundFileFrom:%s:%s:%d:%s:%d", server, name, round, kind, from))
+	f.roundFileFromCalls = append(f.roundFileFromCalls, from)
+	if f.roundFileFromFunc != nil {
+		return f.roundFileFromFunc(ctx, server, name, round, kind, from)
+	}
+	if f.roundFileFromResp != nil || f.roundFileFromErr != nil {
+		return f.roundFileFromResp, f.roundFileFromRange, f.roundFileFromErr
+	}
+	return f.roundFileResp, remote.FileRange{}, f.roundFileErr
 }
 
 func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
@@ -2339,8 +2356,8 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 	}
 
 	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
-		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+		getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp: io.NopCloser(strings.NewReader("builder log line 1\n")),
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -2363,16 +2380,230 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 		if c == "GetBinding:zen:api" {
 			foundGet = true
 		}
-		if c == "RoundFile:zen:api:1:log" {
+		if strings.HasPrefix(c, "RoundFileFrom:zen:api:1:log") {
 			foundLog = true
 		}
 	}
 	if !foundGet || !foundLog {
-		t.Fatalf("calls = %v, want GetBinding and RoundFile(log)", fr.calls)
+		t.Fatalf("calls = %v, want GetBinding and RoundFileFrom(log)", fr.calls)
 	}
 	if got.State != store.StateActive {
 		t.Fatalf("state = %s, want active while running", got.State)
 	}
+}
+
+func TestMirrorLogAppends(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("b\n")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 2, Size: 4},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "a\nb\n" {
+		t.Fatalf("log data = %q, want %q", string(data), "a\nb\n")
+	}
+	if len(fr.roundFileFromCalls) != 1 || fr.roundFileFromCalls[0] != 2 {
+		t.Fatalf("roundFileFromCalls = %v, want [2]", fr.roundFileFromCalls)
+	}
+}
+
+func TestMirrorLogOldServerReplaces(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("prior log content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("whole\n")),
+		roundFileFromRange: remote.FileRange{Honored: false},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "whole\n" {
+		t.Fatalf("log data = %q, want %q", string(data), "whole\n")
+	}
+}
+
+func TestMirrorLogShrankRefetches(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	callCount := 0
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromFunc: func(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error) {
+			callCount++
+			if callCount == 1 {
+				// from is 10, server reports file shrunk to size 4
+				return io.NopCloser(strings.NewReader("")), remote.FileRange{Honored: true, From: from, Size: 4}, nil
+			}
+			// Second call: from is 0
+			return io.NopCloser(strings.NewReader("shrunk\n")), remote.FileRange{Honored: true, From: 0, Size: 7}, nil
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "shrunk\n" {
+		t.Fatalf("log data = %q, want %q", string(data), "shrunk\n")
+	}
+	if len(fr.roundFileFromCalls) != 2 || fr.roundFileFromCalls[0] != 10 || fr.roundFileFromCalls[1] != 0 {
+		t.Fatalf("roundFileFromCalls = %v, want [10, 0]", fr.roundFileFromCalls)
+	}
+}
+
+func TestMirrorDriftOnce(t *testing.T) {
+	t.Cleanup(func() {
+		mirrorDriftAttempts = sync.Map{}
+	})
+	mirrorDriftAttempts = sync.Map{}
+
+	t.Run("fetches and caches drift", func(t *testing.T) {
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		driftCalls := 0
+		fr := &fakeRemote{
+			getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning},
+			roundFileFromResp: io.NopCloser(strings.NewReader("")),
+			roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+				if kind == "drift" {
+					driftCalls++
+					return io.NopCloser(strings.NewReader("drift diff\n")), nil
+				}
+				return io.NopCloser(strings.NewReader("")), nil
+			},
+		}
+		rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+		// First poll: fetches drift
+		got, err := reconcile(t, rt, b)
+		if err != nil {
+			t.Fatalf("reconcile 1: %v", err)
+		}
+		data, err := rt.Store.ReadFile(st.DriftPath("api", 1))
+		if err != nil {
+			t.Fatalf("ReadFile drift: %v", err)
+		}
+		if string(data) != "drift diff\n" {
+			t.Fatalf("drift data = %q, want %q", string(data), "drift diff\n")
+		}
+		if driftCalls != 1 {
+			t.Fatalf("driftCalls = %d, want 1", driftCalls)
+		}
+
+		// Second poll: makes no drift request
+		if _, err := reconcile(t, rt, got); err != nil {
+			t.Fatalf("reconcile 2: %v", err)
+		}
+		if driftCalls != 1 {
+			t.Fatalf("driftCalls after poll 2 = %d, want 1", driftCalls)
+		}
+	})
+
+	t.Run("404 asked once across two polls", func(t *testing.T) {
+		mirrorDriftAttempts = sync.Map{}
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		b.Name = "api-404"
+		b.Branch = "relevo/api-404"
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+
+		driftCalls := 0
+		fr := &fakeRemote{
+			getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning},
+			roundFileFromResp: io.NopCloser(strings.NewReader("")),
+			roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+				if kind == "drift" {
+					driftCalls++
+					return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound, Message: "not found"}}
+				}
+				return io.NopCloser(strings.NewReader("")), nil
+			},
+		}
+		rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+		// First poll: returns 404
+		got, err := reconcile(t, rt, b)
+		if err != nil {
+			t.Fatalf("reconcile 1: %v", err)
+		}
+		if driftCalls != 1 {
+			t.Fatalf("driftCalls = %d, want 1", driftCalls)
+		}
+
+		// Second poll: asked once across two polls (still 1)
+		if _, err := reconcile(t, rt, got); err != nil {
+			t.Fatalf("reconcile 2: %v", err)
+		}
+		if driftCalls != 1 {
+			t.Fatalf("driftCalls after poll 2 = %d, want 1 (should not be asked again on 404)", driftCalls)
+		}
+	})
 }
 
 // TestObserveRemoteCopiesStalledSince pins #252's remote half: a running
@@ -2391,8 +2622,8 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 
 	stalled := baseTime.Add(-20 * time.Minute)
 	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
-		roundFileResp:  io.NopCloser(strings.NewReader("builder log line 1\n")),
+		getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning, StalledSince: stalled},
+		roundFileFromResp: io.NopCloser(strings.NewReader("builder log line 1\n")),
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -2489,8 +2720,8 @@ func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 	}
 
 	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
-		roundFileResp:  io.NopCloser(strings.NewReader("")),
+		getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp: io.NopCloser(strings.NewReader("")),
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -2527,7 +2758,7 @@ func TestObserveRemoteRunningStoresLive(t *testing.T) {
 			RoundState: remote.RoundRunning,
 			Live:       live,
 		},
-		roundFileResp: io.NopCloser(strings.NewReader("")),
+		roundFileFromResp: io.NopCloser(strings.NewReader("")),
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -2615,8 +2846,8 @@ func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 	}
 
 	fr := &fakeRemote{
-		getBindingResp: remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
-		roundFileResp:  io.NopCloser(strings.NewReader("")),
+		getBindingResp:    remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/anthropic/sonnet"},
+		roundFileFromResp: io.NopCloser(strings.NewReader("")),
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -4370,10 +4601,10 @@ func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
 	ctx := context.Background()
 	view := remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/test/m"}
 	fr := &fakeRemote{
-		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
-		startRoundResp: view,
-		getBindingResp: view,
-		roundFileResp:  io.NopCloser(strings.NewReader("")),
+		whoAmIResp:        remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
+		startRoundResp:    view,
+		getBindingResp:    view,
+		roundFileFromResp: io.NopCloser(strings.NewReader("")),
 	}
 	rt, st, _ := remoteBuilderRT(t, fr)
 

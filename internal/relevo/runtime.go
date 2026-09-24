@@ -313,6 +313,7 @@ type RemoteClient interface {
 	// dedupes a repeated send may be sent the same round twice (#373 §4.4).
 	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, tags []remote.TagRef, retryOnUnreachable bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
+	RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)
 	RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error)
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
 	Unavailable(ctx context.Context, server, name, token, reason string) error

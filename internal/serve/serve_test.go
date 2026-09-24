@@ -3604,3 +3604,120 @@ func TestRequestLogClientVersion(t *testing.T) {
 		t.Errorf("log without the header = %q, want no client_version attribute", got)
 	}
 }
+
+func TestRoundFileLogFrom(t *testing.T) {
+	env := setupTestEnv(t)
+	sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+
+	rt := env.runtime(t)
+	logPath := rt.Store.BuilderLogPath("api", 1)
+	logContent := []byte("line 1\nline 2\nline 3\n")
+	if err := os.WriteFile(logPath, logContent, 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	totalLen := len(logContent)
+	totalLenStr := strconv.Itoa(totalLen)
+
+	// No from: gives whole body, X-Relevo-Size = len, X-Relevo-From = 0
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != "0" {
+		t.Fatalf("X-Relevo-From = %q, want 0", got)
+	}
+	if string(body) != string(logContent) {
+		t.Fatalf("body = %q, want %q", string(body), string(logContent))
+	}
+
+	// ?from=k with k inside the file: gives suffix and From = k
+	k := 7
+	kStr := strconv.Itoa(k)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+kStr, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != kStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, kStr)
+	}
+	if string(body) != string(logContent[k:]) {
+		t.Fatalf("body = %q, want %q", string(body), string(logContent[k:]))
+	}
+
+	// ?from= past the end: gives empty body with Size = len
+	pastEnd := totalLen + 100
+	pastEndStr := strconv.Itoa(pastEnd)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+pastEndStr, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != pastEndStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, pastEndStr)
+	}
+	if len(body) != 0 {
+		t.Fatalf("body = %q, want empty", string(body))
+	}
+
+	// ?from=-1 gives 400
+	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from=-1", nil, "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+
+	// ?from=x gives 400
+	resp, _ = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from=x", nil, "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestRoundFileDriftRunning(t *testing.T) {
+	env := setupTestEnv(t)
+	sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+
+	rt := env.runtime(t)
+
+	// Drift missing gives 404 "file not found", not "round 1 is not closed"
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/drift", nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "file not found") {
+		t.Fatalf("body = %q, want to contain 'file not found'", string(body))
+	}
+	if strings.Contains(string(body), "not closed") {
+		t.Fatalf("body = %q, should not contain 'not closed'", string(body))
+	}
+
+	// Drift present gives 200 and its bytes
+	driftContent := []byte("diff --git a/foo b/foo\n+drift\n")
+	driftPath := rt.Store.DriftPath("api", 1)
+	if err := os.WriteFile(driftPath, driftContent, 0o644); err != nil {
+		t.Fatalf("write drift: %v", err)
+	}
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/drift", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != string(driftContent) {
+		t.Fatalf("body = %q, want %q", string(body), string(driftContent))
+	}
+
+	// Report on running round is still 404 "not closed"
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/report", nil, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "not closed") {
+		t.Fatalf("body = %q, want to contain 'not closed'", string(body))
+	}
+}
