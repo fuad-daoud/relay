@@ -594,7 +594,10 @@ func (c *Client) CheckoutWorktree(ctx context.Context, dir, path, branch string)
 // never removes the branch: a branch holds commits, and commits are work.
 //
 // Preconditions:  path is a worktree of dir's repository.
-// Postconditions: path no longer exists; the branch survives.
+// Postconditions: path no longer exists; the branch survives. A path that
+//
+//	is already gone is success (its stale entry is pruned).
+//
 // Errors: ErrWorktreeDirty when the tree has uncommitted or untracked changes
 //
 //	and force is false; ErrNotRepo; ErrGitUnavailable; wrapped failure.
@@ -602,6 +605,16 @@ func (c *Client) RemoveWorktree(ctx context.Context, dir, path string, force boo
 	absPath := path
 	if !filepath.IsAbs(absPath) {
 		absPath = filepath.Join(dir, absPath)
+	}
+
+	// Already gone -- removed by hand, or by an earlier `relevo done` -- is
+	// success: the postcondition holds. Prune the stale administrative entry
+	// so the branch is no longer "checked out" there and can be deleted.
+	if _, statErr := os.Stat(absPath); errors.Is(statErr, os.ErrNotExist) {
+		if _, err := c.run(ctx, dir, nil, "worktree", "prune"); errors.Is(err, ErrNotRepo) || errors.Is(err, ErrGitUnavailable) {
+			return err
+		}
+		return nil
 	}
 
 	args := []string{"worktree", "remove"}
