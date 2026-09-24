@@ -18,13 +18,20 @@ import (
 // days is long enough that no live planner is still reading the result.
 const settledGrace = 7 * 24 * time.Hour
 
+// ackedGrace is how long a DONE binding whose rounds are all acked stays
+// before it is collected: a client that has just run `relevo done` reads the
+// binding's view right after (TestRemoteRoundEndToEnd does), and must not get
+// a 404 because the server's next tick collected it in between.
+const ackedGrace = time.Hour
+
 // settled reports whether a served binding is finished with the server and its
 // per-binding resources may be collected (spec §7). It is pure: now is a
 // parameter, so tests can pin the seven-day fallback boundary.
 //
 // It is true iff the binding is DONE, carries its Serve facts, has no builder
 // process, no running consult and no running gate, and either the owner acked
-// the last closed round or the binding has been quiet for settledGrace.
+// the last closed round and the binding has been quiet for ackedGrace, or it
+// has been quiet for settledGrace.
 func settled(b store.Binding, now time.Time) bool {
 	if b.State != store.StateDone || b.Serve == nil {
 		return false
@@ -38,7 +45,7 @@ func settled(b store.Binding, now time.Time) bool {
 		}
 	}
 	if b.Serve.AckedRound >= b.Serve.ClosedRound {
-		return true
+		return now.Sub(b.UpdatedAt) >= ackedGrace
 	}
 	return now.Sub(b.UpdatedAt) >= settledGrace
 }
