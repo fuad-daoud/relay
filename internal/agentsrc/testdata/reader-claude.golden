@@ -1,0 +1,7 @@
+---
+name: ui-designer
+description: Designs a page as static HTML and CSS from the plan it is given.
+---
+
+Design the page as static HTML and CSS.
+Write index.html and style.css into the artifact directory.

@@ -1,0 +1,20 @@
+---
+name: ui-designer
+description: Designs a page as static HTML and CSS from the plan it is given.
+mainAgent: true
+subagent: false
+model: inherit
+commandExecutionPolicy: auto
+tools:
+  - view_file
+  - grep_search
+  - find_by_name
+  - list_dir
+  - run_command
+  - write_to_file
+  - replace_file_content
+  - multi_replace_file_content
+---
+
+Design the page as static HTML and CSS.
+Write index.html and style.css into the artifact directory.
