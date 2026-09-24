@@ -145,11 +145,13 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("StoreSource.List = %v (err %v), want the sealed 001-report.md", names, err)
 	}
 
-	// A fork cut through round 1 gets the sealed files as files.
-	if err := rt.Store.ForkState("webshop", "forked", 1); err != nil {
+	// A fork cut through round 1 gets the sealed files as its own round_file
+	// rows. The fork needs a working directory of its own: ForkState's Save
+	// refuses a second active binding on webshop's CWD (/repo).
+	if err := rt.Store.ForkState("webshop", store.Binding{Name: "forked", CWD: t.TempDir()}, 1); err != nil {
 		t.Fatalf("ForkState: %v", err)
 	}
-	forked, err := os.ReadFile(filepath.Join(rt.Store.Dir("forked"), "001-report.md"))
+	forked, err := rt.Store.ReadFile(rt.Store.ReportPath("forked", 1))
 	if err != nil || !bytes.Equal(forked, report) {
 		t.Errorf("forked report = %q (err %v), want %q", forked, err, report)
 	}

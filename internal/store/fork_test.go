@@ -88,35 +88,25 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		t.Fatalf("ReadLog src: %v", err)
 	}
 
-	// Fork through round 2 under the lock.
+	// Fork through round 2 under the lock. ForkState saves dst itself: there
+	// is no Save after it and no dst/log.jsonl for a Save's import to adopt
+	// (deletion items 2 and 5).
+	dst := newBinding(dstName, "/repo-fork")
 	if err := s.WithLock(func(tx *Tx) error {
-		return tx.ForkState(srcName, dstName, 2)
+		return tx.ForkState(srcName, dst, 2)
 	}); err != nil {
 		t.Fatalf("ForkState: %v", err)
 	}
 
 	dstDir := s.Dir(dstName)
 
-	// Postcondition: bind.json must NOT exist in dst.
-	if _, err := os.Stat(filepath.Join(dstDir, "bind.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dst must not contain bind.json, got err: %v", err)
+	// Postcondition: ForkState creates nothing on disk, so dst has no
+	// directory (deletion items 1 and 3).
+	if _, err := os.Stat(dstDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dst directory %s must not exist after ForkState, got err: %v", dstDir, err)
 	}
 
-	// Postcondition: ForkState leaves dst/log.jsonl waiting, and the fork's
-	// own Save is what adopts it (A2). Before the Save the file is there.
-	dstLogPath := filepath.Join(dstDir, "log.jsonl")
-	if _, err := os.Stat(dstLogPath); err != nil {
-		t.Fatalf("dst must contain log.jsonl before its Save, got err: %v", err)
-	}
-	if err := s.Save(newBinding(dstName, "/repo-fork")); err != nil {
-		t.Fatalf("Save(dst): %v", err)
-	}
-	if _, err := os.Stat(dstLogPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the Save's import must adopt dst/log.jsonl, got err: %v", err)
-	}
-
-	// The adopted log must hold only round 1 & 2 entries, all Confirmed: true
-	// and DeliveredAt == nil.
+	// Postcondition: the record ForkState saved is what holds the log now.
 	dstLog, err := s.ReadLog(dstName)
 	if err != nil {
 		t.Fatalf("ReadLog dst: %v", err)
@@ -134,28 +124,19 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		if e.DeliveredAt != nil {
 			t.Errorf("entry %d DeliveredAt = %v, want nil", i, e.DeliveredAt)
 		}
-	}
-
-	// Verify dst files.
-	dstEntries, err := os.ReadDir(dstDir)
-	if err != nil {
-		t.Fatalf("ReadDir dst: %v", err)
-	}
-
-	var dstFileNames []string
-	for _, e := range dstEntries {
-		dstFileNames = append(dstFileNames, e.Name())
-
-		// Verify mode is 0644.
-		info, err := e.Info()
-		if err != nil {
-			t.Fatalf("Info %s: %v", e.Name(), err)
-		}
-		if info.Mode().Perm() != 0o644 {
-			t.Errorf("dst file %s has mode %o, want 0644", e.Name(), info.Mode().Perm())
+		// A copied Path that pointed into src's directory now points into
+		// dst's, so the fork does not depend on src.
+		if e.Path != "" && filepath.Dir(e.Path) != dstDir {
+			t.Errorf("entry %d Path = %q, want a path in %s", i, e.Path, dstDir)
 		}
 	}
+	if got, want := dstLog[0].Path, s.PlanPath(dstName, 1); got != want {
+		t.Errorf("first copied entry Path = %q, want %q", got, want)
+	}
 
+	// Verify dst files: RoundFiles lists the copied names and ReadFile
+	// returns src's bytes, with no dst directory to read them from
+	// (deletion items 1 and 3).
 	wantFiles := []string{
 		"001-custom.artifact",
 		"001-diff.patch",
@@ -168,18 +149,18 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		"002-question.md",
 		"002-report.md",
 	}
-	slices.Sort(dstFileNames)
 	slices.Sort(wantFiles)
-	if !slices.Equal(dstFileNames, wantFiles) {
-		t.Fatalf("dst files = %v, want %v", dstFileNames, wantFiles)
+	dstFiles, err := s.RoundFiles(dstName)
+	if err != nil {
+		t.Fatalf("RoundFiles dst: %v", err)
+	}
+	if !slices.Equal(dstFiles, wantFiles) {
+		t.Fatalf("RoundFiles(dst) = %v, want %v", dstFiles, wantFiles)
 	}
 
 	// Verify file contents match src for copied files.
 	for _, name := range wantFiles {
-		if name == "log.jsonl" {
-			continue
-		}
-		dstContent, err := os.ReadFile(filepath.Join(dstDir, name))
+		dstContent, err := s.ReadFile(filepath.Join(dstDir, name))
 		if err != nil {
 			t.Fatalf("ReadFile dst %s: %v", name, err)
 		}
@@ -241,7 +222,7 @@ func TestForkStateValidationAndErrors(t *testing.T) {
 		t.Fatalf("Mkdir: %v", err)
 	}
 	err := s.WithLock(func(tx *Tx) error {
-		return tx.ForkState(srcName, "existing", 1)
+		return tx.ForkState(srcName, newBinding("existing", "/repo-existing"), 1)
 	})
 	if err == nil {
 		t.Fatal("ForkState into existing directory must error, got nil")
@@ -249,7 +230,7 @@ func TestForkStateValidationAndErrors(t *testing.T) {
 
 	// 2. ForkState from nonexistent source returns ErrNotFound.
 	err = s.WithLock(func(tx *Tx) error {
-		return tx.ForkState("nosuch", "dst", 1)
+		return tx.ForkState("nosuch", newBinding("dst", "/repo-dst"), 1)
 	})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ForkState from nonexistent src: got %v, want ErrNotFound", err)
@@ -258,7 +239,7 @@ func TestForkStateValidationAndErrors(t *testing.T) {
 	// 3. ForkState with invalid dst name errors.
 	for _, bad := range []string{"", "123bad", "UPPER", "bad name"} {
 		err = s.WithLock(func(tx *Tx) error {
-			return tx.ForkState(srcName, bad, 1)
+			return tx.ForkState(srcName, newBinding(bad, "/repo-bad"), 1)
 		})
 		if err == nil {
 			t.Errorf("ForkState with invalid dst %q must error, got nil", bad)
@@ -268,11 +249,27 @@ func TestForkStateValidationAndErrors(t *testing.T) {
 	// 4. ForkState with throughRound < 1 errors.
 	for _, badRound := range []int{0, -1, -5} {
 		err = s.WithLock(func(tx *Tx) error {
-			return tx.ForkState(srcName, "validfork", badRound)
+			return tx.ForkState(srcName, newBinding("validfork", "/repo-validfork"), badRound)
 		})
 		if err == nil {
 			t.Errorf("ForkState with round %d must error, got nil", badRound)
 		}
+	}
+
+	// 5. ForkState onto an existing record with no directory errors: the
+	// record owns the name even though nothing is on disk for it.
+	taken := newBinding("taken", "/repo-taken")
+	if err := s.Save(taken); err != nil {
+		t.Fatalf("Save taken: %v", err)
+	}
+	if err := os.RemoveAll(s.Dir("taken")); err != nil {
+		t.Fatalf("RemoveAll taken dir: %v", err)
+	}
+	err = s.WithLock(func(tx *Tx) error {
+		return tx.ForkState(srcName, newBinding("taken", "/repo-taken2"), 1)
+	})
+	if err == nil {
+		t.Fatal("ForkState onto an existing record must error, got nil")
 	}
 }
 
@@ -301,7 +298,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 
 		dstName := "dstfailed"
 		err := s.WithLock(func(tx *Tx) error {
-			return tx.ForkState(srcName, dstName, 1)
+			return tx.ForkState(srcName, newBinding(dstName, "/repo-dstfailed"), 1)
 		})
 		if err == nil {
 			t.Fatal("ForkState must error when a file is unreadable, got nil")
@@ -310,6 +307,11 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 		// Ensure dst directory was removed entirely.
 		if _, err := os.Stat(s.Dir(dstName)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("dst directory %s must be removed on failure, got err: %v", s.Dir(dstName), err)
+		}
+		// Ensure the record is gone too: a failed fork leaves nothing List
+		// could pick up.
+		if _, err := s.Load(dstName); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Load(%s) after a failed fork = %v, want ErrNotFound", dstName, err)
 		}
 	})
 
@@ -327,7 +329,7 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 
 		dstName := "dstfailedlog"
 		err := s.WithLock(func(tx *Tx) error {
-			return tx.ForkState(srcName, dstName, 1)
+			return tx.ForkState(srcName, newBinding(dstName, "/repo-dstfailedlog"), 1)
 		})
 		if err == nil {
 			t.Fatal("ForkState must error when log is corrupt, got nil")
@@ -337,7 +339,92 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 		if _, err := os.Stat(s.Dir(dstName)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("dst directory %s must be removed on failure, got err: %v", s.Dir(dstName), err)
 		}
+		// Ensure the record is gone too: a failed fork leaves nothing List
+		// could pick up.
+		if _, err := s.Load(dstName); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("Load(%s) after a failed fork = %v, want ErrNotFound", dstName, err)
+		}
 	})
+}
+
+// TestForkWritesNoFiles pins the R3 guarantee: a fork cut from a source whose
+// round 1 files are on disk and whose round 2 files are sealed gets every
+// copied file as its own round_file rows, and never creates its directory.
+//
+// Mutation: restore the per-file WriteFile into dst/ and Dir(dst) exists.
+func TestForkWritesNoFiles(t *testing.T) {
+	s := New(t.TempDir())
+	srcName := "webshop"
+	dstName := "webshop-fork"
+
+	b := newBinding(srcName, "/repo")
+	b.Round = 3
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Round 1 stays on disk; round 2 is sealed into the database.
+	onDisk := map[string]string{
+		s.PlanPath(srcName, 1):   "round 1 plan",
+		s.ReportPath(srcName, 1): "round 1 report",
+	}
+	sealed := map[string]string{
+		s.PlanPath(srcName, 2):   "round 2 plan",
+		s.ReportPath(srcName, 2): "round 2 report",
+	}
+	for path, content := range onDisk {
+		if err := os.WriteFile(path, []byte(content), bindingFileMode); err != nil {
+			t.Fatalf("WriteFile %s: %v", path, err)
+		}
+	}
+	for path, content := range sealed {
+		if err := os.WriteFile(path, []byte(content), bindingFileMode); err != nil {
+			t.Fatalf("WriteFile %s: %v", path, err)
+		}
+	}
+	if err := s.WithLock(func(tx *Tx) error {
+		_, err := tx.SealRound(srcName, 2)
+		return err
+	}); err != nil {
+		t.Fatalf("SealRound: %v", err)
+	}
+	for path := range sealed {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s must be sealed off disk, got err: %v", path, err)
+		}
+	}
+
+	dst := newBinding(dstName, "/repo-fork")
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.ForkState(srcName, dst, 2)
+	}); err != nil {
+		t.Fatalf("ForkState: %v", err)
+	}
+
+	if _, err := os.Stat(s.Dir(dstName)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Dir(dst) must not exist after the fork, got err: %v", err)
+	}
+
+	names, err := s.RoundFiles(dstName)
+	if err != nil {
+		t.Fatalf("RoundFiles dst: %v", err)
+	}
+	want := []string{"001-plan.md", "001-report.md", "002-plan.md", "002-report.md"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("RoundFiles(dst) = %v, want %v", names, want)
+	}
+
+	for _, files := range []map[string]string{onDisk, sealed} {
+		for path, content := range files {
+			body, err := s.ReadFile(filepath.Join(s.Dir(dstName), filepath.Base(path)))
+			if err != nil {
+				t.Fatalf("ReadFile dst %s: %v", filepath.Base(path), err)
+			}
+			if string(body) != content {
+				t.Errorf("dst %s = %q, want %q", filepath.Base(path), body, content)
+			}
+		}
+	}
 }
 
 func TestRoundOfFile(t *testing.T) {
