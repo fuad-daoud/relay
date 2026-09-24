@@ -173,12 +173,9 @@ func (s *Store) importPresent(name string) error {
 		// entry_json keeps each line's exact bytes, so a key a newer relevo
 		// wrote survives the import (§3.1, §4.3).
 		lines := splitLogLines(lpRaw)
-		if len(lines) != len(entries) {
-			return fmt.Errorf("import log %q: %d entries but %d lines", name, len(entries), len(lines))
-		}
-		evs := make([]db.RecordEvent, 0, len(entries))
-		for i, e := range entries {
-			evs = append(evs, recordEventOf(e, string(lines[i])))
+		evs, err := recordEventsOf(entries, lines)
+		if err != nil {
+			return fmt.Errorf("import log %q: %w", name, err)
 		}
 		if err := d.EventReplaceAll(rec.ID, evs); err != nil {
 			return fmt.Errorf("import log %q: %w", name, err)
@@ -304,6 +301,22 @@ func recordEventOf(e LogEntry, entryJSON string) db.RecordEvent {
 		Route:       e.Route,
 		JSON:        entryJSON,
 	}
+}
+
+// recordEventsOf projects decoded entries and their exact JSON onto the event
+// rows EventReplaceAll takes, in order: the conversion importPresent uses for
+// an adopted log.jsonl, shared with ForkState, which writes a copied history
+// straight into dst's events (R3). entryJSON holds one marshalled entry per
+// entry, so a length mismatch is an error exactly as it is for an imported log.
+func recordEventsOf(entries []LogEntry, entryJSON [][]byte) ([]db.RecordEvent, error) {
+	if len(entries) != len(entryJSON) {
+		return nil, fmt.Errorf("%d entries but %d lines", len(entries), len(entryJSON))
+	}
+	evs := make([]db.RecordEvent, 0, len(entries))
+	for i, e := range entries {
+		evs = append(evs, recordEventOf(e, string(entryJSON[i])))
+	}
+	return evs, nil
 }
 
 // logEntriesOf decodes stored events back into LogEntry values. entry_json is
