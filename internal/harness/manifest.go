@@ -4,23 +4,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// manifestFileName is the role manifest's name inside relevo's state root.
-const manifestFileName = "agents-manifest.json"
-
-// ManifestPath returns the role manifest's location under stateRoot (#371 §3).
-// The manifest maps a home-relative definition path -- exactly Role.Path, the
-// form InstallResult.Path carries -- to the lowercase hex sha256 of what relevo
-// last wrote there, so a later relevo can tell "unchanged since relevo wrote it"
-// (safe to refresh) from "edited by the user" (kept).
-func ManifestPath(stateRoot string) string {
-	return filepath.Join(stateRoot, manifestFileName)
-}
+// manifestKey is the kv row the role manifest lives in (P3b plan §1, §4.4). It
+// was the file <state root>/agents-manifest.json until this round; ReadManifest
+// imports a present one on first read.
+const manifestKey = "agents-manifest"
 
 // docSHA is the manifest's value for one definition: the lowercase hex sha256
 // of the raw bytes. It is always taken over the raw bytes, never over the
@@ -30,22 +24,25 @@ func docSHA(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ReadManifest loads the manifest at path. A missing file is an empty map and
-// no error: a machine relevo has never installed roles on has nothing recorded.
-// Malformed JSON is an error, and the caller decides what to do with it --
-// Install reports it once and then treats the manifest as empty (#371 §3).
-func ReadManifest(path string) (map[string]string, error) {
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]string{}, nil
-	}
+// ReadManifest loads the role manifest from the kv row "agents-manifest",
+// importing a present legacyPath file (agents-manifest.json) on first read
+// (P3b plan §4.3, §4.4). An absent row with no file behind it is an empty map
+// and no error: a machine relevo has never installed roles on has nothing
+// recorded. Malformed JSON is an error, and the caller decides what to do with
+// it -- Install reports it once and then treats the manifest as empty
+// (#371 §3).
+func ReadManifest(kv db.KV, legacyPath string) (map[string]string, error) {
+	raw, ok, err := db.KVImportFile(kv, manifestKey, legacyPath)
 	if err != nil {
-		return nil, fmt.Errorf("read role manifest: %w", err)
+		return nil, err
+	}
+	if !ok {
+		return map[string]string{}, nil
 	}
 
 	var m map[string]string
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("decode role manifest %s: %w", path, err)
+		return nil, fmt.Errorf("decode role manifest: %w", err)
 	}
 	if m == nil {
 		m = map[string]string{}
@@ -53,15 +50,14 @@ func ReadManifest(path string) (map[string]string, error) {
 	return m, nil
 }
 
-// WriteManifest writes the manifest atomically -- a temp file in the same
-// directory, then a rename, mode 0644 -- so a reader never sees half of it
-// (#371 §3).
-func WriteManifest(path string, m map[string]string) error {
+// WriteManifest stores the whole manifest in the kv row "agents-manifest"
+// (#371 §3; P3b plan §4.4).
+func WriteManifest(kv db.KV, m map[string]string) error {
 	raw, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal role manifest: %w", err)
 	}
-	return writeFileAtomic(path, append(raw, '\n'), 0o644)
+	return kv.KVPut(manifestKey, append(raw, '\n'))
 }
 
 // writeFileAtomic writes via a temp file in the same directory then renames, so

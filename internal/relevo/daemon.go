@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -188,7 +189,16 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
-	cached, ok, err := release.Load(root)
+	// The cache lives in the machine database's kv row "release-check"
+	// (P3b plan §4.5); opening it here is what creates relevo.db on a
+	// machine whose daemon has nothing else to store.
+	mdb, err := store.New(root).DB()
+	if err != nil {
+		slog.Debug("release check: no database", "err", err)
+		return
+	}
+
+	cached, ok, err := release.Load(mdb, filepath.Join(root, "release-check.json"))
 	if err != nil {
 		slog.Debug("release check: read cache", "err", err)
 		return
@@ -206,7 +216,7 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
-	if err := release.Save(root, release.Cache{
+	if err := release.Save(mdb, release.Cache{
 		Latest:    tag,
 		CheckedAt: now(),
 		Source:    release.Source(),

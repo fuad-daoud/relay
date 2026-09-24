@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -42,20 +44,24 @@ func TestDaemonInfoRoundTrip(t *testing.T) {
 }
 
 // TestWriteDaemonInfoOmitsEmptyOptional pins the omitempty tags: a plain start
-// must not write an empty reexec_from or a null reexec_failed.
+// must not store an empty reexec_from or a null reexec_failed.
 func TestWriteDaemonInfoOmitsEmptyOptional(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 	if err := s.WriteDaemonInfo(DaemonInfo{Version: "v1"}); err != nil {
 		t.Fatalf("WriteDaemonInfo: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, daemonInfoFileName))
+	d, err := s.DB()
 	if err != nil {
-		t.Fatalf("read daemon.json: %v", err)
+		t.Fatalf("DB: %v", err)
+	}
+	raw, ok, err := d.KVGet(daemonInfoKey)
+	if err != nil || !ok {
+		t.Fatalf("KVGet(%s) = (_, %v, %v), want the row", daemonInfoKey, ok, err)
 	}
 	for _, key := range []string{"reexec_from", "reexec_failed"} {
 		if strings.Contains(string(raw), key) {
-			t.Errorf("daemon.json contains %q for a plain start: %s", key, raw)
+			t.Errorf("daemon row contains %q for a plain start: %s", key, raw)
 		}
 	}
 }
@@ -64,28 +70,67 @@ func TestReadDaemonInfoMissingIsNotAnError(t *testing.T) {
 	s := New(t.TempDir())
 	info, ok, err := s.ReadDaemonInfo()
 	if err != nil {
-		t.Fatalf("ReadDaemonInfo on a missing file: %v", err)
+		t.Fatalf("ReadDaemonInfo on a missing record: %v", err)
 	}
 	if ok {
-		t.Error("ok = true for a missing file, want false")
+		t.Error("ok = true for a missing record, want false")
 	}
 	if !reflect.DeepEqual(info, DaemonInfo{}) {
 		t.Errorf("info = %+v, want the zero value", info)
 	}
 }
 
+// TestReadDaemonInfoImportsLegacyFile pins the import rule (P3b plan §4.4): a
+// legacy daemon.json beside an existing database is imported on first read and
+// removed.
+func TestReadDaemonInfoImportsLegacyFile(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+	// Create the database without writing the record, so the legacy file is
+	// the only source.
+	if _, err := s.DB(); err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+
+	want := DaemonInfo{Version: "v1.2.3", PID: 4242}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	legacy := filepath.Join(root, daemonInfoFileName)
+	if err := os.WriteFile(legacy, raw, 0o644); err != nil {
+		t.Fatalf("seed daemon.json: %v", err)
+	}
+
+	got, ok, err := s.ReadDaemonInfo()
+	if err != nil || !ok {
+		t.Fatalf("ReadDaemonInfo = (_, %v, %v), want the imported record", ok, err)
+	}
+	if got.Version != want.Version || got.PID != want.PID {
+		t.Errorf("imported record = %+v, want %+v", got, want)
+	}
+	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("daemon.json still exists after import: err = %v", err)
+	}
+}
+
 func TestReadDaemonInfoMalformedIsAnError(t *testing.T) {
 	root := t.TempDir()
+	s := New(root)
+	// The database must exist for the legacy file to be read at all.
+	if _, err := s.DB(); err != nil {
+		t.Fatalf("DB: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(root, daemonInfoFileName), []byte("{not json"), 0o644); err != nil {
 		t.Fatalf("seed malformed daemon.json: %v", err)
 	}
-	if _, _, err := New(root).ReadDaemonInfo(); err == nil {
+	if _, _, err := s.ReadDaemonInfo(); err == nil {
 		t.Fatal("ReadDaemonInfo on malformed JSON: err = nil, want an error")
 	}
 }
 
-// TestWriteDaemonInfoIsAtomic checks the write leaves no temp file behind: the
-// temp-and-rename either lands daemon.json or nothing, never both.
+// TestWriteDaemonInfoIsAtomic checks the write leaves no temp file behind and
+// the record reads back: the kv upsert either lands or it does not.
 func TestWriteDaemonInfoIsAtomic(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
@@ -102,8 +147,8 @@ func TestWriteDaemonInfoIsAtomic(t *testing.T) {
 			t.Errorf("temp file %q survived the write", e.Name())
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, daemonInfoFileName)); err != nil {
-		t.Errorf("daemon.json missing after write: %v", err)
+	if info, ok, err := s.ReadDaemonInfo(); err != nil || !ok || info.Version != "v1" {
+		t.Errorf("ReadDaemonInfo after write = (%+v, %v, %v), want the record", info, ok, err)
 	}
 }
 

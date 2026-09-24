@@ -76,10 +76,10 @@ type Store struct {
 
 	mu sync.Mutex // serialises WithLock within this process
 
-	// The database at <root>/relevo.db holds the bindings and their logs.
-	// It opens lazily on the first data-method call: path helpers, WithLock
-	// alone, DaemonRunning and the daemon-info methods never open it (P3a
-	// plan §3.2, §4.2).
+	// The database at <root>/relevo.db holds the bindings, their logs and the
+	// small records (config, the ledger/availability/latency kv rows, daemon
+	// info). It opens lazily on the first data-method call: path helpers and
+	// WithLock alone never open it (P3a plan §3.2, §4.2).
 	dbOnce sync.Once
 	dbh    *db.DB
 	dbErr  error
@@ -696,23 +696,10 @@ func (s *Store) ReadArchivedLog(path string) ([]LogEntry, error) {
 	}
 }
 
-// LedgerPath is the availability ledger (#61): one file at the state root,
-// beside .lock, so every write to it can run under WithLock like a
-// bind.json write.
-func (s *Store) LedgerPath() string { return filepath.Join(s.root, "ledger.json") }
-
-// AvailabilityPath is the availability history file (#61 step 7), beside
-// ledger.json. Renamed from history.json (#172 q6) so "history" is free for
-// binding history; history.Load migrates an older install's file in place.
-func (s *Store) AvailabilityPath() string { return filepath.Join(s.root, "availability.json") }
-
-// LatencyPath is the per-candidate latency history (#324 part 1): time to
-// first output per candidate, beside availability.json. It is a record, not
-// a policy -- nothing in the pick order reads it.
-func (s *Store) LatencyPath() string { return filepath.Join(s.root, "latency.json") }
-
 // DBPath is relevo's sqlite database file (docs/specs/2026-09-20-persistence-design.md
-// §4), beside ledger.json and availability.json.
+// §4), the one record for bindings, config and the small stores (P3b plan D2:
+// the ledger, availability and latency path helpers are gone -- each record is
+// a kv row now).
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 
 // ChannelsDir is where relevo mcp's claim files live, one per planner

@@ -249,20 +249,20 @@ func Probe(ctx context.Context, rt Runtime, x LineExec, tokens []string, host st
 }
 
 // recordLatency appends one probe result to the latency history under the
-// store lock, so a probe and a listing never read a torn file. A history
-// failure is one stderr line; it never fails a probe. An empty LatencyPath
-// means no store is configured, so there is nothing to record into.
+// store lock, so a probe and a listing never read a torn document. A history
+// failure is one stderr line; it never fails a probe. A nil Latency means no
+// store is configured, so there is nothing to record into (P3b plan §4.5).
 func recordLatency(rt Runtime, r ProbeResult) {
-	if rt.LatencyPath == "" {
+	if rt.Latency == nil {
 		return
 	}
 
 	err := rt.Store.WithLock(func(*store.Tx) error {
-		h, err := latency.Load(rt.LatencyPath)
+		h, err := latency.LoadKV(rt.Latency, latencyLegacyPath(rt))
 		if err != nil {
 			return err
 		}
-		return latency.Save(rt.LatencyPath, h.Prune(rt.Now()).Append(r))
+		return latency.SaveKV(rt.Latency, h.Prune(rt.Now()).Append(r))
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record latency: %v\n", err)

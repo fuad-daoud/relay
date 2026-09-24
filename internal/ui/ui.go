@@ -16,9 +16,10 @@ type Options struct {
 	// match the daemon tick.
 	Interval time.Duration
 
-	// PrefsPath is the ui's own preference file (spec §6.0); "" keeps the
-	// ui stateless -- nothing loaded, nothing saved.
-	PrefsPath string
+	// Prefs is where the ui keeps its own preferences (spec §6.0; P3b plan
+	// §4.4). A zero Prefs (KV nil) keeps the ui stateless -- nothing loaded,
+	// nothing saved.
+	Prefs PrefsStore
 
 	// Here is the cwd scope all resolves into a repo filter for
 	// relevo.Bindings, exactly as `relevo history --here` does; "" means

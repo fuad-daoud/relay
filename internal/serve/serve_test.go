@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -1243,20 +1244,27 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
 
-	// Check server-wide ledger.json at root exists
-	serverLedgerPath := filepath.Join(root, "ledger.json")
-	if _, err := os.Stat(serverLedgerPath); err != nil {
-		t.Fatalf("server-wide ledger.json missing: %v", err)
+	// The server-wide gate lives in the serve root's database (P3b plan §4.5),
+	// not in any owner's.
+	if _, ok, err := s.DB().KVGet("ledger"); err != nil || !ok {
+		t.Fatalf("serve-root ledger row = (_, %v, %v), want it present", ok, err)
 	}
 
-	// Check no per-owner store dir gains a ledger.json
+	// No per-owner database carries the server-wide gate.
 	idADir, ok := idA.Dir()
 	if !ok {
 		t.Fatalf("idA.Dir() failed for %s", idA)
 	}
-	ownerLedgerPath := filepath.Join(root, "bindings", idADir, "ledger.json")
-	if _, err := os.Stat(ownerLedgerPath); err == nil {
-		t.Fatalf("per-owner ledger.json unexpectedly exists at %s", ownerLedgerPath)
+	ownerDB := filepath.Join(root, "bindings", idADir, "relevo.db")
+	if _, err := os.Stat(ownerDB); err == nil {
+		od, oerr := db.OpenReadOnly(ownerDB)
+		if oerr != nil {
+			t.Fatalf("OpenReadOnly(%s): %v", ownerDB, oerr)
+		}
+		defer od.Close()
+		if _, ok, err := od.KVGet("ledger"); err != nil || ok {
+			t.Fatalf("per-owner ledger row = (_, %v, %v), want none", ok, err)
+		}
 	}
 }
 
@@ -1325,9 +1333,9 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	}
 
 	// The server-wide ledger has no rate_limited entry left.
-	l, err := ledger.Load(filepath.Join(root, "ledger.json"))
+	l, err := ledger.LoadKV(s.DB(), "")
 	if err != nil {
-		t.Fatalf("ledger.Load: %v", err)
+		t.Fatalf("ledger.LoadKV: %v", err)
 	}
 	for _, e := range l.Entries {
 		if e.Kind == ledger.RateLimited {
@@ -3177,7 +3185,12 @@ func TestCandidatesView(t *testing.T) {
 			},
 		},
 	}
-	if err := ledger.Save(filepath.Join(root, "ledger.json"), l); err != nil {
+	seedDB, serr := store.New(root).DB()
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	defer seedDB.Close()
+	if err := ledger.SaveKV(seedDB, l); err != nil {
 		t.Fatal(err)
 	}
 

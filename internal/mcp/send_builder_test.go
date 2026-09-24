@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -46,7 +45,7 @@ func TestRelevoVerbsSendPassesBuilder(t *testing.T) {
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
-		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
+		Gates:      testGateKV(t),
 		Now:        func() time.Time { return time.Unix(0, 0) },
 	}
 	saveVerbBinding(t, s, store.Binding{

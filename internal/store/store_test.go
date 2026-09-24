@@ -703,15 +703,6 @@ func TestLoadIgnoresLegacyPreamblePending(t *testing.T) {
 	}
 }
 
-// LedgerPath sits at the state root beside .lock so writes can serialize under
-// WithLock (#61).
-func TestLedgerPath(t *testing.T) {
-	dir := t.TempDir()
-	if got, want := New(dir).LedgerPath(), filepath.Join(dir, "ledger.json"); got != want {
-		t.Errorf("LedgerPath = %q, want %q", got, want)
-	}
-}
-
 func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")

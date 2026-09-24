@@ -10,26 +10,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // now is the fixed clock every test in this package reasons from.
 var now = time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
 
+// testKV is a real t.TempDir() database, the medium the history lives in from
+// this round (P3b plan §7).
+func testKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
 func TestRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "history.json")
+	kv := testKV(t)
 
 	h := History{}.
 		Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}).
 		Append(Event{At: now.Add(time.Minute), Kind: ledger.SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relevo", Binding: "webshop"})
 
-	if err := Save(path, h); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := SaveKV(kv, h); err != nil {
+		t.Fatalf("SaveKV: %v", err)
 	}
 
-	got, err := Load(path)
+	got, err := LoadKV(kv, "")
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadKV: %v", err)
 	}
 	if len(got.Events) != len(h.Events) {
 		t.Fatalf("got %d events, want %d: %+v", len(got.Events), len(h.Events), got.Events)
@@ -46,65 +59,79 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadMigratesLegacyHistoryFile(t *testing.T) {
+// TestLoadKVImportsLegacyHistoryFile pins the pre-#172 migration as an import
+// (P3b plan §8): a history.json file present, and no availability.json, is
+// imported into the kv row and removed.
+func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
+	kv := testKV(t)
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, "history.json")
 	newPath := filepath.Join(dir, "availability.json")
 
-	legacy := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"})
-	if err := Save(legacyPath, legacy); err != nil {
-		t.Fatalf("Save(legacy): %v", err)
+	doc, err := json.Marshal(History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, doc, 0o644); err != nil {
+		t.Fatalf("WriteFile(legacy): %v", err)
 	}
 
-	got, err := Load(newPath)
+	got, err := LoadKV(kv, newPath)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadKV: %v", err)
 	}
 	if len(got.Events) != 1 || got.Events[0].Provider != "anthropic" {
 		t.Fatalf("got %+v, want the legacy event", got.Events)
 	}
 
-	if _, err := os.Stat(newPath); err != nil {
-		t.Errorf("availability.json does not exist after migration: %v", err)
+	if _, _, err := kv.KVGet("availability"); err != nil {
+		t.Errorf("KVGet after import: %v", err)
 	}
 	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("history.json still exists after migration: err = %v", err)
 	}
 }
 
-func TestLoadPrefersNewFileWhenBothExist(t *testing.T) {
+// TestLoadKVPrefersRowOverFile: the kv row is the record; a legacy
+// availability.json beside it is ignored and left in place (P3b plan §4.3).
+func TestLoadKVPrefersRowOverFile(t *testing.T) {
+	kv := testKV(t)
 	dir := t.TempDir()
-	legacyPath := filepath.Join(dir, "history.json")
 	newPath := filepath.Join(dir, "availability.json")
 
-	legacy := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "legacy", Source: "planner"})
-	if err := Save(legacyPath, legacy); err != nil {
-		t.Fatalf("Save(legacy): %v", err)
-	}
 	fresh := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "fresh", Source: "planner"})
-	if err := Save(newPath, fresh); err != nil {
-		t.Fatalf("Save(fresh): %v", err)
+	if err := SaveKV(kv, fresh); err != nil {
+		t.Fatalf("SaveKV(fresh): %v", err)
 	}
 
-	got, err := Load(newPath)
+	doc, err := json.Marshal(History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "legacy", Source: "planner"}))
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := os.WriteFile(newPath, doc, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := LoadKV(kv, newPath)
+	if err != nil {
+		t.Fatalf("LoadKV: %v", err)
 	}
 	if len(got.Events) != 1 || got.Events[0].Provider != "fresh" {
-		t.Fatalf("got %+v, want the fresh event", got.Events)
+		t.Fatalf("got %+v, want the fresh row", got.Events)
 	}
 
-	if _, err := os.Stat(legacyPath); err != nil {
-		t.Errorf("history.json was removed even though both files existed: %v", err)
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("availability.json was removed even though the row existed: %v", err)
 	}
 }
 
-func TestRoundTripMissingPath(t *testing.T) {
+func TestLoadKVMissingPath(t *testing.T) {
+	kv := testKV(t)
 	path := filepath.Join(t.TempDir(), "missing", "history.json")
 
-	got, err := Load(path)
+	got, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load(missing): %v", err)
+		t.Fatalf("LoadKV(missing): %v", err)
 	}
 	if len(got.Events) != 0 {
 		t.Errorf("got %d events, want 0: %+v", len(got.Events), got.Events)
@@ -221,6 +248,7 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "availability.json")
+	kv := testKV(t)
 	h := History{}.Append(Event{
 		At:       now,
 		Kind:     Cleared,
@@ -228,13 +256,13 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		Source:   "planner",
 		Since:    now.Add(-5 * time.Hour),
 	})
-	if err := Save(path, h); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := SaveKV(kv, h); err != nil {
+		t.Fatalf("SaveKV: %v", err)
 	}
 
-	got, err := Load(path)
+	got, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadKV: %v", err)
 	}
 	if len(got.Events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(got.Events), got.Events)

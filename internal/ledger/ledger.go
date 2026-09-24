@@ -7,12 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
@@ -87,41 +86,51 @@ func knownSource(s string) bool {
 	return s == "relevo" || s == "planner"
 }
 
-// Load reads and validates the availability ledger from disk. A missing file
-// returns an empty Ledger without error, as a fresh install records no events yet.
-// Load validates entry schema but does not prune expired entries; callers prune
+// ledgerKey is the kv row the ledger document lives in (P3b plan §1).
+const ledgerKey = "ledger"
+
+// LoadKV reads and validates the availability ledger from the store database's
+// kv row "ledger", importing a present legacyPath file (ledger.json) on first
+// read (P3b plan §4.3, §4.4). An absent row with no file behind it returns an
+// empty Ledger without error, as a fresh install records no events yet. LoadKV
+// validates entry schema but does not prune expired entries; callers prune
 // against their own notion of time (#61 step 1).
 //
 // An entry whose kind or source is unknown to this binary is preserved raw in
 // Other rather than rejected, so a ledger written by a newer relevo survives a
 // rollback (#372 §4.2). Malformed JSON is still an error.
 //
-// An entry recorded before the rename carries Source "relay": Load reads it as // name-guard: legacy
+// An entry recorded before the rename carries Source "relay": LoadKV reads it as // name-guard: legacy
 // relevo's own, rewriting the source to "relevo" before the knownKind and
 // knownSource test, so a pre-cutover rate-limit gate keeps gating instead of
-// lapsing into Other (#292 §1). A later Save then writes "relevo", which is the
-// only change #292 makes to a stored entry.
-func Load(path string) (Ledger, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+// lapsing into Other (#292 §1). A later SaveKV then writes "relevo", which is
+// the only change #292 makes to a stored entry.
+func LoadKV(kv db.KV, legacyPath string) (Ledger, error) {
+	data, ok, err := db.KVImportFile(kv, ledgerKey, legacyPath)
+	if err != nil {
+		return Ledger{}, err
+	}
+	if !ok {
 		return Ledger{}, nil
 	}
-	if err != nil {
-		return Ledger{}, fmt.Errorf("read ledger %s: %w", path, err)
-	}
+	return decode(data)
+}
 
+// decode parses and validates one ledger document. It is today's file Load body
+// factored out unchanged: the medium moved to the kv row, the document did not.
+func decode(data []byte) (Ledger, error) {
 	var doc struct {
 		Entries []json.RawMessage `json:"entries"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return Ledger{}, fmt.Errorf("decode ledger %s: %w", path, err)
+		return Ledger{}, fmt.Errorf("decode ledger: %w", err)
 	}
 
 	var l Ledger
 	for i, raw := range doc.Entries {
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
-			return Ledger{}, fmt.Errorf("decode ledger %s: entry %d: %w", path, i, err)
+			return Ledger{}, fmt.Errorf("decode ledger: entry %d: %w", i, err)
 		}
 
 		// A pre-rename entry is relevo's own, written before the cutover: it
@@ -145,7 +154,7 @@ func Load(path string) (Ledger, error) {
 			why = "until precedes at"
 		}
 		if why != "" {
-			return Ledger{}, fmt.Errorf("ledger %s: entry %d: %s: %w", path, i, why, ErrBadEntry)
+			return Ledger{}, fmt.Errorf("ledger: entry %d: %s: %w", i, why, ErrBadEntry)
 		}
 		l.Entries = append(l.Entries, e)
 	}
@@ -153,17 +162,10 @@ func Load(path string) (Ledger, error) {
 	return l, nil
 }
 
-// Save writes the ledger to disk atomically via a temporary file and rename,
-// ensuring concurrent readers never observe torn writes. It creates any missing
-// parent directories so callers need not ensure state root existence (#61 step 1).
-//
-// The known entries are marshalled as before; Other's raw bytes follow
-// verbatim (#372 §4.2).
-func Save(path string, l Ledger) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create ledger dir: %w", err)
-	}
-
+// SaveKV writes the whole ledger document to the kv row "ledger". The known
+// entries are marshalled as before; Other's raw bytes follow verbatim
+// (#372 §4.2). The row holds the same JSON document the file did.
+func SaveKV(kv db.KV, l Ledger) error {
 	var entries []json.RawMessage
 	for _, e := range l.Entries {
 		raw, err := json.Marshal(e)
@@ -183,16 +185,7 @@ func Save(path string, l Ledger) error {
 		return fmt.Errorf("marshal ledger: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write ledger temp file: %w", err)
-	}
-
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename ledger into place: %w", err)
-	}
-
-	return nil
+	return kv.KVPut(ledgerKey, data)
 }
 
 // Prune returns a new Ledger containing every non-expired entry, in order.

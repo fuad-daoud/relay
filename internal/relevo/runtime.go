@@ -108,18 +108,24 @@ type Runtime struct {
 	Runner     Runner
 	Store      *store.Store
 	Candidates *candidate.Set
-	LedgerPath string // the availability ledger file (#61 step 1)
 
-	// AvailabilityPath is the availability history file (#61 step 7, renamed
-	// availability.json by #172 q6).
-	AvailabilityPath string
+	// Gates is where the availability ledger and the availability history live
+	// (P3b plan §4.5): the store root's database. A nil Gates means no gates
+	// store is configured -- gates read as empty, and every write is dropped
+	// with an error.
+	Gates db.KV
 
-	// LatencyPath is the per-candidate latency history file (#324 part 1):
-	// time to first output per candidate, recorded by `relevo config
-	// --probe` and read back for the p50 on a plain listing. "" means no
-	// store is configured, so nothing is recorded (tests, and any caller
+	// GatesDir is the legacy directory holding ledger.json, availability.json
+	// and history.json, which LoadKV imports on the first read of their kv
+	// rows. It is normally the store root. "" skips the import.
+	GatesDir string
+
+	// Latency is where the per-candidate latency history lives (#324 part 1;
+	// P3b plan §4.5): time to first output per candidate, recorded by `relevo
+	// config --probe` and read back for the p50 on a plain listing. Nil means
+	// no store is configured, so nothing is recorded (tests, and any caller
 	// that never set one).
-	LatencyPath string
+	Latency db.KV
 
 	// DB is relevo's sqlite database (docs/specs/2026-09-20-persistence-design.md).
 	// Nil means no database: this round opens it only in `relevo db *`, never

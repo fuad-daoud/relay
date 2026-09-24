@@ -464,7 +464,10 @@ func TestGateOnLimit(t *testing.T) {
 	t.Run("ledger write failure", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := gateOnLimitSetup(t, fr)
-		rt.LedgerPath = t.TempDir() // a directory, so ledger.Save fails
+		// A KV whose ledger put fails: the record cannot be written, so the
+		// switch must proceed anyway.
+		rt.Gates = failPutKV{inner: rt.Gates, key: "ledger"}
+		rt.GatesDir = ""
 
 		_, _, handled, err := gateHeadless(t, rt, b, gateFixtureLine, false)
 		if err != nil {

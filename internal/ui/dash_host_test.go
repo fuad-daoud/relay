@@ -227,10 +227,10 @@ func TestOptionsDashboardWithoutDBNotices(t *testing.T) {
 }
 
 // TestDashSavePrefsOnChange: a query and a sort change on the dashboard are
-// persisted on the same path Scope is.
+// persisted on the same store Scope is.
 func TestDashSavePrefsOnChange(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ui.json")
-	m := dashHostModel(t, 140, 40, Options{PrefsPath: path}, threeRows()...)
+	ps := testPrefsStore(t)
+	m := dashHostModel(t, 140, 40, Options{Prefs: ps}, threeRows()...)
 	res, cmd := m.Update(keyD())
 	m = res.(Model)
 	m = drain(t, m, cmd)
@@ -242,7 +242,7 @@ func TestDashSavePrefsOnChange(t *testing.T) {
 		t.Fatal("s did not record a sort key")
 	}
 	m = drain(t, m, cmd)
-	if got := loadPrefs(path).DashboardSort; got != m.dashSort {
+	if got := loadPrefs(ps).DashboardSort; got != m.dashSort {
 		t.Errorf("saved DashboardSort = %q, want %q", got, m.dashSort)
 	}
 
@@ -254,7 +254,7 @@ func TestDashSavePrefsOnChange(t *testing.T) {
 	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
 	m = drain(t, m, cmd)
-	if got := loadPrefs(path).Dashboard; got != "harness:agy" {
+	if got := loadPrefs(ps).Dashboard; got != "harness:agy" {
 		t.Errorf("saved Dashboard = %q, want harness:agy", got)
 	}
 }

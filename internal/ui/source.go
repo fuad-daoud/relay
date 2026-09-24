@@ -147,8 +147,8 @@ func RunSource(ctx context.Context, src Source, opts Options) error {
 	}
 
 	model := newModel(ctx, src, opts)
-	if opts.PrefsPath != "" {
-		model = model.applyPrefs(loadPrefs(opts.PrefsPath))
+	if opts.Prefs.KV != nil {
+		model = model.applyPrefs(loadPrefs(opts.Prefs))
 	}
 	model.notice = opts.Notice
 

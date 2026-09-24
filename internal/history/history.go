@@ -1,19 +1,19 @@
 // Package history keeps the ledger's observations, kept for 30 days by
 // provider and hour, so `relevo config` can show when a provider tends to be
-// limited (#61 step 7); it decides nothing. The file is availability.json
-// (renamed from history.json, #172 q6, so "history" is free for binding
-// history); Load migrates an older install's history.json the first time it
-// finds no availability.json.
+// limited (#61 step 7); it decides nothing. The document lives in the store
+// database's kv row "availability" (P3b plan §1), which was the file
+// availability.json (renamed from history.json, #172 q6, so "history" is free
+// for binding history); LoadKV imports an older install's availability.json --
+// or, behind that, history.json -- the first time it reads.
 package history
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
@@ -46,83 +46,49 @@ type History struct {
 	Events []Event `json:"events"`
 }
 
-// Load reads the availability history from disk. A missing file with no
-// legacy history.json beside it returns an empty History without error, as a
-// fresh install has recorded nothing yet.
+// availabilityKey is the kv row the availability document lives in (P3b
+// plan §1).
+const availabilityKey = "availability"
+
+// LoadKV reads the availability history from the kv row "availability". An
+// absent row with neither legacy file behind it returns an empty History
+// without error, as a fresh install has recorded nothing yet.
 //
-// When path itself is missing but <dir>/history.json (the pre-#172 name)
-// exists, Load migrates it in place: read the old file, write it back under
-// path (the next Save would anyway), remove the old file, then return the
-// events -- so the move happens on this first read and every later Load or
-// Save only ever sees availability.json.
-func Load(path string) (History, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return loadLegacy(path)
-	}
+// Importing is the migration (#172 q6, P3b plan §4.4): when the row is absent
+// and legacyPath (availability.json) exists, KVImportFile adopts it; when that
+// too is absent, <dir>/history.json -- the pre-#172 name -- is tried the same
+// way. Either way the file is removed once its row is written.
+func LoadKV(kv db.KV, legacyPath string) (History, error) {
+	data, ok, err := db.KVImportFile(kv, availabilityKey, legacyPath)
 	if err != nil {
-		return History{}, fmt.Errorf("read history %s: %w", path, err)
-	}
-
-	var h History
-	if err := json.Unmarshal(data, &h); err != nil {
-		return History{}, fmt.Errorf("decode history %s: %w", path, err)
-	}
-
-	return h, nil
-}
-
-// loadLegacy reads the pre-#172 history.json beside path, if any, migrating
-// it to path before returning.
-func loadLegacy(path string) (History, error) {
-	legacy := filepath.Join(filepath.Dir(path), "history.json")
-
-	data, err := os.ReadFile(legacy)
-	if errors.Is(err, os.ErrNotExist) {
-		return History{}, nil
-	}
-	if err != nil {
-		return History{}, fmt.Errorf("read history %s: %w", legacy, err)
-	}
-
-	var h History
-	if err := json.Unmarshal(data, &h); err != nil {
-		return History{}, fmt.Errorf("decode history %s: %w", legacy, err)
-	}
-
-	if err := Save(path, h); err != nil {
 		return History{}, err
 	}
-	if err := os.Remove(legacy); err != nil {
-		return History{}, fmt.Errorf("remove legacy history %s: %w", legacy, err)
+	if !ok {
+		legacy := filepath.Join(filepath.Dir(legacyPath), "history.json")
+		data, ok, err = db.KVImportFile(kv, availabilityKey, legacy)
+		if err != nil {
+			return History{}, err
+		}
+		if !ok {
+			return History{}, nil
+		}
+	}
+
+	var h History
+	if err := json.Unmarshal(data, &h); err != nil {
+		return History{}, fmt.Errorf("decode history: %w", err)
 	}
 
 	return h, nil
 }
 
-// Save writes the history to disk atomically via a temporary file and
-// rename, so concurrent readers never observe a torn write. It creates any
-// missing parent directories so callers need not ensure state root existence.
-func Save(path string, h History) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create history dir: %w", err)
-	}
-
+// SaveKV writes the whole history document to the kv row "availability".
+func SaveKV(kv db.KV, h History) error {
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal history: %w", err)
 	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write history temp file: %w", err)
-	}
-
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename history into place: %w", err)
-	}
-
-	return nil
+	return kv.KVPut(availabilityKey, data)
 }
 
 // Prune returns a new History containing every event no older than

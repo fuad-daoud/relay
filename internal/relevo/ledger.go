@@ -1,8 +1,10 @@
 package relevo
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +15,36 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// ErrNoGates is what a gate write reports when the runtime carries no gates
+// store (P3b plan §4.5): a nil Gates means gates read as empty and writes are
+// dropped with this error.
+var ErrNoGates = errors.New("no gates store configured")
+
+// ledgerLegacyPath, availabilityLegacyPath and latencyLegacyPath are the pre-kv
+// files LoadKV imports on the first read of their rows. They live in GatesDir
+// -- normally the store root -- and are "" when no directory is set, so an
+// import never reads a file out of the process's working directory.
+func ledgerLegacyPath(rt Runtime) string {
+	if rt.GatesDir == "" {
+		return ""
+	}
+	return filepath.Join(rt.GatesDir, "ledger.json")
+}
+
+func availabilityLegacyPath(rt Runtime) string {
+	if rt.GatesDir == "" {
+		return ""
+	}
+	return filepath.Join(rt.GatesDir, "availability.json")
+}
+
+func latencyLegacyPath(rt Runtime) string {
+	if rt.GatesDir == "" {
+		return ""
+	}
+	return filepath.Join(rt.GatesDir, "latency.json")
+}
 
 // providerOf resolves a candidate token to its provider, or "" if the token
 // does not parse. It is the one place Gates and appendEntryLocked's history
@@ -39,12 +71,15 @@ const SpawnFailedCooldown = 10 * time.Minute
 // blocks forever rather than erroring. (Its unlocked twin, mutateLedger,
 // went with #302: Available was its last caller.)
 func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
-	l, err := ledger.Load(rt.LedgerPath)
+	if rt.Gates == nil {
+		return ErrNoGates
+	}
+	l, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
 	if err != nil {
 		return err
 	}
 	l = fn(l.Prune(rt.Now()))
-	return ledger.Save(rt.LedgerPath, l)
+	return ledger.SaveKV(rt.Gates, l)
 }
 
 // appendEntryLocked commits one observation: the ledger entry that gates,
@@ -55,9 +90,9 @@ func appendEntryLocked(rt Runtime, e ledger.Entry) error {
 	if err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
-	h, err := history.Load(rt.AvailabilityPath)
+	h, err := history.LoadKV(rt.Gates, availabilityLegacyPath(rt))
 	if err == nil {
-		err = history.Save(rt.AvailabilityPath, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
+		err = history.SaveKV(rt.Gates, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", err)
@@ -158,11 +193,14 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 	if source != ClearedByPlanner && source != ClearedByServer {
 		return "", 0, fmt.Errorf("available: unknown clear source %q", source)
 	}
+	if rt.Gates == nil {
+		return "", 0, ErrNoGates
+	}
 
 	var oldest time.Time
 
 	err = rt.Store.WithLock(func(*store.Tx) error {
-		l, lerr := ledger.Load(rt.LedgerPath)
+		l, lerr := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
 		if lerr != nil {
 			return lerr
 		}
@@ -183,7 +221,7 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 			}
 		}
 
-		if serr := ledger.Save(rt.LedgerPath, l.Clear(ledger.RateLimited, provider)); serr != nil {
+		if serr := ledger.SaveKV(rt.Gates, l.Clear(ledger.RateLimited, provider)); serr != nil {
 			return serr
 		}
 
@@ -196,9 +234,9 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
 			}
-			h, herr := history.Load(rt.AvailabilityPath)
+			h, herr := history.LoadKV(rt.Gates, availabilityLegacyPath(rt))
 			if herr == nil {
-				herr = history.Save(rt.AvailabilityPath, h.Prune(rt.Now()).Append(ev))
+				herr = history.SaveKV(rt.Gates, h.Prune(rt.Now()).Append(ev))
 			}
 			if herr != nil {
 				fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", herr)
@@ -223,10 +261,14 @@ func Gates(rt Runtime) []ledger.Gate {
 		return nil
 	}
 
-	l, err := ledger.Load(rt.LedgerPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
-		return nil
+	l := ledger.Ledger{}
+	if rt.Gates != nil {
+		loaded, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
+			return nil
+		}
+		l = loaded
 	}
 
 	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
