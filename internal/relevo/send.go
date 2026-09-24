@@ -422,7 +422,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		driftLine := ""
 		if b.Round == hintRound {
-			res := CaptureDrift(ctx, rt, b, baseline)
+			res := CaptureDrift(ctx, rt, tx, b, baseline)
 			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
 				driftEntry := store.LogEntry{
 					TS: rt.Now().UTC(), Round: b.Round,

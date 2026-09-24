@@ -166,7 +166,12 @@ func Land(ctx context.Context, rt Runtime, name string, opts LandOptions) (LandR
 	// a base that breaks the build must never reach origin.
 	switch {
 	case b.Gate != "" && !opts.NoGate:
-		logPath := filepath.Join(rt.Store.Dir(name), "land-gate.log")
+		// NNN-: the seal takes it with the round, so it survives archive and does not pin a DONE dir (R1-lite).
+		r := b.Round - 1
+		if r < 1 {
+			r = 1
+		}
+		logPath := filepath.Join(rt.Store.Dir(name), fmt.Sprintf("%03d-land-gate.log", r))
 		code, out, gerr := execFn(ctx, b.Worktree, logPath, "sh", "-c", b.Gate+" 2>&1")
 		if gerr != nil {
 			return LandResult{}, fmt.Errorf("%w: run %q: %v", ErrLandGate, b.Gate, gerr)
