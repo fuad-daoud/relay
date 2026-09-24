@@ -233,6 +233,14 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	return nil
 }
 
+// Kept here since D3b removed ingest.go's round-file mirror, their former caller.
+func builderLogPathBase(round int) string {
+	return filepath.Base(memberStore.BuilderLogPath("x", round))
+}
+func builderStreamPathBase(round int) string {
+	return filepath.Base(memberStore.BuilderStreamPath("x", round))
+}
+
 // deriveTranscripts re-derives a mirror round's transcript rows from the
 // record's own sealed round files, returning every candidate the identity
 // rule allows: the transcript is a duplicate when either source reproduces
