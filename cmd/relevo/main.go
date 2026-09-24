@@ -66,29 +66,27 @@ Usage:
 
 Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
-  add       attach an additional builder to this planner, on its own worktree [--tier] [--branch B]
-  fork      branch a new binding from an earlier round with its own worktree [--tier]
+              --worktree | --cwd DIR | --branch B | --server S
+                        attach another builder to this planner, on its own worktree or tree
+              --from SRC[@ROUND]
+                        branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   pull      print the oldest pending report's text to stdout and mark it delivered [--path-only]
-  diff      print a round's captured patch to stdout [--anchors]
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
-  status    one row per binding: round, state, live pane status, what is pending [--all]
-  statusline  this planner's builders, one row each, for Claude Code's statusLine setting
-  log       print a binding's append-only round log
+  status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
-  show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--json]
+  show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
   stats     rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
   wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
-  pause     release a binding's worktree between rounds; branch and log stay; bind --resume brings it back [--commit]
   stop      kill the builder process and close its round without a report unless one is already on disk
   land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
   edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relevo edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
-  gc        clear every binding the planner marked DONE
+              --done clears every binding the planner marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler
   mcp       run an MCP server over stdio for a Claude Code planner pane: status/send/done
             as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
@@ -112,8 +110,6 @@ Commands:
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui|gates|available|unavailable
                             server administration, on the server host
-
-  add --server <name> [--base <ref>]  attach a builder that runs on a configured remote server
 
   help      print this message
   version   print the relevo version
@@ -322,30 +318,18 @@ func run(args []string) error {
 		return nil
 	case "bind":
 		return cmdBind(args[1:])
-	case "add":
-		return cmdAdd(args[1:])
-	case "fork":
-		return cmdFork(args[1:])
 	case "unbind":
 		return cmdUnbind(args[1:])
-	case "gc":
-		return cmdGC(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
 		return cmdAsk(args[1:])
 	case "pull":
 		return cmdPull(args[1:])
-	case "diff":
-		return cmdDiff(args[1:])
 	case "review":
 		return cmdReview(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
-	case "statusline":
-		return cmdStatusline(args[1:])
-	case "log":
-		return cmdLog(args[1:])
 	case "history":
 		return cmdHistory(args[1:])
 	case "show":
@@ -360,8 +344,6 @@ func run(args []string) error {
 		return cmdUI(args[1:])
 	case "done":
 		return cmdDone(args[1:])
-	case "pause":
-		return cmdPause(args[1:])
 	case "stop":
 		return cmdStop(args[1:])
 	case "land":
@@ -389,8 +371,9 @@ func run(args []string) error {
 	case "serve":
 		return cmdServe(args[1:])
 	default:
-		// The seven verbs P2b folded into `relevo config` name their
-		// replacement rather than the generic unknown-subcommand error (§4.4).
+		// The verbs P2b folded into `relevo config`, and the verbs P4a merged
+		// into bind/show/unbind/status, name their replacement rather than the
+		// generic unknown-subcommand error (§4.4, §4.6).
 		if replacement, ok := removedVerbs[args[0]]; ok {
 			fmt.Fprintf(os.Stderr, "relevo: %q was removed; use %s\n", args[0], replacement)
 			return exitCodeErr{code: 2}
@@ -399,8 +382,9 @@ func run(args []string) error {
 	}
 }
 
-// removedVerbs names each verb P2b folded into `relevo config`, with the form
-// that replaces it (§4.4).
+// removedVerbs names each removed verb and the form that replaces it: the
+// seven P2b folded into `relevo config` (§4.4), and the seven P4a merged into
+// bind, show, unbind and status (§4.6).
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -409,6 +393,14 @@ var removedVerbs = map[string]string{
 	"agent":      "relevo config agents",
 	"client":     "relevo config server",
 	"servers":    "relevo config server list",
+
+	"add":        "relevo bind --worktree",
+	"fork":       "relevo bind --from <source>@<round>",
+	"diff":       "relevo show --diff",
+	"log":        "relevo show --log",
+	"gc":         "relevo unbind --done",
+	"pause":      "relevo done, then relevo bind --resume",
+	"statusline": "relevo status --line",
 }
 
 // userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
@@ -1032,6 +1024,78 @@ func cmdAvailable(args []string) error {
 	return nil
 }
 
+// bindFlags is the union of the flags today's bind, add and fork each accept.
+// bindRouteFor chooses which of the three bodies runs; keeping the flag set in
+// one place is what lets each old flag keep its name, default and help text
+// (§4.1).
+type bindFlags struct {
+	name      string
+	builder   string
+	planner   string
+	resume    bool
+	rebind    bool
+	timeout   time.Duration
+	tier      string
+	allowYolo bool
+	gate      string
+	noGate    bool
+	regate    *int
+	feature   string
+	role      string
+
+	// The placement flags choose add's path.
+	worktree bool
+	cwd      string
+	branch   string
+	server   string
+	base     string
+
+	// --from chooses fork's path; round is fork's --round.
+	from  string
+	round int
+}
+
+// bindRoute names which of the three merged paths cmdBind runs.
+type bindRoute int
+
+const (
+	routeBind bindRoute = iota
+	routeAdd
+	routeFork
+)
+
+// bindRouteFor chooses the path from the parsed flags and refuses the
+// combinations §4.1 forbids. It is a pure function, so the rules are table
+// tested without a runtime, a state directory or a harness.
+func bindRouteFor(f bindFlags) (bindRoute, error) {
+	placement := f.worktree || f.cwd != "" || f.branch != "" || f.server != "" || f.base != ""
+	switch {
+	case f.from != "":
+		// --cwd is fork's own, so it stays allowed here; the rest are add's.
+		if f.resume || f.rebind {
+			return routeBind, errors.New("--from cannot be combined with --resume/--rebind")
+		}
+		if f.worktree || f.branch != "" || f.server != "" || f.base != "" {
+			return routeBind, errors.New("--from cannot be combined with --worktree/--branch/--server/--base")
+		}
+		return routeFork, nil
+	case f.resume || f.rebind:
+		// --resume and --rebind are bind's alone.
+		if placement {
+			return routeBind, errors.New("--resume/--rebind cannot be combined with --worktree/--cwd/--branch/--server/--base")
+		}
+		return routeBind, nil
+	case placement:
+		return routeAdd, nil
+	default:
+		return routeBind, nil
+	}
+}
+
+// cmdBind binds a planner to a builder. It is the one entry point the old
+// bind, add and fork merged into (§4.1): the flags choose which of the three
+// bodies runs, and each body stays an unexported helper so none of its logic
+// is duplicated.
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
@@ -1048,30 +1112,67 @@ func cmdBind(args []string) error {
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
 	role := fs.String("role", "", "writer role this binding runs: a config roles writer row (default builder)")
+	worktree := fs.Bool("worktree", false, "attach an additional builder to this planner, on its own worktree")
+	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
+	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
+	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	from := fs.String("from", "", "source binding to branch a new one from, as <source>[@<round>]")
+	round := fs.Int("round", 0, "with --from: source round to copy history through")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	// --resume takes the name from --name, so a positional one is dropped on
-	// the floor and the binding lookup then fails on the empty name.
-	if *resume && *name == "" {
-		return fmt.Errorf("relevo bind --resume needs --name NAME (a positional name is ignored)")
-	}
-	if *rebind && !*resume {
-		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
-	}
-	if *role != "" && *resume {
-		return fmt.Errorf("relevo bind --resume keeps the binding's role; drop --role")
-	}
 
-	if *feature != "" {
-		if err := store.ValidFeature(*feature); err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-			return exitCodeErr{code: 2}
-		}
-	}
 	regateOpt, err := regateFlag(fs, regate)
 	if err != nil {
 		return err
+	}
+
+	f := bindFlags{
+		name: *name, builder: *builderAlias, planner: *plannerFlag,
+		resume: *resume, rebind: *rebind, timeout: *timeout, tier: *tier,
+		allowYolo: *allowYolo, gate: *gate, noGate: *noGate, regate: regateOpt,
+		feature: *feature, role: *role, worktree: *worktree, cwd: *cwd,
+		branch: *branch, server: *server, base: *base, from: *from, round: *round,
+	}
+
+	route, rerr := bindRouteFor(f)
+	if rerr != nil {
+		// One line, exit 2, before any runtime is built (§4.1).
+		fmt.Fprintf(os.Stderr, "relevo: %v\n", rerr)
+		return fmt.Errorf("%v: %w", rerr, exitCodeErr{code: 2})
+	}
+
+	switch route {
+	case routeAdd:
+		return runAdd(f)
+	case routeFork:
+		return runFork(f)
+	default:
+		return runBind(f)
+	}
+}
+
+// runBind is bind's own body after parsing: bind the current tree, or resume
+// or rebind an existing binding (the old cmdBind).
+func runBind(f bindFlags) error {
+	// --resume takes the name from --name, so a positional one is dropped on
+	// the floor and the binding lookup then fails on the empty name.
+	if f.resume && f.name == "" {
+		return fmt.Errorf("relevo bind --resume needs --name NAME (a positional name is ignored)")
+	}
+	if f.rebind && !f.resume {
+		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
+	}
+	if f.role != "" && f.resume {
+		return fmt.Errorf("relevo bind --resume keeps the binding's role; drop --role")
+	}
+
+	if f.feature != "" {
+		if err := store.ValidFeature(f.feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
 	}
 
 	rt, err := newRuntime()
@@ -1085,41 +1186,41 @@ func cmdBind(args []string) error {
 	}
 
 	opts := relevo.BindOptions{
-		Name:         *name,
-		PlannerID:    *plannerFlag,
+		Name:         f.name,
+		PlannerID:    f.planner,
 		CWD:          cwd,
-		Resume:       *resume,
-		Rebind:       *rebind,
-		RoundTimeout: *timeout,
-		Tier:         *tier,
-		AllowYolo:    *allowYolo,
-		Gate:         *gate,
-		NoGate:       *noGate,
-		Regate:       regateOpt,
-		Feature:      *feature,
-		Role:         *role,
+		Resume:       f.resume,
+		Rebind:       f.rebind,
+		RoundTimeout: f.timeout,
+		Tier:         f.tier,
+		AllowYolo:    f.allowYolo,
+		Gate:         f.gate,
+		NoGate:       f.noGate,
+		Regate:       f.regate,
+		Feature:      f.feature,
+		Role:         f.role,
 	}
-	opts.Candidate = *builderAlias
+	opts.Candidate = f.builder
 
-	adopted := *resume
-	roleName := roleOrBuilder(*role)
+	adopted := f.resume
+	roleName := roleOrBuilder(f.role)
 	specRole := roleName
 	kind := ""
 	switch {
-	case *rebind:
+	case f.rebind:
 		// A rebind replaces the builder of an existing binding, so the
 		// definitions come from the stored binding's role -- --role is
 		// refused with --resume, so roleName is "builder" here (#382 round 3).
 		// If the load fails, today's behaviour (roleName) stands.
-		if *name != "" {
-			if existing, err := rt.Store.Load(*name); err == nil {
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
 				specRole = relevo.BindingRole(existing)
 			}
 		}
 		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
 	case adopted:
-		if *name != "" {
-			if existing, err := rt.Store.Load(*name); err == nil {
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
 				kind = existing.Builder.Kind
 				specRole = relevo.BindingRole(existing)
 			}
@@ -1158,7 +1259,7 @@ func cmdBind(args []string) error {
 		fmt.Printf("resumed %s after pause\n", b.Name)
 	}
 
-	if *resume && (*builderAlias != "" || *rebind) {
+	if f.resume && (f.builder != "" || f.rebind) {
 		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
 			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), b.BuilderCandidate)
@@ -1190,45 +1291,51 @@ func cmdBind(args []string) error {
 	return nil
 }
 
-func cmdFork(args []string) error {
-	fs := flag.NewFlagSet("fork", flag.ContinueOnError)
-	name := fs.String("name", "", "source binding to fork from")
-	round := fs.Int("round", 0, "source round to copy history through")
-	newName := fs.String("new-name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in config policy order[builder])")
-	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
-	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: inherits the source binding's gate)")
-	noGate := fs.Bool("no-gate", false, "opt this fork out of a gate even when the source binding has one")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: inherits the source binding's regate)")
-	feature := fs.String("feature", "", "label grouping this binding with others (default: inherits the source binding's feature)")
-	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
-	if err := parseFlags(fs, args); err != nil {
+// splitFromSource splits --from's SRC[@ROUND] into the source binding name and
+// the round. An absent @ROUND returns 0, so fork then uses the --round flag's
+// value (its default, exactly as the removed fork verb did).
+func splitFromSource(from string) (string, int, error) {
+	i := strings.LastIndex(from, "@")
+	if i < 0 {
+		return from, 0, nil
+	}
+	n, err := strconv.Atoi(from[i+1:])
+	if err != nil {
+		return "", 0, fmt.Errorf("relevo bind --from %q: the round after @ must be an integer", from)
+	}
+	return from[:i], n, nil
+}
+
+// runFork is fork's body after parsing (the old cmdFork), reached through
+// `bind --from SRC[@ROUND]` (§4.1): the source and round come from --from, and
+// --name is the new binding's name.
+func runFork(f bindFlags) error {
+	source, fromRound, err := splitFromSource(f.from)
+	if err != nil {
 		return err
 	}
+	round := fromRound
+	if round == 0 {
+		round = f.round
+	}
+	newName := f.name
 
-	source, ok := explicitBinding(*name, fs.Args())
-	if !ok {
-		return fmt.Errorf("usage: relevo fork <source> --round N --new-name NAME [--builder CANDIDATE] [--cwd DIR]%s\n"+
-			"fork branches a new binding from an earlier round; it needs the source binding name", bindingHint("fork"))
+	if source == "" {
+		return fmt.Errorf("usage: relevo bind --from <source>[@<round>] --name NAME [--builder CANDIDATE] [--cwd DIR]%s\n"+
+			"bind --from branches a new binding from an earlier round; it needs the source binding name", bindingHint("bind"))
 	}
 
-	if *round < 1 {
-		return fmt.Errorf("relevo fork requires --round N (where N >= 1)")
+	if round < 1 {
+		return fmt.Errorf("relevo bind --from requires --round N (where N >= 1)")
 	}
-	if *newName == "" {
-		return fmt.Errorf("relevo fork requires --new-name NAME")
+	if newName == "" {
+		return fmt.Errorf("relevo bind --from requires --name NAME (the new binding's name)")
 	}
-	if *feature != "" {
-		if err := store.ValidFeature(*feature); err != nil {
+	if f.feature != "" {
+		if err := store.ValidFeature(f.feature); err != nil {
 			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
 			return exitCodeErr{code: 2}
 		}
-	}
-	regateOpt, err := regateFlag(fs, regate)
-	if err != nil {
-		return err
 	}
 
 	rt, err := newRuntime()
@@ -1238,17 +1345,17 @@ func cmdFork(args []string) error {
 
 	opts := relevo.ForkOptions{
 		Source:    source,
-		Round:     *round,
-		NewName:   *newName,
-		Candidate: *builderAlias,
-		PlannerID: *plannerFlag,
-		CWD:       *cwd,
-		Tier:      *tier,
-		AllowYolo: *allowYolo,
-		Gate:      *gate,
-		NoGate:    *noGate,
-		Regate:    regateOpt,
-		Feature:   *feature,
+		Round:     round,
+		NewName:   newName,
+		Candidate: f.builder,
+		PlannerID: f.planner,
+		CWD:       f.cwd,
+		Tier:      f.tier,
+		AllowYolo: f.allowYolo,
+		Gate:      f.gate,
+		NoGate:    f.noGate,
+		Regate:    f.regate,
+		Feature:   f.feature,
 	}
 
 	res, err := relevo.Fork(context.Background(), rt, opts)
@@ -1273,51 +1380,34 @@ func cmdFork(args []string) error {
 	return nil
 }
 
-func cmdAdd(args []string) error {
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	name := fs.String("name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in config policy order[builder]")
-	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
-	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
-	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
-	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
-	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
-	noGate := fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
-	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
-	role := fs.String("role", "", "writer role this binding runs: a config roles writer row (default builder)")
-	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
+// runAdd is add's body after parsing (the old cmdAdd), reached through
+// `bind --worktree` or one of the placement flags (§4.1).
+func runAdd(f bindFlags) error {
+	name := f.name
+	branch := f.branch
+	cwd := f.cwd
 
 	// Before newRuntime, in this order: the flag pair, then a name that is
 	// either given or derivable from the branch.
-	if *branch != "" && *cwd != "" {
-		fmt.Fprintf(os.Stderr, "relevo: relevo add --branch and --cwd are exclusive\n")
-		return fmt.Errorf("relevo add --branch and --cwd are exclusive: %w", exitCodeErr{code: 2})
+	if branch != "" && cwd != "" {
+		fmt.Fprintf(os.Stderr, "relevo: relevo bind --branch and --cwd are exclusive\n")
+		return fmt.Errorf("relevo bind --branch and --cwd are exclusive: %w", exitCodeErr{code: 2})
 	}
-	if *name == "" {
-		if *branch == "" {
-			return fmt.Errorf("relevo add requires --name NAME")
+	if name == "" {
+		if branch == "" {
+			return fmt.Errorf("relevo bind requires --name NAME")
 		}
-		derived, err := relevo.DefaultBindingName(*branch)
+		derived, err := relevo.DefaultBindingName(branch)
 		if err != nil {
-			return fmt.Errorf("relevo add --branch %s: cannot derive a binding name (%v); pass --name", *branch, err)
+			return fmt.Errorf("relevo bind --branch %s: cannot derive a binding name (%v); pass --name", branch, err)
 		}
-		*name = derived
+		name = derived
 	}
-	if *feature != "" {
-		if err := store.ValidFeature(*feature); err != nil {
+	if f.feature != "" {
+		if err := store.ValidFeature(f.feature); err != nil {
 			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
 			return exitCodeErr{code: 2}
 		}
-	}
-	regateOpt, err := regateFlag(fs, regate)
-	if err != nil {
-		return err
 	}
 
 	rt, err := newRuntime()
@@ -1331,21 +1421,21 @@ func cmdAdd(args []string) error {
 	}
 
 	res, err := relevo.Add(context.Background(), rt, relevo.AddOptions{
-		Name:      *name,
-		Candidate: *builderAlias,
-		PlannerID: *plannerFlag,
+		Name:      name,
+		Candidate: f.builder,
+		PlannerID: f.planner,
 		Repo:      repo,
-		CWD:       *cwd,
-		Branch:    *branch,
-		Server:    *server,
-		Base:      *base,
-		Tier:      *tier,
-		AllowYolo: *allowYolo,
-		Gate:      *gate,
-		NoGate:    *noGate,
-		Regate:    regateOpt,
-		Feature:   *feature,
-		Role:      *role,
+		CWD:       cwd,
+		Branch:    branch,
+		Server:    f.server,
+		Base:      f.base,
+		Tier:      f.tier,
+		AllowYolo: f.allowYolo,
+		Gate:      f.gate,
+		NoGate:    f.noGate,
+		Regate:    f.regate,
+		Feature:   f.feature,
+		Role:      f.role,
 	})
 	if err != nil {
 		return err
@@ -1369,7 +1459,7 @@ func cmdAdd(args []string) error {
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(roleOrBuilder(*role), res.Resolution)
+	notePick(roleOrBuilder(f.role), res.Resolution)
 	switch {
 	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
 		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
@@ -1394,8 +1484,21 @@ func cmdUnbind(args []string) error {
 	name := fs.String("name", "", "binding to unbind")
 	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
 	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
+	done := fs.Bool("done", false, "clear every binding the planner marked DONE")
+	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
+	dryRun := fs.Bool("dry-run", false, "with --done: list what would be cleared, change nothing")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// --done is gc, not unbind: it clears every DONE binding, so naming one or
+	// asking to pick one contradicts it (§4.3).
+	if *done {
+		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
+			fmt.Fprintln(os.Stderr, "relevo: --done clears every DONE binding; do not also name one or pass --pick")
+			return exitCodeErr{code: 2}
+		}
+		return runGC(*delete, *dryRun)
 	}
 
 	if *pickFlag {
@@ -1427,26 +1530,17 @@ func cmdUnbind(args []string) error {
 	return nil
 }
 
-func cmdGC(args []string) error {
-	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
-	delete := fs.Bool("delete", false, "remove each finished binding's directory instead of archiving it")
-	dryRun := fs.Bool("dry-run", false, "list what would be cleared, change nothing")
-	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo gc [--dry-run] [--delete]")
-		fs.PrintDefaults()
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
+// runGC is gc's body (the old cmdGC), now reached through `unbind --done`
+// (§4.3). It clears every binding the planner marked DONE.
+func runGC(delete, dryRun bool) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
 
 	done, err := relevo.GC(context.Background(), rt, relevo.GCOptions{
-		Delete: *delete,
-		DryRun: *dryRun,
+		Delete: delete,
+		DryRun: dryRun,
 	})
 	if err != nil {
 		return err
@@ -1459,7 +1553,7 @@ func cmdGC(args []string) error {
 
 	for _, r := range done {
 		switch {
-		case *dryRun:
+		case dryRun:
 			wtMsg := ""
 			if r.WorktreeRemoved != "" {
 				wtMsg = fmt.Sprintf(" (worktree %s would be removed)", r.WorktreeRemoved)
@@ -1492,7 +1586,7 @@ func cmdGC(args []string) error {
 		}
 	}
 
-	if *dryRun {
+	if dryRun {
 		fmt.Printf("\n%d binding(s) would be cleared; re-run without --dry-run\n", len(done))
 	}
 
@@ -1682,51 +1776,36 @@ func cmdPull(args []string) error {
 	return nil
 }
 
-func cmdDiff(args []string) error {
-	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
-	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	round := fs.Int("round", 0, "round to diff (default: newest completed round, or the open round with --drift)")
-	stat := fs.Bool("stat", false, "print summary line instead of patch body")
-	drift := fs.Bool("drift", false, "show between-rounds drift instead of round diff (default: the open round)")
-	anchors := fs.Bool("anchors", false, "prefix each hunk and line with its path:line, for a review comments file")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
+// printDiff is diff's body (the old cmdDiff), shared by `show --diff` and
+// `show --drift` (§4.2): the output is byte-identical to the removed diff verb
+// for the same arguments, including the #143 .viewed stamp.
+// round 0 means diff's default: the newest completed round, or the open round
+// with drift.
+func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors bool) error {
+	b, err := rt.Store.Load(name)
 	if err != nil {
 		return err
 	}
 
-	target, err := resolveBinding(rt, *name, fs.Args())
-	if err != nil {
-		return err
-	}
-
-	b, err := rt.Store.Load(target)
-	if err != nil {
-		return err
-	}
-
-	targetRound := *round
+	targetRound := round
 	if targetRound == 0 {
-		if *drift {
+		if drift {
 			targetRound = b.Round
 		} else {
 			targetRound = b.Round - 1
 		}
 	}
 	if targetRound < 1 {
-		return fmt.Errorf("binding %q has no completed round yet", target)
+		return fmt.Errorf("binding %q has no completed round yet", name)
 	}
 
-	if *stat {
-		entries, err := rt.Store.ReadLog(target)
+	if stat {
+		entries, err := rt.Store.ReadLog(name)
 		if err != nil {
 			return err
 		}
 		targetKind := store.KindDiff
-		if *drift {
+		if drift {
 			targetKind = store.KindDrift
 		}
 		var found *store.LogEntry
@@ -1737,36 +1816,36 @@ func cmdDiff(args []string) error {
 			}
 		}
 		if found == nil || found.Note == "" {
-			if *drift {
-				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, target)
+			if drift {
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
 			}
-			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
+			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
 		}
 		fmt.Println(found.Note)
 		// #143: a successful print is what "viewed" means; the stamp is
 		// best-effort and must never fail a read command.
-		_ = rt.Store.MarkViewed(target, time.Now())
+		_ = rt.Store.MarkViewed(name, time.Now())
 		return nil
 	}
 
 	var patch []byte
 	var ok bool
-	if *drift {
-		patch, ok, err = relevo.ReadDrift(rt, target, targetRound)
+	if drift {
+		patch, ok, err = relevo.ReadDrift(rt, name, targetRound)
 	} else {
-		patch, ok, err = relevo.ReadDiff(rt, target, targetRound)
+		patch, ok, err = relevo.ReadDiff(rt, name, targetRound)
 	}
 	if err != nil {
 		return err
 	}
 	if !ok {
-		if *drift {
-			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, target)
+		if drift {
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
 		}
-		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, target)
+		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
 	}
 
-	if *anchors {
+	if anchors {
 		patch, err = diffpatch.Annotate(patch)
 		if err != nil {
 			return err
@@ -1778,7 +1857,7 @@ func cmdDiff(args []string) error {
 	}
 	// #143: a successful print is what "viewed" means; the stamp is
 	// best-effort and must never fail a read command.
-	_ = rt.Store.MarkViewed(target, time.Now())
+	_ = rt.Store.MarkViewed(name, time.Now())
 	return nil
 }
 
@@ -1830,11 +1909,22 @@ func filterReportPlanner(rep relevo.Report, plannerID string) relevo.Report {
 
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo gc clears them)")
+	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	name := fs.String("name", "", "show only this binding (default: all)")
+	line := fs.Bool("line", false, "this planner's builders, one row each, for Claude Code's statusLine setting")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// --line is today's statusline: one row per builder of the calling
+	// planner, so it takes no binding and no other output mode (§4.5).
+	if *line {
+		if *all || *asJSON || *name != "" || len(fs.Args()) > 0 {
+			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --json/--all/--name")
+			return exitCodeErr{code: 2}
+		}
+		return runStatusline()
 	}
 
 	target, err := bindingArg(*name, fs.Args())
@@ -1914,10 +2004,10 @@ func cmdStatus(args []string) error {
 	return nil
 }
 
-func cmdStatusline(args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("usage: relevo statusline")
-	}
+// runStatusline is statusline's body (the old cmdStatusline), now reached
+// through `status --line` (§4.5): the same output, COLUMNS,
+// RELEVO_STATUSLINE_MARGIN and planner filtering.
+func runStatusline() error {
 	if fi, err := os.Stdin.Stat(); err != nil || relevo.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
@@ -1928,7 +2018,7 @@ func cmdStatusline(args []string) error {
 	columns = relevo.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
 	rt, err := newRuntime()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo statusline: %v\n", err)
+		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 		return nil
 	}
 	// §3.3: the row set is the calling planner's bindings. A session with no
@@ -1945,48 +2035,19 @@ func cmdStatusline(args []string) error {
 	fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
 	rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo statusline: %v\n", err)
+		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 		return nil
 	}
 	fmt.Print(relevo.RenderStatusLine(rep, rt.Now(), columns))
 	return nil
 }
 
-func cmdLog(args []string) error {
-	const usage = "usage: relevo log <name> [--round N] [--after N] [--json] [--follow]"
-
-	fs := flag.NewFlagSet("log", flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
-	after := fs.Int("after", 0, "show only entries with a Seq greater than this (0 = all)")
-	asJSON := fs.Bool("json", false, "one compact JSON object per line (NDJSON)")
-	follow := fs.Bool("follow", false, "keep printing new entries until the binding is DONE or removed")
-	round := fs.Int("round", 0, "show only this round (default: all rounds)")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if *after < 0 {
-		fmt.Fprintln(os.Stderr, "relevo: --after must be >= 0")
-		return exitCodeErr{code: 2}
-	}
-	args = fs.Args()
-	if len(args) != 1 {
-		return fmt.Errorf("%s", usage)
-	}
-	name := args[0]
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-	return printLog(rt, name, *round, *after, *asJSON, *follow, true)
-}
-
-// printLog is cmdLog's body after flag parsing and newRuntime(): it prints
+// printLog is the log body after flag parsing and newRuntime(): it prints
 // name's entries, applying the --round filter, JSON-encoded when asJSON is
 // set, and follows new entries until the binding is DONE or removed when
-// follow is set. markViewed guards the #143 .viewed stamp: `relevo log` stamps
-// and the read-only `relevo serve log` must not, because the stamp is the
-// owner's, not the admin's.
+// follow is set. markViewed guards the #143 .viewed stamp: `relevo show --log`
+// stamps and the read-only `relevo serve log` must not, because the stamp is
+// the owner's, not the admin's.
 func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
 	// A binding that does not exist is named at once, the way every other
 	// command reports it; only a binding that disappears mid-follow (below)
@@ -2231,36 +2292,6 @@ func cmdDone(args []string) error {
 		return err
 	}
 	warnWaitingOnYou(rt, target)
-	return nil
-}
-
-// cmdPause releases a binding's worktree between rounds. It takes
-// the binding from --name or a positional and never from the current
-// directory: pause is not undoable without a resume, so it must not guess.
-func cmdPause(args []string) error {
-	fs := flag.NewFlagSet("pause", flag.ContinueOnError)
-	name := fs.String("name", "", "binding to pause")
-	commit := fs.Bool("commit", false, "commit the worktree's changes on the binding branch before releasing it")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	target, ok := explicitBinding(*name, fs.Args())
-	if !ok {
-		return fmt.Errorf("usage: relevo pause <name> | --name <name>\n" +
-			"pause releases a binding's worktree between rounds; it is not undoable without a resume, so it must not guess")
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-	res, err := relevo.Pause(context.Background(), rt, target, relevo.PauseOptions{Commit: *commit})
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(relevo.PauseText(target, res))
 	return nil
 }
 

@@ -515,7 +515,7 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 
 	// No local log for the round: the single line naming the server.
 	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 1, 24)().(tabMsg)
-	if want := "remote builder on contabo: relevo log webshop"; msg.content.empty != want {
+	if want := "remote builder on contabo: relevo show --log webshop"; msg.content.empty != want {
 		t.Errorf("empty = %q, want %q", msg.content.empty, want)
 	}
 }

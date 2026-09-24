@@ -46,7 +46,7 @@ func frontmatterField(front, key string) (string, bool) {
 	return "", false
 }
 
-// TestPluginCommandFiles pins the three slash-command files in
+// TestPluginCommandFiles pins the slash-command files in
 // claude-plugin/commands: each has a leading frontmatter block naming it and
 // allowing exactly Bash(relevo:*), and exactly one line in the file starts
 // `relevo `, whose verb is one the CLI actually dispatches. The realistic
@@ -57,8 +57,8 @@ func TestPluginCommandFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob claude-plugin/commands/*.md: %v", err)
 	}
-	if len(paths) < 3 {
-		t.Fatalf("found %d command file(s), want at least 3: %v", len(paths), paths)
+	if len(paths) < 2 {
+		t.Fatalf("found %d command file(s), want at least 2: %v", len(paths), paths)
 	}
 
 	verbs := commandVerbs(t)

@@ -12,8 +12,9 @@ import (
 )
 
 // seedLogStore saves a binding with n entries under the package's temp state
-// root (TestMain moved XDG_STATE_HOME there), so `run` reads it back. cmdLog
-// touches the store only, never a harness, so this is safe where none exists.
+// root (TestMain moved XDG_STATE_HOME there), so `run` reads it back. The
+// show --log path touches the store only, never a harness, so this is safe
+// where none exists.
 func seedLogStore(t *testing.T, name string, state store.State, n int) *store.Store {
 	t.Helper()
 	root, err := store.DefaultRoot()
@@ -38,10 +39,10 @@ func TestLogAfterAndJSON(t *testing.T) {
 	s := seedLogStore(t, name, store.StateActive, 3)
 
 	stdout, _, err := captureOutput(t, func() error {
-		return run([]string{"log", name, "--after", "1", "--json"})
+		return run([]string{"show", name, "--log", "--after", "1", "--json"})
 	})
 	if err != nil {
-		t.Fatalf("run log --after 1 --json: %v", err)
+		t.Fatalf("run show --log --after 1 --json: %v", err)
 	}
 	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
 	if len(lines) != 2 {
@@ -68,10 +69,10 @@ func TestLogAfterAndJSON(t *testing.T) {
 		want.WriteString("\n")
 	}
 	stdout, _, err = captureOutput(t, func() error {
-		return run([]string{"log", name})
+		return run([]string{"show", name, "--log"})
 	})
 	if err != nil {
-		t.Fatalf("run log: %v", err)
+		t.Fatalf("run show --log: %v", err)
 	}
 	if string(stdout) != want.String() {
 		t.Errorf("plain log output:\n%s\nwant:\n%s", stdout, want.String())
@@ -79,11 +80,11 @@ func TestLogAfterAndJSON(t *testing.T) {
 
 	// A negative --after is a usage error: exit code 2.
 	_, _, err = captureOutput(t, func() error {
-		return run([]string{"log", name, "--after", "-1"})
+		return run([]string{"show", name, "--log", "--after", "-1"})
 	})
 	var ec exitCodeErr
 	if !errors.As(err, &ec) || ec.code != 2 {
-		t.Fatalf("run log --after -1 = %v, want exit code 2", err)
+		t.Fatalf("run show --log --after -1 = %v, want exit code 2", err)
 	}
 }
 
@@ -94,7 +95,7 @@ func TestLogFollowStopsOnDone(t *testing.T) {
 	done := make(chan error, 1)
 	timedOut := errors.New("log --follow did not return")
 	stdout, _, err := captureOutput(t, func() error {
-		go func() { done <- run([]string{"log", name, "--follow"}) }()
+		go func() { done <- run([]string{"show", name, "--log", "--follow"}) }()
 		select {
 		case e := <-done:
 			return e
@@ -103,10 +104,10 @@ func TestLogFollowStopsOnDone(t *testing.T) {
 		}
 	})
 	if errors.Is(err, timedOut) {
-		t.Fatal("relevo log --follow did not return for a binding already DONE")
+		t.Fatal("relevo show --log --follow did not return for a binding already DONE")
 	}
 	if err != nil {
-		t.Fatalf("run log --follow: %v", err)
+		t.Fatalf("run show --log --follow: %v", err)
 	}
 	lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
 	if len(lines) != 2 {

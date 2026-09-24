@@ -648,7 +648,7 @@ func RenderStatus(r Report) string {
 	case len(r.Bindings) == 0 && r.DoneHidden > 0:
 		// The footer says "clear" and not "free": gc frees disk only for
 		// relevo-created worktrees, and the footer must not overpromise.
-		fmt.Fprintf(&sb, "%d done · relevo gc to clear\n", r.DoneHidden)
+		fmt.Fprintf(&sb, "%d done · relevo unbind --done to clear\n", r.DoneHidden)
 		if len(r.Gated) > 0 {
 			writeGatedBlock(&sb, r.Gated, false)
 		}
@@ -777,7 +777,7 @@ func RenderStatus(r Report) string {
 	if r.DoneHidden > 0 {
 		// The footer says "clear" and not "free": gc frees disk only for
 		// relevo-created worktrees, and the footer must not overpromise.
-		fmt.Fprintf(&sb, "%d done · relevo gc to clear\n", r.DoneHidden)
+		fmt.Fprintf(&sb, "%d done · relevo unbind --done to clear\n", r.DoneHidden)
 	}
 
 	return sb.String()

@@ -829,7 +829,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.Flagged != 1 {
 			t.Errorf("Flagged = %d, want 1", report.Flagged)
 		}
-		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo log)") {
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks flagged parenthetical", report.Payload)
 		}
 	})
@@ -1050,7 +1050,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if len(fake.Calls) != 0 {
 			t.Errorf("len(fake.Calls) = %d, want 0", len(fake.Calls))
 		}
-		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo log)") {
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks #139 parenthetical", report.Payload)
 		}
 	})
@@ -1110,7 +1110,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.Classify.Note != "" {
 			t.Errorf("Classify.Note = %q, want empty", report.Classify.Note)
 		}
-		if !strings.Contains(report.Payload, "(3 instruction-shaped lines flagged; jev p=0.95; see relevo log)") {
+		if !strings.Contains(report.Payload, "(3 instruction-shaped lines flagged; jev p=0.95; see relevo show --log)") {
 			t.Errorf("payload %q lacks expected parenthetical", report.Payload)
 		}
 		if len(fake.Calls) == 0 {
@@ -1172,7 +1172,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if len(fake.Calls) != 1 {
 			t.Errorf("len(fake.Calls) = %d, want 1", len(fake.Calls))
 		}
-		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo log)") {
+		if !strings.Contains(report.Payload, "(1 instruction-shaped line flagged; see relevo show --log)") {
 			t.Errorf("payload %q lacks #139 parenthetical", report.Payload)
 		}
 		if strings.Contains(report.Payload, "p=") {
@@ -2274,7 +2274,7 @@ func TestReconcileRetiresLegacyPaneBinding(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("retired entries = %d, want 1", len(entries))
 	}
-	if want := "pane builders were removed (#303); rebind with relevo add"; entries[0].Note != want {
+	if want := "pane builders were removed (#303); rebind with relevo bind --worktree"; entries[0].Note != want {
 		t.Errorf("retired note = %q, want %q", entries[0].Note, want)
 	}
 	if got.Worktree != "/wt/pane" || got.Branch != "relevo/pane" {

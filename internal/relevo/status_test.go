@@ -178,8 +178,8 @@ func TestRenderStatusFooterCountsHidden(t *testing.T) {
 		wantSub   string
 		wantNoSub string
 	}{
-		{hidden: 3, wantSub: "3 done · relevo gc to clear"},
-		{hidden: 1, wantSub: "1 done · relevo gc to clear"},
+		{hidden: 3, wantSub: "3 done · relevo unbind --done to clear"},
+		{hidden: 1, wantSub: "1 done · relevo unbind --done to clear"},
 		{hidden: 0, wantNoSub: "done ·"},
 	}
 
@@ -206,7 +206,7 @@ func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
 		DoneHidden: 2,
 	}
 	out := RenderStatus(r)
-	if !strings.Contains(out, "2 done · relevo gc to clear") {
+	if !strings.Contains(out, "2 done · relevo unbind --done to clear") {
 		t.Errorf("RenderStatus output missing footer:\n%s", out)
 	}
 	if strings.Contains(out, "no bindings") {
