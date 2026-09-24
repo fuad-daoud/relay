@@ -642,6 +642,42 @@ func writeTempAndRename(dest string, r io.Reader) error {
 // The split exists for SyncRemote (spec §2.2): a read path must observe the
 // server's state without ever calling deliverAndSettle, because a CLI one-shot
 // has no business claiming a pending payload out from under the daemon.
+func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
+	if v == nil {
+		return nil
+	}
+	var tail []string
+	if v.Tail != nil {
+		tail = make([]string, len(v.Tail))
+		copy(tail, v.Tail)
+	}
+	var u *usage.Usage
+	if v.Usage != nil {
+		copyU := *v.Usage
+		u = &copyU
+	}
+	var diff *store.DiffFacts
+	if v.Diff != nil {
+		diff = &store.DiffFacts{
+			Files:   v.Diff.Files,
+			Added:   v.Diff.Added,
+			Removed: v.Diff.Removed,
+		}
+	}
+	return &store.LiveFacts{
+		At:             v.At,
+		PID:            v.PID,
+		StartedAt:      v.StartedAt,
+		ExitCode:       v.ExitCode,
+		Tail:           tail,
+		Usage:          u,
+		Diff:           diff,
+		LastProgressAt: v.LastProgressAt,
+		ExploringSince: v.ExploringSince,
+		GatingSince:    v.GatingSince,
+	}
+}
+
 func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
@@ -721,9 +757,10 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
-	// RemoteQueue is set only in the RoundQueued case below; every other
-	// state clears it, including a round-closed catchUp (#285).
+	// RemoteQueue and RemoteLive are set only in their respective cases below;
+	// every other state clears them, including a round-closed catchUp (#285).
 	b.Builder.RemoteQueue = nil
+	b.Builder.RemoteLive = nil
 
 	// A server-side switch (#100): the candidate that actually ran differs
 	// from what this binding last recorded. Refresh the token and the
@@ -769,6 +806,7 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// running round carries its stall stamp across so the client shows
 		// the same "stalled <age>" (#252).
 		b.StalledSince = view.StalledSince
+		b.Builder.RemoteLive = liveFactsOf(view.Live)
 		rc, err := rt.Remote.RoundFile(ctx, server, name, b.Round, "log")
 		if err != nil {
 			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", b.Round, "err", err)
@@ -1278,6 +1316,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	// whether to deliver.
 	next.Builder.RemoteStatus = "idle"
 	next.Builder.RemoteQueue = nil
+	next.Builder.RemoteLive = nil
 	return next, nil
 }
 

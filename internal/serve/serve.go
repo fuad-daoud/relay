@@ -78,6 +78,8 @@ type Server struct {
 	// through the machine database, so a tick opens no per-owner handle. It is
 	// guarded by s.mu, which every caller of ownerStore holds.
 	stores map[string]*store.Store
+	// liveCache caches running round LiveViews per caller/binding/round.
+	liveCache *liveCache
 	// tickFn, when non-nil, replaces Tick in Run (#373): the drain and
 	// WithoutCancel tests need a tick they can hold open. Production leaves
 	// it nil.
@@ -119,6 +121,7 @@ func New(cfg Config) (*Server, error) {
 		transport: transport,
 		gates:     db.PrefixKV{KV: cfg.DB, Prefix: "serve."},
 		stores:    map[string]*store.Store{},
+		liveCache: newLiveCache(),
 	}, nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // State is a binding's display and control state.
@@ -136,6 +138,7 @@ type Endpoint struct {
 	// RemoteQueue is what the server's last GET said while the round was
 	// queued (#285); nil in every other round state.
 	RemoteQueue *QueueFacts `json:"remote_queue,omitempty"`
+	RemoteLive  *LiveFacts  `json:"remote_live,omitempty"`
 
 	// TranscriptLocator is the harness's own transcript file path for this
 	// endpoint's session, resolved at bind time when possible. Set on
@@ -153,6 +156,28 @@ type QueueFacts struct {
 	Running  int       `json:"running"`
 	Cap      int       `json:"cap"`
 	Since    time.Time `json:"since"`
+}
+
+// DiffFacts has the same three ints as remote.DiffStat.
+type DiffFacts struct {
+	Files   int `json:"files"`
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+}
+
+// LiveFacts is copied from BindingView.Live by observeRemote on each running poll;
+// nil in every other round state.
+type LiveFacts struct {
+	At             time.Time    `json:"at"`
+	PID            int          `json:"pid,omitempty"`
+	StartedAt      time.Time    `json:"started_at,omitzero"`
+	ExitCode       string       `json:"exit_code,omitempty"`
+	Tail           []string     `json:"tail,omitempty"`
+	Usage          *usage.Usage `json:"usage,omitempty"`
+	Diff           *DiffFacts   `json:"diff,omitempty"`
+	LastProgressAt time.Time    `json:"last_progress_at,omitzero"`
+	ExploringSince time.Time    `json:"exploring_since,omitzero"`
+	GatingSince    time.Time    `json:"gating_since,omitzero"`
 }
 
 // Headless reports whether this endpoint is a process relevo runs rather than

@@ -2908,6 +2908,55 @@ func TestStopAnotherOwnersBindingIs404(t *testing.T) {
 	}
 }
 
+func TestGetBindingRunningHasLive(t *testing.T) {
+	env := setupTestEnv(t)
+
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, resp, body, "A")
+	if view := decodeView(t, body); view.RoundState != remote.RoundRunning {
+		t.Fatalf("round_state = %q, want running", view.RoundState)
+	}
+
+	rt := env.runtime(t)
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.Builder.PID == 0 {
+		t.Fatal("stored builder PID = 0, want a running process")
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	view := decodeView(t, body)
+	if view.Live == nil {
+		t.Fatal("view.Live = nil, want non-nil for running round")
+	}
+	if view.Live.PID == 0 {
+		t.Fatal("view.Live.PID = 0, want non-zero")
+	}
+	if view.Live.PID != b.Builder.PID {
+		t.Errorf("view.Live.PID = %d, want stored PID %d", view.Live.PID, b.Builder.PID)
+	}
+
+	// Stop the round and GET again: view.Live must be nil
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/stop", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop status = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status after stop = %d, want 200; body: %s", resp.StatusCode, string(body))
+	}
+	viewAfter := decodeView(t, body)
+	if viewAfter.Live != nil {
+		t.Errorf("view.Live after stop = %+v, want nil", viewAfter.Live)
+	}
+}
+
 func TestFilesBeforeCloseIs404(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()

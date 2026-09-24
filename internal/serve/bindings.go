@@ -224,36 +224,59 @@ func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	caller := callerOf(r)
 	name := r.PathValue("name")
 
-	b, rt, err := s.loadBinding(caller, name)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
+	b, rt, view, ok := func() (store.Binding, relevo.Runtime, remote.BindingView, bool) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		b, rt, err := s.loadBinding(caller, name)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+				return store.Binding{}, relevo.Runtime{}, remote.BindingView{}, false
+			}
+			writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
+			return store.Binding{}, relevo.Runtime{}, remote.BindingView{}, false
 		}
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-	if !Allowed(caller, "get", b) {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+		if !Allowed(caller, "get", b) {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
+			return store.Binding{}, relevo.Runtime{}, remote.BindingView{}, false
+		}
+
+		now := s.cfg.Now()
+		if b.Serve == nil {
+			b.Serve = &store.ServeFacts{}
+		}
+		b.Serve.LastSeen = now
+		_ = rt.Store.Save(b)
+
+		entries, _ := rt.Store.ReadLog(name)
+		view := relevo.ServedView(b, entries)
+		view.Queue = s.queuePositionView(b, view, caller)
+		return b, rt, view, true
+	}()
+	if !ok {
 		return
 	}
 
-	now := s.cfg.Now()
-	if b.Serve == nil {
-		b.Serve = &store.ServeFacts{}
+	if view.RoundState == remote.RoundRunning {
+		now := s.cfg.Now()
+		cacheKey := string(caller) + "\x00" + name
+		if cached, hit := s.liveCache.get(cacheKey, view.Round, now); hit {
+			view.Live = cached
+		} else {
+			live, err := relevo.ServedLive(r.Context(), rt, b)
+			if err != nil {
+				slog.Warn("served live failed", "name", name, "round", view.Round, "err", err)
+			} else {
+				s.liveCache.put(cacheKey, view.Round, now, live)
+				view.Live = live
+			}
+		}
 	}
-	b.Serve.LastSeen = now
-	_ = rt.Store.Save(b)
 
-	entries, _ := rt.Store.ReadLog(name)
-	view := relevo.ServedView(b, entries)
-	view.Queue = s.queuePositionView(b, view, caller)
 	writeJSON(w, http.StatusOK, view)
 }
 

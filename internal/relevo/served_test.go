@@ -828,3 +828,96 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 		t.Fatalf("Serve.ClosedRound = %+v, want 1", got.Serve)
 	}
 }
+
+func TestLiveViewOf(t *testing.T) {
+	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	started := at.Add(-10 * time.Minute)
+	lastProg := at.Add(-2 * time.Minute)
+	exploring := at.Add(-5 * time.Minute)
+	gateStarted := at.Add(-1 * time.Minute)
+
+	u := &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}
+	row := BindingStatus{
+		Headless: &HeadlessInfo{
+			PID:       1234,
+			StartedAt: started,
+			ExitCode:  "3",
+			Tail:      []string{"line1", "line2"},
+		},
+		LiveUsage:      u,
+		Live:           &LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
+		LastProgressAt: lastProg,
+	}
+	b := store.Binding{
+		ExploringSince: exploring,
+		GateRun: &store.GateRun{
+			StartedAt: gateStarted.Unix(),
+		},
+	}
+
+	v := liveViewOf(row, b, at)
+	if v == nil {
+		t.Fatal("liveViewOf returned nil")
+	}
+	if !v.At.Equal(at) {
+		t.Errorf("At = %v, want %v", v.At, at)
+	}
+	if v.PID != 1234 {
+		t.Errorf("PID = %d, want 1234", v.PID)
+	}
+	if !v.StartedAt.Equal(started) {
+		t.Errorf("StartedAt = %v, want %v", v.StartedAt, started)
+	}
+	if v.ExitCode != "3" {
+		t.Errorf("ExitCode = %q, want 3", v.ExitCode)
+	}
+	if len(v.Tail) != 2 || v.Tail[0] != "line1" || v.Tail[1] != "line2" {
+		t.Errorf("Tail = %v, want [line1 line2]", v.Tail)
+	}
+	if v.Usage != u {
+		t.Errorf("Usage = %v, want %v", v.Usage, u)
+	}
+	if v.Diff == nil || v.Diff.Files != 4 || v.Diff.Added != 20 || v.Diff.Removed != 5 {
+		t.Errorf("Diff = %+v, want Files:4 Added:20 Removed:5", v.Diff)
+	}
+	if !v.LastProgressAt.Equal(lastProg) {
+		t.Errorf("LastProgressAt = %v, want %v", v.LastProgressAt, lastProg)
+	}
+	if !v.ExploringSince.Equal(exploring) {
+		t.Errorf("ExploringSince = %v, want %v", v.ExploringSince, exploring)
+	}
+	if !v.GatingSince.Equal(time.Unix(gateStarted.Unix(), 0)) {
+		t.Errorf("GatingSince = %v, want %v", v.GatingSince, time.Unix(gateStarted.Unix(), 0))
+	}
+
+	// nil Headless, LiveUsage and Live give zero values and nil pointers
+	rowNil := BindingStatus{
+		LastProgressAt: lastProg,
+	}
+	bNil := store.Binding{}
+	vNil := liveViewOf(rowNil, bNil, at)
+	if vNil.PID != 0 {
+		t.Errorf("PID = %d, want 0", vNil.PID)
+	}
+	if !vNil.StartedAt.IsZero() {
+		t.Errorf("StartedAt = %v, want zero", vNil.StartedAt)
+	}
+	if vNil.ExitCode != "" {
+		t.Errorf("ExitCode = %q, want empty", vNil.ExitCode)
+	}
+	if vNil.Tail != nil {
+		t.Errorf("Tail = %v, want nil", vNil.Tail)
+	}
+	if vNil.Usage != nil {
+		t.Errorf("Usage = %v, want nil", vNil.Usage)
+	}
+	if vNil.Diff != nil {
+		t.Errorf("Diff = %v, want nil", vNil.Diff)
+	}
+	if !vNil.ExploringSince.IsZero() {
+		t.Errorf("ExploringSince = %v, want zero", vNil.ExploringSince)
+	}
+	if !vNil.GatingSince.IsZero() {
+		t.Errorf("GatingSince = %v, want zero", vNil.GatingSince)
+	}
+}

@@ -8,18 +8,23 @@ import (
 // BindingFormat is the format of the Binding JSON this binary writes. Format 1
 // is today's shape and is stored as an *absent* "format" field, so a binding
 // saved today stays byte-identical to one saved before the field existed; from
-// format 2 on the number is written. Format 2 adds "role".
+// format 2 on the number is written. Format 2 adds "role". Format 3 adds
+// `builder.remote_live`, which recordFormat never stamps: it is a poll cache
+// re-fetched on every tick, so an older relevo that drops it on rewrite loses
+// nothing, while stamping it would lock older relevo out of loading a running
+// remote binding (store.go Load refuses a newer format).
 //
 // Bump it whenever Binding's JSON shape changes. An older relevo that meets a
 // newer format refuses to save, because its rewrite would erase every field it
 // does not know (#372).
-const BindingFormat = 2
+const BindingFormat = 3
 
 // recordFormat is the format to write b at: the lowest format that can hold
 // the record (#382 §5.2). A binding whose Role is empty is format 1, so it is
 // byte-identical to a binding written before the field existed; any other role
 // is format 2. An older relevo then refuses to save exactly the bindings it
-// would get wrong, and keeps working on every other one.
+// would get wrong, and keeps working on every other one. RemoteLive (format 3)
+// never raises the record's format; see BindingFormat.
 func recordFormat(b Binding) int {
 	if b.Role != "" {
 		return 2

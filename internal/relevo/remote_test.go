@@ -2503,6 +2503,97 @@ func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 	}
 }
 
+func TestObserveRemoteRunningStoresLive(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	live := &remote.LiveView{
+		At:             baseTime,
+		PID:            4242,
+		StartedAt:      baseTime.Add(-10 * time.Minute),
+		ExitCode:       "3",
+		Tail:           []string{"line1", "line2"},
+		Usage:          &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}},
+		Diff:           &remote.DiffStat{Files: 2, Added: 10, Removed: 3},
+		LastProgressAt: baseTime.Add(-2 * time.Minute),
+		ExploringSince: baseTime.Add(-5 * time.Minute),
+		GatingSince:    baseTime.Add(-1 * time.Minute),
+	}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundRunning,
+			Live:       live,
+		},
+		roundFileResp: io.NopCloser(strings.NewReader("")),
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	rl := got.Builder.RemoteLive
+	if rl == nil {
+		t.Fatal("RemoteLive = nil, want non-nil")
+	}
+	if !rl.At.Equal(live.At) {
+		t.Errorf("At = %v, want %v", rl.At, live.At)
+	}
+	if rl.PID != live.PID {
+		t.Errorf("PID = %d, want %d", rl.PID, live.PID)
+	}
+	if !rl.StartedAt.Equal(live.StartedAt) {
+		t.Errorf("StartedAt = %v, want %v", rl.StartedAt, live.StartedAt)
+	}
+	if rl.ExitCode != live.ExitCode {
+		t.Errorf("ExitCode = %q, want %q", rl.ExitCode, live.ExitCode)
+	}
+	if len(rl.Tail) != len(live.Tail) || rl.Tail[0] != live.Tail[0] || rl.Tail[1] != live.Tail[1] {
+		t.Errorf("Tail = %v, want %v", rl.Tail, live.Tail)
+	}
+	if rl.Usage == nil || rl.Usage.Tokens != live.Usage.Tokens {
+		t.Errorf("Usage = %+v, want %+v", rl.Usage, live.Usage)
+	}
+	if rl.Diff == nil || rl.Diff.Files != live.Diff.Files || rl.Diff.Added != live.Diff.Added || rl.Diff.Removed != live.Diff.Removed {
+		t.Errorf("Diff = %+v, want %+v", rl.Diff, live.Diff)
+	}
+	if !rl.LastProgressAt.Equal(live.LastProgressAt) {
+		t.Errorf("LastProgressAt = %v, want %v", rl.LastProgressAt, live.LastProgressAt)
+	}
+	if !rl.ExploringSince.Equal(live.ExploringSince) {
+		t.Errorf("ExploringSince = %v, want %v", rl.ExploringSince, live.ExploringSince)
+	}
+	if !rl.GatingSince.Equal(live.GatingSince) {
+		t.Errorf("GatingSince = %v, want %v", rl.GatingSince, live.GatingSince)
+	}
+}
+
+func TestObserveRemoteClosedClearsLive(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("contabo")
+	b.Builder.RemoteStatus = string(remote.RoundRunning)
+	b.Builder.RemoteLive = &store.LiveFacts{PID: 4242, At: baseTime}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundQueued},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Builder.RemoteLive != nil {
+		t.Errorf("RemoteLive = %+v, want nil once the round is queued", got.Builder.RemoteLive)
+	}
+}
+
 // TestReconcileRemoteRefreshesCandidate checks that a server-side switch
 // (the round is now running a different candidate than this binding last
 // recorded) updates the token and harness kind and logs a switch entry
