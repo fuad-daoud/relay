@@ -201,9 +201,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		}
 	}
 
-	// 4.5. tier probe: opts.Tier requires the server to advertise FeatureTier
-	// before any binding is created there. checkTierCap here is the client's
-	// own policy, as Add does locally.
+	// 4.5. feature probe: a requested --tier or custom --role requires the
+	// server to advertise the matching feature before any binding is created
+	// there. One WhoAmI answers both, and it is called at most once.
 	wireTier := ""
 	if opts.Tier != "" {
 		t, err := harness.ParseTier(opts.Tier)
@@ -213,14 +213,24 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
 			return AddResult{}, err
 		}
+		wireTier = string(t)
+	}
+	wireRole := normRole(opts.Role)
+	if opts.Tier != "" || wireRole != "" {
 		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
 		if err != nil {
 			return AddResult{}, err
 		}
-		if !slices.Contains(who.Features, remote.FeatureTier) {
+		if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
 			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
 		}
-		wireTier = string(t)
+		// The client's roles.json never travels (§5.3): the server resolves
+		// the role against its own. A server too old to do that would ignore
+		// the field and run its builder, so it is refused here -- before any
+		// branch, worktree or create call.
+		if wireRole != "" && !slices.Contains(who.Features, remote.FeatureRoles) {
+			return AddResult{}, fmt.Errorf("server %s does not run custom roles (role %q); upgrade it", opts.Server, opts.Role)
+		}
 	}
 
 	// 5. view := rt.Remote.CreateBinding(ctx, server, {Name, RepoID, BaseCommit: base, Candidate, RoundCap, RoundTimeoutMS, Tier})
@@ -233,6 +243,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		BaseCommit: base,
 		Candidate:  candidateStr,
 		Tier:       wireTier,
+		Role:       wireRole,
 		Author:     &remote.GitIdentity{Name: authorName, Email: authorEmail},
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
@@ -323,6 +334,10 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             view.Tier,
+		// The role travels as the client asked it: the server resolved it
+		// against its own roles.json, and the mirror records it so
+		// `relevo status` shows it (#382 §5.3).
+		Role: wireRole,
 		// rt.Git is guaranteed non-nil here (checked at the top of
 		// addRemote), and opts.Repo is the client's local checkout the
 		// branch and bundle are cut from -- the same "parent repo" concept

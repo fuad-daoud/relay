@@ -163,22 +163,22 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 	}
 }
 
-// ResolveServedTier is the served counterpart of add.go's
-// resolveTier+checkTierCap. token is the candidate PickServedCandidate
-// chose (may be "" or unresolvable: then the candidate contributes no
-// tier); explicit is the wire tier ("" = none).
+// ResolveServedTierFor is the served counterpart of add.go's
+// resolveTier+checkTierCap, for the binding's role. token is the candidate
+// PickServedCandidateFor chose (may be "" or unresolvable: then the candidate
+// contributes no tier); explicit is the wire tier ("" = none).
 //
-//	chain: explicit > candidate.Tier > rt.Policy.TierFor("builder") > harness
+//	chain: explicit > candidate.Tier > policy's tier.<role> > harness
 //	cap:   checkTierCap(tier, rt.Policy, allowYolo=false) -- the server's
 //	       max_tier is a ceiling nothing on the wire lifts
 //
 // Errors: harness.ParseTier's error for a malformed explicit;
 // ErrTierAboveMax (wrapped, message names the ceiling) above the cap.
-// explicit == "" can still fail: a policy tier.builder above max_tier is a
+// explicit == "" can still fail: a policy tier.<role> above max_tier is a
 // policy authoring error and returns ErrTierAboveMax too, so the create
 // fails loudly instead of launching at a tier the policy forbids (add.go
 // behaves the same locally).
-func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error) {
+func ResolveServedTierFor(rt Runtime, role, token, explicit string) (harness.Tier, error) {
 	var c candidate.Candidate
 	if rt.Candidates != nil && token != "" {
 		if ref, err := candidate.ParseRef(token); err == nil {
@@ -192,11 +192,16 @@ func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error)
 			return "", err
 		}
 	}
-	tier := resolveRoleTier(explicit, c, rt.RoleRegistry(), "builder")
+	tier := resolveRoleTier(explicit, c, rt.RoleRegistry(), role)
 	if err := checkTierCap(tier, rt.Policy, false); err != nil {
 		return tier, err
 	}
 	return tier, nil
+}
+
+// ResolveServedTier is ResolveServedTierFor for the built-in builder role.
+func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error) {
+	return ResolveServedTierFor(rt, "builder", token, explicit)
 }
 
 // ServedBuilderTier is what WhoAmI reports and relevo serve logs at startup:
@@ -211,12 +216,13 @@ func ServedBuilderTier(rt Runtime) harness.Tier {
 	return tier
 }
 
-// PickServedCandidate resolves the builder candidate token and harness kind for a served binding.
-func PickServedCandidate(rt Runtime, token string) (string, string) {
+// PickServedCandidateFor resolves the role's candidate token and harness kind
+// for a served binding.
+func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
 	if rt.Candidates == nil {
 		return token, ""
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
 	if err == nil {
 		return res.Candidate.Ref().String(), res.Candidate.Harness
 	}
@@ -228,4 +234,9 @@ func PickServedCandidate(rt Runtime, token string) (string, string) {
 		}
 	}
 	return token, ""
+}
+
+// PickServedCandidate is PickServedCandidateFor for the built-in builder role.
+func PickServedCandidate(rt Runtime, token string) (string, string) {
+	return PickServedCandidateFor(rt, "builder", token)
 }

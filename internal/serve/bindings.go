@@ -103,6 +103,17 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A binding runs one writer role (#382 §5.3). Resolve it against this
+	// server's own registry -- the client's roles.json never travels -- and
+	// refuse before InitBare, so a refused create leaves no bare repo behind.
+	role := relevo.NormRole(req.Role)
+	if role != "" {
+		if err := relevo.CheckWriterRole(rt, role); err != nil {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			return
+		}
+	}
+
 	repoRoot, err := s.repoRoot(caller)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
@@ -115,15 +126,19 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.cfg.Now()
-	candidateToken, harnessKind := relevo.PickServedCandidate(rt, req.Candidate)
+	roleName := role
+	if roleName == "" {
+		roleName = "builder"
+	}
+	candidateToken, harnessKind := relevo.PickServedCandidateFor(rt, roleName, req.Candidate)
 
-	tier, err := relevo.ResolveServedTier(rt, candidateToken, req.Tier)
+	tier, err := relevo.ResolveServedTierFor(rt, roleName, candidateToken, req.Tier)
 	if err != nil {
 		if errors.Is(err, relevo.ErrTierAboveMax) {
 			offending := req.Tier
 			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's policy.json"
 			if offending == "" {
-				format = "policy tier.builder %s exceeds max_tier %s"
+				format = "policy tier." + roleName + " %s exceeds max_tier %s"
 				offending = string(tier)
 			}
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax,
@@ -151,6 +166,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		Builder:          store.Endpoint{Kind: harnessKind, Mode: store.ModeHeadless, AgentName: req.Name},
 		BuilderCandidate: candidateToken,
 		Tier:             string(tier),
+		Role:             role,
 		Round:            1,
 		State:            store.StateActive,
 		RoundCap:         req.RoundCap,

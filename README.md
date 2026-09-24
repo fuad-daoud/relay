@@ -1489,6 +1489,11 @@ Roles live in `$XDG_CONFIG_HOME/relevo/roles.json` (default
   new **writer** runs as a binding's role: `relevo add --role <name>` or
   `relevo bind --role <name>`. Every round of that binding runs it, and
   `relevo fork` keeps it.
+
+With `relevo add --server S --role <r>`, the server resolves `<r>` against
+**its own** `roles.json`, and your local `roles.json` does not travel. A server
+too old to run custom roles refuses the add.
+
 - `gate` -- for a writer, whether its round closes on a gate. true takes
   `policy.json`'s `gate.default`; false takes none. It defaults to true for
   every writer; an explicit `--gate` still wins.

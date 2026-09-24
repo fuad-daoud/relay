@@ -38,6 +38,13 @@ func normRole(role string) string {
 	return role
 }
 
+// NormRole is normRole for callers outside this package. It is exported for
+// internal/serve, which resolves a remote add's role against the server's own
+// roles.json and must store the same "" for builder (#382).
+func NormRole(role string) string {
+	return normRole(role)
+}
+
 // checkWriterRole returns nil when role (after normRole; "" means builder) is a
 // writer in reg. Otherwise it reports an unknown role wrapping ErrUnknownRole,
 // or a reader wrapping ErrNotAWriterRole.
@@ -50,6 +57,15 @@ func checkWriterRole(reg *roles.Registry, role string) error {
 		return fmt.Errorf("--role %s: a reader role runs through relevo ask --role %s: %w", role, role, ErrNotAWriterRole)
 	}
 	return nil
+}
+
+// CheckWriterRole reports whether role (after normRole; "" means builder) is a
+// writer role in rt's registry (#382). A name no role has is an error wrapping
+// ErrUnknownRole; a reader is one wrapping ErrNotAWriterRole. It is exported
+// for internal/serve, which resolves a remote add's role against the server's
+// own roles.json, never the client's.
+func CheckWriterRole(rt Runtime, role string) error {
+	return checkWriterRole(rt.RoleRegistry(), role)
 }
 
 // roleGates reports whether a binding of role takes policy.json's gate.default

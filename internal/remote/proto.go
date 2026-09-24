@@ -72,6 +72,7 @@ type CreateBindingRequest struct {
 	RoundCap       int    `json:"round_cap,omitempty"`
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
 	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
+	Role           string `json:"role,omitempty"` // "" = builder; resolved against the server's own roles.json
 
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
@@ -232,6 +233,11 @@ const FeatureStop = "stop"
 // the binding's builder from that round on; absent or "" means keep the
 // binding's builder.
 const FeatureBuilder = "builder"
+
+// FeatureRoles is the WhoAmI.Features token a server that honours
+// CreateBindingRequest.Role advertises (#382); a server without it would
+// ignore the field and run the builder.
+const FeatureRoles = "roles"
 
 // FeatureIdempotentSend is the WhoAmI.Features token a server that answers a
 // repeated identical start-round request for the open round with 200 and the

@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -490,13 +491,16 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	if len(who.Features) != 6 ||
+	// TestWhoAmIAdvertisesRoles (#382 §5.3): the existing features test is
+	// extended rather than duplicated.
+	if len(who.Features) != 7 ||
 		who.Features[0] != remote.FeatureTier || who.Features[1] != remote.FeatureQueue ||
 		who.Features[2] != remote.FeatureStop || who.Features[3] != remote.FeatureBuilder ||
-		who.Features[4] != remote.FeatureIdempotentSend || who.Features[5] != remote.FeatureAuthor {
-		t.Fatalf("Features = %v, want [%s %s %s %s %s %s]", who.Features,
+		who.Features[4] != remote.FeatureIdempotentSend || who.Features[5] != remote.FeatureAuthor ||
+		who.Features[6] != remote.FeatureRoles {
+		t.Fatalf("Features = %v, want [%s %s %s %s %s %s %s]", who.Features,
 			remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder,
-			remote.FeatureIdempotentSend, remote.FeatureAuthor)
+			remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles)
 	}
 	if who.Builders == nil || who.Builders.Cap <= 0 {
 		t.Fatalf("Builders = %+v, want a positive Cap", who.Builders)
@@ -770,6 +774,157 @@ func createBindingRequest(t *testing.T, srv *Server, kp remote.Keypair, req remo
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httpReq)
 	return rec
+}
+
+// roleTestCandidateSet writes and loads the single claude/anthropic/haiku
+// candidate row newTierTestServer also uses, so a #382 role test can build the
+// server's registry over the same set.
+func roleTestCandidateSet(t *testing.T, root string) *candidate.Set {
+	t.Helper()
+	candPath := filepath.Join(root, "candidates.json")
+	candJSON := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	if err := os.WriteFile(candPath, []byte(candJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cSet, err := candidate.Load(candPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cSet
+}
+
+// roleTestRegistry is the server's own roles.json for the role tests: the
+// built-in builder plus a ui-builder writer whose claude definition is srv-ui.
+func roleTestRegistry(t *testing.T, set *candidate.Set, pol policy.Policy) *roles.Registry {
+	t.Helper()
+	writer := "writer"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"builder": {Candidates: []string{"claude/anthropic/haiku"}},
+		"ui-builder": {
+			Shape:       &writer,
+			Candidates:  []string{"claude/anthropic/haiku"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "srv-ui"}},
+		},
+	}}, set, pol)
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	return reg
+}
+
+// newRoleTestServer builds a server whose Config.Registry is reg: that is how a
+// test gives the server a roles.json of its own (#382 §5.3).
+func newRoleTestServer(t *testing.T, set *candidate.Set, pol policy.Policy, reg *roles.Registry) (*Server, remote.Keypair) {
+	t.Helper()
+	srv, err := New(Config{
+		Root:       t.TempDir(),
+		Candidates: set,
+		Policy:     pol,
+		Registry:   reg,
+		Now:        time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return srv, kp
+}
+
+// TestCreateBindingRunsServerRole pins #382 §5.3: a create with Role resolves
+// the role against the server's own registry, that role's candidates drive the
+// pick, and the served binding stores the role.
+func TestCreateBindingRunsServerRole(t *testing.T) {
+	root := t.TempDir()
+	set := roleTestCandidateSet(t, root)
+	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "ui-builder",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+
+	id := remote.IDOf(kp.Public)
+	b, err := testRuntime(t, srv, id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Role != "ui-builder" {
+		t.Fatalf("stored binding Role = %q, want ui-builder", b.Role)
+	}
+	if b.BuilderCandidate != "claude/anthropic/haiku" {
+		t.Fatalf("BuilderCandidate = %q, want claude/anthropic/haiku (ui-builder's list)", b.BuilderCandidate)
+	}
+}
+
+// TestCreateBindingUnknownRoleRefused pins #382 §5.3's server refusal: an
+// unknown Role is a 400 before InitBare, so neither a binding nor a bare repo
+// is left behind.
+func TestCreateBindingUnknownRoleRefused(t *testing.T) {
+	root := t.TempDir()
+	set := roleTestCandidateSet(t, root)
+	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "nope",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if !strings.Contains(errBody.Message, `unknown role "nope"`) {
+		t.Fatalf("message = %q, want it to contain unknown role \"nope\"", errBody.Message)
+	}
+
+	id := remote.IDOf(kp.Public)
+	if _, err := testRuntime(t, srv, id).Store.Load("api"); err == nil {
+		t.Fatal("binding was stored despite the unknown-role refusal")
+	}
+	repoRoot, err := srv.repoRoot(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(repoRoot, "repo123.git")
+	if _, err := os.Stat(bare); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bare repo %s exists after the refusal (stat err = %v)", bare, err)
+	}
+}
+
+// TestCreateBindingReaderRoleRefused pins #382 §5.3: a reader role is refused
+// with the same error the local path gives.
+func TestCreateBindingReaderRoleRefused(t *testing.T) {
+	root := t.TempDir()
+	set := roleTestCandidateSet(t, root)
+	srv, kp := newRoleTestServer(t, set, policy.Policy{}, roleTestRegistry(t, set, policy.Policy{}))
+
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "reviewer",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "a reader role runs through relevo ask") {
+		t.Fatalf("body = %s, want it to contain the reader-role refusal", rec.Body.String())
+	}
 }
 
 func TestCreateBindingResolvesTierFromPolicy(t *testing.T) {

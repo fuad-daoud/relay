@@ -1038,7 +1038,16 @@ func cmdBind(args []string) error {
 	kind := ""
 	switch {
 	case *rebind:
-		kind = relevo.CandidateKindFor(rt, opts.Candidate, roleName)
+		// A rebind replaces the builder of an existing binding, so the
+		// definitions come from the stored binding's role -- --role is
+		// refused with --resume, so roleName is "builder" here (#382 round 3).
+		// If the load fails, today's behaviour (roleName) stands.
+		if *name != "" {
+			if existing, err := rt.Store.Load(*name); err == nil {
+				specRole = relevo.BindingRole(existing)
+			}
+		}
+		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
 	case adopted:
 		if *name != "" {
 			if existing, err := rt.Store.Load(*name); err == nil {
@@ -1054,10 +1063,10 @@ func cmdBind(args []string) error {
 	// failure is dropped rather than printed. See bindPreflight.
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
-		// The builder's definitions for this kind come from the registry, so a
-		// roles.json that names a custom builder executor preflights that file
-		// (#374 §3.4). A Spec error is data: defs stays nil and the preflight
-		// falls back to the shipped builder definitions.
+		// The binding's role's definitions for this kind come from the
+		// registry, so a roles.json that names a custom builder executor
+		// preflights that file (#374 §3.4). A Spec error is data: defs stays
+		// nil and the preflight falls back to the shipped builder definitions.
 		var defs []string
 		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
 			defs = spec.Definitions

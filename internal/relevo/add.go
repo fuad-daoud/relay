@@ -116,16 +116,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
-	// A binding runs one writer role (#382 §2). Refuse a bad one before the
-	// --server branch: a remote binding's custom role is round 3.
-	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
-		return AddResult{}, err
-	}
-	if normRole(opts.Role) != "" && opts.Server != "" {
-		return AddResult{}, fmt.Errorf("server %s does not run custom roles (role %q); not yet available", opts.Server, opts.Role)
-	}
 	if opts.Server != "" {
 		return addRemote(ctx, rt, opts, rec, haveRec)
+	}
+	// A binding runs one writer role (#382 §2). Refuse a bad one here, on the
+	// local path only: a remote binding's role is resolved against the
+	// server's own roles.json, never this client's (§5.3).
+	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+		return AddResult{}, err
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err

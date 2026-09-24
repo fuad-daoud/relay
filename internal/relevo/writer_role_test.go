@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -363,26 +364,40 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	}
 }
 
-// TestAddCustomRoleOnServerRefused pins #382 round 1: a remote add with a
-// custom role is refused before any network call. The runtime's Remote is nil,
-// so reaching addRemote would fail with a different error.
+// TestAddCustomRoleOnServerRefused pins #382 §4 (round 3; this is round 1's
+// test ported): a remote add with a custom role is refused before any binding
+// is created on the server, because the server does not advertise
+// remote.FeatureRoles -- an old server would ignore the field and run its
+// builder. The client's own registry knows ui-builder, which must not matter:
+// the server's roles never come from here.
 func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"builder":    {Candidates: []string{testClaudeRef}},
 		"ui-builder": uiBuilderRow(testClaudeRef),
 	})
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}} // Features nil: a server without roles
+	rt.Remote = fr
 
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "remote-ui", Role: "ui-builder", Server: "s",
 		PlannerID: testPlannerName, Repo: "/repo",
 	})
 	if err == nil {
-		t.Fatal("Add(--server with a custom role) = nil, want the not-yet-available error")
+		t.Fatal("Add(--server with a custom role) = nil, want the upgrade-it error")
 	}
-	want := `server s does not run custom roles (role "ui-builder"); not yet available`
+	want := `server s does not run custom roles (role "ui-builder"); upgrade it`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
 	}
 }
 
