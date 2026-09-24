@@ -25,6 +25,11 @@ type WaitResult struct {
 	// DeliverErr is a read or confirm failure while delivering Payload. It
 	// never changes the exit code (§6): the CLI prints it to stderr.
 	DeliverErr error
+
+	// Round is the round Wait waited on for the binding it returns, so the
+	// CLI can name it when a delivery fails. 0 when not applicable: a
+	// timeout or a gone binding.
+	Round int
 }
 
 const (
@@ -208,13 +213,14 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				// outcome only. A delivery failure never changes the exit
 				// code (§6); the CLI prints DeliverErr to stderr.
 				if waitDeliverable(r.Code) && !opts.Peek {
-					text, found, derr := pullPending(ctx, rt, n, "wait")
+					text, found, derr := pullPendingThrough(ctx, rt, n, "wait", rounds[n])
 					if derr != nil {
 						r.DeliverErr = derr
 					} else if found {
 						r.Payload = text
 					}
 				}
+				r.Round = rounds[n]
 				return n, r, nil
 			}
 		}

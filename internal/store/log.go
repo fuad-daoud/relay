@@ -236,6 +236,15 @@ func (s *Store) ReadLogAfter(name string, after int) ([]LogEntry, error) {
 	return entries, err
 }
 
+// PendingEntry is one undelivered planner payload together with its index in
+// the log. Pairing them lets a caller that holds the lock confirm several
+// entries in one critical section: confirmIndex marks an entry in place, so
+// the indices stay valid while several are confirmed under the same lock.
+type PendingEntry struct {
+	Entry LogEntry // the undelivered payload
+	Idx   int      // its index, for ConfirmIndex under the same lock
+}
+
 // PendingForPlanner returns the oldest undelivered payload bound for the
 // planner, acquiring the state lock for the operation. It drops the entry's
 // index: a caller that only reads cannot confirm, and a caller that intends to
@@ -279,6 +288,13 @@ func (t *Tx) ReadLogAfter(name string, after int) ([]LogEntry, error) {
 // under the held lock.
 func (t *Tx) PendingForPlanner(name string) (LogEntry, int, bool, error) {
 	return t.s.pendingForPlanner(name)
+}
+
+// PendingForPlannerThrough reads every undelivered planner payload whose round
+// is at most round -- every round when round <= 0 -- with each one's index,
+// in log order, under the held lock.
+func (t *Tx) PendingForPlannerThrough(name string, round int) ([]PendingEntry, error) {
+	return t.s.pendingForPlannerThrough(name, round)
 }
 
 // ConfirmIndex rewrites the log under the held lock, marking the entry at idx
@@ -455,6 +471,26 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 	}
 
 	return LogEntry{}, 0, false, nil
+}
+
+// pendingForPlannerThrough returns every undelivered payload bound for the
+// planner whose round is at most round -- every round when round <= 0 -- in
+// log order, each with its index. It is pendingForPlanner's through-round
+// sibling and reads s.readLog(name) the same way.
+func (s *Store) pendingForPlannerThrough(name string, round int) ([]PendingEntry, error) {
+	entries, err := s.readLog(name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pending []PendingEntry
+	for i, e := range entries {
+		if e.Direction == DirToPlanner && !e.Confirmed && (round <= 0 || e.Round <= round) {
+			pending = append(pending, PendingEntry{Entry: e, Idx: i})
+		}
+	}
+
+	return pending, nil
 }
 
 // confirmIndex marks one entry as delivered by route: the idx'th event in Seq
