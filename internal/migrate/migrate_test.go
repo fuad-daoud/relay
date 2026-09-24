@@ -446,6 +446,103 @@ func TestRunWarnings(t *testing.T) {
 	})
 }
 
+// TestRunRepairsOrphanWorktree covers a worktree directory no binding records:
+// the binding pass never sees it, so the orphan pass must repair it from the
+// gitdir line of its .git file, mapped onto the new state root (#385).
+func TestRunRepairsOrphanWorktree(t *testing.T) {
+	base := t.TempDir()
+	stateFrom := filepath.Join(base, "oldstate")
+	stateTo := filepath.Join(base, "newstate")
+
+	wt := filepath.Join(stateFrom, ".worktrees", "x")
+	mustMkdir(t, wt)
+	admin := filepath.Join(stateFrom, "serve", "repos", "o", "r.git", "worktrees", "x")
+	mustMkdir(t, admin)
+	mustWrite(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
+
+	f := newFakes()
+	var out bytes.Buffer
+	res, err := Run(context.Background(), f.options(stateFrom, stateTo, "", "", &out))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	wantRepo := filepath.Join(stateTo, "serve", "repos", "o", "r.git")
+	wantWT := filepath.Join(stateTo, ".worktrees", "x")
+	if len(f.repairs) != 1 {
+		t.Fatalf("Repair calls = %d, want 1: %+v", len(f.repairs), f.repairs)
+	}
+	if f.repairs[0] != (repairCall{repo: wantRepo, worktree: wantWT}) {
+		t.Errorf("Repair(%q, %q), want (%q, %q)",
+			f.repairs[0].repo, f.repairs[0].worktree, wantRepo, wantWT)
+	}
+	s := findStep(t, res, "repair-worktrees")
+	if s.Detail != "repaired 1 worktree(s)" {
+		t.Errorf("repair-worktrees detail = %q, want %q", s.Detail, "repaired 1 worktree(s)")
+	}
+	if s.Warn || s.Skipped {
+		t.Errorf("repair-worktrees = %+v, want neither warned nor skipped", s)
+	}
+}
+
+// TestRunOrphanNotRepairedTwice checks the binding pass records what it
+// repaired, so the orphan pass leaves that same worktree alone (#385).
+func TestRunOrphanNotRepairedTwice(t *testing.T) {
+	base := t.TempDir()
+	stateFrom := filepath.Join(base, "oldstate")
+	stateTo := filepath.Join(base, "newstate")
+
+	wt := filepath.Join(stateFrom, ".worktrees", "y")
+	mustMkdir(t, wt)
+	admin := filepath.Join(stateFrom, "serve", "repos", "o", "r.git", "worktrees", "y")
+	mustWrite(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
+	saveBinding(t, stateFrom, "y", wt, filepath.Join(base, "repo"), store.StateDone)
+
+	f := newFakes()
+	var out bytes.Buffer
+	if _, err := Run(context.Background(), f.options(stateFrom, stateTo, "", "", &out)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	wantWT := filepath.Join(stateTo, ".worktrees", "y")
+	if len(f.repairs) != 1 {
+		t.Fatalf("Repair calls = %d, want 1: %+v", len(f.repairs), f.repairs)
+	}
+	if f.repairs[0].worktree != wantWT {
+		t.Errorf("Repair worktree = %q, want %q", f.repairs[0].worktree, wantWT)
+	}
+}
+
+// TestRunOrphanDryRun checks the orphan pass counts a would-be repair without
+// calling Repair (#385).
+func TestRunOrphanDryRun(t *testing.T) {
+	base := t.TempDir()
+	stateFrom := filepath.Join(base, "oldstate")
+	stateTo := filepath.Join(base, "newstate")
+
+	wt := filepath.Join(stateFrom, ".worktrees", "x")
+	mustMkdir(t, wt)
+	admin := filepath.Join(stateFrom, "serve", "repos", "o", "r.git", "worktrees", "x")
+	mustMkdir(t, admin)
+	mustWrite(t, filepath.Join(wt, ".git"), "gitdir: "+admin+"\n")
+
+	f := newFakes()
+	var out bytes.Buffer
+	o := f.options(stateFrom, stateTo, "", "", &out)
+	o.DryRun = true
+	res, err := Run(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(f.repairs) != 0 {
+		t.Errorf("dry run called Repair: %+v", f.repairs)
+	}
+	s := findStep(t, res, "repair-worktrees")
+	if s.Detail != "repaired 1 worktree(s)" {
+		t.Errorf("repair-worktrees detail = %q, want %q", s.Detail, "repaired 1 worktree(s)")
+	}
+}
+
 func mustMkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
