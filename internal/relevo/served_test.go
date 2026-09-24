@@ -741,3 +741,90 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 		t.Fatalf("Serve.ResultCommit: got %q, want %q", reconciled.Serve.ResultCommit, expectedSHA)
 	}
 }
+
+// ownedExitFixture is an owned (served) binding with round 1's plan logged and
+// its builder process gone, for the close paths that do not see a marker.
+func ownedExitFixture(t *testing.T) (Runtime, store.Binding, *fakeRunner, string) {
+	t.Helper()
+	st := store.New(t.TempDir())
+	fr := newFakeRunner()
+	sha := "commit-abcdef"
+	wtDir := t.TempDir()
+	b := store.Binding{
+		Name:     "api",
+		Owner:    "client1",
+		State:    store.StateActive,
+		Round:    1,
+		RoundCap: 10,
+		CWD:      wtDir,
+		Builder:  store.Endpoint{Mode: store.ModeHeadless, PID: 1234},
+		Branch:   "relevo/api",
+		Worktree: wtDir,
+		Serve:    &store.ServeFacts{BareRepo: t.TempDir()},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}); err != nil {
+		t.Fatal(err)
+	}
+	fr.script(1234, false)
+	fr.exit(1234, 0)
+	rt := Runtime{
+		Store:  st,
+		Git:    &fakeGit{refSHA: map[string]string{"refs/heads/relevo/api": sha}},
+		Runner: fr,
+		Now:    time.Now,
+	}
+	return rt, b, fr, sha
+}
+
+func reconcileOwned(t *testing.T, rt Runtime, b store.Binding) store.Binding {
+	t.Helper()
+	var got store.Binding
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		got, err = Reconcile(context.Background(), rt, tx, b)
+		return err
+	}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	return got
+}
+
+// TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts: a served builder that
+// exits after writing its report but without the done marker closes the round
+// unmarked -- and must record ClosedRound as a marked close does, or the owner
+// sees the round as idle and never fetches it (the flaky
+// TestRemoteRoundCollectedAfterClientWasAway hit exactly this).
+func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
+	rt, b, _, sha := ownedExitFixture(t)
+	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte("report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := reconcileOwned(t, rt, b)
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 (closed)", got.Round)
+	}
+	if got.Serve == nil || got.Serve.ClosedRound != 1 {
+		t.Fatalf("Serve.ClosedRound = %+v, want 1", got.Serve)
+	}
+	if got.Serve.ResultCommit != sha {
+		t.Errorf("Serve.ResultCommit = %q, want %q", got.Serve.ResultCommit, sha)
+	}
+}
+
+// TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts: a served builder
+// that exits while a stop is requested closes through closeStopped, and the
+// served round's facts are recorded there too.
+func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
+	rt, b, _, _ := ownedExitFixture(t)
+	b.StopRequestedAt = time.Now().Add(-time.Second)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	got := reconcileOwned(t, rt, b)
+	if got.Serve == nil || got.Serve.ClosedRound != 1 {
+		t.Fatalf("Serve.ClosedRound = %+v, want 1", got.Serve)
+	}
+}

@@ -658,6 +658,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if err != nil {
 			return b, err
 		}
+		if next.Owner != "" {
+			// An unmarked close is still a close: record the served round's
+			// facts as markerClose does, or the owner sees "idle" and never
+			// fetches the report.
+			next = closeServedRound(ctx, rt, next)
+		}
 		next.Builder = clearProcess(next.Builder)
 		next.StalledSince = time.Time{}
 		return deliverAndSettle(ctx, rt, tx, next)
@@ -689,7 +695,17 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// synchronously and never sets the request -- for a process killed
 	// between the request and the close.
 	if !b.StopRequestedAt.IsZero() {
-		return closeStopped(ctx, rt, tx, b, "killed")
+		next, err := closeStopped(ctx, rt, tx, b, "killed")
+		if err != nil {
+			return next, err
+		}
+		if next.Owner != "" {
+			// Same as Stop and markerClose: a served round that closed here
+			// must record its facts, or the owner sees "idle" and never
+			// collects it.
+			next = closeServedRound(ctx, rt, next)
+		}
+		return next, nil
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
