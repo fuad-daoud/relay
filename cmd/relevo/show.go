@@ -15,7 +15,8 @@ import (
 
 const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID] [--json]
        relevo show <name> --diff|--drift [--stat] [--anchors]
-       relevo show <name> --log [--follow] [--after N]`
+       relevo show <name> --log [--follow] [--after N]
+       relevo show <name> --owner <label|id> [--log] [--state DIR]`
 
 // flagGiven reports whether the named flag was set on the command line. It is
 // how `--after 0` is told from the flag's default 0.
@@ -87,6 +88,8 @@ func cmdShow(args []string) error {
 	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
 	after := fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
 	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
+	owner := fs.String("owner", "", "on the server host: read this owner's binding, a client label or id")
+	state := fs.String("state", "", "with --owner: the serve state directory")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), showUsage)
 		fs.PrintDefaults()
@@ -100,8 +103,23 @@ func cmdShow(args []string) error {
 	}
 	name := fs.Args()[0]
 
+	// --state names the serve root, so it means nothing without an owner to
+	// read there (§4.1).
+	if *state != "" && *owner == "" {
+		fmt.Fprintln(os.Stderr, "relevo show: --state only applies with --owner")
+		fmt.Fprintln(os.Stderr, showUsage)
+		return exitCodeErr{code: 2}
+	}
+
 	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, *gateSection, *findings)
 	if serr != nil {
+		// An --owner invocation is the moved serve show body, so its section
+		// conflict keeps that route's prefix and usage line (§4.1).
+		if *owner != "" {
+			fmt.Fprintln(os.Stderr, "relevo serve show: "+serr.Error())
+			fmt.Fprintln(os.Stderr, serveShowUsage)
+			return exitCodeErr{code: 2}
+		}
 		fmt.Fprintln(os.Stderr, "relevo show: "+serr.Error())
 		fmt.Fprintln(os.Stderr, showUsage)
 		return exitCodeErr{code: 2}
@@ -134,6 +152,15 @@ func cmdShow(args []string) error {
 	if *after < 0 {
 		fmt.Fprintln(os.Stderr, "relevo: --after must be >= 0")
 		return exitCodeErr{code: 2}
+	}
+
+	if *owner != "" {
+		// --log without --round is the whole-log read the removed `serve
+		// log` did; every other form is the removed `serve show` (§4.1).
+		if section == relevo.ShowLog && *round == 0 {
+			return serveLog(*owner, *state, name, *round, *after, *asJSON, *follow)
+		}
+		return serveShow(*owner, *state, name, *round, section, *asJSON)
 	}
 
 	rt, err := newRuntime()

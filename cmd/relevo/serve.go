@@ -118,6 +118,15 @@ func adminRoot(fs *flag.FlagSet) (string, *db.DB, error) {
 	if f := fs.Lookup("state"); f != nil {
 		state = f.Value.String()
 	}
+	return adminRootFor(state)
+}
+
+// adminRootFor is adminRoot for a caller that has already read --state from
+// its own flag set. The `show`/`history` --owner routes take parsed values
+// rather than a FlagSet, and resolve their root through this so the four
+// resolution steps (daemon pointer, default root, stale note, initialised
+// check) stay in one place.
+func adminRootFor(state string) (string, *db.DB, error) {
 	def, err := defaultServeRoot()
 	if err != nil {
 		return "", nil, err
@@ -154,9 +163,6 @@ func cmdServe(args []string) error {
        relevo serve revoke <id> [--state <dir>]
        relevo serve fingerprint [--state <dir>]
        relevo serve status [--state <dir>]
-       relevo serve log --owner <label|id> <name> [--round N] [--after N] [--json] [--follow] [--state <dir>]
-       relevo serve show --owner <label|id> <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]
-       relevo serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner] [--json] [--state <dir>]
        relevo gate --serve [--state <dir>]        (gates, available and unavailable moved to relevo gate)
        relevo serve ui [--state <dir>] [--interval 2s]
        relevo serve gc --abandoned <duration> [--dry-run] [--state <dir>]
@@ -181,11 +187,14 @@ func cmdServe(args []string) error {
 	case "status":
 		return cmdServeStatus(args[1:])
 	case "log":
-		return cmdServeLog(args[1:])
+		fmt.Fprintln(os.Stderr, "relevo serve log was removed; use relevo show <name> --owner <label> --log")
+		return exitCodeErr{code: 2}
 	case "show":
-		return cmdServeShow(args[1:])
+		fmt.Fprintln(os.Stderr, "relevo serve show was removed; use relevo show <name> --owner <label>")
+		return exitCodeErr{code: 2}
 	case "tab":
-		return cmdServeTab(args[1:])
+		fmt.Fprintln(os.Stderr, "relevo serve tab was removed; use relevo history --tab --owner <label|all>")
+		return exitCodeErr{code: 2}
 	case "gates", "available", "unavailable":
 		fmt.Fprintf(os.Stderr, "relevo serve %s was removed; use relevo gate --serve …\n", args[0])
 		return exitCodeErr{code: 2}
@@ -724,38 +733,21 @@ func cmdServeStatus(args []string) error {
 	return nil
 }
 
-// cmdServeLog prints one owner's binding log from the server (#216): the
-// read-only counterpart of `relevo log`. It resolves the owner with the same
-// resolver `serve unbind` uses, builds that owner's runtime, and renders
-// through the same printLog the client verb uses, so the output reads exactly
-// like a client's. It stamps nothing -- the .viewed sidecar is the owner's,
-// not the admin's -- and creates nothing.
-func cmdServeLog(args []string) error {
-	const usage = "usage: relevo serve log --owner <label|id> <name> [--round N] [--after N] [--json] [--follow] [--state <dir>]"
+// serveShowUsage is the removed `relevo serve show` usage line, updated to
+// the verb that carries the --owner route now (§4.1). cmdShow prints it when
+// an --owner invocation names more than one section.
+const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]"
 
-	fs := flag.NewFlagSet("relevo serve log", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
-	owner := fs.String("owner", "", "client label or id")
-	round := fs.Int("round", 0, "show only this round (default: all rounds)")
-	after := fs.Int("after", 0, "show only entries with a Seq greater than this (0 = all)")
-	asJSON := fs.Bool("json", false, "one compact JSON object per line (NDJSON)")
-	follow := fs.Bool("follow", false, "keep printing new entries until the binding is DONE or removed")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if *owner == "" || fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-	name := fs.Arg(0)
-
-	root, d, err := adminRoot(fs)
+// serveLog is cmdServeLog's body, moved so `relevo show <name> --owner
+// <label> --log` calls it (§4.1). It takes the parsed values: state is the
+// resolved --state ("" for the default root). It prints one owner's binding
+// log from the server (#216): the read-only counterpart of `relevo log`. It
+// resolves the owner with the same resolver `serve unbind` uses, builds that
+// owner's runtime, and renders through the same printLog the client verb
+// uses, so the output reads exactly like a client's. It stamps nothing -- the
+// .viewed sidecar is the owner's, not the admin's -- and creates nothing.
+func serveLog(owner, state, name string, round, after int, asJSON, follow bool) error {
+	root, d, err := adminRootFor(state)
 	if err != nil {
 		return err
 	}
@@ -766,21 +758,21 @@ func cmdServeLog(args []string) error {
 		return err
 	}
 
-	rt, _, err := serve.AdminOwnerRuntime(srv, *owner)
+	rt, _, err := serve.AdminOwnerRuntime(srv, owner)
 	if err != nil {
 		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: no such client: %s\n", *owner)
+			fmt.Fprintf(os.Stderr, "relevo serve log: no such client: %s\n", owner)
 		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", *owner, name)
+			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", owner, name)
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo serve log: %v\n", err)
 		}
 		return exitCodeErr{code: 1}
 	}
 
-	if err := printLog(rt, name, *round, *after, *asJSON, *follow, false); err != nil {
+	if err := printLog(rt, name, round, after, asJSON, follow, false); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", *owner, name)
+			fmt.Fprintf(os.Stderr, "relevo serve log: %s/%s: binding not found\n", owner, name)
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo serve log: %v\n", err)
 		}
@@ -789,48 +781,16 @@ func cmdServeLog(args []string) error {
 	return nil
 }
 
-// cmdServeShow prints one owner's round from the server (#216): the read-only
-// counterpart of `relevo show`. It reads live bindings only -- opening the
-// database would create it, and the database belongs to the client that ran
-// the work, not to the server admin's read -- and prefixes the stderr header
-// with the owner's label so the reader can see whose round it is.
-func cmdServeShow(args []string) error {
-	const usage = "usage: relevo serve show --owner <label|id> <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]"
-
-	fs := flag.NewFlagSet("relevo serve show", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
-	owner := fs.String("owner", "", "client label or id")
-	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
-	plan := fs.Bool("plan", false, "show the plan (default)")
-	report := fs.Bool("report", false, "show the report")
-	diff := fs.Bool("diff", false, "show the round's captured diff")
-	drift := fs.Bool("drift", false, "show the round's drift patch")
-	logSection := fs.Bool("log", false, "show the round's log entries")
-	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
-	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if *owner == "" || fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-	name := fs.Arg(0)
-
-	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, false, "")
-	if serr != nil {
-		fmt.Fprintln(os.Stderr, "relevo serve show: "+serr.Error())
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-
-	root, d, err := adminRoot(fs)
+// serveShow is cmdServeShow's body, moved so `relevo show <name> --owner
+// <label>` calls it (§4.1). It takes the parsed values: state is the resolved
+// --state ("" for the default root) and section the resolved section. It
+// prints one owner's round from the server (#216): the read-only counterpart
+// of `relevo show`. It reads live bindings only -- opening the database would
+// create it, and the database belongs to the client that ran the work, not to
+// the server admin's read -- and prefixes the stderr header with the owner's
+// label so the reader can see whose round it is.
+func serveShow(owner, state, name string, round int, section relevo.ShowSection, asJSON bool) error {
+	root, d, err := adminRootFor(state)
 	if err != nil {
 		return err
 	}
@@ -841,22 +801,22 @@ func cmdServeShow(args []string) error {
 		return err
 	}
 
-	rt, label, err := serve.AdminOwnerRuntime(srv, *owner)
+	rt, label, err := serve.AdminOwnerRuntime(srv, owner)
 	if err != nil {
 		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: no such client: %s\n", *owner)
+			fmt.Fprintf(os.Stderr, "relevo serve show: no such client: %s\n", owner)
 		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", *owner, name)
+			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo serve show: %v\n", err)
 		}
 		return exitCodeErr{code: 1}
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
+	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON}
 	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", *owner, name)
+			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo serve show: %v\n", err)
 		}
@@ -865,39 +825,20 @@ func cmdServeShow(args []string) error {
 	return nil
 }
 
-// cmdServeTab sums recorded usage across owners from the server (#216). With
-// --owner it sums that owner's bindings; without it sums every owner, and the
-// binding group is "<label>/<name>" while --by owner groups by label. It is
-// the spec's "`relevo tab --by owner` on the server", scoped to this verb.
-func cmdServeTab(args []string) error {
-	const usage = "usage: relevo serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner] [--json] [--state <dir>]"
-
-	fs := flag.NewFlagSet("relevo serve tab", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() { fmt.Fprintln(fs.Output(), usage) }
-	owner := fs.String("owner", "", "client label or id (default: every owner)")
-	since := fs.String("since", "", "only rounds closed after this: 24h, 7d, or YYYY-MM-DD (default: all)")
-	by := fs.String("by", "binding", "group rows by binding, model, provider or owner")
-	asJSON := fs.Bool("json", false, "machine-readable output")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-
-	cut, err := relevo.ParseSince(*since, time.Now().UTC())
+// serveTab is cmdServeTab's body, moved so `relevo history --tab --owner
+// <label|all>` calls it (§4.2). It takes the parsed values: owner "" means
+// every owner (the caller maps `--owner all` to ""), state is the resolved
+// --state. It sums recorded usage across owners from the server (#216). With
+// an owner it sums that owner's bindings; without it sums every owner, and
+// the binding group is "<label>/<name>" while --by owner groups by label. It
+// is the spec's "`relevo tab --by owner` on the server", scoped to this verb.
+func serveTab(owner, state, since, by string, asJSON bool) error {
+	cut, err := relevo.ParseSince(since, time.Now().UTC())
 	if err != nil {
 		return err
 	}
 
-	root, d, err := adminRoot(fs)
+	root, d, err := adminRootFor(state)
 	if err != nil {
 		return err
 	}
@@ -908,21 +849,21 @@ func cmdServeTab(args []string) error {
 		return err
 	}
 
-	entries, err := serve.AdminTabEntries(srv, *owner, cut, func(msg string) {
+	entries, err := serve.AdminTabEntries(srv, owner, cut, func(msg string) {
 		fmt.Fprintf(os.Stderr, "relevo serve tab: skip %s\n", msg)
 	})
 	if err != nil {
 		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: no such client: %s\n", *owner)
+			fmt.Fprintf(os.Stderr, "relevo serve tab: no such client: %s\n", owner)
 		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: %s: binding not found\n", *owner)
+			fmt.Fprintf(os.Stderr, "relevo serve tab: %s: binding not found\n", owner)
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo serve tab: %v\n", err)
 		}
 		return exitCodeErr{code: 1}
 	}
 
-	return renderTabReport(entries, *by, cut, *asJSON)
+	return renderTabReport(entries, by, cut, asJSON)
 }
 
 // serveGateList lists the gates on the server-wide ledger: `relevo serve

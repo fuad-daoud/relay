@@ -65,9 +65,12 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
-func TestServeLogWithoutOwnerExits2(t *testing.T) {
+// TestShowStateWithoutOwnerExits2 is TestServeLogWithoutOwnerExits2's port
+// to the new form (§8): `--state` names the serve root, so `show` refuses it
+// without `--owner`, naming --owner, exit 2.
+func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"serve", "log", "some-binding"})
+		return run([]string{"show", "some-binding", "--state", t.TempDir()})
 	})
 
 	var ec exitCodeErr
@@ -82,9 +85,12 @@ func TestServeLogWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
-func TestServeShowWithoutOwnerExits2(t *testing.T) {
+// TestHistoryOwnerWithoutTabExits2 is TestServeShowWithoutOwnerExits2's port
+// to the new form (§8): `--owner` reads the server through the tab form, so
+// `history --owner` without `--tab` refuses, naming --tab, exit 2.
+func TestHistoryOwnerWithoutTabExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"serve", "show", "some-binding"})
+		return run([]string{"history", "--owner", "alice"})
 	})
 
 	var ec exitCodeErr
@@ -94,8 +100,8 @@ func TestServeShowWithoutOwnerExits2(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "--owner") {
-		t.Errorf("expected mention of --owner on stderr, got %q", string(stderr))
+	if !strings.Contains(string(stderr), "--tab") {
+		t.Errorf("expected mention of --tab on stderr, got %q", string(stderr))
 	}
 }
 
@@ -340,6 +346,36 @@ func TestServeGateSubverbsWereRemoved(t *testing.T) {
 			}
 			if !strings.Contains(string(stderr), "relevo gate --serve") {
 				t.Errorf("stderr = %q, want it to name relevo gate --serve", stderr)
+			}
+		})
+	}
+}
+
+// TestServeReadSubverbsWereRemoved pins §4.3: `serve log`, `serve show` and
+// `serve tab` exit 2, each naming the form that replaces it.
+func TestServeReadSubverbsWereRemoved(t *testing.T) {
+	cases := []struct {
+		sub  string
+		want string
+	}{
+		{"log", "relevo show <name> --owner <label> --log"},
+		{"show", "relevo show <name> --owner <label>"},
+		{"tab", "relevo history --tab --owner <label|all>"},
+	}
+	for _, c := range cases {
+		t.Run(c.sub, func(t *testing.T) {
+			stdout, stderr, runErr := captureOutput(t, func() error {
+				return run([]string{"serve", c.sub})
+			})
+			var ec exitCodeErr
+			if !errors.As(runErr, &ec) || ec.code != 2 {
+				t.Fatalf("run = %v, want exit code 2", runErr)
+			}
+			if len(stdout) != 0 {
+				t.Errorf("expected nothing on stdout, got %q", string(stdout))
+			}
+			if !strings.Contains(string(stderr), c.want) {
+				t.Errorf("stderr = %q, want it to name %q", stderr, c.want)
 			}
 		})
 	}
