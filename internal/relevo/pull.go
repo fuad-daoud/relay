@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"context"
-	"os"
 
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -22,8 +21,8 @@ type PullOptions struct {
 // every `relevo wait`: the CLI prints the result to stdout and the planner
 // reads it as tool output.
 //
-// The text is PushText(entry, os.ReadFile): the stored payload (origin line
-// first) plus a blank line plus the report file's text, capped at
+// The text is PushText(entry, rt.Store.ReadFile): the stored payload (origin
+// line first) plus a blank line plus the report file's text, capped at
 // MaxPushBytes. With PullOptions.PathOnly, Pull returns the stored pointer
 // payload instead.
 func Pull(_ context.Context, rt Runtime, name string, opts PullOptions) (string, bool, error) {
@@ -63,6 +62,6 @@ func Pull(_ context.Context, rt Runtime, name string, opts PullOptions) (string,
 		return entry.Payload, true, nil
 	}
 
-	text, _ := PushText(entry, os.ReadFile)
+	text, _ := PushText(entry, rt.Store.ReadFile)
 	return text, true, nil
 }

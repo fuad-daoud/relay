@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -32,6 +33,10 @@ type Source struct {
 	Model      string // the candidate's; "" for an adopted builder
 	Plan       bool   // the candidate's subscription flag
 	StreamPath string // headless: the round's NNN-builder.jsonl
+	// ReadFile, when set, reads a stream path that is no longer on disk: a
+	// sealed round's file, held in the store's database (P3c §4.5). nil keeps
+	// today's behaviour -- a path that is not on disk is "no stream".
+	ReadFile   func(string) ([]byte, error)
 	Worktree   string // pane: the binding's worktree; "" for a --cwd binding
 	Start, End time.Time
 }
@@ -152,7 +157,7 @@ func waitClosed(ctx context.Context, path string) bool {
 
 func (r reader) readStream(ctx context.Context, src Source, wait bool) ([]Sample, string) {
 	if _, err := os.Stat(src.StreamPath); err != nil {
-		return nil, "no stream"
+		return readSealed(src)
 	}
 	closed := false
 	if wait {
@@ -171,6 +176,53 @@ func (r reader) readStream(ctx context.Context, src Source, wait bool) ([]Sample
 		return samples, "stream still open"
 	}
 	return samples, ""
+}
+
+// readSealed reads a stream that is no longer on disk through Source.ReadFile:
+// a sealed round's stream, held as a row in the store's database (P3c §4.5).
+// A sealed file is complete by definition -- a round seals only once nothing
+// can still write it -- so it is read whole, never waited on and never cached.
+func readSealed(src Source) ([]Sample, string) {
+	if src.ReadFile == nil {
+		return nil, "no stream"
+	}
+	data, err := src.ReadFile(src.StreamPath)
+	if err != nil {
+		return nil, "no stream"
+	}
+	c, ok := newSourceCarry(src)
+	if !ok {
+		return nil, "no reader for " + src.Harness
+	}
+	// Only whole lines are fed, exactly as parseCached does: a trailing
+	// partial line is not an event.
+	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
+		data = data[:i+1]
+	} else {
+		data = nil
+	}
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(line) > 0 && line[0] == '{' && len(line) <= maxLine {
+			c.feed(line)
+		}
+	}
+	samples := c.samples()
+	if len(samples) == 0 {
+		return nil, "no usage events"
+	}
+	return samples, ""
+}
+
+// newSourceCarry returns a fresh carry for src, resolving a codex model's
+// effort the way every reader path must.
+func newSourceCarry(src Source) (streamCarry, bool) {
+	model := src.Model
+	if src.Harness == "codex" {
+		if id, _, err := harness.SplitEffort(src.Model); err == nil {
+			model = id
+		}
+	}
+	return newCarry(src.Harness, src.Provider, model)
 }
 
 // parseCached reads src's stream through the per-stream cache (#234):
@@ -192,13 +244,7 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	key := src.StreamPath + "\x00" + src.Harness
 	e := r.cache[key]
 	if e == nil || info.Size() < e.offset {
-		model := src.Model
-		if src.Harness == "codex" {
-			if id, _, err := harness.SplitEffort(src.Model); err == nil {
-				model = id
-			}
-		}
-		c, ok := newCarry(src.Harness, src.Provider, model)
+		c, ok := newSourceCarry(src)
 		if !ok {
 			return nil, "no reader for " + src.Harness
 		}

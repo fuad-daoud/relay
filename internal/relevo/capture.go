@@ -354,7 +354,7 @@ func ReadDiff(rt Runtime, name string, round int) ([]byte, bool, error) {
 	}
 
 	path := rt.Store.DiffPath(name, round)
-	data, err := os.ReadFile(path)
+	data, err := rt.Store.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}

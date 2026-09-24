@@ -369,7 +369,7 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		appendLogMarker(b.Builder.LogPath, now, "rate-limited: "+m.Line)
 	}
 
-	if _, err := os.Stat(rt.Store.ReportPath(b.Name, b.Round)); err == nil {
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.ReportPath(b.Name, b.Round)); ok {
 		return b, m, false, nil
 	}
 

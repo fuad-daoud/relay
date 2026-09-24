@@ -38,8 +38,8 @@ var (
 // however much of the output was clock, timing or tempdir noise. "" when the
 // file cannot be read: the caller then skips the stall bound rather than
 // treating an unreadable log as a repeat.
-func gateSignature(logPath string) string {
-	data, err := os.ReadFile(logPath)
+func gateSignature(read func(string) ([]byte, error), logPath string) string {
+	data, err := read(logPath)
 	if err != nil {
 		return ""
 	}
@@ -100,7 +100,7 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 //
 // Preconditions: the round just closed; rec.Result == "fail"; b.Regate > 0.
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {
-	sig := gateSignature(rec.LogPath)
+	sig := gateSignature(rt.Store.ReadFile, rec.LogPath)
 	if b.RepairCount >= b.Regate {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, rec.LogPath))
 	}
@@ -111,7 +111,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	b.LastGateSig = sig
 	b.RepairCount++
 
-	text := repairPlan(b, failedRound, rt.Store.PlanPath(b.Name, failedRound), rec.LogPath, tailLines(rec.LogPath, repairTailLines))
+	text := repairPlan(b, failedRound, rt.Store.PlanPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
 	planPath := rt.Store.PlanPath(b.Name, b.Round)
 	if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))

@@ -176,7 +176,7 @@ func evaluateEdges(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		if err != nil {
 			return b, pendings, err
 		}
-		if _, err := os.Stat(path); err != nil {
+		if _, _, ok, err := rt.Store.StatFile(path); err != nil || !ok {
 			b.Edges[i].Fired = true
 			b.Edges[i].FiredAt = rt.Now().UTC()
 			b.Edges[i].Result = "skipped: no " + e.When

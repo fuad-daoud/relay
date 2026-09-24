@@ -284,6 +284,11 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 			return nil
 		}
 
+		// P3c §4.3: before Reconcile, seal every closed round whose files
+		// nothing can still read. Errors are logged per binding and never
+		// fail the tick.
+		sealRounds(d.rt.Store, tx, loaded)
+
 		fresh := backfillPlannerID(d.rt, loaded)
 
 		next, err := Reconcile(ctx, d.rt, tx, fresh)
@@ -298,6 +303,32 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		return tx.Save(next)
 	})
+}
+
+// sealRounds seals every sealable closed round of one binding (P3c §4.3):
+// the round's NNN-* files become round_file rows and then leave the binding
+// directory. It never fails the tick -- each error is logged and the next
+// tick retries, which is also what makes a failed removal harmless.
+func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
+	rounds, err := st.RoundsOnDisk(b.Name)
+	if err != nil {
+		slog.Warn("seal: list rounds", "binding", b.Name, "err", err)
+		return
+	}
+	for _, r := range rounds {
+		drained := st.StreamDrained(b, r)
+		if !store.Sealable(b, r, drained) {
+			continue
+		}
+		n, err := tx.SealRound(b.Name, r)
+		if err != nil {
+			slog.Warn("seal: round", "binding", b.Name, "round", r, "err", err)
+			continue
+		}
+		if n > 0 {
+			slog.Info("seal", "binding", b.Name, "round", r, "files", n)
+		}
+	}
 }
 
 // safely runs one of Tick's non-binding phases, recovering a panic so that a

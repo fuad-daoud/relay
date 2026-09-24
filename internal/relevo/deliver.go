@@ -3,7 +3,6 @@ package relevo
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -88,7 +87,7 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 	kind := b.Planner.Kind
 	if d, ok := rt.Deliverers[kind]; ok && kind != "" {
-		text, _ := PushText(pending, os.ReadFile)
+		text, _ := PushText(pending, rt.Store.ReadFile)
 		out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
 		if err != nil {
 			return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)

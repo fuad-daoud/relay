@@ -146,15 +146,15 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 
 	switch opts.Section {
 	case ShowPlan:
-		res.Text, res.Missing, err = readFileOrMissing(rt.Store.PlanPath(b.Name, round))
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.PlanPath(b.Name, round))
 	case ShowReport:
-		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReportPath(b.Name, round))
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.ReportPath(b.Name, round))
 	case ShowDiff:
-		res.Text, res.Missing, err = readFileOrMissing(rt.Store.DiffPath(b.Name, round))
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.DiffPath(b.Name, round))
 	case ShowDrift:
-		res.Text, res.Missing, err = readFileOrMissing(rt.Store.DriftPath(b.Name, round))
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.DriftPath(b.Name, round))
 	case ShowTranscript:
-		res.Text, res.Missing, err = readFileOrMissing(rt.Store.BuilderLogPath(b.Name, round))
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.BuilderLogPath(b.Name, round))
 	case ShowLog:
 		for _, e := range entries {
 			if e.Round == round {
@@ -259,10 +259,11 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 	return res, nil
 }
 
-// readFileOrMissing reads path, reporting Missing rather than an error when
-// it does not exist.
-func readFileOrMissing(path string) (text string, missing bool, err error) {
-	data, err := os.ReadFile(path)
+// readFileOrMissing reads path through read, reporting Missing rather than an
+// error when it does not exist. read is rt.Store.ReadFile, so a sealed
+// round's file is found in the database exactly as a present one is.
+func readFileOrMissing(read func(string) ([]byte, error), path string) (text string, missing bool, err error) {
+	data, err := read(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", true, nil

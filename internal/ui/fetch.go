@@ -148,7 +148,7 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				},
 			}
 		}
-		data, err := os.ReadFile(rt.Store.PlanPath(name, round))
+		data, err := rt.Store.ReadFile(rt.Store.PlanPath(name, round))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return tabMsg{
@@ -286,14 +286,16 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 }
 
 // logTab reads a round log for the terminal tab: the last headlessLogLines
-// lines, transcript true, logName the file's base name. ok is false when
-// the file cannot be read (missing or otherwise), so the caller decides
-// what the tab says instead: the pane branch falls back to the capture, the
-// headless branch keeps its own "log not written yet" prose. (Extracted
-// from the headless branch of fetchTerminal; that branch now calls it.)
-// key names the reply's row and name the store path the log was read from.
-func logTab(key, name, logPath string) (tabMsg, bool) {
-	data, err := os.ReadFile(logPath)
+// lines, transcript true, logName the file's base name. read is
+// rt.Store.ReadFile, so a sealed round's log is found in the database too.
+// ok is false when the file cannot be read (missing or otherwise), so the
+// caller decides what the tab says instead: the pane branch falls back to the
+// capture, the headless branch keeps its own "log not written yet" prose.
+// (Extracted from the headless branch of fetchTerminal; that branch now calls
+// it.) key names the reply's row and name the store path the log was read
+// from.
+func logTab(key, name string, read func(string) ([]byte, error), logPath string) (tabMsg, bool) {
+	data, err := read(logPath)
 	if err != nil {
 		return tabMsg{}, false
 	}
@@ -359,7 +361,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			if round != b.Round {
 				// A past round: its own file, canonically named, is the
 				// only place it could be.
-				if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
+				if msg, ok := logTab(key, name, rt.Store.ReadFile, rt.Store.BuilderLogPath(name, round)); ok {
 					msg.round = round
 					return msg
 				}
@@ -395,7 +397,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 					},
 				}
 			}
-			if msg, ok := logTab(key, name, logPath); ok {
+			if msg, ok := logTab(key, name, rt.Store.ReadFile, logPath); ok {
 				msg.round = round
 				return msg
 			}
@@ -415,7 +417,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 		// round's local builder log when relevo has one, otherwise the single
 		// line naming where the builder runs.
 		if b.Builder.Remote() {
-			if msg, ok := logTab(key, name, rt.Store.BuilderLogPath(name, round)); ok {
+			if msg, ok := logTab(key, name, rt.Store.ReadFile, rt.Store.BuilderLogPath(name, round)); ok {
 				msg.round = round
 				return msg
 			}

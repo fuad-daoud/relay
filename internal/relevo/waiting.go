@@ -4,7 +4,6 @@ package relevo
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -115,7 +114,7 @@ func WaitingOn(b store.Binding, entries []store.LogEntry, questionOf func(name s
 // place WaitingOn's callers touch the filesystem beyond the store.
 func questionFirstLine(rt Runtime) func(name string, round int) string {
 	return func(name string, round int) string {
-		data, err := os.ReadFile(rt.Store.QuestionPath(name, round))
+		data, err := rt.Store.ReadFile(rt.Store.QuestionPath(name, round))
 		if err != nil {
 			return ""
 		}

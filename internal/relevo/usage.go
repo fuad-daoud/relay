@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"context"
-	"os"
 	"strings"
 	"time"
 
@@ -55,6 +54,7 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 	src := usage.Source{
 		Harness:  b.Builder.Kind,
 		Mode:     usage.ModeHeadless,
+		ReadFile: rt.Store.ReadFile,
 		Worktree: b.Worktree,
 		Start:    start,
 		End:      end,
@@ -76,6 +76,7 @@ func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) 
 		Mode:       usage.ModeHeadless,
 		Worktree:   b.Worktree,
 		StreamPath: c.Endpoint.LogPath, // consults have no stream file today; the reader notes "no stream"
+		ReadFile:   rt.Store.ReadFile,
 		Start:      c.SpawnedAt,
 		End:        end,
 	}
@@ -152,7 +153,7 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 	// (#323, #324). A missing or unreadable stream leaves them zero; this
 	// is not part of the reader, so it happens with no reader too.
 	if src.StreamPath != "" {
-		if data, err := os.ReadFile(src.StreamPath); err == nil {
+		if data, err := rt.Store.ReadFile(src.StreamPath); err == nil {
 			steps := usage.StreamSteps(src.Harness, data)
 			u.Steps, u.ToolCalls = steps.Steps, steps.ToolCalls
 			u.StepP50MS, u.FirstOutputP50MS = steps.StepP50MS, steps.FirstOutputP50MS

@@ -383,16 +383,17 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	f, err := os.Open(path)
+	// A sealed round's file is a row, not a file (P3c §4.4): ReadFile answers
+	// from disk or from the sealed row, and a miss is still a 404.
+	data, err := rt.Store.ReadFile(path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "file not found")
 		return
 	}
-	defer f.Close()
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, f)
+	_, _ = w.Write(data)
 }
 
 // validTagRef reports whether a shipped tag is well formed enough to set as a
