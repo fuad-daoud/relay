@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -15,38 +14,28 @@ import (
 func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
 
-	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.live = true
-	m.detail.active = tabReport
-	m.detail.lastLogTS = ts
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "initial report"}
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	}}
+	rv := newTestRound(t, rt, rep, name, 0)
+	rv.pane.detail.active = tabReport
+	rv.pane.detail.lastLogTS = ts
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "initial report"}
+	rv.pane.tabInFlight = false
 
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{
-				Name:  name,
-				Round: 2,
-				Last: &relevo.LastEvent{
-					TS:    ts,
-					Round: 2,
-				},
-			},
-		},
-	}
-
-	res, cmd := m.Update(statusMsg{report: rep})
-	m = res.(Model)
+	next, cmd := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	got := next.(roundView)
 
 	if cmd != nil {
 		t.Fatalf("expected nil cmd for unchanged TS, got %v", cmd)
 	}
-	if !m.detail.cache[tabReport].loaded {
+	if !got.pane.detail.cache[tabReport].loaded {
 		t.Fatal("expected report cache to remain loaded when TS unchanged")
 	}
 }
@@ -55,72 +44,51 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
-
-	b := newTestBinding(name)
-	if err := st.Save(b); err != nil {
+	if err := st.Save(newTestBinding(name)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-
 	ts := time.Now().Truncate(time.Second)
-
-	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.live = true
-	m.detail.active = tabReport
-	m.detail.lastLogTS = ts
-	m.detail.vp = viewport.New(80, 20)
-
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "cached report"}
-	m.detail.cache[tabDiff] = tabContent{loaded: true, body: "cached diff"}
-	m.detail.cache[tabLog] = tabContent{loaded: true, body: "cached log"}
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "live terminal"}
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	}}
+	rv := newTestRound(t, rt, rep, name, 0)
+	rv.pane.detail.active = tabReport
+	rv.pane.detail.lastLogTS = ts
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "cached report"}
+	rv.pane.detail.cache[tabDiff] = tabContent{loaded: true, body: "cached diff"}
+	rv.pane.detail.cache[tabLog] = tabContent{loaded: true, body: "cached log"}
+	rv.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: "live terminal"}
+	rv.pane.tabInFlight = false
 
 	newTS := ts.Add(10 * time.Second)
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{
-				Name:  name,
-				Round: 4,
-				Last: &relevo.LastEvent{
-					TS:    newTS,
-					Round: 4,
-				},
-			},
-		},
-	}
+	newRep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: name, Round: 4, Display: "ACTIVE", Last: &relevo.LastEvent{TS: newTS, Round: 4}},
+	}}
+	next, cmd := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
+	got := next.(roundView)
 
-	res, cmd := m.Update(statusMsg{report: rep})
-	m = res.(Model)
-
-	if m.detail.cache[tabReport].loaded {
-		t.Error("tabReport cache should be cleared on new TS")
+	for _, tb := range []tab{tabReport, tabDiff, tabLog} {
+		if got.pane.detail.cache[tb].loaded {
+			t.Errorf("tab %v cache should be cleared on new TS", tb)
+		}
 	}
-	if m.detail.cache[tabDiff].loaded {
-		t.Error("tabDiff cache should be cleared on new TS")
-	}
-	if m.detail.cache[tabLog].loaded {
-		t.Error("tabLog cache should be cleared on new TS")
-	}
-	if !m.detail.cache[tabTerminal].loaded || m.detail.cache[tabTerminal].body != "live terminal" {
+	if !got.pane.detail.cache[tabTerminal].loaded || got.pane.detail.cache[tabTerminal].body != "live terminal" {
 		t.Error("tabTerminal cache must be untouched by log invalidation")
 	}
-
-	if m.detail.round != 3 {
-		t.Errorf("expected detail.round to update to 3 (row.Round-1), got %d", m.detail.round)
+	if got.pane.detail.round != 3 {
+		t.Errorf("expected detail.round to update to 3 (row.Round-1), got %d", got.pane.detail.round)
 	}
-	if !m.detail.lastLogTS.Equal(newTS) {
-		t.Errorf("expected lastLogTS to update to %v, got %v", newTS, m.detail.lastLogTS)
+	if !got.pane.detail.lastLogTS.Equal(newTS) {
+		t.Errorf("expected lastLogTS to update to %v, got %v", newTS, got.pane.detail.lastLogTS)
 	}
-
 	if cmd == nil {
 		t.Fatal("expected refetch cmd for active tab after invalidation")
 	}
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
+	tMsg, ok := cmd().(tabMsg)
 	if !ok {
-		t.Fatalf("expected tabMsg from refetch cmd, got %T", msg)
+		t.Fatalf("expected tabMsg from refetch cmd, got %T", cmd())
 	}
 	if tMsg.t != tabReport {
 		t.Fatalf("expected refetch of active tab (tabReport), got %v", tMsg.t)
@@ -130,38 +98,27 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
 
-	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.live = true
-	m.detail.active = tabReport
-	m.detail.lastLogTS = ts
-	m.detail.vp = viewport.New(80, 20)
-	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
-	m.detail.vp.YOffset = 33
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	}}
+	rv := newTestRound(t, rt, rep, name, 0)
+	rv.pane.detail.active = tabReport
+	rv.pane.detail.lastLogTS = ts
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.detail.vp.SetContent(strings.Repeat("line\n", 100))
+	rv.pane.detail.vp.YOffset = 33
 
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{
-				Name:  name,
-				Round: 2,
-				Last: &relevo.LastEvent{
-					TS:    ts,
-					Round: 2,
-				},
-			},
-		},
-	}
+	next, _ := rv.Update(statusMsg{report: rep}, testEnv(plannerSource{rt}, rep, 140, 40))
+	got := next.(roundView)
 
-	res, _ := m.Update(statusMsg{report: rep})
-	m = res.(Model)
-
-	if m.detail.vp.YOffset != 33 {
-		t.Errorf("expected scroll offset 33 preserved, got %d", m.detail.vp.YOffset)
+	if got.pane.detail.vp.YOffset != 33 {
+		t.Errorf("expected scroll offset 33 preserved, got %d", got.pane.detail.vp.YOffset)
 	}
 }
 
@@ -169,88 +126,68 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
-
-	b := newTestBinding(name)
-	if err := st.Save(b); err != nil {
+	if err := st.Save(newTestBinding(name)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.live = true
-	m.detail.active = tabTerminal
-	m.detail.vp = viewport.New(80, 20)
-	m.statusInFlight = false
-	m.tabInFlight = false
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 2, Display: "ACTIVE"}}}
+	rv := newTestRound(t, rt, rep, name, 0)
+	rv.pane.detail.active = tabTerminal
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.tabInFlight = false
 
-	// Tick while terminal is visible -> issues tab fetch
-	res, cmd := m.Update(tickMsg(time.Now()))
-	m = res.(Model)
-
-	batch := extractBatch(cmd)
-	if !hasTabMsg(batch) {
-		t.Error("terminal tab must issue fetch on every tick while visible")
+	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rep, 140, 40))
+	rv = next.(roundView)
+	if cmd == nil {
+		t.Fatal("terminal tab must issue a fetch on every tick while visible")
+	}
+	if _, ok := cmd().(tabMsg); !ok {
+		t.Error("the tick's command must be the terminal tab's fetch")
 	}
 
-	// Switch to report tab with cached content
-	m.detail.active = tabReport
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "report"}
-	m.statusInFlight = false
-	m.tabInFlight = false
-
-	// Tick while report tab is cached -> does not issue tab fetch
-	_, cmd2 := m.Update(tickMsg(time.Now()))
-	batch2 := extractBatch(cmd2)
-	if hasTabMsg(batch2) {
-		t.Error("file-backed cached tab must NOT issue fetch on tick")
+	// A cached file-backed tab issues none.
+	rv.pane.detail.active = tabReport
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "report"}
+	rv.pane.tabInFlight = false
+	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(plannerSource{rt}, rep, 140, 40))
+	if cmd2 != nil {
+		if _, ok := cmd2().(tabMsg); ok {
+			t.Error("file-backed cached tab must NOT issue fetch on tick")
+		}
 	}
 }
 
 func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
-	st := store.New(t.TempDir())
-	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	// width 80 (stack layout): this test predates footerView's width-aware
-	// left/right layout and was built at width 0, which the new footerView
-	// treats as "no room" and drops the right side entirely.
-	m.width = 80
+	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	v, _ := newRoundView(m.env(), "webshop", 0)
+	m.stack = append(m.stack, v)
 
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.live = true
-
-	// Report without "webshop"
-	emptyRep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: "other-binding"},
-		},
-	}
-
-	res, _ := m.Update(statusMsg{report: emptyRep})
+	emptyRep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: "other-binding", Display: "ACTIVE"}}}
+	res, cmd := m.Update(statusMsg{report: emptyRep})
 	m = res.(Model)
+	m = drain(t, m, cmd)
 
-	if m.screen != screenList {
-		t.Fatalf("expected screenList when binding vanishes, got %v", m.screen)
+	if len(m.stack) != 1 {
+		t.Fatalf("the round view must pop when its binding vanishes, depth = %d", len(m.stack))
 	}
 	if !strings.Contains(m.notice, "webshop is gone") {
 		t.Fatalf("expected 'webshop is gone' notice, got %q", m.notice)
 	}
-	if !strings.Contains(stripANSI(m.footerView()), "webshop is gone") {
-		t.Fatalf("expected footer to contain 'webshop is gone', got %q", stripANSI(m.footerView()))
+	if n := strings.Count(m.notice, "is gone"); n != 1 {
+		t.Errorf("notice must carry exactly one \"is gone\", got %d: %q", n, m.notice)
+	}
+	if !strings.Contains(stripANSI(m.keysView(m.env())), "webshop is gone") {
+		t.Fatalf("expected the keys row to show the notice, got %q", stripANSI(m.keysView(m.env())))
 	}
 
-	// Second good statusMsg must NOT clear the notice
+	// A later statusMsg must NOT clear the notice.
 	res, _ = m.Update(statusMsg{report: emptyRep})
 	m = res.(Model)
 	if !strings.Contains(m.notice, "webshop is gone") {
-		t.Fatalf("notice must survive subsequent statusMsg, got %q", m.notice)
-	}
-	if !strings.Contains(stripANSI(m.footerView()), "webshop is gone") {
-		t.Fatalf("footer must still show notice after subsequent statusMsg, got %q", stripANSI(m.footerView()))
+		t.Fatalf("notice must survive a subsequent statusMsg, got %q", m.notice)
 	}
 
-	// Keypress clears the notice
+	// A keypress clears it.
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = res.(Model)
 	if m.notice != "" {

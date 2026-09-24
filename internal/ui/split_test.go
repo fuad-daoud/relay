@@ -13,9 +13,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
-	"github.com/muesli/termenv"
 )
 
+// splitModel builds the shell at width x height with the given live rows
+// (R2.10: the split is gone (X1); this is now just "a loaded shell").
 func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
@@ -28,6 +29,67 @@ func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) M
 	return res.(Model)
 }
 
+// fleet is the shell's root fleet view.
+func fleet(m Model) fleetView { return m.stack[0].(fleetView) }
+
+// testEnv is a view's Env for a test at width x height, clock railNow.
+func testEnv(src Source, rep relevo.Report, width, height int) Env {
+	return Env{Ctx: context.Background(), Src: src, Report: rep, Loaded: true,
+		StatusAt: railNow, Now: railNow, Width: width, Height: height}
+}
+
+// newTestRound builds a round view over key with no live rows beyond ret.
+func newTestRound(t *testing.T, rt relevo.Runtime, rep relevo.Report, key string, round int) roundView {
+	t.Helper()
+	v, _ := newRoundView(testEnv(plannerSource{rt}, rep, 140, 40), key, round)
+	return v.(roundView)
+}
+
+// newTestHistRound builds a hist round view over h.
+func newTestHistRound(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding, round int) roundView {
+	t.Helper()
+	v, _ := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, round)
+	return v.(roundView)
+}
+
+// drain runs cmds through the model, unwrapping tea.BatchMsg as the
+// bubbletea loop does, until nothing is left. Commands the model returns
+// are drained too, so a save and its prefsSavedMsg do not leak.
+func drain(t *testing.T, m Model, cmds ...tea.Cmd) Model {
+	t.Helper()
+	queue := append([]tea.Cmd(nil), cmds...)
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		msg := c()
+		if b, ok := msg.(tea.BatchMsg); ok {
+			queue = append(append([]tea.Cmd(nil), b...), queue...)
+			continue
+		}
+		res, next := m.Update(msg)
+		m = res.(Model)
+		if next != nil {
+			queue = append(queue, next)
+		}
+	}
+	return m
+}
+
+// roundKey sends one key through a round view's Update.
+func roundKey(rv roundView, k tea.KeyMsg) roundView {
+	next, _ := rv.Update(k, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	return next.(roundView)
+}
+
+// roundMsg sends one message through a round view's Update.
+func roundMsg(rv roundView, msg tea.Msg) roundView {
+	next, _ := rv.Update(msg, testEnv(plannerSource{relevo.Runtime{}}, rv.pane.report, rv.pane.width, rv.pane.rows+4))
+	return next.(roundView)
+}
+
 func threeRows() []relevo.BindingStatus {
 	return []relevo.BindingStatus{
 		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
@@ -36,95 +98,179 @@ func threeRows() []relevo.BindingStatus {
 	}
 }
 
-// TestStickyFollowsKeyAcrossOwners: the rail's sticky is the row key, so a
+// TestStickyFollowsKeyAcrossOwners: the fleet's sticky is the row key, so a
 // second client's same-named binding appearing above must not steal the
 // cursor -- it stays on the key it was on.
 func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
 	m := splitModel(t, 140, 40, relevo.BindingStatus{
 		Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy",
 	})
-	if m.rows()[m.list.cursor].Key() != "b/persist" {
-		t.Fatalf("cursor on %q", m.rows()[m.list.cursor].Key())
+	fv := fleet(m)
+	if got := fv.rows(m.env())[fv.cursor].Key(); got != "b/persist" {
+		t.Fatalf("cursor on %q", got)
 	}
 	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
 		{Name: "persist", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 	}}})
 	m = res.(Model)
-	if m.rows()[m.list.cursor].Key() != "b/persist" {
-		t.Errorf("cursor moved to %q, want b/persist", m.rows()[m.list.cursor].Key())
+	fv = fleet(m)
+	if got := fv.rows(m.env())[fv.cursor].Key(); got != "b/persist" {
+		t.Errorf("cursor moved to %q, want b/persist", got)
 	}
 }
 
-// TestRailLinesGroupsByOwner: owner-labelled rows get a header per
-// maximal owner run -- the label, the ShortOwner fingerprint and the run's
-// count -- a blank line before each header, and global card indices; with
-// every label empty the output is exactly today's.
-func TestRailLinesGroupsByOwner(t *testing.T) {
-	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
-	rows := []relevo.BindingStatus{
-		{Name: "api", Owner: id, OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
-		{Name: "docs", Owner: id, OwnerLabel: "a", Round: 2, Display: "DONE", BuilderKind: "agy"},
-		{Name: "webshop", Owner: "SHA256:abcdefghijklmnop", OwnerLabel: "b", Round: 3, Display: "ACTIVE", BuilderKind: "agy"},
+// TestFleetNameColumnShowsOwnerName is the owner-grouping port (R2.10): a
+// server row's NAME cell is its Key(), owner/name, so two owners' same-named
+// bindings read apart.
+func TestFleetNameColumnShowsOwnerName(t *testing.T) {
+	m := splitModel(t, 140, 40,
+		relevo.BindingStatus{Name: "api", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
+		relevo.BindingStatus{Name: "api", Owner: "b", OwnerLabel: "b", Round: 2, Display: "ACTIVE", BuilderKind: "agy"},
+	)
+	view := plain(m.View())
+	if !strings.Contains(view, "a/api") || !strings.Contains(view, "b/api") {
+		t.Errorf("NAME column must show owner/name for both rows:\n%s", view)
 	}
-	lines := railLines(rows, -1, false, railNow, true, railDefault, false)
-	if plain(lines[0].text) != "a (SHA256:VLERFMZnvN5H…) 2" {
-		t.Errorf("first line = %q", plain(lines[0].text))
+}
+
+// TestSortToggleKeepsSelection pins §5.4's `s`: it flips the order, keeps
+// the selection, and returns the sort pref.
+func TestSortToggleKeepsSelection(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = res.(Model)
+	fv := fleet(m)
+	if got := fv.rows(m.env())[fv.cursor].Name; got != "api" {
+		t.Fatalf("cursor on %q", got)
 	}
-	if lines[0].binding != -1 {
-		t.Errorf("header must be untagged: %+v", lines[0])
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = res.(Model)
+	if cmd == nil {
+		t.Fatal("s must return a command (the sort pref)")
 	}
-	// run a's cards: every card line tagged its global row index
-	for i := 1; i <= 3; i++ {
-		if lines[i].binding != 0 {
-			t.Errorf("api card line %d binding = %d, want 0", i, lines[i].binding)
-		}
+	fv = fleet(m)
+	if fv.attention {
+		t.Error("s must switch to name order")
 	}
-	for i := 4; i <= 6; i++ {
-		if lines[i].binding != 1 {
-			t.Errorf("docs card line %d binding = %d, want 1", i, lines[i].binding)
-		}
+	if got := fv.rows(m.env())[fv.cursor].Name; got != "api" {
+		t.Errorf("cursor moved to %q on re-sort", got)
 	}
-	// the blank line that precedes the b header
-	if lines[7].binding != -1 || plain(lines[7].text) != "" {
-		t.Errorf("line before the b header must be a blank gap: %+v %q", lines[7], plain(lines[7].text))
+	rows := fv.rows(m.env())
+	if rows[0].Name != "api" || rows[2].Name != "webshop" {
+		t.Errorf("name order = %v", rows)
 	}
-	if lines[8].binding != -1 || plain(lines[8].text) != "b (SHA256:abcdefghijkl…) 1" {
-		t.Errorf("b header = %q", plain(lines[8].text))
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !fleet(res.(Model)).attention {
+		t.Error("s twice is identity")
 	}
-	for i := 9; i <= 11; i++ {
-		if lines[i].binding != 2 {
-			t.Errorf("webshop card line %d binding = %d, want 2", i, lines[i].binding)
-		}
-	}
-	// trailing blank closes the run
-	if lines[12].binding != -1 {
-		t.Errorf("trailing gap = %+v", lines[12])
-	}
-	if len(lines) != 13 {
-		t.Fatalf("%d lines, want 13", len(lines))
+}
+
+// TestFooterNoticesAndRefreshAge pins §5.3's keys row: the top view's keys
+// and the globals on the left, the notice and the refresh age on the right,
+// the right winning on overlap. The old "<other> NEEDS YOU" note is gone
+// (X6: the header's `● N need you` replaces it).
+func TestFooterNoticesAndRefreshAge(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.now = func() time.Time { return railNow.Add(2 * time.Second) }
+
+	// The refresh age is the fleet's context-row right side (§5.4).
+	if got := stripANSI(m.contextView(m.env())); !strings.Contains(got, "refreshed 2s ago") {
+		t.Errorf("context row must carry the refresh age: %q", got)
 	}
 
-	// All labels empty: no untagged lines beyond today's -- identical to
-	// today's output for the same rows.
-	plainRows := []relevo.BindingStatus{
-		{Name: "api", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
-		{Name: "docs", Round: 2, Display: "DONE", BuilderKind: "agy"},
-		{Name: "webshop", Round: 3, Display: "ACTIVE", BuilderKind: "agy"},
+	// A notice is the keys row's right side (§5.3).
+	res, _ := m.Update(noticeMsg{text: "hello"})
+	m = res.(Model)
+	if !strings.Contains(stripANSI(m.keysView(m.env())), "hello") {
+		t.Errorf("keys row must carry the notice: %q", stripANSI(m.keysView(m.env())))
 	}
-	got := railLines(plainRows, -1, false, railNow, true, railDefault, false)
-	if len(got) != 9 {
-		t.Fatalf("label-less rail has %d lines, want 9", len(got))
+	if !strings.Contains(stripANSI(m.keysView(m.env())), ": command") || !strings.Contains(stripANSI(m.keysView(m.env())), "? help") {
+		t.Errorf("the globals must be in the keys row: %q", stripANSI(m.keysView(m.env())))
 	}
-	for i, l := range got {
-		if l.binding != i/3 {
-			t.Errorf("line %d binding = %d, want %d", i, l.binding, i/3)
+
+	// A round view on top contributes its own keys.
+	v, _ := newRoundView(m.env(), "api", 0)
+	m.stack = append(m.stack, v)
+	if !strings.Contains(stripANSI(m.keysView(m.env())), "[ ]") {
+		t.Errorf("the round view's [ ] key must be in the keys row: %q", stripANSI(m.keysView(m.env())))
+	}
+
+	// The right side wins on overlap: at a narrow width the notice survives
+	// and the key list gives way.
+	m.width = 60
+	f := stripANSI(m.keysView(m.env()))
+	if lipgloss.Width(f) > 60 {
+		t.Errorf("keys row wider than the terminal: %q", f)
+	}
+	if !strings.Contains(f, "hello") {
+		t.Errorf("the notice must survive the squeeze: %q", f)
+	}
+	if strings.Contains(f, "q quit") {
+		t.Errorf("the key list must be the side that gives way: %q", f)
+	}
+}
+
+// TestHeaderGatesAndClock pins the header's right side (§5.3): the gates
+// and the clock.
+func TestHeaderGatesAndClock(t *testing.T) {
+	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
+	m := splitModel(t, 140, 40, threeRows()...)
+	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
+	h := stripANSI(m.headerView(m.env()))
+	if !strings.Contains(h, "codex gated until 15:30") || !strings.Contains(h, "14:02") {
+		t.Errorf("header = %q", h)
+	}
+	// The needs-you count is on the header too.
+	if !strings.Contains(h, "● 1 needs you") {
+		t.Errorf("header must carry the needs-you count: %q", h)
+	}
+}
+
+// TestTerminalFollowsTailUntilScrolledUp is the surviving tail rule
+// (plan §3), ported to the round view (R2.10).
+func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(newTestBinding("api")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rt := relevo.Runtime{Store: st}
+	rows := threeRows()
+	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
+
+	rv := newTestRound(t, rt, relevo.Report{Bindings: rows}, "api", 0)
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	rv.pane.tabInFlight = false
+	if !rv.pane.detail.follow {
+		t.Fatal("a fresh terminal tab must follow")
+	}
+	body := func(n int) string {
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			fmt.Fprintf(&b, "line %d\n", i)
 		}
+		return strings.TrimRight(b.String(), "\n")
 	}
-	for i, first := range []int{0, 3, 6} {
-		if p := plain(got[first].text); p != []string{"api r1", "docs r2", "webshop r3"}[i] {
-			t.Errorf("card %d first line = %q", i, p)
-		}
+	rv = roundMsg(rv, tabMsg{name: "api", round: rv.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
+	if !rv.pane.detail.vp.AtBottom() {
+		t.Error("following: a refresh must land at the bottom")
+	}
+	// Scroll up: follow clears.
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyUp})
+	if rv.pane.detail.follow {
+		t.Error("scrolling up must stop following")
+	}
+	y := rv.pane.detail.vp.YOffset
+	rv = roundMsg(rv, tabMsg{name: "api", round: rv.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
+	if rv.pane.detail.vp.YOffset != y {
+		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, rv.pane.detail.vp.YOffset)
+	}
+	// Back to the bottom: follow resumes.
+	for i := 0; i < 200 && !rv.pane.detail.vp.AtBottom(); i++ {
+		rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	if !rv.pane.detail.follow || !rv.pane.detail.vp.AtBottom() {
+		t.Error("scrolling to the bottom must resume following")
 	}
 }
 
@@ -132,13 +278,13 @@ func TestRailLinesGroupsByOwner(t *testing.T) {
 // replaced by the client line; a planner row keeps the planner line.
 func TestPaneHeadShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
-	m := splitModel(t, 140, 40, threeRows()...)
 
 	client := relevo.BindingStatus{
 		Name: "webshop", Owner: id, OwnerLabel: "zen", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 	}
-	head := stripANSI(strings.Join(m.paneHead(&client), "\n"))
+	p := paneModel(t, client, tabReport)
+	head := stripANSI(strings.Join(p.paneHead(&client), "\n"))
 	if !strings.Contains(head, "client") || !strings.Contains(head, "zen") {
 		t.Errorf("no client line:\n%s", head)
 	}
@@ -151,7 +297,8 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 		BuilderKind: "agy", BuilderStatus: "blocked",
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 	}
-	head = stripANSI(strings.Join(m.paneHead(&planner), "\n"))
+	p = paneModel(t, planner, tabReport)
+	head = stripANSI(strings.Join(p.paneHead(&planner), "\n"))
 	if !strings.Contains(head, "planner") {
 		t.Errorf("planner row must keep its planner line:\n%s", head)
 	}
@@ -160,344 +307,18 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 	}
 }
 
-func TestSplitViewShape(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	view := m.View()
-	lines := strings.Split(view, "\n")
-	if len(lines) != 40 {
-		t.Fatalf("%d lines at height 40", len(lines))
-	}
-	for i, l := range lines {
-		if w := lipgloss.Width(l); w > 140 {
-			t.Errorf("line %d is %d wide: %q", i, w, stripANSI(l))
-		}
-	}
-	p := plain(view)
-	if !strings.Contains(p, "relevo 3 bindings · 1 needs you") {
-		t.Errorf("header missing counts:\n%s", p)
-	}
-	// Attention order: webshop first and selected, pane shows it.
-	if idx := strings.Index(p, "▎ webshop"); idx < 0 || idx > strings.Index(p, " api ") {
-		t.Errorf("webshop must be the selected, first card:\n%s", p)
-	}
-	if !strings.Contains(p, "webshop round 4") {
-		t.Errorf("pane must show the cursor's binding:\n%s", p)
-	}
-	if !strings.Contains(p, "⏎ focus pane") || !strings.Contains(p, "s sort: attention") {
-		t.Errorf("split footer keys missing:\n%s", p)
-	}
-	if m.detail.name != "webshop" || m.detail.round != 3 {
-		t.Errorf("detail not pointed at the cursor: %+v", m.detail)
-	}
-}
-
-func TestPaneFollowsCursor(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	// The statusMsg pointed the pane at webshop and issued its fetch.
-	if !m.tabInFlight {
-		t.Fatal("initial point must fetch")
-	}
-	m.tabInFlight = false
-	m.detail.active = tabDiff
-	m.detail.scroll[tabDiff] = 7
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m = res.(Model)
-	if m.detail.name != "api" {
-		t.Errorf("after j the pane shows %q, want api", m.detail.name)
-	}
-	if cmd == nil || !m.tabInFlight {
-		t.Error("moving the cursor must issue exactly one fetch for the new binding")
-	}
-	if m.detail.active != tabDiff {
-		t.Error("the active tab must survive the move")
-	}
-	if m.detail.scroll[tabDiff] != 0 || m.detail.cache[tabDiff].loaded {
-		t.Error("parked scrolls and caches must be cleared")
-	}
-	// With a fetch in flight, a second move issues none.
-	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m = res.(Model)
-	if cmd != nil {
-		t.Error("a move while tabInFlight must not issue a second fetch")
-	}
-	if m.detail.name != "docs" {
-		t.Errorf("pane must still re-point: %q", m.detail.name)
-	}
-	// The reply for the binding the cursor left arrives: discarded, and
-	// the guard is released so the next tick can fetch for docs.
-	res, _ = m.Update(tabMsg{name: "webshop", round: 3, t: tabDiff, content: tabContent{loaded: true, body: "old"}})
-	m = res.(Model)
-	if m.detail.cache[tabDiff].loaded {
-		t.Error("stale tabMsg for a previous binding must be discarded")
-	}
-	if m.tabInFlight {
-		t.Error("a stale reply still completes the fetch; the guard must be released")
-	}
-}
-
-func TestResizeAcrossThreshold(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = res.(Model)
-	if m.screen != screenDetail {
-		t.Fatal("enter in split focuses the pane")
-	}
-	res, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	m = res.(Model)
-	if m.layout() != layoutStack || m.screen != screenDetail || m.detail.name != "webshop" {
-		t.Errorf("narrowing with the pane focused must land on the full-width detail of the same binding: layout=%v screen=%v name=%q", m.layout(), m.screen, m.detail.name)
-	}
-	if m.detail.vp.Width != 100 {
-		t.Errorf("viewport width after narrowing = %d", m.detail.vp.Width)
-	}
-	// Back to the list, then widen: the pane must point at the cursor.
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = res.(Model)
-	m.tabInFlight = false
-	m.detail = detailModel{}
-	res, cmd := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
-	m = res.(Model)
-	if m.detail.name != "webshop" || cmd == nil {
-		t.Errorf("widening from the list must point the pane at the cursor and fetch: %+v", m.detail)
-	}
-}
-
-func TestSortToggleKeepsSelection(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m = res.(Model)
-	if m.rows()[m.list.cursor].Name != "api" {
-		t.Fatalf("cursor on %q", m.rows()[m.list.cursor].Name)
-	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	m = res.(Model)
-	if m.sort {
-		t.Error("s must switch to name order")
-	}
-	if got := m.rows()[m.list.cursor].Name; got != "api" {
-		t.Errorf("cursor moved to %q on re-sort", got)
-	}
-	if m.rows()[0].Name != "api" || m.rows()[2].Name != "webshop" {
-		t.Errorf("name order = %v", m.rows())
-	}
-	if !strings.Contains(stripANSI(m.View()), "s sort: name") {
-		t.Error("footer must show the current order")
-	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	if !res.(Model).sort {
-		t.Error("s twice is identity")
-	}
-}
-
-func TestFooterNoticesAndRefreshAge(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}) // pane on api
-	m = res.(Model)
-	m.now = func() time.Time { return railNow.Add(2 * time.Second) }
-	f := stripANSI(m.footerView())
-	if !strings.Contains(f, "webshop NEEDS YOU") {
-		t.Errorf("another binding at NEEDS YOU must be a footer notice: %q", f)
-	}
-	if !strings.Contains(f, "[ ] round") {
-		t.Errorf("footer must show the [ ] round hint next to the tab hint: %q", f)
-	}
-	if !strings.HasSuffix(strings.TrimRight(f, " "), "refreshed 2s ago") {
-		t.Errorf("footer must end with the refresh age: %q", f)
-	}
-	// The right side wins when they would overlap: at the narrowest split
-	// width the six keys plus the notice do not fit on one line.
-	m.width = splitMinWidth
-	f = stripANSI(m.footerView())
-	if lipgloss.Width(f) > splitMinWidth {
-		t.Errorf("footer wider than the terminal: %q", f)
-	}
-	if !strings.Contains(f, "webshop NEEDS YOU") || !strings.Contains(f, "refreshed 2s ago") {
-		t.Errorf("the notice and the age must survive the squeeze: %q", f)
-	}
-	if strings.Contains(f, "q quit") {
-		t.Errorf("the key list must be the side that gives way: %q", f)
-	}
-}
-
-func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
-	rows := threeRows()
-	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
-	m := splitModel(t, 140, 40, rows...)
-	// Attention order puts webshop (NEEDS YOU) first; make api the one under
-	// test by moving to it, then to the terminal tab.
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m = res.(Model)
-	m.tabInFlight = false
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m = res.(Model)
-	m.tabInFlight = false
-	if !m.detail.follow {
-		t.Fatal("a fresh terminal tab must follow")
-	}
-	body := func(n int) string {
-		var b strings.Builder
-		for i := 1; i <= n; i++ {
-			fmt.Fprintf(&b, "line %d\n", i)
-		}
-		return strings.TrimRight(b.String(), "\n")
-	}
-	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
-	m = res.(Model)
-	if !m.detail.vp.AtBottom() {
-		t.Error("following: a refresh must land at the bottom")
-	}
-	// Scroll up: follow clears.
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // focus the pane
-	m = res.(Model)
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	m = res.(Model)
-	if m.detail.follow {
-		t.Error("scrolling up must stop following")
-	}
-	y := m.detail.vp.YOffset
-	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
-	m = res.(Model)
-	if m.detail.vp.YOffset != y {
-		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, m.detail.vp.YOffset)
-	}
-	// Back to the bottom: follow resumes. The viewport's default keymap has
-	// no Home/End binding, so page down repeatedly until AtBottom().
-	for i := 0; i < 200 && !m.detail.vp.AtBottom(); i++ {
-		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
-		m = res.(Model)
-	}
-	if !m.detail.follow || !m.detail.vp.AtBottom() {
-		t.Error("scrolling to the bottom must resume following")
-	}
-}
-
-func TestFocusIsVisible(t *testing.T) {
-	// ruleStyle and accentStyle render identically (plain text) under the
-	// Ascii profile go test's non-tty output gets by default; force real
-	// colour so the two are actually distinguishable, as detail_test.go and
-	// list_test.go already do for the same reason.
-	orig := lipgloss.ColorProfile()
-	defer lipgloss.SetColorProfile(orig)
-	lipgloss.SetColorProfile(termenv.TrueColor)
-
-	m := splitModel(t, 140, 40, threeRows()...)
-	railFocused := m.View()
-	if !strings.Contains(railFocused, ruleStyle.Render("│")) || strings.Contains(railFocused, accentStyle.Render("│")) {
-		t.Error("rail focused: separator must be in the rule colour")
-	}
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	paneFocused := res.(Model).View()
-	if !strings.Contains(paneFocused, accentStyle.Render("│")) {
-		t.Error("pane focused: separator must be in accent")
-	}
-	if !strings.Contains(paneFocused, dimStyle.Render("▎")) {
-		t.Error("pane focused: the selected card's gutter must dim")
-	}
-}
-
-func TestRailResizeKeys(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'>'}})
-	m = res.(Model)
-	if m.railCols != railDefault+railStep {
-		t.Errorf("> widens by railStep: %d", m.railCols)
-	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
-	res, _ = res.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
-	m = res.(Model)
-	if m.railCols != railDefault-railStep {
-		t.Errorf("< narrows by railStep: %d", m.railCols)
-	}
-	for i := 0; i < 50; i++ {
-		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'<'}})
-		m = res.(Model)
-	}
-	if m.railCols != railMin {
-		t.Errorf("< stops at railMin: %d", m.railCols)
-	}
-	view := m.View()
-	for i, l := range strings.Split(view, "\n") {
-		if w := lipgloss.Width(l); w > 140 {
-			t.Errorf("line %d is %d wide after resizing", i, w)
-		}
-	}
-	// The pane's viewport follows the divider.
-	if m.detail.vp.Width != m.paneWidth() {
-		t.Errorf("viewport width %d, pane %d", m.detail.vp.Width, m.paneWidth())
-	}
-}
-
-func TestCompactToggleKeepsSelection(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m = res.(Model)
-	name := m.rows()[m.list.cursor].Name
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = res.(Model)
-	if !m.compact || m.rows()[m.list.cursor].Name != name || m.detail.name != name {
-		t.Errorf("c: compact %v cursor %q pane %q", m.compact, m.rows()[m.list.cursor].Name, m.detail.name)
-	}
-	if !strings.Contains(stripANSI(m.View()), "c cards") {
-		t.Error("footer names the toggle's other state")
-	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	if res.(Model).compact {
-		t.Error("c twice is identity")
-	}
-}
-
-func TestCompactIgnoresResize(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = res.(Model)
-	before := m.railCols
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'>'}})
-	m = res.(Model)
-	if m.railCols != before || m.railWidth() != railCompact {
-		t.Errorf("> while compact: cols %d width %d", m.railCols, m.railWidth())
-	}
-	view := m.View()
-	for i, l := range strings.Split(view, "\n") {
-		if w := lipgloss.Width(l); w > 140 {
-			t.Errorf("line %d is %d wide", i, w)
-		}
-	}
-	if m.detail.vp.Width != 140-railCompact-railGap {
-		t.Errorf("viewport must widen with the pane: %d", m.detail.vp.Width)
-	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	m = res.(Model)
-	if m.detail.vp.Width != m.paneWidth() || m.railWidth() != before {
-		t.Errorf("back to cards: viewport %d pane %d rail %d", m.detail.vp.Width, m.paneWidth(), m.railWidth())
-	}
-}
-
-func TestHeaderGatesAndClock(t *testing.T) {
-	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
-	m := splitModel(t, 140, 40, threeRows()...)
-	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
-	h := stripANSI(m.headerView())
-	if !strings.Contains(h, "codex gated until 15:30") || !strings.Contains(h, "14:02") {
-		t.Errorf("header = %q", h)
-	}
-	if strings.Count(h, "\n") != headerRows-1 {
-		t.Errorf("header must be %d rows: %q", headerRows, h)
-	}
-}
-
 func TestPaneHeadUsageAndSpendRows(t *testing.T) {
-	rows := threeRows()
-	m := splitModel(t, 140, 40, rows...)
 	var b relevo.BindingStatus
-	for _, r := range rows {
-		if r.Name == m.detail.name {
+	for _, r := range threeRows() {
+		if r.Name == "webshop" {
 			b = r
 		}
 	}
+	p := paneModel(t, b, tabReport)
 	b.LastUsage = &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 		Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
-	head := m.paneHead(&b)
+	head := p.paneHead(&b)
 	joined := stripANSI(strings.Join(head, "\n"))
 	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 0 · out 55k · $4.71") {
 		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
@@ -509,12 +330,9 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 		t.Error("the block still ends with its blank row")
 	}
 	b.LastUsage, b.Spend = nil, nil
-	if n := len(m.paneHead(&b)); n != 5 {
+	p2 := paneModel(t, b, tabReport)
+	if n := len(p2.paneHead(&b)); n != 5 {
 		t.Errorf("without usage the block is 5 rows, got %d", n)
-	}
-	// The header no longer carries the spend: it belongs in the block.
-	if h := stripANSI(m.headerView()); strings.Contains(h, "spend") {
-		t.Errorf("header must not show spend: %q", h)
 	}
 }
 
@@ -522,21 +340,20 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 // (#234): a running round's `usage` row is the live one, exactly one, and
 // the closed round's row does not appear beside it; spend keeps its row.
 func TestPaneHeadLiveUsageRow(t *testing.T) {
-	rows := threeRows()
-	m := splitModel(t, 140, 40, rows...)
 	var b relevo.BindingStatus
-	for _, r := range rows {
-		if r.Name == m.detail.name {
+	for _, r := range threeRows() {
+		if r.Name == "webshop" {
 			b = r
 		}
 	}
+	p := paneModel(t, b, tabReport)
 	b.LastUsage = &usage.Usage{Harness: "agy", Provider: "google", Model: "gemini-3-pro", DurationMS: 6 * 60_000,
 		Cost: usage.Cost{Basis: usage.Unknown}, Note: "agy keeps no usage record"}
 	b.LiveUsage = &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
 		Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
 		Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 0.16}
-	head := m.paneHead(&b)
+	head := p.paneHead(&b)
 	joined := stripANSI(strings.Join(head, "\n"))
 	if n := strings.Count(joined, "usage    "); n != 1 {
 		t.Errorf("%d usage rows, want exactly one:\n%s", n, joined)

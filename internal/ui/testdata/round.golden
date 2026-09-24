@@ -1,0 +1,40 @@
+ relevo › fleet › webshop › r3                                                          ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
+webshop · round 3 of 4                                                                                                                      
+webshop  round 4   NEEDS YOU                                                                                            question r4 · 2m ago
+planner  architect-1 claude    route pull                                                                                                   
+builder  agy       blocked · 2 consults                                                                                                     
+tree     relevo/webshop · dirty                                                                                                             
+usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 50k · out 55k · $4.71                                                   
+spend    3 rounds +2c · $9.40 · 1 unknown                                                                                                   
+                                                                                                                                            
+ plan    report    terminal    diff    log                                                                                                  
+──────────────────━━━━━━━━━━────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+remote · captured 0s ago · 2 lines                                                                                                          
+                                                                                                                                            
+$ go test ./...                                                                                                                             
+ok      github.com/fuad-daoud/relevo/internal/ui    1.2s                                                                                    
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+relevo: relevo status --name webshop                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+tab next tab   1-5 tab   [ ] round   ↑↓ scroll   : command   ? help   esc back                                                              

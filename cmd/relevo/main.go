@@ -79,7 +79,7 @@ Commands:
               --stats rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
-  ui        interactive reader: report, terminal, diff and log tabs
+  ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   stop      kill the builder process and close its round without a report unless one is already on disk
   land      rebase a binding's branch onto its base, run the gate, push, and open or print the PR [--onto] [--pr] [--merge]
@@ -284,10 +284,33 @@ func noteRegateNoGate(b store.Binding) {
 	}
 }
 
+// isTerminal reports whether f is a character device: the same
+// os.ModeCharDevice check internal/ui/source.go uses for stdout.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// bareArgs is what a bare `relevo` runs: `ui` when stdin and stdout are both
+// terminals, nil otherwise (round 3, step 3.1). Pure, so a test covers all
+// four combinations without a terminal.
+func bareArgs(stdinTTY, stdoutTTY bool) []string {
+	if stdinTTY && stdoutTTY {
+		return []string{"ui"}
+	}
+	return nil
+}
+
 func run(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, usage)
-		return errUsagePrinted
+		// A bare `relevo` on a terminal is `relevo ui` (round 3, step 3.1);
+		// it then falls through every guard below exactly as `ui` does.
+		if uiArgs := bareArgs(isTerminal(os.Stdin), isTerminal(os.Stdout)); uiArgs != nil {
+			args = uiArgs
+		} else {
+			fmt.Fprint(os.Stderr, usage)
+			return errUsagePrinted
+		}
 	}
 
 	// #292 §4: an install that runs relevo before `relevo migrate` sees empty
@@ -2247,9 +2270,16 @@ func cmdWait(args []string) error {
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	interval := fs.Duration("interval", 0, "refresh interval")
-	dashboard := fs.Bool("dashboard", false, "start on the dashboard screen")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// A positional `:view` is refused with exit 2 before any runtime is
+	// built, so nothing touches the state directory (round 3, step 3.2).
+	start, err := uiStart(fs.Args())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCodeErr{code: 2}
 	}
 
 	rt, err := newRuntime()
@@ -2276,8 +2306,6 @@ func cmdUI(args []string) error {
 		return err
 	}
 
-	here, _ := os.Getwd()
-
 	// Preferences live in the machine database rt.DB holds once openDB
 	// succeeded; a failed open leaves them disabled, as an empty PrefsPath did
 	// (P3b plan §4.4).
@@ -2293,10 +2321,25 @@ func cmdUI(args []string) error {
 			Key:        "ui",
 			LegacyPath: filepath.Join(root, "ui.json"),
 		},
-		Here:      here,
-		Notice:    notice,
-		Dashboard: *dashboard,
+		Notice: notice,
+		Start:  start,
 	})
+}
+
+// uiStart maps `relevo ui`'s positional args to the shell's start command
+// (round 3, step 3.2): an empty list starts at :fleet; otherwise the first
+// arg names a view after ':' and every arg is joined into its command line.
+// Pure, so a cmd test covers it without running the ui, which needs a
+// terminal.
+func uiStart(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	if !strings.HasPrefix(args[0], ":") {
+		return "", fmt.Errorf("relevo ui: want :<view> (e.g. relevo ui :rounds), got %q", args[0])
+	}
+	parts := append([]string{args[0][1:]}, args[1:]...)
+	return strings.Join(parts, " "), nil
 }
 
 // runPick opens the interactive picker for one verb (#15). The three

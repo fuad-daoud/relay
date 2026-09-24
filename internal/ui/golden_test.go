@@ -22,8 +22,7 @@ import (
 
 var updateGolden = flag.Bool("update", false, "update golden files")
 
-// goldenModel is splitModel widened to take a full relevo.Report, so a
-// fixture can carry Gated alongside its rows.
+// goldenModel is a shell loaded with a full relevo.Report.
 func goldenModel(t *testing.T, width, height int, rep relevo.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
@@ -36,10 +35,8 @@ func goldenModel(t *testing.T, width, height int, rep relevo.Report) Model {
 	return res.(Model)
 }
 
-// allStatesRows covers every display state and the row facts the rail and
-// pane can show today: ACTIVE (a running round's live usage on the card
-// and in the header, #234), NEEDS YOU (blocked, dirty, consults), PAUSED,
-// ACTIVE, ACTIVE (headless, pid), DONE (--cwd, no branch).
+// allStatesRows covers every display state and the row facts the fleet and
+// pane can show today.
 func allStatesRows() []relevo.BindingStatus {
 	return []relevo.BindingStatus{
 		{
@@ -59,7 +56,7 @@ func allStatesRows() []relevo.BindingStatus {
 			LastUsage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 				Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, CacheWrite: 50_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1},
 			Spend:   &usage.Spend{Rounds: 3, Consults: 2, Measured: 9.40, Unknown: 1},
-			Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute), Hint: "relevo status --name webshop"},
+			Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute), Line: "which branch should r4 target?", Hint: "relevo status --name webshop"},
 			Last:    &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 		},
 		{
@@ -88,38 +85,15 @@ func allStatesRows() []relevo.BindingStatus {
 	}
 }
 
-// histRows covers a hist row's rendering (§5.8): one truly archived (tarred
-// by `gc`), one done but never archived -- neither shares a name with
-// allStatesRows(), so scopeRows never dedupes them away.
+// histRows is the archived fixture for the round-archived golden.
 func histRows() []relevo.HistoryBinding {
 	return []relevo.HistoryBinding{
 		{
-			Name: "oldapi", Rounds: 3, Feature: "auth",
+			Name: "oldapi", ID: "h1", Rounds: 3, Feature: "auth",
 			LastActivity: railNow.Add(-49 * 24 * time.Hour),
 			Archived:     true, ArchivedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 		},
-		{
-			Name:         "released",
-			Rounds:       1,
-			LastActivity: railNow.Add(-3 * time.Hour),
-		},
 	}
-}
-
-// goldenAllScopeModel is goldenModel with the rail in scope all: rep's
-// rows live, hist's rows the database's, exactly as a real statusMsg
-// carries both once scope is all (Task 3).
-func goldenAllScopeModel(t *testing.T, width, height int, rep relevo.Report, hist []relevo.HistoryBinding) Model {
-	t.Helper()
-	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
-	m.now = func() time.Time { return railNow }
-	m.scope = scopeAll
-	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	m = res.(Model)
-	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: rep, dbRows: hist})
-	return res.(Model)
 }
 
 func gatedGates() []ledger.Gate {
@@ -128,8 +102,7 @@ func gatedGates() []ledger.Gate {
 	}
 }
 
-// dashRows is the dashboard golden's fixed grid: three rounds across two
-// bindings and two builders, with the columns the grid and the tiles read.
+// dashRows is the dashboard golden's fixed grid.
 func dashRows() []db.RoundRow {
 	s := func(v string) *string { return &v }
 	i := func(v int) *int { return &v }
@@ -160,43 +133,71 @@ func dashRows() []db.RoundRow {
 	}
 }
 
-// goldenDashModel is goldenModel with a database behind the source, pressing
-// d to reach the dashboard and injecting its rowsMsg, as the host's loop
-// would after EnterDashboard's fetch.
-func goldenDashModel(t *testing.T, width, height int, rep relevo.Report) Model {
+// goldenRoundModel is the fleet with the cursor's row opened, then its
+// terminal tab fed so the golden shows content.
+func goldenRoundModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	terminalBody := "$ go test ./...\nok  \tgithub.com/fuad-daoud/relevo/internal/ui\t1.2s\n"
+	m := goldenModel(t, width, height, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(Model)
+	m = drain(t, m, cmd)
+	rv, ok := m.top().(roundView)
+	if !ok {
+		t.Fatalf("enter did not push a round view: %T", m.top())
+	}
+	name, round := rv.pane.detail.name, rv.pane.detail.round
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = res.(Model)
+	res, _ = m.Update(tabMsg{name: name, round: round, t: tabTerminal, content: tabContent{loaded: true, body: terminalBody, at: railNow}})
+	return res.(Model)
+}
+
+// goldenArchivedRoundModel pushes an archived round view with its plan tab
+// fed.
+func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	m = res.(Model)
+	m.statusLoaded = true
+	h := histRows()[0]
+	v, _ := newHistRoundView(m.env(), h, 0)
+	m.stack = append(m.stack, v)
+	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPlan, content: tabContent{loaded: true, round: 3, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"}})
+	return res.(Model)
+}
+
+// goldenRoundsModel hosts the dashboard with its rows fed, reached through
+// the shell's start command so the breadcrumb reads relevo › rounds, as the
+// real `:rounds` does (A5).
+func goldenRoundsModel(t *testing.T, width, height int) Model {
+	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second})
+	st := store.New(t.TempDir())
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+		Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: rep})
-	m = res.(Model)
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	m = res.(Model)
+	res, cmd := m.Update(statusMsg{report: relevo.Report{}})
+	m = drain(t, res.(Model), cmd)
+	if _, ok := m.top().(roundsView); !ok {
+		t.Fatalf("Start=rounds must replace the stack, top is %T", m.top())
+	}
 	res, _ = m.Update(dash.RowsMsg{Rows: dashRows(), At: railNow})
-	return res.(Model)
-}
-
-// feedTerminal switches the pane to the terminal tab and delivers a
-// tabMsg reply for it, so a golden fixture shows content instead of
-// "loading…".
-func feedTerminal(t *testing.T, m Model, name, body string) Model {
-	t.Helper()
-	m.detail.active = tabTerminal
-	res, _ := m.Update(tabMsg{name: name, round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body, at: railNow}})
 	return res.(Model)
 }
 
 func TestGoldenViews(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
-	terminalBody := "$ go test ./...\nok  \tgithub.com/fuad-daoud/relevo/internal/ui\t1.2s\n"
 
 	cases := []struct {
 		name          string
@@ -204,34 +205,40 @@ func TestGoldenViews(t *testing.T) {
 		build         func(t *testing.T) Model
 	}{
 		{
-			name: "split-all-states", width: 140, height: 40,
+			name: "fleet", width: 140, height: 40,
 			build: func(t *testing.T) Model {
-				rows := allStatesRows()
-				m := goldenModel(t, 140, 40, relevo.Report{Bindings: rows, Gated: gatedGates()})
-				// The pane points at the running-round binding, so the
-				// golden's header pins the live usage row (#234).
-				m, _ = m.pointDetailAt("atlas")
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				return goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
 			},
 		},
 		{
-			name: "split-long-name", width: 140, height: 40,
+			name: "fleet-narrow-80", width: 80, height: 30,
 			build: func(t *testing.T) Model {
-				rows := []relevo.BindingStatus{
-					{Name: strings.Repeat("x", 40), Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
+				return goldenModel(t, 80, 30, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+			},
+		},
+		{
+			name: "fleet-filtered", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+				res, _ := m.Update(key('/'))
+				m = res.(Model)
+				for _, r := range "web" {
+					res, _ = m.Update(key(r))
+					m = res.(Model)
 				}
-				m := goldenModel(t, 140, 40, relevo.Report{Bindings: rows})
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				return res.(Model)
 			},
 		},
 		{
-			name: "split-empty", width: 140, height: 40,
+			name: "fleet-empty", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				return goldenModel(t, 140, 40, relevo.Report{})
 			},
 		},
 		{
-			name: "split-error-before-load", width: 140, height: 40,
+			name: "fleet-error-before-load", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				st := store.New(t.TempDir())
 				m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
@@ -244,65 +251,32 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
-			name: "stack-empty", width: 100, height: 30,
-			build: func(t *testing.T) Model {
-				return goldenModel(t, 100, 30, relevo.Report{})
-			},
+			name: "round", width: 140, height: 40,
+			build: func(t *testing.T) Model { return goldenRoundModel(t, 140, 40) },
 		},
 		{
-			name: "stack-all-states", width: 80, height: 30,
-			build: func(t *testing.T) Model {
-				rows := allStatesRows()
-				return goldenModel(t, 80, 30, relevo.Report{Bindings: rows, Gated: gatedGates()})
-			},
+			name: "round-archived", width: 140, height: 40,
+			build: func(t *testing.T) Model { return goldenArchivedRoundModel(t, 140, 40) },
 		},
 		{
-			name: "stack-detail", width: 80, height: 30,
+			name: "rounds", width: 160, height: 40,
+			build: func(t *testing.T) Model { return goldenRoundsModel(t, 160, 40) },
+		},
+		{
+			name: "cmdline-open", width: 140, height: 40,
 			build: func(t *testing.T) Model {
-				rows := allStatesRows()
-				m := goldenModel(t, 80, 30, relevo.Report{Bindings: rows, Gated: gatedGates()})
-				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
 				m = res.(Model)
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+				return res.(Model)
 			},
 		},
 		{
-			// A short live list (unlike split-all-states' six), so the
-			// dim archived rows scope all appends actually fall inside
-			// the rendered window instead of scrolling off it.
-			name: "split-all-scope", width: 140, height: 40,
+			name: "help", width: 140, height: 40,
 			build: func(t *testing.T) Model {
-				rows := allStatesRows()[:2]
-				m := goldenAllScopeModel(t, 140, 40, relevo.Report{Bindings: rows}, histRows())
-				m, _ = m.pointDetailAt(rows[0].Name)
-				return feedTerminal(t, m, m.detail.name, terminalBody)
-			},
-		},
-		{
-			name: "stack-all-scope", width: 80, height: 30,
-			build: func(t *testing.T) Model {
-				rows := allStatesRows()[:2]
-				return goldenAllScopeModel(t, 80, 30, relevo.Report{Bindings: rows}, histRows())
-			},
-		},
-		{
-			// The dashboard through the host: fleet model, d, rowsMsg.
-			name: "split-dash", width: 160, height: 40,
-			build: func(t *testing.T) Model {
-				return goldenDashModel(t, 160, 40, relevo.Report{Bindings: allStatesRows()})
-			},
-		},
-		{
-			name: "split-archived-detail", width: 140, height: 40,
-			build: func(t *testing.T) Model {
-				rows := allStatesRows()
-				m := goldenAllScopeModel(t, 140, 40, relevo.Report{Bindings: rows}, histRows())
-				h := histRows()[0]
-				m, _ = m.pointDetailAtHist(h)
-				res, _ := m.Update(tabMsg{
-					name: h.Name, round: m.detail.round, t: tabPlan,
-					content: tabContent{loaded: true, round: m.detail.round, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"},
-				})
+				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 				return res.(Model)
 			},
 		},

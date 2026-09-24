@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -16,69 +15,79 @@ import (
 	"github.com/muesli/termenv"
 )
 
-func TestListWindow(t *testing.T) {
-	for _, tc := range []struct {
-		name                 string
-		top, cursor, rows, n int
-		want                 int
+// TestFleetWindowTopLines ports the windowing tests to the fleet table
+// (R2.10): it counts lines, not rows, and keeps the cursor row's lines
+// fully visible. The two-line NEEDS YOU case is included.
+func TestFleetWindowTopLines(t *testing.T) {
+	// 10 single-line rows.
+	var one []fleetLine
+	for i := 0; i < 10; i++ {
+		one = append(one, fleetLine{text: fmt.Sprintf("row %d", i), row: i})
+	}
+	// 10 two-line rows (each row has a question line under it).
+	var two []fleetLine
+	for i := 0; i < 10; i++ {
+		two = append(two, fleetLine{text: fmt.Sprintf("row %d", i), row: i}, fleetLine{text: "  └ q", row: i})
+	}
+
+	cases := []struct {
+		name    string
+		lines   []fleetLine
+		cursor  int
+		top     int
+		height  int
+		wantTop int
 	}{
-		{"no limit", 0, 0, 0, 10, 0},
-		{"fits", 0, 3, 5, 3, 0},
-		{"cursor below", 0, 7, 5, 10, 3},
-		{"cursor above", 6, 2, 5, 10, 2},
-		{"already visible", 3, 4, 5, 10, 3},
-		{"clamped from past the end", 9, 4, 5, 10, 4},
-		{"last row", 0, 9, 5, 10, 5},
-	} {
-		if got := listWindow(tc.top, tc.cursor, tc.rows, tc.n); got != tc.want {
-			t.Errorf("%s: listWindow(%d, %d, %d, %d) = %d, want %d",
-				tc.name, tc.top, tc.cursor, tc.rows, tc.n, got, tc.want)
+		{"no limit", one, 0, 0, 0, 0},
+		{"fits", one, 3, 0, 5, 0},
+		{"cursor below", one, 7, 0, 5, 3},
+		{"cursor above", one, 2, 6, 5, 2},
+		{"already visible", one, 4, 3, 5, 3},
+		{"clamped from past the end", one, 4, 9, 5, 4},
+		{"last row", one, 9, 0, 5, 5},
+		{"two-line row below", two, 7, 0, 5, 11},
+		{"two-line row above", two, 2, 12, 5, 4},
+	}
+	for _, tc := range cases {
+		f := fleetView{cursor: tc.cursor, top: tc.top}
+		if got := f.windowTopLines(tc.lines, tc.height); got != tc.wantTop {
+			t.Errorf("%s: windowTopLines(cursor %d, top %d, h %d) = %d, want %d",
+				tc.name, tc.cursor, tc.top, tc.height, got, tc.wantTop)
 		}
 	}
 }
 
-func TestListRowsBudget(t *testing.T) {
-	st := store.New(t.TempDir())
-	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 80
-
-	m.height = 24
-	m.err = nil
-	if got := m.bodyRows(); got != 21 {
-		t.Errorf("height 24, no error: bodyRows() = %d, want 21", got)
+// TestBodyHeight ports the old bodyRows budget to frame.bodyHeight.
+func TestBodyHeight(t *testing.T) {
+	env := Env{Height: 24}
+	if got := bodyHeight(env); got != 20 {
+		t.Errorf("height 24, no error: bodyHeight = %d, want 20", got)
 	}
-
-	m.err = errors.New("line one\nline two")
-	if got := m.bodyRows(); got != 19 {
-		t.Errorf("height 24, two-line error: bodyRows() = %d, want 19", got)
+	env.ErrRows = 2
+	if got := bodyHeight(env); got != 18 {
+		t.Errorf("height 24, two-line error: bodyHeight = %d, want 18", got)
 	}
-
-	m.height = 2
-	m.err = nil
-	if got := m.bodyRows(); got != 0 {
-		t.Errorf("height 2: bodyRows() = %d, want 0", got)
+	env = Env{Height: 2}
+	if got := bodyHeight(env); got != 0 {
+		t.Errorf("height 2: bodyHeight = %d, want 0", got)
 	}
-
-	m.height = 0
-	if got := m.bodyRows(); got != 0 {
-		t.Errorf("height 0: bodyRows() = %d, want 0", got)
+	env = Env{Height: 0}
+	if got := bodyHeight(env); got != 0 {
+		t.Errorf("height 0: bodyHeight = %d, want 0", got)
 	}
 }
 
-// tenBindings builds a model at the given height showing b00..b09.
-func tenBindings(t *testing.T, height int) Model {
+// tenBindings builds a shell at 80 x height showing b00..b{count-1}.
+func tenBindings(t *testing.T, height, count int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 80
-	m.height = height
+	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	m = res.(Model)
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(10)}})
+	m.statusInFlight = false
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(count)}})
 	return res.(Model)
 }
 
@@ -98,20 +107,19 @@ func press(t *testing.T, m Model, r rune) Model {
 	return res.(Model)
 }
 
-// assertCursorVisible fails t unless the list view shows the cursor row for
-// name, the header, the footer, and exactly m.height-1 newlines. The height is
-// read off the model so the same helper works after a resize.
+// assertCursorVisible fails t unless the fleet view shows the cursor row for
+// name, the header, the keys row, and exactly m.height-1 newlines.
 func assertCursorVisible(t *testing.T, m Model, name string) {
 	t.Helper()
 	view := m.View()
 	if !strings.Contains(plain(view), "▎ "+name) {
-		t.Errorf("view must show the cursor card for %s, got:\n%s", name, view)
+		t.Errorf("view must show the cursor row for %s, got:\n%s", name, view)
 	}
 	if !strings.Contains(plain(view), "relevo") {
 		t.Errorf("view must contain the header, got:\n%s", view)
 	}
-	if !strings.Contains(view, "open") {
-		t.Errorf("view must contain the footer, got:\n%s", view)
+	if !strings.Contains(plain(view), "open") {
+		t.Errorf("view must contain the keys row, got:\n%s", view)
 	}
 	if got := strings.Count(m.View(), "\n"); got != m.height-1 {
 		t.Errorf("view must have %d newlines at height %d, got %d:\n%s",
@@ -119,116 +127,87 @@ func assertCursorVisible(t *testing.T, m Model, name string) {
 	}
 }
 
-func TestListViewKeepsCursorVisibleWhenScrollingDown(t *testing.T) {
-	m := tenBindings(t, 15)
-	for i := 1; i <= 9; i++ {
+func TestFleetKeepsCursorVisibleWhenScrollingDown(t *testing.T) {
+	m := tenBindings(t, 12, 20)
+	for i := 1; i <= 12; i++ {
 		m = press(t, m, 'j')
 		assertCursorVisible(t, m, fmt.Sprintf("b%02d", i))
 	}
 }
 
-func TestListViewKeepsCursorVisibleWhenScrollingUp(t *testing.T) {
-	m := tenBindings(t, 15)
-	for i := 0; i < 9; i++ {
+func TestFleetKeepsCursorVisibleWhenScrollingUp(t *testing.T) {
+	m := tenBindings(t, 12, 20)
+	for i := 0; i < 12; i++ {
 		m = press(t, m, 'j')
 	}
-	for i := 8; i >= 0; i-- {
+	top := fleet(m).top
+	for i := 11; i >= 0; i-- {
 		m = press(t, m, 'k')
 		assertCursorVisible(t, m, fmt.Sprintf("b%02d", i))
-		if i == 8 {
-			// After the first k from the bottom the window must not have
-			// moved: it still shows b06..b09, not b05.
-			view := m.View()
-			if !strings.Contains(view, "b06") {
-				t.Errorf("after the first k the view must still contain b06, got:\n%s", view)
-			}
-			if strings.Contains(view, "b05") {
-				t.Errorf("after the first k the view must not contain b05 yet, got:\n%s", view)
+		if i == 11 {
+			if fleet(m).top != top {
+				t.Errorf("after the first k the window must not move: top %d -> %d", top, fleet(m).top)
 			}
 		}
 	}
 }
 
-func TestListViewRewindowsOnResize(t *testing.T) {
-	m := tenBindings(t, 15)
+func TestFleetRewindowsOnResize(t *testing.T) {
+	m := tenBindings(t, 15, 20)
 	for i := 0; i < 7; i++ {
 		m = press(t, m, 'j')
 	}
-	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 4})
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	m = res.(Model)
 	assertCursorVisible(t, m, "b07")
-	if got := strings.Count(m.View(), "\n"); got != 3 {
-		t.Errorf("after resize to height 4 the view must have 3 newlines, got %d:\n%s", got, m.View())
+	if got := strings.Count(m.View(), "\n"); got != 7 {
+		t.Errorf("after resize to height 8 the view must have 7 newlines, got %d:\n%s", got, m.View())
 	}
 }
 
-func TestListViewRewindowsWhenBindingRemoved(t *testing.T) {
-	m := tenBindings(t, 15)
+func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
+	m := tenBindings(t, 12, 10)
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
 	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(5)}})
 	m = res.(Model)
-	if m.list.cursor != 4 {
-		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", m.list.cursor)
+	if got := fleet(m).cursor; got != 4 {
+		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", got)
 	}
 	assertCursorVisible(t, m, "b04")
-}
-
-func TestListViewUnlimitedBeforeResize(t *testing.T) {
-	// Built by hand rather than through tenBindings: no WindowSizeMsg, so
-	// height stays 0 and listRows reads as no limit — every row must render,
-	// exactly as before windowing existed.
-	st := store.New(t.TempDir())
-	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 80
-	m.height = 0
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(10)}})
-	m = res.(Model)
-
-	view := m.View()
-	for _, name := range []string{"b00", "b01", "b02", "b03", "b04", "b05", "b06", "b07", "b08", "b09"} {
-		if !strings.Contains(view, name) {
-			t.Errorf("height 0 must render every row; %s missing from:\n%s", name, view)
-		}
-	}
 }
 
 func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m.now = func() time.Time { return railNow }
 
-	initialReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: "bravo"},
-			{Name: "charlie"},
-		},
-	}
-	res, _ := m.Update(statusMsg{report: initialReport})
+	initial := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "bravo", Display: "ACTIVE"},
+		{Name: "charlie", Display: "ACTIVE"},
+	}}
+	res, _ := m.Update(statusMsg{report: initial})
 	m = res.(Model)
-	if m.list.cursor != 0 || m.list.sticky != "bravo" {
-		t.Fatalf("expected cursor at 0 (bravo), got %d (%s)", m.list.cursor, m.list.sticky)
+	fv := fleet(m)
+	if fv.cursor != 0 || fv.sticky != "bravo" {
+		t.Fatalf("expected cursor at 0 (bravo), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	// Insert "alpha" before "bravo"
-	updatedReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: "alpha"},
-			{Name: "bravo"},
-			{Name: "charlie"},
-		},
-	}
-	res, _ = m.Update(statusMsg{report: updatedReport})
+	updated := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "alpha", Display: "ACTIVE"},
+		{Name: "bravo", Display: "ACTIVE"},
+		{Name: "charlie", Display: "ACTIVE"},
+	}}
+	res, _ = m.Update(statusMsg{report: updated})
 	m = res.(Model)
-
-	if m.list.cursor != 1 {
-		t.Errorf("expected cursor to track 'bravo' to index 1, got %d", m.list.cursor)
+	fv = fleet(m)
+	if fv.cursor != 1 {
+		t.Errorf("expected cursor to track 'bravo' to index 1, got %d", fv.cursor)
 	}
-	if m.list.sticky != "bravo" {
-		t.Errorf("expected sticky to remain 'bravo', got %s", m.list.sticky)
+	if fv.sticky != "bravo" {
+		t.Errorf("expected sticky to remain 'bravo', got %s", fv.sticky)
 	}
 }
 
@@ -236,37 +215,30 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
+	m.now = func() time.Time { return railNow }
 
-	initialReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: "alpha"},
-			{Name: "bravo"},
-		},
-	}
-	res, _ := m.Update(statusMsg{report: initialReport})
+	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "alpha", Display: "ACTIVE"},
+		{Name: "bravo", Display: "ACTIVE"},
+	}}})
 	m = res.(Model)
 
-	// Move down to "bravo"
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = res.(Model)
-	if m.list.cursor != 1 || m.list.sticky != "bravo" {
-		t.Fatalf("expected cursor on bravo (1), got %d (%s)", m.list.cursor, m.list.sticky)
+	if fv := fleet(m); fv.cursor != 1 || fv.sticky != "bravo" {
+		t.Fatalf("expected cursor on bravo (1), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	// "bravo" is removed
-	updatedReport := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: "alpha"},
-		},
-	}
-	res, _ = m.Update(statusMsg{report: updatedReport})
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "alpha", Display: "ACTIVE"},
+	}}})
 	m = res.(Model)
-
-	if m.list.cursor != 0 {
-		t.Errorf("expected cursor clamped to 0, got %d", m.list.cursor)
+	fv := fleet(m)
+	if fv.cursor != 0 {
+		t.Errorf("expected cursor clamped to 0, got %d", fv.cursor)
 	}
-	if m.list.sticky != "alpha" {
-		t.Errorf("expected sticky re-pointed to 'alpha', got %s", m.list.sticky)
+	if fv.sticky != "alpha" {
+		t.Errorf("expected sticky re-pointed to 'alpha', got %s", fv.sticky)
 	}
 }
 
@@ -274,23 +246,21 @@ func TestEmptyBindingsList(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 80
-	m.height = 24
-
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
 
-	view := m.View()
-	if !strings.Contains(view, "no bindings") {
-		t.Errorf("expected 'no bindings' in view, got:\n%s", view)
+	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	m = res.(Model)
+
+	if !strings.Contains(m.View(), "no bindings") {
+		t.Errorf("expected 'no bindings' in view, got:\n%s", m.View())
 	}
 
-	// Enter on empty bindings is a no-op
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
-	if m.screen != screenList {
-		t.Errorf("expected screen to remain screenList, got %v", m.screen)
+	if len(m.stack) != 1 {
+		t.Errorf("expected no push on an empty fleet, depth = %d", len(m.stack))
 	}
 	if cmd != nil {
 		t.Errorf("expected enter on empty list to return nil cmd, got %v", cmd)
@@ -306,11 +276,8 @@ func TestQuitFromList(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected quit cmd, got nil")
 	}
-	// In bubbletea, tea.Quit returns a quitMsg
-	msg := cmd()
-	if _, ok := msg.(tea.QuitMsg); !ok {
-		// tea.Quit() returns nil msg internally or signals quit
-		// In bubbletea tea.Quit() is func() Msg { return quitMsg{} }
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("q at depth 1 must return tea.Quit")
 	}
 }
 
@@ -334,82 +301,72 @@ func TestStateStylesDistinguishable(t *testing.T) {
 	if stateStyle("HELD").Render("HELD") == normalStyle.Render("HELD") {
 		t.Fatalf("HELD must be styled, not left as normalStyle (that was the old regression)")
 	}
-	// The selected-card gutter styling is pinned by TestCardLinesShapes'
-	// "blocked" case ("▎ webshop"); renderListRow/cursorStyle are gone
-	// (Task 3).
 }
 
-func TestListScreenThreeStates(t *testing.T) {
+// TestFleetThreeStates ports the rail's three list states (R2.10): loading
+// before the first status, an unavailable status after only a failure, and
+// "no bindings" after a successful empty report.
+func TestFleetThreeStates(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	// 1. Fresh model with no message renders "loading…"
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 80
-	m.height = 24
-	view := m.View()
-	if !strings.Contains(view, "loading…") {
-		t.Errorf("fresh model must render 'loading…', got:\n%s", view)
-	}
-	if strings.Contains(view, "no bindings") {
-		t.Errorf("fresh model must NOT render 'no bindings', got:\n%s", view)
-	}
-
-	// 2. Model receiving only a failing statusMsg renders cannot-reach line and NOT "no bindings"
-	res, _ := m.Update(statusMsg{err: errors.New("harness connection refused")})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
-	view = m.View()
-	if !strings.Contains(view, "status unavailable — see the error above") {
-		t.Errorf("failing statusMsg before any success must render status-unavailable line, got:\n%s", view)
+	if !strings.Contains(m.View(), "loading…") {
+		t.Errorf("fresh model must render 'loading…', got:\n%s", m.View())
 	}
-	if strings.Contains(view, "no bindings") {
-		t.Errorf("failing statusMsg before any success must NOT render 'no bindings', got:\n%s", view)
+	if strings.Contains(m.View(), "no bindings") {
+		t.Errorf("fresh model must NOT render 'no bindings', got:\n%s", m.View())
 	}
 
-	// 3. Model given a successful empty report renders "no bindings"
+	res, _ = m.Update(statusMsg{err: errors.New("harness connection refused")})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "harness connection refused") {
+		t.Errorf("a failing statusMsg must render the error block, got:\n%s", m.View())
+	}
+	if strings.Contains(m.View(), "no bindings") {
+		t.Errorf("a failing statusMsg before any success must NOT render 'no bindings', got:\n%s", m.View())
+	}
+
 	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
 	m = res.(Model)
-	view = m.View()
-	if !strings.Contains(view, "no bindings") {
-		t.Errorf("successful empty report must render 'no bindings', got:\n%s", view)
+	if !strings.Contains(m.View(), "no bindings") {
+		t.Errorf("successful empty report must render 'no bindings', got:\n%s", m.View())
 	}
 
-	// 4. A later failing poll after a successful one keeps showing the last good list rather than reverting
 	b := relevo.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
 	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
 	m = res.(Model)
-	view = m.View()
-	if !strings.Contains(view, "webshop") {
-		t.Fatalf("expected 'webshop' in list, got:\n%s", view)
+	if !strings.Contains(m.View(), "webshop") {
+		t.Fatalf("expected 'webshop' in the fleet, got:\n%s", m.View())
 	}
 
-	// Now fail
 	res, _ = m.Update(statusMsg{err: errors.New("intermittent failure")})
 	m = res.(Model)
-	view = m.View()
-	if !strings.Contains(view, "webshop") {
-		t.Errorf("failing poll after successful one must keep showing last good list, got:\n%s", view)
+	if !strings.Contains(m.View(), "webshop") {
+		t.Errorf("a failing poll after a successful one must keep the last good fleet, got:\n%s", m.View())
 	}
-	if strings.Contains(view, "cannot reach the daemon") {
-		t.Errorf("failing poll after successful one must NOT revert to cannot-reach, got:\n%s", view)
-	}
-	if strings.Contains(view, "no bindings") {
-		t.Errorf("failing poll after successful one must NOT revert to 'no bindings', got:\n%s", view)
+	if strings.Contains(m.View(), "cannot reach the daemon") || strings.Contains(m.View(), "no bindings") {
+		t.Errorf("a failing poll after a successful one must not revert, got:\n%s", m.View())
 	}
 }
 
-func TestRenderErrorAndListErrorBlock(t *testing.T) {
+// TestRenderErrorAndErrorBlock ports the error-block tests to the frame
+// (R2.10).
+func TestRenderErrorAndErrorBlock(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 
-	// 1. A three-line error renders as three lines with no line exceeding width
+	// 1. A three-line error renders as three lines, none wider than width.
 	threeLineErr := errors.New("error line one\nerror line two\nerror line three")
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.ready = true
-	m.width = 60
-	m.height = 24
-	m.err = threeLineErr
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m = res.(Model)
+	res, _ = m.Update(statusMsg{err: threeLineErr})
+	m = res.(Model)
 	view := m.View()
 
 	errRendered := renderError(threeLineErr, 60)
@@ -421,29 +378,26 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 		if w := lipgloss.Width(l); w > 60 {
 			t.Errorf("error line %d width %d > 60: %q", i, w, l)
 		}
-	}
-	for _, l := range errLines {
 		if !strings.Contains(view, l) {
 			t.Errorf("expected view to contain error line %q", l)
 		}
 	}
 
-	// 2. A multi-line error renders in full, its last line included
+	// 2. A multi-line error renders in full, its last line included.
 	multiLineMsg := "client protocol 22 is newer than server protocol 20; restart the daemon\n" +
 		"before using this command. Stop the old process to use the new version.\n" +
 		"Stopping exits running processes.\n" +
 		"Run `relevo daemon --stop`, then restart relevo with the\n" +
 		"same socket override."
-	m.err = errors.New(multiLineMsg)
-	view = m.View()
-	if !strings.Contains(view, "same socket override") {
-		t.Errorf("expected the last line of a multi-line error in listView output, got:\n%s", view)
+	res, _ = m.Update(statusMsg{err: errors.New(multiLineMsg)})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "same socket override") {
+		t.Errorf("expected the last line of a multi-line error, got:\n%s", m.View())
 	}
 
-	// 3. Error of more than maxErrorLines (8) lines is capped at maxErrorLines and ends with "…"
+	// 3. More than maxErrorLines is capped and ends with "…".
 	tenLineMsg := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10"
-	tenLineRendered := renderError(errors.New(tenLineMsg), 80)
-	cappedLines := strings.Split(tenLineRendered, "\n")
+	cappedLines := strings.Split(renderError(errors.New(tenLineMsg), 80), "\n")
 	if len(cappedLines) != maxErrorLines {
 		t.Fatalf("expected %d lines, got %d", maxErrorLines, len(cappedLines))
 	}
@@ -451,42 +405,19 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 		t.Fatalf("expected capped error to end with '…', got %q", cappedLines[len(cappedLines)-1])
 	}
 
-	// 4. Footer contains the marker "! refresh failed (retrying)" but not the error text
-	footer := stripANSI(m.footerView())
-	if !strings.Contains(footer, "! refresh failed (retrying)") {
-		t.Errorf("footer must contain '! refresh failed (retrying)', got %q", footer)
+	// 4. The keys row carries the marker, not the error text.
+	f := stripANSI(m.keysView(m.env()))
+	if !strings.Contains(f, "! refresh failed (retrying)") {
+		t.Errorf("keys row must contain '! refresh failed (retrying)', got %q", f)
 	}
-	if strings.Contains(footer, "client protocol") {
-		t.Errorf("footer must NOT contain error text, got %q", footer)
-	}
-
-	// 5. Detail screen has footer marker and NO error block
-	m.screen = screenDetail
-	m.width = 80
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "report content"}
-	m.detail.vp.SetContent(bodyOf(tabReport, m.detail.cache[tabReport], false))
-	detailOut := m.View()
-	if strings.Contains(detailOut, "client protocol") {
-		t.Errorf("detailView must NOT contain error block, got:\n%s", detailOut)
-	}
-	if !strings.Contains(detailOut, "! refresh failed (retrying)") {
-		t.Errorf("detailView footer must contain '! refresh failed (retrying)', got:\n%s", detailOut)
+	if strings.Contains(f, "client protocol") {
+		t.Errorf("keys row must NOT contain error text, got %q", f)
 	}
 
-	// 6. Nil m.err adds no lines to either screen
-	m.err = nil
-	m.screen = screenList
-	viewNoErr := m.View()
-	if strings.Contains(viewNoErr, "refresh failed") {
-		t.Errorf("nil err must not add refresh failed marker to list, got:\n%s", viewNoErr)
-	}
-
-	m.screen = screenDetail
-	detailNoErr := m.View()
-	if strings.Contains(detailNoErr, "refresh failed") {
-		t.Errorf("nil err must not add refresh failed marker to detail, got:\n%s", detailNoErr)
+	// 5. A nil error adds no error block and no marker.
+	res, _ = m.Update(statusMsg{report: relevo.Report{}})
+	m = res.(Model)
+	if strings.Contains(m.View(), "refresh failed") || strings.Contains(m.View(), "client protocol") {
+		t.Errorf("nil err must not add an error block or marker, got:\n%s", m.View())
 	}
 }
