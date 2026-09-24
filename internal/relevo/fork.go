@@ -19,8 +19,8 @@ var ErrRoundOutOfRange = errors.New("round is outside the source binding's histo
 // --builder to spawn from.
 var ErrNoBuilderCandidate = errors.New("source binding has no builder candidate; pass --builder")
 
-// ErrGitRequired reports a fork that needs a worktree with no git available.
-var ErrGitRequired = errors.New("relevo fork needs git; pass --cwd to bind a tree yourself")
+// ErrGitRequired reports a bind that needs a worktree with no git available.
+var ErrGitRequired = errors.New("relevo bind needs git; pass --cwd to bind a tree yourself")
 
 // ForkOptions describes one fork request.
 type ForkOptions struct {

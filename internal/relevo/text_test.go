@@ -7,7 +7,7 @@ import "testing"
 // never say different things (spec §5).
 
 func TestDoneText(t *testing.T) {
-	base := "webshop marked done; relaying stopped (relevo gc archives it when you are finished with it)"
+	base := "webshop marked done; relaying stopped (relevo unbind --done archives it when you are finished with it)"
 	cases := []struct {
 		name string
 		res  DoneResult
@@ -20,7 +20,7 @@ func TestDoneText(t *testing.T) {
 		{"removed without branch", DoneResult{WorktreeRemoved: "/w"},
 			base + "\nremoved worktree /w"},
 		{"kept", DoneResult{WorktreeKept: "/w", KeptReason: "uncommitted changes"},
-			base + "\nkept worktree /w (uncommitted changes); relevo gc retries when it is clean"},
+			base + "\nkept worktree /w (uncommitted changes); relevo unbind --done retries when it is clean"},
 		{"gone", DoneResult{WorktreeGone: "/w"},
 			base + "\nworktree /w was already gone"},
 	}
@@ -67,24 +67,6 @@ func TestUnbindTextProcessLines(t *testing.T) {
 	// No process, no line: existing output is unchanged.
 	if got := UnbindText("x", UnbindResult{}); got != "unbound x" {
 		t.Errorf("plain: %q", got)
-	}
-}
-
-func TestPauseText(t *testing.T) {
-	cases := []struct {
-		name string
-		res  PauseResult
-		want string
-	}{
-		{"between rounds", PauseResult{Round: 1, Branch: "relevo/x", Worktree: "/w"},
-			"webshop paused after round 1; worktree /w released, branch relevo/x kept\n  resume: relevo bind --resume --name webshop"},
-		{"committed", PauseResult{Round: 2, Branch: "relevo/x", Worktree: "/w", Committed: "abcdef1234567890"},
-			"webshop paused after round 2; worktree /w released, branch relevo/x kept\n  committed abcdef123456 ([relevo] webshop: paused after round 2)\n  resume: relevo bind --resume --name webshop"},
-	}
-	for _, c := range cases {
-		if got := PauseText("webshop", c.res); got != c.want {
-			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
-		}
 	}
 }
 

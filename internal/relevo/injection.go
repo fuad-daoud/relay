@@ -178,11 +178,11 @@ func composeFlagged(regexLines []int, kept []classify.Paragraph, probs []float64
 // flaggedParenthetical moves here from reconcile.go. With rec == nil or
 // rec.Note != "" it is #139's text unchanged:
 //
-//	" (N instruction-shaped line[s] flagged; see relevo log)"
+//	" (N instruction-shaped line[s] flagged; see relevo show --log)"
 //
 // With a successful rec it is
 //
-//	" (N instruction-shaped line[s] flagged; jev p=0.94; see relevo log)"
+//	" (N instruction-shaped line[s] flagged; jev p=0.94; see relevo show --log)"
 //
 // where p is rec.Max formatted %.2f. Empty when flagged <= 0, always.
 func flaggedParenthetical(flagged int, rec *store.ClassifyRecord) string {
@@ -194,7 +194,7 @@ func flaggedParenthetical(flagged int, rec *store.ClassifyRecord) string {
 		unit = "line"
 	}
 	if rec == nil || rec.Note != "" {
-		return fmt.Sprintf(" (%d instruction-shaped %s flagged; see relevo log)", flagged, unit)
+		return fmt.Sprintf(" (%d instruction-shaped %s flagged; see relevo show --log)", flagged, unit)
 	}
-	return fmt.Sprintf(" (%d instruction-shaped %s flagged; jev p=%.2f; see relevo log)", flagged, unit, rec.Max)
+	return fmt.Sprintf(" (%d instruction-shaped %s flagged; jev p=%.2f; see relevo show --log)", flagged, unit, rec.Max)
 }

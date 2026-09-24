@@ -134,16 +134,6 @@ func TestSendVerifyAndNoVerifyAreExclusive(t *testing.T) {
 	}
 }
 
-func TestPauseRefusesToGuessTheBinding(t *testing.T) {
-	err := run([]string{"pause"})
-	if err == nil {
-		t.Fatal("relevo pause with no binding must be refused")
-	}
-	if !strings.Contains(err.Error(), "--name") {
-		t.Errorf("error must point at --name, got %q", err)
-	}
-}
-
 func TestStopRefusesToGuessTheBinding(t *testing.T) {
 	err := run([]string{"stop"})
 	if err == nil {
@@ -202,7 +192,7 @@ func TestExplicitBindingNeverGuesses(t *testing.T) {
 }
 
 func TestDiffHelp(t *testing.T) {
-	err := run([]string{"diff", "-h"})
+	err := run([]string{"show", "-h"})
 	if !errors.Is(err, errHelpShown) {
 		t.Fatalf("got %v, want errHelpShown", err)
 	}
@@ -274,7 +264,7 @@ func TestDiffCommand(t *testing.T) {
 	}
 	os.Stdout = w
 
-	runErr := run([]string{"diff", "--name", "webshop"})
+	runErr := run([]string{"show", "webshop", "--diff"})
 
 	w.Close()
 	os.Stdout = origStdout
@@ -306,7 +296,7 @@ func TestDiffCommand(t *testing.T) {
 	// Test --stat flag
 	r2, w2, _ := os.Pipe()
 	os.Stdout = w2
-	runErr = run([]string{"diff", "--name", "webshop", "--stat"})
+	runErr = run([]string{"show", "webshop", "--diff", "--stat"})
 	w2.Close()
 	os.Stdout = origStdout
 	outStat, _ := io.ReadAll(r2)
@@ -318,7 +308,7 @@ func TestDiffCommand(t *testing.T) {
 	}
 
 	// Test unknown round errors naming binding and round
-	errUnknown := run([]string{"diff", "--name", "webshop", "--round", "99"})
+	errUnknown := run([]string{"show", "webshop", "--diff", "--round", "99"})
 	if errUnknown == nil {
 		t.Fatal("expected error for unknown round")
 	}
@@ -331,7 +321,7 @@ func TestDiffCommand(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatal(err)
 	}
-	errNoCompleted := run([]string{"diff", "--name", "webshop"})
+	errNoCompleted := run([]string{"show", "webshop", "--diff"})
 	if errNoCompleted == nil {
 		t.Fatal("expected error for binding with no completed round")
 	}
@@ -366,7 +356,7 @@ func TestDiffAnchorsCommand(t *testing.T) {
 	}
 
 	stdout, _, runErr := captureOutput(t, func() error {
-		return run([]string{"diff", "--name", "webshop", "--anchors"})
+		return run([]string{"show", "webshop", "--diff", "--anchors"})
 	})
 	if runErr != nil {
 		t.Fatalf("run diff --anchors: %v", runErr)
@@ -445,7 +435,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	}
 	os.Stdout = w
 
-	runErr := run([]string{"diff", "--name", "webshop", "--drift"})
+	runErr := run([]string{"show", "webshop", "--drift"})
 
 	w.Close()
 	os.Stdout = origStdout
@@ -463,7 +453,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	// 2. --round overrides (requests round 1)
 	rRound, wRound, _ := os.Pipe()
 	os.Stdout = wRound
-	runErr = run([]string{"diff", "--name", "webshop", "--drift", "--round", "1"})
+	runErr = run([]string{"show", "webshop", "--drift", "--round", "1"})
 	wRound.Close()
 	os.Stdout = origStdout
 	outRound, _ := io.ReadAll(rRound)
@@ -477,7 +467,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	// 3. --stat prints the KindDrift Note
 	rStat, wStat, _ := os.Pipe()
 	os.Stdout = wStat
-	runErr = run([]string{"diff", "--name", "webshop", "--drift", "--stat"})
+	runErr = run([]string{"show", "webshop", "--drift", "--stat"})
 	wStat.Close()
 	os.Stdout = origStdout
 	outStat, _ := io.ReadAll(rStat)
@@ -489,7 +479,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	}
 
 	// 4. a round with no drift errors mentioning --drift
-	errNoDrift := run([]string{"diff", "--name", "webshop", "--drift", "--round", "99"})
+	errNoDrift := run([]string{"show", "webshop", "--drift", "--round", "99"})
 	if errNoDrift == nil {
 		t.Fatal("expected error for round with no drift")
 	}
@@ -497,7 +487,7 @@ func TestDiffDriftCommand(t *testing.T) {
 		t.Fatalf("error %q must name --drift, round 99, and webshop", errNoDrift.Error())
 	}
 
-	errNoDriftStat := run([]string{"diff", "--name", "webshop", "--drift", "--stat", "--round", "99"})
+	errNoDriftStat := run([]string{"show", "webshop", "--drift", "--stat", "--round", "99"})
 	if errNoDriftStat == nil {
 		t.Fatal("expected error for --stat on round with no drift")
 	}
@@ -507,34 +497,27 @@ func TestDiffDriftCommand(t *testing.T) {
 }
 
 func TestForkHelp(t *testing.T) {
-	err := run([]string{"fork", "-h"})
+	err := run([]string{"bind", "--from", "src", "-h"})
 	if !errors.Is(err, errHelpShown) {
 		t.Fatalf("got %v, want errHelpShown", err)
 	}
 }
 
 func TestForkValidation(t *testing.T) {
-	// Each assertion names the specific validation being exercised. The usage
-	// line lists every flag, so asserting on a bare "--round" would pass on the
-	// usage string alone -- which is exactly how these cases passed while never
-	// reaching the validation they claim to cover (#48).
+	// Each assertion names the specific validation being exercised: the
+	// new binding's name is --name, and the round comes from --from's @ROUND
+	// or from --round.
 
-	// Missing source
-	err := run([]string{"fork", "--round", "1", "--new-name", "fork-1"})
-	if err == nil || !strings.Contains(err.Error(), "needs the source binding name") {
-		t.Fatalf("expected the refuse-to-guess error, got %v", err)
-	}
-
-	// Missing --round
-	err = run([]string{"fork", "src", "--new-name", "fork-1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo fork requires --round N") {
+	// Missing --round: no @ROUND in --from and --round left at 0.
+	err := run([]string{"bind", "--from", "src", "--name", "fork-1"})
+	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --round N") {
 		t.Fatalf("expected the --round validation, got %v", err)
 	}
 
-	// Missing --new-name
-	err = run([]string{"fork", "src", "--round", "1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo fork requires --new-name NAME") {
-		t.Fatalf("expected the --new-name validation, got %v", err)
+	// Missing --name, the new binding's name.
+	err = run([]string{"bind", "--from", "src", "--round", "1"})
+	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --name NAME") {
+		t.Fatalf("expected the --name validation, got %v", err)
 	}
 }
 
@@ -588,7 +571,7 @@ func TestDiffHonoursConfigHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := run([]string{"diff", "--name", "anything"})
+	err := run([]string{"show", "anything", "--diff"})
 	if err == nil {
 		t.Fatal("diff must fail when XDG_CONFIG_HOME names an invalid candidate")
 	}
@@ -660,7 +643,7 @@ func TestHooksConfigHome(t *testing.T) {
 // check -- which runs before any runtime is built, so this test touches
 // neither the state directory nor a harness.
 func TestAddHelp(t *testing.T) {
-	err := run([]string{"add", "-h"})
+	err := run([]string{"bind", "--worktree", "-h"})
 	if !errors.Is(err, errHelpShown) {
 		t.Fatalf("got %v, want errHelpShown", err)
 	}
@@ -668,7 +651,7 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"add", "--builder", "claude/test/m"})
+	err := run([]string{"bind", "--worktree", "--builder", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
 	}
@@ -677,7 +660,7 @@ func TestAddValidation(t *testing.T) {
 // TestAddBranchWithCwdIsRefusedBeforeRuntime pins the flag-pair refusal: it
 // happens in validation, before newRuntime, so it reaches no harness.
 func TestAddBranchWithCwdIsRefusedBeforeRuntime(t *testing.T) {
-	err := run([]string{"add", "--branch", "x", "--cwd", "/tmp"})
+	err := run([]string{"bind", "--branch", "x", "--cwd", "/tmp"})
 	if err == nil || !strings.Contains(err.Error(), "exclusive") {
 		t.Fatalf("expected an 'exclusive' refusal, got %v", err)
 	}
@@ -695,7 +678,7 @@ func TestAddBranchDerivesName(t *testing.T) {
 	t.Setenv("RELEVO_PLANNER", "")
 	t.Setenv("CLAUDECODE", "")
 
-	err := run([]string{"add", "--branch", "feature/api-auth"})
+	err := run([]string{"bind", "--branch", "feature/api-auth"})
 	if err == nil {
 		t.Fatal("add without a relevo planner must refuse")
 	}
@@ -961,8 +944,8 @@ func TestParseFor(t *testing.T) {
 func TestBindRejectsTabFlag(t *testing.T) {
 	for _, args := range [][]string{
 		{"bind", "--tab"},
-		{"add", "--name", "x", "--tab"},
-		{"fork", "x", "--round", "1", "--new-name", "y", "--tab"},
+		{"bind", "--worktree", "--name", "x", "--tab"},
+		{"bind", "--from", "x", "--round", "1", "--name", "y", "--tab"},
 		{"ask", "--role", "reviewer", "--file", "q.md", "--new-tab"},
 	} {
 		err := run(args)
@@ -1228,5 +1211,107 @@ func TestDaemonPreflightFailsOnBadConfig(t *testing.T) {
 
 	if err := cmdDaemon([]string{"--preflight"}); err == nil {
 		t.Fatal("cmdDaemon --preflight with a malformed policy.json: err = nil, want an error")
+	}
+}
+
+// TestBindRoutesAndRefusals pins §4.1: the flag combinations choose the path,
+// and the forbidden pairs exit 2 before any runtime is built. bindRouteFor is
+// a pure function, so the valid half needs no state; the invalid half goes
+// through run so the exit code and the one-line refusal are pinned too.
+func TestBindRoutesAndRefusals(t *testing.T) {
+	valid := []struct {
+		name string
+		f    bindFlags
+		want bindRoute
+	}{
+		{"no placement is bind", bindFlags{}, routeBind},
+		{"resume is bind", bindFlags{name: "x", resume: true}, routeBind},
+		{"rebind is bind", bindFlags{name: "x", resume: true, rebind: true}, routeBind},
+		{"worktree is add", bindFlags{worktree: true}, routeAdd},
+		{"cwd is add", bindFlags{cwd: "/tmp"}, routeAdd},
+		{"branch is add", bindFlags{branch: "b"}, routeAdd},
+		{"server is add", bindFlags{server: "s"}, routeAdd},
+		{"base is add", bindFlags{base: "main"}, routeAdd},
+		{"from is fork", bindFlags{from: "src@2", name: "new"}, routeFork},
+		{"from with cwd is fork", bindFlags{from: "src@2", name: "new", cwd: "/tmp"}, routeFork},
+	}
+	for _, c := range valid {
+		got, err := bindRouteFor(c.f)
+		if err != nil {
+			t.Errorf("%s: bindRouteFor = %v, want nil", c.name, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: route = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	invalid := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"from+resume", []string{"bind", "--from", "src@1", "--name", "x", "--resume"}, "--from cannot be combined with --resume/--rebind"},
+		{"from+rebind", []string{"bind", "--from", "src@1", "--name", "x", "--rebind"}, "--from cannot be combined with --resume/--rebind"},
+		{"from+worktree", []string{"bind", "--from", "src@1", "--name", "x", "--worktree"}, "--from cannot be combined with --worktree"},
+		{"from+branch", []string{"bind", "--from", "src@1", "--name", "x", "--branch", "b"}, "--from cannot be combined with --worktree"},
+		{"from+server", []string{"bind", "--from", "src@1", "--name", "x", "--server", "s"}, "--from cannot be combined with --worktree"},
+		{"from+base", []string{"bind", "--from", "src@1", "--name", "x", "--base", "main"}, "--from cannot be combined with --worktree"},
+		{"resume+worktree", []string{"bind", "--resume", "--name", "x", "--worktree"}, "--resume/--rebind cannot be combined with"},
+		{"resume+cwd", []string{"bind", "--resume", "--name", "x", "--cwd", "/tmp"}, "--resume/--rebind cannot be combined with"},
+		{"rebind+server", []string{"bind", "--resume", "--rebind", "--name", "x", "--server", "s"}, "--resume/--rebind cannot be combined with"},
+	}
+	for _, c := range invalid {
+		_, stderr, err := captureOutput(t, func() error { return run(c.args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%s: run = %v, want exit code 2", c.name, err)
+			continue
+		}
+		if !strings.Contains(string(stderr), c.want) {
+			t.Errorf("%s: stderr = %q, want it to contain %q", c.name, stderr, c.want)
+		}
+	}
+}
+
+// TestUnbindDoneTakesNoBinding pins §4.3: --done clears every DONE binding, so
+// naming one or asking to pick one is refused with exit 2 before a runtime is
+// built.
+func TestUnbindDoneTakesNoBinding(t *testing.T) {
+	for _, args := range [][]string{
+		{"unbind", "--done", "webshop"},
+		{"unbind", "--done", "--name", "webshop"},
+		{"unbind", "--done", "--pick"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
+	}
+}
+
+// TestRemovedVerbsNameTheirReplacement pins §4.6: each of the seven names P4a
+// removed exits 2 with one line naming the form that replaces it.
+func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
+	cases := []struct{ verb, replacement string }{
+		{"add", "relevo bind --worktree"},
+		{"fork", "relevo bind --from <source>@<round>"},
+		{"diff", "relevo show --diff"},
+		{"log", "relevo show --log"},
+		{"gc", "relevo unbind --done"},
+		{"pause", "relevo done, then relevo bind --resume"},
+		{"statusline", "relevo status --line"},
+	}
+	for _, c := range cases {
+		_, stderr, err := captureOutput(t, func() error { return run([]string{c.verb}) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%s: run = %v, want exit code 2", c.verb, err)
+			continue
+		}
+		if !strings.Contains(string(stderr), c.replacement) {
+			t.Errorf("%s: stderr = %q, want it to name %q", c.verb, stderr, c.replacement)
+		}
 	}
 }

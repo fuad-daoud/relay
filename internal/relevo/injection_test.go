@@ -123,16 +123,16 @@ func TestFlaggedParenthetical(t *testing.T) {
 	if got := flaggedParenthetical(0, nil); got != "" {
 		t.Errorf("(0, nil) = %q, want empty", got)
 	}
-	if got := flaggedParenthetical(1, nil); got != " (1 instruction-shaped line flagged; see relevo log)" {
+	if got := flaggedParenthetical(1, nil); got != " (1 instruction-shaped line flagged; see relevo show --log)" {
 		t.Errorf("(1, nil) = %q", got)
 	}
-	if got := flaggedParenthetical(3, nil); got != " (3 instruction-shaped lines flagged; see relevo log)" {
+	if got := flaggedParenthetical(3, nil); got != " (3 instruction-shaped lines flagged; see relevo show --log)" {
 		t.Errorf("(3, nil) = %q", got)
 	}
-	if got := flaggedParenthetical(3, &store.ClassifyRecord{Max: 0.94}); got != " (3 instruction-shaped lines flagged; jev p=0.94; see relevo log)" {
+	if got := flaggedParenthetical(3, &store.ClassifyRecord{Max: 0.94}); got != " (3 instruction-shaped lines flagged; jev p=0.94; see relevo show --log)" {
 		t.Errorf("(3, Max: 0.94) = %q", got)
 	}
-	if got := flaggedParenthetical(3, &store.ClassifyRecord{Max: 0.94, Note: "classify: timeout after 4s"}); got != " (3 instruction-shaped lines flagged; see relevo log)" {
+	if got := flaggedParenthetical(3, &store.ClassifyRecord{Max: 0.94, Note: "classify: timeout after 4s"}); got != " (3 instruction-shaped lines flagged; see relevo show --log)" {
 		t.Errorf("(3, Note: timeout) = %q", got)
 	}
 }

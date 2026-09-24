@@ -220,7 +220,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 
 	if restore {
 		if b.Branch == "" {
-			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: worktree %s is gone and no branch is recorded; relevo add to start fresh", opts.Name, b.Worktree)
+			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: worktree %s is gone and no branch is recorded; relevo bind --worktree to start fresh", opts.Name, b.Worktree)
 		}
 		if rt.Git == nil {
 			return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot restore worktree")
@@ -426,7 +426,7 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP s
 		return store.Binding{}, Resolution{}, fmt.Errorf("check branch %s: %w", b.Branch, berr)
 	}
 	if !exists {
-		return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is gone; relevo unbind, then relevo add --server to start fresh", opts.Name, b.Branch)
+		return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is gone; relevo unbind, then relevo bind --server to start fresh", opts.Name, b.Branch)
 	}
 
 	var out store.Binding

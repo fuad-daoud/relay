@@ -14,7 +14,7 @@ import (
 // then at most one for its worktree.
 func DoneText(name string, r DoneResult) string {
 	lines := []string{
-		fmt.Sprintf("%s marked done; relaying stopped (relevo gc archives it when you are finished with it)", name),
+		fmt.Sprintf("%s marked done; relaying stopped (relevo unbind --done archives it when you are finished with it)", name),
 	}
 	switch {
 	case r.WorktreeRemoved != "" && r.Branch != "":
@@ -22,7 +22,7 @@ func DoneText(name string, r DoneResult) string {
 	case r.WorktreeRemoved != "":
 		lines = append(lines, fmt.Sprintf("removed worktree %s", r.WorktreeRemoved))
 	case r.WorktreeKept != "":
-		lines = append(lines, fmt.Sprintf("kept worktree %s (%s); relevo gc retries when it is clean", r.WorktreeKept, r.KeptReason))
+		lines = append(lines, fmt.Sprintf("kept worktree %s (%s); relevo unbind --done retries when it is clean", r.WorktreeKept, r.KeptReason))
 	case r.WorktreeGone != "":
 		lines = append(lines, fmt.Sprintf("worktree %s was already gone", r.WorktreeGone))
 	}
@@ -37,23 +37,6 @@ func RestoreText(res Resolution) string {
 	lines := []string{
 		fmt.Sprintf("restored worktree %s on %s", res.RestoredWorktree, res.RestoredBranch),
 	}
-	return strings.Join(lines, "\n")
-}
-
-// PauseText is what `relevo pause` says on success: the binding and what it
-// kept, then what it did with the builder pane, then how to bring it back.
-func PauseText(name string, r PauseResult) string {
-	lines := []string{
-		fmt.Sprintf("%s paused after round %d; worktree %s released, branch %s kept", name, r.Round, r.Worktree, r.Branch),
-	}
-	if r.Committed != "" {
-		sha12 := r.Committed
-		if len(sha12) > 12 {
-			sha12 = sha12[:12]
-		}
-		lines = append(lines, fmt.Sprintf("  committed %s ([relevo] %s: paused after round %d)", sha12, name, r.Round))
-	}
-	lines = append(lines, fmt.Sprintf("  resume: relevo bind --resume --name %s", name))
 	return strings.Join(lines, "\n")
 }
 

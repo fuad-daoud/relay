@@ -118,7 +118,7 @@ func retireLegacyPane(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding,
 		Direction: store.DirToPlanner,
 		Kind:      store.KindRetired,
 		Confirmed: true,
-		Note:      "pane builders were removed (#303); rebind with relevo add",
+		Note:      "pane builders were removed (#303); rebind with relevo bind --worktree",
 	}); err != nil {
 		return b, err
 	}

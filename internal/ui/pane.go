@@ -316,7 +316,7 @@ func emptyPaneBlock(width, height int) []string {
 		"no bindings",
 		"",
 		"  relevo bind                   put a builder on this tree",
-		"  relevo add --name <name>      put a builder on its own worktree",
+		"  relevo bind --worktree        put a builder on its own worktree",
 		"  relevo config                 list what can be bound",
 	}
 	lines := make([]string, 0, height)

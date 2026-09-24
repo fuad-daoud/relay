@@ -13,7 +13,21 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]`
+const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]
+       relevo show <name> --diff|--drift [--stat] [--anchors]
+       relevo show <name> --log [--follow] [--after N]`
+
+// flagGiven reports whether the named flag was set on the command line. It is
+// how `--after 0` is told from the flag's default 0.
+func flagGiven(fs *flag.FlagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
+}
 
 // showSectionFlags counts how many section flags are set and resolves the
 // one section they name, defaulting to plan when none is given. It is a
@@ -48,7 +62,9 @@ func showSectionFlags(plan, report, diff, drift, log, transcript bool) (relevo.S
 
 // cmdShow prints one round's plan, report, diff, drift, log or transcript,
 // read from a live binding's files or, for anything not live, from the
-// database (docs/specs/2026-09-20-persistence-design.md §5.7).
+// database (docs/specs/2026-09-20-persistence-design.md §5.7). Its --diff,
+// --drift and whole-log forms are today's diff and log verbs, byte for byte
+// (§4.2).
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	round := fs.Int("round", 0, "the round to read; 0 = the newest completed round")
@@ -58,6 +74,10 @@ func cmdShow(args []string) error {
 	drift := fs.Bool("drift", false, "show the round's drift patch")
 	logSection := fs.Bool("log", false, "show the round's log entries")
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
+	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
+	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
+	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
+	after := fs.Int("after", 0, "with --log: show only entries with a Seq greater than this (0 = all)")
 	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), showUsage)
@@ -79,9 +99,49 @@ func cmdShow(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
+	// The absorbed flags are valid only with the section they came from
+	// (§4.2): --stat/--anchors are diff's, --follow/--after are log's.
+	if *stat || *anchors {
+		if section != relevo.ShowDiff && section != relevo.ShowDrift {
+			bad := "--stat"
+			if *anchors {
+				bad = "--anchors"
+			}
+			fmt.Fprintf(os.Stderr, "relevo show: %s requires --diff or --drift\n", bad)
+			fmt.Fprintln(os.Stderr, showUsage)
+			return exitCodeErr{code: 2}
+		}
+	}
+	if *follow || flagGiven(fs, "after") {
+		if section != relevo.ShowLog {
+			bad := "--follow"
+			if !*follow {
+				bad = "--after"
+			}
+			fmt.Fprintf(os.Stderr, "relevo show: %s requires --log\n", bad)
+			fmt.Fprintln(os.Stderr, showUsage)
+			return exitCodeErr{code: 2}
+		}
+	}
+	if *after < 0 {
+		fmt.Fprintln(os.Stderr, "relevo: --after must be >= 0")
+		return exitCodeErr{code: 2}
+	}
+
 	rt, err := newRuntime()
 	if err != nil {
 		return err
+	}
+
+	switch {
+	case section == relevo.ShowDiff, section == relevo.ShowDrift:
+		// Byte-identical to the removed diff verb, including its default
+		// round and its #143 .viewed stamp.
+		return printDiff(rt, name, *round, *stat, section == relevo.ShowDrift, *anchors)
+	case section == relevo.ShowLog && (*round == 0 || *follow):
+		// The whole log is the removed log verb, byte for byte, --json's
+		// NDJSON included.
+		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
 	}
 
 	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}

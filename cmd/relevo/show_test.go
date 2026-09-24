@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestShowSectionFlagsConflict pins `relevo show`'s section-flag rules:
@@ -29,5 +33,85 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 
 	if _, err := showSectionFlags(true, true, false, false, false, false); err == nil {
 		t.Error("--plan --report: err = nil, want a usage error (more than one section)")
+	}
+}
+
+// seedShowDiffStore builds a binding under the default state root with one
+// completed round: a diff patch on disk and the log entries that name it. It
+// is store-only -- no harness and no network -- so the run-based assertions
+// below reach no builder.
+func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime) {
+	t.Helper()
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	patch := "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
+	if err := os.WriteFile(s.DiffPath(name, 1), []byte(patch), 0o644); err != nil {
+		t.Fatalf("write diff: %v", err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true},
+		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindDiff, Note: "1 file, +1 -0", Confirmed: true},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	return s, relevo.Runtime{Store: s, Now: time.Now}
+}
+
+// TestShowAbsorbsDiffAndLog pins §4.2: `show --diff --stat` and `show --log`
+// route to the same diff and log helpers the removed verbs used, so the
+// subcommand's stdout is byte-identical to the helper's.
+func TestShowAbsorbsDiffAndLog(t *testing.T) {
+	const name = "showabsorb"
+	_, rt := seedShowDiffStore(t, name)
+
+	want, _, err := captureOutput(t, func() error { return printDiff(rt, name, 0, true, false, false) })
+	if err != nil {
+		t.Fatalf("printDiff: %v", err)
+	}
+	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--diff", "--stat"}) })
+	if err != nil {
+		t.Fatalf("run show --diff --stat: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("show --diff --stat = %q, want the printDiff helper's %q", got, want)
+	}
+
+	wantLog, _, err := captureOutput(t, func() error { return printLog(rt, name, 0, 0, false, false, true) })
+	if err != nil {
+		t.Fatalf("printLog: %v", err)
+	}
+	gotLog, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--log"}) })
+	if err != nil {
+		t.Fatalf("run show --log: %v", err)
+	}
+	if string(gotLog) != string(wantLog) {
+		t.Errorf("show --log = %q, want the printLog helper's %q", gotLog, wantLog)
+	}
+}
+
+// TestShowAbsorbedFlagCombinations pins §4.2's refusals: --stat/--anchors need
+// --diff/--drift, and --follow/--after need --log. Each exits 2 before any
+// runtime is built.
+func TestShowAbsorbedFlagCombinations(t *testing.T) {
+	for _, args := range [][]string{
+		{"show", "api", "--stat"},
+		{"show", "api", "--anchors"},
+		{"show", "api", "--plan", "--stat"},
+		{"show", "api", "--follow"},
+		{"show", "api", "--after", "2"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
 	}
 }

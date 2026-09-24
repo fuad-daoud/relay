@@ -428,7 +428,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  fmt.Sprintf("remote builder on %s: relevo log %s", b.Builder.Server, name),
+					empty:  fmt.Sprintf("remote builder on %s: relevo show --log %s", b.Builder.Server, name),
 				},
 			}
 		}
