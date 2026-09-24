@@ -108,6 +108,9 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 // SnapshotTree writes a git tree object capturing dir's entire working tree --
 // tracked and untracked, honouring .gitignore -- and returns its object id.
 //
+// A clean tree (status prints nothing) is HEAD's own tree: the snapshot returns
+// HEAD^{tree} without a temp index or writing any object (R4).
+//
 // Preconditions:  dir exists.
 // Postconditions: the repository's own index, HEAD, refs and working tree are
 //
@@ -126,6 +129,19 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 	gitDir := strings.TrimSpace(string(out))
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(dir, gitDir)
+	}
+
+	// R4 fast path: a clean tree is HEAD's own tree. `status` below takes no
+	// index lock (gitEnv sets GIT_OPTIONAL_LOCKS=0), so this is a read-only
+	// shortcut that skips the temp index, the index copy and add/write-tree.
+	status, err := c.run(ctx, dir, nil, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return "", err
+	}
+	if len(status) == 0 {
+		if treeOut, err := c.run(ctx, dir, nil, "rev-parse", "--verify", "-q", "HEAD^{tree}"); err == nil {
+			return strings.TrimSpace(string(treeOut)), nil
+		}
 	}
 
 	tempDir, err := os.MkdirTemp("", "relevo-git-index-*")
