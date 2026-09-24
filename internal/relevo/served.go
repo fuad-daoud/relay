@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -238,4 +239,43 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
 // PickServedCandidate is PickServedCandidateFor for the built-in builder role.
 func PickServedCandidate(rt Runtime, token string) (string, string) {
 	return PickServedCandidateFor(rt, "builder", token)
+}
+
+func liveViewOf(row BindingStatus, b store.Binding, at time.Time) *remote.LiveView {
+	v := &remote.LiveView{
+		At:             at,
+		Usage:          row.LiveUsage,
+		LastProgressAt: row.LastProgressAt,
+		ExploringSince: b.ExploringSince,
+	}
+	if row.Headless != nil {
+		v.PID = row.Headless.PID
+		v.StartedAt = row.Headless.StartedAt
+		v.ExitCode = row.Headless.ExitCode
+		v.Tail = row.Headless.Tail
+	}
+	if row.Live != nil {
+		v.Diff = &remote.DiffStat{
+			Files:   row.Live.Files,
+			Added:   row.Live.Added,
+			Removed: row.Live.Removed,
+		}
+	}
+	if b.GateRun != nil {
+		v.GatingSince = time.Unix(b.GateRun.StartedAt, 0)
+	}
+	return v
+}
+
+// ServedLive returns the live view of an owned binding's running round (spec §3.1).
+func ServedLive(ctx context.Context, rt Runtime, b store.Binding) (*remote.LiveView, error) {
+	row, err := statusRow(ctx, rt, b)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if rt.Now != nil {
+		now = rt.Now()
+	}
+	return liveViewOf(row, b, now), nil
 }

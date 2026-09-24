@@ -457,6 +457,9 @@ func (p roundPane) sourceLine() string {
 			src := "pane"
 			if p.detail.headless {
 				src = "headless"
+				if r != nil && r.Server != "" {
+					src = "remote"
+				}
 			}
 			if c.logName != "" {
 				src += " · " + c.logName
@@ -471,7 +474,7 @@ func (p roundPane) sourceLine() string {
 			if r != nil {
 				pane = "remote"
 				if r.Headless != nil {
-					pane = "headless"
+					pane = r.ProcessWord()
 				}
 			}
 			s = fmt.Sprintf("%s · captured %s ago · %d lines", pane, ago(c.at, p.now()), n)

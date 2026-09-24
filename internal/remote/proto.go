@@ -137,6 +137,11 @@ type BindingView struct {
 	// Queue is this round's place in the server's builder queue (#285);
 	// non-nil iff RoundState == RoundQueued.
 	Queue *QueueView `json:"queue,omitempty"`
+
+	// Live is the running round's live facts as the server's own status row
+	// sees it. Non-nil only when RoundState == RoundRunning on a server that
+	// sends it; nil from an older server.
+	Live *LiveView `json:"live,omitempty"`
 }
 
 // QueueView is a queued round's place in the server's queue (#285).
@@ -146,6 +151,28 @@ type QueueView struct {
 	Running  int       `json:"running"`
 	Cap      int       `json:"cap"`
 	Since    time.Time `json:"since"`
+}
+
+// DiffStat is a round's diff stats across the wire.
+type DiffStat struct {
+	Files   int `json:"files"`
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+}
+
+// LiveView is the running round as the server's own status row sees it.
+// No field holds a server path.
+type LiveView struct {
+	At             time.Time    `json:"at"`
+	PID            int          `json:"pid,omitempty"`
+	StartedAt      time.Time    `json:"started_at,omitzero"`
+	ExitCode       string       `json:"exit_code,omitempty"`
+	Tail           []string     `json:"tail,omitempty"`
+	Usage          *usage.Usage `json:"usage,omitempty"`
+	Diff           *DiffStat    `json:"diff,omitempty"`
+	LastProgressAt time.Time    `json:"last_progress_at,omitzero"`
+	ExploringSince time.Time    `json:"exploring_since,omitzero"`
+	GatingSince    time.Time    `json:"gating_since,omitzero"`
 }
 
 // BuildersView is the server's builder census (#285).

@@ -250,6 +250,15 @@ func (b BindingStatus) Key() string {
 	return b.Owner + "/" + b.Name
 }
 
+// ProcessWord returns "remote" when the binding is hosted on a remote server,
+// else "headless".
+func (b BindingStatus) ProcessWord() string {
+	if b.Server != "" {
+		return "remote"
+	}
+	return "headless"
+}
+
 // HeadlessInfo is the process half of a headless builder's status row
 // (#99, spec §4.8). Nil on a pane row.
 type HeadlessInfo struct {
@@ -341,6 +350,52 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (Rep
 	return rep, nil
 }
 
+// applyRemoteLive sets the live facts from the remote server on the client's status row.
+func applyRemoteLive(row *BindingStatus, lf *store.LiveFacts, stalled bool, logPath string, now time.Time) {
+	if lf == nil {
+		return
+	}
+	row.Headless = &HeadlessInfo{
+		PID:       lf.PID,
+		StartedAt: lf.StartedAt,
+		LogPath:   logPath,
+		ExitCode:  lf.ExitCode,
+		Tail:      lf.Tail,
+	}
+	if lf.Usage != nil {
+		copyU := *lf.Usage
+		row.LiveUsage = &copyU
+	} else {
+		row.LiveUsage = nil
+	}
+	if lf.Diff != nil {
+		row.Live = &LiveDiff{
+			Files:   lf.Diff.Files,
+			Added:   lf.Diff.Added,
+			Removed: lf.Diff.Removed,
+		}
+	} else {
+		row.Live = nil
+	}
+	row.LastProgressAt = lf.LastProgressAt
+
+	switch {
+	case !lf.ExploringSince.IsZero():
+		row.BuilderStatus = "exploring " + AgeText(now.Sub(lf.ExploringSince))
+		if !stalled {
+			row.Exploring = row.BuilderStatus
+		}
+	case !lf.GatingSince.IsZero():
+		row.BuilderStatus = "gating " + AgeText(now.Sub(lf.GatingSince))
+	case lf.ExitCode == "unknown":
+		row.BuilderStatus = "exited"
+	case lf.ExitCode != "":
+		row.BuilderStatus = "exited " + lf.ExitCode
+	default:
+		row.BuilderStatus = "working"
+	}
+}
+
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
@@ -412,7 +467,10 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		if row.BuilderStatus == string(remote.RoundQueued) {
 			row.BuilderStatus = queueText(b.Builder.RemoteQueue, b.Builder.Server, rt.Now())
 		}
-		if !b.StalledSince.IsZero() && row.BuilderStatus == "running" {
+		if b.Builder.RemoteStatus == string(remote.RoundRunning) && b.Builder.RemoteLive != nil {
+			applyRemoteLive(&row, b.Builder.RemoteLive, !b.StalledSince.IsZero(), rt.Store.BuilderLogPath(b.Name, b.Round), rt.Now())
+		}
+		if !b.StalledSince.IsZero() && b.Builder.RemoteStatus == string(remote.RoundRunning) {
 			row.BuilderStatus = "stalled " + AgeText(rt.Now().Sub(b.StalledSince))
 		}
 	}
@@ -517,14 +575,18 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 	if rt.Now != nil {
 		now = rt.Now()
 	}
-	row.LiveUsage = peekUsage(ctx, rt, b, now)
+	if !b.Builder.Remote() {
+		row.LiveUsage = peekUsage(ctx, rt, b, now)
+	}
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
 
 	// #143's live diff: the round's working tree against its baseline,
 	// while a round is open. liveStat degrades to nil on its own -- no Git
 	// wired, no baseline recorded, or the git read failed -- so this never
 	// fails the row.
-	row.Live = liveStat(ctx, rt, b)
+	if !b.Builder.Remote() {
+		row.Live = liveStat(ctx, rt, b)
+	}
 
 	// #143's quiet age: only for an ACTIVE row with an open round that has
 	// been sampled at least once. Reuses the same now the live usage figure
@@ -810,7 +872,7 @@ func RenderStatus(r Report) string {
 		}
 		if b.Headless != nil {
 			// spec §4.8: builder  headless  <kind>  <status>  [pid P since HH:MM]  `<token>`
-			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", "headless", b.BuilderKind, b.BuilderStatus)
+			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", b.ProcessWord(), b.BuilderKind, b.BuilderStatus)
 			if b.Headless.PID != 0 {
 				fmt.Fprintf(&sb, " pid %d since %s ", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))
 			} else {

@@ -2146,3 +2146,179 @@ func TestStatusPlanRound(t *testing.T) {
 		t.Errorf("seedBound PlanRound = %d, want %d", got, want)
 	}
 }
+
+func TestApplyRemoteLive(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	logPath := "/tmp/test.log"
+
+	tests := []struct {
+		name          string
+		lf            *store.LiveFacts
+		stalled       bool
+		wantWord      string
+		wantExploring string
+	}{
+		{
+			name: "working",
+			lf: &store.LiveFacts{
+				PID:   1001,
+				Usage: &usage.Usage{Tokens: usage.Tokens{In: 1000, Out: 500}},
+				Diff:  &store.DiffFacts{Files: 1, Added: 5, Removed: 2},
+			},
+			stalled:       false,
+			wantWord:      "working",
+			wantExploring: "",
+		},
+		{
+			name: "exploring",
+			lf: &store.LiveFacts{
+				PID:            1002,
+				Usage:          &usage.Usage{Tokens: usage.Tokens{In: 2000, Out: 600}},
+				Diff:           &store.DiffFacts{Files: 2, Added: 10, Removed: 4},
+				ExploringSince: now.Add(-30 * time.Second),
+			},
+			stalled:       false,
+			wantWord:      "exploring 30s",
+			wantExploring: "exploring 30s",
+		},
+		{
+			name: "exploring_stalled",
+			lf: &store.LiveFacts{
+				PID:            1003,
+				Usage:          &usage.Usage{Tokens: usage.Tokens{In: 3000, Out: 700}},
+				Diff:           &store.DiffFacts{Files: 3, Added: 15, Removed: 6},
+				ExploringSince: now.Add(-45 * time.Second),
+			},
+			stalled:       true,
+			wantWord:      "exploring 45s",
+			wantExploring: "",
+		},
+		{
+			name: "gating",
+			lf: &store.LiveFacts{
+				PID:         1004,
+				Usage:       &usage.Usage{Tokens: usage.Tokens{In: 4000, Out: 800}},
+				Diff:        &store.DiffFacts{Files: 4, Added: 20, Removed: 8},
+				GatingSince: now.Add(-15 * time.Second),
+			},
+			stalled:       false,
+			wantWord:      "gating 15s",
+			wantExploring: "",
+		},
+		{
+			name: "exit_3",
+			lf: &store.LiveFacts{
+				PID:      1005,
+				Usage:    &usage.Usage{Tokens: usage.Tokens{In: 5000, Out: 900}},
+				Diff:     &store.DiffFacts{Files: 5, Added: 25, Removed: 10},
+				ExitCode: "3",
+			},
+			stalled:       false,
+			wantWord:      "exited 3",
+			wantExploring: "",
+		},
+		{
+			name: "exit_unknown",
+			lf: &store.LiveFacts{
+				PID:      1006,
+				Usage:    &usage.Usage{Tokens: usage.Tokens{In: 6000, Out: 1000}},
+				Diff:     &store.DiffFacts{Files: 6, Added: 30, Removed: 12},
+				ExitCode: "unknown",
+			},
+			stalled:       false,
+			wantWord:      "exited",
+			wantExploring: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var row BindingStatus
+			applyRemoteLive(&row, tt.lf, tt.stalled, logPath, now)
+
+			if row.BuilderStatus != tt.wantWord {
+				t.Errorf("BuilderStatus = %q, want %q", row.BuilderStatus, tt.wantWord)
+			}
+			if row.Exploring != tt.wantExploring {
+				t.Errorf("Exploring = %q, want %q", row.Exploring, tt.wantExploring)
+			}
+			if row.Headless == nil || row.Headless.PID != tt.lf.PID {
+				t.Errorf("Headless.PID = %v, want %d", row.Headless, tt.lf.PID)
+			}
+			if row.Headless == nil || row.Headless.LogPath != logPath {
+				t.Errorf("Headless.LogPath = %v, want %q", row.Headless, logPath)
+			}
+			if row.LiveUsage == nil || row.LiveUsage.Tokens != tt.lf.Usage.Tokens {
+				t.Errorf("LiveUsage tokens = %v, want %v", row.LiveUsage, tt.lf.Usage.Tokens)
+			}
+			if row.Live == nil || row.Live.Files != tt.lf.Diff.Files || row.Live.Added != tt.lf.Diff.Added || row.Live.Removed != tt.lf.Diff.Removed {
+				t.Errorf("Live = %+v, want Files:%d Added:%d Removed:%d", row.Live, tt.lf.Diff.Files, tt.lf.Diff.Added, tt.lf.Diff.Removed)
+			}
+		})
+	}
+}
+
+func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := store.Binding{
+		Name:             "remote-b",
+		CWD:              "/repo",
+		Branch:           "relevo/remote-b",
+		State:            store.StateActive,
+		Round:            1,
+		RoundStartedAt:   baseTime,
+		BuilderCandidate: "claude/test/m",
+		Builder: store.Endpoint{
+			Mode:         store.ModeRemote,
+			Server:       "remote-server",
+			RemoteStatus: "running",
+			RemoteLive: &store.LiveFacts{
+				PID:   4242,
+				Usage: &usage.Usage{Tokens: usage.Tokens{In: 30000, Out: 11000}}, // 41k
+				Diff:  &store.DiffFacts{Files: 2, Added: 10, Removed: 3},
+			},
+		},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeUsage{
+		peekSamples: []usage.Sample{
+			{Tokens: usage.Tokens{In: 99999, Out: 99999}},
+		},
+	}
+	rt := Runtime{
+		Store: st,
+		Usage: fake,
+		Now:   func() time.Time { return baseTime },
+	}
+
+	row, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if row.LiveUsage == nil || row.LiveUsage.Tokens.Total() != 41000 {
+		t.Errorf("LiveUsage = %+v, want 41k tokens from RemoteLive", row.LiveUsage)
+	}
+	if row.Live == nil || row.Live.Files != 2 || row.Live.Added != 10 || row.Live.Removed != 3 {
+		t.Errorf("Live = %+v, want 2/+10/-3", row.Live)
+	}
+	if row.Headless == nil || row.Headless.PID != 4242 {
+		t.Errorf("Headless.PID = %v, want 4242", row.Headless)
+	}
+	if len(fake.peeks) != 0 {
+		t.Errorf("fake.peeks = %d, want 0 (local reader must not be called)", len(fake.peeks))
+	}
+}
+
+func TestProcessWord(t *testing.T) {
+	rem := BindingStatus{Server: "contabo"}
+	if got := rem.ProcessWord(); got != "remote" {
+		t.Errorf("ProcessWord with server = %q, want remote", got)
+	}
+	local := BindingStatus{Server: ""}
+	if got := local.ProcessWord(); got != "headless" {
+		t.Errorf("ProcessWord without server = %q, want headless", got)
+	}
+}
