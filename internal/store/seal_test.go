@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // TestSealableTable pins the pure predicate: a closed, quiet round is
@@ -114,11 +116,13 @@ func TestStreamDrained(t *testing.T) {
 		t.Fatalf("write stream: %v", err)
 	}
 
-	// The trailer is present but the cursor has not reached the stream's size.
+	// The trailer is present but the cursor is still inside the payload: the
+	// bytes it has not rendered are payload lines, so the builder may still be
+	// flushing.
 	short := b
-	short.Builder.StreamOffset = int64(len(body)) - 1
+	short.Builder.StreamOffset = 1
 	if s.StreamDrained(short, 3) {
-		t.Error("StreamDrained with the cursor short of size = true, want false")
+		t.Error("StreamDrained with the cursor inside the payload = true, want false")
 	}
 
 	// The trailer is present and the cursor is at the stream's size.
@@ -137,6 +141,46 @@ func TestStreamDrained(t *testing.T) {
 	flushing.Builder.StreamOffset = int64(len(noTrailer))
 	if s.StreamDrained(flushing, 3) {
 		t.Error("StreamDrained without the trailer = true, want false")
+	}
+}
+
+// TestStreamDrainedLegacyTrailer pins the pre-rename stream: a supervisor that
+// wrote the legacy exit trailer still ends the round, and the cursor a
+// pre-rename drain stopped before the trailer lines is drained -- the live
+// leftover the seal could not close.
+func TestStreamDrainedLegacyTrailer(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/home/dev/webshop")
+	b.Round = 4
+	b.Builder.StreamRound = 3
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	body := []byte(`{"type":"step"}` + "\n\n" +
+		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
+		legacy.ExitTrailer + "0\n")
+	if err := os.WriteFile(s.BuilderStreamPath(b.Name, 3), body, bindingFileMode); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	// The cursor stopped just before the pre-rename rusage and exit lines: the
+	// only bytes left are trailer lines, so the stream is drained.
+	at := bytes.Index(body, []byte(legacy.RusageTrailer))
+	if at < 0 {
+		t.Fatal("the legacy rusage trailer is not in the stream")
+	}
+	old := b
+	old.Builder.StreamOffset = int64(at)
+	if !s.StreamDrained(old, 3) {
+		t.Error("StreamDrained of a pre-rename stream whose only unrendered bytes are its trailer = false, want true")
+	}
+
+	// Payload bytes after the cursor still hold the round back.
+	held := b
+	held.Builder.StreamOffset = 0
+	if s.StreamDrained(held, 3) {
+		t.Error("StreamDrained with payload bytes after the cursor = true, want false")
 	}
 }
 

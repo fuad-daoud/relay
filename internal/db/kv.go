@@ -214,8 +214,10 @@ func (a TxKV) Tx(fn func(KVTx) error) error {
 // (docs/specs/2026-09-24-db-as-record-design.md §4.3). The rule is "a file
 // that is present is imported":
 //
-//   - the key's row wins when it exists: the file is ignored and left where it
-//     is, so a machine that has already migrated is never re-read;
+//   - the key's row wins when it exists: the row is returned unchanged, and a
+//     file still present beside it -- a leftover of a write that raced its
+//     read -- is removed, because nothing writes these files any more and the
+//     row is the record;
 //   - otherwise a present path is read, validated as JSON and put under key,
 //     and only then removed. A file that is not there is (nil, false, nil);
 //   - invalid JSON is an error naming path, and the file is not deleted, so a
@@ -232,6 +234,9 @@ func KVImportFile(kv KV, key, path string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	if ok {
+		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("kv import: could not remove file for an existing row", "key", key, "path", path, "err", rerr)
+		}
 		return v, true, nil
 	}
 

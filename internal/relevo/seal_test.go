@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestClosedRoundSealsAfterTwoTicks is the P3c seal's end-to-end contract
@@ -158,5 +159,50 @@ func TestClosedRoundSealsAfterTwoTicks(t *testing.T) {
 	sealed, found, aerr := rt.Store.ArchivedFile(archived[0].RecordID, "001-report.md")
 	if aerr != nil || !found || !bytes.Equal(sealed, report) {
 		t.Errorf("archived report = %q (%v, ok=%v), want %q", sealed, aerr, found, report)
+	}
+}
+
+// TestSealPassEmptiesADoneDirOnly pins the last leftover the seal pass clears:
+// once a DONE binding's rounds are all sealed and its directory holds nothing
+// else, the empty directory goes too. An ACTIVE binding's directory stays, as
+// more rounds are coming.
+func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		state    store.State
+		wantGone bool
+	}{
+		{"done", store.StateDone, true},
+		{"active", store.StateActive, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			st := store.New(root)
+			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: tc.state}
+			if err := st.Save(b); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if err := os.WriteFile(st.ReportPath("webshop", 1), []byte("round 1\n"), 0o644); err != nil {
+				t.Fatalf("write round file: %v", err)
+			}
+
+			if err := st.WithLock(func(tx *store.Tx) error {
+				sealRounds(st, tx, b)
+				return nil
+			}); err != nil {
+				t.Fatalf("sealRounds: %v", err)
+			}
+
+			// The round file is sealed either way.
+			if _, err := os.Stat(st.ReportPath("webshop", 1)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the round file is still on disk after the seal: %v", err)
+			}
+
+			_, err := os.Stat(st.Dir("webshop"))
+			gone := errors.Is(err, os.ErrNotExist)
+			if gone != tc.wantGone {
+				t.Errorf("binding dir gone = %v, want %v (stat err %v)", gone, tc.wantGone, err)
+			}
+		})
 	}
 }

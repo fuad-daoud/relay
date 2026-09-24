@@ -93,7 +93,8 @@ func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
 }
 
 // TestLoadKVPrefersRowOverFile: the kv row is the record; a legacy
-// availability.json beside it is ignored and left in place (P3b plan §4.3).
+// availability.json beside it is ignored and removed, since nothing writes
+// these files any more (P3b plan §4.3).
 func TestLoadKVPrefersRowOverFile(t *testing.T) {
 	kv := testKV(t)
 	dir := t.TempDir()
@@ -120,8 +121,8 @@ func TestLoadKVPrefersRowOverFile(t *testing.T) {
 		t.Fatalf("got %+v, want the fresh row", got.Events)
 	}
 
-	if _, err := os.Stat(newPath); err != nil {
-		t.Errorf("availability.json was removed even though the row existed: %v", err)
+	if _, err := os.Stat(newPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("availability.json beside the row was not removed: stat err = %v, want not-exist", err)
 	}
 }
 

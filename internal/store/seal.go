@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // roundBaseRe matches the basename of a round file: the NNN- prefix every
@@ -250,6 +251,14 @@ func Sealable(b Binding, round int, streamDrained bool) bool {
 // equal.
 const ExitTrailer = "relevo-exit:"
 
+// rusageTrailer prefixes the supervisor's resource line, "relevo-rusage:...",
+// the line the supervisor writes just before the exit trailer. It names
+// proc.RusageTrailer (internal/proc), which writes that line, and
+// internal/relevo.RusageTrailerPrefix; this package cannot import proc to share
+// the literal -- proc imports internal/relevo, which imports this package -- so
+// the literal is repeated here, exactly as ExitTrailer above is.
+const rusageTrailer = "relevo-rusage:"
+
 // StreamDrained reports whether round's builder stream is fully consumed by
 // the drain, so nothing more will be rendered out of it into that round's
 // builder log (P3c §4.2, §4.3). Only the round the endpoint is currently
@@ -258,9 +267,16 @@ const ExitTrailer = "relevo-exit:"
 //
 // A missing stream is drained: there is nothing to render. Otherwise the
 // stream is drained exactly when the supervisor's exit trailer is in its
-// content and the endpoint's cursor (StreamOffset) has reached its size,
-// meaning the builder has really exited and drainStream has consumed every
-// byte. It is the caller's test for Sealable's stream-drain blocker.
+// content -- the relevo spelling, or the pre-rename spelling internal/legacy
+// keeps -- and every byte the endpoint's cursor (StreamOffset) has
+// not rendered yet is a trailer line. An offset at or past EOF has nothing
+// left to render, so it is drained.
+//
+// The trailer is what says the builder really exited; the cursor is only how
+// far the drain got. A pre-rename stream stops its cursor before the
+// supervisor's trailing rusage and exit lines, so a stream whose only
+// unrendered bytes are those lines is drained too. It is the caller's test for
+// Sealable's stream-drain blocker.
 func (s *Store) StreamDrained(b Binding, round int) bool {
 	if round != b.Builder.StreamRound {
 		return true
@@ -277,10 +293,39 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 	if err != nil {
 		return false
 	}
-	if !strings.Contains(string(body), "\n"+ExitTrailer) {
+	text := string(body)
+	if !strings.Contains(text, "\n"+ExitTrailer) && !strings.Contains(text, "\n"+legacy.ExitTrailer) {
 		return false
 	}
-	return b.Builder.StreamOffset >= info.Size()
+	off := b.Builder.StreamOffset
+	if off < 0 {
+		off = 0
+	}
+	if off >= info.Size() {
+		return true
+	}
+	return trailerLinesOnly(text[off:])
+}
+
+// trailerLinesOnly reports whether every line in s is one the supervisor's
+// exit leaves behind: an empty line, or a rusage or exit trailer line in
+// either the relevo or the pre-rename spelling. It is how StreamDrained tests
+// the bytes a drain has not rendered yet: any payload line means the builder
+// may still be flushing, and only the supervisor's own trailer may remain.
+func trailerLinesOnly(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, ExitTrailer) ||
+			strings.HasPrefix(line, legacy.ExitTrailer) ||
+			strings.HasPrefix(line, rusageTrailer) ||
+			strings.HasPrefix(line, legacy.RusageTrailer) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // consultActive reports whether a consult can still need its round's files.

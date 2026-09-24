@@ -154,6 +154,9 @@ func TestKVImportFileImportsThenDeletes(t *testing.T) {
 	}
 }
 
+// TestKVImportFilePrefersRow pins that the row is the record: when it exists,
+// the row's document is returned unchanged and a file still sitting beside it
+// is removed, because nothing writes these files any more.
 func TestKVImportFilePrefersRow(t *testing.T) {
 	d := openTestDB(t)
 	if err := d.KVPut("ledger", []byte(`{"entries":[1]}`)); err != nil {
@@ -171,8 +174,11 @@ func TestKVImportFilePrefersRow(t *testing.T) {
 	if string(got) != `{"entries":[1]}` {
 		t.Errorf("KVImportFile = %q, want the row's document", got)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("KVImportFile removed the file though the row won: %v", err)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("KVImportFile left the file although the row won: stat err = %v, want not-exist", err)
+	}
+	if row, ok, _ := d.KVGet("ledger"); !ok || string(row) != `{"entries":[1]}` {
+		t.Errorf("row after import = (%q, %v), want the unchanged row", row, ok)
 	}
 }
 
