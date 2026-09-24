@@ -314,11 +314,24 @@ func TestClientVersionHeader(t *testing.T) {
 // answers slower than it fails the call instead of blocking, and the failure
 // is the retryable ErrUnreachable.
 //
+// The server waits for the client to give up instead of sleeping a fixed
+// time, so a late-firing deadline timer on a stalled CI machine cannot let
+// the reply win the race (the macOS flake).
+//
 // Mutation: drop the WithTimeout from RoundFile and this call waits out the
-// server's sleep and succeeds.
+// server's 10 s fallback and succeeds.
 func TestRoundFileDeadline(t *testing.T) {
+	// slowServerFallback is how long the handler waits for the client to give
+	// up before it answers anyway. It must be comfortably above the elapsed
+	// bound below, so a mutated client fails on the "succeeded" assertion.
+	const slowServerFallback = 10 * time.Second
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			return // client gave up: no reply
+		case <-time.After(slowServerFallback):
+		}
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("report\n"))
 	}))
