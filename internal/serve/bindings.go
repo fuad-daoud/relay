@@ -137,7 +137,7 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, relevo.ErrTierAboveMax) {
 			offending := req.Tier
-			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's policy.json"
+			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's config policy"
 			if offending == "" {
 				format = "policy tier." + roleName + " %s exceeds max_tier %s"
 				offending = string(tier)

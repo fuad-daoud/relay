@@ -31,7 +31,7 @@ type PolicyWarning struct {
 	Text  string // the rendered line
 }
 
-// PolicyWarnings is the one source of the three findings: relevo policy's
+// PolicyWarnings is the one source of the three findings: relevo config's
 // warnings block and doctor's policy rows both render from this function;
 // neither computes its own.
 func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
@@ -98,7 +98,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 // right now, computed by the same resolveCandidate call bind makes.
 type RoleRefusal struct {
 	Role    string
-	Text    string   // the words after "would refuse:" in relevo policy
+	Text    string   // the words after "would refuse:" in relevo config
 	NoOrder bool     // true for the ambiguous case, false for the all-gated case
 	Serving []string // tokens serving the role, in Set.ForRole order
 	Gated   []string // providers with a gate on a serving token, deduplicated, in Serving order; nil when NoOrder
@@ -129,7 +129,7 @@ func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []
 }
 
 // refusalFromErr maps resolveCandidate's error for role to a RoleRefusal.
-// FormatPolicy and RoleRefusals both go through here, so relevo policy and
+// FormatPolicy and RoleRefusals both go through here, so relevo config and
 // relevo doctor print the same words for the same state.
 func refusalFromErr(role string, serving []candidate.Candidate, gates []ledger.Gate, err error) (RoleRefusal, bool) {
 	tokens := make([]string, 0, len(serving))
@@ -251,10 +251,10 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, width int, gates []
 // FormatPolicy renders, per role, what resolveCandidate would do right now
 // and why -- computed by calling it, so the marker here can never disagree
 // with what bind actually picks (spec §4.7). It is a listing, not a check:
-// `relevo policy` prints this and always exits 0.
+// `relevo config` prints this and always exits 0.
 func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
 	if set == nil || set.Len() == 0 {
-		return "no candidates configured; write ~/.config/relevo/candidates.json (see README \"Candidates\")\n"
+		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	}
 
 	width := refWidth(set)
@@ -266,7 +266,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 
 		header := role
 		if ordered {
-			header += "  (order set in ~/.config/relevo/policy.json)"
+			header += "  (order set in config policy)"
 		} else {
 			header += "  (no order set)"
 		}
@@ -303,7 +303,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 	}
 
 	if len(pol.Order) == 0 {
-		sb.WriteString("no policy configured; write ~/.config/relevo/policy.json (see README \"Policy\")\n")
+		sb.WriteString("no policy configured; set one with relevo config set policy (see README \"Policy\")\n")
 	}
 
 	return sb.String()
@@ -319,7 +319,7 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 		return FormatPolicy(set, pol, gates, hist, now, loc)
 	}
 	if set == nil || set.Len() == 0 {
-		return "no candidates configured; write ~/.config/relevo/candidates.json (see README \"Candidates\")\n"
+		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	}
 
 	width := refWidth(set)
@@ -334,11 +334,11 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 
 		v := policyRoleView{
 			role:    role,
-			header:  role + "  (roles.json)",
+			header:  role + "  (config roles)",
 			rows:    rows,
 			serving: serving,
 			sole:    len(rows) == 1,
-			noRows:  fmt.Sprintf("  no candidate listed in roles.json %s.candidates", role),
+			noRows:  fmt.Sprintf("  no candidate listed in config roles %s.candidates", role),
 		}
 		if len(rows) > 0 {
 			v.res, v.err = resolveRole(reg, set, gates, "", role)
@@ -385,7 +385,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: tok,
-					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q is not a configured candidate", role, i, tok),
+					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, tok),
 				})
 				continue
 			}
@@ -394,7 +394,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: tok,
-					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q is not a configured candidate", role, i, tok),
+					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, tok),
 				})
 				continue
 			}
@@ -403,7 +403,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: tok,
-					Text:  fmt.Sprintf("roles.json %s.candidates[%d] %q: %s has no definition for %s", role, i, tok, role, ref.Harness),
+					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q: %s has no definition for %s", role, i, tok, role, ref.Harness),
 				})
 			}
 		}
@@ -461,7 +461,7 @@ func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy
 			continue
 		}
 		if len(c.Roles) > 0 {
-			out = append(out, fmt.Sprintf("candidates.json: %s: roles is ignored; roles.json assigns candidates to roles", ref))
+			out = append(out, fmt.Sprintf("candidates: %s: roles is ignored; config roles assigns candidates to roles", ref))
 		}
 	}
 	for _, ref := range set.Refs() {
@@ -471,14 +471,14 @@ func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy
 			continue
 		}
 		if c.Tier != "" {
-			out = append(out, fmt.Sprintf("candidates.json: %s: tier is ignored; set the role's tier in roles.json", ref))
+			out = append(out, fmt.Sprintf("candidates: %s: tier is ignored; set the role's tier in config roles", ref))
 		}
 	}
 	if len(pol.Order) > 0 {
-		out = append(out, "policy.json: order is ignored; roles.json <role>.candidates orders them")
+		out = append(out, "policy: order is ignored; config roles <role>.candidates orders them")
 	}
 	if len(pol.Tier) > 0 {
-		out = append(out, "policy.json: tier is ignored; set the role's tier in roles.json")
+		out = append(out, "policy: tier is ignored; set the role's tier in config roles")
 	}
 	return out
 }
@@ -503,7 +503,7 @@ func peakText(hist history.History, provider string, now time.Time, loc *time.Lo
 // RateLimited before SpawnFailed before Cleared within a provider (spec
 // §4.2). A provider whose Cleared events carry a Since also gets a row in
 // the "blocked for" summary under the grid (#302). It returns "" when hist
-// has no events, so a fresh install's `relevo policy` prints nothing extra.
+// has no events, so a fresh install's `relevo config` prints nothing extra.
 func formatHistory(hist history.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""

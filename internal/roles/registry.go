@@ -219,7 +219,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 				continue
 			}
 			if _, err := set.Lookup(ref); err != nil {
-				// Tolerated here; round 3's `relevo policy` warns about it.
+				// Tolerated here; round 3's `relevo config` warns about it.
 				continue
 			}
 			if _, ok := role.Definitions[ref.Harness]; !ok {

@@ -23,7 +23,7 @@ func TestFormatCandidates(t *testing.T) {
 func TestFormatCandidatesEmpty(t *testing.T) {
 	set := candidateSet(t, "[]")
 	got := FormatCandidates(set, nil)
-	want := "no candidates configured; write ~/.config/relevo/candidates.json (see README \"Candidates\")\n"
+	want := "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	if got != want {
 		t.Errorf("FormatCandidates(empty) = %q, want %q", got, want)
 	}

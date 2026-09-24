@@ -356,7 +356,7 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	if !errors.Is(err, ErrUnknownRole) {
 		t.Errorf("err = %v, want ErrUnknownRole", err)
 	}
-	if !strings.Contains(err.Error(), "which roles.json no longer defines") {
+	if !strings.Contains(err.Error(), "which config roles no longer defines") {
 		t.Errorf("err = %q, want it to name the vanished role", err.Error())
 	}
 	if len(fr.specs) != 0 {

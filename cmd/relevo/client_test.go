@@ -7,11 +7,11 @@ import (
 )
 
 // TestClientUsageOnNoArgs pins the no-args usage line; CI launches no harness
-// binary, so this test must never reach cmdClient's callers that do (it
-// doesn't -- `relevo client` alone dispatches nothing).
+// binary, so this test must never reach the server subcommands that do (it
+// doesn't -- `relevo config server` alone dispatches nothing).
 func TestClientUsageOnNoArgs(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"client"})
+		return run([]string{"config", "server"})
 	})
 
 	var ec exitCodeErr
@@ -21,7 +21,7 @@ func TestClientUsageOnNoArgs(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("expected nothing on stdout, got %q", string(stdout))
 	}
-	if !strings.Contains(string(stderr), "usage: relevo client") {
+	if !strings.Contains(string(stderr), "usage: relevo config server") {
 		t.Errorf("expected usage on stderr, got %q", string(stderr))
 	}
 }
@@ -32,7 +32,7 @@ func TestClientUsageOnNoArgs(t *testing.T) {
 // call, so this never reaches a harness or the wire either.
 func TestClientAddServerFlagExclusivityExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"client", "add-server", "zen", "https://zen:7777", "--fingerprint", "sha256:aa", "--ca", "system"})
+		return run([]string{"config", "server", "add", "zen", "https://zen:7777", "--fingerprint", "sha256:aa", "--ca", "system"})
 	})
 
 	var ec exitCodeErr

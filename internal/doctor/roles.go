@@ -35,8 +35,8 @@ func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) [
 		out = append(out, Check{
 			Name:     "binding role",
 			Severity: SevFail,
-			Detail:   fmt.Sprintf("binding %s runs role %q, which roles.json no longer defines", b.Name, role),
-			Fix:      "restore the role in roles.json, or relevo done " + b.Name,
+			Detail:   fmt.Sprintf("binding %s runs role %q, which config roles no longer defines", b.Name, role),
+			Fix:      "restore the role in config roles, or relevo done " + b.Name,
 		})
 	}
 	return out

@@ -279,8 +279,8 @@ func TestDoctorRolesRow(t *testing.T) {
 		if !strings.Contains(c.Detail, "role definitions are stale") {
 			t.Errorf("detail = %q, want it to say the definitions are stale", c.Detail)
 		}
-		if c.Fix != "relevo agent install" {
-			t.Errorf("fix = %q, want relevo agent install", c.Fix)
+		if c.Fix != "relevo config agents" {
+			t.Errorf("fix = %q, want relevo config agents", c.Fix)
 		}
 	})
 
@@ -483,7 +483,7 @@ func TestDoctorMissingRoleFileNamesTheRoleInTheFix(t *testing.T) {
 	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
-	want := "relevo agent install --kind claude --role researcher"
+	want := "relevo config agents --kind claude --role researcher"
 	if c.Fix != want {
 		t.Errorf("fix = %q, want %q", c.Fix, want)
 	}
@@ -679,7 +679,7 @@ func TestDoctorAgyMissingRoleHasAFix(t *testing.T) {
 	report := Run(context.Background(), env, []string{"agy"})
 	c := findCheck(report, "agy", "reviewer")
 	if c == nil || c.Severity != SevWarn || c.Detail != "missing: ~/.gemini/config/agents/reviewer.md" ||
-		c.Fix != "relevo agent install --kind agy --role reviewer" {
+		c.Fix != "relevo config agents --kind agy --role reviewer" {
 		t.Errorf("row = %+v", c)
 	}
 }
@@ -724,7 +724,7 @@ func TestDoctorRoleDriftFromShipped(t *testing.T) {
 		if !strings.Contains(c.Detail, "differs from the definition this relevo ships") {
 			t.Errorf("detail = %q, want it to mention shipped drift", c.Detail)
 		}
-		if c.Fix != "relevo agent install --kind agy --role researcher --force" {
+		if c.Fix != "relevo config agents --kind agy --role researcher --force" {
 			t.Errorf("fix = %q", c.Fix)
 		}
 	})
@@ -837,7 +837,7 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 		report := Run(context.Background(), env, []string{"codex"})
 		c := findCheck(report, "codex", "researcher")
 		wantDetail := "~/.codex/researcher.config.toml (model: gpt-5.6-terra) -- pins gpt-5.6-terra; relevo ships gpt-5.6-luna"
-		wantFix := "relevo agent install --kind codex --role researcher --force"
+		wantFix := "relevo config agents --kind codex --role researcher --force"
 		if c == nil || c.Severity != SevWarn || c.Detail != wantDetail || c.Fix != wantFix {
 			t.Errorf("row = %+v, want SevWarn %q fix %q", c, wantDetail, wantFix)
 		}
@@ -1361,7 +1361,7 @@ func TestDoctorDaemonRowsUnchanged(t *testing.T) {
 // TestCustomRoleRow pins §3.6: a definition in scope that relevo does not ship
 // gets a row of its own -- SevWarn with the by-hand fix when the file is
 // missing, SevOK with "(custom)" when it is there -- while a shipped
-// definition beside it keeps its own row and its own `relevo agent install`
+// definition beside it keeps its own row and its own `relevo config agents`
 // fix.
 func TestCustomRoleRow(t *testing.T) {
 	const customPath = "/fake/home/.claude/agents/my-executor.md"
@@ -1392,8 +1392,8 @@ func TestCustomRoleRow(t *testing.T) {
 		if shipped == nil || shipped.Severity != SevWarn {
 			t.Fatalf("shipped plan-executor row = %+v, want a missing-file warn", shipped)
 		}
-		if shipped.Fix != "relevo agent install --kind claude --role plan-executor" {
-			t.Errorf("shipped fix = %q, want relevo agent install", shipped.Fix)
+		if shipped.Fix != "relevo config agents --kind claude --role plan-executor" {
+			t.Errorf("shipped fix = %q, want relevo config agents", shipped.Fix)
 		}
 		if strings.Contains(shipped.Detail, "(custom)") {
 			t.Errorf("shipped detail = %q, want no custom marker", shipped.Detail)

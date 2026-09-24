@@ -15,79 +15,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
-// cmdClient dispatches `relevo client init|add-server|rm-server` (§4.7): this
-// machine's remote-builder identity (an ed25519 keypair) and its server
-// list (~/.config/relevo/servers.json).
-func cmdClient(args []string) error {
-	const usage = `usage: relevo client init
-       relevo client add-server <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
-       relevo client rm-server <name>`
-
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-
-	switch args[0] {
-	case "init":
-		return cmdClientInit(args[1:])
-	case "add-server":
-		return cmdClientAddServer(args[1:])
-	case "rm-server":
-		return cmdClientRmServer(args[1:])
-	case "help", "-h", "--help":
-		fmt.Println(usage)
-		return nil
-	default:
-		fmt.Fprintln(os.Stderr, usage)
-		return exitCodeErr{code: 2}
-	}
-}
-
-// cmdClientInit generates this machine's client key (refusing to overwrite
-// one that exists) and prints the id and the enrollment line a server admin
-// runs `relevo serve enroll --key "<line>"` with.
-func cmdClientInit(args []string) error {
-	fs := flag.NewFlagSet("relevo client init", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	if _, ok, err := rt.Config.Secret(config.SecretClientKey); err != nil {
-		return err
-	} else if ok {
-		return fmt.Errorf("client key already exists; remove it first to replace it: %w", client.ErrKeyExists)
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		return err
-	}
-	pem, err := remote.MarshalPrivate(kp)
-	if err != nil {
-		return err
-	}
-	if err := rt.Config.PutSecret(config.SecretClientKey, pem); err != nil {
-		return err
-	}
-
-	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
-	fmt.Println(client.EnrollLine(kp))
-	return nil
-}
-
-// cmdClientAddServer records a server entry in servers.json and, when
+// cmdClientAddServer records a server entry in the servers section, and, when
 // --fingerprint pins it, checks enrollment once with WhoAmI (§4.7). A 401
-// here is not an error: it means the admin has not enrolled this client's
-// key yet, and the reply names the enrollment line to hand them.
+// here is not an error: it means the admin has not enrolled this client's key
+// yet, and the reply names the enrollment line to hand them. When no client
+// key exists yet it first generates one, as `client init` did, and prints the
+// enrollment line.
 func cmdClientAddServer(args []string) error {
-	fs := flag.NewFlagSet("relevo client add-server", flag.ContinueOnError)
+	fs := flag.NewFlagSet("relevo config server add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fingerprint := fs.String("fingerprint", "", "pin the server's certificate fingerprint (sha256:<hex>)")
 	ca := fs.String("ca", "", `trust the system CA pool instead of pinning ("system")`)
@@ -98,7 +33,7 @@ func cmdClientAddServer(args []string) error {
 
 	rest := fs.Args()
 	if len(rest) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: relevo client add-server <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
+		fmt.Fprintln(os.Stderr, "usage: relevo config server add <name> <url> (--fingerprint sha256:... | --ca system | --insecure)")
 		return exitCodeErr{code: 2}
 	}
 	name, rawURL := rest[0], rest[1]
@@ -114,7 +49,7 @@ func cmdClientAddServer(args []string) error {
 		set++
 	}
 	if set > 1 {
-		fmt.Fprintln(os.Stderr, "relevo client add-server: --fingerprint, --ca and --insecure are mutually exclusive")
+		fmt.Fprintln(os.Stderr, "relevo config server add: --fingerprint, --ca and --insecure are mutually exclusive")
 		return exitCodeErr{code: 2}
 	}
 
@@ -127,6 +62,19 @@ func cmdClientAddServer(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// The key comes first: the enrollment line printed once is the one the
+	// server admin needs before the enrollment check below can succeed.
+	pem, generated, err := ensureClientKey(rt)
+	if err != nil {
+		return err
+	}
+	if generated {
+		if err := printClientKey(pem); err != nil {
+			return err
+		}
+	}
+
 	L, err := rt.Config.Load()
 	if err != nil {
 		return err
@@ -148,11 +96,7 @@ func cmdClientAddServer(args []string) error {
 		return nil
 	}
 
-	if len(L.ClientKey) == 0 {
-		fmt.Println("no client key yet; run relevo client init, then relevo client add-server again to check enrollment")
-		return nil
-	}
-	key, err := remote.ParsePrivate(L.ClientKey)
+	key, err := remote.ParsePrivate(pem)
 	if err != nil {
 		return err
 	}
@@ -176,14 +120,14 @@ func cmdClientAddServer(args []string) error {
 // internal/relevo so this thin wrapper needs no harness or network access to
 // test the refusal shape -- see CLAUDE.md's CI rule).
 func cmdClientRmServer(args []string) error {
-	fs := flag.NewFlagSet("relevo client rm-server", flag.ContinueOnError)
+	fs := flag.NewFlagSet("relevo config server rm", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo client rm-server <name>")
+		fmt.Fprintln(os.Stderr, "usage: relevo config server rm <name>")
 		return exitCodeErr{code: 2}
 	}
 	name := rest[0]
@@ -224,7 +168,7 @@ func cmdClientRmServer(args []string) error {
 // client's enrollment on it (§4.7), via the same relevo.ProbeServers doctor's
 // per-server checks use.
 func cmdServers(args []string) error {
-	fs := flag.NewFlagSet("relevo servers", flag.ContinueOnError)
+	fs := flag.NewFlagSet("relevo config server list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -240,7 +184,7 @@ func cmdServers(args []string) error {
 	}
 	servers := L.Servers
 	if len(servers) == 0 {
-		fmt.Println("no servers configured; relevo client add-server <name> <url>")
+		fmt.Println("no servers configured; relevo config server add <name> <url>")
 		return nil
 	}
 

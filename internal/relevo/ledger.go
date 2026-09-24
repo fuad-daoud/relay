@@ -292,7 +292,7 @@ func rolesMissingGates(rt Runtime) []ledger.Gate {
 
 // rolesMissingNote is one roles-missing gate's note: which of role's
 // definitions are missing on kind, and how to fix each class of them. A
-// shipped path is installed by `relevo agent install`; a custom one relevo never
+// shipped path is installed by `relevo config agents`; a custom one relevo never
 // writes, so its fix says to install it by hand.
 func rolesMissingNote(role, kind string, defs, paths []string) string {
 	var shipped, custom []string
@@ -306,7 +306,7 @@ func rolesMissingNote(role, kind string, defs, paths []string) string {
 
 	var fixes []string
 	if len(shipped) > 0 {
-		fixes = append(fixes, "run relevo agent install --kind "+kind)
+		fixes = append(fixes, "run relevo config agents --kind "+kind)
 	}
 	if len(custom) > 0 {
 		fixes = append(fixes, "install "+strings.Join(custom, ", ")+" yourself; relevo never installs a custom definition")

@@ -60,7 +60,7 @@ func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates [
 // segment, which only legacy mode does (#374 §3.2).
 func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
 	if set == nil || set.Len() == 0 {
-		return "no candidates configured; write ~/.config/relevo/candidates.json (see README \"Candidates\")\n"
+		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	}
 
 	byToken := make(map[string][]ledger.Gate)

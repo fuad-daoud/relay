@@ -199,7 +199,7 @@ func renderReport(w io.Writer, rep doctor.Report) {
 
 	if failCount == 0 {
 		if rep.NoCandidates {
-			fmt.Fprintf(w, "%s, %s -- no candidates configured; write ~/.config/relevo/candidates.json first.\n", warnPart, failPart)
+			fmt.Fprintf(w, "%s, %s -- no candidates configured; set them with relevo config set candidates first.\n", warnPart, failPart)
 		} else if !rep.UsableBuilder {
 			// Say why. Every row can be `ok` and still leave no usable builder --
 			// a machine whose only alias names a kind relevo was not taught reads
@@ -357,7 +357,7 @@ func cmdDoctor(args []string) error {
 			Name:     "candidates",
 			Severity: doctor.SevWarn,
 			Detail:   "none configured",
-			Fix:      `write ~/.config/relevo/candidates.json, e.g. [{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`,
+			Fix:      `relevo config set candidates '[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]'`,
 		})
 	}
 
@@ -469,7 +469,7 @@ func serverChecks(probes []relevo.ServerProbe) []doctor.Check {
 					Name:     "servers",
 					Severity: doctor.SevWarn,
 					Detail:   fmt.Sprintf("%s: %s", p.Name, warning),
-					Fix:      "set tier.builder in the server's policy.json",
+					Fix:      "set tier.builder in the server's config policy",
 				})
 			} else if !p.TierAware {
 				checks = append(checks, doctor.Check{
@@ -500,7 +500,7 @@ func serverChecks(probes []relevo.ServerProbe) []doctor.Check {
 		case "cert changed":
 			c.Severity = doctor.SevFail
 			c.Detail = fmt.Sprintf("%s: certificate changed", p.Name)
-			c.Fix = fmt.Sprintf("relevo client add-server %s <url> --fingerprint <new>", p.Name)
+			c.Fix = fmt.Sprintf("relevo config server add %s <url> --fingerprint <new>", p.Name)
 		case "no key":
 			c.Severity = doctor.SevWarn
 			c.Detail = fmt.Sprintf("%s: %s", p.Name, p.Detail)
@@ -545,7 +545,7 @@ func policyChecks(warnings []relevo.PolicyWarning) []doctor.Check {
 			Name:     "policy",
 			Severity: doctor.SevWarn,
 			Detail:   w.Text,
-			Fix:      "edit ~/.config/relevo/policy.json",
+			Fix:      "run relevo config edit",
 		})
 	}
 	return checks
@@ -562,7 +562,7 @@ func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 		if r.Role == "builder" {
 			detail = r.Text + " -- add/bind without --builder would refuse"
 		}
-		fix := "write ~/.config/relevo/policy.json, e.g. " + policyExample(r.Role, r.Serving)
+		fix := "relevo config set policy '" + policyExample(r.Role, r.Serving) + "'"
 		if !r.NoOrder {
 			provider := "<provider>"
 			if len(r.Gated) > 0 {

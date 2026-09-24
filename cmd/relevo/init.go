@@ -16,9 +16,9 @@ import (
 // cmdInit seeds the candidates and policy sections from the harness binaries
 // on PATH, then installs the role definitions for those harnesses.
 func cmdInit(args []string) error {
-	fs := flag.NewFlagSet("relevo init", flag.ContinueOnError)
+	fs := flag.NewFlagSet("relevo config init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	force := fs.Bool("force", false, "overwrite existing candidates.json / policy.json")
+	force := fs.Bool("force", false, "overwrite the existing candidates / policy sections")
 	noRoles := fs.Bool("no-roles", false, "do not install role definitions")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {

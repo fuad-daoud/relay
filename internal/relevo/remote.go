@@ -661,7 +661,7 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 				b.Builder.RemoteStatus = "auth: " + string(httpErr.Body.Code)
 				if rt.AuthGrace.Expired(name, now, authGraceLimit) {
 					dur := now.Sub(first).Truncate(time.Second)
-					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo servers",
+					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo config server list",
 						name, server, httpErr.Body.Code, dur))
 					return b, false, err
 				}
@@ -869,7 +869,7 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 }
 
 // ServerProbe is one configured server's reachability and enrollment, as
-// `relevo servers` and `relevo doctor` both report it (spec §5.5, §4.7).
+// `relevo config server list` and `relevo doctor` both report it (spec §5.5, §4.7).
 type ServerProbe struct {
 	Name  string
 	URL   string
@@ -914,7 +914,7 @@ func ProbeServers(ctx context.Context, rt Runtime, servers map[string]client.Ser
 		p := ServerProbe{Name: n, URL: servers[n].URL}
 		if rt.Remote == nil {
 			p.State = "no key"
-			p.Detail = "run relevo client init"
+			p.Detail = "run relevo config server key"
 			probes = append(probes, p)
 			continue
 		}
@@ -973,16 +973,16 @@ func probeStatusText(p ServerProbe) string {
 // headless builders at tier harness, "" otherwise (including !TierAware).
 func ServerTierWarning(p ServerProbe) string {
 	if p.TierAware && p.BuilderTier == string(harness.TierHarness) {
-		return "headless builders at tier harness deny every tool unless the server host's harness settings allow them; set tier.builder in the server's policy.json or pass --tier"
+		return "headless builders at tier harness deny every tool unless the server host's harness settings allow them; set tier.builder in the server's config policy or pass --tier"
 	}
 	return ""
 }
 
-// RenderServers formats probes as the table `relevo servers` prints: one row
+// RenderServers formats probes as the table `relevo config server list` prints: one row
 // per server, name, url, and enrollment status, aligned on the longest name.
 func RenderServers(probes []ServerProbe) string {
 	if len(probes) == 0 {
-		return "no servers configured; relevo client add-server <name> <url>\n"
+		return "no servers configured; relevo config server add <name> <url>\n"
 	}
 
 	width := 0
@@ -1357,7 +1357,7 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 }
 
 // ServerInUse names every binding that names server -- the pure rule behind
-// `relevo client rm-server`'s refusal (§4.7). A pure function over the
+// `relevo config server rm`'s refusal (§4.7). A pure function over the
 // binding list rather than a store read, so the CLI (cmd/relevo) can be
 // tested without touching the network -- the caller loads the bindings and
 // this function decides.

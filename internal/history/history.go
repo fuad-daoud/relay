@@ -1,5 +1,5 @@
 // Package history keeps the ledger's observations, kept for 30 days by
-// provider and hour, so `relevo policy` can show when a provider tends to be
+// provider and hour, so `relevo config` can show when a provider tends to be
 // limited (#61 step 7); it decides nothing. The file is availability.json
 // (renamed from history.json, #172 q6, so "history" is free for binding
 // history); Load migrates an older install's history.json the first time it

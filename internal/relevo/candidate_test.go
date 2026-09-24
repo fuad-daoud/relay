@@ -135,7 +135,7 @@ func TestResolveCandidate(t *testing.T) {
 			token:           "",
 			role:            "builder",
 			wantErr:         ErrNoCandidates,
-			messageContains: []string{"candidates.json"},
+			messageContains: []string{"relevo config set candidates"},
 		},
 		{
 			name:            "none serve, no token",
@@ -159,7 +159,7 @@ func TestResolveCandidate(t *testing.T) {
 			token:           "",
 			role:            "builder",
 			wantErr:         ErrAmbiguousCandidate,
-			messageContains: []string{`3 candidates serve "builder"`, "name one with", "policy.json"},
+			messageContains: []string{`3 candidates serve "builder"`, "name one with", "config policy"},
 		},
 		{
 			name:         "order, first ungated",
@@ -543,7 +543,7 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveCandidate succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relevo agent install --kind") {
-		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo agent install --kind")
+	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
+		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo config agents --kind")
 	}
 }

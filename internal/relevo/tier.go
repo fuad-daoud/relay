@@ -45,7 +45,7 @@ func resolveTier(explicit string, c candidate.Candidate, pol policy.Policy, role
 func checkTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	maxTier := pol.MaxTierOrDefault()
 	if tier.Above(maxTier) && !allowYolo {
-		return fmt.Errorf("%w: tier %s exceeds max_tier %s; pass --allow-yolo or raise max_tier in ~/.config/relevo/policy.json", ErrTierAboveMax, tier, maxTier)
+		return fmt.Errorf("%w: tier %s exceeds max_tier %s; pass --allow-yolo or raise max_tier in config policy", ErrTierAboveMax, tier, maxTier)
 	}
 	return nil
 }

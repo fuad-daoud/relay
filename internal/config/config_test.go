@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -282,6 +283,151 @@ func TestImportTxFailureKeepsFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s removed after a failed commit: %v", name, err)
 		}
+	}
+}
+
+func TestStoreDeleteRemovesAndBumpsVersion(t *testing.T) {
+	s := openStore(t)
+	if _, err := s.Put(Candidates, []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	before, err := s.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+
+	if err := s.Delete(Candidates); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	ok, err := s.Has(Candidates)
+	if err != nil {
+		t.Fatalf("Has: %v", err)
+	}
+	if ok {
+		t.Error("candidates still present after Delete")
+	}
+	after, err := s.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if after <= before {
+		t.Errorf("Version after Delete = %d, want > %d", after, before)
+	}
+
+	// Deleting an absent section still bumps: the version is a change counter.
+	if err := s.Delete(Candidates); err != nil {
+		t.Fatalf("second Delete: %v", err)
+	}
+	again, err := s.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if again <= after {
+		t.Errorf("Version after second Delete = %d, want > %d", again, after)
+	}
+}
+
+func TestPutDocWritesEverySectionAndWarnings(t *testing.T) {
+	s := openStore(t)
+	doc := map[Section]json.RawMessage{
+		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+		Policy:     json.RawMessage(`{"order":{"builder":["claude/p/m"]}}`),
+		Hooks:      json.RawMessage(`{"state_changed":[["/bin/true"]]}`),
+	}
+	if _, err := s.PutDoc(doc); err != nil {
+		t.Fatalf("PutDoc: %v", err)
+	}
+	if _, ok, err := s.Body(Candidates); err != nil || !ok {
+		t.Errorf("candidates after PutDoc = ok %v, err %v", ok, err)
+	}
+	if _, ok, err := s.Body(Policy); err != nil || !ok {
+		t.Errorf("policy after PutDoc = ok %v, err %v", ok, err)
+	}
+	if _, ok, err := s.Body(Hooks); err != nil || !ok {
+		t.Errorf("hooks after PutDoc = ok %v, err %v", ok, err)
+	}
+	// A section not in the document is untouched.
+	if _, ok, err := s.Body(Roles); err != nil || ok {
+		t.Errorf("roles after PutDoc = ok %v, err %v, want absent", ok, err)
+	}
+}
+
+func TestPutDocLeavesUnmentionedSectionsAlone(t *testing.T) {
+	s := openStore(t)
+	if _, err := s.Put(Servers, []byte(`{"zen":{"url":"https://zen:7777","insecure":true}}`)); err != nil {
+		t.Fatalf("Put(servers): %v", err)
+	}
+
+	if _, err := s.PutDoc(map[Section]json.RawMessage{
+		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+	}); err != nil {
+		t.Fatalf("PutDoc: %v", err)
+	}
+
+	body, ok, err := s.Body(Servers)
+	if err != nil || !ok {
+		t.Fatalf("servers after PutDoc = ok %v, err %v, want present", ok, err)
+	}
+	if !strings.Contains(string(body), "zen") {
+		t.Errorf("servers body = %s, want it left untouched", body)
+	}
+}
+
+func TestPutDocUnknownSectionWritesNothing(t *testing.T) {
+	s := openStore(t)
+	_, err := s.PutDoc(map[Section]json.RawMessage{
+		Candidates:          json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+		Section("nonesuch"): json.RawMessage(`{}`),
+	})
+	if err == nil {
+		t.Fatal("PutDoc with an unknown section: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonesuch") {
+		t.Errorf("error %v does not name the unknown section", err)
+	}
+	if ok, _ := s.Has(Candidates); ok {
+		t.Error("candidates written despite the unknown section in the same document")
+	}
+	if v, _ := s.Version(); v != 0 {
+		t.Errorf("Version = %d, want 0: nothing was written", v)
+	}
+}
+
+func TestPutDocInvalidSectionWritesNothing(t *testing.T) {
+	s := openStore(t)
+	_, err := s.PutDoc(map[Section]json.RawMessage{
+		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
+		Policy:     json.RawMessage(`{"max_switches":-1}`),
+	})
+	if err == nil {
+		t.Fatal("PutDoc with an invalid policy: want error, got nil")
+	}
+	if ok, _ := s.Has(Candidates); ok {
+		t.Error("candidates written despite the invalid policy in the same document")
+	}
+	if v, _ := s.Version(); v != 0 {
+		t.Errorf("Version = %d, want 0: nothing was written", v)
+	}
+}
+
+func TestSecretDeleteAndNames(t *testing.T) {
+	s := openStore(t)
+	if err := s.PutSecret(SecretTypesafe, []byte("ts-key")); err != nil {
+		t.Fatalf("PutSecret: %v", err)
+	}
+	names, err := s.SecretNames()
+	if err != nil {
+		t.Fatalf("SecretNames: %v", err)
+	}
+	if !reflect.DeepEqual(names, []string{SecretTypesafe}) {
+		t.Errorf("SecretNames = %v, want [%s]", names, SecretTypesafe)
+	}
+
+	if err := s.SecretDelete(SecretTypesafe); err != nil {
+		t.Fatalf("SecretDelete: %v", err)
+	}
+	if _, ok, err := s.Secret(SecretTypesafe); err != nil || ok {
+		t.Errorf("secret after delete = ok %v, err %v, want absent", ok, err)
 	}
 }
 

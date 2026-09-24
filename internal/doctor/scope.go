@@ -59,7 +59,7 @@ func ScopeChecks(env Env, blocks []ScopeBlock, controllersPath string, ncpu int)
 		case b.MaxCPU >= ncpu:
 			c.Severity = SevWarn
 			c.Detail = fmt.Sprintf("%s names cpu %d but this host has %d (0-%d)", b.Key, b.MaxCPU, ncpu, ncpu-1)
-			c.Fix = fmt.Sprintf("narrow %s in policy.json to cpus this host has", b.Key)
+			c.Fix = fmt.Sprintf("narrow %s in config policy to cpus this host has", b.Key)
 		default:
 			c.Severity = SevOK
 			c.Detail = fmt.Sprintf("cpuset delegated; rounds pinned one per core from %s", b.AllowedCPUs)

@@ -245,7 +245,7 @@ func TestProbeServersStates(t *testing.T) {
 		{
 			name:      "no key",
 			rt:        Runtime{},
-			wantState: "no key", wantDetail: "run relevo client init",
+			wantState: "no key", wantDetail: "run relevo config server key",
 		},
 		{
 			name:      "enrolled",
@@ -2772,8 +2772,8 @@ func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
 	if !strings.Contains(got.Halt, "stale for 16m") {
 		t.Fatalf("Halt = %q, want the code and how long it persisted", got.Halt)
 	}
-	if !strings.Contains(got.Halt, "check this machine's clock and relevo servers") {
-		t.Fatalf("Halt = %q, want the clock and relevo servers hint", got.Halt)
+	if !strings.Contains(got.Halt, "check this machine's clock and relevo config server list") {
+		t.Fatalf("Halt = %q, want the clock and relevo config server list hint", got.Halt)
 	}
 }
 

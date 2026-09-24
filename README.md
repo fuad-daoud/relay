@@ -108,7 +108,7 @@ its old `relay.service` (or LaunchAgent) and the old `relay` binary until
    /plugin marketplace add fuad-daoud/relevo
    /plugin install relevo@relevo
    ```
-5. Run `relevo agent install`.
+5. Run `relevo config agents`.
 6. Restart planner sessions.
 
 <!-- name-guard: on -->
@@ -138,34 +138,36 @@ the planner.
 
 ## First run on a clean machine
 
-On a clean machine, set up prerequisites and preflight with `relevo init` and
+On a clean machine, set up prerequisites and preflight with `relevo config init` and
 `relevo doctor`:
 
 1. Install relevo (see [Install](#install)).
-2. Run `relevo init` to write a starter configuration from the harnesses on
+2. Run `relevo config init` to write a starter configuration from the harnesses on
    `PATH`:
    ```
-   relevo init
+   relevo config init
    ```
    It finds the harness binaries on `PATH`, writes one builder candidate per
-   harness to `~/.config/relevo/candidates.json`, writes
-   `~/.config/relevo/policy.json` ordering them, and installs the role
-   definitions into each of those harnesses. It refuses to overwrite either
-   config file without `--force`, and `--no-roles` skips the definitions. It
-   says what it wrote and the command to run next, e.g.:
+   harness to the candidates section, writes the policy section ordering them,
+   and installs the role definitions into each of those harnesses. The
+   configuration lives in relevo.db under the state root, not in a file; a
+   file you drop into `~/.config/relevo` is imported on the next command and
+   removed. It refuses to overwrite the candidates or policy section without
+   `--force`, and `--no-roles` skips the definitions. It says what it wrote and
+   the command to run next, e.g.:
    ```
-   wrote ~/.config/relevo/candidates.json (2 candidates: claude, opencode)
-   wrote ~/.config/relevo/policy.json (order.builder: claude/anthropic/sonnet, opencode/openrouter/z-ai/glm-5.3-flash)
+   wrote candidates (2: claude, opencode)
+   wrote policy (order.builder: claude/anthropic/sonnet, opencode/openrouter/z-ai/glm-5.3-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
-   next: edit the model names in ~/.config/relevo/candidates.json, then run: relevo doctor
+   next: edit the model names, then run: relevo doctor
    ```
 
    **Edit the model names it wrote** to the models your accounts may run (see
-   [Candidates](#candidates)); `relevo candidates` prints what you configured.
-   When more than one candidate serves `builder`, `relevo policy` shows the
-   order relevo would pick them in and says `would refuse` until the file's
-   order suits you (see [Policy](#policy)).
+   [Candidates](#candidates)); `relevo config` prints what you configured.
+   When more than one candidate serves `builder`, `relevo config` shows the
+   order relevo would pick them in and says `would refuse` until the order
+   suits you (see [Policy](#policy)).
 3. Run `relevo doctor` to check your environment:
    ```
    relevo doctor
@@ -180,45 +182,42 @@ On a clean machine, set up prerequisites and preflight with `relevo init` and
    ```
    (or, with one candidate, `relevo bind`).
 
-To write these files by hand instead, install the role definitions into each
-harness on `PATH` — the daemon refreshes unmodified definitions on every start
-and upgrade, a file you edited is kept, and `relevo agent install --force`
-replaces it:
+To install the role definitions into each harness on `PATH` by hand instead —
+the daemon refreshes unmodified definitions on every start and upgrade, a file
+you edited is kept, and `relevo config agents --force` replaces it:
 ```
-relevo agent install
+relevo config agents
 ```
 One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--role` for one definition,
-`--dry-run` to look first.
-This writes `plan-executor`, `researcher`, `reviewer` and `architect`
-for every kind; `relevo agent print --kind <k> --role <r>` still emits
-one to stdout.
+`--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`
+and `architect` for every kind; `relevo config agents --dry-run` shows what
+would be written.
 
 `researcher` is the read-only role the builder's own sub-agents run as. It
 exists because exactly one agent may write to a working tree: research can fan
 out safely, implementation cannot. The claude and opencode definitions pin a
 `model:` in their front matter as a worked example, chosen so neither needs a
 provider the rest of relevo does not already assume; that line is the first
-thing to change for your own setup, and a plain `relevo agent install`
+thing to change for your own setup, and a plain `relevo config agents`
 keeps your edit. The agy definitions pin `model: inherit`
 and that is not an example: on agy the key is a tier (`inherit`, `flash`,
 `pro`) that would override the `--model` relevo passes at launch. `relevo
 doctor` reports the pin each installed definition carries, warns when an
 agy copy pins a tier or differs from what relevo ships, and names the
-`relevo agent install ... --force` that restores it.
+`relevo config agents ... --force` that restores it.
 
 codex roles are TOML profiles at `~/.codex/<role>.config.toml` selected
 with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
 every codex builder's research sub-agents and `relevo doctor` warns when
 that pin drifts.
 
-Then write `~/.config/relevo/candidates.json` (see [Candidates](#candidates))
-and check it with `relevo candidates`. If more than one candidate serves
-`builder`, write `~/.config/relevo/policy.json` with the order to try them in
-(see [Policy](#policy)); `relevo policy` shows what relevo would pick and says
-`would refuse` until you do. `relevo doctor` warns about this too and prints a
-starter file built from your candidates.
+Then set the candidates section (see [Candidates](#candidates)) and check it
+with `relevo config`. If more than one candidate serves `builder`, set the
+policy order to try them in (see [Policy](#policy)); `relevo config` shows what
+relevo would pick and says `would refuse` until you do. `relevo doctor` warns
+about this too and prints a starter policy built from your candidates.
 
 ## Quick start
 
@@ -226,7 +225,7 @@ On a clean machine, seed your configuration first (see
 [First run on a clean machine](#first-run-on-a-clean-machine)):
 
 ```
-relevo init                        # write candidates.json and policy.json, install the role definitions
+relevo config init                 # seed candidates and policy, install the role definitions
 ```
 
 From the planner session, in the repository you want worked on:
@@ -375,13 +374,20 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   round history and artifacts through round R and launching a fresh builder in a
   dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
   binding's own.
-- `relevo candidates` — list the configured candidates and the roles each serves.
-- `relevo policy` — show, per role, the candidates in the order relevo would
-  try them, which one it would pick right now, and any gap between
-  `policy.json` and `candidates.json`.
-- `relevo roles` — list every role's shape, candidates, tier and per-kind agent
-  definitions; `relevo roles init` writes `roles.json` from `candidates.json`
-  and `policy.json` (`--dry-run`, `--force`).
+- `relevo config` — show the roles, the current pick per role and the
+  configured candidates, in three blocks; `relevo config --probe` runs each
+  candidate once and records its time to first output.
+- `relevo config init` — seed the candidates and policy sections from the
+  harnesses on `PATH` and install the role definitions (`--force`,
+  `--no-roles`).
+- `relevo config roles-init` — derive the roles section from the candidates and
+  policy (`--dry-run`, `--force`).
+- `relevo config agents` — install the per-kind agent role definitions
+  (`--kind`, `--role`, `--force`, `--dry-run`).
+- `relevo config export|import|get|set|unset|edit` — read and change the
+  configuration document section by section.
+- `relevo config secret set|rm|list` — store, forget or list the `typesafe`
+  and `client.key` secrets (the value is read from stdin).
 - `relevo unavailable <harness/provider/model> [--for D] [--reason S]` — record
   that a candidate's provider is rate-limited; gates every candidate on that
   provider until `--for` elapses, or until `relevo available` clears it.
@@ -402,15 +408,15 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo serve gates [--state DIR]` — list the gates on the server's own ledger.
 - `relevo serve available <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
 - `relevo serve unavailable <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
-- `relevo client init` — generate this machine's remote-builder identity (an
+- `relevo config server key` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
   `relevo serve enroll --key "<line>"` with.
-- `relevo client add-server NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
-  record a remote server in `servers.json`; with `--fingerprint`, checks
-  enrollment once.
-- `relevo client rm-server NAME` — forget a configured server; refused while
+- `relevo config server add NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
+  record a remote server; with `--fingerprint`, checks enrollment once.
+  Generates and prints this machine's key when it has none yet.
+- `relevo config server rm NAME` — forget a configured server; refused while
   any binding still names it.
-- `relevo servers` — one row per configured server: name, url, and this
+- `relevo config server list` — one row per configured server: name, url, and this
   client's enrollment on it.
 - `relevo help` — the command list. `relevo <command> -h` prints that command's
   flags.
@@ -596,7 +602,7 @@ What this means in practice:
 
 - **No dialogs.** The process runs with stdin closed. If a harness needs
   permission prompts answered, put its `--dangerously-skip-permissions`/`--auto`
-  extra arg in `candidates.json`.
+  extra arg in the candidates section.
 - **No memory across rounds.** Every round is a fresh process. relevo plans
   already carry their own context (worktree table, conventions, "stop rather
   than improvise"); headless makes that a hard requirement.
@@ -638,7 +644,7 @@ verify reviewer each get a scope from the same template too, with a unit name
 that says what it is: `relevo-gate-local-<binding>-<round>`,
 `relevo-consult-local-<binding>-<round>-<consult-id>` and
 `relevo-verify-local-<binding>-<round>-<consult-id>` (an owned remote binding
-uses its owner's id where `local` sits, exactly as for a round). `policy.json`'s
+uses its owner's id where `local` sits, exactly as for a round). The policy section's
 top-level `scope` block configures the scope (`enabled`, `slice`, `cpu_weight`,
 `cpu_quota`, `gate_cpu_quota`, `memory_max`, `tasks_max`); `gate_cpu_quota` is
 the gate's own CPU ceiling, and defaults to `cpu_quota`. `serve.scope` replaces
@@ -732,21 +738,20 @@ history alongside the plan, and the daemon polls the server for the round's
 state the same way it polls a local builder.
 
 Set up once per machine:
-1. `relevo client init` generates this client's ed25519 keypair (in
-   `~/.config/relevo/client.key` / `.pub`) and prints two lines: the client's
-   id, and an enrollment line (`ed25519 <base64> <user>@<host>`) to hand the
-   server admin.
+1. `relevo config server key` generates this client's ed25519 keypair (stored
+   in relevo.db) and prints two lines: the client's id, and an enrollment line
+   (`ed25519 <base64> <user>@<host>`) to hand the server admin.
 2. The admin runs `relevo serve enroll --label <you> --key "<enrollment
    line>"` on the server, and shares back that server's certificate
    fingerprint (printed by `relevo serve init` there).
-3. `relevo client add-server <name> <url> --fingerprint sha256:<hex>` records
-   the server in `~/.config/relevo/servers.json` and, having a fingerprint to
-   pin the connection with, checks enrollment immediately: "enrolled as
+3. `relevo config server add <name> <url> --fingerprint sha256:<hex>` records
+   the server and, having a fingerprint to pin the connection with, checks
+   enrollment immediately: "enrolled as
    `<label>`", or "not enrolled on `<name>`: give the admin: `<enrollment
    line>`" if step 2 has not happened yet. `--ca system` trusts the system CA
    pool instead of pinning a fingerprint; `--insecure` allows plain HTTP, for
    a server reachable only over an already-trusted tunnel.
-4. `relevo servers` lists every configured server and this client's
+4. `relevo config server list` lists every configured server and this client's
    enrollment on each: `enrolled as <label>`, `not enrolled`, `unreachable`,
    or `cert changed` (the pinned fingerprint no longer matches -- a hard
    refusal the client never overrides silently).
@@ -1248,7 +1253,10 @@ time since the last plan, report or question crossed.
 
 A candidate is one way to fill a role, named by the token `harness/provider/model`. `harness` and `provider` are single segments; `model` is the rest, so `opencode/openrouter/z-ai/glm-5.3-flash` is one token. **relevo ships no candidates**: which model you are entitled to run is a fact about your accounts, not about relevo.
 
-Candidates are configured in `$XDG_CONFIG_HOME/relevo/candidates.json` (default `~/.config/relevo/candidates.json`), a JSON array:
+Candidates are the `candidates` section of relevo.db, a JSON array you read
+and write with `relevo config`: show it with `relevo config get candidates`, set
+the whole array with `relevo config set candidates '[…]'`, or edit the document
+with `relevo config edit`. The array is:
 
 ```json
 [
@@ -1286,7 +1294,7 @@ Candidates are configured in `$XDG_CONFIG_HOME/relevo/candidates.json` (default 
 - `limit_patterns` — extra regexes, appended to the harness defaults, for the text this candidate's provider prints when it closes a session on quota. Extend-only; a default that misfires is a bug to report.
 - `dialog_patterns` — extra regexes appended to the harness defaults, matched against a runner's output to detect a blocking dialog; a match refuses `send` as blocked; extend-only.
 
-A file that does not validate stops every relevo command with a message naming the entry; a missing file is zero candidates.
+A section that does not validate is refused with a message naming the entry; an absent section is zero candidates.
 
 | Name | Shape | Definition |
 | --- | --- | --- |
@@ -1294,7 +1302,7 @@ A file that does not validate stops every relevo command with a message naming t
 | `reviewer` | consult | `reviewer` |
 | `researcher` | consult | `researcher` |
 
-A role is relevo's name for a job; the harness definition it selects is what `relevo agent print` emits.
+A role is relevo's name for a job; the harness definition it selects is what `relevo config agents` installs.
 
 ### How relevo launches one
 
@@ -1322,7 +1330,7 @@ With `--builder` omitted, relevo decides, by one rule:
 
 - exactly one configured candidate serves the role → that one, unless it
   is gated;
-- several serve it and `policy.json` orders them (see [Policy](#policy))
+- several serve it and the policy section orders them (see [Policy](#policy))
   → the first in that order that is not gated, then any serving
   candidate the order does not list, in token order;
 - several serve it and nothing is ordered → relevo refuses and lists
@@ -1342,12 +1350,13 @@ binding's log as a `pick` entry, so `relevo log` shows it later:
 picked claude/anthropic/sonnet for builder: order #2; skipped agy/google/gemini-3.8-flash-high (rate-limited until 20:28)
 ```
 
-`relevo candidates` prints the configured tokens with their roles.
+`relevo config` prints the configured tokens with their roles.
 
 ### Policy
 
-`~/.config/relevo/policy.json` is where you tell relevo the order to try
-candidates in, per role:
+The `policy` section of relevo.db is where you tell relevo the order to try
+candidates in, per role. Read it with `relevo config get policy` and change it
+with `relevo config set policy.<key> <json>` or `relevo config edit`:
 
 ```json
 {
@@ -1375,11 +1384,11 @@ candidates in, per role:
 
 Roles you leave out are unordered, and an omitted `--builder` keeps
 refusing for them when several candidates serve the role. A candidate
-you add to `candidates.json` without adding it here is tried last, after
+you add to the candidates section without adding it here is tried last, after
 everything listed. An entry here that names a candidate that is not
 configured, or one that does not serve the role, is skipped -- never an
 error, because removing a candidate must not stop every command -- and
-`relevo policy` and `relevo doctor` warn about it. Both also say when several
+`relevo config` and `relevo doctor` warn about it. Both also say when several
 candidates serve a role and no order is set, since an omitted `--builder`
 refuses in that state. `tier` specifies default permission tiers per role
 (`builder`, `reviewer`, `researcher`), defaulting to `harness`. `max_tier`
@@ -1417,12 +1426,13 @@ beside the regex scan. When absent, relevo scans with regexes only. The block
 requires `"provider": "jev"`; `model` defaults to `"jev-latest"`,
 `injection_threshold` defaults to `0.7`, and `timeout_ms` defaults to `4000`.
 The API key is read from the `TYPESAFE_API_KEY` environment variable or from
-`~/.config/relevo/typesafe.key`. The key is stripped from every builder's
-environment so that agents running arbitrary plans never inherit relevo's own secrets.
-The key file exists because the daemon runs as a systemd user unit that inherits no login
-environment (`systemctl --user set-environment TYPESAFE_API_KEY=...` also works). The key
-file must be mode 0600 and is ignored otherwise, with `relevo doctor` naming it. `relevo doctor`
-reports which key source was found or warns if neither is set. In `relevo log`, an entry like
+the `typesafe` secret (`relevo config secret set typesafe` reads the value from
+stdin). The key is stripped from every builder's environment so that agents
+running arbitrary plans never inherit relevo's own secrets. The secret exists
+because the daemon runs as a systemd user unit that inherits no login
+environment (`systemctl --user set-environment TYPESAFE_API_KEY=...` also
+works). `relevo doctor` reports which key source was found or warns if neither
+is set. In `relevo log`, an entry like
 `flagged=3 by=both p=0.94` records the de-duplicated union of regex-hit lines
 and classifier paragraphs at or above the threshold, which judge flagged the
 content (`regex`, `jev`, or `both`), and the maximum probability seen across
@@ -1430,10 +1440,10 @@ all paragraphs. The 0.7 threshold is provisional pending `make jev`. Model
 output is never altered and delivery is never held: a high probability flags the
 entry for the planner to see, but never halts delivery.
 
-`relevo policy` shows what relevo would do right now:
+`relevo config` shows what relevo would do right now:
 
 ```
-builder  (order set in ~/.config/relevo/policy.json)
+builder  (order set in config policy)
   1  agy/google/gemini-3.8-flash-high        order     rate-limited until 20:28
   2  claude/anthropic/sonnet                 order     <- would pick
   3  opencode/openrouter/z-ai/glm-5.3-flash  unlisted  limited 2x around 14:00 (30d)
@@ -1442,10 +1452,10 @@ reviewer  (no order set)
 ```
 
 The marker is computed by the same code `bind` runs, so it cannot
-disagree with what `bind` does next. There is no `relevo policy set`:
-edit the file. The rest of #61 -- scoring for unordered roles, peak
-windows, mid-round switching -- will add keys to this file as it
-lands.
+disagree with what `bind` does next. Change the order with `relevo config set
+policy.order.builder '["…"]'` or `relevo config edit`. The rest of #61 --
+scoring for unordered roles, peak windows, mid-round switching -- will add keys
+to the policy section as it lands.
 
 ### Roles
 
@@ -1455,8 +1465,8 @@ is one way to fill a role -- a `harness/provider/model`. Each role picks its
 own candidates, in order, at its own tier. Three roles are built in: `builder`,
 `reviewer` and `researcher`.
 
-Roles live in `$XDG_CONFIG_HOME/relevo/roles.json` (default
-`~/.config/relevo/roles.json`), an object keyed by role name:
+Roles are the `roles` section of relevo.db, an object keyed by role name (read
+it with `relevo config get roles`, edit it with `relevo config edit`):
 
 ```json
 {
@@ -1488,12 +1498,12 @@ Roles live in `$XDG_CONFIG_HOME/relevo/roles.json` (default
   `relevo fork` keeps it.
 
 With `relevo add --server S --role <r>`, the server resolves `<r>` against
-**its own** `roles.json`, and your local `roles.json` does not travel. A server
-too old to run custom roles refuses the add.
+**its own** roles section, and your local roles section does not travel. A
+server too old to run custom roles refuses the add.
 
 - `gate` -- for a writer, whether its round closes on a gate. true takes
-  `policy.json`'s `gate.default`; false takes none. It defaults to true for
-  every writer; an explicit `--gate` still wins.
+  the policy section's `gate.default`; false takes none. It defaults to true
+  for every writer; an explicit `--gate` still wins.
 - `definitions.<kind>.agent` -- the definition relevo launches for that harness
   kind; `requires` names the definitions that agent dispatches to.
 - `candidates` -- the role's own candidate tokens, most preferred first.
@@ -1520,15 +1530,14 @@ path, the report path, the done marker and the closing `relevo` block. A custom
 definition only shapes behaviour; `requires` names the definitions your agent
 dispatches to (the shipped builder requires `researcher`).
 
-**Migrating.** Without `roles.json`, relevo keeps reading `candidates.json`'s
-`roles`/`tier` and `policy.json`'s `order`/`tier`, and nothing changes. `relevo
-roles init` writes `roles.json` from them (`--dry-run`, `--force`). Once the
-file exists, those fields are ignored and `relevo doctor` lists them -- so
-delete them only after every relevo process on the machine is upgraded: an
-older relevo does not know `roles.json`.
+**Migrating.** Without a roles section, relevo keeps reading the candidates'
+`roles`/`tier` and the policy's `order`/`tier`, and nothing changes. `relevo
+config roles-init` writes the roles section from them (`--dry-run`, `--force`).
+Once the roles section exists, those fields are ignored and `relevo doctor`
+lists them.
 
-**Seeing it.** `relevo roles` lists each role's shape, candidates, tier and
-definitions; `relevo policy` adds `(roles.json)` per role; `relevo status --json`
+**Seeing it.** `relevo config` lists each role's shape, candidates, tier and
+definitions, and adds `(config roles)` per role; `relevo status --json`
 has `builder_definition` for a custom builder. `relevo status` shows `role <r>`
 on a non-builder binding's builder line, and `status --json` has `role`.
 
@@ -1565,7 +1574,7 @@ agent fails, gating that one candidate for ten minutes, and it expires on
 its own.
 
 Where it shows: `relevo status` gains a `candidates` block only while
-something is gated; `relevo candidates` marks gated rows `unavailable:`;
+something is gated; `relevo config` marks gated rows `unavailable:`;
 `relevo doctor` warns per gated candidate with the command that clears it.
 `bind`/`add`/`fork`/`ask` with an explicit token print a `note:` on
 stderr when the candidate is gated and **proceed** -- you named it. With
@@ -1573,8 +1582,8 @@ the token omitted they skip gated candidates and refuse when nothing
 ungated serves the role.
 
 A candidate whose harness role files are missing on disk is gated the same
-way (`roles missing` in `relevo policy`, `relevo candidates`, `relevo
-doctor`), fixed with `relevo agent install --kind <kind>` -- except an
+way (`roles missing` in `relevo config` and `relevo
+doctor`), fixed with `relevo config agents --kind <kind>` -- except an
 explicit `--builder` pick of it is **refused**, not allowed to proceed,
 because it cannot succeed. `relevo serve` logs each configured harness
 kind's role coverage once at startup.
@@ -1589,7 +1598,7 @@ open, in two cases:
   tell relevo a running builder hit its limit. The command names the
   bindings the daemon will switch.
 
-The daemon resolves `builder` again through `policy.json` order and the
+The daemon resolves `builder` again through the policy section's order and the
 ledger (an omitted token, so the order applies even to a builder you
 named), starts the pick in the **same** tree, and hands it the **same**
 round's plan. The round number does not change; the round clock
@@ -1602,7 +1611,7 @@ switched builder (rate-limited: 5h window): picked opencode/openrouter/z-ai/glm-
 
 `relevo status` shows `switched 1x` on the builder line. After
 `max_switches` replacements in one round (default 2; set it in
-`policy.json`, `0` turns switching off), or when nothing ungated
+the policy section, `0` turns switching off), or when nothing ungated
 serves `builder`, the binding goes `NEEDS YOU` with the reason, and
 recovers on its own once `relevo available` clears a provider. A
 failed replacement spawn counts as a switch and the daemon walks to
@@ -1620,7 +1629,7 @@ starts a fresh one. relevo selects a role for every builder it starts, with
 
 Every gate relevo records -- a limit you report, a spawn failure it hit
 -- is also kept for 30 days in `~/.local/state/relevo/availability.json`, by
-provider and local hour. `relevo policy` shows it twice: a `limited 3x
+provider and local hour. `relevo config` shows it twice: a `limited 3x
 around 21:00 (30d)` note on a candidate whose provider was limited
 within an hour of now, and a `history` block with a 24-hour row per
 provider. It changes nothing about which candidate is picked; it is the
@@ -1653,9 +1662,9 @@ codex does not support the `read` tier: `-s read-only` cannot write the report, 
 
 Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
 
-`max_tier` in `policy.json` defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
+`max_tier` in the policy section defines the permission ceiling across all commands, defaulting to `edit`. Any command requesting a tier above `max_tier` (such as `yolo` under default policy) is refused unless:
 - The command includes `--allow-yolo` on the command line (e.g. `relevo bind --tier yolo --allow-yolo` or `relevo send --tier yolo --allow-yolo`), or
-- `max_tier` is explicitly raised to `"yolo"` in `policy.json`.
+- `max_tier` is explicitly raised to `"yolo"` in the policy section.
 
 `max_tier` cannot be set to `"harness"` because `"harness"` is outside the rank order and does not represent a ceiling.
 
@@ -1663,13 +1672,13 @@ Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy a
 
 When starting an agent, relevo resolves the permission tier through a precedence chain:
 1. Explicit CLI flag: `--tier <tier>` passed to `bind`, `add`, `fork`, or `send`.
-2. Candidate configuration: `"tier"` set on the candidate in `candidates.json`.
-3. Policy configuration: `"tier"` mapped for the active role (`builder`, `reviewer`, `researcher`) in `policy.json`.
+2. Candidate configuration: `"tier"` set on the candidate in the candidates section.
+3. Policy configuration: `"tier"` mapped for the active role (`builder`, `reviewer`, `researcher`) in the policy section.
 4. Fallback default: `harness`.
 
 When forking a binding (`relevo fork`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
 
-For consults (`relevo ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in `policy.json` since `ask` has no `--allow-yolo` flag.
+For consults (`relevo ask`), tier resolves from the candidate's `tier`, policy `tier.<role>`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in the policy section since `ask` has no `--allow-yolo` flag.
 
 ### Per-round tiers
 
@@ -1691,12 +1700,12 @@ To recover from a permission-blocked halt, adjust the tier (e.g. `relevo send --
 
 ### Migration from extra_args
 
-Previously, permission bypass flags were often passed via `extra_args` in `candidates.json` (such as `"--dangerously-skip-permissions"` or `"--auto"`).
+Previously, permission bypass flags were often passed via `extra_args` in the candidates section (such as `"--dangerously-skip-permissions"` or `"--auto"`).
 
 When any explicit tier (`read`, `edit`, `yolo`) is active, relevo validates that `extra_args` does not contain conflicting permission flags (e.g. `--permission-mode`, `--dangerously-skip-permissions`, `--mode`, `--auto`). If detected, relevo refuses to launch.
 
 To migrate:
-- Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in `candidates.json`, and set `"max_tier": "yolo"` in `policy.json` (or use `--allow-yolo` on CLI commands).
+- Move `--dangerously-skip-permissions` (or `--auto`) from `extra_args` to `"tier": "yolo"` on the candidate in the candidates section, and set `"max_tier": "yolo"` in the policy section (or use `--allow-yolo` on CLI commands).
 - Alternatively, leave `tier` unset (or set to `"harness"`), and relevo will leave `extra_args` untouched.
 
 ## Gate
@@ -1714,7 +1723,7 @@ builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind`, `relevo add`, or `relevo
-fork`; `--no-gate` opts a binding out of `policy.json`'s `gate.default` (see
+fork`; `--no-gate` opts a binding out of the policy section's `gate.default` (see
 above) even when one is configured machine-wide. `relevo fork` without
 `--gate`/`--no-gate` inherits the source binding's gate. Omitting both flags
 on `bind`/`add` falls back to `gate.default`, `""` meaning no gate at all --
@@ -1753,7 +1762,7 @@ never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is what
 
 ### Verify
 
-`relevo send --verify` -- or `policy.json` `"verify": {"default": true}` -- marks
+`relevo send --verify` -- or the policy section's `"verify": {"default": true}` -- marks
 the round: when it closes, **after the gate** so the reviewer sees the gate's
 own output, relevo runs a read-only **reviewer** over the finished round and
 records its verdict. `--no-verify` overrides the policy default for one send;
@@ -1767,7 +1776,7 @@ worktree at the builder's HEAD under
 there, and removes the tree once the consult reaches any terminal state. That
 isolation is what lets the reviewer run tests without touching the builder's
 tree or the planner's checkout, and it is why the reviewer consult's tier is
-`policy.json` `tier.reviewer` when set, else the candidate's, else **yolo** --
+the policy section's `tier.reviewer` when set, else the candidate's, else **yolo** --
 for this consult only, in this tree only. The reviewer's role definition still
 tells it not to edit; relevo cannot observe writes.
 
@@ -1801,7 +1810,7 @@ leave a tree under `.worktrees/.verify/`; remove it with
 A failing gate does nothing on its own: the round closes, the report goes to
 the planner, and a human judges the diff. A binding can opt into a **repair
 round** instead, with `--regate N` on `relevo bind`, `relevo add`, `relevo fork`
-or `relevo send`, or with `"regate": N` under `gate` in `policy.json` (the
+or `relevo send`, or with `"regate": N` under `gate` in the policy section (the
 default for new bindings, which `relevo fork` inherits from its source). `N` is
 how many repair rounds relevo may open after failing gates; `0` -- the default
 -- turns the loop off, and `--regate` on a binding with no gate is accepted and
@@ -1866,11 +1875,11 @@ While consults are running, `relevo status` appends ` +Nc` to the binding's row
 consult's record is dropped once its findings have been queued. Terminal
 consults are not work in flight, so the count does not include them.
 
-`relevo agent install` writes the reviewer definition with the other
+`relevo config agents` writes the reviewer definition with the other
 roles; to install just this one:
 
 ```
-relevo agent install --role reviewer
+relevo config agents --role reviewer
 ```
 
 `relevo doctor` reports whether the definition landed, on every kind.
@@ -1901,7 +1910,7 @@ provenance:
 | `cost.basis` | meaning |
 |---|---|
 | `measured` | the harness reported dollars itself (claude's `total_cost_usd`, opencode's `cost`) |
-| `estimated` | relevo multiplied the harness's token counts by `~/.config/relevo/prices.json` |
+| `estimated` | relevo multiplied the harness's token counts by the prices section |
 | `unknown` | no record, no price row, or no way to read; `note` says which |
 
 `unknown` is an answer, not a failure. Where each figure comes from:
@@ -2004,7 +2013,7 @@ expired gate keeps no expiry time, so it counts as an event with no duration.
 `relevo ask --role reviewer` resolves `reviewer` through the role table and then
 picks a candidate whose `roles` include it, by the same rule as `--builder`.
 
-In `~/.config/relevo/candidates.json`:
+In the candidates section:
 
 ```json
 {"harness": "claude", "provider": "anthropic", "model": "opus", "roles": ["reviewer"]}
@@ -2057,10 +2066,10 @@ and `relevo ask` from -- and relevo does not pick its harness or start it. What
 relevo provides is the definition, so the same architect runs on any kind:
 
 ```
-relevo agent install --role architect
+relevo config agents --role architect
 ```
 
-(`relevo agent install` with no flags writes it too.)
+(`relevo config agents` with no flags writes it too.)
 
 Then start the planner with the harness's own `--agent` flag, for example:
 
@@ -2141,18 +2150,29 @@ and 1 if not, printing nothing.
 
 ## Lifecycle hooks
 
-relevo supports user-defined hook scripts dispatched during binding lifecycle events. When state changes or a new round begins, `relevo daemon` executes scripts located in `$XDG_CONFIG_HOME/relevo/hooks/<event_type>.d/` (default `~/.config/relevo/hooks/<event_type>.d/`).
+relevo supports user-defined hook commands dispatched during binding lifecycle
+events. When state changes or a new round begins, `relevo daemon` runs the argv
+lists in the `hooks` section, keyed by event type. Set one with:
+
+```
+relevo config set hooks.state_changed '[["/path/to/script"]]'
+```
+
+A directory of executable scripts dropped into
+`$XDG_CONFIG_HOME/relevo/hooks/<event_type>.d/` (default
+`~/.config/relevo/hooks/<event_type>.d/`) is imported into the `hooks` section
+on the next command and removed; the scripts themselves are never removed.
 
 ### Supported events
 
-- `state_changed` (`~/.config/relevo/hooks/state_changed.d/`) — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
-- `round_started` (`~/.config/relevo/hooks/round_started.d/`) — fires whenever a new round starts.
-- `builder_stalled` (`~/.config/relevo/hooks/builder_stalled.d/`) — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
-- `binding_stale` (`~/.config/relevo/hooks/binding_stale.d/`) — fires once when a `NEEDS YOU` or `HELD` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
+- `state_changed` — fires whenever a binding transitions between states (`ACTIVE`, `NEEDS YOU`, `HELD`, `DONE`, `BROKEN`, `ORPHANED`).
+- `round_started` — fires whenever a new round starts.
+- `builder_stalled` — fires once when a live local builder's tree and stream or screen have been quiet for `stall_after_ms` (#252, generalised by #135). Clearing the stall fires nothing.
+- `binding_stale` — fires once when a `NEEDS YOU` or `HELD` binding has sat unacted for `stale_after_ms` (#135). Clearing the stamp fires nothing.
 
 ### Hook execution & environment
 
-Each hook script is executed asynchronously in a detached process with a 10-second timeout. relevo injects the following environment variables:
+Each hook command is executed asynchronously in a detached process with a 10-second timeout. relevo injects the following environment variables:
 
 - `RELEVO_EVENT`: The event type name (`state_changed`, `round_started`, `builder_stalled`, `binding_stale`).
 - `RELEVO_BINDING`: The name of the binding.
@@ -2162,11 +2182,11 @@ Each hook script is executed asynchronously in a detached process with a 10-seco
 
 Hook stdout, stderr, and execution failures are logged to `~/.local/state/relevo/hooks.log` (or `$XDG_STATE_HOME/relevo/hooks.log`).
 
-Scripts must have their executable bit set (`chmod +x`). If `~/.config/relevo/hooks/` or an event directory does not exist, event dispatch is a silent no-op.
+Each hook script must have its executable bit set (`chmod +x`). An event with no argv list in the `hooks` section is a silent no-op.
 
 ### Webhooks
 
-Beside hook scripts, `policy.json`'s `notify.webhooks` posts lifecycle events straight to a URL -- a Slack incoming webhook, a Discord webhook, or any endpoint that accepts a JSON POST -- with no script required:
+Beside hook scripts, the policy section's `notify.webhooks` posts lifecycle events straight to a URL -- a Slack incoming webhook, a Discord webhook, or any endpoint that accepts a JSON POST -- with no script required:
 
 ```json
 "notify": { "webhooks": [
@@ -2191,7 +2211,7 @@ Each matching webhook POSTs in its own goroutine with a 5-second timeout and nev
 ## Setting up your agent harnesses
 
 A harness needs nothing installed beyond its own binary on `PATH` and the role
-definitions relevo installs (`relevo agent install`). relevo starts each builder
+definitions relevo installs (`relevo config agents`). relevo starts each builder
 as a non-interactive process and reads the round from the harness's own stream,
 so there is no lifecycle hook to install for it.
 
@@ -2232,7 +2252,7 @@ relevo bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # s
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its role on the launch line,
 like any builder relevo spawns. With `--rebind` the candidate is resolved through
-`policy.json` order and the ledger, and the pick is logged, exactly as a fresh
+the policy section's order and the ledger, and the pick is logged, exactly as a fresh
 bind with `--builder` omitted. Relevo does not automatically re-send the current
 plan: it prints the `relevo send` command pointing at the staged plan so you can
 hand over the round when ready.

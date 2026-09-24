@@ -54,7 +54,7 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	t.Setenv("PATH", bin)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init"})
+		return run([]string{"config", "init"})
 	})
 	if err != nil {
 		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
@@ -94,13 +94,13 @@ func TestInitRefusesOverwriteWithoutForce(t *testing.T) {
 	t.Setenv("PATH", bin)
 
 	if _, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init"})
+		return run([]string{"config", "init"})
 	}); err != nil {
 		t.Fatalf("first init: %v (stderr: %s)", err, stderr)
 	}
 
 	_, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init"})
+		return run([]string{"config", "init"})
 	})
 	if err == nil {
 		t.Fatal("second init without --force: want error, got nil")
@@ -110,7 +110,7 @@ func TestInitRefusesOverwriteWithoutForce(t *testing.T) {
 	}
 
 	if _, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init", "--force"})
+		return run([]string{"config", "init", "--force"})
 	}); err != nil {
 		t.Fatalf("init --force: %v (stderr: %s)", err, stderr)
 	}
@@ -134,7 +134,7 @@ func TestInitNoBinariesExits1(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init"})
+		return run([]string{"config", "init"})
 	})
 	if err == nil {
 		t.Fatal("init with no binaries on PATH: want error, got nil")
@@ -152,7 +152,7 @@ func TestInitNoRolesSkipsInstall(t *testing.T) {
 	t.Setenv("PATH", bin)
 
 	if _, stderr, err := captureOutput(t, func() error {
-		return run([]string{"init", "--no-roles"})
+		return run([]string{"config", "init", "--no-roles"})
 	}); err != nil {
 		t.Fatalf("init --no-roles: %v (stderr: %s)", err, stderr)
 	}

@@ -84,7 +84,7 @@ func roleGates(reg *roles.Registry, role string) bool {
 func bindingSpec(rt Runtime, b store.Binding, kind string) (harness.RoleSpec, error) {
 	role := bindingRole(b)
 	if _, ok := rt.RoleRegistry().Role(role); !ok {
-		return harness.RoleSpec{}, fmt.Errorf("binding %s runs role %q, which roles.json no longer defines: %w", b.Name, role, ErrUnknownRole)
+		return harness.RoleSpec{}, fmt.Errorf("binding %s runs role %q, which config roles no longer defines: %w", b.Name, role, ErrUnknownRole)
 	}
 	return rt.RoleRegistry().Spec(role, kind)
 }

@@ -55,7 +55,7 @@ type Skip struct {
 }
 
 // Resolution is what resolveCandidate picked and why. T3 records it in the
-// binding's log; T4 renders it in `relevo policy`.
+// binding's log; T4 renders it in `relevo config`.
 type Resolution struct {
 	Candidate candidate.Candidate
 	How       How
@@ -244,13 +244,13 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 	}
 
 	if set.Len() == 0 {
-		return Resolution{}, fmt.Errorf("%w; write ~/.config/relevo/candidates.json (see README \"Candidates\")", ErrNoCandidates)
+		return Resolution{}, fmt.Errorf("%w; set one with relevo config set candidates (see README \"Candidates\")", ErrNoCandidates)
 	}
 
 	info, ok := reg.Role(role)
 	if !ok {
 		if reg.Source() == roles.SourceFile {
-			return Resolution{}, fmt.Errorf("no candidate in roles.json %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("no candidate in config roles %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
 		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
@@ -262,7 +262,7 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 	}
 	if len(serving) == 0 {
 		if reg.Source() == roles.SourceFile {
-			return Resolution{}, fmt.Errorf("no candidate in roles.json %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("no candidate in config roles %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
 		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
@@ -278,7 +278,7 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		for _, c := range serving {
 			refs = append(refs, c.Ref().String())
 		}
-		return Resolution{}, fmt.Errorf("%d candidates serve %q: %v; name one with --builder or --candidate, or set order.%s in ~/.config/relevo/policy.json: %w", len(serving), role, refs, role, ErrAmbiguousCandidate)
+		return Resolution{}, fmt.Errorf("%d candidates serve %q: %v; name one with --builder or --candidate, or set order.%s in config policy: %w", len(serving), role, refs, role, ErrAmbiguousCandidate)
 	}
 
 	var skipped []Skip
@@ -303,7 +303,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 }
 
 // ExplainResolution is the one line that says what was picked and why.
-// The pick log entry, the stderr line after a spawn, and `relevo policy`
+// The pick log entry, the stderr line after a spawn, and `relevo config`
 // all render from it, so a pick the planner reads in `relevo log` is
 // word-for-word what bind printed (spec §1 principle 1).
 func ExplainResolution(role string, res Resolution) string {

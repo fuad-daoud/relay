@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrNoKey     = errors.New("no client key; run relevo client init")
+	ErrNoKey     = errors.New("no client key; run relevo config server key")
 	ErrKeyExists = errors.New("client key already exists")
 )
 

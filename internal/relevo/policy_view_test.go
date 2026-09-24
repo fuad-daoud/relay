@@ -68,7 +68,7 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
-		"builder  (order set in ~/.config/relevo/policy.json)",
+		"builder  (order set in config policy)",
 		"  1  agy/test/m       order     spawn failed " + GateUntilText(until),
 		"  2  claude/test/m    order     <- would pick",
 		"  3  opencode/test/m  unlisted",
@@ -101,7 +101,7 @@ func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
 		"  1  claude/test/m    sole      <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
-		`no policy configured; write ~/.config/relevo/policy.json (see README "Policy")`,
+		`no policy configured; set one with relevo config set policy (see README "Policy")`,
 	}, "\n") + "\n"
 
 	if got != want {
@@ -117,7 +117,7 @@ func TestFormatPolicyAllGated(t *testing.T) {
 	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
-		"builder  (order set in ~/.config/relevo/policy.json)",
+		"builder  (order set in config policy)",
 		"  1  agy/test/m       order     rate-limited until cleared",
 		"  2  claude/test/m    order     rate-limited until cleared",
 		"  3  opencode/test/m  order     rate-limited until cleared",
@@ -139,7 +139,7 @@ func TestFormatPolicyEmptySet(t *testing.T) {
 
 	got := FormatPolicy(set, orderOf("builder", testAgyRef), nil, history.History{}, baseTime, time.UTC)
 
-	want := "no candidates configured; write ~/.config/relevo/candidates.json (see README \"Candidates\")\n"
+	want := "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	if got != want {
 		t.Errorf("FormatPolicy = %q, want %q", got, want)
 	}
@@ -160,7 +160,7 @@ func TestFormatPolicySoleWithOrder(t *testing.T) {
 	want := strings.Join([]string{
 		"builder  (no order set)",
 		"  1  claude/test/m  sole      <- would pick",
-		"reviewer  (order set in ~/.config/relevo/policy.json)",
+		"reviewer  (order set in config policy)",
 		"  1  claude/test/m  sole      <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
@@ -217,7 +217,7 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 	sfCounts[21] = 1
 
 	want := strings.Join([]string{
-		"builder  (order set in ~/.config/relevo/policy.json)",
+		"builder  (order set in config policy)",
 		"  1  agy/test/m       order     limited 3x around 21:00 (30d)  <- would pick",
 		"  2  claude/test/m    order     limited 3x around 21:00 (30d)",
 		"  3  opencode/test/m  unlisted  limited 3x around 21:00 (30d)",

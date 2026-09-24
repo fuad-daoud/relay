@@ -231,7 +231,7 @@ func ConfigCheck(warnings []string) Check {
 	c := Check{Name: "config", Group: ""}
 	if len(warnings) == 0 {
 		c.Severity = SevOK
-		c.Detail = "policy.json and candidates.json have no unknown keys"
+		c.Detail = "the policy and candidates sections have no unknown keys"
 		return c
 	}
 	c.Severity = SevWarn
@@ -343,11 +343,11 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 	if env.Stat(fullPath) != nil {
 		// The fix must work on a machine that has never run this harness
 		// as a sub-agent host: none of the agents/ directories exist yet
-		// (#166 §1); relevo agent install creates the directory.
+		// (#166 §1); relevo config agents creates the directory.
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s", kind, r.Name),
+			Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s", kind, r.Name),
 		}
 	}
 
@@ -363,7 +363,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 					return Check{
 						Group: kind, Name: r.Name, Severity: SevWarn,
 						Detail: fmt.Sprintf("%s -- pins %s; relevo ships %s", detail, model, r.ExpectModel),
-						Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s --force", kind, r.Name),
+						Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s --force", kind, r.Name),
 					}
 				}
 				return Check{
@@ -386,7 +386,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 					return Check{
 						Group: kind, Name: r.Name, Severity: SevWarn,
 						Detail: fmt.Sprintf("%s -- differs from the definition this relevo ships", detail),
-						Fix:    fmt.Sprintf("relevo agent install --kind %s --role %s --force", kind, r.Name),
+						Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s --force", kind, r.Name),
 					}
 				}
 			}
@@ -398,7 +398,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 // customRoleCheck probes one custom role definition on disk (#374 §3.6). A
 // custom definition is the user's own file: relevo never installs it, so
 // there is no model-pin check, no drift check and no manifest entry, and a
-// missing file's fix is by hand rather than `relevo agent install`.
+// missing file's fix is by hand rather than `relevo config agents`.
 func customRoleCheck(env Env, kind, name string) Check {
 	path, _ := harness.DefinitionPath(kind, name)
 	homeRel := "~/" + path
@@ -491,8 +491,8 @@ func rolesCheck(env Env, kind string) Check {
 	case stale:
 		return Check{
 			Group: kind, Name: "roles", Severity: SevWarn,
-			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relevo agent install",
-			Fix:    "relevo agent install",
+			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relevo config agents",
+			Fix:    "relevo config agents",
 		}
 	case edited:
 		return Check{Group: kind, Name: "roles", Severity: SevOK, Detail: "differs from every copy relevo has shipped (kept as your edit)"}
