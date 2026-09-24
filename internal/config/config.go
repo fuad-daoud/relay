@@ -104,13 +104,18 @@ type Loaded struct {
 	Version    int64
 }
 
-// Store reads and writes the config sections and secrets of one database.
+// Store reads and writes the config sections and secrets of one database. Its
+// source, message and clock label every write's revision; Open gives a store
+// its default clock, and As/WithClock copy it with a label or a test clock.
 type Store struct {
-	db *db.DB
+	db      *db.DB
+	source  string
+	message string
+	now     func() time.Time
 }
 
 // Open returns a Store over d.
-func Open(d *db.DB) *Store { return &Store{db: d} }
+func Open(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
 
 // Load reads every section and both secrets. A stored body that does not parse
 // is returned as an error: it cannot happen after a validated Put.
@@ -279,7 +284,14 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 		return nil, err
 	}
 	if err := s.db.Tx(func(t *db.Tx) error {
-		return t.ConfigPut(string(sec), body, time.Now().UTC())
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
+		if err := t.ConfigPut(string(sec), body, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.record(t, before, nil)
 	}); err != nil {
 		return nil, err
 	}
@@ -291,7 +303,14 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 // count of stored sections.
 func (s *Store) Delete(sec Section) error {
 	return s.db.Tx(func(t *db.Tx) error {
-		return t.ConfigDelete(string(sec))
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
+		if err := t.ConfigDelete(string(sec)); err != nil {
+			return err
+		}
+		return s.record(t, before, nil)
 	})
 }
 
@@ -325,8 +344,12 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 		warnings = append(warnings, w...)
 	}
 
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	if err := s.db.Tx(func(t *db.Tx) error {
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
 		for _, sec := range Sections {
 			body, ok := doc[sec]
 			if !ok {
@@ -336,7 +359,7 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 				return err
 			}
 		}
-		return nil
+		return s.record(t, before, nil)
 	}); err != nil {
 		return nil, err
 	}
@@ -363,14 +386,34 @@ func (s *Store) PutSecret(name string, value []byte) error {
 		}
 	}
 	return s.db.Tx(func(t *db.Tx) error {
-		return t.SecretPut(name, value, time.Now().UTC())
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
+		if err := t.SecretPut(name, value, s.now().UTC()); err != nil {
+			return err
+		}
+		return s.record(t, before, []Change{{Path: "secret." + name, Op: "set"}})
 	})
 }
 
-// SecretDelete removes name's stored value, if any.
+// SecretDelete removes name's stored value, if any. A name that was not stored
+// writes nothing: there is no change to record.
 func (s *Store) SecretDelete(name string) error {
 	return s.db.Tx(func(t *db.Tx) error {
-		return t.SecretDelete(name)
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
+		if _, ok, err := t.SecretGet(name); err != nil {
+			return err
+		} else if !ok {
+			return nil
+		}
+		if err := t.SecretDelete(name); err != nil {
+			return err
+		}
+		return s.record(t, before, []Change{{Path: "secret." + name, Op: "remove"}})
 	})
 }
 

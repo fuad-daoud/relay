@@ -559,7 +559,8 @@ func newRuntime() (relevo.Runtime, error) {
 		return relevo.Runtime{}, err
 	}
 	if !d.Newer() {
-		if _, err := cs.ImportFiles(filepath.Join(configDir, "relevo"), time.Now().UTC()); err != nil {
+		dir := filepath.Join(configDir, "relevo")
+		if _, err := cs.As("import", "imported "+dir).ImportFiles(dir, time.Now().UTC()); err != nil {
 			return relevo.Runtime{}, err
 		}
 	} else {
@@ -2571,7 +2572,15 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	watcher := relevo.NewConfigWatcher(rt.Config, filepath.Join(configDir, "relevo"), os.Getenv)
+	configDirPath := filepath.Join(configDir, "relevo")
+	// rt.Config is nil on the --check / --preflight peek path, which never
+	// refreshes. A daemon that opened a real store hands the watcher a
+	// labelled copy, so the import it runs is recorded as source "import".
+	var configSource relevo.ConfigSource
+	if rt.Config != nil {
+		configSource = rt.Config.As("import", "imported "+configDirPath)
+	}
+	watcher := relevo.NewConfigWatcher(configSource, configDirPath, os.Getenv)
 
 	// --check is the plugin startup hook's probe. It prints nothing on either
 	// path: the exit status is the whole answer, and a hook that printed would

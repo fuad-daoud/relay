@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -9,9 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -26,6 +30,8 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config set <section>[.<key>...] <json>
        relevo config unset <section>[.<key>...]
        relevo config edit
+       relevo config log [-n N] [--rev N] [--json]
+       relevo config rollback <rev> [--yes] [-m <message>]
        relevo config init [--force] [--no-roles]
        relevo config roles-init [--force] [--dry-run]
        relevo config agents [--kind <agy|claude|opencode>] [--role <name>] [--force] [--dry-run]
@@ -59,6 +65,10 @@ func cmdConfig(args []string) error {
 		return configUnset(args[1:])
 	case "edit":
 		return configEdit(args[1:])
+	case "log":
+		return cmdConfigLog(args[1:])
+	case "rollback":
+		return cmdConfigRollback(args[1:])
 	case "init":
 		return cmdInit(args[1:])
 	case "roles-init":
@@ -175,7 +185,7 @@ func configImport(args []string) error {
 	if err != nil {
 		return err
 	}
-	warnings, err := rt.Config.PutDoc(doc)
+	warnings, err := rt.Config.As("cli", "config import "+rest[0]).PutDoc(doc)
 	if err != nil {
 		return err
 	}
@@ -257,7 +267,7 @@ func configSet(args []string) error {
 	}
 
 	if len(keys) == 0 {
-		_, err := rt.Config.Put(sec, value)
+		_, err := rt.Config.As("cli", "config set "+path).Put(sec, value)
 		return err
 	}
 
@@ -271,7 +281,7 @@ func configSet(args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %v", path, err)
 	}
-	_, err = rt.Config.Put(sec, updated)
+	_, err = rt.Config.As("cli", "config set "+path).Put(sec, updated)
 	return err
 }
 
@@ -303,7 +313,7 @@ func configUnset(args []string) error {
 		return err
 	}
 	if len(keys) == 0 {
-		return rt.Config.Delete(sec)
+		return rt.Config.As("cli", "config unset "+path).Delete(sec)
 	}
 
 	body, present, err := rt.Config.Body(sec)
@@ -320,7 +330,7 @@ func configUnset(args []string) error {
 	if !removed {
 		return fmt.Errorf("%s: not set", path)
 	}
-	_, err = rt.Config.Put(sec, updated)
+	_, err = rt.Config.As("cli", "config unset "+path).Put(sec, updated)
 	return err
 }
 
@@ -400,7 +410,7 @@ func configEdit(args []string) error {
 			continue
 		}
 
-		warnings, err := rt.Config.PutDoc(parsed)
+		warnings, err := rt.Config.As("cli", "config edit").PutDoc(parsed)
 		if err != nil {
 			return err
 		}
@@ -411,7 +421,11 @@ func configEdit(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("saved (config version %d)\n", v)
+		var rev int64
+		if rows, err := rt.Config.Log(1); err == nil && len(rows) > 0 {
+			rev = rows[0].Rev
+		}
+		fmt.Printf("saved (config version %d, revision #%d)\n", v, rev)
 		return nil
 	}
 }
@@ -568,7 +582,7 @@ func configSecretSet(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := rt.Config.PutSecret(name, []byte(value)); err != nil {
+	if err := rt.Config.As("cli", "config secret set "+name).PutSecret(name, []byte(value)); err != nil {
 		return err
 	}
 	fmt.Printf("stored secret %s\n", name)
@@ -599,7 +613,7 @@ func configSecretRm(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := rt.Config.SecretDelete(name); err != nil {
+	if err := rt.Config.As("cli", "config secret rm "+name).SecretDelete(name); err != nil {
 		return err
 	}
 	fmt.Printf("removed secret %s\n", name)
@@ -643,45 +657,7 @@ func exportDoc(rt relevo.Runtime) ([]byte, error) {
 			doc[sec] = body
 		}
 	}
-	return encodeDoc(doc)
-}
-
-// encodeDoc renders doc as an indented JSON object with one key per section,
-// in config.Sections order. A map's own keys would be sorted alphabetically,
-// so the object is assembled by hand and then indented.
-func encodeDoc(doc map[config.Section]json.RawMessage) ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	first := true
-	for _, sec := range config.Sections {
-		body, ok := doc[sec]
-		if !ok {
-			continue
-		}
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, body); err != nil {
-			return nil, fmt.Errorf("%s: %v", sec, err)
-		}
-		if !first {
-			buf.WriteByte(',')
-		}
-		first = false
-		key, err := json.Marshal(string(sec))
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(key)
-		buf.WriteByte(':')
-		buf.Write(compact.Bytes())
-	}
-	buf.WriteByte('}')
-
-	var out bytes.Buffer
-	if err := json.Indent(&out, buf.Bytes(), "", "  "); err != nil {
-		return nil, err
-	}
-	out.WriteByte('\n')
-	return out.Bytes(), nil
+	return config.EncodeDoc(doc)
 }
 
 // decodeDoc parses a whole-config document into sections. The top level must
@@ -892,7 +868,7 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 	if err != nil {
 		return nil, false, err
 	}
-	if err := rt.Config.PutSecret(config.SecretClientKey, pem); err != nil {
+	if err := rt.Config.As("cli", "config server key").PutSecret(config.SecretClientKey, pem); err != nil {
 		return nil, false, err
 	}
 	return pem, true, nil
@@ -907,5 +883,223 @@ func printClientKey(pem []byte) error {
 	}
 	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
 	fmt.Println(client.EnrollLine(kp))
+	return nil
+}
+
+// stdinStat is the terminal test's only seam: production stats os.Stdin, and a
+// test can replace it. It is the pattern internal/ui/source.go:115-118 and
+// internal/pick/pick.go:27 use, with no new dependency.
+var stdinStat = os.Stdin.Stat
+
+// stdinIsTerminal reports whether os.Stdin is a character device.
+func stdinIsTerminal() bool {
+	info, err := stdinStat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// revisionJSON is the --json shape of one revision (§6.4). Snapshot is present
+// only for `--rev`, where it is the raw snapshot object.
+type revisionJSON struct {
+	Rev      int64           `json:"rev"`
+	At       string          `json:"at"`
+	Source   string          `json:"source"`
+	Message  string          `json:"message"`
+	Version  int64           `json:"version"`
+	Changes  json.RawMessage `json:"changes"`
+	Snapshot json.RawMessage `json:"snapshot,omitempty"`
+}
+
+// revChangeList decodes a revision row's raw change list; a row whose changes
+// do not parse reads as no changes rather than failing the whole listing.
+func revChangeList(r db.RevisionRow) []config.Change {
+	var cs []config.Change
+	if err := json.Unmarshal(r.Changes, &cs); err != nil {
+		return nil
+	}
+	return cs
+}
+
+func revisionJSONOf(r db.RevisionRow, withSnapshot bool) revisionJSON {
+	changes := r.Changes
+	if !json.Valid(changes) {
+		changes = json.RawMessage("[]")
+	}
+	out := revisionJSON{
+		Rev:     r.Rev,
+		At:      r.At.UTC().Format(time.RFC3339),
+		Source:  r.Source,
+		Message: r.Message,
+		Version: r.Version,
+		Changes: changes,
+	}
+	if withSnapshot {
+		snapshot := r.Snapshot
+		if !json.Valid(snapshot) {
+			snapshot = json.RawMessage("{}")
+		}
+		out.Snapshot = snapshot
+	}
+	return out
+}
+
+// printRevisionText prints one revision's header, its message when it has one,
+// and one Describe line per change indented by two spaces.
+func printRevisionText(r db.RevisionRow) error {
+	fmt.Printf("#%d  %s  %s  config version %d\n",
+		r.Rev, r.At.Local().Format("2006-01-02 15:04"), r.Source, r.Version)
+	if r.Message != "" {
+		fmt.Printf("message: %s\n", r.Message)
+	}
+	if r.Source == "baseline" {
+		fmt.Println("  (baseline: the config as it was before revisions were recorded)")
+		return nil
+	}
+	for _, c := range revChangeList(r) {
+		fmt.Printf("  %s\n", config.Describe(c))
+	}
+	return nil
+}
+
+// cmdConfigLog lists revisions newest first, or shows one with --rev. The list
+// is a header line per revision; --rev adds the message and every change.
+func cmdConfigLog(args []string) error {
+	fs := flag.NewFlagSet("relevo config log", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	n := fs.Int("n", 20, "how many revisions to list")
+	rev := fs.Int64("rev", 0, "show one revision: its header and changes")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
+		return exitCodeErr{code: 2}
+	}
+	if len(fs.Args()) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: relevo config log [-n N] [--rev N] [--json]")
+		return exitCodeErr{code: 2}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	if *rev > 0 {
+		r, err := rt.Config.Revision(*rev)
+		if err != nil {
+			if errors.Is(err, config.ErrNoRevision) {
+				return fmt.Errorf("no such revision #%d", *rev)
+			}
+			return err
+		}
+		if *asJSON {
+			out, err := json.Marshal(revisionJSONOf(r, true))
+			if err != nil {
+				return err
+			}
+			return printJSON(os.Stdout, out)
+		}
+		return printRevisionText(r)
+	}
+
+	rows, err := rt.Config.Log(*n)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		list := make([]revisionJSON, 0, len(rows))
+		for _, r := range rows {
+			list = append(list, revisionJSONOf(r, false))
+		}
+		out, err := json.Marshal(list)
+		if err != nil {
+			return err
+		}
+		return printJSON(os.Stdout, out)
+	}
+	if len(rows) == 0 {
+		fmt.Println("no revisions yet")
+		return nil
+	}
+	for _, r := range rows {
+		fmt.Printf("#%d  %s  %-9s  %d change(s)  %s\n",
+			r.Rev, r.At.Local().Format("2006-01-02 15:04"), r.Source, len(revChangeList(r)), r.Message)
+	}
+	return nil
+}
+
+// cmdConfigRollback prints what rolling back to rev would change, confirms
+// with the user unless --yes, then writes the rollback as one new revision.
+func cmdConfigRollback(args []string) error {
+	fs := flag.NewFlagSet("relevo config rollback", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	yes := fs.Bool("yes", false, "skip the confirmation prompt")
+	msg := fs.String("m", "", "message for the rollback revision")
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
+		return exitCodeErr{code: 2}
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: relevo config rollback <rev> [--yes] [-m <message>]")
+		return exitCodeErr{code: 2}
+	}
+	rev, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil || rev <= 0 {
+		fmt.Fprintf(os.Stderr, "relevo config rollback: not a revision number: %q\n", rest[0])
+		return exitCodeErr{code: 2}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	plan, err := rt.Config.RollbackPlan(rev)
+	if err != nil {
+		switch {
+		case errors.Is(err, config.ErrNoRevision):
+			return fmt.Errorf("no such revision #%d", rev)
+		case errors.Is(err, config.ErrNoChange):
+			fmt.Printf("config already equals revision #%d\n", rev)
+			return nil
+		default:
+			return err
+		}
+	}
+
+	fmt.Printf("rollback to #%d would change:\n", rev)
+	for _, c := range plan {
+		fmt.Println(config.Describe(c))
+	}
+
+	if !*yes {
+		if !stdinIsTerminal() {
+			fmt.Fprintln(os.Stderr, "relevo: config rollback needs a terminal to confirm; pass --yes")
+			return exitCodeErr{code: 2}
+		}
+		fmt.Printf("Roll back to #%d? [y/N] ", rev)
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+			fmt.Println("nothing changed")
+			return exitCodeErr{code: 1}
+		}
+	}
+
+	row, err := rt.Config.As("rollback", *msg).Rollback(rev)
+	if err != nil {
+		switch {
+		case errors.Is(err, config.ErrNoRevision):
+			return fmt.Errorf("no such revision #%d", rev)
+		case errors.Is(err, config.ErrNoChange):
+			fmt.Printf("config already equals revision #%d\n", rev)
+			return nil
+		default:
+			return err
+		}
+	}
+	fmt.Printf("rolled back to #%d as #%d (config version %d)\n", rev, row.Rev, row.Version)
 	return nil
 }

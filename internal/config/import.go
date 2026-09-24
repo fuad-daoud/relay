@@ -35,6 +35,13 @@ type ImportResult struct {
 func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, error) {
 	var res ImportResult
 
+	// Every revision this import writes is stamped with the time the caller
+	// gave, and labelled "import" unless the caller labelled it.
+	s = s.WithClock(func() time.Time { return now })
+	if s.source == "" {
+		s.source = "import"
+	}
+
 	type pendingSection struct {
 		sec  Section
 		path string
@@ -92,6 +99,10 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	}
 
 	err = s.db.Tx(func(t *db.Tx) error {
+		before, err := readDoc(t)
+		if err != nil {
+			return err
+		}
 		for _, sf := range sections {
 			if err := t.ConfigPut(string(sf.sec), sf.data, now); err != nil {
 				return err
@@ -100,15 +111,18 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 				return err
 			}
 		}
+		var extra []Change
 		if haveClientKey {
 			if err := t.SecretPut(SecretClientKey, clientKey, now); err != nil {
 				return err
 			}
+			extra = append(extra, Change{Path: "secret." + SecretClientKey, Op: "set"})
 		}
 		if haveTypesafe {
 			if err := t.SecretPut(SecretTypesafe, []byte(typesafe), now); err != nil {
 				return err
 			}
+			extra = append(extra, Change{Path: "secret." + SecretTypesafe, Op: "set"})
 		}
 		if importHooks {
 			body, err := json.Marshal(hooks)
@@ -119,7 +133,7 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 				return err
 			}
 		}
-		return nil
+		return s.record(t, before, extra)
 	})
 	if err != nil {
 		return ImportResult{}, err
