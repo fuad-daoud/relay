@@ -304,8 +304,20 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 	if off >= info.Size() {
 		return true
 	}
-	return trailerLinesOnly(text[off:])
+	if trailerLinesOnly(text[off:]) {
+		return true
+	}
+	// The exit trailer proves the builder is gone, so nothing will write this
+	// stream again. A drain that stopped short -- the pre-rename drain could
+	// stop mid-line, a few bytes before the trailer -- will never advance
+	// either; once the stream has been quiet for staleStreamAfter, what it has
+	// not rendered is final, and the round may seal.
+	return time.Since(info.ModTime()) >= staleStreamAfter
 }
+
+// staleStreamAfter is how long a stream that carries its exit trailer must go
+// unwritten before StreamDrained stops waiting for the drain to catch up.
+const staleStreamAfter = time.Hour
 
 // trailerLinesOnly reports whether every line in s is one the supervisor's
 // exit leaves behind: an empty line, or a rusage or exit trailer line in
