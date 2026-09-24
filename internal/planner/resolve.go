@@ -2,8 +2,23 @@ package planner
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
+
+// ErrUnregisteredSession reports a detected session that has no planner record in the registry.
+type ErrUnregisteredSession struct {
+	Kind      string
+	SessionID string
+}
+
+func (e ErrUnregisteredSession) Error() string {
+	return fmt.Sprintf("no relevo planner for %s session %s", e.Kind, e.SessionID)
+}
+
+func (e ErrUnregisteredSession) Is(target error) bool {
+	return target == ErrNoPlanner
+}
 
 // Resolution says which step of Resolve's order produced a record (§4.3), for
 // the debug line "planner=<id> via=<resolution>" (§6.2).
@@ -33,6 +48,11 @@ type ResolveInput struct {
 	ProcStart func(pid int) (int64, error)
 	// Now stamps the seen_at of whatever Resolve hits.
 	Now time.Time
+	// CWD is the caller's working directory; "" skips the opencode step.
+	CWD string
+	// OpencodeSession finds an opencode session id for the working directory;
+	// nil skips the opencode step.
+	OpencodeSession func(cwd string, now time.Time) (string, error)
 }
 
 // Resolve is how every verb except `init` gets its planner: flag > env > host >
@@ -82,12 +102,31 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		}
 	}
 
+	if detected && ident.Kind == "opencode" && ident.SessionID == "" {
+		if in.OpencodeSession == nil || in.CWD == "" {
+			detected = false
+		} else {
+			id, err := in.OpencodeSession(in.CWD, in.Now)
+			switch {
+			case err == nil:
+				ident.SessionID = id
+			case errors.Is(err, ErrNoOpencodeSession):
+				detected = false
+			default:
+				return Record{}, "", err
+			}
+		}
+	}
+
 	if detected {
 		rec, err := reg.BySession(ident.Kind, ident.SessionID)
 		switch {
 		case err == nil:
 			return hit(reg, rec, ResolutionSession, in.Now)
 		case errors.Is(err, ErrNotFound):
+			if ident.Kind == "opencode" {
+				return Record{}, "", ErrUnregisteredSession{Kind: "opencode", SessionID: ident.SessionID}
+			}
 		default:
 			return Record{}, "", err
 		}

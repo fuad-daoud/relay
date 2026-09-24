@@ -522,11 +522,14 @@ func plannerFilter(rt relevo.Runtime) (planner.Record, bool) {
 	if rt.Now != nil {
 		now = rt.Now()
 	}
+	cwd, _ := os.Getwd()
 	rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
-		Env:       os.Getenv,
-		PPID:      os.Getppid(),
-		ProcStart: rt.ProcStart,
-		Now:       now,
+		Env:             os.Getenv,
+		PPID:            os.Getppid(),
+		ProcStart:       rt.ProcStart,
+		Now:             now,
+		CWD:             cwd,
+		OpencodeSession: rt.OpencodeSession,
 	})
 	if err != nil {
 		return planner.Record{}, false

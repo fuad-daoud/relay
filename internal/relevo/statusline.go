@@ -264,3 +264,65 @@ func PlannerStatus(ctx context.Context, rt Runtime, plannerID string) (Report, e
 	}
 	return buildReport(ctx, rt, kept)
 }
+
+// StatusLinePlanner is the planner identification in StatusLineDoc (§3).
+type StatusLinePlanner struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// StatusLineRow is one binding row in StatusLineDoc (§3).
+type StatusLineRow struct {
+	Name      string `json:"name"`
+	Round     int    `json:"round"`
+	Display   string `json:"display"`
+	Harness   string `json:"harness"`
+	Candidate string `json:"candidate"`
+	Role      string `json:"role,omitempty"`
+	Waiting   string `json:"waiting"`
+	Clock     string `json:"clock"`
+	Tokens    string `json:"tokens"`
+	LastKind  string `json:"last_kind"`
+	LastTS    string `json:"last_ts"`
+	Route     string `json:"route"`
+}
+
+// StatusLineDoc is the top-level document emitted by relevo status --line --json (§3).
+type StatusLineDoc struct {
+	Planner *StatusLinePlanner `json:"planner"`
+	Now     time.Time          `json:"now"`
+	Rows    []StatusLineRow    `json:"rows"`
+}
+
+// StatusLineRows produces one StatusLineRow per r.Bindings entry, in order (§4).
+func StatusLineRows(r Report, now time.Time) []StatusLineRow {
+	rows := make([]StatusLineRow, 0, len(r.Bindings))
+	for _, b := range r.Bindings {
+		harness := harnessSegment(b.BuilderCandidate)
+		if b.Server != "" {
+			harness += "@" + b.Server
+		}
+		var lastKind, lastTS string
+		if b.LastPayload != nil {
+			lastKind = string(b.LastPayload.Kind)
+			if !b.LastPayload.TS.IsZero() {
+				lastTS = b.LastPayload.TS.UTC().Format(time.RFC3339)
+			}
+		}
+		rows = append(rows, StatusLineRow{
+			Name:      b.Name,
+			Round:     b.Round,
+			Display:   b.Display,
+			Harness:   harness,
+			Candidate: b.BuilderCandidate,
+			Role:      b.Role,
+			Waiting:   waiting(b),
+			Clock:     roundClock(b, now),
+			Tokens:    roundTokens(b),
+			LastKind:  lastKind,
+			LastTS:    lastTS,
+			Route:     b.PlannerRoute,
+		})
+	}
+	return rows
+}

@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -752,4 +753,161 @@ func TestRoundTokensAddsPrior(t *testing.T) {
 	if got := roundTokens(b3); got != "100k tok" {
 		t.Errorf("no live samples roundTokens = %q, want %q", got, "100k tok")
 	}
+}
+
+func TestStatusLineRows(t *testing.T) {
+	now := baseTime
+
+	t.Run("NEEDS YOU row with a report LastPayload", func(t *testing.T) {
+		b := BindingStatus{
+			Name:             "worker",
+			Round:            2,
+			Display:          "NEEDS YOU",
+			BuilderCandidate: "claude/model",
+			RoundStart:       now.Add(-5 * time.Minute),
+			RoundEnd:         now.Add(-2 * time.Minute),
+			LastPayload: &LastEvent{
+				Kind: store.KindReport,
+				Note: "halted",
+				TS:   now.Add(-2 * time.Minute),
+			},
+			PlannerRoute: "deliverer",
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		row := rows[0]
+		if row.Name != "worker" || row.Round != 2 || row.Display != "NEEDS YOU" {
+			t.Errorf("row = %+v", row)
+		}
+		if row.Waiting != "report in (halted)" {
+			t.Errorf("Waiting = %q, want 'report in (halted)'", row.Waiting)
+		}
+		if row.Clock != "3m" {
+			t.Errorf("Clock = %q, want '3m'", row.Clock)
+		}
+		if row.LastKind != "report" {
+			t.Errorf("LastKind = %q, want 'report'", row.LastKind)
+		}
+		expectedTS := now.Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+		if row.LastTS != expectedTS {
+			t.Errorf("LastTS = %q, want %q", row.LastTS, expectedTS)
+		}
+		if row.Route != "deliverer" {
+			t.Errorf("Route = %q, want 'deliverer'", row.Route)
+		}
+	})
+
+	t.Run("open round with LiveUsage samples -> tokens = <n> tok", func(t *testing.T) {
+		b := BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+			RoundStart:       now.Add(-12 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-12 * time.Minute), Kind: store.KindPlan},
+			LiveUsage: &usage.Usage{
+				Tokens:  usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000},
+				Samples: 1,
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].Tokens != "41k tok" {
+			t.Errorf("Tokens = %q, want '41k tok'", rows[0].Tokens)
+		}
+	})
+
+	t.Run("closed round with RoundUsage -> its tokens", func(t *testing.T) {
+		b := BindingStatus{
+			Name:       "api",
+			Round:      1,
+			RoundStart: now.Add(-10 * time.Minute),
+			RoundEnd:   now.Add(-5 * time.Minute),
+			RoundUsage: &usage.Usage{
+				Tokens: usage.Tokens{In: 20_000, Out: 5_000},
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].Tokens != "25k tok" {
+			t.Errorf("Tokens = %q, want '25k tok'", rows[0].Tokens)
+		}
+	})
+
+	t.Run("remote row (Server set) -> harness <h>@<server>", func(t *testing.T) {
+		b := BindingStatus{
+			Name:             "api",
+			Round:            1,
+			BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+			Server:           "contabo",
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].Harness != "opencode@contabo" {
+			t.Errorf("Harness = %q, want 'opencode@contabo'", rows[0].Harness)
+		}
+	})
+
+	t.Run("no RoundStart -> clock --", func(t *testing.T) {
+		b := BindingStatus{
+			Name:  "api",
+			Round: 1,
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].Clock != "--" {
+			t.Errorf("Clock = %q, want '--'", rows[0].Clock)
+		}
+	})
+
+	t.Run("no payload -> last_kind \"\", last_ts \"\"", func(t *testing.T) {
+		b := BindingStatus{
+			Name:        "api",
+			Round:       1,
+			LastPayload: nil,
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].LastKind != "" {
+			t.Errorf("LastKind = %q, want empty", rows[0].LastKind)
+		}
+		if rows[0].LastTS != "" {
+			t.Errorf("LastTS = %q, want empty", rows[0].LastTS)
+		}
+	})
+
+	t.Run("empty report -> [] (not nil) once wrapped in StatusLineDoc and marshalled", func(t *testing.T) {
+		rows := StatusLineRows(Report{}, now)
+		if rows == nil {
+			t.Fatal("StatusLineRows returned nil slice, want non-nil empty slice")
+		}
+		doc := StatusLineDoc{
+			Planner: nil,
+			Now:     now.UTC(),
+			Rows:    rows,
+		}
+		data, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		s := string(data)
+		if !strings.Contains(s, `"planner":null`) {
+			t.Errorf("json %q does not contain '\"planner\":null'", s)
+		}
+		if !strings.Contains(s, `"rows":[]`) {
+			t.Errorf("json %q does not contain '\"rows\":[]'", s)
+		}
+	})
 }

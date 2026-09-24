@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -1351,4 +1352,58 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 			t.Errorf("%s: stderr = %q, want it to name %q", c.verb, stderr, c.replacement)
 		}
 	}
+}
+
+func TestStatusLineFlags(t *testing.T) {
+	t.Run("status --line --name x exits 2", func(t *testing.T) {
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--name", "x"})
+		})
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("status --line --name x: err = %v, want exit code 2", err)
+		}
+	})
+
+	t.Run("status --line --all exits 2", func(t *testing.T) {
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--all"})
+		})
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("status --line --all: err = %v, want exit code 2", err)
+		}
+	})
+
+	t.Run("status --line --json prints StatusLineDoc with null planner and empty rows", func(t *testing.T) {
+		t.Setenv("RELEVO_PLANNER", "")
+		t.Setenv("CLAUDECODE", "")
+		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+		t.Setenv("RELEVO_HARNESS", "")
+
+		stdout, stderr, err := captureOutput(t, func() error {
+			return run([]string{"status", "--line", "--json"})
+		})
+		if err != nil {
+			t.Fatalf("run status --line --json failed: %v (stderr: %s)", err, stderr)
+		}
+
+		var doc relevo.StatusLineDoc
+		if err := json.Unmarshal(stdout, &doc); err != nil {
+			t.Fatalf("unmarshal json %q: %v", stdout, err)
+		}
+		if doc.Planner != nil {
+			t.Errorf("doc.Planner = %+v, want nil", doc.Planner)
+		}
+		if doc.Rows == nil || len(doc.Rows) != 0 {
+			t.Errorf("doc.Rows = %+v, want empty []", doc.Rows)
+		}
+		s := string(stdout)
+		if !strings.Contains(s, `"planner":null`) {
+			t.Errorf("output %q does not contain '\"planner\":null'", s)
+		}
+		if !strings.Contains(s, `"rows":[]`) {
+			t.Errorf("output %q does not contain '\"rows\":[]'", s)
+		}
+	})
 }

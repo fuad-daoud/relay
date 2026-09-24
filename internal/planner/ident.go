@@ -36,9 +36,8 @@ var conversationIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-
 func validConversationID(id string) bool { return conversationIDRe.MatchString(id) }
 
 // Detect reports which harness process is calling. `claude` is detected from
-// CLAUDECODE and `agy` from a valid ANTIGRAVITY_CONVERSATION_ID; opencode tools
-// see no session id, so opencode alone registers explicitly with
-// `relevo planner init --kind ... --session ...` (§1.1, §4.2). Claude is checked
+// CLAUDECODE, `agy` from a valid ANTIGRAVITY_CONVERSATION_ID, and `opencode`
+// from RELEVO_HARNESS=opencode. Claude is checked
 // first, so CLAUDECODE=1 wins even when agy's variables are in the same
 // environment. It never shells out and never reads a file -- the host's start
 // time is the caller's business (ProcStart) -- so it is a pure function of its
@@ -74,6 +73,10 @@ func Detect(env func(string) string, ppid int) (Ident, bool) {
 	// host_pid is 0 -- and plannerHostStart(0) returns 0 for it.
 	if conv := env(agyConversationEnv); validConversationID(conv) {
 		return Ident{Kind: "agy", SessionID: conv, HostPID: 0}, true
+	}
+
+	if env("RELEVO_HARNESS") == "opencode" {
+		return Ident{Kind: "opencode"}, true
 	}
 
 	return Ident{}, false

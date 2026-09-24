@@ -74,7 +74,7 @@ status line; agy/codex; a relevo-authored plan (the plugin never writes a plan).
   tui.tsx                                 sidebar, toasts, /relevo pages, dialogs, commands
   server.ts                               shell hook: marks every shell RELEVO_HARNESS=opencode   [§5.6]
 
-TUI plugin ──spawn──► relevo planner init --kind opencode --session S --host-parent
+TUI plugin ──spawn──► relevo planner init --kind opencode --session S
             ──spawn──► relevo status --line --json          (poll)
             ──spawn──► relevo history --json --planner S     (fleet feed)
             ──spawn──► relevo show NAME --round N --json [--plan|--report|--diff|--log|--transcript]
@@ -127,30 +127,22 @@ with `RenderStatusLine` so both front ends use the same words. Store-only, like
 `PlannerStatus`. Planner resolution is `plannerFilter` unchanged, so it honours
 `RELEVO_PLANNER`.
 
-### 5.2 `relevo planner init --host-parent` (Go)
+### 5.2 Idle OpenCode records are pruned (Go)
 
-`planner init --kind opencode --session ses_…` today makes a hostless record,
-which `RecordState` reports as `explicit` and `Prune` never forgets. A plugin
-that registered every session it showed would pile records up.
-
-New flag `--host-parent`, valid only with `--kind/--session`: record the
-calling process's **parent** (the OpenCode TUI process that spawned `relevo`)
-as `host_pid`, with its start time as `host_started_at`. On re-attach
-(`InitReattached`, `internal/planner/hook.go` `reattach`) the host is replaced
-with the new caller's parent. A `--host-parent` init looks the record up **by
-session only**, never by host: one TUI process shows many sessions, and the
-usual host-first lookup (`findCaller` in `internal/planner/hook.go`) would find
-session A's record from session B's init and move it, merging two planners.
-Effect: a record whose TUI has exited is `gone`,
-and the hourly prune forgets it unless a binding still names it (the existing
-`inUse` guard). Output is unchanged: the last line is still
-`export RELEVO_PLANNER=pl_…`, which the plugin parses.
+An OpenCode planner record is an explicit registration (no host): one TUI
+process shows many sessions, and the registry refuses two records on one live
+host (`ErrHostTaken`), so the TUI cannot be the host. `Prune` never forgets an
+explicit record. `planner.PruneIdle` does, for kind `opencode` only: a record
+unseen for `OpencodeIdleTTL` (7 days) that no binding names. `seen_at` is
+refreshed by every Resolve hit, and the TUI plugin resolves every 5 s while it
+is open, so a session in use never goes idle. The daemon runs `PruneIdle`
+right after `Prune`.
 
 ### 5.3 The TUI plugin (`tui.tsx`)
 
 **Session → planner.** On the first `sidebar.content` render for a top-level
 session (skip sessions with a parent), spawn
-`relevo planner init --kind opencode --session <id> --host-parent` once per
+`relevo planner init --kind opencode --session <id>` once per
 session per TUI process, parse `export RELEVO_PLANNER=(pl_\w+)`, and cache it.
 Every later spawn for that session sets `RELEVO_PLANNER` in its environment.
 
@@ -347,7 +339,7 @@ explicit record. Read-only commands (`status`) do not register.
 
 - Go, pure functions in `internal/relevo` and `internal/planner` (CI has no
   harness binary and no network, so no `cmd/relevo` test spawns one):
-  `StatusLineRows` table test; `--host-parent` on register and re-attach;
+  `StatusLineRows` table test; `PruneIdle` table test;
   `MatchOpencodeSession` (exact dir, ancestor, longest-match, child sessions
   ignored, archived ignored, the 60 s ambiguity, none); Detect with
   `RELEVO_HARNESS=opencode` below `CLAUDECODE` and agy; Resolve calling
@@ -355,7 +347,7 @@ explicit record. Read-only commands (`status`) do not register.
   install of the plugin files under `harness.Install` (absent / shipped /
   modified / force / dry-run); doctor rows.
 - `cmd/relevo`: flag-parsing tests only (`--line --json` accepted; `--line
-  --name` still refused; `--host-parent` without `--kind` refused).
+  --name` still refused).
 - The plugin: the probe driver (`docs/specs/probes/2026-09-24-opencode-tui/run.sh`)
   becomes `scripts/opencode-plugin-smoke.sh`: a private `--standalone` OpenCode
   under tmux with `OPENCODE_CONFIG_DIR`, a throwaway session, captures of the

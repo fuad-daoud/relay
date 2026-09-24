@@ -2059,3 +2059,37 @@ func TestForkRegateFlagOverridesSource(t *testing.T) {
 		t.Errorf("Binding.Regate = %d, want the explicit 0", res.Binding.Regate)
 	}
 }
+
+func TestResolveVerbPlannerRegistersOpencodeSession(t *testing.T) {
+	t.Setenv("RELEVO_PLANNER", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
+	t.Setenv("RELEVO_HARNESS", "opencode")
+	rt := newRuntime(t)
+	rt.OpencodeSession = func(cwd string, now time.Time) (string, error) {
+		return "ses_abc", nil
+	}
+
+	rec, ok, err := resolveVerbPlanner(rt, "")
+	if err != nil {
+		t.Fatalf("resolveVerbPlanner: %v", err)
+	}
+	if !ok {
+		t.Fatal("resolveVerbPlanner returned ok=false")
+	}
+	if rec.HarnessKind != "opencode" || rec.SessionID != "ses_abc" {
+		t.Errorf("got rec = %+v, want opencode/ses_abc", rec)
+	}
+
+	// a second call returns the same record id
+	second, ok, err := resolveVerbPlanner(rt, "")
+	if err != nil {
+		t.Fatalf("second resolveVerbPlanner: %v", err)
+	}
+	if !ok {
+		t.Fatal("second resolveVerbPlanner returned ok=false")
+	}
+	if second.ID != rec.ID {
+		t.Errorf("second resolveVerbPlanner ID = %s, want %s", second.ID, rec.ID)
+	}
+}
