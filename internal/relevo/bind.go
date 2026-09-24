@@ -123,6 +123,10 @@ type BindOptions struct {
 	// On resume, an empty Feature means "leave the binding's existing
 	// Feature untouched" rather than clearing it.
 	Feature string
+
+	// Role is the writer role the new binding runs (#382); "" means builder.
+	// Bind ignores it on resume, because the binding keeps its stored role.
+	Role string
 }
 
 // BindResolved ties the calling planner to a builder over one working tree.
@@ -273,12 +277,15 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 			}
 		}
 		opts.Headless = true
-		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
+		// A resume re-points the binding at a builder; it keeps its stored
+		// writer role (#382 §2), so BindOptions.Role is ignored here.
+		opts.Role = b.Role
+		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, bindingRole(b))
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
 		if opts.Tier != "" {
-			tier := resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), "builder")
+			tier := resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), bindingRole(b))
 			if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 				return store.Binding{}, Resolution{}, err
 			}
@@ -446,15 +453,19 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP s
 	return out, Resolution{}, nil
 }
 
-// resolveGate applies the gate resolution rule (#132): --no-gate wins over
-// everything, an explicit --gate is used as given, and an unset flag falls
-// back to policy.json's gate.default.
-func resolveGate(gate string, noGate bool, pol policy.Policy) string {
+// resolveGateFor applies the gate resolution rule (#132, #382): --no-gate wins
+// over everything, an explicit --gate is used as given, and an unset flag takes
+// policy.json's gate.default only when the binding's role gates. A writer role
+// with "gate": false takes no gate.
+func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleGates bool) string {
 	if noGate {
 		return ""
 	}
 	if gate != "" {
 		return gate
+	}
+	if !roleGates {
+		return ""
 	}
 	return pol.GateDefault()
 }
@@ -470,6 +481,9 @@ func resolveRegate(regate *int, pol policy.Policy) int {
 }
 
 func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint) (store.Binding, Resolution, error) {
+	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+		return store.Binding{}, Resolution{}, err
+	}
 	name := opts.Name
 	if name == "" {
 		name = SanitizeName(baseName(opts.CWD))
@@ -509,11 +523,12 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	}
 
 	var tier harness.Tier
-	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
+	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
+	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
-	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), "builder")
+	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -534,7 +549,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),
-		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		Role:             normRole(opts.Role),
+		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          captureRepo(ctx, rt, opts.CWD),
 		Feature:          opts.Feature,
@@ -593,7 +609,8 @@ func builderAgentName(name string) (string, error) {
 //
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
+	roleName := bindingRole(store.Binding{Role: opts.Role})
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
@@ -604,7 +621,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 	}
 
 	var role harness.RoleSpec
-	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	role, err = rt.RoleRegistry().Spec(roleName, c.Harness)
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, fmt.Errorf("binding %q builder: %w", name, err)
 	}

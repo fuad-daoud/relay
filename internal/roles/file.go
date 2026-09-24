@@ -43,8 +43,9 @@ type File struct {
 // keeps what the role already had, while an empty list means "none".
 type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
-	// repeat the built-in shape; a new role must give it and must be a
-	// reader (writer rows need `relevo send --role`, S2).
+	// repeat the built-in shape; a new role must give it. A new writer runs
+	// as a binding's role (`relevo add --role` / `relevo bind --role`); a
+	// new reader runs through `relevo ask --role`.
 	Shape *string `json:"shape"`
 
 	// Gate marks a writer role whose round closes on a gate. true is
@@ -146,7 +147,9 @@ func validate(path string, f *File) error {
 					return badField("shape", "built-in role is "+shapeWord(builtin.Shape))
 				}
 			} else if word == "writer" {
-				return badField("shape", "a new writer role needs relevo send --role, not yet available")
+				// #382 §4: a new writer row is accepted. Shape is what the
+				// gate check below reads, so record the writer word as one.
+				shape = harness.ShapeBuilder
 			}
 		} else if !isBuiltin {
 			return badField("shape", "required for a new role")

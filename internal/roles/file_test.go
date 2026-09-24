@@ -127,11 +127,6 @@ func TestLoadValidation(t *testing.T) {
 			wantSubstring: "reviewer.shape: must be writer or reader",
 		},
 		{
-			name:          "new writer role",
-			body:          `{"my-role": {"shape": "writer"}}`,
-			wantSubstring: "my-role.shape: a new writer role needs relevo send --role, not yet available",
-		},
-		{
 			name:          "gate on a reader",
 			body:          `{"reviewer": {"gate": true}}`,
 			wantSubstring: "reviewer.gate: a reader role has no gate",
@@ -287,14 +282,20 @@ func TestLoadBuiltinShapeOverride(t *testing.T) {
 	}
 }
 
-// TestLoadNewWriterRefused pins the S1 restriction: a new role may not be a
-// writer until `relevo send --role` exists (S2).
-func TestLoadNewWriterRefused(t *testing.T) {
-	_, err := Load(writeRoles(t, `{"my-writer": {"shape": "writer"}}`))
-	if err == nil {
-		t.Fatal("Load(new writer row) = nil, want an error")
+// TestLoadNewWriterAccepted is the port of TestLoadNewWriterRefused: by
+// #382 plan §4 (and the design's §3) a new writer row is accepted now, so the
+// assertion flips from "refused" to "loads". S1's refusal branch -- "a new
+// writer role needs relevo send --role, not yet available" -- is deleted.
+func TestLoadNewWriterAccepted(t *testing.T) {
+	f, err := Load(writeRoles(t, `{"my-writer": {"shape": "writer"}}`))
+	if err != nil {
+		t.Fatalf("Load(new writer row) = %v, want nil", err)
 	}
-	if !strings.Contains(err.Error(), "a new writer role needs relevo send --role, not yet available") {
-		t.Errorf("err = %q, want the not-yet-available text", err.Error())
+	row, ok := f.Rows["my-writer"]
+	if !ok {
+		t.Fatal("Rows is missing my-writer")
+	}
+	if row.Shape == nil || *row.Shape != "writer" {
+		t.Errorf("my-writer shape = %v, want \"writer\"", row.Shape)
 	}
 }

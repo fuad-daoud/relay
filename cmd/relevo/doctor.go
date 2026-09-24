@@ -380,6 +380,15 @@ func cmdDoctor(args []string) error {
 	rep.Checks = append(rep.Checks, ledgerChecks(relevo.Gates(rt))...)
 	rep.Checks = append(rep.Checks, policyChecks(relevo.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
+	// #382 §5.4: a binding whose role roles.json no longer defines fails at
+	// round start, so doctor names it. A store error skips the rows silently,
+	// as plannerCheckInput treats its own store read.
+	if bindings, err := rt.Store.List(); err == nil {
+		rep.Checks = append(rep.Checks, doctor.BindingRoleChecks(bindings, func(r string) bool {
+			_, ok := rt.RoleRegistry().Role(r)
+			return ok
+		})...)
+	}
 	_, st := classify.Resolve(rt.Policy.Classify, configDir, os.Getenv)
 	rep.Checks = append(rep.Checks, doctor.ClassifyCheck(st))
 	refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt))

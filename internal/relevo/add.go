@@ -65,6 +65,10 @@ type AddOptions struct {
 	// Feature is the human-given label grouping this binding with others
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
+
+	// Role is the writer role the new binding runs (#382); "" means builder.
+	// It must name a writer role in roles.json.
+	Role string
 }
 
 // AddResult is what an add produced, so the CLI can tell the human where the
@@ -115,6 +119,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if opts.Server != "" {
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
+	// A binding runs one writer role (#382 §2). Refuse a bad one here, on the
+	// local path only: a remote binding's role is resolved against the
+	// server's own roles.json, never this client's (§5.3).
+	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+		return AddResult{}, err
+	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
 	}
@@ -131,13 +141,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, "builder")
+	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
 	if err != nil {
 		return AddResult{}, err
 	}
 	c := res.Candidate
 
-	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), "builder")
+	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return AddResult{}, err
 	}
@@ -279,6 +290,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Headless:  opts.Headless,
 		Tier:      string(tier),
 		AllowYolo: opts.AllowYolo,
+		Role:      normRole(opts.Role),
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -310,7 +322,8 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		ExistingBranch:   existingBranch,
 		Repo:             opts.Repo,
 		Tier:             string(tier),
-		Gate:             resolveGate(opts.Gate, opts.NoGate, rt.Policy),
+		Role:             normRole(opts.Role),
+		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is

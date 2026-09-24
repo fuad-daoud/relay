@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -762,8 +763,8 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(`"format": 2`)) {
-		t.Fatalf("the fixture must carry format 2, got:\n%s", raw)
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, store.BindingFormat+1))) {
+		t.Fatalf("the fixture must carry format %d, got:\n%s", store.BindingFormat+1, raw)
 	}
 	path := filepath.Join(rt.Store.Dir(b.Name), "bind.json")
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
@@ -789,7 +790,7 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	// reason why the binding stopped moving. Dropping the tickOne check
 	// leaves the warning unlogged, so this is what the guard's own mutation
 	// check catches.
-	wanted := "binding webshop is format 2; this relevo knows 1; leaving it to a newer relevo"
+	wanted := fmt.Sprintf("binding webshop is format %d; this relevo knows %d; leaving it to a newer relevo", store.BindingFormat+1, store.BindingFormat)
 	for _, r := range h.snapshot() {
 		if r.Message == wanted {
 			return

@@ -17,8 +17,10 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -771,6 +773,124 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	}
 	if fr.createBindingReq.Tier != "" {
 		t.Fatalf("CreateBindingRequest.Tier = %q, want empty", fr.createBindingReq.Tier)
+	}
+}
+
+// TestAddRemoteRolePreRolesServerRefused pins #382 §4: a server that does not
+// advertise remote.FeatureRoles refuses a custom --role before any binding is
+// created there. An old server would ignore the field and run its builder, so
+// the add is refused with no CreateBinding call and no branch or worktree.
+func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}} // Features nil: a server without roles
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+	_, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+		Role:   "ui-builder",
+	})
+	if err == nil {
+		t.Fatal("Add(--role on a pre-roles server) = nil, want a refusal")
+	}
+	want := `server zen does not run custom roles (role "ui-builder"); upgrade it`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want %q", err.Error(), want)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "CreateBinding") {
+			t.Fatalf("calls = %v, want no CreateBinding", fr.calls)
+		}
+	}
+	if len(fg.createBranchCalls) != 0 || len(fg.addWorktreeCalls) != 0 {
+		t.Fatalf("git calls = %v / %v, want no branch or worktree", fg.createBranchCalls, fg.addWorktreeCalls)
+	}
+}
+
+// TestAddRemoteRoleWiresRequest pins #382 §5.3's client half: a roles-aware
+// server gets Role on the CreateBindingRequest, and the local mirror records
+// it so `relevo status` shows it. The client's registry names only the
+// builder, so an add the client's own roles.json cannot explain still
+// succeeds: the client never checks its own roles for a server add.
+func TestAddRemoteRoleWiresRequest(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureRoles}},
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{
+		Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t),
+		Registry: rolesFileRegistry(t, candidateSet(t, testCandidatesJSON), policy.Policy{}, map[string]roles.Row{
+			"builder": {Candidates: []string{testClaudeRef}},
+		}),
+	}
+
+	res, err := Add(ctx, rt, AddOptions{
+		Name:   "api",
+		Server: "zen",
+		Repo:   "/fake/repo",
+		Role:   "ui-builder",
+	})
+	if err != nil {
+		t.Fatalf("Add --server --role: %v", err)
+	}
+	if fr.createBindingReq.Role != "ui-builder" {
+		t.Fatalf("CreateBindingRequest.Role = %q, want ui-builder", fr.createBindingReq.Role)
+	}
+	if res.Binding.Role != "ui-builder" {
+		t.Fatalf("res.Binding.Role = %q, want ui-builder", res.Binding.Role)
+	}
+	stored, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Role != "ui-builder" {
+		t.Fatalf("stored.Role = %q, want ui-builder", stored.Role)
+	}
+}
+
+// TestAddRemoteBuilderUnchanged pins #382 §5.3: a builder add to a server that
+// lacks remote.FeatureRoles still succeeds and sends Role "", so an old server
+// keeps working for builder bindings.
+func TestAddRemoteBuilderUnchanged(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		whoAmIResp: remote.WhoAmI{}, // Features nil: a server without roles
+		createBindingResp: remote.BindingView{
+			Name:      "api",
+			Candidate: "claude/anthropic/haiku",
+		},
+	}
+	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+	res, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
+	if err != nil {
+		t.Fatalf("Add --server (builder) failed: %v", err)
+	}
+	if fr.createBindingReq.Role != "" {
+		t.Fatalf("CreateBindingRequest.Role = %q, want empty", fr.createBindingReq.Role)
+	}
+	if res.Binding.Role != "" {
+		t.Fatalf("res.Binding.Role = %q, want empty", res.Binding.Role)
 	}
 }
 

@@ -154,7 +154,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 				return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
 			}
 		} else {
-			p, err := ResolveSendBuilder(rt, b.BuilderCandidate, opts.Builder)
+			p, err := ResolveSendBuilderFor(rt, bindingRole(b), b.BuilderCandidate, opts.Builder)
 			if err != nil {
 				return preflight{}, err
 			}
@@ -242,8 +242,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
-	var role harness.RoleSpec
-	role, err = rt.RoleRegistry().Spec("builder", c.Harness)
+	role, err := bindingSpec(rt, b, c.Harness)
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}

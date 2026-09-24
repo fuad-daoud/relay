@@ -1,4 +1,4 @@
-format 1
+format 2
 base
 base_ref
 branch
@@ -135,6 +135,7 @@ repair_count
 repo
 repo_ref.common_dir
 repo_ref.origin_url
+role
 round
 round_baseline_head
 round_baseline_tree

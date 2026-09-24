@@ -461,6 +461,78 @@ func TestFileTier(t *testing.T) {
 	}
 }
 
+// TestBuildNewWriterRow pins #382 plan §4: a new writer row is a writer in the
+// built registry, its gate defaults to true (the built-in builder's rule),
+// and its definition is what Spec resolves for the kind the row gives.
+func TestBuildNewWriterRow(t *testing.T) {
+	f := fileFromJSON(t, `{"ui-builder": {
+	  "shape": "writer",
+	  "definitions": {"claude": {"agent": "my-ui"}},
+	  "candidates": ["claude/anthropic/sonnet"]
+	}}`)
+	set := setFromFile(t, "testdata/legacy-candidates.json")
+	pol := policyFromFile(t, "testdata/legacy-policy.json")
+
+	reg, err := Build(f, set, pol)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	role, ok := reg.Role("ui-builder")
+	if !ok {
+		t.Fatal("Role(\"ui-builder\") not found")
+	}
+	if role.Shape != harness.ShapeBuilder {
+		t.Errorf("Shape = %q, want %q", role.Shape, harness.ShapeBuilder)
+	}
+	if !role.Gate {
+		t.Error("Gate = false, want true: a new writer gates by default")
+	}
+	if role.Builtin {
+		t.Error("Builtin = true, want false")
+	}
+
+	spec, err := reg.Spec("ui-builder", "claude")
+	if err != nil {
+		t.Fatalf("Spec(ui-builder, claude): %v", err)
+	}
+	if spec.Definition != "my-ui" {
+		t.Errorf("Definition = %q, want my-ui", spec.Definition)
+	}
+}
+
+// TestBuildNewWriterGateFalse pins #382 plan §4: "gate": false opts a new
+// writer out of the default gate.
+func TestBuildNewWriterGateFalse(t *testing.T) {
+	f := fileFromJSON(t, `{"ui-builder": {"shape": "writer", "gate": false}}`)
+	reg, err := Build(f, emptySet(t), policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	role, ok := reg.Role("ui-builder")
+	if !ok {
+		t.Fatal("Role(\"ui-builder\") not found")
+	}
+	if role.Gate {
+		t.Error("Gate = true, want false: the row opted out")
+	}
+}
+
+// TestValidateNewReaderGateStillRefused pins that #382 §4 lifts the writer
+// refusal only: a new reader role still has no gate.
+func TestValidateNewReaderGateStillRefused(t *testing.T) {
+	_, err := Load(writeRoles(t, `{"security-reviewer": {"shape": "reader", "gate": true}}`))
+	if err == nil {
+		t.Fatal("Load(reader with gate true) = nil, want an error")
+	}
+	if !errors.Is(err, ErrBadRoles) {
+		t.Errorf("err = %v, want ErrBadRoles", err)
+	}
+	if !strings.Contains(err.Error(), "a reader role has no gate") {
+		t.Errorf("err = %q, want the reader-gate text", err.Error())
+	}
+}
+
 // TestRoleCopies pins that Role hands out a copy: mutating what a caller gets
 // cannot change what the registry resolves.
 func TestRoleCopies(t *testing.T) {

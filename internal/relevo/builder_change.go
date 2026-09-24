@@ -15,18 +15,25 @@ import (
 // rather than 500 (#318).
 var ErrBadBuilder = errors.New("send --builder")
 
-// ResolveSendBuilder turns --builder's token into the resolution to apply, or
-// nil for a no-op. An explicit token is resolved exactly as `relevo add
-// --builder` resolves one, so a gated candidate still resolves (its gates are
-// recorded on the Resolution) and only roles_missing refuses (#238).
+// ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
+// role, so the callers and tests that predate roles stay unchanged.
+func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) {
+	return ResolveSendBuilderFor(rt, "builder", current, token)
+}
+
+// ResolveSendBuilderFor turns --builder's token into the resolution to apply
+// for a binding whose writer role is role, or nil for a no-op. An explicit
+// token is resolved exactly as `relevo add --builder` resolves one, so a gated
+// candidate still resolves (its gates are recorded on the Resolution) and only
+// roles_missing refuses (#238).
 //
 // It returns nil, nil when the token canonicalises to the binding's current
 // candidate: naming the builder a binding already has changes nothing. Every
 // error is wrapped with ErrBadBuilder, naming the token.
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
-func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
+func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution, error) {
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
 	}
@@ -45,7 +52,7 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 // re-derived tier is above max_tier without allowYolo is refused with
 // ErrBadBuilder, leaving the binding unchanged. Pure.
 func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
-	tier := resolveRoleTier("", res.Candidate, reg, "builder")
+	tier := resolveRoleTier("", res.Candidate, reg, bindingRole(b))
 	if err := checkTierCap(tier, pol, allowYolo); err != nil {
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}

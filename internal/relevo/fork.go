@@ -171,7 +171,10 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if token == "" {
 		token = src.BuilderCandidate
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
+	// A fork inherits the source binding's writer role (#382 §2). No
+	// checkWriterRole here: the source's role was checked when it was created.
+	roleName := bindingRole(src)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, roleName)
 	if err != nil && token == "" {
 		return ForkResult{}, fmt.Errorf("%w (%v)", ErrNoBuilderCandidate, err)
 	}
@@ -184,7 +187,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if explicitTier == "" && src.Tier != "" {
 		explicitTier = src.Tier
 	}
-	tier := resolveRoleTier(explicitTier, c, rt.RoleRegistry(), "builder")
+	tier := resolveRoleTier(explicitTier, c, rt.RoleRegistry(), roleName)
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return ForkResult{}, err
 	}
@@ -193,7 +196,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	if explicitGate == "" && src.Gate != "" {
 		explicitGate = src.Gate
 	}
-	gate := resolveGate(explicitGate, opts.NoGate, rt.Policy)
+	gate := resolveGateFor(explicitGate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName))
 
 	// A fork inherits the source's repair budget unless the human named one
 	// (#132 part 2): the source's own value already carries whatever policy
@@ -274,6 +277,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		Headless:  opts.Headless,
 		Tier:      string(tier),
 		AllowYolo: opts.AllowYolo,
+		Role:      src.Role,
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -323,6 +327,7 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 		RepoRef:          repoRef,
 		Feature:          feature,
 		Tier:             string(tier),
+		Role:             src.Role,
 		Gate:             gate,
 		Regate:           regate,
 	}

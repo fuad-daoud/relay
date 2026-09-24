@@ -697,6 +697,16 @@ func notePick(role string, res relevo.Resolution) {
 	fmt.Fprintln(os.Stderr, relevo.ExplainResolution(role, res))
 }
 
+// roleOrBuilder is the role name a flag value means: "builder" for "", else
+// the value. The CLI's --role and the registry both spell the default builder
+// as "".
+func roleOrBuilder(r string) string {
+	if r == "" {
+		return "builder"
+	}
+	return r
+}
+
 // headlessFlagNote is the one line relevo prints when a local-builder verb is
 // passed --headless: the flag is accepted and ignored (#303).
 const headlessFlagNote = "relevo: --headless is the default and only local mode; the flag is ignored"
@@ -966,6 +976,7 @@ func cmdBind(args []string) error {
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
+	role := fs.String("role", "", "writer role this binding runs: a roles.json writer row (default builder)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -977,6 +988,10 @@ func cmdBind(args []string) error {
 	if *rebind && !*resume {
 		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
 	}
+	if *role != "" && *resume {
+		return fmt.Errorf("relevo bind --resume keeps the binding's role; drop --role")
+	}
+
 	printHeadlessNoOp(*headless)
 	if *feature != "" {
 		if err := store.ValidFeature(*feature); err != nil {
@@ -1013,34 +1028,47 @@ func cmdBind(args []string) error {
 		NoGate:       *noGate,
 		Regate:       regateOpt,
 		Feature:      *feature,
+		Role:         *role,
 	}
 	opts.Candidate = *builderAlias
 
 	adopted := *resume
+	roleName := roleOrBuilder(*role)
+	specRole := roleName
 	kind := ""
 	switch {
 	case *rebind:
-		kind = relevo.CandidateKind(rt, opts.Candidate)
+		// A rebind replaces the builder of an existing binding, so the
+		// definitions come from the stored binding's role -- --role is
+		// refused with --resume, so roleName is "builder" here (#382 round 3).
+		// If the load fails, today's behaviour (roleName) stands.
+		if *name != "" {
+			if existing, err := rt.Store.Load(*name); err == nil {
+				specRole = relevo.BindingRole(existing)
+			}
+		}
+		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
 	case adopted:
 		if *name != "" {
 			if existing, err := rt.Store.Load(*name); err == nil {
 				kind = existing.Builder.Kind
+				specRole = relevo.BindingRole(existing)
 			}
 		}
 	default:
-		kind = relevo.CandidateKind(rt, opts.Candidate)
+		kind = relevo.CandidateKindFor(rt, opts.Candidate, roleName)
 	}
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
 	// failure is dropped rather than printed. See bindPreflight.
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
-		// The builder's definitions for this kind come from the registry, so a
-		// roles.json that names a custom builder executor preflights that file
-		// (#374 §3.4). A Spec error is data: defs stays nil and the preflight
-		// falls back to the shipped builder definitions.
+		// The binding's role's definitions for this kind come from the
+		// registry, so a roles.json that names a custom builder executor
+		// preflights that file (#374 §3.4). A Spec error is data: defs stays
+		// nil and the preflight falls back to the shipped builder definitions.
 		var defs []string
-		if spec, err := rt.RoleRegistry().Spec("builder", kind); err == nil {
+		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
 			defs = spec.Definitions
 		}
 		for _, line := range bindPreflightDefs(context.Background(), env, kind, adopted, defs) {
@@ -1052,6 +1080,8 @@ func cmdBind(args []string) error {
 	if err != nil {
 		return err
 	}
+	// A resume keeps the binding's stored role, so the pick note names it.
+	roleName = relevo.BindingRole(b)
 	if t := relevo.RestoreText(res); t != "" {
 		fmt.Println(t)
 	}
@@ -1069,7 +1099,7 @@ func cmdBind(args []string) error {
 			"  relevo send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
 		noteRegateNoGate(b)
-		notePick("builder", res)
+		notePick(roleName, res)
 		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
@@ -1080,7 +1110,7 @@ func cmdBind(args []string) error {
 	if n := relevo.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick("builder", res)
+	notePick(roleName, res)
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relevo chose, so the note would warn about a name the human did not pick
 	// here.
@@ -1192,6 +1222,7 @@ func cmdAdd(args []string) error {
 	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
+	role := fs.String("role", "", "writer role this binding runs: a roles.json writer row (default builder)")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -1250,6 +1281,7 @@ func cmdAdd(args []string) error {
 		NoGate:    *noGate,
 		Regate:    regateOpt,
 		Feature:   *feature,
+		Role:      *role,
 	})
 	if err != nil {
 		return err
@@ -1274,7 +1306,7 @@ func cmdAdd(args []string) error {
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick("builder", res.Resolution)
+	notePick(roleOrBuilder(*role), res.Resolution)
 	switch {
 	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
 		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
@@ -1486,7 +1518,7 @@ func cmdSend(args []string) error {
 
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	role := fs.String("role", "", "consult role: reviewer, researcher")
+	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in roles.json")
 	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in policy.json order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
