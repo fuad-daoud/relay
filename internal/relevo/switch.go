@@ -84,7 +84,7 @@ func switchEntry(now time.Time, round int, reason string, res Resolution) store.
 //
 // counted controls whether the switch advances b.RoundSwitches. A rate-limit
 // switch -- whether the gate came from a pattern match or from a human's
-// `relevo unavailable` -- passes false: max_switches counts builders that
+// `relevo gate <token>` -- passes false: max_switches counts builders that
 // fail, not providers that close, and counting one trigger but not the
 // other would make the halt depend on who noticed the gate first. The
 // `>= limit` check above is unaffected either way: `0` still disables

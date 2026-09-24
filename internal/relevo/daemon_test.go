@@ -40,7 +40,7 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 	}
 	// #303 deleted the pane injection; the report is queued for the planner
 	// and, with no live channel claim and no deliverer, stays pending for
-	// `relevo pull`.
+	// `relevo wait`.
 	pending, found, err := rt.Store.PendingForPlanner("webshop")
 	if err != nil || !found {
 		t.Fatalf("the closed round's report must be queued for the planner: found=%v err=%v", found, err)
@@ -829,5 +829,91 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	}
 	if !bytes.Equal(raw, after) {
 		t.Errorf("the import rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
+	}
+}
+
+// TestPlannerPruneDue pins §4.4's once-an-hour decision, pure so it needs no
+// daemon.
+func TestPlannerPruneDue(t *testing.T) {
+	now := time.Unix(1757000000, 0).UTC()
+	cases := []struct {
+		name string
+		last time.Time
+		ok   bool
+		now  time.Time
+		want bool
+	}{
+		{"never pruned", time.Time{}, false, now, true},
+		{"pruned just now", now, true, now, false},
+		{"59 minutes on", now, true, now.Add(59 * time.Minute), false},
+		{"an hour on", now, true, now.Add(time.Hour), true},
+		{"a clock step back is not a trigger", now, true, now.Add(-time.Hour), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := plannerPruneDue(c.last, c.ok, c.now); got != c.want {
+				t.Errorf("plannerPruneDue = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestPrunePlannersForgetsAndStamps pins the daemon's own prune (§4.4): a gone
+// record no binding names is forgotten, a live one survives, and the run is
+// stamped in the store database's kv row planner.pruned_at.
+func TestPrunePlannersForgetsAndStamps(t *testing.T) {
+	st := store.New(t.TempDir())
+	now := time.Unix(1757000000, 0).UTC()
+	d, err := st.DB()
+	if err != nil {
+		t.Fatalf("open store db: %v", err)
+	}
+	reg := &planner.DBRegistry{KV: db.TxKV{DB: d}, Root: st.PlannersDir(), Now: func() time.Time { return now }}
+
+	mk := func(id, name, session string, host int) planner.Record {
+		rec, err := reg.Create(planner.Record{
+			ID: id, Name: name, HarnessKind: "claude", SessionID: session,
+			HostPID: host, HostStartedAt: int64(host) * 10, CWD: "/tmp/x",
+			CreatedAt: now, SeenAt: now,
+		})
+		if err != nil {
+			t.Fatalf("Create(%s): %v", id, err)
+		}
+		return rec
+	}
+	live := mk("pl_aaaaaaaaaaaa", "alpha", "sess-a", 111)
+	gone := mk("pl_bbbbbbbbbbbb", "beta", "sess-b", 222)
+
+	rt := Runtime{
+		Store:    st,
+		Planners: reg,
+		Now:      func() time.Time { return now },
+		ProcStart: func(pid int) (int64, error) {
+			if pid == live.HostPID {
+				return live.HostStartedAt, nil
+			}
+			return 0, errors.New("ps: no such process")
+		},
+	}
+
+	NewDaemon(rt, time.Second).prunePlanners()
+
+	if _, err := reg.Get(gone.ID); !errors.Is(err, planner.ErrNotFound) {
+		t.Errorf("gone record %s is still present: err = %v", gone.ID, err)
+	}
+	if _, err := reg.Get(live.ID); err != nil {
+		t.Errorf("live record %s was forgotten: %v", live.ID, err)
+	}
+
+	kv, err := st.DB()
+	if err != nil {
+		t.Fatalf("store DB: %v", err)
+	}
+	last, ok, err := plannerLastPruned(kv)
+	if err != nil {
+		t.Fatalf("plannerLastPruned: %v", err)
+	}
+	if !ok || !last.Equal(now) {
+		t.Errorf("planner.pruned_at = (%v, %v), want (%v, true)", last, ok, now)
 	}
 }

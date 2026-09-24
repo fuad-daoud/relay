@@ -81,10 +81,11 @@ func schemaObject(required []string, props map[string]any) map[string]any {
 // WaitCommand is the tools-mode background wait (#303 §4.5), rendered
 // exactly as the model must run it: with run_in_background, ending its turn,
 // while the round runs. budget is the binding's round budget in a form
-// `relevo wait --timeout` accepts.
+// `relevo wait --timeout` accepts. The wait itself prints the report, so
+// there is no second command to run (P4a round 2 §4.1).
 func WaitCommand(name, budget string) string {
 	return "background wait (run with run_in_background, then end your turn):\n" +
-		"  relevo wait --name " + name + " --timeout " + budget + "; relevo pull --name " + name
+		"  relevo wait --name " + name + " --timeout " + budget
 }
 
 // appendWaitCommand appends the background-wait block to a tool result's

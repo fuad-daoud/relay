@@ -71,7 +71,7 @@ func TestStopPayload(t *testing.T) {
 		{
 			name: "report on disk", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2. Report: /s/reports/002.md",
+			wantPayload: "Builder was stopped (killed) for round 2. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
 		},
 		{
@@ -83,7 +83,7 @@ func TestStopPayload(t *testing.T) {
 		{
 			name: "remote, report on disk", how: "killed", round: 2, where: " on zen",
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2 on zen. Report: /s/reports/002.md",
+			wantPayload: "Builder was stopped (killed) for round 2 on zen. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
 		},
 		{
@@ -96,7 +96,7 @@ func TestStopPayload(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			payload, note := stopPayload(c.how, c.round, c.where, c.reportPath, c.haveReport)
+			payload, note := stopPayload(c.how, "webshop", c.round, c.where, c.haveReport)
 			if payload != c.wantPayload {
 				t.Errorf("payload = %q, want %q", payload, c.wantPayload)
 			}
@@ -184,8 +184,8 @@ func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
 		if !strings.Contains(pending.Note, "stopped") {
 			t.Errorf("report note = %q, want it to say stopped", pending.Note)
 		}
-		if !strings.Contains(pending.Payload, reportPath) {
-			t.Errorf("payload = %q, must name the report on disk", pending.Payload)
+		if !strings.Contains(pending.Payload, "relevo show webshop --round 1 --report") {
+			t.Errorf("payload = %q, must name the show command", pending.Payload)
 		}
 	})
 }

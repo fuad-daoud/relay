@@ -102,10 +102,10 @@ func repairPlan(b store.Binding, failedRound int, planPath, gateLogPath string, 
 func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, rec store.GateRecord, failedRound int) (store.Binding, error) {
 	sig := gateSignature(rt.Store.ReadFile, rec.LogPath)
 	if b.RepairCount >= b.Regate {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, rec.LogPath))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate failed after %d repair round(s) (regate %d); see %s", b.Name, b.RepairCount, b.Regate, showCommand(b.Name, failedRound, "gate")))
 	}
 	if sig != "" && sig == b.LastGateSig {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, rec.LogPath))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: gate output unchanged after repair; see %s", b.Name, showCommand(b.Name, failedRound, "gate")))
 	}
 
 	b.LastGateSig = sig

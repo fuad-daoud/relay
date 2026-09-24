@@ -96,12 +96,12 @@ func TestClosedRoundSealsAfterTwoTicks(t *testing.T) {
 		t.Errorf("ReadDiff = %q (ok %v, err %v), want %q", patch, ok, err, diff)
 	}
 
-	text, found, err := Pull(context.Background(), rt, "webshop", PullOptions{})
+	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
 	if err != nil || !found {
-		t.Fatalf("Pull: found=%v err=%v", found, err)
+		t.Fatalf("pullPending: found=%v err=%v", found, err)
 	}
 	if !strings.Contains(text, string(report)) {
-		t.Errorf("Pull text does not carry the sealed report: %q", text)
+		t.Errorf("pullPending text does not carry the sealed report: %q", text)
 	}
 
 	src := ingest.StoreSource(rt.Store, "webshop")

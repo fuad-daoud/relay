@@ -407,7 +407,7 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 			round:       5,
 			wantSummary: "3 files, +40 -2",
 			wantLine: "drift: 3 files, +40 -2 between round 4's report and this send\n" +
-				"       /home/u/.local/state/relevo/webshop/005-drift.patch",
+				"       relevo show webshop --round 5 --drift",
 		},
 		{
 			name: "single file drift with patch",
@@ -419,7 +419,7 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 			round:       2,
 			wantSummary: "1 file, +12 -3",
 			wantLine: "drift: 1 file, +12 -3 between round 1's report and this send\n" +
-				"       /home/u/.local/state/relevo/webshop/002-drift.patch",
+				"       relevo show webshop --round 2 --drift",
 		},
 		{
 			name: "truncated diff",
@@ -442,7 +442,7 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 				t.Errorf("DriftSummary = %q, want %q", gotSummary, tc.wantSummary)
 			}
 
-			gotLine := DriftLine(tc.res, tc.round)
+			gotLine := DriftLine(tc.res, "webshop", tc.round)
 			if gotLine != tc.wantLine {
 				t.Errorf("DriftLine = %q, want %q", gotLine, tc.wantLine)
 			}

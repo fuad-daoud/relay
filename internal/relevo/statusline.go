@@ -1,4 +1,4 @@
-// Package relevo statusline rendering per docs/specs/2026-09-13-statusline-design.md.
+// Package relevo renders the status line per docs/specs/2026-09-13-statusline-design.md.
 package relevo
 
 import (

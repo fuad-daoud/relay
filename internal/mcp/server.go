@@ -45,7 +45,7 @@ type Server struct {
 	Version string // serverInfo.version
 	// Mode picks the instructions text when Instructions is empty (#303
 	// §4.5): channel mode hears events, tools mode gets reports from the
-	// background wait's `relevo pull`.
+	// background wait.
 	Mode Mode
 	// Instructions overrides the mode's text when non-empty. Tests use it;
 	// cmd/relevo leaves it empty so the mode decides.

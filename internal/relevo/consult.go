@@ -178,7 +178,7 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 // finishConsult queues one planner-bound entry and marks the record terminal.
 //
 // It goes through Queue rather than appending directly, which is what makes
-// consults inherit the anti-clobber rule, held, notifications and `relevo pull`
+// consults inherit the anti-clobber rule, held, notifications and `relevo wait`
 // without a line of new delivery code.
 func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, i int, state store.ConsultState, note string) (store.Binding, error) {
 	c := b.Consults[i]
@@ -194,7 +194,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if state == store.ConsultDone {
 		entry.Path = c.FindingsPath
-		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, c.FindingsPath)
+		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, findingsCommand(b.Name, c.Round, c.ID))
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
 		// does not exist would send the planner to read nothing. The note is
@@ -217,7 +217,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			entry.Verdict = verdict
 			entry.Reasons = reasons
 			entry.Payload = fmt.Sprintf("relevo: round %d · verdict %s · %d reasons · %s",
-				c.Round, verdict, len(reasons), c.FindingsPath)
+				c.Round, verdict, len(reasons), findingsCommand(b.Name, c.Round, c.ID))
 			b.LastVerdict = &store.Verdict{
 				Round:    c.Round,
 				Verdict:  verdict,

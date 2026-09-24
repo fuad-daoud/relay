@@ -338,7 +338,7 @@ func cmdDoctor(args []string) error {
 		})
 	}
 	// #335: a remote builder commits as the client, so a repo whose effective
-	// user.name/user.email is unset makes `relevo add --server` refuse. The row
+	// user.name/user.email is unset makes `relevo bind --server` refuse. The row
 	// exists only where a server is configured and the cwd is inside a repo; a
 	// git failure (no repo, no git) is not established, so it is no row.
 	identity := doctor.GitIdentityInput{HasServers: hasServers}
@@ -443,7 +443,7 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 
 		fix := "wait until " + relevo.GateTimeText(g.Until)
 		if g.Kind == ledger.RateLimited {
-			fix = "relevo available " + provider
+			fix = "relevo gate --clear " + provider
 		}
 
 		checks = append(checks, doctor.Check{
@@ -580,7 +580,7 @@ func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 			if len(r.Gated) > 0 {
 				provider = r.Gated[0]
 			}
-			fix = "relevo available " + provider
+			fix = "relevo gate --clear " + provider
 		}
 		checks = append(checks, doctor.Check{
 			Group:    "",

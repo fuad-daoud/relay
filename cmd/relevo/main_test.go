@@ -37,11 +37,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestHelpListsServeVerbs pins that the top-level usage's `serve` line names
-// all the server administration verbs, not just the original eight: `relevo
-// serve ui`, `gates`, `available` and `unavailable` exist in
-// cmd/relevo/serve.go's sub-usage but were missing here. `relevo help` only
-// prints a constant string, so this reaches no harness and touches no state.
+// TestHelpListsServeVerbs pins that the top-level usage names the server
+// administration verbs and the gate verb that replaced `serve gates`,
+// `serve available` and `serve unavailable` (§4.3). `relevo help` only prints
+// a constant string, so this reaches no harness and touches no state.
 func TestHelpListsServeVerbs(t *testing.T) {
 	stdout, _, runErr := captureOutput(t, func() error {
 		return run([]string{"help"})
@@ -49,8 +48,10 @@ func TestHelpListsServeVerbs(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("run: %v", runErr)
 	}
-	if !strings.Contains(string(stdout), "gates") {
-		t.Errorf("expected the top-level usage to mention gates, got %q", string(stdout))
+	for _, want := range []string{"serve init", "gate --serve"} {
+		if !strings.Contains(string(stdout), want) {
+			t.Errorf("expected the top-level usage to mention %q, got %q", want, string(stdout))
+		}
 	}
 }
 
@@ -332,7 +333,7 @@ func TestDiffCommand(t *testing.T) {
 	}
 }
 
-// TestDiffAnchorsCommand pins `relevo diff --anchors`: it store-only seeds a
+// TestDiffAnchorsCommand pins `relevo show --diff --anchors`: it store-only seeds a
 // binding and a round 1 diff the way TestDiffCommand does, so it reaches no
 // a harness, and asserts the printed patch carries the path:line gutter
 // internal/patch's Annotate produces.
@@ -552,7 +553,7 @@ func TestCandidatesConfigHome(t *testing.T) {
 
 // TestDiffHonoursConfigHome pins #235: cmdDiff's newRuntime() reads
 // candidates.json through userConfigRoot(), so XDG_CONFIG_HOME decides which
-// file it reads. A candidates file the branch rejects must make `relevo diff`
+// file it reads. A candidates file the branch rejects must make `relevo show --diff`
 // fail with that rejection, exactly the way the two diff tests used to fail
 // when they picked the file up from the real home. (An unknown harness no
 // longer rejects the load: #372 skips it with a warning, so this uses a bad
@@ -604,7 +605,7 @@ func TestDaemonCheckLeavesNoDB(t *testing.T) {
 	}
 }
 
-// TestDefaultServeRoot pins the root `relevo available` reads the serve
+// TestDefaultServeRoot pins the root `relevo gate --clear` reads the serve
 // pointer from (#372 §4.6): the serve root under the state root, not the
 // client root's daemon.json.
 func TestDefaultServeRoot(t *testing.T) {
@@ -1299,8 +1300,8 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 	}
 }
 
-// TestRemovedVerbsNameTheirReplacement pins §4.6: each of the seven names P4a
-// removed exits 2 with one line naming the form that replaces it.
+// TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
+// name exits 2 with one line naming the form that replaces it.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 	cases := []struct{ verb, replacement string }{
 		{"add", "relevo bind --worktree"},
@@ -1310,6 +1311,9 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 		{"gc", "relevo unbind --done"},
 		{"pause", "relevo done, then relevo bind --resume"},
 		{"statusline", "relevo status --line"},
+		{"pull", "relevo wait"},
+		{"unavailable", "relevo gate"},
+		{"available", "relevo gate --clear"},
 	}
 	for _, c := range cases {
 		_, stderr, err := captureOutput(t, func() error { return run([]string{c.verb}) })

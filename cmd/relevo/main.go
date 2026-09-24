@@ -72,14 +72,13 @@ Commands:
                         branch a new binding from an earlier round with its own worktree
   send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
-  pull      print the oldest pending report's text to stdout and mark it delivered [--path-only]
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
-  show      one round's plan, report, diff, drift, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
+  show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
   stats     rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
-  wait      block until a round closes or needs you; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout
+  wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   stop      kill the builder process and close its round without a report unless one is already on disk
@@ -102,13 +101,14 @@ Commands:
             this machine's remote-builder identity and server list
   config secret set|rm|list
             store or forget the typesafe and client.key secrets
-  planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
-  unavailable  record a provider rate limit: relevo unavailable <token> [--for D] [--reason S]
-  available    clear a recorded rate limit locally and on every server your bindings name: relevo available <provider|token>
+  planner      register this planner (or re-attach an existing one), and list, rename or forget records
+  gate      list this machine's active gates; gate a provider: relevo gate <token> [--for D] [--reason S];
+            clear one: relevo gate --clear <provider|token>; relevo gate --serve [--state DIR] acts on the
+            local serve daemon's gates instead
   db        path|migrate|stats for relevo's sqlite database
 
   serve                     run the remote-builder server (listener + daemon)
-  serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui|gates|available|unavailable
+  serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui
                             server administration, on the server host
 
   help      print this message
@@ -216,7 +216,7 @@ func statusNotice(running, latest string, ok bool, kind release.Kind) string {
 // the flag package has already printed usage, so the caller just returns.
 //
 // It parses iteratively rather than once, because flag.Parse stops at the first
-// non-flag argument -- which meant `relevo fork webshop --round 2` silently
+// non-flag argument -- which meant `relevo bind --from webshop --round 2` silently
 // dropped --round, the exact form the README documents (#48). Each pass takes
 // one leftover word as a positional and re-parses the remainder, so flags are
 // found wherever they appear. Letting Parse do the work is what keeps this
@@ -324,8 +324,6 @@ func run(args []string) error {
 		return cmdSend(args[1:])
 	case "ask":
 		return cmdAsk(args[1:])
-	case "pull":
-		return cmdPull(args[1:])
 	case "review":
 		return cmdReview(args[1:])
 	case "status":
@@ -362,10 +360,8 @@ func run(args []string) error {
 		return cmdConfig(args[1:])
 	case "planner":
 		return cmdPlanner(args[1:])
-	case "unavailable":
-		return cmdUnavailable(args[1:])
-	case "available":
-		return cmdAvailable(args[1:])
+	case "gate":
+		return cmdGate(args[1:])
 	case "db":
 		return cmdDB(args[1:])
 	case "serve":
@@ -383,8 +379,9 @@ func run(args []string) error {
 }
 
 // removedVerbs names each removed verb and the form that replaces it: the
-// seven P2b folded into `relevo config` (§4.4), and the seven P4a merged into
-// bind, show, unbind and status (§4.6).
+// seven P2b folded into `relevo config` (§4.4), the seven P4a merged into
+// bind, show, unbind and status (§4.6), and the P4a round 2 verbs folded into
+// wait and gate (§4.1, §4.3).
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -401,6 +398,10 @@ var removedVerbs = map[string]string{
 	"gc":         "relevo unbind --done",
 	"pause":      "relevo done, then relevo bind --resume",
 	"statusline": "relevo status --line",
+
+	"pull":        "relevo wait (it prints the report)",
+	"unavailable": "relevo gate <token>",
+	"available":   "relevo gate --clear <provider>",
 }
 
 // userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
@@ -511,7 +512,7 @@ func captureAgyEnv() {
 // OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
 // (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
 // opencode deliverer could never confirm a delivery, so an opencode planner's
-// reports stay pending for relevo pull. agy needs no external tool: it reads
+// reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy
 // itself, and reports its own failure as OutcomeUnavailable.
 func newDeliverers() map[string]relevo.PlannerDeliverer {
@@ -942,31 +943,69 @@ func formatPolicy(rt relevo.Runtime) string {
 	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt), loadHistory(rt), rt.Now(), time.Local)
 }
 
-func cmdUnavailable(args []string) error {
-	fs := flag.NewFlagSet("unavailable", flag.ContinueOnError)
-	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relevo available`")
+// cmdGate is one verb for the gate operations that used to be four: the
+// top-level unavailable and available, and the serve gates|available|unavailable
+// subverbs (§4.3). With no positional it lists the active
+// gates; a positional gates a provider; --clear lifts a gate; --serve sends
+// the same three forms to the local serve daemon's own ledger.
+func cmdGate(args []string) error {
+	const gateUsage = `usage: relevo gate
+       relevo gate <token> [--for D] [--reason S]
+       relevo gate --clear <provider|token>
+       relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]`
+
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relevo gate --clear`")
 	reason := fs.String("reason", "", "why, for the record")
+	clear := fs.String("clear", "", "clear a recorded rate limit: --clear <provider|token>")
+	serveFlag := fs.Bool("serve", false, "act on the local serve daemon's gates instead of this machine's")
+	_ = fs.String("state", "", "with --serve: state directory")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	positional := fs.Args()
-	if len(positional) != 1 {
-		return fmt.Errorf("usage: relevo unavailable <harness/provider/model> [--for D] [--reason S]")
+	if *serveFlag {
+		return gateServe(fs, positional, *forFlag, *reason, *clear)
 	}
-	token := positional[0]
+	switch {
+	case *clear != "":
+		return gateClear(*clear)
+	case len(positional) == 1:
+		return gateUnavailable(positional[0], *forFlag, *reason)
+	case len(positional) == 0 && *forFlag == "" && *reason == "":
+		return gateList()
+	default:
+		fmt.Fprintln(os.Stderr, gateUsage)
+		return exitCodeErr{code: 2}
+	}
+}
 
+// gateList prints this machine's active gates: the rendering `relevo serve
+// gates` printed for the serve root's ledger (§4.3), fed by relevo.Gates.
+func gateList() error {
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	fmt.Print(serve.RenderGates(relevo.Gates(rt), rt.Now()))
+	return nil
+}
+
+// gateUnavailable records a provider rate limit: exactly today's
+// cmdUnavailable (§4.3).
+func gateUnavailable(token, forFlag, reason string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
 
-	until, err := parseFor(*forFlag, rt.Now())
+	until, err := parseFor(forFlag, rt.Now())
 	if err != nil {
 		return err
 	}
 
-	provider, err := relevo.Unavailable(rt, token, until, *reason)
+	provider, err := relevo.Unavailable(rt, token, until, reason)
 	if err != nil {
 		return err
 	}
@@ -990,25 +1029,16 @@ func cmdUnavailable(args []string) error {
 		}
 	}
 
-	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, token, *reason) {
+	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, token, reason) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 
 	return nil
 }
 
-func cmdAvailable(args []string) error {
-	fs := flag.NewFlagSet("available", flag.ContinueOnError)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	positional := fs.Args()
-	if len(positional) != 1 {
-		return fmt.Errorf("usage: relevo available <provider|harness/provider/model>")
-	}
-	subject := positional[0]
-
+// gateClear lifts a recorded rate limit locally and on every server the
+// bindings name: exactly today's cmdAvailable (§4.3).
+func gateClear(subject string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
@@ -1039,11 +1069,27 @@ func cmdAvailable(args []string) error {
 	// DaemonInfo, which decodes as a pointer with a live pid.
 	if defRoot, err := defaultServeRoot(); err == nil {
 		if p, ok, _ := serve.ReadPointer(defRoot); ok && pidAlive(p.PID) {
-			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo serve gates / relevo serve available\n")
+			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}
 
 	return nil
+}
+
+// gateServe sends the three gate forms to the local serve daemon's own
+// ledger: today's `relevo serve gates`, `relevo serve unavailable` and
+// `relevo serve available`, via the serve root's ledgerRuntime (§4.3).
+func gateServe(fs *flag.FlagSet, positional []string, forFlag, reason, clear string) error {
+	switch {
+	case clear != "":
+		return serveGateClear(fs, clear)
+	case len(positional) == 1:
+		return serveGateUnavailable(fs, positional[0], forFlag, reason)
+	case len(positional) == 0 && forFlag == "" && reason == "":
+		return serveGateList(fs)
+	default:
+		return fmt.Errorf("usage: relevo gate --serve [--state DIR] [<token> [--for D] [--reason S] | --clear <provider|token>]")
+	}
 }
 
 // bindFlags is the union of the flags today's bind, add and fork each accept.
@@ -1762,42 +1808,6 @@ func cmdAsk(args []string) error {
 	return nil
 }
 
-func cmdPull(args []string) error {
-	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
-	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	pathOnly := fs.Bool("path-only", false, "print the pointer payload (report path and diff line) instead of the report text")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-	target, err := resolveBinding(rt, *name, fs.Args())
-	if err != nil {
-		return err
-	}
-
-	if rt.Remote != nil {
-		if _, serr := relevo.SyncRemote(context.Background(), rt); serr != nil {
-			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
-		}
-	}
-
-	payload, found, err := relevo.Pull(context.Background(), rt, target, relevo.PullOptions{PathOnly: *pathOnly})
-	if err != nil {
-		return err
-	}
-	if !found {
-		fmt.Println("nothing pending")
-		return nil
-	}
-
-	fmt.Println(payload)
-	return nil
-}
-
 // printDiff is diff's body (the old cmdDiff), shared by `show --diff` and
 // `show --drift` (§4.2): the output is byte-identical to the removed diff verb
 // for the same arguments, including the #143 .viewed stamp.
@@ -2139,6 +2149,7 @@ func cmdWait(args []string) error {
 	anyFlag := fs.Bool("any", false, "wait on every named binding; the first to close or need you wins, its name printed first")
 	round := fs.Int("round", 0, "round to wait on (default: the newest round sent; an earlier round answers from the log)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait before giving up")
+	peek := fs.Bool("peek", false, "print the outcome line only: do not deliver the pending report")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -2172,7 +2183,7 @@ func cmdWait(args []string) error {
 	defer stop()
 
 	resName, res, err := relevo.Wait(ctx, rt, relevo.WaitOptions{
-		Names: names, Round: *round, Timeout: *timeout, Interval: time.Second,
+		Names: names, Round: *round, Timeout: *timeout, Interval: time.Second, Peek: *peek,
 	})
 	if err != nil {
 		return err
@@ -2183,6 +2194,17 @@ func cmdWait(args []string) error {
 	}
 	if res.Line != "" {
 		fmt.Println(res.Line)
+	}
+	// §4.1: after the outcome line, a blank line and the pending payload --
+	// the same text `pull` printed -- for every exit but the timeout and a
+	// gone binding. A delivery failure is printed and never changes the exit
+	// code (§6).
+	if res.DeliverErr != nil {
+		fmt.Fprintf(os.Stderr, "relevo wait: %v\n", res.DeliverErr)
+	}
+	if res.Payload != "" {
+		fmt.Println()
+		fmt.Println(res.Payload)
 	}
 	if res.Code == 0 {
 		return nil

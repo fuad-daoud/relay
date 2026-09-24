@@ -27,12 +27,14 @@ const (
 	ShowDrift      ShowSection = "drift"
 	ShowLog        ShowSection = "log"
 	ShowTranscript ShowSection = "transcript"
+	ShowGate       ShowSection = "gate"
+	ShowFindings   ShowSection = "findings"
 )
 
 // ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
-	case ShowPlan, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript:
+	case ShowPlan, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings:
 		return true
 	}
 	return false
@@ -45,6 +47,9 @@ type ShowOptions struct {
 	Round   int
 	Section ShowSection
 	JSON    bool
+	// FindingsID is the consult whose findings --findings names (§4.2). It is
+	// meaningful only with Section == ShowFindings.
+	FindingsID string
 }
 
 // ShowResult is one round's requested section, resolved from a live
@@ -155,6 +160,13 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.DriftPath(b.Name, round))
 	case ShowTranscript:
 		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.BuilderLogPath(b.Name, round))
+	case ShowGate:
+		// The round's gate log, read the same way every other section is:
+		// through rt.Store.ReadFile, so a sealed round's log is found in the
+		// database exactly as a present one is (P4a round 2 §4.2).
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.GateLogPath(b.Name, round))
+	case ShowFindings:
+		res.Text, res.Missing, err = readFileOrMissing(rt.Store.ReadFile, rt.Store.FindingsPath(b.Name, round, opts.FindingsID))
 	case ShowLog:
 		for _, e := range entries {
 			if e.Round == round {
@@ -252,6 +264,11 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 			res.Text = strings.Join(lines, "\n")
 			res.Missing = len(recs) == 0
 		}
+	case ShowGate, ShowFindings:
+		// A gate log and a consult's findings are round files, not ingest
+		// artifacts, so an archived (database-only) binding has no row to
+		// read them from: report Missing rather than an empty section.
+		res.Missing = true
 	}
 	if err != nil {
 		return ShowResult{}, err

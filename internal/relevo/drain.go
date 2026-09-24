@@ -88,11 +88,11 @@ func Drain(ctx context.Context, rt Runtime, st *DrainState, p Pusher) (DrainResu
 				"kind":    string(entry.Kind),
 				"seq":     strconv.Itoa(entry.Seq),
 			}
-			if entry.Path != "" {
-				meta["path"] = entry.Path
+			if show := logRef(b.Name, entry); show != "" {
+				meta["show"] = show
 			}
 
-			content, _ := PushText(entry, rt.Store.ReadFile)
+			content, _ := PushText(entry, b.Name, rt.Store.ReadFile)
 			if err := p.Push(ctx, content, meta); err != nil {
 				res.Failed = append(res.Failed, b.Name)
 				slog.Info("channel push failed; entry stays pending", "binding", b.Name, "round", entry.Round, "error", err)

@@ -176,8 +176,8 @@ func TestLedgerChecks(t *testing.T) {
 	if checks[0].Group != "claude" || checks[0].Name != "ledger" || checks[0].Severity != doctor.SevWarn {
 		t.Errorf("check 0 = %+v", checks[0])
 	}
-	if !strings.HasPrefix(checks[0].Fix, "relevo available ") {
-		t.Errorf("check 0 Fix = %q, want prefix %q", checks[0].Fix, "relevo available ")
+	if !strings.HasPrefix(checks[0].Fix, "relevo gate --clear ") {
+		t.Errorf("check 0 Fix = %q, want prefix %q", checks[0].Fix, "relevo gate --clear ")
 	}
 
 	if checks[1].Group != "agy" || checks[1].Name != "ledger" || checks[1].Severity != doctor.SevWarn {
@@ -338,7 +338,7 @@ func TestRefusalChecks(t *testing.T) {
 	if want := "every candidate serving reviewer is gated -- ask --role reviewer without --candidate would refuse"; checks[1].Detail != want {
 		t.Errorf("reviewer Detail = %q, want %q", checks[1].Detail, want)
 	}
-	if want := "relevo available test"; checks[1].Fix != want {
+	if want := "relevo gate --clear test"; checks[1].Fix != want {
 		t.Errorf("reviewer Fix = %q, want %q", checks[1].Fix, want)
 	}
 	if got := refusalChecks(nil); len(got) != 0 {

@@ -1,8 +1,8 @@
 // Package patch is a small unified-diff reader sized for relevo's own
-// captured patches (relevo diff): it parses the "diff --git" / "---" /
+// captured patches (relevo show --diff): it parses the "diff --git" / "---" /
 // "+++" / "@@ ... @@" structure relevo's capture path already produces and
 // numbers each line by its post-image (new-file) line number, so a review
-// comment can anchor to a path:line the way `relevo diff --anchors` prints
+// comment can anchor to a path:line the way `relevo show --diff --anchors` prints
 // it.
 package patch
 

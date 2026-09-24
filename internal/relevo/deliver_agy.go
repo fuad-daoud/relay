@@ -125,7 +125,7 @@ func (d *AgyDeliverer) home() (string, error) {
 // reports its state instead. It never puts a credential in the reason: the
 // token passes only through the extraEnv of one exec, and any text that came
 // back from agy is redacted before it becomes a reason.
-func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
+func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error) {
 	if planner.Kind != "agy" {
 		return OutcomeNotMine, "", nil
 	}
@@ -139,7 +139,7 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 	}
 	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
 		reason := fmt.Sprintf("agy push gave up after %s", d.fallbackAfter())
-		slog.Info("agy push not confirmed; payload stays pending for relevo pull", "conversation", conv, "reason", reason)
+		slog.Info("agy push not confirmed; payload stays pending for the background wait", "conversation", conv, "reason", reason)
 		return OutcomeNotMine, reason, nil
 	}
 
@@ -165,7 +165,7 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 
 	content := payload
 	if len(content) > AgyMaxContent {
-		content = agyOversizeContent(origin, len(content), path)
+		content = agyOversizeContent(origin, len(content), ref)
 	}
 	exe := creds.AgentAPIExe
 	if exe == "" {
@@ -308,12 +308,14 @@ func agyTitle(origin string) string {
 // agyOversizeContent is what replaces a payload too long for one argv element:
 // the origin line, how big the report was, and where to read it. It keeps the
 // planner's wake-up meaningful -- the title and the first line still identify
-// the round -- without an argv the kernel would refuse.
-func agyOversizeContent(origin string, n int, path string) string {
-	if path == "" {
-		return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes); run relevo pull.", origin, n)
+// the round -- without an argv the kernel would refuse. ref is the
+// `relevo show …` command that prints the full text (P4a round 2 §4.2), or ""
+// when the entry names no show section.
+func agyOversizeContent(origin string, n int, ref string) string {
+	if ref == "" {
+		return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes); run relevo wait.", origin, n)
 	}
-	return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes). Read it: %s", origin, n, path)
+	return fmt.Sprintf("%s\n\nThe report is too long to push (%d bytes). Read it: %s", origin, n, ref)
 }
 
 // agySendError returns the first line of a JSON error object send-message

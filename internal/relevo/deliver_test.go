@@ -69,7 +69,7 @@ func seedPending(t *testing.T, rt Runtime, name, plannerID, kind string) store.B
 }
 
 // deliverOnce runs DeliverPending under the state lock, the way the daemon
-// and `relevo pull` do.
+// and `relevo wait` do.
 func deliverOnce(t *testing.T, rt Runtime, b store.Binding) (store.Binding, Delivery) {
 	t.Helper()
 	var (
@@ -252,7 +252,7 @@ func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
 // TestDeliverNilDeliverersBehavesAsToday proves a nil Deliverers map -- the
 // zero value every existing test already runs with -- takes the pull route
 // exactly as it did before this round: nothing is confirmed, and the payload
-// waits for `relevo pull`.
+// waits for `relevo wait`.
 func TestDeliverNilDeliverersBehavesAsToday(t *testing.T) {
 	rt := routeRuntime(t)
 	rt.Deliverers = nil

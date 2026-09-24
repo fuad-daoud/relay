@@ -743,7 +743,7 @@ func TestAddRemoteTierWiresRequestAndEchoesBinding(t *testing.T) {
 
 // TestAddRemoteNoTierSkipsProbe pins the no-op path: omitting --tier never
 // probes WhoAmI and sends no Tier on the wire, so a pre-tier server is
-// unaffected by a plain `relevo add --server` (#141 remote half).
+// unaffected by a plain `relevo bind --server` (#141 remote half).
 func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -4124,12 +4124,12 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 
 	count := 0
 	for _, r := range h.snapshot() {
-		if r.Level == slog.LevelInfo && r.Message == "checkout another branch, then relevo pull" {
+		if r.Level == slog.LevelInfo && r.Message == "checkout another branch, then relevo wait" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("Info 'checkout another branch, then relevo pull' logged %d times, want exactly 1", count)
+		t.Fatalf("Info 'checkout another branch, then relevo wait' logged %d times, want exactly 1", count)
 	}
 }
 

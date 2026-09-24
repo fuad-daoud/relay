@@ -7,7 +7,7 @@ headless or remote processes; relevo no longer integrates with herdr.
 ## Working with builders
 
 The dispatch protocol -- `relevo send` not in-session subagents, headless by
-default, one harness many worktrees, `relevo unavailable` on a usage limit,
+default, one harness many worktrees, `relevo gate` on a usage limit,
 stop rather than improvise -- is in the shipped `architect` definition
 (`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
 follows is what is specific to this machine and this repo.
@@ -17,17 +17,18 @@ follows is what is specific to this machine and this repo.
   `relevo config` shows the current pick.
 - relevo stops a builder *process* in exactly four places: `relevo done` and
   `relevo unbind` on a binding whose round is running, a mid-round switch of a
-  builder whose provider you gated with `relevo unavailable`, and `relevo stop`.
+  builder whose provider you gated with `relevo gate`, and `relevo stop`.
   A binding's builder is a process relevo started, so there is no terminal to
   clean up afterwards.
 - `relevo done` releases a clean worktree (the branch survives) so you can
-  `gh pr checkout` in the main repo without `gc`; a dirty tree or an open
-  round is kept and `gc` retries. `relevo bind --resume` restores a
-  released worktree; rebind a DONE binding only after that restore.
+  `gh pr checkout` in the main repo without `relevo unbind --done`; a dirty
+  tree or an open round is kept and `relevo unbind --done` retries. `relevo
+  bind --resume` restores a released worktree; rebind a DONE binding only
+  after that restore.
 - A headless round's log is at `~/.local/state/relevo/<name>/NNN-builder.log`.
-- When a builder reports a usage limit mid-round, `relevo unavailable
-  <token>` is enough: the daemon switches and resends. Do not rebind by
-  hand unless `relevo status` says `NEEDS YOU`.
+- When a builder reports a usage limit mid-round, `relevo gate <token>` is
+  enough: the daemon switches and resends. Do not rebind by hand unless
+  `relevo status` says `NEEDS YOU`.
 
 ## Verifying a builder's work
 

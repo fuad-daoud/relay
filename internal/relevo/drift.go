@@ -88,8 +88,10 @@ func DriftSummary(res DriftResult) string {
 // there is nothing worth telling the planner (rt.Git off, not a repository, or
 // an empty Stat).
 //
-// round is the opening round; the prose names round-1, the round that closed.
-func DriftLine(res DriftResult, round int) string {
+// round is the opening round; the prose names round-1, the round that closed,
+// and points the planner at `relevo show <name> --round <round> --drift`
+// instead of the patch's path (P4a round 2 §4.2).
+func DriftLine(res DriftResult, name string, round int) string {
 	if !res.Available {
 		if res.Reason == "" {
 			return ""
@@ -105,13 +107,13 @@ func DriftLine(res DriftResult, round int) string {
 		return msg + "\n       (patch omitted, over the 4 MiB cap)"
 	}
 	if res.Path != "" {
-		return msg + "\n       " + res.Path
+		return msg + "\n       " + showCommand(name, round, "drift")
 	}
 	return msg
 }
 
 // ReadDrift returns the stored drift patch for one round, and whether one exists.
-// It is the read path behind `relevo diff --drift`.
+// It is the read path behind `relevo show --drift`.
 //
 // Errors: store.ErrNotFound for an unknown binding; a wrapped read error.
 func ReadDrift(rt Runtime, name string, round int) ([]byte, bool, error) {

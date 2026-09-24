@@ -154,31 +154,35 @@ func gateTimeoutFor(b store.Binding, pol policy.Policy) time.Duration {
 	return pol.GateTimeout()
 }
 
-// gateLine is the payload line describing a gate's result. pass:
+// gateLine is the payload line describing a gate's result. name and round are
+// the binding and the round the gate ran for, so the line points the planner
+// at `relevo show <name> --round <round> --gate` rather than the log's path
+// (P4a round 2 §4.2):
 //
-//	"Gate: make check -- PASS (exit 0, 1m40s). Output: <log>"
+//	"Gate: make check -- PASS (exit 0, 1m40s). Output: relevo show webshop --round 1 --gate"
 //
 // fail adds the tail:
 //
-//	"Gate: make check -- FAIL (exit 2, 1m40s). Output: <log>\n  <last 5 non-empty lines of the log, each indented two spaces>"
+//	"Gate: make check -- FAIL (exit 2, 1m40s). Output: relevo show …\n  <last 5 non-empty lines of the log, each indented two spaces>"
 //
-// timeout: "Gate: make check -- TIMEOUT after 10m0s. Output: <log>"
+// timeout: "Gate: make check -- TIMEOUT after 10m0s. Output: relevo show …"
 // error:   "Gate: make check -- ERROR: <note>."
-func gateLine(rec store.GateRecord, tail []string) string {
+func gateLine(name string, round int, rec store.GateRecord, tail []string) string {
 	dur := time.Duration(rec.DurationMS) * time.Millisecond
+	out := showCommand(name, round, "gate")
 	switch rec.Result {
 	case "pass":
-		return fmt.Sprintf("Gate: %s -- PASS (exit %d, %s). Output: %s", rec.Command, rec.ExitCode, dur, rec.LogPath)
+		return fmt.Sprintf("Gate: %s -- PASS (exit %d, %s). Output: %s", rec.Command, rec.ExitCode, dur, out)
 	case "fail":
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "Gate: %s -- FAIL (exit %d, %s). Output: %s", rec.Command, rec.ExitCode, dur, rec.LogPath)
+		fmt.Fprintf(&sb, "Gate: %s -- FAIL (exit %d, %s). Output: %s", rec.Command, rec.ExitCode, dur, out)
 		for _, l := range tail {
 			sb.WriteString("\n  ")
 			sb.WriteString(l)
 		}
 		return sb.String()
 	case "timeout":
-		return fmt.Sprintf("Gate: %s -- TIMEOUT after %s. Output: %s", rec.Command, dur, rec.LogPath)
+		return fmt.Sprintf("Gate: %s -- TIMEOUT after %s. Output: %s", rec.Command, dur, out)
 	default: // "error"
 		return fmt.Sprintf("Gate: %s -- ERROR: %s.", rec.Command, rec.Note)
 	}

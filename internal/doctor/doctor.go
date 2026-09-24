@@ -798,7 +798,7 @@ func usageChecks(env Env, cfg runConfig) []Check {
 		if _, err := env.LookPath("sqlite3"); err != nil {
 			out = append(out, Check{
 				Name: "sqlite3", Severity: SevWarn,
-				Detail: "not on PATH; relevo cannot confirm a push to an opencode planner, so its reports wait for relevo pull",
+				Detail: "not on PATH; relevo cannot confirm a push to an opencode planner, so its reports wait for the background wait",
 				Fix:    "install sqlite3 (the CLI), e.g. pacman -S sqlite / apt install sqlite3",
 			})
 		} else {

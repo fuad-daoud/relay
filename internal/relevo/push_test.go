@@ -29,7 +29,7 @@ func TestPushTextExpandsReportWithReadablePath(t *testing.T) {
 	}
 	read := mapReader(map[string][]byte{"/x/001-report.md": []byte("the report body")})
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if !ok {
 		t.Fatal("want ok=true for an expandable kind with a readable path")
 	}
@@ -43,7 +43,7 @@ func TestPushTextDoesNotExpandDiff(t *testing.T) {
 	e := store.LogEntry{Kind: store.KindDiff, Path: "/x/001.patch", Payload: "diff payload"}
 	read := mapReader(map[string][]byte{"/x/001.patch": []byte("patch body")})
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if ok || got != e.Payload {
 		t.Errorf("PushText(diff) = (%q, %v), want (%q, false)", got, ok, e.Payload)
 	}
@@ -53,7 +53,7 @@ func TestPushTextDoesNotExpandWithNoPath(t *testing.T) {
 	e := store.LogEntry{Kind: store.KindReport, Payload: "no path here"}
 	read := mapReader(nil)
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if ok || got != e.Payload {
 		t.Errorf("PushText(no path) = (%q, %v), want (%q, false)", got, ok, e.Payload)
 	}
@@ -63,7 +63,7 @@ func TestPushTextReadErrorReturnsPayload(t *testing.T) {
 	e := store.LogEntry{Kind: store.KindReport, Path: "/missing", Payload: "payload stands alone"}
 	read := mapReader(nil)
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if ok || got != e.Payload {
 		t.Errorf("PushText(read error) = (%q, %v), want (%q, false)", got, ok, e.Payload)
 	}
@@ -77,16 +77,17 @@ func TestPushTextTruncatesAtNewlineWithinBudget(t *testing.T) {
 	body := b.String()
 	e := store.LogEntry{
 		Kind:    store.KindFindings,
-		Path:    "/x/findings.md",
+		Round:   4,
+		Path:    "/x/004-7f2a3c1d-findings.md",
 		Payload: `relevo: consult · to planner · about builder "w" (not the human)`,
 	}
-	read := mapReader(map[string][]byte{"/x/findings.md": []byte(body)})
+	read := mapReader(map[string][]byte{"/x/004-7f2a3c1d-findings.md": []byte(body)})
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if !ok {
 		t.Fatal("want ok=true")
 	}
-	wantLine := "[truncated at 64 KiB -- full text at /x/findings.md]"
+	wantLine := "[truncated at 64 KiB -- full text: relevo show webshop --round 4 --findings 7f2a3c1d]"
 	if !strings.HasSuffix(got, wantLine) {
 		t.Fatalf("PushText does not end with the truncation line: %q", got[max(0, len(got)-len(wantLine)-5):])
 	}
@@ -103,14 +104,14 @@ func TestPushTextTruncatesAtNewlineWithinBudget(t *testing.T) {
 
 func TestPushTextTruncatesAtBudgetWhenNoNewline(t *testing.T) {
 	body := strings.Repeat("x", MaxPushBytes+1000) // no newline anywhere
-	e := store.LogEntry{Kind: store.KindReport, Path: "/x/huge.md", Payload: "relevo: round 1 · to planner · about builder \"w\" (not the human)"}
+	e := store.LogEntry{Kind: store.KindReport, Round: 1, Path: "/x/huge.md", Payload: "relevo: round 1 · to planner · about builder \"w\" (not the human)"}
 	read := mapReader(map[string][]byte{"/x/huge.md": []byte(body)})
 
-	got, ok := PushText(e, read)
+	got, ok := PushText(e, "webshop", read)
 	if !ok {
 		t.Fatal("want ok=true")
 	}
-	wantLine := "[truncated at 64 KiB -- full text at /x/huge.md]"
+	wantLine := "[truncated at 64 KiB -- full text: relevo show webshop --round 1 --report]"
 	if !strings.HasSuffix(got, wantLine) {
 		t.Fatalf("PushText does not end with the truncation line, got tail %q", got[max(0, len(got)-len(wantLine)-5):])
 	}
@@ -148,7 +149,7 @@ func TestPushTextOriginLineIsAlwaysFirst(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := PushText(tc.e, tc.read)
+			got, _ := PushText(tc.e, "webshop", tc.read)
 			firstLine, _, _ := strings.Cut(got, "\n")
 			if firstLine != origin {
 				t.Errorf("first line = %q, want origin %q", firstLine, origin)

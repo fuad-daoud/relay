@@ -13,10 +13,9 @@ type Delivery struct {
 	Delivered bool
 	Empty     bool // nothing was pending for this binding
 	// Route is how this attempt would deliver, or did: "channel",
-	// "deliverer:<kind>" or "pull" (#303 §4.6). "pull" is a route, not a
-	// fault: the entry stays pending for `relevo pull`, which is exactly how a
-	// Claude Code planner in tools mode gets its report through the
-	// background wait (D6).
+	// "deliverer:<kind>" or "wait" (#303 §4.6). "wait" is a route, not a
+	// fault: the entry stays pending for the background wait, which is exactly
+	// how a Claude Code planner in tools mode gets its report (D6).
 	Route  string
 	Reason string
 	// Round is the pending entry's round, set on Delivered and on a left-
@@ -60,10 +59,10 @@ func Queue(_ context.Context, rt Runtime, tx *store.Tx, name string, e store.Log
 //     longer falls through to a pane (there is none).
 //  3. otherwise the entry stays pending with Delivery.Route "pull". For a
 //     Claude Code planner in tools mode that is the normal path, not a fault:
-//     the background wait's `relevo pull` delivers it.
+//     the background wait prints it (its route is "wait").
 //
 // The caller holds the state lock across pending -> deliver -> confirm and
-// passes tx in: `relevo pull` runs the same sequence from another process, and
+// passes tx in: `relevo wait` runs the same sequence from another process, and
 // unserialised both could deliver the same payload, and Reconcile needs this
 // step inside the same lock as the rest of one binding's advance.
 func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
@@ -87,8 +86,8 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 	kind := b.Planner.Kind
 	if d, ok := rt.Deliverers[kind]; ok && kind != "" {
-		text, _ := PushText(pending, rt.Store.ReadFile)
-		out, reason, err := d.Deliver(ctx, b.Planner, text, pending.Path, pending.TS)
+		text, _ := PushText(pending, b.Name, rt.Store.ReadFile)
+		out, reason, err := d.Deliver(ctx, b.Planner, text, logRef(b.Name, pending), pending.TS)
 		if err != nil {
 			return b, Delivery{}, fmt.Errorf("deliver to planner: %w", err)
 		}
@@ -100,8 +99,8 @@ func DeliverPending(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			return b, Delivery{Delivered: true, Route: route, Reason: reason, Round: pending.Round}, nil
 		}
 		// OutcomeNotMine and OutcomeUnavailable both leave the entry
-		// pending: the deliverer's own reason is the answer, and `relevo pull`
-		// is the route that will finally take it.
+		// pending: the deliverer's own reason is the answer, and the
+		// background wait is the route that will finally take it.
 		return b, Delivery{Route: "pull", Reason: reason, Round: pending.Round}, nil
 	}
 
