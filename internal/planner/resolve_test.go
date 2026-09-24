@@ -2,12 +2,9 @@ package planner
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // agyConversation is a valid agy conversation id: the lower-case 8-4-4-4-12
@@ -220,14 +217,10 @@ func TestResolveOrder(t *testing.T) {
 }
 
 // TestResolveNeverCreates pins §4.3's "Resolve never registers": an empty
-// registry resolves nothing, says so with ErrNoPlanner, and leaves no file
+// registry resolves nothing, says so with ErrNoPlanner, and leaves no row
 // behind.
 func TestResolveNeverCreates(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "planners")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	reg := &FileRegistry{Root: dir, Now: func() time.Time { return testNow }}
+	reg := testRegistry(t)
 
 	in := ResolveInput{
 		Env:       envFunc(map[string]string{"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "sess-a"}),
@@ -244,16 +237,12 @@ func TestResolveNeverCreates(t *testing.T) {
 		t.Fatalf("Resolve with an unknown flag = %v, want ErrUnknownPlanner", err)
 	}
 
-	entries, err := os.ReadDir(dir)
+	keys, err := reg.KV.KVKeys(plannerKeyPrefix)
 	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
+		t.Fatalf("KVKeys: %v", err)
 	}
-	if len(entries) != 0 {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Fatalf("resolve left %v in the registry; it must create nothing", names)
+	if len(keys) != 0 {
+		t.Fatalf("resolve left %v in the registry; it must create nothing", keys)
 	}
 }
 

@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/mcp"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -115,8 +116,8 @@ func TestHeadlessE2E(t *testing.T) {
 
 	// -- 4. The channel -----------------------------------------------------
 	channel := startChannel(t, ctx, rt, first.ID, 50*time.Millisecond)
-	if _, err := os.Stat(claimPath(rt, first.ID)); err != nil {
-		t.Fatalf("relevo mcp wrote no channel claim for planner %s: %v", first.ID, err)
+	if !claimExists(t, rt, first.ID) {
+		t.Fatalf("relevo mcp wrote no live channel claim for planner %s", first.ID)
 	}
 
 	// The channel's poll loop and any builder a failing step left behind are
@@ -411,7 +412,7 @@ func writeCandidatesAndPolicy(t *testing.T, configDir string) {
 // the same store root, config resolution and claim store cmd/relevo's
 // newRuntime builds, with a real process Runner (the fake harness is a real
 // executable on PATH) and no remote client, database or release fetcher.
-func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *planner.FileRegistry) {
+func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *planner.DBRegistry) {
 	t.Helper()
 
 	candidates, err := candidate.Load(filepath.Join(configDir, "candidates.json"))
@@ -425,14 +426,15 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	reg := &planner.FileRegistry{Root: st.PlannersDir(), Now: time.Now}
 
 	// Gates live in the store root's database, as buildRuntime wires them
-	// (P3b plan §4.5).
+	// (P3b plan §4.5); the planner records and the channel claims live in the
+	// same database (P3b round 2 §4.1, §4.2).
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
 	}
+	reg := &planner.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.PlannersDir()}
 
 	rt := relevo.Runtime{
 		Git:        gitClient,
@@ -444,7 +446,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Latency:    mdb,
 		Policy:     pol,
 		Now:        time.Now,
-		Channels:   &relevo.FileClaims{Root: st.ChannelsDir()},
+		Channels:   &relevo.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
 		Planners:   reg,
 		ProcStart:  procStartUnix,
 	}
@@ -483,7 +485,7 @@ func hookPayload(t *testing.T, source, session, cwd string) string {
 // $CLAUDE_ENV_FILE exactly as cmd/relevo's plannerInitHook does. cmd/relevo's
 // command function itself is package main and cannot be called from here; this
 // is the same sequence through the same planner package.
-func runPlannerHook(t *testing.T, reg *planner.FileRegistry, now func() time.Time, raw string) planner.Record {
+func runPlannerHook(t *testing.T, reg *planner.DBRegistry, now func() time.Time, raw string) planner.Record {
 	t.Helper()
 
 	in, err := planner.ParseHookInput(strings.NewReader(raw))
@@ -949,7 +951,7 @@ func loadBinding(t *testing.T, rt relevo.Runtime, name string) store.Binding {
 }
 
 // recordByID loads one planner record, failing the test when it cannot.
-func recordByID(t *testing.T, reg *planner.FileRegistry, id string) planner.Record {
+func recordByID(t *testing.T, reg *planner.DBRegistry, id string) planner.Record {
 	t.Helper()
 	rec, err := reg.Get(id)
 	if err != nil {
@@ -968,9 +970,15 @@ func hasSession(rec planner.Record, session string) bool {
 	return false
 }
 
-// claimPath is where relevo mcp's claim for one planner lives.
-func claimPath(rt relevo.Runtime, plannerID string) string {
-	return filepath.Join(rt.Store.ChannelsDir(), relevo.ClaimFileName(plannerID))
+// claimExists reports whether relevo mcp's claim for one planner is live in
+// the runtime's claim store.
+func claimExists(t *testing.T, rt relevo.Runtime, plannerID string) bool {
+	t.Helper()
+	c, err := rt.Channels.Live(plannerID, rt.Now())
+	if err != nil {
+		t.Fatalf("Live(%s): %v", plannerID, err)
+	}
+	return c != nil
 }
 
 // writePlan writes a plan file into a temp dir and returns its path.

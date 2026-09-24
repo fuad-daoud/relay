@@ -6,13 +6,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/planner"
 )
 
 // ClaimTTL is how stale a claim's SeenAt may be before it is treated as dead.
 const ClaimTTL = 10 * time.Second
+
+// claimKeyPrefix is the kv prefix every claim's row shares: one claim is one
+// `claim/<planner-id>` row holding exactly the JSON the file held (P3b round 2
+// §3).
+const claimKeyPrefix = "claim/"
+
+// claimKey is the row a claim's JSON lives under.
+func claimKey(plannerID string) string { return claimKeyPrefix + plannerID }
 
 // Claim is one relevo mcp process's hold on a planner's mailbox (spec
 // docs/specs/2026-09-21-planner-channel-design.md §3.2, re-keyed by planner id
@@ -36,53 +46,92 @@ var ErrClaimHeld = errors.New("planner already has a live channel")
 // Runtime means "no claims exist"; DeliverPending's guard treats it that way.
 type ClaimStore interface {
 	// Live returns the claim for planner if it is live: parses, pid alive,
-	// now - SeenAt <= ClaimTTL. A file that exists but is not live is
-	// removed and (nil, nil) returned. Missing file -> (nil, nil). A name
+	// now - SeenAt <= ClaimTTL. A row that exists but is not live is
+	// removed and (nil, nil) returned. Missing row -> (nil, nil). A name
 	// that is not a planner id is not a claim this version made: it is
-	// ignored (nil, nil) and left on disk for SweepPaneKeyed.
+	// ignored (nil, nil) and left for SweepPaneKeyed.
 	Live(planner string, now time.Time) (*Claim, error)
-	// Write persists c (atomic: temp file + rename). Returns ErrClaimHeld
-	// when a different live claim (other PID) exists for c.Planner.
+	// Write persists c. Returns ErrClaimHeld when a different live claim
+	// (other PID) exists for c.Planner.
 	Write(c Claim, now time.Time) error
-	// Remove deletes the claim file for planner if its PID equals pid. No
-	// error when absent.
+	// Remove deletes the claim for planner if its PID equals pid. No error
+	// when absent.
 	Remove(planner string, pid int) error
-	// SweepPaneKeyed removes the pre-#303 pane-keyed claim files whose
-	// writer is dead, and returns how many it removed. A live pane-keyed
-	// claim -- another planner session still running an older relevo mcp --
-	// is left alone.
+	// SweepPaneKeyed removes the pre-#303 pane-keyed claims whose writer is
+	// dead, and returns how many it removed. A live pane-keyed claim --
+	// another planner session still running an older relevo mcp -- is left
+	// alone.
 	SweepPaneKeyed() int
 }
 
-// FileClaims is the on-disk ClaimStore: one JSON file per planner under Root.
-type FileClaims struct {
-	Root string
+// KVClaims is the ClaimStore over the store root database's kv rows: one
+// `claim/<planner-id>` row per planner (P3b round 2 §4.2).
+type KVClaims struct {
+	// KV is the kv handle the claims live in: the store root's database.
+	KV db.DBTxKV
+
 	// Alive reports whether pid names a live process. Nil uses the
 	// default: syscall.Kill(pid, 0) == nil || the error is EPERM (a
 	// process we cannot signal is still alive).
 	Alive func(pid int) bool
+
+	// Root is the pre-database channels directory (store.ChannelsDir) the
+	// import reads once per store. "" imports nothing.
+	Root string
+
+	importOnce sync.Once
+	importErr  error
 }
 
-// ClaimFileName turns a planner id into the claim file's base name: the id
-// plus the ".json" extension. A planner id is path-safe (planner.ValidID), so
-// an id can never become a path.
-func ClaimFileName(plannerID string) string {
-	return plannerID + ".json"
-}
+var _ ClaimStore = (*KVClaims)(nil)
 
-func (f *FileClaims) alive(pid int) bool {
-	if f.Alive != nil {
-		return f.Alive(pid)
+func (c *KVClaims) alive(pid int) bool {
+	if c.Alive != nil {
+		return c.Alive(pid)
 	}
 	return defaultClaimAlive(pid)
 }
 
-func (f *FileClaims) path(plannerID string) string {
-	return filepath.Join(f.Root, ClaimFileName(plannerID))
+// ensureImported adopts the pre-database claim files once per store: every
+// <Root>/*.json present is put to claim/<name> and removed, then the directory
+// itself goes when it is left empty (§4.2). It is a no-op with no Root.
+func (c *KVClaims) ensureImported() error {
+	if c.Root == "" {
+		return nil
+	}
+	c.importOnce.Do(func() { c.importErr = c.importFiles() })
+	return c.importErr
+}
+
+func (c *KVClaims) importFiles() error {
+	entries, err := os.ReadDir(c.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		// The sweep's own filter: only a *.json file was ever a claim. The
+		// base name is the key's tail, pane-keyed names included -- the
+		// sweep is what eventually reaps those.
+		if e.IsDir() || filepath.Ext(name) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".json")
+		if _, _, err := db.KVImportFile(c.KV, claimKey(id), filepath.Join(c.Root, name)); err != nil {
+			return err
+		}
+	}
+
+	_ = os.Remove(c.Root)
+	return nil
 }
 
 // Live implements ClaimStore.
-func (f *FileClaims) Live(plannerID string, now time.Time) (*Claim, error) {
+func (c *KVClaims) Live(plannerID string, now time.Time) (*Claim, error) {
 	if plannerID == "" {
 		return nil, errors.New("empty planner")
 	}
@@ -92,149 +141,141 @@ func (f *FileClaims) Live(plannerID string, now time.Time) (*Claim, error) {
 		// remove it, and only once its writer is dead.
 		return nil, nil
 	}
-
-	path := f.path(plannerID)
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+	if err := c.ensureImported(); err != nil {
+		return nil, err
 	}
+	return c.liveFrom(c.KV, plannerID, now)
+}
+
+// liveFrom is Live's body over one kv handle: the *DB for a read, or the
+// transaction Write's check-then-write runs in.
+func (c *KVClaims) liveFrom(kv db.KVTx, plannerID string, now time.Time) (*Claim, error) {
+	raw, ok, err := kv.KVGet(claimKey(plannerID))
 	if err != nil {
 		return nil, err
 	}
+	if !ok {
+		return nil, nil
+	}
 
-	var c Claim
+	var existing Claim
 	live := true
-	if err := json.Unmarshal(raw, &c); err != nil {
+	if err := json.Unmarshal(raw, &existing); err != nil {
 		live = false
-	} else if c.PID <= 0 || !f.alive(c.PID) || now.Sub(c.SeenAt) > ClaimTTL {
+	} else if existing.PID <= 0 || !c.alive(existing.PID) || now.Sub(existing.SeenAt) > ClaimTTL {
 		live = false
 	}
 	if live {
-		return &c, nil
+		return &existing, nil
 	}
 
 	// Stale: whoever reads it cleans it up. Removal failures are not worth
 	// failing the read over -- the caller already has its answer, "not live".
-	_ = os.Remove(path)
+	_ = kv.KVDelete(claimKey(plannerID))
 	return nil, nil
 }
 
 // Write implements ClaimStore.
-func (f *FileClaims) Write(c Claim, now time.Time) error {
-	if c.Planner == "" {
+//
+// Its check-then-write runs inside one DBTxKV.Tx, so the check and the write
+// are atomic: two relevo mcp processes starting together cannot both read "no
+// live claim" and both write, which a read followed by a separate write could
+// (P3b round 2 §4.2). The second writer sees the first's row and gets
+// ErrClaimHeld.
+func (c *KVClaims) Write(claim Claim, now time.Time) error {
+	if claim.Planner == "" {
 		return errors.New("empty planner")
 	}
-	if planner.ValidID(c.Planner) != nil {
+	if planner.ValidID(claim.Planner) != nil {
 		// A claim is keyed by a planner id; refusing anything else keeps a
-		// new pane-keyed file from ever being written again.
+		// new pane-keyed row from ever being written again.
 		return errors.New("claim planner must be a planner id")
 	}
-
-	existing, err := f.Live(c.Planner, now)
-	if err != nil {
-		return err
-	}
-	if existing != nil && existing.PID != c.PID {
-		return ErrClaimHeld
-	}
-
-	if err := os.MkdirAll(f.Root, 0o755); err != nil {
+	if err := c.ensureImported(); err != nil {
 		return err
 	}
 
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
+	return c.KV.Tx(func(tx db.KVTx) error {
+		existing, err := c.liveFrom(tx, claim.Planner, now)
+		if err != nil {
+			return err
+		}
+		if existing != nil && existing.PID != claim.PID {
+			return ErrClaimHeld
+		}
 
-	tmp, err := os.CreateTemp(f.Root, ".tmp-claim-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, f.path(c.Planner)); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-
-	return nil
+		raw, err := json.Marshal(claim)
+		if err != nil {
+			return err
+		}
+		return tx.KVPut(claimKey(claim.Planner), raw)
+	})
 }
 
 // Remove implements ClaimStore. A name that is not a planner id names no
 // claim this version wrote, so it is absent, not an error.
-func (f *FileClaims) Remove(plannerID string, pid int) error {
+func (c *KVClaims) Remove(plannerID string, pid int) error {
 	if plannerID == "" {
 		return errors.New("empty planner")
 	}
 	if planner.ValidID(plannerID) != nil {
 		return nil
 	}
-
-	path := f.path(plannerID)
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
+	if err := c.ensureImported(); err != nil {
 		return err
 	}
 
-	var c Claim
-	if err := json.Unmarshal(raw, &c); err != nil {
+	raw, ok, err := c.KV.KVGet(claimKey(plannerID))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	var existing Claim
+	if err := json.Unmarshal(raw, &existing); err != nil {
 		// Unparseable: not provably "present with pid == pid", so leave it
 		// for a reader's Live to clean up.
 		return nil
 	}
-	if c.PID != pid {
+	if existing.PID != pid {
 		return nil
 	}
 
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return c.KV.KVDelete(claimKey(plannerID))
 }
 
-// SweepPaneKeyed implements ClaimStore: it removes every file in Root whose
-// name is not a valid planner id -- a claim written by a pre-#303 relevo mcp,
-// keyed by pane -- but only once that file's pid is provably dead. Other
+// SweepPaneKeyed implements ClaimStore: it removes every claim/<name> row
+// whose name is not a valid planner id -- a claim written by a pre-#303 relevo
+// mcp, keyed by pane -- but only once that claim's pid is provably dead. Other
 // planner sessions may still be running an older relevo mcp during the
 // upgrade, and deleting a live claim would make them rewrite it every poll.
-// A file with no parseable pid has no dead writer to prove, so it is left.
-// It returns how many files it removed; a missing Root is nothing to sweep.
-func (f *FileClaims) SweepPaneKeyed() int {
-	entries, err := os.ReadDir(f.Root)
+// A row with no parseable pid has no dead writer to prove, so it is left.
+// It returns how many rows it removed.
+func (c *KVClaims) SweepPaneKeyed() int {
+	if err := c.ensureImported(); err != nil {
+		return 0
+	}
+	keys, err := c.KV.KVKeys(claimKeyPrefix)
 	if err != nil {
 		return 0
 	}
 
 	removed := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || filepath.Ext(name) != ".json" {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".json")
+	for _, key := range keys {
+		id := strings.TrimPrefix(key, claimKeyPrefix)
 		if planner.ValidID(id) == nil {
 			continue // a planner-keyed claim: Live's business, not this sweep's
 		}
-		raw, err := os.ReadFile(filepath.Join(f.Root, name))
-		if err != nil {
+		raw, ok, err := c.KV.KVGet(key)
+		if err != nil || !ok {
 			continue
 		}
-		if !paneKeyedClaimDead(raw, f.alive) {
+		if !paneKeyedClaimDead(raw, c.alive) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(f.Root, name)); err == nil {
+		if err := c.KV.KVDelete(key); err == nil {
 			removed++
 		}
 	}
@@ -242,7 +283,7 @@ func (f *FileClaims) SweepPaneKeyed() int {
 }
 
 // paneKeyedClaimDead is the sweep's rule, pure so it is tested directly: a
-// claim file is removed only when it parses and carries a pid that is not
+// claim document is removed only when it parses and carries a pid that is not
 // alive. Anything else -- unparseable bytes, no pid, a live pid -- is left.
 func paneKeyedClaimDead(raw []byte, alive func(pid int) bool) bool {
 	var c struct {

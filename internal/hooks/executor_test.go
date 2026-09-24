@@ -5,25 +5,57 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
+// runLogFake is a RunLog that keeps every run it is given, safe to read after
+// the executor returned.
+type runLogFake struct {
+	mu   sync.Mutex
+	runs []HookRun
+}
+
+func (f *runLogFake) Append(run HookRun) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runs = append(f.runs, run)
+	return nil
+}
+
+// all is every recorded run, oldest first.
+func (f *runLogFake) all() []HookRun {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]HookRun(nil), f.runs...)
+}
+
+// only is the single recorded run, failing the test when there is not exactly
+// one.
+func (f *runLogFake) only(t *testing.T) HookRun {
+	t.Helper()
+	runs := f.all()
+	if len(runs) != 1 {
+		t.Fatalf("run log holds %d runs, want exactly 1", len(runs))
+	}
+	return runs[0]
+}
+
 func TestOSExecutorExecute_EmptyArgvSkipped(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "empty.log")
-	executor := NewOSExecutor(logPath)
+	log := &runLogFake{}
+	executor := NewOSExecutor(log)
 
 	if err := executor.Execute(context.Background(), nil, Event{Type: EventStateChanged}); err != nil {
 		t.Fatalf("Execute with an empty argv returned %v, want nil", err)
 	}
 
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
+	run := log.only(t)
+	if !strings.Contains(run.Output, "empty argv") {
+		t.Errorf("run output missing the empty-argv note, got:\n%s", run.Output)
 	}
-	if !strings.Contains(string(logData), "empty argv") {
-		t.Errorf("log output missing the empty-argv note, got:\n%s", logData)
+	if run.Event != string(EventStateChanged) {
+		t.Errorf("event = %q, want %q", run.Event, EventStateChanged)
 	}
 }
 
@@ -44,8 +76,8 @@ echo "ROUND=$RELEVO_ROUND"
 		t.Fatalf("Chmod failed: %v", err)
 	}
 
-	logPath := filepath.Join(tmpDir, "test.log")
-	executor := NewOSExecutor(logPath)
+	log := &runLogFake{}
+	executor := NewOSExecutor(log)
 
 	event := Event{
 		Type:      EventStateChanged,
@@ -61,11 +93,8 @@ echo "ROUND=$RELEVO_ROUND"
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	content := string(logData)
+	run := log.only(t)
+	content := run.Output
 
 	expectedStrings := []string{
 		"EVENT=state_changed",
@@ -78,6 +107,12 @@ echo "ROUND=$RELEVO_ROUND"
 		if !strings.Contains(content, expected) {
 			t.Errorf("log output missing %q, got:\n%s", expected, content)
 		}
+	}
+	if run.Error != "" || run.ExitCode != 0 {
+		t.Errorf("a successful run = error %q exit %d, want neither", run.Error, run.ExitCode)
+	}
+	if len(run.Argv) != 1 || run.Argv[0] != scriptPath {
+		t.Errorf("argv = %q, want [%s]", run.Argv, scriptPath)
 	}
 }
 
@@ -94,8 +129,8 @@ exit 2
 		t.Fatalf("Chmod failed: %v", err)
 	}
 
-	logPath := filepath.Join(tmpDir, "fail.log")
-	executor := NewOSExecutor(logPath)
+	log := &runLogFake{}
+	executor := NewOSExecutor(log)
 
 	event := Event{
 		Type:      EventStateChanged,
@@ -111,17 +146,12 @@ exit 2
 		t.Fatal("Execute expected error, got nil")
 	}
 
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
+	run := log.only(t)
+	if !strings.Contains(run.Error, "exit status 2") {
+		t.Errorf("recorded error = %q, want it to carry exit status 2", run.Error)
 	}
-	content := string(logData)
-
-	if !strings.Contains(content, "hook execution failed for") {
-		t.Errorf("log output missing failure message prefix, got:\n%s", content)
-	}
-	if !strings.Contains(content, "exit status 2") {
-		t.Errorf("log output missing exit status 2, got:\n%s", content)
+	if run.ExitCode != 2 {
+		t.Errorf("exit code = %d, want 2", run.ExitCode)
 	}
 }
 
@@ -138,8 +168,8 @@ sleep 10
 		t.Fatalf("Chmod failed: %v", err)
 	}
 
-	logPath := filepath.Join(tmpDir, "timeout.log")
-	executor := NewOSExecutor(logPath)
+	log := &runLogFake{}
+	executor := NewOSExecutor(log)
 
 	event := Event{
 		Type:      EventRoundStarted,
@@ -156,12 +186,7 @@ sleep 10
 		t.Fatal("Execute expected timeout error, got nil")
 	}
 
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	content := string(logData)
-	if !strings.Contains(content, "hook execution failed for") {
-		t.Errorf("log output missing failure message prefix, got:\n%s", content)
+	if run := log.only(t); run.Error == "" {
+		t.Error("a timed-out run must record its error")
 	}
 }

@@ -1,28 +1,55 @@
 package relevo
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // testClaimPlanner is a valid planner id (pl_ plus 12 characters of [a-z2-7]),
-// the shape ClaimFileName, Live, Write and Remove all key on.
+// the shape Live, Write and Remove all key on.
 const testClaimPlanner = "pl_aaaaaaaabbbb"
 
 // otherClaimPlanner is a second valid id, for the "a different planner's
 // claim is not this one's" cases.
 const otherClaimPlanner = "pl_ccccccccdddd"
 
-// paneClaimFileName is a pre-#303 claim file's name: the pane id with ":" as
-// "_", which is what the old ClaimFileName produced.
-const paneClaimFileName = "wG_pQ.json"
+// paneClaimID is a pre-#303 claim's key: the pane id with ":" as "_", which is
+// what the old pane-keyed claim file name held.
+const paneClaimID = "wG_pQ"
 
-func TestClaimFileName(t *testing.T) {
-	if got, want := ClaimFileName(testClaimPlanner), testClaimPlanner+".json"; got != want {
-		t.Errorf("ClaimFileName(%q) = %q, want %q", testClaimPlanner, got, want)
+// claimRow reads one claim row back, reporting whether it is there.
+func claimRow(t *testing.T, d *db.DB, plannerID string) (Claim, bool) {
+	t.Helper()
+	raw, ok, err := d.KVGet(claimKey(plannerID))
+	if err != nil {
+		t.Fatalf("KVGet(%s): %v", claimKey(plannerID), err)
+	}
+	if !ok {
+		return Claim{}, false
+	}
+	var c Claim
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("decode %s: %v", claimKey(plannerID), err)
+	}
+	return c, true
+}
+
+// seedClaim writes one claim row the way an older relevo would have, so a test
+// can pin what Live, Remove and the sweep do with it.
+func seedClaim(t *testing.T, d *db.DB, plannerID string, c Claim) {
+	t.Helper()
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal claim: %v", err)
+	}
+	if err := d.KVPut(claimKey(plannerID), raw); err != nil {
+		t.Fatalf("KVPut(%s): %v", claimKey(plannerID), err)
 	}
 }
 
@@ -30,7 +57,7 @@ func alwaysAlive(int) bool { return true }
 func neverAlive(int) bool  { return false }
 
 func TestClaimLiveAbsent(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	c, err := f.Live(testClaimPlanner, time.Now())
 	if err != nil {
 		t.Fatalf("Live: %v", err)
@@ -41,11 +68,10 @@ func TestClaimLiveAbsent(t *testing.T) {
 }
 
 // TestClaimKeyedByPlannerID is the plan's required case (§3.3): a claim is
-// written to channels/<planner-id>.json, is found by that id, and is not
+// written to the claim/<planner-id> row, is found by that id, and is not
 // found by another planner's id.
 func TestClaimKeyedByPlannerID(t *testing.T) {
-	root := t.TempDir()
-	f := &FileClaims{Root: root, Alive: alwaysAlive}
+	f, d, _ := testClaims(t)
 	now := time.Now()
 
 	claim := Claim{Planner: testClaimPlanner, PID: 123, HostPID: 99, HostStartedAt: 42, StartedAt: now, SeenAt: now}
@@ -53,8 +79,12 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, testClaimPlanner+".json")); err != nil {
-		t.Fatalf("the claim must live at channels/<planner-id>.json: %v", err)
+	stored, ok := claimRow(t, d, testClaimPlanner)
+	if !ok {
+		t.Fatalf("the claim must live in the %s row", claimKey(testClaimPlanner))
+	}
+	if stored.PID != 123 || stored.HostPID != 99 || stored.HostStartedAt != 42 {
+		t.Errorf("stored claim = %+v", stored)
 	}
 
 	got, err := f.Live(testClaimPlanner, now)
@@ -63,9 +93,6 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 	}
 	if got == nil || got.PID != 123 {
 		t.Fatalf("Live = %+v, want the written claim", got)
-	}
-	if got.HostPID != 99 || got.HostStartedAt != 42 {
-		t.Errorf("host fields = %d@%d, want 99@42", got.HostPID, got.HostStartedAt)
 	}
 
 	other, err := f.Live(otherClaimPlanner, now)
@@ -77,24 +104,20 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 	}
 }
 
-// TestClaimLiveIgnoresPaneKeyedFile: a pre-#303 pane-keyed file is not a
-// claim this version wrote. Live must ignore it (it would otherwise have to
-// answer a question about a pane it no longer has) and leave it on disk for
-// the sweep, which is the only thing allowed to remove it.
-func TestClaimLiveIgnoresPaneKeyedFile(t *testing.T) {
-	root := t.TempDir()
-	f := &FileClaims{Root: root, Alive: alwaysAlive}
+// TestClaimLiveIgnoresPaneKeyedRow: a pre-#303 pane-keyed claim is not a claim
+// this version wrote. Live must ignore it (it would otherwise have to answer a
+// question about a pane it no longer has) and leave the row for the sweep,
+// which is the only thing allowed to remove it.
+func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
+	f, d, _ := testClaims(t)
 	now := time.Now()
 
 	// A live, current pane-keyed claim: exactly what an older relevo mcp
-	// still running during the upgrade has on disk.
-	raw := []byte(`{"pane":"wG:pQ","pid":4242,"seen_at":"` + now.Format(time.RFC3339Nano) + `"}`)
-	if err := os.WriteFile(filepath.Join(root, paneClaimFileName), raw, 0o644); err != nil {
-		t.Fatalf("seed pane-keyed claim: %v", err)
-	}
+	// still running during the upgrade has on record.
+	seedClaim(t, d, paneClaimID, Claim{PID: 4242, StartedAt: now, SeenAt: now})
 
 	// Live never asks about a pane name, and asking about the pane name must
-	// not remove the file either.
+	// not remove the row either.
 	got, err := f.Live("wG:pQ", now)
 	if err != nil {
 		t.Fatalf("Live(pane): %v", err)
@@ -102,45 +125,41 @@ func TestClaimLiveIgnoresPaneKeyedFile(t *testing.T) {
 	if got != nil {
 		t.Fatalf("Live(pane name) = %+v, want nil", got)
 	}
-	if _, err := os.Stat(filepath.Join(root, paneClaimFileName)); err != nil {
-		t.Fatalf("Live must leave a pane-keyed file alone: %v", err)
+	if _, ok := claimRow(t, d, paneClaimID); !ok {
+		t.Fatal("Live must leave a pane-keyed claim alone")
 	}
 }
 
 // TestMCPStartRemovesOnlyDeadPaneKeyedClaims is the plan's required case for
-// the sweep rule: a pane-keyed file whose pid is dead goes, a live one stays,
-// a planner-keyed file is never swept, and bytes with no pid are left alone.
+// the sweep rule: a pane-keyed claim whose pid is dead goes, a live one stays,
+// a planner-keyed claim is never swept, and a row with no pid is left alone.
 func TestMCPStartRemovesOnlyDeadPaneKeyedClaims(t *testing.T) {
-	root := t.TempDir()
-	f := &FileClaims{Root: root, Alive: func(pid int) bool { return pid == 4242 }}
+	f, d, _ := testClaims(t)
+	f.Alive = func(pid int) bool { return pid == 4242 }
 
-	write := func(name, body string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+	now := time.Now()
+	seedClaim(t, d, "wG_pQ", Claim{PID: 111, StartedAt: now, SeenAt: now})  // dead
+	seedClaim(t, d, "w9_p1", Claim{PID: 4242, StartedAt: now, SeenAt: now}) // live
+	seedClaim(t, d, testClaimPlanner, Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now})
+	if err := d.KVPut(claimKey("junk"), []byte(`{"pane":"wG:pQ"}`)); err != nil {
+		t.Fatalf("seed junk row: %v", err)
 	}
-
-	write("wG_pQ.json", `{"pane":"wG:pQ","pid":111,"seen_at":"2026-01-01T00:00:00Z"}`)  // dead
-	write("w9_p1.json", `{"pane":"w9:p1","pid":4242,"seen_at":"2026-01-01T00:00:00Z"}`) // live
-	write(ClaimFileName(testClaimPlanner), `{"planner":"`+testClaimPlanner+`","pid":111,"seen_at":"2026-01-01T00:00:00Z"}`)
-	write("junk.json", "not json")
 
 	if removed := f.SweepPaneKeyed(); removed != 1 {
-		t.Fatalf("SweepPaneKeyed removed %d files, want 1", removed)
+		t.Fatalf("SweepPaneKeyed removed %d claims, want 1", removed)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "wG_pQ.json")); !os.IsNotExist(err) {
-		t.Errorf("a dead pane-keyed claim must be removed, stat err = %v", err)
+	if _, ok := claimRow(t, d, "wG_pQ"); ok {
+		t.Error("a dead pane-keyed claim must be removed")
 	}
-	if _, err := os.Stat(filepath.Join(root, "w9_p1.json")); err != nil {
-		t.Errorf("a live pane-keyed claim must survive the sweep: %v", err)
+	if _, ok := claimRow(t, d, "w9_p1"); !ok {
+		t.Error("a live pane-keyed claim must survive the sweep")
 	}
-	if _, err := os.Stat(filepath.Join(root, ClaimFileName(testClaimPlanner))); err != nil {
-		t.Errorf("a planner-keyed claim must survive the sweep: %v", err)
+	if _, ok := claimRow(t, d, testClaimPlanner); !ok {
+		t.Error("a planner-keyed claim must survive the sweep")
 	}
-	if _, err := os.Stat(filepath.Join(root, "junk.json")); err != nil {
-		t.Errorf("an unparseable pane-keyed file has no dead pid to prove, so it stays: %v", err)
+	if _, ok := claimRow(t, d, "junk"); !ok {
+		t.Error("a pane-keyed claim with no pid has no dead writer to prove, so it stays")
 	}
 }
 
@@ -164,13 +183,9 @@ func TestPaneKeyedClaimDead(t *testing.T) {
 }
 
 func TestClaimLiveRemovesStaleTTL(t *testing.T) {
-	root := t.TempDir()
-	f := &FileClaims{Root: root, Alive: alwaysAlive}
+	f, d, _ := testClaims(t)
 	start := time.Now()
-	claim := Claim{Planner: testClaimPlanner, PID: 123, StartedAt: start, SeenAt: start}
-	if err := f.Write(claim, start); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	seedClaim(t, d, testClaimPlanner, Claim{Planner: testClaimPlanner, PID: 123, StartedAt: start, SeenAt: start})
 
 	later := start.Add(ClaimTTL + time.Second)
 	got, err := f.Live(testClaimPlanner, later)
@@ -180,21 +195,18 @@ func TestClaimLiveRemovesStaleTTL(t *testing.T) {
 	if got != nil {
 		t.Fatalf("Live past TTL = %+v, want nil", got)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ClaimFileName(testClaimPlanner))); !os.IsNotExist(statErr) {
-		t.Errorf("stale claim file must be removed, stat err = %v", statErr)
+	if _, ok := claimRow(t, d, testClaimPlanner); ok {
+		t.Error("a stale claim row must be removed")
 	}
 }
 
 // TestClaimLiveRemovesDeadPID is the plan's required case: a claim with a
-// dead pid must read as not-live and the file must be gone afterward.
+// dead pid must read as not-live and the row must be gone afterward.
 func TestClaimLiveRemovesDeadPID(t *testing.T) {
-	root := t.TempDir()
-	f := &FileClaims{Root: root, Alive: neverAlive}
+	f, d, _ := testClaims(t)
+	f.Alive = neverAlive
 	now := time.Now()
-	claim := Claim{Planner: testClaimPlanner, PID: 999, StartedAt: now, SeenAt: now}
-	if err := f.Write(claim, now); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	seedClaim(t, d, testClaimPlanner, Claim{Planner: testClaimPlanner, PID: 999, StartedAt: now, SeenAt: now})
 
 	got, err := f.Live(testClaimPlanner, now)
 	if err != nil {
@@ -203,17 +215,37 @@ func TestClaimLiveRemovesDeadPID(t *testing.T) {
 	if got != nil {
 		t.Fatalf("Live on a dead pid = %+v, want nil", got)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ClaimFileName(testClaimPlanner))); !os.IsNotExist(statErr) {
-		t.Errorf("a dead-pid claim file must be removed, stat err = %v", statErr)
+	if _, ok := claimRow(t, d, testClaimPlanner); ok {
+		t.Error("a dead-pid claim row must be removed")
 	}
 }
 
-func TestClaimLiveRemovesUnparseable(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, ClaimFileName(testClaimPlanner)), []byte("not json"), 0o644); err != nil {
-		t.Fatalf("seed corrupt claim: %v", err)
+// invalidJSONKV hands out unparseable bytes for one key -- a row no writer of
+// this version could have written -- and counts its removal.
+type invalidJSONKV struct {
+	db.DBTxKV
+	key     string
+	deleted int
+}
+
+func (k *invalidJSONKV) KVGet(key string) ([]byte, bool, error) {
+	if key == k.key {
+		return []byte("not json"), true, nil
 	}
-	f := &FileClaims{Root: root, Alive: alwaysAlive}
+	return k.DBTxKV.KVGet(key)
+}
+
+func (k *invalidJSONKV) KVDelete(key string) error {
+	if key == k.key {
+		k.deleted++
+	}
+	return k.DBTxKV.KVDelete(key)
+}
+
+func TestClaimLiveRemovesUnparseable(t *testing.T) {
+	d := testSecretDB(t)
+	kv := &invalidJSONKV{DBTxKV: db.TxKV{DB: d}, key: claimKey(testClaimPlanner)}
+	f := &KVClaims{KV: kv, Alive: alwaysAlive}
 
 	got, err := f.Live(testClaimPlanner, time.Now())
 	if err != nil {
@@ -222,20 +254,20 @@ func TestClaimLiveRemovesUnparseable(t *testing.T) {
 	if got != nil {
 		t.Fatalf("Live on unparseable json = %+v, want nil", got)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, ClaimFileName(testClaimPlanner))); !os.IsNotExist(statErr) {
-		t.Errorf("an unparseable claim file must be removed, stat err = %v", statErr)
+	if kv.deleted == 0 {
+		t.Error("an unparseable claim row must be removed")
 	}
 }
 
 func TestClaimLiveEmptyPlanner(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	if _, err := f.Live("", time.Now()); err == nil {
 		t.Fatal("Live with an empty planner must error")
 	}
 }
 
 func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	now := time.Now()
 	first := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(first, now); err != nil {
@@ -252,21 +284,21 @@ func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
 
 // TestClaimWriteRefusesANonPlannerID: the old pane-keyed shape must never be
 // written again, so a claim whose key is not a planner id is refused rather
-// than silently creating a file the sweep would later reap.
+// than silently creating a row the sweep would later reap.
 func TestClaimWriteRefusesANonPlannerID(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, d, _ := testClaims(t)
 	now := time.Now()
 	err := f.Write(Claim{Planner: "wG:pQ", PID: 111, StartedAt: now, SeenAt: now}, now)
 	if err == nil {
 		t.Fatal("Write with a non-planner key must be refused")
 	}
-	if _, statErr := os.Stat(filepath.Join(f.Root, "wG:pQ.json")); !os.IsNotExist(statErr) {
-		t.Errorf("a refused Write must leave no file behind, stat err = %v", statErr)
+	if _, ok := claimRow(t, d, "wG:pQ"); ok {
+		t.Error("a refused Write must leave no row behind")
 	}
 }
 
 func TestClaimWriteSameWriterRefreshes(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(claim, now); err != nil {
@@ -289,7 +321,7 @@ func TestClaimWriteSameWriterRefreshes(t *testing.T) {
 }
 
 func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	start := time.Now()
 	first := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: start, SeenAt: start}
 	if err := f.Write(first, start); err != nil {
@@ -312,7 +344,7 @@ func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
 }
 
 func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
 	if err := f.Write(claim, now); err != nil {
@@ -335,8 +367,47 @@ func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
 }
 
 func TestClaimRemoveAbsentIsNotAnError(t *testing.T) {
-	f := &FileClaims{Root: t.TempDir(), Alive: alwaysAlive}
+	f, _, _ := testClaims(t)
 	if err := f.Remove(testClaimPlanner, 111); err != nil {
 		t.Fatalf("Remove on an absent claim must not error: %v", err)
+	}
+}
+
+// TestClaimsImportAdoptsChannelFiles is §4.2's import: a present
+// channels/<name>.json is put to claim/<name> and removed, and the emptied
+// directory goes with it.
+func TestClaimsImportAdoptsChannelFiles(t *testing.T) {
+	d := testSecretDB(t)
+	dir := filepath.Join(t.TempDir(), "channels")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	now := time.Now()
+	for name, c := range map[string]Claim{
+		testClaimPlanner + ".json": {Planner: testClaimPlanner, PID: 123, StartedAt: now, SeenAt: now},
+		paneClaimID + ".json":      {PID: 4242, StartedAt: now, SeenAt: now},
+	} {
+		raw, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	f := &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}
+	if _, err := f.Live(testClaimPlanner, now); err != nil {
+		t.Fatalf("Live: %v", err)
+	}
+
+	if _, ok := claimRow(t, d, testClaimPlanner); !ok {
+		t.Error("the planner-keyed claim file was not imported")
+	}
+	if _, ok := claimRow(t, d, paneClaimID); !ok {
+		t.Error("the pane-keyed claim file was not imported")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the emptied channels directory is still there: %v", err)
 	}
 }

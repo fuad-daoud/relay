@@ -4,8 +4,10 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/planner"
 )
 
 // testGateKV returns a real t.TempDir() database for a Runtime's Gates or
@@ -32,6 +34,43 @@ func testGates(t *testing.T) (db.KV, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d, dir
+}
+
+// testSecretDB returns a real t.TempDir() database, the machine database the
+// secret store and the run log live in (P3b round 2 §7: new tests use
+// t.TempDir() DBs only).
+func testSecretDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// testSecrets returns the machine database's secret store.
+func testSecrets(t *testing.T) SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
+
+// testClaims returns a KVClaims over a fresh temp database, the database it
+// writes to, and the directory a legacy channels/ tree would live in.
+func testClaims(t *testing.T) (*KVClaims, *db.DB, string) {
+	t.Helper()
+	d := testSecretDB(t)
+	dir := filepath.Join(t.TempDir(), "channels")
+	// alwaysAlive, as the FileClaims fixtures had: a claim's fake pid must not
+	// depend on which pids happen to exist on the machine running the test.
+	return &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
+}
+
+// testPlanners returns a planner registry over a fresh temp database.
+func testPlanners(t *testing.T) *planner.DBRegistry {
+	t.Helper()
+	return &planner.DBRegistry{
+		KV:   db.TxKV{DB: testSecretDB(t)},
+		Now:  time.Now,
+		Root: filepath.Join(t.TempDir(), "planners"),
+	}
 }
 
 // badJSONKV returns invalid bytes for every key, so a reader hits the decode

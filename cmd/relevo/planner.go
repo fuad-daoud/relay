@@ -62,10 +62,16 @@ func cmdPlanner(args []string) error {
 	}
 }
 
-// plannerRegistry is the CLI's registry: the state root's planners directory
-// (store.PlannersDir) on the runtime's clock.
-func plannerRegistry(rt relevo.Runtime) *planner.FileRegistry {
-	return &planner.FileRegistry{Root: rt.Store.PlannersDir(), Now: rt.Now}
+// plannerRegistry is the CLI's registry: the state root's database kv rows
+// `<root>/relevo.db` (P3b round 2 §4.1) on the runtime's clock, importing the
+// pre-database planners directory the first time a record is touched. A store
+// whose database cannot be opened is fatal for the verb.
+func plannerRegistry(rt relevo.Runtime) (*planner.DBRegistry, error) {
+	d, err := rt.Store.DB()
+	if err != nil {
+		return nil, err
+	}
+	return &planner.DBRegistry{KV: db.TxKV{DB: d}, Root: rt.Store.PlannersDir(), Now: rt.Now}, nil
 }
 
 func cmdPlannerInit(args []string) error {
@@ -124,7 +130,11 @@ func cmdPlannerInit(args []string) error {
 	defer closePrior()
 	in.PriorID = prior
 
-	rec, res, err := planner.Init(plannerRegistry(rt), in)
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return err
+	}
+	rec, res, err := planner.Init(reg, in)
 	if err != nil {
 		return err
 	}
@@ -159,7 +169,11 @@ func plannerInitHook(nameFlag string) error {
 	prior, closePrior := plannerPriorID(rt.Store.DBPath())
 	defer closePrior()
 
-	rec, _, err := planner.Init(plannerRegistry(rt), planner.InitInput{
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return plannerInitHookFailure(err)
+	}
+	rec, _, err := planner.Init(reg, planner.InitInput{
 		Kind:           "claude",
 		SessionID:      in.SessionID,
 		TranscriptPath: in.TranscriptPath,
@@ -286,9 +300,13 @@ func cmdPlannerList(args []string) error {
 		return err
 	}
 
-	// FileRegistry.List sorts by name, which is the order `relevo planner list`
+	// DBRegistry.List sorts by name, which is the order `relevo planner list`
 	// documents (§4.7).
-	records, err := plannerRegistry(rt).List()
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return err
+	}
+	records, err := reg.List()
 	if err != nil {
 		return err
 	}
@@ -413,7 +431,10 @@ func cmdPlannerRename(args []string) error {
 		return err
 	}
 
-	reg := plannerRegistry(rt)
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return err
+	}
 	rec, err := plannerLookup(reg, positional[0])
 	if err != nil {
 		return err
@@ -444,7 +465,10 @@ func cmdPlannerForget(args []string) error {
 		return err
 	}
 
-	reg := plannerRegistry(rt)
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return err
+	}
 	rec, err := plannerLookup(reg, positional[0])
 	if err != nil {
 		return err
@@ -478,7 +502,11 @@ func cmdPlannerPrune(args []string) error {
 		return err
 	}
 
-	forgotten, err := planner.Prune(plannerRegistry(rt), rt.ProcStart,
+	reg, err := plannerRegistry(rt)
+	if err != nil {
+		return err
+	}
+	forgotten, err := planner.Prune(reg, rt.ProcStart,
 		func(id string) int { return counts[id] }, *dryRun)
 	if err != nil {
 		return err

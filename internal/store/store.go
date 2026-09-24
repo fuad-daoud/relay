@@ -702,19 +702,25 @@ func (s *Store) ReadArchivedLog(path string) ([]LogEntry, error) {
 // a kv row now).
 func (s *Store) DBPath() string { return filepath.Join(s.root, "relevo.db") }
 
-// ChannelsDir is where relevo mcp's claim files live, one per planner
-// (docs/specs/2026-09-21-planner-channel-design.md §3.2).
+// ChannelsDir is where relevo mcp's claim files used to live, one per planner
+// (docs/specs/2026-09-21-planner-channel-design.md §3.2). The claims are
+// `claim/<planner-id>` kv rows now (P3b round 2 §4.2), and this is the
+// directory the claim import reads them from and then removes.
 func (s *Store) ChannelsDir() string { return filepath.Join(s.root, "channels") }
 
-// PlannersDir is where relevo's planner records live: one JSON file per record,
-// named <id>.json (#303 §3.1). Created mode 0700 by the first write.
+// PlannersDir is where relevo's planner records used to live: one JSON file
+// per record, named <id>.json (#303 §3.1), beside the registry's .lock. The
+// records are `planner/<id>` kv rows now (P3b round 2 §4.1), and this is the
+// directory the registry's import reads them from and then removes.
 func (s *Store) PlannersDir() string { return filepath.Join(s.root, "planners") }
 
-// AgyCredsDir is where the captured agy agentapi credentials live, one 0600
-// JSON file per conversation id (#349): <root>/planners/.agy. It sits inside
-// planners/ rather than beside it because the credentials belong to a planner
-// session, and it is dot-prefixed so the planner registry's list -- which skips
-// directories and dot-prefixed names -- never reads it as a record.
+// AgyCredsDir is where the captured agy agentapi credentials used to live: one
+// 0600 JSON file per conversation id (#349), under planners/.agy. The
+// credentials are `agy/<conversation>` secrets now (P3b round 2 §4.3), and
+// this is the directory the credential import reads them from and then
+// removes. It still sits inside planners/ because the credentials belong to a
+// planner session, and it is dot-prefixed so a directory scan never reads it
+// as a record.
 func (s *Store) AgyCredsDir() string { return filepath.Join(s.PlannersDir(), ".agy") }
 
 // WorktreeDir is where relevo keeps the worktrees it creates. Like ArchiveDir it

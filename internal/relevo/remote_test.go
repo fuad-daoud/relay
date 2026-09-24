@@ -32,7 +32,7 @@ import (
 // the same record newRuntime seeds, on its own temp dir, and exports it as
 // $RELEVO_PLANNER the way a real planner session does, so the Runtime below
 // resolves it without a --planner flag.
-func addRemotePlanner(t *testing.T) *planner.FileRegistry {
+func addRemotePlanner(t *testing.T) *planner.DBRegistry {
 	t.Helper()
 	t.Setenv("RELEVO_PLANNER", testPlannerName)
 	reg, _ := testPlannerRegistry(t, planner.Record{
@@ -584,7 +584,7 @@ func TestAddRemoteNoPlannerIsHardError(t *testing.T) {
 
 	ctx := context.Background()
 	rt := newRuntime(t)
-	rt.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	rt.Planners = testPlanners(t)
 	rt.Git = &fakeGit{
 		headCommitID:  "1111111111111111111111111111111111111111",
 		rootCommitSHA: "2222222222222222222222222222222222222222",

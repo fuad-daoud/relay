@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // HookInput is the Claude Code SessionStart payload relevo reads from stdin
@@ -170,21 +172,24 @@ type InitInput struct {
 // Init implements §5.1: register, re-attach or move, and hand back the record
 // the caller should export.
 //
-// Every lookup and write happens under one registry lock, so `relevo planner
-// init --hook` and a concurrently starting `relevo mcp`, or two hook firings,
-// serialise: whichever runs second finds the first's record instead of
+// Every lookup and write happens inside one registry transaction, so `relevo
+// planner init --hook` and a concurrently starting `relevo mcp`, or two hook
+// firings, serialise: whichever runs second finds the first's record instead of
 // creating a second one for the same host or session.
 func Init(reg Registry, in InitInput) (Record, InitResult, error) {
-	// A *FileRegistry can hold its lock across the whole sequence; that is
+	// A *DBRegistry holds one transaction across the whole sequence; that is
 	// the only implementation, and the one the concurrency rule is about.
-	if fr, ok := reg.(*FileRegistry); ok {
+	if dr, ok := reg.(*DBRegistry); ok {
+		if err := dr.ensureImported(); err != nil {
+			return Record{}, "", err
+		}
 		var (
 			rec Record
 			res InitResult
 		)
-		err := fr.withLock(func() error {
+		err := dr.KV.Tx(func(tx db.KVTx) error {
 			var e error
-			rec, res, e = initLocked(fr, in)
+			rec, res, e = initLocked(dr.ops(tx), in)
 			return e
 		})
 		return rec, res, err
@@ -192,9 +197,8 @@ func Init(reg Registry, in InitInput) (Record, InitResult, error) {
 	return initLocked(regAdapter{reg}, in)
 }
 
-// regOps is the lock-free surface initLocked drives. *FileRegistry implements
-// it with its unexported, lock-assuming methods; regAdapter adapts any other
-// Registry.
+// regOps is the transaction-free surface initLocked drives. kvOps implements
+// it over one KVTx; regAdapter adapts any other Registry, one call per step.
 type regOps interface {
 	get(id string) (Record, error)
 	byName(name string) (Record, error)

@@ -123,6 +123,50 @@ func kvKeys(ctx context.Context, q queryer, prefix string) ([]string, error) {
 	return out, nil
 }
 
+// KVTx is the kv surface inside one BEGIN IMMEDIATE transaction (P3b round 2
+// §4.1): the four calls a package needs to read, write and scan its rows
+// atomically. *Tx implements it; *DB implements it too, for the read paths
+// that need no transaction.
+type KVTx interface {
+	KVGet(key string) ([]byte, bool, error)
+	KVPut(key string, value []byte) error
+	KVDelete(key string) error
+	KVKeys(prefix string) ([]string, error)
+}
+
+// DBTxKV is the transactional kv surface the planner registry and the channel
+// claims need: the four kv calls on the handle, and Tx to run a whole
+// read-modify-write inside one transaction. TxKV adapts a *DB to it.
+type DBTxKV interface {
+	KVTx
+	Tx(fn func(KVTx) error) error
+}
+
+// TxKV adapts a *DB to DBTxKV: the four kv calls pass straight through to the
+// handle's own short transactions, and Tx narrows db's *Tx callback to the
+// KVTx interface a caller's transaction body is written against.
+type TxKV struct{ DB *DB }
+
+var _ DBTxKV = TxKV{}
+
+// KVGet implements DBTxKV.
+func (a TxKV) KVGet(key string) ([]byte, bool, error) { return a.DB.KVGet(key) }
+
+// KVPut implements DBTxKV.
+func (a TxKV) KVPut(key string, value []byte) error { return a.DB.KVPut(key, value) }
+
+// KVDelete implements DBTxKV.
+func (a TxKV) KVDelete(key string) error { return a.DB.KVDelete(key) }
+
+// KVKeys implements DBTxKV.
+func (a TxKV) KVKeys(prefix string) ([]string, error) { return a.DB.KVKeys(prefix) }
+
+// Tx implements DBTxKV: fn runs inside one BEGIN IMMEDIATE transaction, and
+// the *Tx it receives satisfies KVTx.
+func (a TxKV) Tx(fn func(KVTx) error) error {
+	return a.DB.Tx(func(t *Tx) error { return fn(t) })
+}
+
 // KVImportFile is the one import helper every package below uses
 // (docs/specs/2026-09-24-db-as-record-design.md §4.3). The rule is "a file
 // that is present is imported":

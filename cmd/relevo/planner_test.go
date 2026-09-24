@@ -11,10 +11,27 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// plannerRegistryAt is a registry over the database the state root holds, for
+// a test that inspects what a verb wrote without building a runtime.
+func plannerRegistryAt(t *testing.T, state string) *planner.DBRegistry {
+	t.Helper()
+	dir := filepath.Join(state, "relevo")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll %s: %v", dir, err)
+	}
+	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	if err != nil {
+		t.Fatalf("open relevo.db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return &planner.DBRegistry{KV: db.TxKV{DB: d}, Root: filepath.Join(dir, "planners")}
+}
 
 // stdinFile is a temp file holding payload, rewound and ready to be os.Stdin.
 func stdinFile(t *testing.T, payload string) *os.File {
@@ -114,16 +131,11 @@ func TestPlannerInitHookWritesEnvFile(t *testing.T) {
 	}
 	id := strings.TrimPrefix(line, "export RELEVO_PLANNER=")
 
-	// The record is on disk under the state root, and the record's name comes
-	// from CLAUDE_CODE_AGENT.
-	recordPath := filepath.Join(state, "relevo", "planners", id+".json")
-	recRaw, err := os.ReadFile(recordPath)
+	// The record is in the state root's database, under planner/<id>, and the
+	// record's name comes from CLAUDE_CODE_AGENT.
+	rec, err := plannerRegistryAt(t, state).Get(id)
 	if err != nil {
-		t.Fatalf("read %s: %v", recordPath, err)
-	}
-	var rec planner.Record
-	if err := json.Unmarshal(recRaw, &rec); err != nil {
-		t.Fatalf("decode %s: %v", recordPath, err)
+		t.Fatalf("read record %s: %v", id, err)
 	}
 	if rec.ID != id || rec.SessionID != "sess-abc" || rec.HarnessKind != "claude" {
 		t.Errorf("record = %+v", rec)
@@ -176,19 +188,13 @@ func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
 		t.Errorf("additionalContext = %q, want the unset-env-file note", ctx)
 	}
 
-	// Registration still happened: one record is on disk under the state root.
-	entries, err := os.ReadDir(filepath.Join(state, "relevo", "planners"))
+	// Registration still happened: the state root's database holds one record.
+	records, err := plannerRegistryAt(t, state).List()
 	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
+		t.Fatalf("List: %v", err)
 	}
-	records := 0
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") {
-			records++
-		}
-	}
-	if records != 1 {
-		t.Fatalf("registry holds %d records, want exactly 1", records)
+	if len(records) != 1 {
+		t.Fatalf("registry holds %d records, want exactly 1", len(records))
 	}
 }
 
@@ -196,7 +202,8 @@ func TestPlannerInitHookWithoutEnvFileSaysSo(t *testing.T) {
 // three read/manage verbs, including forget's guard: a binding that is not DONE
 // still names the record, so it must be refused.
 func TestPlannerVerbsListRenameForget(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 
 	stdout, _, err := captureOutput(t, func() error {
 		return run([]string{"planner", "init", "--kind", "opencode", "--session", "ses_abc123"})
@@ -277,8 +284,8 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 	if !strings.Contains(string(stdout), "forgot") {
 		t.Errorf("forget printed %q, want a confirmation line", stdout)
 	}
-	if _, err := os.Stat(filepath.Join(root, "planners", id+".json")); !os.IsNotExist(err) {
-		t.Errorf("record file still there after forget: %v", err)
+	if _, err := plannerRegistryAt(t, state).Get(id); !errors.Is(err, planner.ErrNotFound) {
+		t.Errorf("record row still there after forget: %v", err)
 	}
 }
 
@@ -288,13 +295,10 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 // a synthetic claude transcript and names claude records only, so the test
 // spawns nothing and reaches no network.
 func TestAnnotatePlannerChat(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 
-	root, err := store.DefaultRoot()
-	if err != nil {
-		t.Fatalf("DefaultRoot: %v", err)
-	}
-	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+	reg := plannerRegistryAt(t, state)
 
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
@@ -339,13 +343,10 @@ func TestAnnotatePlannerChat(t *testing.T) {
 // overflowed its cell. Under tabwriter every row -- header included -- starts
 // its `seen` column at the same byte offset.
 func TestListAlignsLongValues(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 
-	root, err := store.DefaultRoot()
-	if err != nil {
-		t.Fatalf("DefaultRoot: %v", err)
-	}
-	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+	reg := plannerRegistryAt(t, state)
 
 	long := filepath.Join(t.TempDir(), strings.Repeat("long-cwd-segment-", 6))
 	longer := filepath.Join(t.TempDir(), strings.Repeat("an-even-longer-cwd-segment-", 6))
@@ -399,13 +400,10 @@ func TestListAlignsLongValues(t *testing.T) {
 // and --json carries the same two fields. It writes a synthetic transcript and
 // uses claude records only, so the test spawns nothing and reaches no network.
 func TestListShowsChat(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 
-	root, err := store.DefaultRoot()
-	if err != nil {
-		t.Fatalf("DefaultRoot: %v", err)
-	}
-	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+	reg := plannerRegistryAt(t, state)
 
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
 	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +

@@ -376,7 +376,7 @@ func cmdServeRun(args []string) error {
 
 	reader, prices := newUsageReader(L.Prices)
 
-	hooksCfg, err := resolveHooksConfig(L.Hooks)
+	hooksCfg, err := resolveHooksConfig(L.Hooks, nil)
 	if err != nil {
 		return err
 	}

@@ -5,27 +5,47 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // testNow is the pinned clock every planner test writes records at.
 var testNow = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
-// testRegistry is a FileRegistry on a fresh temp root with a pinned clock.
-func testRegistry(t *testing.T) *FileRegistry {
+// testDB is a fresh temp database, the store the registry's rows live in.
+func testDB(t *testing.T) *db.DB {
 	t.Helper()
-	return &FileRegistry{
-		Root: filepath.Join(t.TempDir(), "planners"),
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// testRegistry is a DBRegistry over a fresh temp database with a pinned clock.
+func testRegistry(t *testing.T) *DBRegistry {
+	t.Helper()
+	return testRegistryOn(t, testDB(t))
+}
+
+// testRegistryOn is a DBRegistry over an existing database handle. Two of them
+// over one handle share a database, the way two processes do.
+func testRegistryOn(t *testing.T, d *db.DB) *DBRegistry {
+	t.Helper()
+	return &DBRegistry{
+		KV:   db.TxKV{DB: d},
 		Now:  func() time.Time { return testNow },
+		Root: filepath.Join(t.TempDir(), "planners"),
 	}
 }
 
 // mustCreate creates a record and fails the test if it is refused.
-func mustCreate(t *testing.T, reg *FileRegistry, rec Record) Record {
+func mustCreate(t *testing.T, reg *DBRegistry, rec Record) Record {
 	t.Helper()
 	got, err := reg.Create(rec)
 	if err != nil {
@@ -336,9 +356,9 @@ func TestErrUnknownPlannerNamesTheRef(t *testing.T) {
 	}
 }
 
-// TestListReadsEveryRecordOnDisk pins the file layout and the sort order: one
-// <id>.json per record, by name.
-func TestListReadsEveryRecordOnDisk(t *testing.T) {
+// TestListReadsEveryRecord pins the row layout and the sort order: one
+// planner/<id> row per record, by name.
+func TestListReadsEveryRecord(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_bbbbbbbbbbbb", "zeta", "claude", "s-b", 0))
 	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "s-a", 0))
@@ -354,15 +374,15 @@ func TestListReadsEveryRecordOnDisk(t *testing.T) {
 		t.Errorf("List order = %q, %q; want alpha, zeta", records[0].Name, records[1].Name)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(reg.Root, "pl_aaaaaaaaaaaa.json"))
-	if err != nil {
-		t.Fatalf("read record file: %v", err)
+	raw, ok, err := reg.KV.KVGet(registryKey("pl_aaaaaaaaaaaa"))
+	if err != nil || !ok {
+		t.Fatalf("KVGet(pl_aaaaaaaaaaaa) = (_, %v, %v), want the row", ok, err)
 	}
-	var onDisk Record
-	if err := json.Unmarshal(raw, &onDisk); err != nil {
-		t.Fatalf("decode record file: %v", err)
+	var stored Record
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("decode record row: %v", err)
 	}
-	if onDisk.Name != "alpha" || onDisk.SessionID != "s-a" {
-		t.Errorf("record file = %+v", onDisk)
+	if stored.Name != "alpha" || stored.SessionID != "s-a" {
+		t.Errorf("record row = %+v", stored)
 	}
 }

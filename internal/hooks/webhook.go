@@ -26,7 +26,12 @@ const webhookTimeout = 5 * time.Second
 type WebhookSink struct {
 	Client *http.Client     // nil -> a client with a 5s timeout
 	Hooks  []policy.Webhook // the webhooks to notify
-	Log    io.Writer        // nil -> discard
+	// Log is the plain-text sink a failure line is written to when Runs is
+	// nil (a caller with no database, and the tests): nil -> discard.
+	Log io.Writer
+	// Runs is the run log a delivery failure is appended to (P3b round 2
+	// §4.4): the production sink. nil -> Log is used instead.
+	Runs RunLog
 }
 
 var _ Dispatcher = (*WebhookSink)(nil)
@@ -160,17 +165,33 @@ func (s *WebhookSink) post(h policy.Webhook, ev Event) {
 	}
 }
 
-// logFailure writes one line to Log (discarding it when Log is nil):
+// logFailure records one failed delivery: a HookRun whose event is the
+// webhook event, whose argv is ["webhook", <host>] and whose error is the status
+// or transport error (§4.4). With no run log it writes the old text line to
+// Log instead (discarding it when Log is nil):
 // "<ts> webhook <url-host> <event>: <status|err>".
 func (s *WebhookSink) logFailure(h policy.Webhook, ev Event, detail string) {
-	w := s.Log
-	if w == nil {
-		w = io.Discard
-	}
-
+	// A webhook URL is a bearer secret (its path or query often carries the
+	// token), so only its host is ever recorded -- in the run log as in the
+	// text line.
 	host := h.URL
 	if u, err := url.Parse(h.URL); err == nil && u.Host != "" {
 		host = u.Host
+	}
+
+	if s.Runs != nil {
+		_ = s.Runs.Append(HookRun{
+			At:    time.Now().UTC(),
+			Event: string(ev.Type),
+			Argv:  []string{"webhook", host},
+			Error: detail,
+		})
+		return
+	}
+
+	w := s.Log
+	if w == nil {
+		w = io.Discard
 	}
 
 	fmt.Fprintf(w, "%s webhook %s %s: %s\n", time.Now().UTC().Format(time.RFC3339), host, ev.Type, detail)

@@ -2,7 +2,9 @@ package relevo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,27 +26,24 @@ const (
 	agyAgentAPIExeEnv  = "ANTIGRAVITY_AGENTAPI_EXE"
 )
 
+// agySecretPrefix is the secret-table name prefix one conversation's
+// credentials live under: a conversation 0f0e… is the secret `agy/0f0e…`
+// (P3b round 2 §1).
+const agySecretPrefix = "agy/"
+
 // agyCredsPruneAfter is how long an unused conversation's credentials are kept
 // after the last capture. A conversation that has not touched relevo for a week
 // is gone, and its token died with the agy launch that issued it.
 const agyCredsPruneAfter = 7 * 24 * time.Hour
-
-// agyCredsDirMode and agyCredsFileMode are the permissions the credentials
-// directory and files are created with: private to the user, because the file
-// holds a bearer token for a running language server.
-const (
-	agyCredsDirMode  = 0o700
-	agyCredsFileMode = 0o600
-)
 
 // redactedToken is what every rendering of a credential replaces the token
 // with, so an accidental %v cannot leak it.
 const redactedToken = "<redacted>"
 
 // AgyCreds is one agy conversation's captured agentapi credentials, stored as
-// <root>/planners/.agy/<conversation_id>.json. The conversation id is the
-// file's base name and the key, not the planner record's id: Deliver receives
-// only an Endpoint, whose Kind and SessionID are the agy conversation.
+// the secret `agy/<conversation_id>` in the machine database. The conversation
+// id is the secret's name and the key, not the planner record's id: Deliver
+// receives only an Endpoint, whose Kind and SessionID are the agy conversation.
 type AgyCreds struct {
 	ConversationID string    `json:"conversation_id"`
 	LSAddress      string    `json:"ls_address"`
@@ -90,123 +89,178 @@ func loopbackAgyAddress(addr string) bool {
 	return true
 }
 
-// CaptureAgyCreds persists the calling agy session's agentapi credentials to
-// dir/<conversation_id>.json and reports whether it wrote. Running inside agy
-// is the only place the address and token exist, so every verb calls this once
-// before dispatch: an agy planner runs relevo constantly (send, wait, pull,
-// status), and the file is therefore fresh after every agy restart as soon as
-// the planner next touches relevo.
+// SecretStore is the machine database's secret surface (schema v2's `secret`
+// table), the store the agy capture, the agy deliverer and the credential
+// import run over. Its names are `agy/<conversation id>` for credentials.
+type SecretStore interface {
+	SecretGet(name string) ([]byte, bool, error)
+	SecretPut(name string, value []byte, now time.Time) error
+	SecretDelete(name string) error
+	SecretNames() ([]string, error)
+}
+
+// agySecretName is the secret name one conversation's credentials live under.
+func agySecretName(conv string) string { return agySecretPrefix + conv }
+
+// agyEnvValid reports whether the environment carries a capturable agy
+// session: a valid conversation id, a loopback address and a non-empty,
+// whitespace-free token are all present.
+func agyEnvValid(env func(string) string) bool {
+	if env == nil {
+		return false
+	}
+	if !validConversationID(env(agyConversationEnv)) {
+		return false
+	}
+	if !loopbackAgyAddress(env(agyLSAddressEnv)) {
+		return false
+	}
+	token := env(agyCSRFTokenEnv)
+	return token != "" && !strings.ContainsAny(token, " \t\r\n")
+}
+
+// AgyEnvPresent is agyEnvValid, exported: main.go checks it before opening the
+// machine database, so a command that runs outside agy opens no database at
+// all -- which is what keeps captureAgyEnv free on every verb (P3b round 2
+// §4.3).
+func AgyEnvPresent(env func(string) string) bool { return agyEnvValid(env) }
+
+// CaptureAgyCreds persists the calling agy session's agentapi credentials as
+// the secret agy/<conversation_id> and reports whether it wrote. Running inside
+// agy is the only place the address and token exist, so every verb calls this
+// once before dispatch: an agy planner runs relevo constantly (send, wait,
+// pull, status), and the secret is therefore fresh after every agy restart as
+// soon as the planner next touches relevo.
 //
 // It writes nothing and returns false, nil unless a valid conversation id, a
 // loopback address and a non-empty, whitespace-free token are all present, and
-// skips the write when the file already carries the same address, token and
-// exe. It never returns an error that contains the token: path errors name the
-// path only.
-func CaptureAgyCreds(env func(string) string, dir string, now time.Time) (bool, error) {
-	if env == nil || dir == "" {
+// skips the write when the stored credentials already carry the same address,
+// token and exe. It never returns an error that contains the token: an error
+// names the secret only.
+func CaptureAgyCreds(env func(string) string, secrets SecretStore, now time.Time) (bool, error) {
+	if secrets == nil || !agyEnvValid(env) {
 		return false, nil
 	}
 
 	conv := env(agyConversationEnv)
-	if !validConversationID(conv) {
-		return false, nil
-	}
-	addr := env(agyLSAddressEnv)
-	if !loopbackAgyAddress(addr) {
-		return false, nil
-	}
-	token := env(agyCSRFTokenEnv)
-	if token == "" || strings.ContainsAny(token, " \t\r\n") {
-		return false, nil
-	}
-
 	creds := AgyCreds{
 		ConversationID: conv,
-		LSAddress:      addr,
-		CSRFToken:      token,
+		LSAddress:      env(agyLSAddressEnv),
+		CSRFToken:      env(agyCSRFTokenEnv),
 		AgentAPIExe:    env(agyAgentAPIExeEnv),
 		CapturedAt:     now,
 	}
 
-	if prev, err := ReadAgyCreds(dir, conv); err == nil &&
+	if prev, err := ReadAgyCreds(secrets, conv); err == nil &&
 		prev.LSAddress == creds.LSAddress &&
 		prev.CSRFToken == creds.CSRFToken &&
 		prev.AgentAPIExe == creds.AgentAPIExe {
 		return false, nil
 	}
 
-	if err := os.MkdirAll(dir, agyCredsDirMode); err != nil {
-		return false, fmt.Errorf("agy credentials: create %s: %w", dir, err)
-	}
 	raw, err := json.Marshal(creds)
 	if err != nil {
 		return false, fmt.Errorf("agy credentials: encode: %w", err)
 	}
-	path := filepath.Join(dir, conv+".json")
-	if err := writeAgyCredsFile(path, raw); err != nil {
-		return false, fmt.Errorf("agy credentials: write %s: %w", path, err)
+	name := agySecretName(conv)
+	if err := secrets.SecretPut(name, raw, now); err != nil {
+		return false, fmt.Errorf("agy credentials: write %s: %w", name, err)
 	}
 
-	pruneAgyCreds(dir, now)
+	pruneAgyCreds(secrets, now)
 	return true, nil
 }
 
-// ReadAgyCreds reads and validates one conversation's credentials. A missing
-// file returns an error wrapping os.ErrNotExist; the caller turns any error
-// into "no credentials yet", so the distinction only matters to a reader.
-func ReadAgyCreds(dir, conv string) (AgyCreds, error) {
-	path := filepath.Join(dir, conv+".json")
-	raw, err := os.ReadFile(path)
+// ImportAgyCreds adopts the pre-database credential files, if any: a present
+// <dir>/<conversation>.json is put to the secret agy/<conversation> and only
+// then removed, and <dir> is removed when it is left empty (P3b round 2 §4.3).
+// The order is round 1's KVImportFile rule: put, then remove, never the
+// reverse, so a crash between them leaves the file and the next run imports it
+// again. The row wins over a file that is still there, and a malformed file
+// fails loudly and stays where it is. It is a no-op with a nil store or dir.
+func ImportAgyCreds(secrets SecretStore, dir string) error {
+	if secrets == nil || dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return AgyCreds{}, fmt.Errorf("agy credentials: read %s: %w", path, err)
+		return fmt.Errorf("agy credentials: read %s: %w", dir, err)
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		conv := strings.TrimSuffix(name, ".json")
+		key := agySecretName(conv)
+		path := filepath.Join(dir, name)
+
+		if _, ok, err := secrets.SecretGet(key); err != nil {
+			return fmt.Errorf("agy credentials: read %s: %w", key, err)
+		} else if ok {
+			// The row is the record now: the file is left where it is.
+			continue
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("agy credentials: read %s: %w", path, err)
+		}
+		if !json.Valid(raw) {
+			return fmt.Errorf("agy credentials: decode %s: invalid JSON", path)
+		}
+		if err := secrets.SecretPut(key, raw, time.Now().UTC()); err != nil {
+			return fmt.Errorf("agy credentials: write %s: %w", key, err)
+		}
+		if err := os.Remove(path); err != nil {
+			slog.Warn("agy credentials: could not remove imported file", "secret", key, "path", path, "err", err)
+		}
+	}
+
+	_ = os.Remove(dir)
+	return nil
+}
+
+// ReadAgyCreds reads and validates one conversation's credentials. A missing
+// secret returns an error wrapping os.ErrNotExist; the caller turns any error
+// into "no credentials yet", so the distinction only matters to a reader.
+func ReadAgyCreds(secrets SecretStore, conv string) (AgyCreds, error) {
+	name := agySecretName(conv)
+	if secrets == nil {
+		return AgyCreds{}, fmt.Errorf("agy credentials: read %s: %w", name, os.ErrNotExist)
+	}
+	raw, ok, err := secrets.SecretGet(name)
+	if err != nil {
+		return AgyCreds{}, fmt.Errorf("agy credentials: read %s: %w", name, err)
+	}
+	if !ok {
+		return AgyCreds{}, fmt.Errorf("agy credentials: read %s: %w", name, os.ErrNotExist)
 	}
 	var creds AgyCreds
 	if err := json.Unmarshal(raw, &creds); err != nil {
-		return AgyCreds{}, fmt.Errorf("agy credentials: decode %s: %w", path, err)
+		return AgyCreds{}, fmt.Errorf("agy credentials: decode %s: %w", name, err)
 	}
 	return creds, nil
 }
 
-// writeAgyCredsFile writes raw to path through a temp file in the same
-// directory, so a concurrent reader never sees a half-written credential file,
-// and renames it into place mode 0600.
-func writeAgyCredsFile(path string, raw []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".agy-creds-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-
-	if _, err := f.Write(raw); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Chmod(agyCredsFileMode); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-// pruneAgyCreds deletes every other credential file in dir whose capture is
-// older than agyCredsPruneAfter. Best effort by design: it runs on the capture
-// path, which must never fail a command, so every error is dropped.
-func pruneAgyCreds(dir string, now time.Time) {
-	entries, err := os.ReadDir(dir)
+// pruneAgyCreds deletes every other agy credential whose capture is older than
+// agyCredsPruneAfter. Best effort by design: it runs on the capture path, which
+// must never fail a command, so every error is dropped.
+func pruneAgyCreds(secrets SecretStore, now time.Time) {
+	names, err := secrets.SecretNames()
 	if err != nil {
 		return
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	for _, name := range names {
+		if !strings.HasPrefix(name, agySecretPrefix) {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		raw, err := os.ReadFile(path)
-		if err != nil {
+		raw, ok, err := secrets.SecretGet(name)
+		if err != nil || !ok {
 			continue
 		}
 		var creds AgyCreds
@@ -214,7 +268,7 @@ func pruneAgyCreds(dir string, now time.Time) {
 			continue
 		}
 		if !creds.CapturedAt.IsZero() && now.Sub(creds.CapturedAt) > agyCredsPruneAfter {
-			_ = os.Remove(path)
+			_ = secrets.SecretDelete(name)
 		}
 	}
 }

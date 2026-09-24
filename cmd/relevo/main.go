@@ -418,56 +418,42 @@ func userConfigRoot() (string, error) {
 }
 
 // resolveHooksConfig builds the hook dispatcher environment: the hooks section
-// the config store loaded, and the log path under the state root (#4.4).
-func resolveHooksConfig(hooksMap map[string][][]string) (hooks.Config, error) {
-	stateDir := os.Getenv("XDG_STATE_HOME")
-	if stateDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return hooks.Config{}, fmt.Errorf("resolve user home directory: %w", err)
-		}
-		stateDir = filepath.Join(home, ".local", "state")
-	}
-
+// the config store loaded, and the run log its runs are recorded in (#4.4).
+// log is the machine database's kv log; a caller with no database open
+// (preflight, check, serve's admin paths) passes nil, and hook output is then
+// recorded nowhere.
+func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
 	return hooks.Config{
-		Hooks:   hooksMap,
-		LogPath: filepath.Join(stateDir, "relevo", "hooks.log"),
+		Hooks: hooksMap,
+		Log:   log,
 	}, nil
+}
+
+// hooksRunLog is the machine database's hook run log: the kv row every hook
+// run and webhook failure is recorded in (P3b round 2 §4.4). A store whose
+// database cannot be opened gets a nil log, which records nothing.
+func hooksRunLog(st *store.Store) hooks.RunLog {
+	d, err := st.DB()
+	if err != nil {
+		return nil
+	}
+	return hooks.NewKVLog(db.TxKV{DB: d}, filepath.Dir(st.DBPath()))
 }
 
 // newHooksDispatcher wires the local hooks.d script dispatcher, and, when
 // config policy's notify.webhooks is non-empty, a WebhookSink beside it (#4):
 // both receive every event, fanned out by a MultiDispatcher.
 func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatcher {
-	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))}
+	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.Log))}
 
 	if pol.Notify != nil && len(pol.Notify.Webhooks) > 0 {
 		sinks = append(sinks, &hooks.WebhookSink{
 			Hooks: pol.Notify.Webhooks,
-			Log:   openHooksLogAppend(hooksCfg.LogPath),
+			Runs:  hooksCfg.Log,
 		})
 	}
 
 	return hooks.MultiDispatcher(sinks)
-}
-
-// openHooksLogAppend opens hooksCfg.LogPath for append, creating its parent
-// directory if needed, for the WebhookSink to log delivery failures to
-// (alongside hook script failures). A failure to open falls back to
-// io.Discard: a webhook is best-effort, and losing its failure log is not a
-// reason to fail the caller.
-func openHooksLogAppend(path string) io.Writer {
-	if path == "" {
-		return io.Discard
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return io.Discard
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return io.Discard
-	}
-	return f
 }
 
 // opencodeServiceFile resolves $XDG_CONFIG_HOME/opencode/service.json, falling
@@ -493,36 +479,55 @@ func opencodeDBPath() string {
 
 // captureAgyEnv persists the calling agy session's agentapi credentials, when
 // the environment carries them (#349). It runs for every verb rather than a
-// chosen list, and it costs nothing when ANTIGRAVITY_* is absent.
+// chosen list, and it costs nothing when ANTIGRAVITY_* is absent: the machine
+// database is opened only when there is something to capture, because the
+// capture itself short-circuits on the same check (P3b round 2 §4.3).
 //
 // Both failures are deliberately silent: capture is best-effort and must never
 // change a command's exit code or output, so a root relevo cannot resolve, a
-// directory it cannot write, and an environment with nothing to capture all
+// database it cannot open, and an environment with nothing to capture all
 // end the same way -- nothing written, nothing printed.
 func captureAgyEnv() {
+	if !relevo.AgyEnvPresent(os.Getenv) {
+		return
+	}
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return
 	}
-	_, _ = relevo.CaptureAgyCreds(os.Getenv, store.New(root).AgyCredsDir(), time.Now().UTC())
+	st := store.New(root)
+	d, err := st.DB()
+	if err != nil {
+		return
+	}
+	secrets := db.SecretStore{DB: d}
+	// The credentials were files under planners/.agy before this round: a file
+	// that is present is imported, then removed (§4.3).
+	_ = relevo.ImportAgyCreds(secrets, st.AgyCredsDir())
+	_, _ = relevo.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
 }
 
 // newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
 // OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
 // (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
 // opencode deliverer could never confirm a delivery, so an opencode planner's
-// reports stay pending for relevo pull. agy needs no external tool: it reads the
-// captured credential file and runs agy itself, and reports its own failure as
-// OutcomeUnavailable.
+// reports stay pending for relevo pull. agy needs no external tool: it reads
+// the captured credential secret from the machine database and runs agy
+// itself, and reports its own failure as OutcomeUnavailable.
 func newDeliverers() map[string]relevo.PlannerDeliverer {
 	deliverers := map[string]relevo.PlannerDeliverer{}
 	// store.DefaultRoot has already succeeded once in newRuntime; the guard is
 	// only for the shape of the function, and a root relevo cannot resolve means
 	// every verb has failed long before a delivery is attempted.
 	if root, err := store.DefaultRoot(); err == nil {
-		deliverers["agy"] = &relevo.AgyDeliverer{
-			Exec:     binEnvExec{},
-			CredsDir: store.New(root).AgyCredsDir(),
+		// DBIfExists, not DB: a root with no relevo.db yet -- `daemon
+		// --preflight` and `--check` run against one -- must not get a
+		// database conjured into it just because a deliverer was wired.
+		if d, derr := store.New(root).DBIfExists(); derr == nil && d != nil {
+			deliverers["agy"] = &relevo.AgyDeliverer{
+				Exec:  binEnvExec{},
+				Creds: db.SecretStore{DB: d},
+			}
 		}
 	}
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -653,20 +658,21 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	reader, prices := newUsageReader(L.Prices)
 	home, _ := os.UserHomeDir()
 
-	hooksCfg, err := resolveHooksConfig(L.Hooks)
-	if err != nil {
-		return relevo.Runtime{}, err
-	}
-	dispatcher := newHooksDispatcher(hooksCfg, pol)
-
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
 	// Gates, availability and latency live in the store root's database; the
 	// legacy directory holding ledger.json/availability.json/history.json is
 	// the store root too, so LoadKV imports them on first read (P3b plan §4.5).
-	var gates db.KV
-	gatesDir := ""
+	// The channel claims, the planner registry and the hooks run log live in
+	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
+	// and `--check`, which pass openGates false, open no database at all.
+	var (
+		gates    db.KV
+		gatesDir string
+		claims   relevo.ClaimStore
+		runLog   hooks.RunLog
+	)
 	if openGates {
 		d, err := st.DB()
 		if err != nil {
@@ -674,7 +680,15 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		}
 		gates = d
 		gatesDir = root
+		claims = &relevo.KVClaims{KV: db.TxKV{DB: d}, Root: st.ChannelsDir()}
+		runLog = hooksRunLog(st)
 	}
+
+	hooksCfg, err := resolveHooksConfig(L.Hooks, runLog)
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
 	remoteClient, transport, err := newRemoteClient(L.Servers, L.ClientKey, gitClient)
 	if err != nil {
@@ -703,13 +717,21 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		Remote:         remoteClient,
 		Transport:      transport,
 		Roles:          harness.OSRoleChecker(),
-		Channels:       &relevo.FileClaims{Root: st.ChannelsDir()},
+		Channels:       claims,
 		ProcStart:      procStartUnix,
 		Deliverers:     newDeliverers(),
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
-	// here rather than in the literal above.
-	rt.Planners = plannerRegistry(rt)
+	// here rather than in the literal above. A runtime with no database open
+	// (preflight, check) keeps a nil registry, which every caller already
+	// treats as "no planners".
+	if openGates {
+		reg, rerr := plannerRegistry(rt)
+		if rerr != nil {
+			return relevo.Runtime{}, rerr
+		}
+		rt.Planners = reg
+	}
 	return rt, nil
 }
 
@@ -2607,7 +2629,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	hooksCfg, err := resolveHooksConfig(loaded.Hooks)
+	hooksCfg, err := resolveHooksConfig(loaded.Hooks, hooksRunLog(rt.Store))
 	if err != nil {
 		return err
 	}

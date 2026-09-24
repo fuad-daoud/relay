@@ -2,8 +2,6 @@ package planner
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -134,13 +132,10 @@ func TestInitReusesPriorDBID(t *testing.T) {
 				t.Errorf("id = %q, want the prior db id %q", rec.ID, tc.priorID)
 			}
 
-			// The record is named <id>.json, so a ULID-named record resolved
-			// by Get reads the same file layout a `pl_` id does.
-			if _, err := os.Stat(filepath.Join(reg.Root, tc.priorID+".json")); err != nil {
-				t.Errorf("record file for id %q: %v", tc.priorID, err)
-			}
-			if _, err := reg.Get(tc.priorID); err != nil {
-				t.Errorf("Get(%q): %v", tc.priorID, err)
+			// The record is stored under its own id, so a ULID-named record
+			// resolved by Get reads the same row a `pl_` id does.
+			if stored, err := reg.Get(tc.priorID); err != nil || stored.ID != tc.priorID {
+				t.Errorf("Get(%q) = %+v, %v", tc.priorID, stored, err)
 			}
 
 			// A prior id for another session is not consulted, and a second
@@ -237,11 +232,11 @@ func TestInitRenamesWhenNameGiven(t *testing.T) {
 	}
 }
 
-// TestConcurrentInitSerialises is §4.1's locking rule made observable: two
-// registries racing on one root -- the hook and `relevo mcp` starting together
-// -- must end with exactly one record, not two.
+// TestConcurrentInitSerialises is §4.1's transaction rule made observable: two
+// registries racing on one database -- the hook and `relevo mcp` starting
+// together -- must end with exactly one record, not two.
 func TestConcurrentInitSerialises(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "planners")
+	d := testDB(t)
 
 	const racers = 2
 	var (
@@ -253,7 +248,7 @@ func TestConcurrentInitSerialises(t *testing.T) {
 	start := make(chan struct{})
 
 	for i := 0; i < racers; i++ {
-		reg := &FileRegistry{Root: root, Now: func() time.Time { return testNow }}
+		reg := testRegistryOn(t, d)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -276,7 +271,7 @@ func TestConcurrentInitSerialises(t *testing.T) {
 		}
 	}
 
-	records, err := (&FileRegistry{Root: root}).List()
+	records, err := testRegistryOn(t, d).List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
