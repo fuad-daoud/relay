@@ -744,6 +744,11 @@ func TestTableExactValues(t *testing.T) {
 				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
 			},
+			Files: []ShippedFile{
+				{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
+				{Name: "opencode-plugin/server.ts", Path: ".config/opencode/plugins/relevo/server.ts", Embed: "opencodeplugin/server.ts"},
+				{Name: "opencode-plugin/tui.tsx", Path: ".config/opencode/plugins/relevo/tui.tsx", Embed: "opencodeplugin/tui.tsx"},
+			},
 		},
 		"codex": {
 			Kind:       "codex",

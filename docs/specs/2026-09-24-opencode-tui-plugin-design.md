@@ -240,20 +240,22 @@ the oldest NEEDS YOU row, or toasts `nothing needs you`.
 
 The package's three files are embedded in the binary next to the agent
 definitions (`internal/harness/agents/`, `go:embed`) and installed by
-`harness.Install` for kind `opencode` to `~/.config/opencode/plugins/relevo/`
-(`$OPENCODE_CONFIG_DIR/plugins/relevo/` when that variable is set), with the
-same rules as an agent definition: write when absent; overwrite when the
-installed file's sha is in the manifest or `ShippedBefore`; otherwise report
-`modified` and leave it, unless `--force`; `--dry-run` writes nothing.
-`package.json`'s `version` is the relevo version, so a stale install is
-visible.
+`harness.Install` for kind `opencode` to `~/.config/opencode/plugins/relevo/`,
+with the same rules as an agent definition: write when absent; overwrite when
+the installed file's sha is in the manifest or `ShippedBefore`; otherwise
+report `modified` and leave it, unless `--force`; `--dry-run` writes nothing.
+The plugin is opt-in: only `relevo config agents` writes it when absent; once
+installed, every install (daemon start, `relevo config init`) refreshes an
+unmodified copy and keeps an edited one. It installs under
+`~/.config/opencode/plugins/relevo/` like the agent definitions under
+`~/.config/opencode/agents/`.
 
 ### 5.5 `relevo doctor` (Go)
 
 New rows in the `opencode` group, only when `opencode` is on PATH:
 - `plugin` -- OK when the three files are present and match the shipped
-  shas; WARN `not installed (relevo config agents)`; WARN `modified` or
-  `from relevo vX (running vY)`.
+  shas; OK `not installed -- relevo config agents installs the OpenCode plugin`;
+  WARN `modified` or `from relevo vX (running vY)`.
 - `plugin keys` -- WARN when the user's OpenCode config binds `<leader>o` or
   `<leader>j` to anything else (read the `keybinds` of `opencode.jsonc` /
   `cli.json`; unreadable config is not a failure).

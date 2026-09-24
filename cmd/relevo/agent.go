@@ -40,6 +40,10 @@ func cmdAgentInstall(args []string) error {
 	role := fs.String("role", "", "role name")
 	force := fs.Bool("force", false, "force overwrite")
 	dryRun := fs.Bool("dry-run", false, "dry run")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--role <name>] [--force] [--dry-run]")
+		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
+	}
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
@@ -52,6 +56,9 @@ func cmdAgentInstall(args []string) error {
 		Role:   *role,
 		Force:  *force,
 		DryRun: *dryRun,
+		// The OpenCode plugin is opt-in: this verb is the one place that
+		// writes it when it is absent (#393 §5.4).
+		Files: true,
 	}
 
 	env, err := agentInstallEnv()

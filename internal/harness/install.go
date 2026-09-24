@@ -42,6 +42,11 @@ type InstallOptions struct {
 	Role   string
 	Force  bool
 	DryRun bool
+	// Files opts a kind's shipped files in (#393 §5.4): when true, an
+	// absent shipped file is written; when false, an absent shipped file
+	// produces no result row (the OpenCode plugin is opt-in). A file
+	// present on disk follows the definition rules either way.
+	Files bool
 }
 
 // InstallOutcome represents the outcome of an install action for a single role.
@@ -151,6 +156,40 @@ func Install(env InstallEnv, opts InstallOptions) ([]InstallResult, error) {
 			changed = changed || rchanged
 			results = append(results, res)
 		}
+
+		// Shipped files (#393 §5.4): the OpenCode plugin package, opt-in.
+		// An absent file is written only when opts.Files is set; otherwise
+		// it produces no row. A file present on disk follows the definition
+		// rules in both cases. Only a full install (no --role) touches
+		// them, never a single-role probe like doctor's dry run.
+		if opts.Role == "" {
+			for _, f := range h.Files {
+				shipped, err := ShippedFileBytes(h.Kind, f.Name)
+				if err != nil {
+					results = append(results, InstallResult{
+						Kind:    h.Kind,
+						Role:    f.Name,
+						Path:    f.Path,
+						Outcome: OutcomeError,
+						Err:     err.Error(),
+					})
+					continue
+				}
+				full, err := env.HomePath(f.Path)
+				if err != nil {
+					return nil, err
+				}
+				if _, rerr := env.ReadFile(full); errors.Is(rerr, fs.ErrNotExist) && !opts.Files {
+					continue
+				}
+				res, fchanged, err := installBytes(env, opts, InstallResult{Kind: h.Kind, Role: f.Name, Path: f.Path}, f.Path, shipped, manifest, "")
+				if err != nil {
+					return nil, err
+				}
+				changed = changed || fchanged
+				results = append(results, res)
+			}
+		}
 	}
 
 	if changed && !opts.DryRun {
@@ -188,14 +227,26 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 			Err:     err.Error(),
 		}, false, nil
 	}
-	full, err := env.HomePath(r.Path)
+	return installBytes(env, opts, InstallResult{Kind: kind, Role: r.Name, Path: r.Path}, r.Path, shipped, manifest, agentDocBase(r, kind))
+}
+
+// installBytes applies §5's decision table to one shipped file: an agent
+// definition (from installOne) or an opt-in shipped file (#393 §5.4). res names
+// the target -- Kind, Role (the install label) and Path; homeRel is the
+// home-relative path whose sha the manifest records (the same as res.Path);
+// shipped is the bytes to land; shippedBeforeKey is the embedded basename (or
+// file name) ShippedBefore indexes, "" for a shipped file, which has no
+// pre-manifest history and so is consulted only when the key is non-empty. Its
+// bool reports whether the manifest changed, so Install can save it once; a
+// write that failed records nothing.
+//
+// The behaviour for a role is byte-for-byte the table installOne applied
+// before the extraction: only the manifest key and the ShippedBefore key are
+// parameters now.
+func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRel string, shipped []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
+	full, err := env.HomePath(homeRel)
 	if err != nil {
 		return InstallResult{}, false, err
-	}
-	res := InstallResult{
-		Kind: kind,
-		Role: r.Name,
-		Path: r.Path,
 	}
 	existing, rerr := env.ReadFile(full)
 	existingSHA := docSHA(existing)
@@ -209,11 +260,11 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		if res.Outcome != OutcomeWrote {
 			return res, false, nil
 		}
-		return res, record(manifest, r.Path, docSHA(shipped)), nil
+		return res, record(manifest, homeRel, docSHA(shipped)), nil
 	case rerr == nil && DocEqual(shipped, existing):
 		res.Outcome = OutcomeKeptIdentical
-		return res, record(manifest, r.Path, existingSHA), nil
-	case rerr == nil && (manifest[r.Path] == existingSHA || ShippedBefore(agentDocBase(r, kind), existingSHA)):
+		return res, record(manifest, homeRel, existingSHA), nil
+	case rerr == nil && (manifest[homeRel] == existingSHA || (shippedBeforeKey != "" && ShippedBefore(shippedBeforeKey, existingSHA))):
 		// The bytes on disk are exactly what relevo last wrote, or a blob
 		// some past relevo shipped before manifests existed, so the
 		// difference from the shipped copy is relevo's own older release,
@@ -226,7 +277,7 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		if res.Outcome != OutcomeUpdated {
 			return res, false, nil
 		}
-		return res, record(manifest, r.Path, docSHA(shipped)), nil
+		return res, record(manifest, homeRel, docSHA(shipped)), nil
 	default:
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
@@ -240,7 +291,7 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 		if res.Outcome != OutcomeOverwrote {
 			return res, false, nil
 		}
-		return res, record(manifest, r.Path, docSHA(shipped)), nil
+		return res, record(manifest, homeRel, docSHA(shipped)), nil
 	}
 }
 
