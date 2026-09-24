@@ -515,3 +515,52 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 		t.Errorf("the pane must be pointed at the binding: detail.name = %q", rv.pane.detail.name)
 	}
 }
+
+func TestPaneRound(t *testing.T) {
+	tests := []struct {
+		r    relevo.BindingStatus
+		want int
+	}{
+		{r: relevo.BindingStatus{Round: 1, PlanRound: 1}, want: 1},
+		{r: relevo.BindingStatus{Round: 5, PlanRound: 5}, want: 5},
+		{r: relevo.BindingStatus{Round: 5, PlanRound: 4}, want: 4},
+		{r: relevo.BindingStatus{Round: 1, PlanRound: 0}, want: 0},
+		{r: relevo.BindingStatus{Round: 3, PlanRound: 0}, want: 2},
+	}
+	for _, tc := range tests {
+		if got := paneRound(tc.r); got != tc.want {
+			t.Errorf("paneRound(%+v) = %d, want %d", tc.r, got, tc.want)
+		}
+	}
+}
+
+func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(store.Binding{Name: "inflight", CWD: "/repo/inflight", Round: 1, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := st.Save(store.Binding{Name: "idle", CWD: "/repo/idle", Round: 3, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rt := relevo.Runtime{Store: st}
+
+	rvInflight := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "inflight", Round: 1, PlanRound: 1, Display: "ACTIVE"},
+	}}, "inflight", 0)
+	if rvInflight.pane.detail.round != 1 {
+		t.Errorf("inflight detail.round = %d, want 1", rvInflight.pane.detail.round)
+	}
+	if rvInflight.pane.detail.rounds != 1 {
+		t.Errorf("inflight detail.rounds = %d, want 1", rvInflight.pane.detail.rounds)
+	}
+
+	rvIdle := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "idle", Round: 3, PlanRound: 2, Display: "ACTIVE"},
+	}}, "idle", 0)
+	if rvIdle.pane.detail.round != 2 {
+		t.Errorf("idle detail.round = %d, want 2", rvIdle.pane.detail.round)
+	}
+	if rvIdle.pane.detail.rounds != 3 {
+		t.Errorf("idle detail.rounds = %d, want 3", rvIdle.pane.detail.rounds)
+	}
+}

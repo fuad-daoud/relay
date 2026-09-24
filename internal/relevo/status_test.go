@@ -2099,3 +2099,50 @@ func TestRoundFacts(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusPlanRound(t *testing.T) {
+	// round 1 sent, in flight; Send logs a plan entry for round 1
+	rt1, _ := sentBinding(t)
+	rep1, err := Status(context.Background(), rt1)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep1.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep1.Bindings))
+	}
+	if got, want := rep1.Bindings[0].Round, 1; got != want {
+		t.Errorf("sentBinding Round = %d, want %d", got, want)
+	}
+	if got, want := rep1.Bindings[0].PlanRound, 1; got != want {
+		t.Errorf("sentBinding PlanRound = %d, want %d", got, want)
+	}
+
+	// round 1 closed, b.Round now 2
+	rt2, _ := seedClosedRound(t, "clean", 1)
+	rep2, err := Status(context.Background(), rt2)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep2.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep2.Bindings))
+	}
+	if got, want := rep2.Bindings[0].Round, 2; got != want {
+		t.Errorf("seedClosedRound Round = %d, want %d", got, want)
+	}
+	if got, want := rep2.Bindings[0].PlanRound, 1; got != want {
+		t.Errorf("seedClosedRound PlanRound = %d, want %d", got, want)
+	}
+
+	// bound, nothing sent: PlanRound == 0
+	rt3, _ := seedBound(t)
+	rep3, err := Status(context.Background(), rt3)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep3.Bindings) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(rep3.Bindings))
+	}
+	if got, want := rep3.Bindings[0].PlanRound, 0; got != want {
+		t.Errorf("seedBound PlanRound = %d, want %d", got, want)
+	}
+}

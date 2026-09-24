@@ -78,7 +78,7 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 		t.Error("tabTerminal cache must be untouched by log invalidation")
 	}
 	if got.pane.detail.round != 3 {
-		t.Errorf("expected detail.round to update to 3 (row.Round-1), got %d", got.pane.detail.round)
+		t.Errorf("fallback Round-1 when PlanRound is 0: got %d", got.pane.detail.round)
 	}
 	if !got.pane.detail.lastLogTS.Equal(newTS) {
 		t.Errorf("expected lastLogTS to update to %v, got %v", newTS, got.pane.detail.lastLogTS)
@@ -92,6 +92,15 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	}
 	if tMsg.t != tabReport {
 		t.Fatalf("expected refetch of active tab (tabReport), got %v", tMsg.t)
+	}
+
+	rep2 := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: name, Round: 4, PlanRound: 4, Display: "ACTIVE", Last: &relevo.LastEvent{TS: newTS.Add(10 * time.Second), Round: 4}},
+	}}
+	next2, _ := got.Update(statusMsg{report: rep2}, testEnv(plannerSource{rt}, rep2, 140, 40))
+	got2 := next2.(roundView)
+	if got2.pane.detail.round != 4 {
+		t.Errorf("expected detail.round to update to 4, got %d", got2.pane.detail.round)
 	}
 }
 

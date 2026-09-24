@@ -25,7 +25,7 @@ func newRoundPane(env Env) roundPane {
 }
 
 // newRoundView targets a live binding's round. round == 0 means the
-// default: today's pointDetailAt rule (Round-1). A non-zero round is set
+// default: pointDetailAt's rule (paneRound). A non-zero round is set
 // after the point, with the caches cleared like stepRound does, and its
 // fetch is issued (§4.5, R2.4).
 func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
@@ -82,6 +82,18 @@ func row(rep relevo.Report, key string) *relevo.BindingStatus {
 		}
 	}
 	return nil
+}
+
+// paneRound returns the round the pane opens on (#428). While a round is in
+// flight, r.Round is the running round, so Round - 1 alone wrongly targets the
+// previous (finished) round instead of the live tail. It returns r.PlanRound
+// when > 0, else r.Round - 1 (a binding with no plan yet, or a row from an
+// older relevo serve whose JSON lacks plan_round).
+func paneRound(r relevo.BindingStatus) int {
+	if r.PlanRound > 0 {
+		return r.PlanRound
+	}
+	return r.Round - 1
 }
 
 // roundView is the full-screen round detail: today's pane, hosted as a
