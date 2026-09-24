@@ -81,20 +81,21 @@ func (s *Store) DB() (*db.DB, error) { return s.dbForWrite() }
 func (s *Store) DBIfExists() (*db.DB, error) { return s.dbForRead() }
 
 // importPresent adopts binding name's files, if any, into the database: a
-// present bind.json upserts the record and is deleted, and a present log.jsonl
-// replaces that record's events and is deleted. It is the rule that migrates
-// existing state on first use and keeps hand-written fixtures working (P3a
-// plan §4.3).
+// present bind.json upserts the record and is deleted, a present log.jsonl
+// replaces that record's events and is deleted, and a present .viewed sidecar
+// becomes the record's viewed_at and is deleted (#143). It is the rule that
+// migrates existing state on first use and keeps hand-written fixtures working
+// (P3a plan §4.3).
 //
 // It always runs under the flock, because every caller already holds it. A
 // log.jsonl with no record yet -- a fork directory before its Save (§4.6) --
 // is left in place for save() to adopt. A file is removed only after its DB
 // write committed, so a failed import leaves the file where it was.
 //
-// A root with neither file present imports nothing and opens no database, so a
-// read of a root that has never been written leaves no relevo.db behind
-// (§B1). The presence of a legacy file is the one exception to reads never
-// creating the database.
+// A root with none of the three files present imports nothing and opens no
+// database, so a read of a root that has never been written leaves no relevo.db
+// behind (§B1). The presence of a legacy file is the one exception to reads
+// never creating the database.
 func (s *Store) importPresent(name string) error {
 	bp, lp := s.bindingPath(name), s.logPath(name)
 
@@ -110,7 +111,17 @@ func (s *Store) importPresent(name string) error {
 	}
 	lpPresent := lpErr == nil
 
-	if !bpPresent && !lpPresent {
+	// The pre-P3a "<dir>/.viewed" sidecar carries what binding_record.viewed_at
+	// holds now (#143). One stat decides both whether the import has anything to
+	// do and, when it has, the stamp a record without one takes.
+	viewedPath := s.ViewedPath(name)
+	viewedInfo, viewedErr := os.Stat(viewedPath)
+	if viewedErr != nil && !errors.Is(viewedErr, os.ErrNotExist) {
+		return fmt.Errorf("stat viewed %q: %w", name, viewedErr)
+	}
+	viewedPresent := viewedErr == nil
+
+	if !bpPresent && !lpPresent && !viewedPresent {
 		return nil
 	}
 
@@ -183,6 +194,26 @@ func (s *Store) importPresent(name string) error {
 	if lpPresent {
 		if err := os.Remove(lp); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove imported log %q: %w", name, err)
+		}
+	}
+
+	// The sidecar's mtime becomes viewed_at only when the record has no stamp
+	// of its own, so an older file never overwrites a newer stamp; either way
+	// the file goes once the record it belongs to has been read.
+	if viewedPresent {
+		rec, ok, err := d.RecordGet(s.owner, name)
+		if err != nil {
+			return fmt.Errorf("import viewed %q: %w", name, err)
+		}
+		if ok {
+			if rec.ViewedAt == nil {
+				if err := d.RecordSetViewed(s.owner, name, viewedInfo.ModTime()); err != nil {
+					return fmt.Errorf("import viewed %q: %w", name, err)
+				}
+			}
+			if err := os.Remove(viewedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove imported viewed %q: %w", name, err)
+			}
 		}
 	}
 	return nil

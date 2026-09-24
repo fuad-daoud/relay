@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sync"
@@ -398,6 +399,18 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
 		}
 		if n > 0 {
 			slog.Info("seal", "binding", b.Name, "round", r, "files", n)
+		}
+	}
+
+	// A DONE binding is finished: once its rounds are sealed and the directory
+	// holds nothing else -- no round file left to seal, no non-NNN file, no
+	// .viewed sidecar -- the empty directory goes too, so a finished binding
+	// leaves nothing on disk. os.Remove, never RemoveAll: anything still in
+	// there means the directory stays. The error is ignored, like every other
+	// failure in this pass.
+	if b.State == store.StateDone {
+		if entries, rerr := os.ReadDir(st.Dir(b.Name)); rerr == nil && len(entries) == 0 {
+			_ = os.Remove(st.Dir(b.Name))
 		}
 	}
 }

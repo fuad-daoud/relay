@@ -224,3 +224,55 @@ func TestListSkipsANewerFormatBinding(t *testing.T) {
 		t.Fatalf("Load(future) = %v, want *ErrNewerFormat", err)
 	}
 }
+
+// TestImportPresentAdoptsViewedSidecar pins the .viewed sidecar import (#143):
+// a pre-P3a <dir>/.viewed becomes the record's viewed_at -- the file's mtime
+// when the record has no stamp -- and the file goes; a stamp the record
+// already has is kept and the file still goes.
+func TestImportPresentAdoptsViewedSidecar(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+
+	b := newBinding("webshop", "/home/dev/webshop")
+	b.Round = 2
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	stamp := time.Date(2026, 9, 20, 8, 30, 0, 0, time.UTC)
+	viewed := s.ViewedPath("webshop")
+	if err := os.WriteFile(viewed, []byte("2026-09-20T08:30:00Z\n"), 0o644); err != nil {
+		t.Fatalf("write .viewed: %v", err)
+	}
+	if err := os.Chtimes(viewed, stamp, stamp); err != nil {
+		t.Fatalf("chtimes .viewed: %v", err)
+	}
+
+	// ViewedAt imports the sidecar: the mtime is the stamp and the file goes.
+	got, ok := s.ViewedAt("webshop")
+	if !ok || !got.Equal(stamp) {
+		t.Fatalf("ViewedAt after the import = (%v, %v), want (%v, true)", got, ok, stamp)
+	}
+	if _, err := os.Stat(viewed); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf(".viewed is still present after the import: %v", err)
+	}
+
+	// A stamp the record already has is kept, and the sidecar still goes.
+	kept := time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)
+	if err := s.MarkViewed("webshop", kept); err != nil {
+		t.Fatalf("MarkViewed: %v", err)
+	}
+	if err := os.WriteFile(viewed, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("rewrite .viewed: %v", err)
+	}
+	if err := os.Chtimes(viewed, stamp, stamp); err != nil {
+		t.Fatalf("chtimes .viewed: %v", err)
+	}
+	got, ok = s.ViewedAt("webshop")
+	if !ok || !got.Equal(kept) {
+		t.Fatalf("ViewedAt after a stale sidecar = (%v, %v), want (%v, true)", got, ok, kept)
+	}
+	if _, err := os.Stat(viewed); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a stale .viewed was not removed: %v", err)
+	}
+}
