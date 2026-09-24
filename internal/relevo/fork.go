@@ -370,20 +370,27 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}, nil
 }
 
-// writeFork populates the new binding's directory and saves it, under the
-// caller's held lock. It is all-or-nothing: if any step fails, the destination
-// directory is removed, so a failed fork never leaves a directory that
-// store.list cannot see and a later bind would collide with.
+// writeFork populates the new binding's state and saves it, under the caller's
+// held lock. It is all-or-nothing: if any step fails, both the destination
+// directory and (when Save created it) the binding's record are removed, so a
+// failed fork leaves neither a record store.list could see nor a directory a
+// later bind would collide with.
 //
-// Preconditions:  the lock is held; b.Name has no directory yet.
-// Postconditions: on success, <root>/<b.Name>/ holds log.jsonl, the copied
+// Save comes before the appended entries because it is what creates the record
+// they belong to; it is also what adopts the dst/log.jsonl ForkState wrote.
+// The log order is fixed: the entries copied from src, then the fork note, then
+// the pick.
 //
-//	round files, and bind.json. On ANY error, that directory
-//	does not exist.
+// Preconditions:  the lock is held; b.Name has no record and no directory yet.
+// Postconditions: on success, <root>/<b.Name>/ holds the copied round files and
+//
+//	the binding's record holds the forked entries, the fork note and the pick.
+//	On ANY error, neither the record nor the directory exists.
 func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throughRound int, now time.Time, pick store.LogEntry) error {
 	success := false
 	defer func() {
 		if !success {
+			_ = tx.Delete(b.Name)
 			_ = os.RemoveAll(s.Dir(b.Name))
 		}
 	}()
@@ -403,13 +410,13 @@ func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throug
 		Confirmed: true,
 		Note:      fmt.Sprintf("forked from %s at round %d", src, throughRound),
 	}
+	if err := tx.Save(b); err != nil {
+		return err
+	}
 	if err := tx.AppendLog(b.Name, forkEntry); err != nil {
 		return err
 	}
 	if err := tx.AppendLog(b.Name, pick); err != nil {
-		return err
-	}
-	if err := tx.Save(b); err != nil {
 		return err
 	}
 	success = true

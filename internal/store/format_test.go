@@ -212,47 +212,22 @@ func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(s.Dir("webshop"), "bind.json"))
-	if err != nil {
-		t.Fatalf("read bind.json: %v", err)
-	}
+	raw := bindingRecordJSON(t, s, "webshop")
 	if bytes.Contains(raw, []byte(`"format"`)) {
 		t.Errorf("a format-1 binding must carry no format key:\n%s", raw)
 	}
 }
 
 // TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relevo
-// loads, and saving it back is refused with ErrNewerFormat, leaving the file
-// byte-for-byte as it was and no temp file behind.
+// is refused with ErrNewerFormat, both when Save is handed one and when the
+// import meets one on disk, leaving the file byte-for-byte as it was.
 func TestSaveRefusesANewerFormat(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")
 	b.Format = BindingFormat + 1
 
-	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, BindingFormat+1))) {
-		t.Fatalf("the fixture must carry format %d, got:\n%s", BindingFormat+1, raw)
-	}
-
-	got, err := s.Load(b.Name)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.Format != BindingFormat+1 {
-		t.Fatalf("loaded Format = %d, want %d", got.Format, BindingFormat+1)
-	}
-
-	err = s.Save(got)
+	// Save refuses it outright, before it writes or imports anything.
+	err := s.Save(b)
 	var newer *ErrNewerFormat
 	if !errors.As(err, &newer) {
 		t.Fatalf("Save of a newer format = %v, want *ErrNewerFormat", err)
@@ -268,21 +243,32 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
 
+	// A bind.json a newer relevo left on disk is refused by the import, and
+	// the file is not touched.
+	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, BindingFormat+1))) {
+		t.Fatalf("the fixture must carry format %d, got:\n%s", BindingFormat+1, raw)
+	}
+	path := filepath.Join(s.Dir(b.Name), "bind.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Load(b.Name); !errors.As(err, &newer) {
+		t.Fatalf("Load of a newer-format bind.json = %v, want *ErrNewerFormat", err)
+	}
+
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(raw, after) {
-		t.Error("a refused save must leave the file byte-identical")
-	}
-	entries, err := os.ReadDir(s.Dir(b.Name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
-			t.Errorf("a refused save left a temp file behind: %s", e.Name())
-		}
+		t.Error("a refused import must leave the file byte-identical")
 	}
 }
 

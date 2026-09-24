@@ -102,8 +102,21 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		t.Fatalf("dst must not contain bind.json, got err: %v", err)
 	}
 
-	// Postcondition: log.jsonl must exist and contain only round 1 & 2 entries,
-	// all Confirmed: true and DeliveredAt == nil.
+	// Postcondition: ForkState leaves dst/log.jsonl waiting, and the fork's
+	// own Save is what adopts it (A2). Before the Save the file is there.
+	dstLogPath := filepath.Join(dstDir, "log.jsonl")
+	if _, err := os.Stat(dstLogPath); err != nil {
+		t.Fatalf("dst must contain log.jsonl before its Save, got err: %v", err)
+	}
+	if err := s.Save(newBinding(dstName, "/repo-fork")); err != nil {
+		t.Fatalf("Save(dst): %v", err)
+	}
+	if _, err := os.Stat(dstLogPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the Save's import must adopt dst/log.jsonl, got err: %v", err)
+	}
+
+	// The adopted log must hold only round 1 & 2 entries, all Confirmed: true
+	// and DeliveredAt == nil.
 	dstLog, err := s.ReadLog(dstName)
 	if err != nil {
 		t.Fatalf("ReadLog dst: %v", err)
@@ -154,7 +167,6 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 		"002-plan.md",
 		"002-question.md",
 		"002-report.md",
-		"log.jsonl",
 	}
 	slices.Sort(dstFileNames)
 	slices.Sort(wantFiles)

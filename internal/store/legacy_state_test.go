@@ -18,28 +18,20 @@ func TestLoadMapsHeldAndOrphanedToActive(t *testing.T) {
 			root := t.TempDir()
 			s := New(root)
 
-			// Write the binding through the store so every other field is
-			// what a real bind.json holds, then rewrite its state to the
-			// legacy word exactly as an older relevo wrote it.
-			b := Binding{Name: "webshop", CWD: "/repo/webshop", Round: 2}
-			if err := s.Save(b); err != nil {
-				t.Fatalf("Save: %v", err)
-			}
-			path := filepath.Join(root, "webshop", "bind.json")
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read bind.json: %v", err)
-			}
-			var doc map[string]any
-			if err := json.Unmarshal(raw, &doc); err != nil {
-				t.Fatalf("decode bind.json: %v", err)
-			}
-			doc["state"] = legacy
-			patched, err := json.Marshal(doc)
+			// A bind.json written before those states were deleted, holding
+			// the legacy word as an older relevo wrote it. The import is what
+			// reads it now (P3a plan §4.3).
+			b := newBinding("webshop", "/repo/webshop")
+			b.Round = 2
+			b.State = State(legacy)
+			raw, err := json.MarshalIndent(b, "", "  ")
 			if err != nil {
 				t.Fatalf("encode bind.json: %v", err)
 			}
-			if err := os.WriteFile(path, patched, 0o644); err != nil {
+			if err := os.MkdirAll(s.Dir("webshop"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "webshop", "bind.json"), raw, 0o644); err != nil {
 				t.Fatalf("write bind.json: %v", err)
 			}
 

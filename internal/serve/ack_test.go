@@ -20,6 +20,11 @@ import (
 func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	st := store.New(t.TempDir())
 	name := "api"
+	// The log belongs to a saved binding: since P3a, AppendLog refuses a
+	// name with no record.
+	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
 
 	for _, e := range []store.LogEntry{
 		{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "r1"},

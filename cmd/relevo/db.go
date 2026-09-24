@@ -202,7 +202,7 @@ func cmdDBBackfill(args []string) error {
 			return fmt.Errorf("relevo db backfill: list bindings: %w", lerr)
 		}
 		for _, b := range bindings {
-			src := ingest.DirSource(rt.Store.Dir(b.Name))
+			src := ingest.StoreSource(rt.Store, b.Name)
 			stats, ierr := ingest.Ingest(ctx, src, d, deps)
 			if ierr != nil {
 				fmt.Print(formatBackfillFailure(prefix, b.Name, ierr))

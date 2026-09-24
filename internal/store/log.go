@@ -2,15 +2,14 @@ package store
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -292,7 +291,7 @@ func (t *Tx) ConfirmIndex(name string, idx int, route string) error {
 // via Tx. They never take the lock themselves.
 
 // appendLog appends one entry, stamping TS when the caller left it zero and
-// assigning Seq from the file itself.
+// assigning Seq from the binding's stored events.
 func (s *Store) appendLog(name string, e LogEntry) error {
 	if err := ValidName(name); err != nil {
 		return err
@@ -301,15 +300,32 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 		e.TS = time.Now().UTC()
 	}
 
-	// Seq is the number of newline-terminated lines already in the file, plus
-	// one. Reading the whole file is cheap -- maxLogEntries caps it at 10000
-	// lines -- and counting bytes '\n' needs no decode. A file that is absent
-	// counts zero.
-	raw, err := os.ReadFile(s.logPath(name))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read log for %q: %w", name, err)
+	if err := s.importPresent(name); err != nil {
+		return err
 	}
-	e.Seq = bytes.Count(raw, []byte{'\n'}) + 1
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil {
+		return fmt.Errorf("append log for %q: %w", name, err)
+	}
+	// The record must exist: the log belongs to a binding the store already
+	// knows, exactly as log.jsonl was a file inside the binding's directory.
+	if !ok {
+		return fmt.Errorf("append log for %q: %w", name, ErrNotFound)
+	}
+
+	n, err := d.EventMaxSeq(rec.ID)
+	if err != nil {
+		return err
+	}
+	// Refuse past maxLogEntries exactly as decodeLog does.
+	if n >= maxLogEntries {
+		return fmt.Errorf("log exceeds %d entries", maxLogEntries)
+	}
+	e.Seq = n + 1
 
 	encoded, err := json.Marshal(e)
 	if err != nil {
@@ -320,55 +336,61 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 		return fmt.Errorf("create binding dir: %w", err)
 	}
 
-	f, err := os.OpenFile(s.logPath(name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, bindingFileMode)
-	if err != nil {
-		return fmt.Errorf("open log for %q: %w", name, err)
-	}
-	defer f.Close()
-
-	if _, err := f.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("append log for %q: %w", name, err)
-	}
-
-	return nil
+	return d.EventAppend(rec.ID, recordEventOf(e, string(encoded)))
 }
 
-// readLog returns every entry in order, refusing to read past
-// maxLogEntries rather than silently truncating: since the log is
-// append-only, truncating would drop the newest entries, which is exactly
-// what pendingForPlanner and confirmIndex need.
+// readLog returns every entry in order. A binding with no record yields nil,
+// nil, the result a missing log.jsonl gave before the database.
 func (s *Store) readLog(name string) ([]LogEntry, error) {
-	f, err := os.Open(s.logPath(name))
-	if errors.Is(err, os.ErrNotExist) {
+	if err := s.importPresent(name); err != nil {
+		return nil, err
+	}
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
 		return nil, nil
 	}
+	rec, ok, err := d.RecordGet(name)
 	if err != nil {
-		return nil, fmt.Errorf("open log for %q: %w", name, err)
+		return nil, fmt.Errorf("read log for %q: %w", name, err)
 	}
-	defer f.Close()
-
-	entries, err := decodeLog(f)
+	if !ok {
+		return nil, nil
+	}
+	events, err := d.EventsOf(rec.ID, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%q: %w", name, err)
+		return nil, fmt.Errorf("read log for %q: %w", name, err)
 	}
-	return entries, nil
+	return logEntriesOf(events)
 }
 
 // readLogAfter returns the entries whose Seq is greater than after. A log
 // with no such entry yields nil, nil.
 func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
-	entries, err := s.readLog(name)
+	if err := s.importPresent(name); err != nil {
+		return nil, err
+	}
+	d, err := s.dbForRead()
 	if err != nil {
 		return nil, err
 	}
-
-	var out []LogEntry
-	for _, e := range entries {
-		if e.Seq > after {
-			out = append(out, e)
-		}
+	if d == nil {
+		return nil, nil
 	}
-	return out, nil
+	rec, ok, err := d.RecordGet(name)
+	if err != nil {
+		return nil, fmt.Errorf("read log for %q: %w", name, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	events, err := d.EventsOf(rec.ID, after)
+	if err != nil {
+		return nil, fmt.Errorf("read log for %q: %w", name, err)
+	}
+	return logEntriesOf(events)
 }
 
 // decodeLog scans a log.jsonl stream, one LogEntry per line, refusing to
@@ -434,14 +456,14 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 	return LogEntry{}, 0, false, nil
 }
 
-// confirmIndex marks one entry as delivered by route, patching that line in
-// place rather than re-marshalling the whole log.
+// confirmIndex marks one entry as delivered by route: the idx'th event in Seq
+// order.
 //
-// It decodes only the line it rewrites into map[string]json.RawMessage, sets
-// "confirmed", "delivered_at" and (when route is non-empty) "route", and
-// writes the map back. Every other line keeps its exact bytes, so a key a
-// newer relevo wrote on any line survives this binary (spec §4.3). Seq stays a
-// newline count: an unchanged line is never re-encoded at all.
+// It patches the entry's JSON the way the file writer patched a line --
+// decoding it into map[string]json.RawMessage and setting "confirmed",
+// "delivered_at" and (when route is non-empty) "route" -- so a key a newer
+// relevo wrote survives this binary (spec §4.3). The row's columns carry Seq,
+// Confirmed, DeliveredAt and Route, which readLog prefers.
 //
 // It takes an index rather than re-deriving "the entry we must have meant"
 // because the pair it replaced -- pendingForPlanner and confirmLatest -- agreed
@@ -449,40 +471,34 @@ func (s *Store) pendingForPlanner(name string) (LogEntry, int, bool, error) {
 // implicit and survived exactly as long as nobody edited one of them. Callers
 // hold the state lock across both calls, so the index is stable.
 func (s *Store) confirmIndex(name string, idx int, route string) error {
-	data, err := os.ReadFile(s.logPath(name))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.importPresent(name); err != nil {
+		return err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil {
 		return fmt.Errorf("read log for %q: %w", name, err)
 	}
-
-	// bytes.Split on '\n' then bytes.Join yields the file's exact bytes back,
-	// trailing newline included (the final empty segment). Empty lines are not
-	// entries -- readLog skips them -- so the entry at idx is the idx'th
-	// non-empty line.
-	lines := bytes.Split(data, []byte("\n"))
-	var lineIdx []int
-	for i, line := range lines {
-		if len(line) == 0 {
-			continue
+	var events []db.RecordEvent
+	if ok {
+		if events, err = d.EventsOf(rec.ID, 0); err != nil {
+			return fmt.Errorf("read log for %q: %w", name, err)
 		}
-		lineIdx = append(lineIdx, i)
 	}
-	if idx < 0 || idx >= len(lineIdx) {
-		return fmt.Errorf("confirm entry %d for %q: log has %d entries", idx, name, len(lineIdx))
+	if idx < 0 || idx >= len(events) {
+		return fmt.Errorf("confirm entry %d for %q: log has %d entries", idx, name, len(events))
 	}
-	li := lineIdx[idx]
+	ev := events[idx]
+	if ev.Confirmed {
+		return nil
+	}
 
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(lines[li], &m); err != nil {
+	if err := json.Unmarshal([]byte(ev.JSON), &m); err != nil {
 		return fmt.Errorf("decode log entry %d for %q: %w", idx, name, err)
-	}
-	var confirmed bool
-	if raw, ok := m["confirmed"]; ok {
-		if err := json.Unmarshal(raw, &confirmed); err != nil {
-			return fmt.Errorf("decode confirmed for %q entry %d: %w", name, idx, err)
-		}
-	}
-	if confirmed {
-		return nil
 	}
 
 	now := time.Now().UTC()
@@ -500,17 +516,9 @@ func (s *Store) confirmIndex(name string, idx int, route string) error {
 		m["route"] = encodedRoute
 	}
 
-	// Seq stays a newline count: the changed line carries its 1-based
-	// position, exactly as readLog fills it for a line that predates the
-	// field, so the rewrite writes it through as before.
-	seq := idx + 1
-	if raw, ok := m["seq"]; ok {
-		var n int
-		if err := json.Unmarshal(raw, &n); err == nil && n != 0 {
-			seq = n
-		}
-	}
-	encodedSeq, err := json.Marshal(seq)
+	// Seq is the entry's stored position; it is written through so a reader
+	// of the JSON alone still sees it.
+	encodedSeq, err := json.Marshal(ev.Seq)
 	if err != nil {
 		return fmt.Errorf("encode seq: %w", err)
 	}
@@ -520,7 +528,6 @@ func (s *Store) confirmIndex(name string, idx int, route string) error {
 	if err != nil {
 		return fmt.Errorf("encode log entry: %w", err)
 	}
-	lines[li] = patched
 
-	return writeFileAtomic(s.logPath(name), bytes.Join(lines, []byte("\n")), bindingFileMode)
+	return d.EventConfirm(rec.ID, ev.Seq, now, route, string(patched))
 }

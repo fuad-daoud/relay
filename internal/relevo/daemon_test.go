@@ -351,8 +351,10 @@ func TestTickIngestsLiveBindings(t *testing.T) {
 
 // TestTickWithoutDBIsUnchanged guards the nil-DB path: every call site
 // (here, the ingest hook) must treat Runtime.DB == nil exactly like a
-// machine with no database -- no panic, and no relevo.db file conjured into
-// existence by the mere act of ticking.
+// machine with no database -- no panic, and nothing written into the ingest
+// mirror. relevo.db itself is the store's own record file, which the
+// fixture's Bind/Save creates, so the assertion is on the mirror's rows
+// (P3a round 3, B3).
 func TestTickWithoutDBIsUnchanged(t *testing.T) {
 	rt, _ := sentBinding(t)
 
@@ -360,8 +362,38 @@ func TestTickWithoutDBIsUnchanged(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 
-	if _, err := os.Stat(rt.Store.DBPath()); !os.IsNotExist(err) {
-		t.Errorf("relevo.db stat = %v, want os.ErrNotExist (DB == nil must write nothing)", err)
+	assertIngestMirrorEmpty(t, rt.Store.DBPath())
+}
+
+// assertIngestMirrorEmpty asserts that the database at path holds no ingest
+// mirror rows: binding, event and round are all empty. A database that does
+// not exist passes too, which is what makes this a port of the old "Tick with
+// DB == nil must leave no relevo.db behind" stat: relevo.db is now the store's
+// own record file, and a nil Runtime.DB must still ingest nothing into the
+// mirror (P3a round 3, B3).
+func assertIngestMirrorEmpty(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open(%s): %v", path, err)
+	}
+	defer d.Close()
+
+	stats, err := d.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	for _, tbl := range []string{"binding", "event", "round"} {
+		if n := stats.Rows[tbl]; n != 0 {
+			t.Errorf("ingest mirror %s has %d rows, want 0", tbl, n)
+		}
 	}
 }
 
@@ -735,20 +767,15 @@ func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
 	}
 }
 
-// TestTickSkipsANewerFormatBinding pins #372 R1's daemon rule: a binding
-// written by a newer relevo is left alone -- no reconcile, no save -- so its
-// file keeps every field this binary cannot understand.
+// TestTickSkipsANewerFormatBinding pins #372 R1's rule under the DB-backed
+// store: a binding written by a newer relevo is left to that relevo. The
+// import refuses it with ErrNewerFormat and the file is not touched, so no
+// field this binary cannot understand is ever rewritten.
 //
-// The fixture's planner session names newRuntime's seeded record, so an
-// unguarded tick would back-fill PlannerID and save, changing the bytes.
+// (Before the database the daemon skipped the binding after loading it; now
+// the load itself refuses it, so a tick over such a root fails its listing.)
 func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	rt := newRuntime(t)
-	fr := rt.Runner.(*fakeRunner)
-
-	h := &captureHandler{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(h))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive,
@@ -771,8 +798,13 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
+	_, err = rt.Store.Load(b.Name)
+	var newer *store.ErrNewerFormat
+	if !errors.As(err, &newer) {
+		t.Fatalf("Load of a newer-format binding = %v, want *store.ErrNewerFormat", err)
+	}
+	if !errors.Is(err, store.ErrNewerFormatSentinel) {
+		t.Errorf("errors.Is(%v, store.ErrNewerFormatSentinel) = false, want true", err)
 	}
 
 	after, err := os.ReadFile(path)
@@ -780,21 +812,6 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(raw, after) {
-		t.Errorf("Tick rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
+		t.Errorf("the import rewrote a newer-format binding:\nbefore:\n%s\nafter:\n%s", raw, after)
 	}
-	if len(fr.specs) != 0 {
-		t.Errorf("Tick started %d processes for a newer-format binding", len(fr.specs))
-	}
-
-	// The skip must be visible: a silent skip would leave a human with no
-	// reason why the binding stopped moving. Dropping the tickOne check
-	// leaves the warning unlogged, so this is what the guard's own mutation
-	// check catches.
-	wanted := fmt.Sprintf("binding webshop is format %d; this relevo knows %d; leaving it to a newer relevo", store.BindingFormat+1, store.BindingFormat)
-	for _, r := range h.snapshot() {
-		if r.Message == wanted {
-			return
-		}
-	}
-	t.Errorf("Tick did not log %q; captured %d records", wanted, len(h.snapshot()))
 }

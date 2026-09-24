@@ -336,7 +336,7 @@ func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Bindin
 	}
 	deps := IngestDeps(rt)
 	for _, b := range bindings {
-		stats, err := ingest.Ingest(ctx, ingest.DirSource(rt.Store.Dir(b.Name)), rt.DB, deps)
+		stats, err := ingest.Ingest(ctx, ingest.StoreSource(rt.Store, b.Name), rt.DB, deps)
 		if err != nil {
 			slog.Warn("ingest", "binding", b.Name, "err", err)
 			continue

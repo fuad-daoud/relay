@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,8 +16,19 @@ func archiveFixture(t *testing.T, s *Store, name, stamp string, entries []LogEnt
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The fixture is a tarball, not a live binding: build its log member with
+	// the bytes Archive writes into one (D2: a live log is a DB row now).
+	var logBuf []byte
 	for _, e := range entries {
-		if err := s.appendLog(name, e); err != nil {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		logBuf = append(logBuf, raw...)
+		logBuf = append(logBuf, '\n')
+	}
+	if len(logBuf) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), logBuf, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
