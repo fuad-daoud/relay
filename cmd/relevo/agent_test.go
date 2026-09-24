@@ -44,168 +44,12 @@ func captureOutput(t *testing.T, fn func() error) (stdout []byte, stderr []byte,
 	return outBytes, errBytes, runErr
 }
 
-func TestAgentPrintClaudeByteIdentical(t *testing.T) {
-	expected, err := harness.AgentDoc("plan-executor", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc(claude): %v", err)
-	}
-
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "claude"})
-	})
-
-	if runErr != nil {
-		t.Fatalf("unexpected error: %v", runErr)
-	}
-	if len(stderr) != 0 {
-		t.Errorf("expected empty stderr, got %q", string(stderr))
-	}
-	if !bytes.Equal(stdout, expected) {
-		t.Errorf("stdout not byte-identical to embedded claude doc")
-	}
-}
-
-func TestAgentPrintOpencodeByteIdentical(t *testing.T) {
-	expected, err := harness.AgentDoc("plan-executor", "opencode")
-	if err != nil {
-		t.Fatalf("AgentDoc(opencode): %v", err)
-	}
-
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "opencode"})
-	})
-
-	if runErr != nil {
-		t.Fatalf("unexpected error: %v", runErr)
-	}
-	if len(stderr) != 0 {
-		t.Errorf("expected empty stderr, got %q", string(stderr))
-	}
-	if !bytes.Equal(stdout, expected) {
-		t.Errorf("stdout not byte-identical to embedded opencode doc")
-	}
-}
-
-func TestAgentPrintAgyByteIdentical(t *testing.T) {
-	for _, role := range []string{"plan-executor", "researcher", "reviewer"} {
-		expected, err := harness.AgentDoc(role, "agy")
-		if err != nil {
-			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
-		}
-		stdout, stderr, runErr := captureOutput(t, func() error {
-			return run([]string{"agent", "print", "--kind", "agy", "--role", role})
-		})
-		if runErr != nil {
-			t.Fatalf("%s: unexpected error: %v", role, runErr)
-		}
-		if len(stderr) != 0 {
-			t.Errorf("%s: expected empty stderr, got %q", role, string(stderr))
-		}
-		if !bytes.Equal(stdout, expected) {
-			t.Errorf("%s: stdout not byte-identical to embedded agy doc", role)
-		}
-	}
-}
-
-func TestAgentPrintUnknownKindExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "unknown-kind"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "claude") || !strings.Contains(string(stderr), "opencode") {
-		t.Errorf("expected stderr to name kinds that have definitions, got %q", string(stderr))
-	}
-}
-
-func TestAgentPrintMissingKindExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "usage") {
-		t.Errorf("expected usage on stderr, got %q", string(stderr))
-	}
-}
-
-func TestAgentPrintDefaultsToPlanExecutor(t *testing.T) {
-	expected, err := harness.AgentDoc("plan-executor", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc: %v", err)
-	}
-
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "claude"})
-	})
-
-	if runErr != nil {
-		t.Fatalf("unexpected error: %v", runErr)
-	}
-	if len(stderr) != 0 {
-		t.Errorf("expected empty stderr, got %q", string(stderr))
-	}
-	if !bytes.Equal(stdout, expected) {
-		t.Error("no --role must print the plan-executor definition unchanged")
-	}
-}
-
-func TestAgentPrintSelectsResearcher(t *testing.T) {
-	expected, err := harness.AgentDoc("researcher", "claude")
-	if err != nil {
-		t.Fatalf("AgentDoc: %v", err)
-	}
-
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "claude", "--role", "researcher"})
-	})
-
-	if runErr != nil {
-		t.Fatalf("unexpected error: %v", runErr)
-	}
-	if len(stderr) != 0 {
-		t.Errorf("expected empty stderr, got %q", string(stderr))
-	}
-	if !bytes.Equal(stdout, expected) {
-		t.Error("--role researcher must print the researcher definition")
-	}
-}
-
-func TestAgentPrintUnknownRoleExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "print", "--kind", "claude", "--role", "nosuch"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "researcher") {
-		t.Errorf("stderr must name the roles the kind has, got %q", string(stderr))
-	}
-}
-
 func TestAgentInstallDryRunWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "claude", "--dry-run"})
+		return run([]string{"config", "agents", "--kind", "claude", "--dry-run"})
 	})
 
 	if runErr != nil {
@@ -241,7 +85,7 @@ func TestAgentInstallWritesThenKeeps(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "agy"})
+		return run([]string{"config", "agents", "--kind", "agy"})
 	})
 
 	if runErr != nil {
@@ -283,7 +127,7 @@ func TestAgentInstallWritesThenKeeps(t *testing.T) {
 
 	// Run again: four kept (identical) ~/... lines and nil error
 	stdout2, stderr2, runErr2 := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "agy"})
+		return run([]string{"config", "agents", "--kind", "agy"})
 	})
 
 	if runErr2 != nil {
@@ -313,7 +157,7 @@ func TestAgentInstallUnknownKindExits2(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "unknown-kind"})
+		return run([]string{"config", "agents", "--kind", "unknown-kind"})
 	})
 
 	var ec exitCodeErr
@@ -333,7 +177,7 @@ func TestAgentInstallUnknownRoleExits2(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "claude", "--role", "nope"})
+		return run([]string{"config", "agents", "--kind", "claude", "--role", "nope"})
 	})
 
 	var ec exitCodeErr
@@ -371,7 +215,7 @@ func TestAgentInstallWriteFailureExits1(t *testing.T) {
 	})
 
 	stdout, _, runErr := captureOutput(t, func() error {
-		return run([]string{"agent", "install", "--kind", "claude"})
+		return run([]string{"config", "agents", "--kind", "claude"})
 	})
 
 	var ec exitCodeErr

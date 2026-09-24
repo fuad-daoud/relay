@@ -145,7 +145,7 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 // carries both.
 func TestRolesMissingNoteWording(t *testing.T) {
 	shipped := rolesMissingNote("builder", "claude", rolesGateBuilderDefs, []string{".claude/agents/plan-executor.md"})
-	if !strings.Contains(shipped, "run relevo agent install --kind claude") {
+	if !strings.Contains(shipped, "run relevo config agents --kind claude") {
 		t.Errorf("shipped note = %q, want the install fix", shipped)
 	}
 	if strings.Contains(shipped, "yourself") {
@@ -162,7 +162,7 @@ func TestRolesMissingNoteWording(t *testing.T) {
 
 	mixed := rolesMissingNote("builder", "claude", []string{"plan-executor", "my-executor"},
 		[]string{".claude/agents/plan-executor.md", ".claude/agents/my-executor.md"})
-	if !strings.Contains(mixed, "run relevo agent install --kind claude") || !strings.Contains(mixed, "yourself") {
+	if !strings.Contains(mixed, "run relevo config agents --kind claude") || !strings.Contains(mixed, "yourself") {
 		t.Errorf("mixed note = %q, want both fixes", mixed)
 	}
 }

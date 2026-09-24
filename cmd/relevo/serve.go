@@ -359,7 +359,7 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
-			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo agent install --kind "+r.Harness)
+			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
 		} else {
 			slog.Info("roles present", "harness", r.Harness)
 		}
@@ -501,7 +501,7 @@ func cmdServeInit(args []string) error {
 	}
 
 	fmt.Printf("fingerprint %s\n", fp)
-	fmt.Println(`clients: run relevo serve enroll --label <who> --key "<their relevo client init line>"`)
+	fmt.Println(`clients: run relevo serve enroll --label <who> --key "<their relevo config server key line>"`)
 	return nil
 }
 

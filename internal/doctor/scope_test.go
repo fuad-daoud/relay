@@ -111,7 +111,7 @@ func TestScopeChecks(t *testing.T) {
 		if !strings.Contains(got[0].Detail, "scope.allowed_cpus names cpu 7 but this host has 4 (0-3)") {
 			t.Errorf("Detail = %q, want the too-many-cores sentence", got[0].Detail)
 		}
-		if !strings.Contains(got[0].Fix, "narrow scope.allowed_cpus in policy.json") {
+		if !strings.Contains(got[0].Fix, "narrow scope.allowed_cpus in config policy") {
 			t.Errorf("Fix = %q, want the narrowing command", got[0].Fix)
 		}
 	})

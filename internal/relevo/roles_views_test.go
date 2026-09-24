@@ -1,6 +1,6 @@
 package relevo
 
-// The view tests for #374 §3.1-§3.3: relevo policy, relevo candidates, the
+// The view tests for #374 §3.1-§3.3: relevo config's pick and candidates blocks, the
 // post-bind consult-name note and the legacy-field warnings read the roles
 // registry when a roles.json is loaded, and reproduce today's bytes when it is
 // not. The legacy behaviour is pinned by the older tests, which stay unedited.
@@ -51,7 +51,7 @@ func rolesViewsSection(t *testing.T, got, start, end string) string {
 // legacy "no policy configured" line is never printed.
 //
 // Mutation check: make FormatPolicyFor print FormatPolicy's "  (no order set)"
-// header instead of "  (roles.json)" and this test fails on its first line.
+// header instead of "  (config roles)" and this test fails on its first line.
 func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	set := candidateSet(t, rolesViewsCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -61,18 +61,18 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 
 	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
 
-	want := "builder  (roles.json)\n" +
+	want := "builder  (config roles)\n" +
 		"  1  claude/test/b    order     <- would pick\n" +
 		"  2  claude/test/a    order\n" +
-		"reviewer  (roles.json)\n" +
-		"  no candidate listed in roles.json reviewer.candidates\n" +
-		"researcher  (roles.json)\n" +
-		"  no candidate listed in roles.json researcher.candidates\n"
+		"reviewer  (config roles)\n" +
+		"  no candidate listed in config roles reviewer.candidates\n" +
+		"researcher  (config roles)\n" +
+		"  no candidate listed in config roles researcher.candidates\n"
 	if got != want {
 		t.Errorf("FormatPolicyFor =\n%q\nwant:\n%q", got, want)
 	}
 
-	if !strings.Contains(got, "builder  (roles.json)") {
+	if !strings.Contains(got, "builder  (config roles)") {
 		t.Errorf("output must carry the file-mode header, got:\n%s", got)
 	}
 	pick := strings.Index(got, "1  claude/test/b    order     <- would pick")
@@ -80,7 +80,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	if pick < 0 || second < 0 || pick > second {
 		t.Errorf("the row's first candidate must be row 1 with the pick, then the second:\n%s", got)
 	}
-	if !strings.Contains(got, "no candidate listed in roles.json reviewer.candidates") {
+	if !strings.Contains(got, "no candidate listed in config roles reviewer.candidates") {
 		t.Errorf("a role with nothing listed must say so, got:\n%s", got)
 	}
 	if strings.Contains(got, "no policy configured") {
@@ -144,11 +144,11 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 	want := []PolicyWarning{
 		{
 			Role: "scout", Index: 0, Token: "claude/test/m",
-			Text: `roles.json scout.candidates[0] "claude/test/m": scout has no definition for claude`,
+			Text: `config roles scout.candidates[0] "claude/test/m": scout has no definition for claude`,
 		},
 		{
 			Role: "scout", Index: 1, Token: "claude/test/ghost",
-			Text: `roles.json scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
+			Text: `config roles scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -250,10 +250,10 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 
 	got := LegacyRoleFieldWarnings(reg, set, pol)
 	want := []string{
-		"candidates.json: claude/test/m: roles is ignored; roles.json assigns candidates to roles",
-		"candidates.json: claude/test/m: tier is ignored; set the role's tier in roles.json",
-		"policy.json: order is ignored; roles.json <role>.candidates orders them",
-		"policy.json: tier is ignored; set the role's tier in roles.json",
+		"candidates: claude/test/m: roles is ignored; config roles assigns candidates to roles",
+		"candidates: claude/test/m: tier is ignored; set the role's tier in config roles",
+		"policy: order is ignored; config roles <role>.candidates orders them",
+		"policy: tier is ignored; set the role's tier in config roles",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("LegacyRoleFieldWarnings =\n%q\nwant:\n%q", got, want)
@@ -303,10 +303,10 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 
 	_, err := resolveRole(reg, set, nil, "", "builder")
 	if err == nil {
-		t.Fatal("resolveRole with an empty roles.json builder.candidates = nil, want an error")
+		t.Fatal("resolveRole with an empty config roles builder.candidates = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "roles.json builder.candidates") {
-		t.Errorf("err = %q, want it to name roles.json builder.candidates", err)
+	if !strings.Contains(err.Error(), "config roles builder.candidates") {
+		t.Errorf("err = %q, want it to name config roles builder.candidates", err)
 	}
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)

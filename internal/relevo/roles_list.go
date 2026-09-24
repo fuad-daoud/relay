@@ -8,14 +8,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// FormatRoles renders the registry for `relevo roles` (#374 §3.2): one block per
+// FormatRoles renders the registry for `relevo config` (#374 §3.2): one block per
 // role in reg.Names() order, with a blank line between blocks --
 //
 //	<name>  <writer|reader>[  gate]  tier <tier or ->  (<reg.Source()>)
 //	  candidates  <tok>, <tok>      or   candidates  (none)
 //	  <kind>  <agent>[ + <req> ...][  (custom)]
 //
-// It is pure and never fails: `relevo roles` lists what is there.
+// It is pure and never fails: `relevo config` lists what is there.
 func FormatRoles(reg *roles.Registry) string {
 	blocks := make([]string, 0, len(reg.Names()))
 	for _, name := range reg.Names() {

@@ -211,8 +211,8 @@ func TestPolicyChecks(t *testing.T) {
 		if c.Detail != w.Text {
 			t.Errorf("check %d Detail = %q, want %q", i, c.Detail, w.Text)
 		}
-		if c.Fix != "edit ~/.config/relevo/policy.json" {
-			t.Errorf("check %d Fix = %q, want %q", i, c.Fix, "edit ~/.config/relevo/policy.json")
+		if c.Fix != "run relevo config edit" {
+			t.Errorf("check %d Fix = %q, want %q", i, c.Fix, "run relevo config edit")
 		}
 	}
 
@@ -332,7 +332,7 @@ func TestRefusalChecks(t *testing.T) {
 	if want := "3 candidates serve builder and no order is set -- add/bind without --builder would refuse"; checks[0].Detail != want {
 		t.Errorf("builder Detail = %q, want %q", checks[0].Detail, want)
 	}
-	if want := `write ~/.config/relevo/policy.json, e.g. {"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}`; checks[0].Fix != want {
+	if want := `relevo config set policy '{"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}'`; checks[0].Fix != want {
 		t.Errorf("builder Fix = %q, want %q", checks[0].Fix, want)
 	}
 	if want := "every candidate serving reviewer is gated -- ask --role reviewer without --candidate would refuse"; checks[1].Detail != want {
@@ -373,7 +373,7 @@ func TestRenderReportVerdict(t *testing.T) {
 			{Group: "", Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
 			{Group: "", Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
 			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relevo agent install --kind claude --role plan-executor"},
+			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relevo config agents --kind claude --role plan-executor"},
 		},
 		UsableBuilder: true,
 	}
@@ -385,7 +385,7 @@ func TestRenderReportVerdict(t *testing.T) {
 	if !strings.Contains(out, "1 warning, 0 failures -- relevo can run.") {
 		t.Errorf("expected success footer, got: %s", out)
 	}
-	if !strings.Contains(out, "    fix: relevo agent install --kind claude --role plan-executor") {
+	if !strings.Contains(out, "    fix: relevo config agents --kind claude --role plan-executor") {
 		t.Errorf("expected indented fix line, got: %s", out)
 	}
 
@@ -446,7 +446,7 @@ func TestRenderReportFooterPrecedence(t *testing.T) {
 			"could not establish a usable builder"},
 		{"no candidates beats no usable builder",
 			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
-			"0 warnings, 0 failures -- no candidates configured; write ~/.config/relevo/candidates.json first."},
+			"0 warnings, 0 failures -- no candidates configured; set them with relevo config set candidates first."},
 		{"a failure beats everything",
 			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
 			"Fix the failure above."},

@@ -1,4 +1,4 @@
-// Package setup builds the starter candidates.json and policy.json relevo init
+// Package setup builds the starter candidates and policy `relevo config init`
 // writes, and lands them under the user's config directory.
 package setup
 
@@ -12,7 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// Default is the provider and model relevo init seeds a harness with.
+// Default is the provider and model relevo config init seeds a harness with.
 type Default struct{ Provider, Model string }
 
 // Defaults is the README's documented example, one per harness kind. The values
@@ -33,7 +33,7 @@ type Files struct {
 }
 
 // Plan builds starter candidates and a policy for every harness binary on PATH,
-// in harness.All() order. It is an error when none is found: relevo init has
+// in harness.All() order. It is an error when none is found: relevo config init has
 // nothing to seed.
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string

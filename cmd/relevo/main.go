@@ -95,23 +95,24 @@ Commands:
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   migrate   move ` + legacy.Name + `-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
-  candidates   list the configured harness/provider/model candidates [--probe]
-  policy       show, per role, which candidate relevo would pick right now and why
-  roles        list each role's shape, candidates, tier and definitions; roles init writes roles.json
+  config    show the roles, the current pick and the candidates
+  config edit|get|set|unset|export|import
+            read and change the configuration document
+  config init|roles-init|agents
+            write starter configuration, roles, or agent definitions
+  config server add|rm|list|key
+            this machine's remote-builder identity and server list
+  config secret set|rm|list
+            store or forget the typesafe and client.key secrets
   planner      register this planner (or re-attach an existing one), and list, rename, forget or prune records
   unavailable  record a provider rate limit: relevo unavailable <token> [--for D] [--reason S]
   available    clear a recorded rate limit locally and on every server your bindings name: relevo available <provider|token>
-  agent     print or install embedded agent role definitions (e.g. relevo agent install --kind claude)
   db        path|migrate|stats for relevo's sqlite database
-  init      write starter candidates.json and policy.json from the harnesses on PATH, and install role definitions
 
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui|gates|available|unavailable
                             server administration, on the server host
 
-  client init|add-server|rm-server
-                            this machine's remote-builder identity and server list
-  servers   list configured remote servers and this client's enrollment on each
   add --server <name> [--base <ref>]  attach a builder that runs on a configured remote server
 
   help      print this message
@@ -375,33 +376,39 @@ func run(args []string) error {
 		return cmdDoctor(args[1:])
 	case "migrate":
 		return cmdMigrate(args[1:])
-	case "candidates":
-		return cmdCandidates(args[1:])
-	case "policy":
-		return cmdPolicy(args[1:])
-	case "roles":
-		return cmdRoles(args[1:])
+	case "config":
+		return cmdConfig(args[1:])
 	case "planner":
 		return cmdPlanner(args[1:])
 	case "unavailable":
 		return cmdUnavailable(args[1:])
 	case "available":
 		return cmdAvailable(args[1:])
-	case "agent":
-		return cmdAgent(args[1:])
 	case "db":
 		return cmdDB(args[1:])
-	case "init":
-		return cmdInit(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
-	case "client":
-		return cmdClient(args[1:])
-	case "servers":
-		return cmdServers(args[1:])
 	default:
+		// The seven verbs P2b folded into `relevo config` name their
+		// replacement rather than the generic unknown-subcommand error (§4.4).
+		if replacement, ok := removedVerbs[args[0]]; ok {
+			fmt.Fprintf(os.Stderr, "relevo: %q was removed; use %s\n", args[0], replacement)
+			return exitCodeErr{code: 2}
+		}
 		return fmt.Errorf("unknown subcommand %q; run \"relevo help\" for the command list", args[0])
 	}
+}
+
+// removedVerbs names each verb P2b folded into `relevo config`, with the form
+// that replaces it (§4.4).
+var removedVerbs = map[string]string{
+	"init":       "relevo config init",
+	"candidates": "relevo config",
+	"policy":     "relevo config",
+	"roles":      "relevo config",
+	"agent":      "relevo config agents",
+	"client":     "relevo config server",
+	"servers":    "relevo config server list",
 }
 
 // userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
@@ -437,7 +444,7 @@ func resolveHooksConfig(hooksMap map[string][][]string) (hooks.Config, error) {
 }
 
 // newHooksDispatcher wires the local hooks.d script dispatcher, and, when
-// policy.json's notify.webhooks is non-empty, a WebhookSink beside it (#4):
+// config policy's notify.webhooks is non-empty, a WebhookSink beside it (#4):
 // both receive every event, fanned out by a MultiDispatcher.
 func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatcher {
 	sinks := []hooks.Dispatcher{hooks.NewLocalDispatcher(hooksCfg, hooks.NewOSExecutor(hooksCfg.LogPath))}
@@ -719,7 +726,7 @@ func newRemoteClient(servers client.Servers, key []byte, gitClient *git.Client) 
 	}
 
 	if len(key) == 0 {
-		fmt.Fprintln(os.Stderr, "relevo: servers configured but no client key; run relevo client init")
+		fmt.Fprintln(os.Stderr, "relevo: servers configured but no client key; run relevo config server key")
 		return nil, nil, nil
 	}
 
@@ -800,13 +807,13 @@ func parseFor(s string, now time.Time) (time.Time, error) {
 }
 
 func cmdCandidates(args []string) error {
-	fs := flag.NewFlagSet("candidates", flag.ContinueOnError)
+	fs := flag.NewFlagSet("relevo config", flag.ContinueOnError)
 	probe := fs.Bool("probe", false, "run each candidate once with a one-line prompt from this machine and record its time to first output")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if !*probe && len(fs.Args()) > 0 {
-		return fmt.Errorf("usage: relevo candidates [--probe [token...]]")
+		return fmt.Errorf("usage: relevo config --probe [token...]")
 	}
 
 	rt, err := newRuntime()
@@ -844,6 +851,13 @@ func cmdCandidates(args []string) error {
 		return err
 	}
 
+	fmt.Print(formatCandidates(rt))
+	return nil
+}
+
+// formatCandidates renders the candidate table cmdCandidates' non-probe form
+// prints -- the candidates block `relevo config` shows.
+func formatCandidates(rt relevo.Runtime) string {
 	h, err := latency.Load(rt.LatencyPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
@@ -856,8 +870,7 @@ func cmdCandidates(args []string) error {
 		lat[ref] = h.Summary(ref)
 	}
 
-	fmt.Print(relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relevo.Gates(rt), lat))
-	return nil
+	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relevo.Gates(rt), lat)
 }
 
 // loadHistory reads the availability history for display, treating an
@@ -872,19 +885,10 @@ func loadHistory(rt relevo.Runtime) history.History {
 	return h.Prune(rt.Now())
 }
 
-func cmdPolicy(args []string) error {
-	fs := flag.NewFlagSet("policy", flag.ContinueOnError)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt), loadHistory(rt), rt.Now(), time.Local))
-	return nil
+// formatPolicy renders the per-role pick explanation the `pick` block of
+// `relevo config` shows.
+func formatPolicy(rt relevo.Runtime) string {
+	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt), loadHistory(rt), rt.Now(), time.Local)
 }
 
 func cmdUnavailable(args []string) error {
@@ -993,19 +997,19 @@ func cmdAvailable(args []string) error {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in config policy order[builder]")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	rebind := fs.Bool("rebind", false,
-		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
+		"with --resume: replace a gone builder, picking it by config policy order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: policy.json gate.default)")
-	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
+	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
+	noGate := fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
-	role := fs.String("role", "", "writer role this binding runs: a roles.json writer row (default builder)")
+	role := fs.String("role", "", "writer role this binding runs: a config roles writer row (default builder)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1091,7 +1095,7 @@ func cmdBind(args []string) error {
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
 		// The binding's role's definitions for this kind come from the
-		// registry, so a roles.json that names a custom builder executor
+		// registry, so a config roles that names a custom builder executor
 		// preflights that file (#374 §3.4). A Spec error is data: defs stays
 		// nil and the preflight falls back to the shipped builder definitions.
 		var defs []string
@@ -1153,7 +1157,7 @@ func cmdFork(args []string) error {
 	name := fs.String("name", "", "source binding to fork from")
 	round := fs.Int("round", 0, "source round to copy history through")
 	newName := fs.String("new-name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in config policy order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
@@ -1234,18 +1238,18 @@ func cmdFork(args []string) error {
 func cmdAdd(args []string) error {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the new binding")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
+	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in config policy order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
-	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo servers)")
+	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: policy.json gate.default)")
-	noGate := fs.Bool("no-gate", false, "opt this binding out of policy.json's gate.default")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
+	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
+	noGate := fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
-	role := fs.String("role", "", "writer role this binding runs: a roles.json writer row (default builder)")
+	role := fs.String("role", "", "writer role this binding runs: a config roles writer row (default builder)")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -1465,9 +1469,9 @@ func cmdSend(args []string) error {
 	builder := fs.String("builder", "", "candidate harness/provider/model to run this round and later ones on; refused while a round is open")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: policy.json gate.regate)")
+	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	verify := fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
-	noVerify := fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: policy.json verify.default)")
+	noVerify := fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: config policy verify.default)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1536,8 +1540,8 @@ func cmdSend(args []string) error {
 
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in roles.json")
-	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in policy.json order[<role>]")
+	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in config roles")
+	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in config policy order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
@@ -2610,7 +2614,7 @@ func cmdDaemon(args []string) error {
 }
 
 // refreshRoles lands relevo's shipped role definitions once per image start
-// (#371 §4.10). The kinds are the ones `relevo agent install` picks by default
+// (#371 §4.10). The kinds are the ones `relevo config agents` picks by default
 // -- harness.Install's own "every harness whose binary is on PATH" selection --
 // and the env is the same one that verb uses, so both read and write the one
 // manifest at <state root>/agents-manifest.json.
@@ -2635,7 +2639,7 @@ func refreshRoles() {
 		case harness.OutcomeWrote, harness.OutcomeUpdated:
 			slog.Info("role definition refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path)
 		case harness.OutcomeKeptDiffers:
-			slog.Info(fmt.Sprintf("%s was edited; relevo agent install --force replaces it", r.Path))
+			slog.Info(fmt.Sprintf("%s was edited; relevo config agents --force replaces it", r.Path))
 		case harness.OutcomeError:
 			slog.Warn("role definition not refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path, "err", r.Err)
 		}

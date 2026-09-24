@@ -11,6 +11,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -285,6 +286,74 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 	return warnings, nil
 }
 
+// Delete removes sec's stored body, if any, in one transaction. The version
+// bumps even when sec was absent: it is a change counter for readers, not a
+// count of stored sections.
+func (s *Store) Delete(sec Section) error {
+	return s.db.Tx(func(t *db.Tx) error {
+		return t.ConfigDelete(string(sec))
+	})
+}
+
+// PutDoc stores every section in doc. It checks every name and validates every
+// body first: an unknown section or the first invalid body aborts with nothing
+// written. The store's ConfigPuts then run in one transaction, so the version
+// bumps once per section in the document rather than once per call. Sections
+// not named in doc are untouched.
+func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
+	var unknown []string
+	for sec := range doc {
+		if !known(sec) {
+			unknown = append(unknown, string(sec))
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown config section %q", unknown[0])
+	}
+
+	var warnings []string
+	for _, sec := range Sections {
+		body, ok := doc[sec]
+		if !ok {
+			continue
+		}
+		w, err := Validate(sec, body)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, w...)
+	}
+
+	now := time.Now().UTC()
+	if err := s.db.Tx(func(t *db.Tx) error {
+		for _, sec := range Sections {
+			body, ok := doc[sec]
+			if !ok {
+				continue
+			}
+			if err := t.ConfigPut(string(sec), body, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return warnings, nil
+}
+
+// known reports whether sec names a stored section.
+func known(sec Section) bool {
+	for _, s := range Sections {
+		if s == sec {
+			return true
+		}
+	}
+	return false
+}
+
 // PutSecret stores value under name. The client key is validated with
 // remote.ParsePrivate first, so a malformed PEM never reaches the database.
 func (s *Store) PutSecret(name string, value []byte) error {
@@ -297,3 +366,14 @@ func (s *Store) PutSecret(name string, value []byte) error {
 		return t.SecretPut(name, value, time.Now().UTC())
 	})
 }
+
+// SecretDelete removes name's stored value, if any.
+func (s *Store) SecretDelete(name string) error {
+	return s.db.Tx(func(t *db.Tx) error {
+		return t.SecretDelete(name)
+	})
+}
+
+// SecretNames returns every stored secret's name, sorted. It never returns a
+// value.
+func (s *Store) SecretNames() ([]string, error) { return s.db.SecretNames() }

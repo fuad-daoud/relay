@@ -164,7 +164,7 @@ the report handoff, and nothing done inline appears in `relevo status`.
 - **Parallelism is instances, not harnesses.** Several builders are several
   `relevo add` bindings of one harness, each on its own worktree. Never bind
   two harness kinds to two tasks as a way of parallelising. Omit `--builder`
-  and let the configured order pick; `relevo policy` explains the current
+  and let the configured order pick; `relevo config` shows the current
   pick and why.
 - **A usage limit gates the provider.** When a builder reports one, run
   `relevo unavailable <token> --reason '<what it said>'`; relevo switches the

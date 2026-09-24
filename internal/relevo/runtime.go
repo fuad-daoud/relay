@@ -115,7 +115,7 @@ type Runtime struct {
 	AvailabilityPath string
 
 	// LatencyPath is the per-candidate latency history file (#324 part 1):
-	// time to first output per candidate, recorded by `relevo candidates
+	// time to first output per candidate, recorded by `relevo config
 	// --probe` and read back for the p50 on a plain listing. "" means no
 	// store is configured, so nothing is recorded (tests, and any caller
 	// that never set one).
@@ -284,7 +284,7 @@ func IngestDeps(rt Runtime) ingest.Deps {
 }
 
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
-var ErrRemoteUnavailable = errors.New("no remote client configured; run relevo client init and relevo client add-server")
+var ErrRemoteUnavailable = errors.New("no remote client configured; run relevo config server key and relevo config server add")
 
 // RemoteClient is the client for communicating with remote relevo servers.
 type RemoteClient interface {

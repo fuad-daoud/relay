@@ -260,7 +260,7 @@ func printWarnings(res migrate.Result) {
 func printNextSteps() {
 	fmt.Println("next steps:")
 	fmt.Println("  relevo doctor")
-	fmt.Println("  relevo agent install")
+	fmt.Println("  relevo config agents")
 	fmt.Println("  reinstall the planner plugin as relevo (README: Upgrading from relay)") // name-guard: legacy
 	fmt.Println("  restart planner sessions")
 }
