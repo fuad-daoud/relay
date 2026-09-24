@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -61,6 +62,20 @@ func Open(path string) (*DB, error) {
 	if err := ping(sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("db: open %s: ping: %w: %w", path, ErrOpen, err)
+	}
+
+	// Secrets live in this file (§4.2), so it and its WAL siblings are
+	// owner-only from the first open. A chmod failure is returned: running
+	// with a world-readable secrets store is not a warning.
+	if err := chmodPrivate(path); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("db: open %s: chmod: %w: %w", path, ErrOpen, err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := chmodIfExists(path + suffix); err != nil {
+			sqlDB.Close()
+			return nil, fmt.Errorf("db: open %s: chmod %s: %w: %w", path, suffix, ErrOpen, err)
+		}
 	}
 
 	have, err := maxVersion(sqlDB)
@@ -156,7 +171,16 @@ type Tx struct {
 
 // Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil
 // return, rollback otherwise. A driver busy error is mapped to ErrBusy.
+//
+// A database whose schema is newer than this binary is never written (#372
+// §4.5): Tx refuses with an error wrapping ErrNewerSchema, so every writer --
+// the config store's Put and PutSecret, the daemon's ingest -- fails cleanly
+// instead of downgrading a schema a newer relevo owns.
 func (d *DB) Tx(fn func(*Tx) error) error {
+	if d.newer {
+		return fmt.Errorf("db: tx: schema version %d is newer than this relevo (knows %d); refusing to write: %w", d.have, d.know, ErrNewerSchema)
+	}
+
 	ctx := context.Background()
 
 	conn, err := d.sqlDB.Conn(ctx)
@@ -196,6 +220,27 @@ func mapBusy(err error) error {
 		return ErrBusy
 	}
 	return err
+}
+
+// chmodPrivate makes path owner-only (0600). The database holds secrets from
+// schema v2 on, so this is not a hardening nicety (§4.2).
+func chmodPrivate(path string) error {
+	if err := os.Chmod(path, 0o600); err != nil {
+		return err
+	}
+	return nil
+}
+
+// chmodIfExists makes path owner-only when it exists; a missing file is not
+// an error, because sqlite creates the -wal and -shm siblings lazily.
+func chmodIfExists(path string) error {
+	if err := os.Chmod(path, 0o600); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // exec runs a statement against the transaction's connection.

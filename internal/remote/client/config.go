@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
-	"path/filepath"
+	"sort"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
@@ -26,15 +26,11 @@ type ServerEntry struct {
 
 type Servers map[string]ServerEntry // key: the server's short name
 
-// LoadServers loads the servers map from path. A missing file returns an empty map and nil error.
-func LoadServers(path string) (Servers, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return make(Servers), nil
-		}
-		return nil, fmt.Errorf("read servers file: %w", err)
-	}
+// ParseServers decodes a servers map from data and validates every entry with
+// ValidateEntry. Entries are checked in name order, so the first error is
+// deterministic. A missing body is the caller's concern; this returns exactly
+// the map the JSON holds, never nil.
+func ParseServers(data []byte) (Servers, error) {
 	var s Servers
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parse servers file: %w", err)
@@ -42,53 +38,31 @@ func LoadServers(path string) (Servers, error) {
 	if s == nil {
 		s = make(Servers)
 	}
+
+	names := make([]string, 0, len(s))
+	for name := range s {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := ValidateEntry(s[name]); err != nil {
+			return nil, fmt.Errorf("parse servers file: %s: %w", name, err)
+		}
+	}
 	return s, nil
 }
 
-// SaveServers saves the servers map to path atomically (write temp and rename) with permissions 0600.
-func SaveServers(path string, s Servers) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create directory: %w", err)
+// EncodeServers renders s as the indented JSON bodies the servers section
+// stores, with a trailing newline. It is the inverse of ParseServers.
+func EncodeServers(s Servers) ([]byte, error) {
+	if s == nil {
+		s = make(Servers)
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal servers: %w", err)
+		return nil, fmt.Errorf("marshal servers: %w", err)
 	}
-	data = append(data, '\n')
-
-	tmp, err := os.CreateTemp(dir, "servers-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if tmpName != "" {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename temp file: %w", err)
-	}
-	tmpName = ""
-	return nil
+	return append(data, '\n'), nil
 }
 
 // ValidateEntry checks that URL parses, is https unless Insecure, and has fingerprint or CA unless Insecure.
@@ -115,111 +89,23 @@ func ValidateEntry(e ServerEntry) error {
 	return nil
 }
 
-// KeyPaths returns the private and public key paths for a given configDir.
-func KeyPaths(configDir string) (priv, pub string) {
-	return filepath.Join(configDir, "relevo", "client.key"), filepath.Join(configDir, "relevo", "client.pub")
+// PublicComment is the "user@host" comment an enrolment line carries, the
+// rule InitKey used before the key moved into the database. It is "" when the
+// username cannot be read.
+func PublicComment() string {
+	u, err := user.Current()
+	if err != nil || u.Username == "" {
+		return ""
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return u.Username + "@" + h
+	}
+	return u.Username + "@localhost"
 }
 
-// ServersPath returns the servers.json path for a given configDir.
-func ServersPath(configDir string) string {
-	return filepath.Join(configDir, "relevo", "servers.json")
-}
-
-// LoadKey loads the ed25519 private key from privPath. Returns ErrNoKey when absent.
-func LoadKey(privPath string) (remote.Keypair, error) {
-	data, err := os.ReadFile(privPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return remote.Keypair{}, ErrNoKey
-		}
-		return remote.Keypair{}, fmt.Errorf("read client key: %w", err)
-	}
-	kp, err := remote.ParsePrivate(data)
-	if err != nil {
-		return remote.Keypair{}, fmt.Errorf("parse client key: %w", err)
-	}
-	return kp, nil
-}
-
-// InitKey generates a fresh ed25519 keypair and writes privPath (0600) and pubPath (0644).
-// Returns ErrKeyExists when privPath or pubPath already exists.
-func InitKey(privPath, pubPath string) (remote.Keypair, error) {
-	if _, err := os.Stat(privPath); err == nil {
-		return remote.Keypair{}, ErrKeyExists
-	}
-	if _, err := os.Stat(pubPath); err == nil {
-		return remote.Keypair{}, ErrKeyExists
-	}
-
-	dir := filepath.Dir(privPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return remote.Keypair{}, fmt.Errorf("create directory: %w", err)
-	}
-	pubDir := filepath.Dir(pubPath)
-	if pubDir != dir {
-		if err := os.MkdirAll(pubDir, 0o700); err != nil {
-			return remote.Keypair{}, fmt.Errorf("create public key directory: %w", err)
-		}
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		return remote.Keypair{}, fmt.Errorf("generate keypair: %w", err)
-	}
-
-	privPEM, err := remote.MarshalPrivate(kp)
-	if err != nil {
-		return remote.Keypair{}, fmt.Errorf("marshal private key: %w", err)
-	}
-
-	comment := ""
-	if u, err := user.Current(); err == nil && u.Username != "" {
-		if h, err := os.Hostname(); err == nil && h != "" {
-			comment = u.Username + "@" + h
-		} else {
-			comment = u.Username + "@localhost"
-		}
-	}
-	pubLine := remote.MarshalPublic(kp.Public, comment) + "\n"
-
-	// Write privPath exclusively (0600)
-	privFile, err := os.OpenFile(privPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return remote.Keypair{}, ErrKeyExists
-		}
-		return remote.Keypair{}, fmt.Errorf("write private key: %w", err)
-	}
-	if _, err := privFile.Write(privPEM); err != nil {
-		_ = privFile.Close()
-		_ = os.Remove(privPath)
-		return remote.Keypair{}, fmt.Errorf("write private key: %w", err)
-	}
-	if err := privFile.Close(); err != nil {
-		_ = os.Remove(privPath)
-		return remote.Keypair{}, fmt.Errorf("close private key: %w", err)
-	}
-
-	// Write pubPath exclusively (0644)
-	pubFile, err := os.OpenFile(pubPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		_ = os.Remove(privPath)
-		if os.IsExist(err) {
-			return remote.Keypair{}, ErrKeyExists
-		}
-		return remote.Keypair{}, fmt.Errorf("write public key: %w", err)
-	}
-	if _, err := pubFile.Write([]byte(pubLine)); err != nil {
-		_ = pubFile.Close()
-		_ = os.Remove(privPath)
-		_ = os.Remove(pubPath)
-		return remote.Keypair{}, fmt.Errorf("write public key: %w", err)
-	}
-	if err := pubFile.Close(); err != nil {
-		_ = os.Remove(privPath)
-		_ = os.Remove(pubPath)
-		return remote.Keypair{}, fmt.Errorf("close public key: %w", err)
-	}
-
-	return kp, nil
+// EnrollLine renders kp's public key as the enrolment line a server admin runs
+// `relevo serve enroll --key "<line>"` with, with the default comment. Callers
+// derive it from the key secret instead of reading a client.pub file.
+func EnrollLine(kp remote.Keypair) string {
+	return remote.MarshalPublic(kp.Public, PublicComment())
 }

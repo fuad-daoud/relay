@@ -22,6 +22,8 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -416,12 +418,9 @@ func userConfigRoot() (string, error) {
 	return filepath.Join(home, ".config"), nil
 }
 
-func resolveHooksConfig() (hooks.Config, error) {
-	configDir, err := userConfigRoot()
-	if err != nil {
-		return hooks.Config{}, err
-	}
-
+// resolveHooksConfig builds the hook dispatcher environment: the hooks section
+// the config store loaded, and the log path under the state root (#4.4).
+func resolveHooksConfig(hooksMap map[string][][]string) (hooks.Config, error) {
 	stateDir := os.Getenv("XDG_STATE_HOME")
 	if stateDir == "" {
 		home, err := os.UserHomeDir()
@@ -432,8 +431,8 @@ func resolveHooksConfig() (hooks.Config, error) {
 	}
 
 	return hooks.Config{
-		HooksDir: filepath.Join(configDir, "relevo", "hooks"),
-		LogPath:  filepath.Join(stateDir, "relevo", "hooks.log"),
+		Hooks:   hooksMap,
+		LogPath: filepath.Join(stateDir, "relevo", "hooks.log"),
 	}, nil
 }
 
@@ -538,48 +537,119 @@ func newDeliverers() map[string]relevo.PlannerDeliverer {
 	return deliverers
 }
 
-// newRuntime constructs the production runtime; aliases.json is never read (#80).
+// newRuntime constructs the production runtime. Config and secrets come from
+// the machine database; any file present under <userConfigRoot>/relevo is
+// imported into it first and removed (#4.6). aliases.json is never read (#80).
 func newRuntime() (relevo.Runtime, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
 
+	d, err := openDB(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+	cs := config.Open(d)
+
 	configDir, err := userConfigRoot()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-
-	candidates, candWarnings, err := candidate.LoadWithWarnings(filepath.Join(configDir, "relevo", "candidates.json"))
-	if err != nil {
-		return relevo.Runtime{}, err
+	if !d.Newer() {
+		if _, err := cs.ImportFiles(filepath.Join(configDir, "relevo"), time.Now().UTC()); err != nil {
+			return relevo.Runtime{}, err
+		}
+	} else {
+		// A schema a newer relevo wrote is never written by this binary: read
+		// what is there and skip the import (#4.6).
+		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
 
-	pol, polWarnings, err := policy.LoadWithWarnings(filepath.Join(configDir, "relevo", "policy.json"))
+	L, err := cs.Load()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
 
-	rolesFile, roleWarnings, err := roles.LoadWithWarnings(filepath.Join(configDir, "relevo", "roles.json"))
+	rt, err := buildRuntime(root, L)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
-	reg, err := roles.Build(rolesFile, candidates, pol)
+	rt.Config = cs
+	return rt, nil
+}
+
+// newRuntimePeek constructs the runtime `relevo daemon --preflight` and
+// `--check` need. It never creates, migrates or writes anything: it reads the
+// config files when any is present, else the database read-only when one
+// exists, else nothing at all (#4.6).
+func newRuntimePeek() (relevo.Runtime, error) {
+	root, err := store.DefaultRoot()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
+	configDir, err := userConfigRoot()
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+	dir := filepath.Join(configDir, "relevo")
+
+	var L config.Loaded
+	switch {
+	case configFilesPresent(dir):
+		L, err = config.LoadFiles(dir)
+	case fileExists(filepath.Join(root, "relevo.db")):
+		var d *db.DB
+		d, err = db.OpenReadOnly(filepath.Join(root, "relevo.db"))
+		if err == nil {
+			L, err = config.Open(d).Load()
+			_ = d.Close()
+		}
+	default:
+		L, err = config.LoadFiles(dir)
+	}
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+
+	return buildRuntime(root, L)
+}
+
+// configFilesPresent reports whether any file the import consumes, or a hooks
+// directory, is present in dir.
+func configFilesPresent(dir string) bool {
+	for _, name := range config.Files() {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	if info, err := os.Stat(filepath.Join(dir, "hooks")); err == nil && info.IsDir() {
+		return true
+	}
+	return false
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// buildRuntime wires the Runtime from one loaded config, the shape both
+// newRuntime and newRuntimePeek use.
+func buildRuntime(root string, L config.Loaded) (relevo.Runtime, error) {
+	pol := L.Policy
 
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
 	// so printing here would be noise (#372 §4.4). `relevo doctor` renders them
 	// and the daemon logs each once.
-	configWarnings := append(append(append([]string(nil), candWarnings...), polWarnings...), roleWarnings...)
+	configWarnings := L.Warnings
 
-	cls, _ := classify.Resolve(pol.Classify, configDir, os.Getenv)
+	cls, _ := classify.Resolve(pol.Classify, L.Typesafe, os.Getenv)
 
-	reader, prices := newUsageReader(configDir)
+	reader, prices := newUsageReader(L.Prices)
 	home, _ := os.UserHomeDir()
 
-	hooksCfg, err := resolveHooksConfig()
+	hooksCfg, err := resolveHooksConfig(L.Hooks)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -588,7 +658,7 @@ func newRuntime() (relevo.Runtime, error) {
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
-	remoteClient, transport, err := newRemoteClient(configDir, gitClient)
+	remoteClient, transport, err := newRemoteClient(L.Servers, L.ClientKey, gitClient)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -597,12 +667,12 @@ func newRuntime() (relevo.Runtime, error) {
 		Git:              gitClient,
 		Runner:           proc.New(),
 		Store:            st,
-		Candidates:       candidates,
+		Candidates:       L.Candidates,
 		LedgerPath:       st.LedgerPath(),
 		AvailabilityPath: st.AvailabilityPath(),
 		LatencyPath:      st.LatencyPath(),
 		Policy:           pol,
-		Registry:         reg,
+		Registry:         L.Registry,
 		ConfigWarnings:   configWarnings,
 		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
 		Classify:         cls,
@@ -638,31 +708,27 @@ func procStartUnix(pid int) (int64, error) {
 }
 
 // newRemoteClient wires Runtime.Remote and Runtime.Transport (§4.7): both nil
-// when servers.json is absent or empty. A servers.json with no client key is
-// not fatal -- every remote path already reports ErrRemoteUnavailable on a
+// when the servers section is absent or empty. Servers without a client key
+// are not fatal -- every remote path already reports ErrRemoteUnavailable on a
 // nil Runtime.Remote -- but it prints once, since a configured server the
 // client cannot reach is a setup mistake worth naming immediately rather
 // than only when a remote command is next run.
-func newRemoteClient(configDir string, gitClient *git.Client) (relevo.RemoteClient, remote.TreeTransport, error) {
-	servers, err := client.LoadServers(client.ServersPath(configDir))
-	if err != nil {
-		return nil, nil, err
-	}
+func newRemoteClient(servers client.Servers, key []byte, gitClient *git.Client) (relevo.RemoteClient, remote.TreeTransport, error) {
 	if len(servers) == 0 {
 		return nil, nil, nil
 	}
 
-	privPath, _ := client.KeyPaths(configDir)
-	key, err := client.LoadKey(privPath)
+	if len(key) == 0 {
+		fmt.Fprintln(os.Stderr, "relevo: servers configured but no client key; run relevo client init")
+		return nil, nil, nil
+	}
+
+	kp, err := remote.ParsePrivate(key)
 	if err != nil {
-		if errors.Is(err, client.ErrNoKey) {
-			fmt.Fprintln(os.Stderr, "relevo: servers.json present but no client key; run relevo client init")
-			return nil, nil, nil
-		}
 		return nil, nil, err
 	}
 
-	return client.New(servers, key, time.Now), remote.NewBundleTransport(gitClient, ""), nil
+	return client.New(servers, kp, time.Now), remote.NewBundleTransport(gitClient, ""), nil
 }
 
 // noteConsultRolesTooLong prints, after a successful bind/add/fork, the one
@@ -2294,7 +2360,17 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 
-	rt, err := newRuntime()
+	var (
+		rt  relevo.Runtime
+		err error
+	)
+	if *preflight || *check {
+		// §4.6: --preflight and --check never write. They read config files
+		// and a database read-only, and open nothing that migrates.
+		rt, err = newRuntimePeek()
+	} else {
+		rt, err = newRuntime()
+	}
 	if err != nil {
 		if *preflight {
 			// §4.4: the error on stderr, exit 1. Returning rather than
@@ -2359,13 +2435,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	watcher := relevo.NewConfigWatcher(relevo.ConfigPaths{
-		Candidates: filepath.Join(configDir, "relevo", "candidates.json"),
-		Policy:     filepath.Join(configDir, "relevo", "policy.json"),
-		Roles:      filepath.Join(configDir, "relevo", "roles.json"),
-		ConfigDir:  configDir,
-		Getenv:     os.Getenv,
-	})
+	watcher := relevo.NewConfigWatcher(rt.Config, filepath.Join(configDir, "relevo"), os.Getenv)
 
 	// --check is the plugin startup hook's probe. It prints nothing on either
 	// path: the exit status is the whole answer, and a hook that printed would
@@ -2448,7 +2518,11 @@ func cmdDaemon(args []string) error {
 	// each harness on disk, and one nobody edited is stale. Never fatal.
 	refreshRoles()
 
-	hooksCfg, err := resolveHooksConfig()
+	loaded, err := rt.Config.Load()
+	if err != nil {
+		return err
+	}
+	hooksCfg, err := resolveHooksConfig(loaded.Hooks)
 	if err != nil {
 		return err
 	}

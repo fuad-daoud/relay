@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
-	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // cmdClient dispatches `relevo client init|add-server|rm-server` (§4.7): this
@@ -54,27 +54,31 @@ func cmdClientInit(args []string) error {
 		return err
 	}
 
-	configDir, err := userConfigRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	privPath, pubPath := client.KeyPaths(configDir)
 
-	kp, err := client.InitKey(privPath, pubPath)
+	if _, ok, err := rt.Config.Secret(config.SecretClientKey); err != nil {
+		return err
+	} else if ok {
+		return fmt.Errorf("client key already exists; remove it first to replace it: %w", client.ErrKeyExists)
+	}
+
+	kp, err := remote.Generate()
 	if err != nil {
-		if errors.Is(err, client.ErrKeyExists) {
-			return fmt.Errorf("client key already exists at %s; remove it first to replace it", privPath)
-		}
+		return err
+	}
+	pem, err := remote.MarshalPrivate(kp)
+	if err != nil {
+		return err
+	}
+	if err := rt.Config.PutSecret(config.SecretClientKey, pem); err != nil {
 		return err
 	}
 
 	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
-
-	pubLine, err := os.ReadFile(pubPath)
-	if err != nil {
-		return err
-	}
-	fmt.Print(string(pubLine))
+	fmt.Println(client.EnrollLine(kp))
 	return nil
 }
 
@@ -119,17 +123,21 @@ func cmdClientAddServer(args []string) error {
 		return err
 	}
 
-	configDir, err := userConfigRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	serversPath := client.ServersPath(configDir)
-	servers, err := client.LoadServers(serversPath)
+	L, err := rt.Config.Load()
 	if err != nil {
 		return err
 	}
+	servers := L.Servers
 	servers[name] = entry
-	if err := client.SaveServers(serversPath, servers); err != nil {
+	body, err := client.EncodeServers(servers)
+	if err != nil {
+		return err
+	}
+	if _, err := rt.Config.Put(config.Servers, body); err != nil {
 		return err
 	}
 	fmt.Printf("added server %s (%s)\n", name, rawURL)
@@ -140,13 +148,12 @@ func cmdClientAddServer(args []string) error {
 		return nil
 	}
 
-	privPath, pubPath := client.KeyPaths(configDir)
-	key, err := client.LoadKey(privPath)
+	if len(L.ClientKey) == 0 {
+		fmt.Println("no client key yet; run relevo client init, then relevo client add-server again to check enrollment")
+		return nil
+	}
+	key, err := remote.ParsePrivate(L.ClientKey)
 	if err != nil {
-		if errors.Is(err, client.ErrNoKey) {
-			fmt.Println("no client key yet; run relevo client init, then relevo client add-server again to check enrollment")
-			return nil
-		}
 		return err
 	}
 
@@ -155,11 +162,7 @@ func cmdClientAddServer(args []string) error {
 	if werr != nil {
 		var httpErr *client.HTTPError
 		if errors.As(werr, &httpErr) && httpErr.Status == 401 {
-			pubLine, rerr := os.ReadFile(pubPath)
-			if rerr != nil {
-				return rerr
-			}
-			fmt.Printf("not enrolled on %s: give the admin: %s", name, string(pubLine))
+			fmt.Printf("not enrolled on %s: give the admin: %s\n", name, client.EnrollLine(key))
 			return nil
 		}
 		return fmt.Errorf("%s: %w", name, werr)
@@ -185,12 +188,11 @@ func cmdClientRmServer(args []string) error {
 	}
 	name := rest[0]
 
-	root, err := store.DefaultRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	st := store.New(root)
-	bindings, err := st.List()
+	bindings, err := rt.Store.List()
 	if err != nil {
 		return err
 	}
@@ -198,20 +200,20 @@ func cmdClientRmServer(args []string) error {
 		return fmt.Errorf("server %q is used by %s; unbind them first", name, strings.Join(inUse, ", "))
 	}
 
-	configDir, err := userConfigRoot()
+	L, err := rt.Config.Load()
 	if err != nil {
 		return err
 	}
-	serversPath := client.ServersPath(configDir)
-	servers, err := client.LoadServers(serversPath)
-	if err != nil {
-		return err
-	}
+	servers := L.Servers
 	if _, ok := servers[name]; !ok {
 		return fmt.Errorf("no such server %q", name)
 	}
 	delete(servers, name)
-	if err := client.SaveServers(serversPath, servers); err != nil {
+	body, err := client.EncodeServers(servers)
+	if err != nil {
+		return err
+	}
+	if _, err := rt.Config.Put(config.Servers, body); err != nil {
 		return err
 	}
 	fmt.Printf("removed server %s\n", name)
@@ -228,32 +230,27 @@ func cmdServers(args []string) error {
 		return err
 	}
 
-	configDir, err := userConfigRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	serversPath := client.ServersPath(configDir)
-	servers, err := client.LoadServers(serversPath)
+	L, err := rt.Config.Load()
 	if err != nil {
 		return err
 	}
+	servers := L.Servers
 	if len(servers) == 0 {
 		fmt.Println("no servers configured; relevo client add-server <name> <url>")
 		return nil
 	}
 
-	privPath, pubPath := client.KeyPaths(configDir)
-	key, keyErr := client.LoadKey(privPath)
-	var rt relevo.Runtime
-	if keyErr == nil {
-		rt.Remote = client.New(servers, key, time.Now)
-	}
-
+	var remoteRT relevo.Runtime
 	enrollLine := ""
-	if raw, rerr := os.ReadFile(pubPath); rerr == nil {
-		enrollLine = string(raw)
+	if key, kerr := remote.ParsePrivate(L.ClientKey); kerr == nil {
+		remoteRT.Remote = client.New(servers, key, time.Now)
+		enrollLine = client.EnrollLine(key)
 	}
 
-	fmt.Print(relevo.RenderServers(relevo.ProbeServers(context.Background(), rt, servers, enrollLine)))
+	fmt.Print(relevo.RenderServers(relevo.ProbeServers(context.Background(), remoteRT, servers, enrollLine)))
 	return nil
 }

@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func TestOSExecutorExecute_EmptyArgvSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "empty.log")
+	executor := NewOSExecutor(logPath)
+
+	if err := executor.Execute(context.Background(), nil, Event{Type: EventStateChanged}); err != nil {
+		t.Fatalf("Execute with an empty argv returned %v, want nil", err)
+	}
+
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if !strings.Contains(string(logData), "empty argv") {
+		t.Errorf("log output missing the empty-argv note, got:\n%s", logData)
+	}
+}
+
 func TestOSExecutorExecute_EnvAndLogging(t *testing.T) {
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "test_env.sh")
@@ -38,7 +56,7 @@ echo "ROUND=$RELEVO_ROUND"
 		Timestamp: time.Now().UTC(),
 	}
 
-	err := executor.Execute(context.Background(), scriptPath, event)
+	err := executor.Execute(context.Background(), []string{scriptPath}, event)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -88,7 +106,7 @@ exit 2
 		Timestamp: time.Now().UTC(),
 	}
 
-	err := executor.Execute(context.Background(), scriptPath, event)
+	err := executor.Execute(context.Background(), []string{scriptPath}, event)
 	if err == nil {
 		t.Fatal("Execute expected error, got nil")
 	}
@@ -133,7 +151,7 @@ sleep 10
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := executor.Execute(ctx, scriptPath, event)
+	err := executor.Execute(ctx, []string{scriptPath}, event)
 	if err == nil {
 		t.Fatal("Execute expected timeout error, got nil")
 	}

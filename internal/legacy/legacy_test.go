@@ -141,7 +141,9 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"both config", false, false, true, true, false, true},
 		{"new state only", false, true, false, false, false, false},
 		{"new state, new config", false, true, false, true, false, false},
-		{"new state, old config", false, true, true, false, true, false},
+		// P2a: once the relevo state root exists, config lives in its DB, so
+		// a missing old config is no longer unmigrated (§4.9).
+		{"new state, old config", false, true, true, false, false, false},
 		{"new state, both config", false, true, true, true, false, true},
 		{"old state only", true, false, false, false, true, false},
 		{"old state, new config", true, false, false, true, true, false},
@@ -149,7 +151,9 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"old state, both config", true, false, true, true, true, true},
 		{"both state", true, true, false, false, false, true},
 		{"both state, new config", true, true, false, true, false, true},
-		{"both state, old config", true, true, true, false, true, true},
+		// P2a: the new state root exists, so its DB holds config; a leftover
+		// old config directory is stale, not unmigrated (§4.9).
+		{"both state, old config", true, true, true, false, false, true},
 		{"all four", true, true, true, true, false, true},
 	}
 

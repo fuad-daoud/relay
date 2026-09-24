@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/config"
 )
 
 // stubBinary writes an executable stub named name into dir.
@@ -18,18 +17,36 @@ func stubBinary(t *testing.T, dir, name string) {
 	}
 }
 
-// initRoot gives a test its own HOME and XDG_CONFIG_HOME and returns them.
+// initRoot gives a test its own HOME, XDG_CONFIG_HOME and XDG_STATE_HOME and
+// returns them. Both roots are per-test: config now lives in the state root's
+// database, so the #235 rule applies to a test that writes config (#235).
 func initRoot(t *testing.T) (home, configHome string) {
 	t.Helper()
 	home = t.TempDir()
 	configHome = filepath.Join(home, "config")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	return home, configHome
 }
 
+// storedConfig loads the sections a command just wrote back through the
+// runtime's own config store.
+func storedConfig(t *testing.T) config.Loaded {
+	t.Helper()
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	L, err := rt.Config.Load()
+	if err != nil {
+		t.Fatalf("Config.Load: %v", err)
+	}
+	return L
+}
+
 func TestInitWritesConfigAndRoles(t *testing.T) {
-	home, configHome := initRoot(t)
+	home, _ := initRoot(t)
 
 	bin := t.TempDir()
 	stubBinary(t, bin, "claude")
@@ -43,13 +60,12 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
 	}
 
-	candPath := filepath.Join(configHome, "relevo", "candidates.json")
-	if _, err := candidate.Load(candPath); err != nil {
-		t.Fatalf("candidate.Load(%s): %v", candPath, err)
+	L := storedConfig(t)
+	if L.Candidates.Len() != 2 {
+		t.Errorf("stored candidates = %v, want claude and opencode", L.Candidates.Refs())
 	}
-	polPath := filepath.Join(configHome, "relevo", "policy.json")
-	if _, err := policy.Load(polPath); err != nil {
-		t.Fatalf("policy.Load(%s): %v", polPath, err)
+	if got := len(L.Policy.OrderFor("builder")); got != 2 {
+		t.Errorf("stored order.builder has %d tokens, want 2", got)
 	}
 
 	for _, path := range []string{
@@ -71,7 +87,7 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 }
 
 func TestInitRefusesOverwriteWithoutForce(t *testing.T) {
-	_, configHome := initRoot(t)
+	_, _ = initRoot(t)
 
 	bin := t.TempDir()
 	stubBinary(t, bin, "claude")
@@ -99,8 +115,16 @@ func TestInitRefusesOverwriteWithoutForce(t *testing.T) {
 		t.Fatalf("init --force: %v (stderr: %s)", err, stderr)
 	}
 
-	if _, err := os.Stat(filepath.Join(configHome, "relevo", "candidates.json")); err != nil {
-		t.Errorf("candidates.json after --force: %v", err)
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	ok, err := rt.Config.Has(config.Candidates)
+	if err != nil {
+		t.Fatalf("Has(candidates): %v", err)
+	}
+	if !ok {
+		t.Error("candidates section missing after init --force")
 	}
 }
 

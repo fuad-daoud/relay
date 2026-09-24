@@ -3,9 +3,6 @@ package classify
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -13,7 +10,7 @@ import (
 
 func TestResolve(t *testing.T) {
 	t.Run("nil cfg -> nil classifier, Configured false", func(t *testing.T) {
-		cls, st := Resolve(nil, t.TempDir(), os.Getenv)
+		cls, st := Resolve(nil, "", osGetenv)
 		if cls != nil {
 			t.Errorf("expected nil classifier, got %v", cls)
 		}
@@ -30,7 +27,7 @@ func TestResolve(t *testing.T) {
 			}
 			return ""
 		}
-		cls, st := Resolve(cfg, t.TempDir(), getenv)
+		cls, st := Resolve(cfg, "", getenv)
 		if !st.Configured {
 			t.Fatal("expected Configured true")
 		}
@@ -52,53 +49,28 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("file key (t.TempDir as configDir, relevo/typesafe.key with trailing newline) -> KeySource file, key trimmed", func(t *testing.T) {
-		cfgDir := t.TempDir()
-		relevoDir := filepath.Join(cfgDir, "relevo")
-		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		keyPath := filepath.Join(relevoDir, "typesafe.key")
-		if err := os.WriteFile(keyPath, []byte("  file-secret-key  \n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
+	t.Run("db key (trailing newline) -> KeySource db, key trimmed", func(t *testing.T) {
 		cfg := &policy.Classify{Provider: "jev", Model: "custom-model"}
-		getenv := func(string) string { return "" }
-
-		cls, st := Resolve(cfg, cfgDir, getenv)
+		cls, st := Resolve(cfg, "  db-secret-key  \n", osGetenv)
 		if !st.Configured {
 			t.Fatal("expected Configured true")
 		}
-		if st.KeySource != "file" {
-			t.Errorf("KeySource = %q, want file", st.KeySource)
-		}
-		if st.KeyPath != keyPath {
-			t.Errorf("KeyPath = %q, want %q", st.KeyPath, keyPath)
+		if st.KeySource != "db" {
+			t.Errorf("KeySource = %q, want db", st.KeySource)
 		}
 		client, ok := cls.(*Client)
 		if !ok {
 			t.Fatalf("expected *Client, got %T", cls)
 		}
-		if client.Key != "file-secret-key" {
-			t.Errorf("client.Key = %q, want file-secret-key", client.Key)
+		if client.Key != "db-secret-key" {
+			t.Errorf("client.Key = %q, want db-secret-key", client.Key)
 		}
 		if client.Model != "custom-model" {
 			t.Errorf("client.Model = %q, want custom-model", client.Model)
 		}
 	})
 
-	t.Run("env wins over file when both", func(t *testing.T) {
-		cfgDir := t.TempDir()
-		relevoDir := filepath.Join(cfgDir, "relevo")
-		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		keyPath := filepath.Join(relevoDir, "typesafe.key")
-		if err := os.WriteFile(keyPath, []byte("file-secret-key\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
+	t.Run("env wins over the db key when both", func(t *testing.T) {
 		cfg := &policy.Classify{Provider: "jev"}
 		getenv := func(key string) string {
 			if key == "TYPESAFE_API_KEY" {
@@ -106,8 +78,7 @@ func TestResolve(t *testing.T) {
 			}
 			return ""
 		}
-
-		cls, st := Resolve(cfg, cfgDir, getenv)
+		cls, st := Resolve(cfg, "db-secret-key", getenv)
 		if st.KeySource != "env" {
 			t.Errorf("KeySource = %q, want env", st.KeySource)
 		}
@@ -120,25 +91,22 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("neither -> Unavailable, KeySource empty, KeyPath ends in relevo/typesafe.key, Judge returns ErrUnavailable", func(t *testing.T) {
-		cfgDir := t.TempDir()
+	t.Run("neither -> Unavailable, KeySource empty, Judge returns ErrUnavailable", func(t *testing.T) {
 		cfg := &policy.Classify{Provider: "jev"}
-		getenv := func(string) string { return "" }
-
-		cls, st := Resolve(cfg, cfgDir, getenv)
+		cls, st := Resolve(cfg, "", osGetenv)
 		if !st.Configured {
 			t.Fatal("expected Configured true")
 		}
 		if st.KeySource != "" {
 			t.Errorf("KeySource = %q, want empty", st.KeySource)
 		}
-		if !strings.HasSuffix(st.KeyPath, filepath.Join("relevo", "typesafe.key")) {
-			t.Errorf("KeyPath %q does not end with relevo/typesafe.key", st.KeyPath)
-		}
 
 		unavail, ok := cls.(Unavailable)
 		if !ok {
 			t.Fatalf("expected Unavailable, got %T", cls)
+		}
+		if unavail.Reason != "no classifier key" {
+			t.Errorf("Reason = %q, want %q", unavail.Reason, "no classifier key")
 		}
 		_, err := unavail.Judge(context.Background(), Request{Source: "report", Paragraphs: []Paragraph{{Index: 0, Kind: KindProse, Text: "t", Line: 1, Lines: 1}}})
 		if !errors.Is(err, ErrUnavailable) {
@@ -146,21 +114,9 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("empty file -> treated as no key", func(t *testing.T) {
-		cfgDir := t.TempDir()
-		relevoDir := filepath.Join(cfgDir, "relevo")
-		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		keyPath := filepath.Join(relevoDir, "typesafe.key")
-		if err := os.WriteFile(keyPath, []byte("   \n\t  \n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
+	t.Run("blank db key -> treated as no key", func(t *testing.T) {
 		cfg := &policy.Classify{Provider: "jev"}
-		getenv := func(string) string { return "" }
-
-		cls, st := Resolve(cfg, cfgDir, getenv)
+		cls, st := Resolve(cfg, "   \n\t  \n", osGetenv)
 		if st.KeySource != "" {
 			t.Errorf("KeySource = %q, want empty", st.KeySource)
 		}
@@ -168,69 +124,6 @@ func TestResolve(t *testing.T) {
 			t.Fatalf("expected Unavailable, got %T", cls)
 		}
 	})
-
-	t.Run("0644 key file -> Unavailable, KeySource empty, KeyFileLoose true, reason names mode; 0600 -> file key", func(t *testing.T) {
-		cfgDir := t.TempDir()
-		relevoDir := filepath.Join(cfgDir, "relevo")
-		if err := os.MkdirAll(relevoDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		keyPath := filepath.Join(relevoDir, "typesafe.key")
-		if err := os.WriteFile(keyPath, []byte("file-secret-key\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		cfg := &policy.Classify{Provider: "jev"}
-		getenv := func(string) string { return "" }
-
-		// Loose permissions (0644)
-		cls, st := Resolve(cfg, cfgDir, getenv)
-		if !st.Configured {
-			t.Fatal("expected Configured true")
-		}
-		if st.KeySource != "" {
-			t.Errorf("KeySource = %q, want empty", st.KeySource)
-		}
-		if !st.KeyFileLoose {
-			t.Errorf("KeyFileLoose = %v, want true", st.KeyFileLoose)
-		}
-		if st.KeyFileMode != 0o644 {
-			t.Errorf("KeyFileMode = 0%o, want 0644", st.KeyFileMode)
-		}
-
-		unavail, ok := cls.(Unavailable)
-		if !ok {
-			t.Fatalf("expected Unavailable, got %T", cls)
-		}
-		if !strings.Contains(unavail.Reason, "0644") {
-			t.Errorf("reason %q does not contain 0644", unavail.Reason)
-		}
-		_, err := unavail.Judge(context.Background(), Request{Source: "report", Paragraphs: []Paragraph{{Index: 0, Kind: KindProse, Text: "t", Line: 1, Lines: 1}}})
-		if err == nil || !strings.Contains(err.Error(), "readable by others") {
-			t.Errorf("Judge error %v does not contain 'readable by others'", err)
-		}
-
-		// Fixed permissions (0600)
-		if err := os.Chmod(keyPath, 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		cls2, st2 := Resolve(cfg, cfgDir, getenv)
-		if !st2.Configured {
-			t.Fatal("expected Configured true")
-		}
-		if st2.KeySource != "file" {
-			t.Errorf("KeySource = %q, want file", st2.KeySource)
-		}
-		if st2.KeyFileLoose {
-			t.Errorf("KeyFileLoose = %v, want false", st2.KeyFileLoose)
-		}
-		client, ok := cls2.(*Client)
-		if !ok {
-			t.Fatalf("expected *Client, got %T", cls2)
-		}
-		if client.Key != "file-secret-key" {
-			t.Errorf("client.Key = %q, want file-secret-key", client.Key)
-		}
-	})
 }
+
+func osGetenv(string) string { return "" }

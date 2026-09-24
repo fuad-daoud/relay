@@ -57,13 +57,25 @@ func LoadPrices(path string) (Prices, error) {
 	if err != nil {
 		return base, fmt.Errorf("%s: %w", path, err)
 	}
+	p, err := ParsePrices(raw)
+	if err != nil {
+		return base, fmt.Errorf("%s: %w", path, err)
+	}
+	return p, nil
+}
+
+// ParsePrices returns the embedded default overlaid by the rows in data, the
+// same overlay LoadPrices applies. Errors wrap ErrBadPrices and carry no path:
+// LoadPrices adds the file's, and internal/config names the section.
+func ParsePrices(data []byte) (Prices, error) {
+	base := DefaultPrices()
 	var file Prices
-	if err := json.Unmarshal(raw, &file); err != nil {
-		return base, fmt.Errorf("%s: %v: %w", path, err, ErrBadPrices)
+	if err := json.Unmarshal(data, &file); err != nil {
+		return base, fmt.Errorf("%v: %w", err, ErrBadPrices)
 	}
 	for k, m := range file.Models {
 		if m.In < 0 || m.CacheRead < 0 || m.CacheWrite < 0 || m.Out < 0 {
-			return base, fmt.Errorf("%s: %s: negative price: %w", path, k, ErrBadPrices)
+			return base, fmt.Errorf("%s: negative price: %w", k, ErrBadPrices)
 		}
 		base.Models[k] = m
 	}

@@ -98,7 +98,15 @@ func LoadWithWarnings(path string) (*File, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return Parse(path, raw)
+}
 
+// Parse validates roles from data, naming them by name in every message. name
+// is the file path when LoadWithWarnings calls it, so an existing message is
+// unchanged; internal/config passes the stored section's file name. It applies
+// exactly the rules LoadWithWarnings documents.
+func Parse(name string, raw []byte) (*File, []string, error) {
+	path := name
 	var rows map[string]Row
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, nil, fmt.Errorf("%s: %v: %w", path, err, ErrBadRoles)

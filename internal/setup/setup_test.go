@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -93,58 +92,5 @@ func TestPlanNoneIsAnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no harness binaries") {
 		t.Fatalf("Plan error = %q, want it to mention %q", err, "no harness binaries")
-	}
-}
-
-func TestWriteRefusesWithoutForceBothOrNeither(t *testing.T) {
-	dir := t.TempDir()
-	files := Files{
-		Kinds:      []string{"claude"},
-		Candidates: []byte("[]\n"),
-		Policy:     []byte("{}\n"),
-	}
-
-	relevoDir := filepath.Join(dir, "relevo")
-	if err := os.MkdirAll(relevoDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	policyPath := filepath.Join(relevoDir, "policy.json")
-	candidatesPath := filepath.Join(relevoDir, "candidates.json")
-	if err := os.WriteFile(policyPath, []byte("keep\n"), 0o644); err != nil {
-		t.Fatalf("pre-create policy: %v", err)
-	}
-
-	res, err := Write(dir, files, false)
-	if err != nil {
-		t.Fatalf("Write(force=false): %v", err)
-	}
-	if res.WroteCandidates || res.WrotePolicy {
-		t.Fatalf("Write(force=false) wrote candidates=%v policy=%v, want both false",
-			res.WroteCandidates, res.WrotePolicy)
-	}
-	if _, err := os.Stat(candidatesPath); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("candidates.json after refused write: err = %v, want not-exist", err)
-	}
-	if b, err := os.ReadFile(policyPath); err != nil || string(b) != "keep\n" {
-		t.Fatalf("policy.json after refused write = %q, %v; want unchanged", b, err)
-	}
-
-	res, err = Write(dir, files, true)
-	if err != nil {
-		t.Fatalf("Write(force=true): %v", err)
-	}
-	if !res.WroteCandidates || !res.WrotePolicy {
-		t.Fatalf("Write(force=true) wrote candidates=%v policy=%v, want both true",
-			res.WroteCandidates, res.WrotePolicy)
-	}
-	if b, err := os.ReadFile(candidatesPath); err != nil || string(b) != "[]\n" {
-		t.Fatalf("candidates.json after forced write = %q, %v", b, err)
-	}
-	if b, err := os.ReadFile(policyPath); err != nil || string(b) != "{}\n" {
-		t.Fatalf("policy.json after forced write = %q, %v", b, err)
-	}
-	if res.CandidatesPath != candidatesPath || res.PolicyPath != policyPath {
-		t.Fatalf("WriteResult paths = %q, %q; want %q, %q",
-			res.CandidatesPath, res.PolicyPath, candidatesPath, policyPath)
 	}
 }

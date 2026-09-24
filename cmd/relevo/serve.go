@@ -16,13 +16,13 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui"
@@ -258,29 +258,34 @@ func serveAdminConfig(root string) serve.Config {
 	}
 }
 
-// loadCandidatesAndPolicy reads the machine's candidates.json, policy.json and
-// roles.json, the set every candidate-aware command needs. It is the one copy
-// of that loading: cmdServeRun starts a daemon with it, and the gate verbs
-// require it. roles.json is optional: absent, the registry is the legacy
-// derivation of the other two.
-func loadCandidatesAndPolicy(configDir string) (*candidate.Set, policy.Policy, *roles.Registry, error) {
-	candidates, err := candidate.Load(filepath.Join(configDir, "relevo", "candidates.json"))
+// loadServeConfig opens the machine database exactly as newRuntime does
+// (store.DefaultRoot(), not --state), imports any config file present, and
+// returns the loaded config: the set every candidate-aware command needs. It
+// is the one copy of that loading: cmdServeRun starts a daemon with it, and
+// the gate verbs require it (§4.8).
+func loadServeConfig() (config.Loaded, error) {
+	root, err := store.DefaultRoot()
 	if err != nil {
-		return nil, policy.Policy{}, nil, err
+		return config.Loaded{}, err
 	}
-	pol, err := policy.Load(filepath.Join(configDir, "relevo", "policy.json"))
+	d, err := openDB(filepath.Join(root, "relevo.db"))
 	if err != nil {
-		return nil, policy.Policy{}, nil, err
+		return config.Loaded{}, err
 	}
-	rolesFile, err := roles.Load(filepath.Join(configDir, "relevo", "roles.json"))
+	cs := config.Open(d)
+
+	configDir, err := userConfigRoot()
 	if err != nil {
-		return nil, policy.Policy{}, nil, err
+		return config.Loaded{}, err
 	}
-	reg, err := roles.Build(rolesFile, candidates, pol)
-	if err != nil {
-		return nil, policy.Policy{}, nil, err
+	if !d.Newer() {
+		if _, err := cs.ImportFiles(filepath.Join(configDir, "relevo"), time.Now().UTC()); err != nil {
+			return config.Loaded{}, err
+		}
+	} else {
+		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
-	return candidates, pol, reg, nil
+	return cs.Load()
 }
 
 // serveAdminConfigWithCandidates is serveAdminConfig plus the configured
@@ -288,28 +293,23 @@ func loadCandidatesAndPolicy(configDir string) (*candidate.Set, policy.Policy, *
 // projects the ledger onto the candidate set, and the two edit verbs refuse a
 // token no candidate names (#251).
 //
-// Unlike cmdServeRun, a missing candidates.json is an error here: with no
+// Unlike cmdServeRun, an empty candidates set is an error here: with no
 // candidate set to project onto, a ledger full of gates would render as
 // "no gates", which reads as "nothing is gated" -- the same false negative
 // this round exists to remove.
 func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
-	configDir, err := userConfigRoot()
+	L, err := loadServeConfig()
 	if err != nil {
 		return serve.Config{}, err
 	}
-	candPath := filepath.Join(configDir, "relevo", "candidates.json")
-	if _, err := os.Stat(candPath); err != nil {
-		return serve.Config{}, fmt.Errorf("no candidates at %s", candPath)
-	}
-	candidates, pol, reg, err := loadCandidatesAndPolicy(configDir)
-	if err != nil {
-		return serve.Config{}, err
+	if L.Candidates.Len() == 0 {
+		return serve.Config{}, errors.New("no candidates configured")
 	}
 
 	cfg := serveAdminConfig(root)
-	cfg.Candidates = candidates
-	cfg.Policy = pol
-	cfg.Registry = reg
+	cfg.Candidates = L.Candidates
+	cfg.Policy = L.Policy
+	cfg.Registry = L.Registry
 	return cfg, nil
 }
 
@@ -328,14 +328,11 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	configDir, err := userConfigRoot()
+	L, err := loadServeConfig()
 	if err != nil {
 		return err
 	}
-	candidates, pol, reg, err := loadCandidatesAndPolicy(configDir)
-	if err != nil {
-		return err
-	}
+	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
 	builderTierRT := serveTierRuntime(candidates, pol, root)
 	if builderTier := relevo.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
@@ -368,9 +365,9 @@ func cmdServeRun(args []string) error {
 		}
 	}
 
-	reader, prices := newUsageReader(configDir)
+	reader, prices := newUsageReader(L.Prices)
 
-	hooksCfg, err := resolveHooksConfig()
+	hooksCfg, err := resolveHooksConfig(L.Hooks)
 	if err != nil {
 		return err
 	}

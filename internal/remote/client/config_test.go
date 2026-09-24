@@ -1,27 +1,13 @@
 package client
 
 import (
-	"bytes"
-	"errors"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 func TestServersRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "servers.json")
-
-	// Missing file -> empty, nil
-	s, err := LoadServers(path)
-	if err != nil {
-		t.Fatalf("LoadServers on missing file: %v", err)
-	}
-	if len(s) != 0 {
-		t.Fatalf("LoadServers on missing file returned %d entries, want 0", len(s))
-	}
-
-	// Save servers
 	saved := Servers{
 		"zen": ServerEntry{
 			URL:         "https://zen:7777",
@@ -32,23 +18,17 @@ func TestServersRoundTrip(t *testing.T) {
 			Insecure: true,
 		},
 	}
-	if err := SaveServers(path, saved); err != nil {
-		t.Fatalf("SaveServers: %v", err)
+	data, err := EncodeServers(saved)
+	if err != nil {
+		t.Fatalf("EncodeServers: %v", err)
+	}
+	if !strings.HasSuffix(string(data), "\n") {
+		t.Errorf("EncodeServers output does not end in a newline: %q", data)
 	}
 
-	// Verify permissions (0600)
-	info, err := os.Stat(path)
+	loaded, err := ParseServers(data)
 	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("permissions = %#o, want 0600", info.Mode().Perm())
-	}
-
-	// Load servers back
-	loaded, err := LoadServers(path)
-	if err != nil {
-		t.Fatalf("LoadServers: %v", err)
+		t.Fatalf("ParseServers: %v", err)
 	}
 	if len(loaded) != 2 {
 		t.Fatalf("len(loaded) = %d, want 2", len(loaded))
@@ -58,6 +38,18 @@ func TestServersRoundTrip(t *testing.T) {
 	}
 	if loaded["local"] != saved["local"] {
 		t.Fatalf("local entry = %+v, want %+v", loaded["local"], saved["local"])
+	}
+}
+
+// TestParseServersValidatesEntries pins that a stored servers body may not
+// carry an entry ValidateEntry refuses.
+func TestParseServersValidatesEntries(t *testing.T) {
+	_, err := ParseServers([]byte(`{"bad":{"url":"http://zen:7777"}}`))
+	if err == nil {
+		t.Fatal("ParseServers accepted an http entry without insecure")
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Errorf("error %v does not name the entry", err)
 	}
 }
 
@@ -140,61 +132,30 @@ func TestValidateEntry(t *testing.T) {
 	}
 }
 
-func TestInitKeyAndLoadKey(t *testing.T) {
-	configDir := t.TempDir()
-	privPath, pubPath := KeyPaths(configDir)
-	serversPath := ServersPath(configDir)
-
-	if filepath.Base(privPath) != "client.key" || filepath.Base(pubPath) != "client.pub" {
-		t.Fatalf("unexpected KeyPaths: %s, %s", privPath, pubPath)
-	}
-	if filepath.Base(serversPath) != "servers.json" {
-		t.Fatalf("unexpected ServersPath: %s", serversPath)
-	}
-
-	// LoadKey when absent -> ErrNoKey
-	_, err := LoadKey(privPath)
-	if !errors.Is(err, ErrNoKey) {
-		t.Fatalf("LoadKey on absent key got %v, want ErrNoKey", err)
-	}
-
-	// InitKey creates priv (0600) and pub (0644)
-	kp, err := InitKey(privPath, pubPath)
+// TestEnrollLine pins the user@host comment rule lifted out of InitKey: the
+// line is an "ed25519 <base64>" enrolment line carrying the same comment a
+// written client.pub used to.
+func TestEnrollLine(t *testing.T) {
+	kp, err := remote.Generate()
 	if err != nil {
-		t.Fatalf("InitKey failed: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 
-	privInfo, err := os.Stat(privPath)
+	line := EnrollLine(kp)
+	if !strings.HasPrefix(line, "ed25519 ") {
+		t.Fatalf("EnrollLine = %q, want an ed25519 line", line)
+	}
+	if comment := PublicComment(); comment != "" {
+		if !strings.HasSuffix(line, " "+comment) {
+			t.Errorf("EnrollLine = %q, want suffix %q", line, " "+comment)
+		}
+	}
+
+	pub, err := remote.ParsePublic(line)
 	if err != nil {
-		t.Fatalf("stat privPath: %v", err)
+		t.Fatalf("ParsePublic(EnrollLine): %v", err)
 	}
-	if privInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("privPath perm = %#o, want 0600", privInfo.Mode().Perm())
-	}
-
-	pubInfo, err := os.Stat(pubPath)
-	if err != nil {
-		t.Fatalf("stat pubPath: %v", err)
-	}
-	if pubInfo.Mode().Perm() != 0o644 {
-		t.Fatalf("pubPath perm = %#o, want 0644", pubInfo.Mode().Perm())
-	}
-
-	// LoadKey loads the same keypair
-	loaded, err := LoadKey(privPath)
-	if err != nil {
-		t.Fatalf("LoadKey: %v", err)
-	}
-	if !bytes.Equal(loaded.Private, kp.Private) {
-		t.Fatalf("loaded private key does not match generated")
-	}
-	if !bytes.Equal(loaded.Public, kp.Public) {
-		t.Fatalf("loaded public key does not match generated")
-	}
-
-	// InitKey refuses overwrite
-	_, err = InitKey(privPath, pubPath)
-	if !errors.Is(err, ErrKeyExists) {
-		t.Fatalf("InitKey overwrite got %v, want ErrKeyExists", err)
+	if remote.IDOf(pub) != remote.IDOf(kp.Public) {
+		t.Errorf("enrolment line names a different key")
 	}
 }

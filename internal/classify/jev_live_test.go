@@ -11,20 +11,17 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 func TestJevInjectionFixtures(t *testing.T) {
 	key := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
 	if key == "" {
-		cfgDir, err := os.UserConfigDir()
-		if err == nil {
-			_, st := Resolve(&policy.Classify{Provider: "jev"}, cfgDir, os.Getenv)
-			if st.KeySource != "" {
-				if data, err := os.ReadFile(st.KeyPath); err == nil {
-					key = strings.TrimSpace(string(data))
-				}
+		// The live test is a local convenience: a key file left over from
+		// before the config move still works here. Production reads the key
+		// from the database (#4.5).
+		if cfgDir, err := os.UserConfigDir(); err == nil {
+			if data, err := os.ReadFile(filepath.Join(cfgDir, "relevo", "typesafe.key")); err == nil {
+				key = strings.TrimSpace(string(data))
 			}
 		}
 	}

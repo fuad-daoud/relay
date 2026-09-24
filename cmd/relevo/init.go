@@ -8,12 +8,13 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
-// cmdInit seeds the user's candidates.json and policy.json from the harness
-// binaries on PATH, then installs the role definitions for those harnesses.
+// cmdInit seeds the candidates and policy sections from the harness binaries
+// on PATH, then installs the role definitions for those harnesses.
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("relevo init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -26,7 +27,7 @@ func cmdInit(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	configDir, err := userConfigRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
@@ -41,18 +42,27 @@ func cmdInit(args []string) error {
 		return err
 	}
 
-	res, err := setup.Write(configDir, files, *force)
+	hasCandidates, err := rt.Config.Has(config.Candidates)
 	if err != nil {
 		return err
 	}
-	if !res.WroteCandidates && !res.WrotePolicy {
-		return errors.New("~/.config/relevo/candidates.json and policy.json exist; pass --force to overwrite")
+	hasPolicy, err := rt.Config.Has(config.Policy)
+	if err != nil {
+		return err
+	}
+	if !*force && (hasCandidates || hasPolicy) {
+		return errors.New("candidates or policy already configured; pass --force to overwrite")
 	}
 
-	fmt.Printf("wrote %s (%d candidates: %s)\n",
-		res.CandidatesPath, len(files.Kinds), strings.Join(files.Kinds, ", "))
-	fmt.Printf("wrote %s (order.builder: %s)\n",
-		res.PolicyPath, strings.Join(orderTokens(files.Kinds), ", "))
+	if _, err := rt.Config.Put(config.Candidates, files.Candidates); err != nil {
+		return err
+	}
+	if _, err := rt.Config.Put(config.Policy, files.Policy); err != nil {
+		return err
+	}
+
+	fmt.Printf("wrote candidates (%d: %s)\n", len(files.Kinds), strings.Join(files.Kinds, ", "))
+	fmt.Printf("wrote policy (order.builder: %s)\n", strings.Join(orderTokens(files.Kinds), ", "))
 
 	if !*noRoles {
 		failed := false
@@ -73,7 +83,7 @@ func cmdInit(args []string) error {
 		}
 	}
 
-	fmt.Printf("next: edit the model names in %s, then run: relevo doctor\n", res.CandidatesPath)
+	fmt.Printf("next: edit the model names, then run: relevo doctor\n")
 	return nil
 }
 

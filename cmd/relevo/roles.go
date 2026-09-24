@@ -1,13 +1,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -40,9 +39,9 @@ func cmdRoles(args []string) error {
 	}
 }
 
-// cmdRolesInit writes <config>/relevo/roles.json from the candidates.json and
-// policy.json beside it. --dry-run prints the file and the notes instead of
-// writing, and an existing roles.json is refused without --force.
+// cmdRolesInit writes the roles section from the candidates and policy the
+// runtime loaded. --dry-run prints the data and the notes instead of writing,
+// and an existing roles section is refused without --force.
 func cmdRolesInit(args []string) error {
 	fs := flag.NewFlagSet("roles init", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "print roles.json and the notes instead of writing it")
@@ -51,22 +50,16 @@ func cmdRolesInit(args []string) error {
 		return err
 	}
 
-	configDir, err := userConfigRoot()
+	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(configDir, "relevo")
-
-	cands, err := candidate.Load(filepath.Join(dir, "candidates.json"))
-	if err != nil {
-		return err
-	}
-	pol, err := policy.Load(filepath.Join(dir, "policy.json"))
+	L, err := rt.Config.Load()
 	if err != nil {
 		return err
 	}
 
-	f, notes, err := roles.FromLegacy(cands, pol)
+	f, notes, err := roles.FromLegacy(L.Candidates, L.Policy)
 	if err != nil {
 		return err
 	}
@@ -83,24 +76,18 @@ func cmdRolesInit(args []string) error {
 		return nil
 	}
 
-	path := filepath.Join(dir, "roles.json")
-	if _, err := os.Stat(path); err == nil && !*force {
-		return fmt.Errorf("%s exists; pass --force to overwrite it", path)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	exists, err := rt.Config.Has(config.Roles)
+	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		os.Remove(tmp) // best effort: leave no half-written file behind
-		return err
+	if exists && !*force {
+		return errors.New("roles section exists; pass --force to overwrite it")
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) // best effort: leave no half-written file behind
+	if _, err := rt.Config.Put(config.Roles, data); err != nil {
 		return err
 	}
 
-	fmt.Printf("wrote %s\n", path)
+	fmt.Println("wrote roles")
 	for _, note := range notes {
 		fmt.Println(note)
 	}
