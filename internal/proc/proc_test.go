@@ -193,6 +193,25 @@ func TestStartedProcessIsInItsOwnGroupAndKillReturnsWithinGrace(t *testing.T) {
 	}
 }
 
+// Repeats the kill path because the trailer race is timing-dependent (it
+// flaked once on macOS bash); the trap makes it impossible. Removing the trap
+// may not fail on Linux, whose shells already die before printing.
+func TestKilledSupervisorNeverWritesTheTrailer(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		r := New()
+		r.KillGrace = 2 * time.Second
+		h, _, stream := start(t, r, "sleep", "60")
+		t.Cleanup(func() { _ = syscall.Kill(-h.PID, syscall.SIGKILL) })
+
+		if err := r.Kill(context.Background(), h); err != nil {
+			t.Fatalf("iteration %d: Kill: %v", i, err)
+		}
+		if _, ok := r.ExitCode(context.Background(), h, stream); ok {
+			t.Errorf("iteration %d: a killed supervisor writes no trailer; ExitCode must be ok=false", i)
+		}
+	}
+}
+
 func TestAliveIsFalseForAReusedPid(t *testing.T) {
 	r := New()
 	// Our own pid certainly exists; a start time that is not ours must not match.
