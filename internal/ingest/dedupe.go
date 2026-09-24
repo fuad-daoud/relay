@@ -234,15 +234,19 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 }
 
 // deriveTranscripts re-derives a mirror round's transcript rows from the
-// record's own sealed round file, returning every candidate the identity
-// rule allows: the transcript is a duplicate when any candidate reproduces
-// every row.
+// record's own sealed round files, returning every candidate the identity
+// rule allows: the transcript is a duplicate when either source reproduces
+// the rows exactly.
 //
 // The stream (NNN-builder.jsonl) is tried first, split exactly as Ingest
 // splits it and rendered under each candidate kind (transcriptKinds). The log
-// (NNN-builder.log) is the fallback, already-rendered text with no record
-// behind it. Neither file present means no candidate at all.
+// (NNN-builder.log) is tried as well whenever it is present -- already-rendered
+// text with no record behind it -- so a round whose stored rows came from the
+// log is recognised even when the record also holds the stream. Neither file
+// present means no candidate at all.
 func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.TranscriptRecord, error) {
+	var out [][]db.TranscriptRecord
+
 	streamBase := builderStreamPathBase(rd.Number)
 	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
 	if err != nil {
@@ -254,12 +258,11 @@ func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.Transcri
 			return nil, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamBase, lerr)
 		}
 		kinds := transcriptKinds(record, rd)
-		out := make([][]db.TranscriptRecord, 0, len(kinds))
+		out = make([][]db.TranscriptRecord, 0, len(kinds)+1)
 		for _, kind := range kinds {
 			recs, _ := streamTranscriptRecords(kind, lines, 0)
 			out = append(out, recs)
 		}
-		return out, nil
 	}
 
 	logBase := builderLogPathBase(rd.Number)
@@ -272,10 +275,10 @@ func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.Transcri
 		if lerr != nil {
 			return nil, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, logBase, lerr)
 		}
-		return [][]db.TranscriptRecord{logOnlyTranscriptRecords(lines, 0)}, nil
+		out = append(out, logOnlyTranscriptRecords(lines, 0))
 	}
 
-	return nil, nil
+	return out, nil
 }
 
 // transcriptKinds is the harness kind each stream candidate is rendered

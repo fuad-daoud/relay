@@ -299,6 +299,58 @@ func TestDedupeMirrorPlansIdenticalTranscriptAndKeepsAlteredRendered(t *testing.
 	}
 }
 
+// TestDedupeMirrorAcceptsALogDerivedTranscriptWhenAStreamExists pins the
+// round-2 rule: a round's transcript is a duplicate when either source in
+// round_file reproduces the rows exactly, so rows that came from
+// NNN-builder.log are planned even when the record also holds
+// NNN-builder.jsonl. The sibling round alters one row's rendered text, which
+// matches neither source, and is kept.
+// Mutation: consult the log only when there is no stream, and the first case
+// is kept.
+func TestDedupeMirrorAcceptsALogDerivedTranscriptWhenAStreamExists(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	bindingID := seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	streamLine := `{"ts":"2026-09-01T10:00:00Z","type":"assistant","message":{"content":"hello"}}`
+	logBody := "the log's first line\n" + "the log's second line\n"
+	// The lines readAppendOnly returns for logBody: both complete, no newline.
+	logLines := [][]byte{[]byte("the log's first line"), []byte("the log's second line")}
+
+	// Round 1: both sources are present, and the stored rows are exactly
+	// what the log derives.
+	round1 := seedMirrorRound(t, d, bindingID, 1)
+	putRoundFile(t, d, recordID, "001-builder.jsonl", 1, streamLine+"\n")
+	putRoundFile(t, d, recordID, "001-builder.log", 1, logBody)
+	fromLog := logOnlyTranscriptRecords(logLines, 0)
+	appendTranscript(t, d, db.OwnerRound, round1, fromLog)
+
+	// Round 2: one row's rendered text was altered, so it matches neither
+	// the stream nor the log.
+	round2 := seedMirrorRound(t, d, bindingID, 2)
+	putRoundFile(t, d, recordID, "002-builder.jsonl", 2, streamLine+"\n")
+	putRoundFile(t, d, recordID, "002-builder.log", 2, logBody)
+	altered := logOnlyTranscriptRecords(logLines, 0)
+	altered[1].Rendered = "tampered"
+	appendTranscript(t, d, db.OwnerRound, round2, altered)
+
+	plan := mustPlan(t, d)
+
+	if plan.stats.TranscriptRoundsDeleted != 1 {
+		t.Errorf("TranscriptRoundsDeleted = %d, want 1", plan.stats.TranscriptRoundsDeleted)
+	}
+	if plan.stats.TranscriptRowsDeleted != len(fromLog) {
+		t.Errorf("TranscriptRowsDeleted = %d, want %d", plan.stats.TranscriptRowsDeleted, len(fromLog))
+	}
+	if plan.stats.TranscriptRoundsKept != 1 {
+		t.Errorf("TranscriptRoundsKept = %d, want 1", plan.stats.TranscriptRoundsKept)
+	}
+	if len(plan.transcriptOwners) != 1 || plan.transcriptOwners[0] != round1 {
+		t.Errorf("transcriptOwners = %v, want [%s]", plan.transcriptOwners, round1)
+	}
+}
+
 // TestDedupeMirrorNeverPlansPlannerTranscript pins case 5: a planner-owned
 // transcript sharing an owner id with a planned round is never touched. The
 // round rows of that owner go, the planner rows stay. Mutation that breaks
