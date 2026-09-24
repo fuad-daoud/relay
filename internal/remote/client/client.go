@@ -503,6 +503,33 @@ func (c *Client) RoundFile(ctx context.Context, server, name string, round int, 
 	})
 }
 
+type roundFileResult struct {
+	body      io.ReadCloser
+	fileRange remote.FileRange
+}
+
+// RoundFileFrom streams a file (report, diff, log) for a given round starting from offset.
+func (c *Client) RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error) {
+	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/files/%s?from=%d", url.PathEscape(name), round, url.PathEscape(kind), from)
+	res, err := retry(ctx, retryAttempts, retryBase, func(ctx context.Context) (roundFileResult, error) {
+		actx, cancel := context.WithTimeout(ctx, roundFileDeadline)
+		resp, err := c.do(actx, server, "GET", path, nil, nil, "")
+		if err != nil {
+			cancel()
+			return roundFileResult{}, err
+		}
+		fr := remote.ParseFileRange(resp.Header)
+		return roundFileResult{
+			body:      &deadlineBody{ReadCloser: resp.Body, cancel: cancel},
+			fileRange: fr,
+		}, nil
+	})
+	if err != nil {
+		return nil, remote.FileRange{}, err
+	}
+	return res.body, res.fileRange, nil
+}
+
 // RoundBundle streams a git bundle for a given round. Returns (nil, nil) on 204 No Content.
 func (c *Client) RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/v1/bindings/%s/rounds/%d/bundle", url.PathEscape(name), round)

@@ -362,3 +362,71 @@ func TestRoundFileDeadline(t *testing.T) {
 		t.Fatalf("RoundFile took %s: the deadline did not cut the call short", elapsed)
 	}
 }
+
+func TestRoundFileFrom(t *testing.T) {
+	t.Run("headers present", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/bindings/api/rounds/1/files/log" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			if r.URL.Query().Get("from") != "10" {
+				t.Fatalf("unexpected from query: %s", r.URL.Query().Get("from"))
+			}
+			w.Header().Set(remote.HeaderFileSize, "42")
+			w.Header().Set(remote.HeaderFileFrom, "10")
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("remainder"))
+		}))
+		defer ts.Close()
+
+		cl := testClient(t, ts)
+		rc, fr, err := cl.RoundFileFrom(context.Background(), "zen", "api", 1, "log", 10)
+		if err != nil {
+			t.Fatalf("RoundFileFrom: %v", err)
+		}
+		defer rc.Close()
+
+		if !fr.Honored {
+			t.Fatal("fr.Honored = false, want true")
+		}
+		if fr.From != 10 {
+			t.Fatalf("fr.From = %d, want 10", fr.From)
+		}
+		if fr.Size != 42 {
+			t.Fatalf("fr.Size = %d, want 42", fr.Size)
+		}
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if string(body) != "remainder" {
+			t.Fatalf("body = %q, want remainder", string(body))
+		}
+	})
+
+	t.Run("headers absent", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("whole file"))
+		}))
+		defer ts.Close()
+
+		cl := testClient(t, ts)
+		rc, fr, err := cl.RoundFileFrom(context.Background(), "zen", "api", 1, "log", 10)
+		if err != nil {
+			t.Fatalf("RoundFileFrom: %v", err)
+		}
+		defer rc.Close()
+
+		if fr.Honored {
+			t.Fatal("fr.Honored = true, want false")
+		}
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("ReadAll: %v", err)
+		}
+		if string(body) != "whole file" {
+			t.Fatalf("body = %q, want whole file", string(body))
+		}
+	})
+}

@@ -631,6 +631,87 @@ func writeTempAndRename(dest string, r io.Reader) error {
 	return os.Rename(tmpName, dest)
 }
 
+func mirrorLog(ctx context.Context, rt Runtime, server, name string, round int) {
+	path := rt.Store.BuilderLogPath(name, round)
+	var local int64
+	if fi, err := os.Stat(path); err == nil {
+		local = fi.Size()
+	}
+	rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
+	if err != nil || rc == nil {
+		if err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+		}
+		return
+	}
+
+	switch {
+	case fr.Honored && fr.From == local && fr.Size >= local:
+		defer rc.Close()
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			slog.Warn("write builder log failed", "path", path, "err", err)
+			return
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			slog.Warn("write builder log failed", "path", path, "err", err)
+			return
+		}
+		defer f.Close()
+		if _, err := io.Copy(f, rc); err != nil {
+			slog.Warn("write builder log failed", "path", path, "err", err)
+		}
+	case fr.Honored && fr.Size < local:
+		_ = rc.Close()
+		rc2, _, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", 0)
+		if err != nil || rc2 == nil {
+			if err != nil {
+				slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			}
+			return
+		}
+		defer rc2.Close()
+		if err := writeTempAndRename(path, rc2); err != nil {
+			slog.Warn("write builder log failed", "path", path, "err", err)
+		}
+	default:
+		defer rc.Close()
+		if err := writeTempAndRename(path, rc); err != nil {
+			slog.Warn("write builder log failed", "path", path, "err", err)
+		}
+	}
+}
+
+var mirrorDriftAttempts sync.Map // "name/round" -> struct{}
+
+func mirrorDriftOnce(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
+	driftPath := rt.Store.DriftPath(name, round)
+	if _, err := rt.Store.ReadFile(driftPath); err == nil {
+		return
+	}
+	key := fmt.Sprintf("%s/%d", name, round)
+	if _, loaded := mirrorDriftAttempts.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	rc, err := rt.Remote.RoundFile(ctx, server, name, round, "drift")
+	if err != nil || rc == nil {
+		if err != nil {
+			slog.Debug("mirror drift not available", "server", server, "name", name, "round", round, "err", err)
+		}
+		return
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		slog.Warn("mirror drift read failed", "server", server, "name", name, "round", round, "err", err)
+		return
+	}
+	if err := tx.PutRoundFile(name, round, driftPath, data); err != nil {
+		slog.Warn("write drift round file failed", "path", driftPath, "err", err)
+	}
+}
+
 // observeRemote advances b from the server's view: planner refresh, candidate
 // refresh, mirrored log, and (on a newly closed round) catchUp -- everything
 // reconcileRemote used to do, except the final delivery to the planner pane.
@@ -807,16 +888,8 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// the same "stalled <age>" (#252).
 		b.StalledSince = view.StalledSince
 		b.Builder.RemoteLive = liveFactsOf(view.Live)
-		rc, err := rt.Remote.RoundFile(ctx, server, name, b.Round, "log")
-		if err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", b.Round, "err", err)
-			return b, false, nil
-		}
-		defer rc.Close()
-		logPath := rt.Store.BuilderLogPath(name, b.Round)
-		if err := writeTempAndRename(logPath, rc); err != nil {
-			slog.Warn("write builder log failed", "path", logPath, "err", err)
-		}
+		mirrorLog(ctx, rt, server, name, b.Round)
+		mirrorDriftOnce(ctx, rt, tx, server, name, b.Round)
 		return b, false, nil
 
 	case remote.RoundNeedsYou:

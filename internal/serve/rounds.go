@@ -371,12 +371,28 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 		path = rt.Store.BuilderStreamPath(name, n)
 	case "plan":
 		path = rt.Store.PlanPath(name, n)
+	case "drift":
+		path = rt.Store.DriftPath(name, n)
 	default:
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "unknown file kind")
 		return
 	}
 
-	if kind != "log" {
+	var fromOffset int64
+	hasFrom := false
+	if kind == "log" {
+		if raw := r.URL.Query().Get("from"); raw != "" || r.URL.Query().Has("from") {
+			hasFrom = true
+			parsed, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || parsed < 0 {
+				writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "invalid from")
+				return
+			}
+			fromOffset = parsed
+		}
+	}
+
+	if kind != "log" && kind != "drift" {
 		if b.Serve == nil || n > b.Serve.ClosedRound {
 			writeErr(w, http.StatusNotFound, remote.CodeNotFound, fmt.Sprintf("round %d is not closed", n))
 			return
@@ -392,6 +408,18 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if kind == "log" {
+		size := int64(len(data))
+		w.Header().Set(remote.HeaderFileSize, strconv.FormatInt(size, 10))
+		w.Header().Set(remote.HeaderFileFrom, strconv.FormatInt(fromOffset, 10))
+		if hasFrom {
+			if fromOffset <= size {
+				data = data[fromOffset:]
+			} else {
+				data = nil
+			}
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

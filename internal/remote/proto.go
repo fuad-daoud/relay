@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -20,6 +22,39 @@ const ContentTypeGitBundle = "application/x-git-bundle"
 // (#373). It is informational -- the server logs it and never rejects a
 // request on it, and it is never part of the signature.
 const HeaderClientVersion = "Relevo-Client-Version"
+
+// HeaderFileSize is the file's total byte length on the server.
+const HeaderFileSize = "X-Relevo-Size"
+
+// HeaderFileFrom is the offset honoured by the server.
+const HeaderFileFrom = "X-Relevo-From"
+
+// FileRange describes the byte range honoured by a server for a round file route.
+// Honored is true only when both headers are present and parse as non-negative ints.
+type FileRange struct {
+	Honored bool
+	From    int64
+	Size    int64
+}
+
+// ParseFileRange extracts a FileRange from HTTP response headers.
+func ParseFileRange(h http.Header) FileRange {
+	fromStr := h.Get(HeaderFileFrom)
+	sizeStr := h.Get(HeaderFileSize)
+	if fromStr == "" || sizeStr == "" {
+		return FileRange{}
+	}
+	from, err1 := strconv.ParseInt(fromStr, 10, 64)
+	size, err2 := strconv.ParseInt(sizeStr, 10, 64)
+	if err1 != nil || err2 != nil || from < 0 || size < 0 {
+		return FileRange{}
+	}
+	return FileRange{
+		Honored: true,
+		From:    from,
+		Size:    size,
+	}
+}
 
 // RoundState represents the execution state of a round on the server.
 type RoundState string
