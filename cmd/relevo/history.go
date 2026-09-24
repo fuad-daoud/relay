@@ -19,7 +19,7 @@ const historyUsage = `usage: relevo history [--here|--repo <url|dir>] [--feature
                      [--harness K] [--provider P] [--model M] [--candidate T]
                      [--outcome O] [--since D] [--until D] [--archived|--live]
                      [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]
-       relevo history --tab [--since D] [--by binding|model|provider] [--json]
+       relevo history --tab [--owner <label|id|all>] [--since D] [--by binding|model|provider|owner] [--json] [--state <dir>]
        relevo history --stats [--since D] [--json]`
 
 // historyOutcomeValues lists the round.Outcome enum in the order
@@ -61,7 +61,7 @@ func validateHistoryBy(by string) error {
 // --tab` and `relevo history --stats` may be combined with. Nothing else on
 // history's flag set is: a tab total is not a round filter (P3d §4.6).
 var (
-	historyTabAllowed   = map[string]bool{"tab": true, "stats": true, "since": true, "json": true, "by": true}
+	historyTabAllowed   = map[string]bool{"tab": true, "stats": true, "since": true, "json": true, "by": true, "owner": true, "state": true}
 	historyStatsAllowed = map[string]bool{"tab": true, "stats": true, "since": true, "json": true}
 )
 
@@ -164,6 +164,8 @@ func cmdHistory(args []string) error {
 	withRows := fs.Bool("rows", false, "with --json --by, include each group's rows")
 	tab := fs.Bool("tab", false, "tokens and cost across bindings, archived ones included")
 	stats := fs.Bool("stats", false, "rounds, outcomes, switches, gate and consults, plus provider blocks")
+	owner := fs.String("owner", "", "with --tab: the server's owner, a client label or id (all = every owner)")
+	state := fs.String("state", "", "with --owner: the serve state directory")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
@@ -172,6 +174,18 @@ func cmdHistory(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 0 {
+		fmt.Fprintln(os.Stderr, historyUsage)
+		return exitCodeErr{code: 2}
+	}
+	// --owner reads the server's owners, and the tab form is the only one
+	// that can (§4.2); --state names that server's root, so it needs --owner.
+	if *owner != "" && !*tab {
+		fmt.Fprintln(os.Stderr, "relevo history: --owner works with --tab")
+		fmt.Fprintln(os.Stderr, historyUsage)
+		return exitCodeErr{code: 2}
+	}
+	if *state != "" && *owner == "" {
+		fmt.Fprintln(os.Stderr, "relevo history: --state only applies with --owner")
 		fmt.Fprintln(os.Stderr, historyUsage)
 		return exitCodeErr{code: 2}
 	}
@@ -193,7 +207,23 @@ func cmdHistory(args []string) error {
 		switch by {
 		case "binding", "model", "provider", "owner":
 		default:
-			fmt.Fprintf(os.Stderr, "relevo history: --by %q: want one of binding, model, provider\n", by)
+			fmt.Fprintf(os.Stderr, "relevo history: --by %q: want one of binding, model, provider, owner\n", by)
+			fmt.Fprintln(os.Stderr, historyUsage)
+			return exitCodeErr{code: 2}
+		}
+		if *owner != "" {
+			// `--owner all` is today's `serve tab` with no --owner: every
+			// owner, grouped as before (§4.2).
+			ownerArg := *owner
+			if ownerArg == "all" {
+				ownerArg = ""
+			}
+			return serveTab(ownerArg, *state, *since, by, *asJSON)
+		}
+		if by == "owner" {
+			// Grouping by owner is the server's view (AdminTabEntries sets
+			// Owner); a local run has no owner to group by.
+			fmt.Fprintln(os.Stderr, "relevo history: --by owner works with --owner")
 			fmt.Fprintln(os.Stderr, historyUsage)
 			return exitCodeErr{code: 2}
 		}
@@ -297,13 +327,9 @@ func cmdHistory(args []string) error {
 
 // historyTab is `relevo history --tab`: exactly what `relevo tab` printed
 // (P3d §4.6). The body is cmdTab's, moved here because the `tab` verb is gone.
+// The server's per-owner form is serveTab, which cmdHistory routes to before
+// this.
 func historyTab(since, by string, asJSON bool) error {
-	// --by owner is the server-side grouping (`relevo serve tab --by owner`):
-	// a client's entries have no owner to group by (#216).
-	if by == "owner" {
-		fmt.Fprintln(os.Stderr, `"owner": --by owner is for relevo serve tab`)
-		return exitCodeErr{code: 1}
-	}
 	now := time.Now().UTC()
 	cut, err := relevo.ParseSince(since, now)
 	if err != nil {
@@ -356,8 +382,9 @@ func historyStats(since string, asJSON bool) error {
 }
 
 // renderTabReport is cmdTab's tail: it sums the gathered entries through
-// relevo.TabRows and prints the report, as JSON when asJSON is set. The server
-// verb `relevo serve tab` renders through the same tail.
+// relevo.TabRows and prints the report, as JSON when asJSON is set. The
+// server form `relevo history --tab --owner` (serveTab) renders through the
+// same tail.
 func renderTabReport(entries []relevo.TabEntry, by string, cut time.Time, asJSON bool) error {
 	rows, total, err := relevo.TabRows(entries, by, cut)
 	if err != nil {
