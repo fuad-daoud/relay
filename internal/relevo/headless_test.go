@@ -3365,3 +3365,57 @@ func TestReportEntryCarriesHeadlessSession(t *testing.T) {
 		t.Errorf("StreamSessionID after the close = %q, want it cleared", got.Builder.StreamSessionID)
 	}
 }
+
+func TestStartProcessSetsStreamStart(t *testing.T) {
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	b := store.Binding{
+		Name:  "webshop",
+		Round: 1,
+		CWD:   t.TempDir(),
+		Builder: store.Endpoint{
+			Mode: store.ModeHeadless,
+		},
+	}
+	c := candidate.Candidate{Harness: "agy"}
+	argv := []string{"echo", "hi"}
+
+	// 1. With no file -> StreamStart == 0
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		got, err := startProcess(context.Background(), rt, tx, b, argv, c)
+		if err != nil {
+			return err
+		}
+		if got.Builder.StreamStart != 0 {
+			t.Errorf("StreamStart with no file = %d, want 0", got.Builder.StreamStart)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. A stream file of N bytes exists before spawn -> StreamStart == N
+	streamPath := rt.Store.BuilderStreamPath("webshop", 1)
+	if err := os.MkdirAll(filepath.Dir(streamPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("stream content of some bytes")
+	if err := os.WriteFile(streamPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		got, err := startProcess(context.Background(), rt, tx, b, argv, c)
+		if err != nil {
+			return err
+		}
+		if got.Builder.StreamStart != int64(len(data)) {
+			t.Errorf("StreamStart with file = %d, want %d", got.Builder.StreamStart, len(data))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

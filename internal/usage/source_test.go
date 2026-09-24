@@ -192,3 +192,70 @@ func TestStreamClosedLegacyTrailer(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamFromSkipsEarlierSegment(t *testing.T) {
+	seg1 := "{\"type\":\"step_finish\",\"timestamp\":1789589782193,\"part\":{\"type\":\"step-finish\",\"tokens\":{\"input\":1000,\"output\":50}}}\n"
+	seg2 := "{\"type\":\"step_finish\",\"timestamp\":1789589783193,\"part\":{\"type\":\"step-finish\",\"tokens\":{\"input\":2000,\"output\":100}}}\n"
+	trailer := "relevo-exit:0\n"
+	full := []byte(seg1 + seg2 + trailer)
+	offset2 := int64(len(seg1))
+
+	// On-disk (parseCached) path
+	path := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(path, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New()
+
+	samples0, note0 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: path, StreamFrom: 0,
+	})
+	if note0 != "" || len(samples0) != 2 {
+		t.Fatalf("StreamFrom=0: got %d samples, note %q", len(samples0), note0)
+	}
+	var total0 int64
+	for _, s := range samples0 {
+		total0 += s.Tokens.Total()
+	}
+	if total0 != 3150 {
+		t.Errorf("StreamFrom=0: total tokens = %d, want 3150", total0)
+	}
+
+	samples1, note1 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: path, StreamFrom: offset2,
+	})
+	if note1 != "" || len(samples1) != 1 {
+		t.Fatalf("StreamFrom=offset2: got %d samples, note %q", len(samples1), note1)
+	}
+	if samples1[0].Tokens.Total() != 2100 {
+		t.Errorf("StreamFrom=offset2: total tokens = %d, want 2100", samples1[0].Tokens.Total())
+	}
+
+	// Sealed (readSealed) path
+	readFile := func(string) ([]byte, error) {
+		return full, nil
+	}
+	sealed0, noteS0 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: "/not/on/disk", ReadFile: readFile, StreamFrom: 0,
+	})
+	if noteS0 != "" || len(sealed0) != 2 {
+		t.Fatalf("sealed StreamFrom=0: got %d samples, note %q", len(sealed0), noteS0)
+	}
+	var sealedTot0 int64
+	for _, s := range sealed0 {
+		sealedTot0 += s.Tokens.Total()
+	}
+	if sealedTot0 != 3150 {
+		t.Errorf("sealed StreamFrom=0: total tokens = %d, want 3150", sealedTot0)
+	}
+
+	sealed1, noteS1 := r.Read(context.Background(), Source{
+		Harness: "opencode", Mode: ModeHeadless, StreamPath: "/not/on/disk", ReadFile: readFile, StreamFrom: offset2,
+	})
+	if noteS1 != "" || len(sealed1) != 1 {
+		t.Fatalf("sealed StreamFrom=offset2: got %d samples, note %q", len(sealed1), noteS1)
+	}
+	if sealed1[0].Tokens.Total() != 2100 {
+		t.Errorf("sealed StreamFrom=offset2: total tokens = %d, want 2100", sealed1[0].Tokens.Total())
+	}
+}

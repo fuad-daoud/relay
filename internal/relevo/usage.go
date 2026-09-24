@@ -61,6 +61,7 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 	}
 	if b.Builder.Headless() {
 		src.StreamPath = rt.Store.BuilderStreamPath(b.Name, b.Round)
+		src.StreamFrom = b.Builder.StreamStart
 	}
 	fillCandidate(&src, rt, b.BuilderCandidate)
 	return src

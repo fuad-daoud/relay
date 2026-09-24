@@ -60,6 +60,22 @@ func (s Spend) Add(o Spend) Spend {
 	}
 }
 
+// AddSegment adds one segment's usage without counting an extra round.
+func (s Spend) AddSegment(u Usage) Spend {
+	s.Steps += u.Steps
+	s.ToolCalls += u.ToolCalls
+	s.Tokens = s.Tokens.Add(u.Tokens)
+	if !u.Cost.Plan {
+		switch u.Cost.Basis {
+		case Measured:
+			s.Measured += u.Cost.USD
+		case Estimated:
+			s.Estimated += u.Cost.USD
+		}
+	}
+	return s
+}
+
 func moneyParts(s Spend) []string {
 	var p []string
 	if s.Measured > 0 {

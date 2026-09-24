@@ -2273,9 +2273,10 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 			Server:       "remote-server",
 			RemoteStatus: "running",
 			RemoteLive: &store.LiveFacts{
-				PID:   4242,
-				Usage: &usage.Usage{Tokens: usage.Tokens{In: 30000, Out: 11000}}, // 41k
-				Diff:  &store.DiffFacts{Files: 2, Added: 10, Removed: 3},
+				PID:         4242,
+				Usage:       &usage.Usage{Tokens: usage.Tokens{In: 30000, Out: 11000}}, // 41k
+				PriorTokens: usage.Tokens{In: 50000, Out: 10000},
+				Diff:        &store.DiffFacts{Files: 2, Added: 10, Removed: 3},
 			},
 		},
 	}
@@ -2301,6 +2302,9 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 	if row.LiveUsage == nil || row.LiveUsage.Tokens.Total() != 41000 {
 		t.Errorf("LiveUsage = %+v, want 41k tokens from RemoteLive", row.LiveUsage)
 	}
+	if row.RoundPriorTokens != (usage.Tokens{In: 50000, Out: 10000}) {
+		t.Errorf("RoundPriorTokens = %+v, want in:50000 out:10000 from RemoteLive", row.RoundPriorTokens)
+	}
 	if row.Live == nil || row.Live.Files != 2 || row.Live.Added != 10 || row.Live.Removed != 3 {
 		t.Errorf("Live = %+v, want 2/+10/-3", row.Live)
 	}
@@ -2320,5 +2324,114 @@ func TestProcessWord(t *testing.T) {
 	local := BindingStatus{Server: ""}
 	if got := local.ProcessWord(); got != "headless" {
 		t.Errorf("ProcessWord without server = %q, want headless", got)
+	}
+}
+
+func TestPriorTokensOf(t *testing.T) {
+	cases := []struct {
+		name    string
+		round   int
+		entries []store.LogEntry
+		want    usage.Tokens
+	}{
+		{
+			name:    "no switches",
+			round:   1,
+			entries: []store.LogEntry{{Round: 1, Kind: store.KindPlan}},
+			want:    usage.Tokens{},
+		},
+		{
+			name:  "two switch entries in the round",
+			round: 1,
+			entries: []store.LogEntry{
+				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
+				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}}},
+			},
+			want: usage.Tokens{In: 300, Out: 80},
+		},
+		{
+			name:  "switch entry in another round ignored",
+			round: 1,
+			entries: []store.LogEntry{
+				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
+				{Round: 2, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 500, Out: 500}}},
+			},
+			want: usage.Tokens{In: 100, Out: 50},
+		},
+		{
+			name:  "report with PriorTokens added",
+			round: 1,
+			entries: []store.LogEntry{
+				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
+				{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, PriorTokens: &usage.Tokens{In: 400, Out: 150}},
+			},
+			want: usage.Tokens{In: 500, Out: 200},
+		},
+		{
+			name:  "switch entry with nil Usage skipped",
+			round: 1,
+			entries: []store.LogEntry{
+				{Round: 1, Kind: store.KindSwitch, Usage: nil},
+				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 150, Out: 25}}},
+			},
+			want: usage.Tokens{In: 150, Out: 25},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := priorTokensOf(tc.entries, tc.round)
+			if got != tc.want {
+				t.Errorf("priorTokensOf() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpendIncludesSwitchSegments(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := []store.LogEntry{
+		{TS: baseTime, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+		{
+			TS: baseTime.Add(1 * time.Minute), Round: 1, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 1.0, Basis: usage.Measured}},
+		},
+		{
+			TS: baseTime.Add(2 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 100}, Cost: usage.Cost{USD: 2.0, Basis: usage.Measured}},
+		},
+		{TS: baseTime.Add(3 * time.Minute), Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+		{
+			TS: baseTime.Add(4 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 150}, Cost: usage.Cost{USD: 3.0, Basis: usage.Measured}},
+		},
+	}
+	for _, e := range entries {
+		if err := st.AppendLog("webshop", e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rt := Runtime{Store: st, Now: func() time.Time { return baseTime.Add(5 * time.Minute) }}
+	row, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if row.Spend == nil {
+		t.Fatal("row.Spend is nil")
+	}
+	if row.Spend.Rounds != 2 {
+		t.Errorf("Spend.Rounds = %d, want 2", row.Spend.Rounds)
+	}
+	wantTokens := usage.Tokens{In: 600, Out: 300}
+	if row.Spend.Tokens != wantTokens {
+		t.Errorf("Spend.Tokens = %+v, want %+v", row.Spend.Tokens, wantTokens)
+	}
+	if row.Spend.Measured != 6.0 {
+		t.Errorf("Spend.Measured = %v, want 6.0", row.Spend.Measured)
 	}
 }

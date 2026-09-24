@@ -86,3 +86,35 @@ func TestRemoteLiveDoesNotRaiseRecordFormat(t *testing.T) {
 		t.Errorf("RemoteLive did not round-trip: %+v", got.Builder.RemoteLive)
 	}
 }
+
+// TestStreamStartDoesNotRaiseRecordFormat pins the format-4 rule (see
+// BindingFormat): StreamStart is an offset into the round stream -- an older
+// relevo that drops it on rewrite makes usage reads start at byte 0, but
+// stamping 4 would lock older relevo out of loading the binding. With an empty
+// Role it is still written at format 1 (no format key).
+func TestStreamStartDoesNotRaiseRecordFormat(t *testing.T) {
+	s := New(t.TempDir())
+
+	b := newBinding("headless-bind", "/home/dev/projects/headless")
+	b.Builder.Mode = ModeHeadless
+	b.Builder.StreamStart = 1024
+
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw := bindingRecordJSON(t, s, b.Name)
+	if bytes.Contains(raw, []byte(`"format"`)) {
+		t.Errorf("StreamStart (format 4) must not raise the record's format; an empty Role stays format 1 with no format key:\n%s", raw)
+	}
+
+	got, err := s.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Format != 0 {
+		t.Errorf("loaded Format = %d, want 0 (the format-1 encoding), not 4", got.Format)
+	}
+	if got.Builder.StreamStart != 1024 {
+		t.Errorf("StreamStart did not round-trip: %d", got.Builder.StreamStart)
+	}
+}

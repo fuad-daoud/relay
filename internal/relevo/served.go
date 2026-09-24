@@ -134,9 +134,16 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 	}
 	var ackedRound int
 	var closedRound int
+	var priorTokens *usage.Tokens
 	if b.Serve != nil {
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
+		if closedRound > 0 {
+			pt := priorTokensOf(entries, closedRound)
+			if pt.Total() > 0 {
+				priorTokens = &pt
+			}
+		}
 	}
 	return remote.BindingView{
 		Name:           b.Name,
@@ -159,6 +166,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
 		Usage:          reportUsage,
+		PriorTokens:    priorTokens,
 		Rusage:         reportRusage,
 		StalledSince:   b.StalledSince,
 	}
@@ -245,6 +253,7 @@ func liveViewOf(row BindingStatus, b store.Binding, at time.Time) *remote.LiveVi
 	v := &remote.LiveView{
 		At:             at,
 		Usage:          row.LiveUsage,
+		PriorTokens:    row.RoundPriorTokens,
 		LastProgressAt: row.LastProgressAt,
 		ExploringSince: b.ExploringSince,
 	}

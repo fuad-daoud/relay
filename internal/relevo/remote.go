@@ -752,6 +752,7 @@ func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 		ExitCode:       v.ExitCode,
 		Tail:           tail,
 		Usage:          u,
+		PriorTokens:    v.PriorTokens,
 		Diff:           diff,
 		LastProgressAt: v.LastProgressAt,
 		ExploringSince: v.ExploringSince,
@@ -1370,7 +1371,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		// not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u, view.Rusage)
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u, view.Rusage, view.PriorTokens)
 	if err != nil {
 		return b, err
 	}

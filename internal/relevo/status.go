@@ -164,6 +164,8 @@ type BindingStatus struct {
 	// RoundUsage is a copy of the Usage on the entry that set RoundEnd. Nil when
 	// RoundEnd is zero or that entry's Usage is nil. Never taken from any other entry.
 	RoundUsage *usage.Usage `json:"round_usage,omitempty"`
+	// RoundPriorTokens is the tokens of the current round's earlier segments.
+	RoundPriorTokens usage.Tokens `json:"round_prior_tokens,omitzero"`
 	// Server is b.Builder.Server when b.Builder.Remote(); "" otherwise.
 	Server string `json:"server,omitempty"`
 	// Dirty is the rendered rule: the newest close left the tree dirty and
@@ -550,21 +552,41 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		}
 	}
 	row.RoundStart, row.RoundEnd, row.RoundUsage = roundFacts(entries)
+	row.RoundPriorTokens = priorTokensOf(entries, row.PlanRound)
+	if b.Builder.Remote() && row.RoundEnd.IsZero() && b.Builder.RemoteLive != nil {
+		row.RoundPriorTokens = b.Builder.RemoteLive.PriorTokens
+	}
 	var usages []usage.Usage
 	var consults []bool
+	var switches []usage.Usage
+	var reportPriors []usage.Tokens
 	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			if e.Usage != nil {
+				u := *e.Usage
+				row.LastUsage = &u
+			}
+			if e.PriorTokens != nil {
+				reportPriors = append(reportPriors, *e.PriorTokens)
+			}
+		}
+		if e.Kind == store.KindSwitch && e.Usage != nil {
+			switches = append(switches, *e.Usage)
+		}
 		if e.Usage == nil || (e.Kind != store.KindReport && e.Kind != store.KindFindings) {
 			continue
 		}
 		usages = append(usages, *e.Usage)
 		consults = append(consults, e.Kind == store.KindFindings)
-		if e.Kind == store.KindReport {
-			u := *e.Usage
-			row.LastUsage = &u
-		}
 	}
-	if len(usages) > 0 {
+	if len(usages) > 0 || len(switches) > 0 || len(reportPriors) > 0 {
 		s := usage.Sum(usages, consults)
+		for _, sw := range switches {
+			s = s.AddSegment(sw)
+		}
+		for _, p := range reportPriors {
+			s.Tokens = s.Tokens.Add(p)
+		}
 		row.Spend = &s
 	}
 	// A round that is still running gets its figure read live (#234):
@@ -649,6 +671,29 @@ func isPayloadKind(k store.Kind) bool {
 	default:
 		return false
 	}
+}
+
+// priorTokensOf returns the sum of tokens from earlier segments in the given
+// round: outgoing switch entries that recorded usage, plus any PriorTokens
+// carried on the newest report entry (for closed remote rounds). Pure; no I/O.
+func priorTokensOf(entries []store.LogEntry, round int) usage.Tokens {
+	var total usage.Tokens
+	var reportPrior *usage.Tokens
+	for _, e := range entries {
+		if e.Round != round {
+			continue
+		}
+		if e.Kind == store.KindSwitch && e.Usage != nil {
+			total = total.Add(e.Usage.Tokens)
+		}
+		if e.Kind == store.KindReport && e.Direction == store.DirToPlanner && e.PriorTokens != nil {
+			reportPrior = e.PriorTokens
+		}
+	}
+	if reportPrior != nil {
+		total = total.Add(*reportPrior)
+	}
+	return total
 }
 
 // roundFacts derives the current round's start, end and report usage from log entries.

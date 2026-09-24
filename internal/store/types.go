@@ -123,6 +123,10 @@ type Endpoint struct {
 	// startRound on a later round moves them. 0 means no stream was started.
 	StreamRound  int   `json:"stream_round,omitempty"`
 	StreamOffset int64 `json:"stream_offset,omitempty"`
+	// StreamStart is the byte length of the round's stream
+	// (Store.BuilderStreamPath(name, round)) when this process was spawned.
+	// 0 for a round's first process.
+	StreamStart int64 `json:"stream_start,omitempty"`
 
 	// StreamSessionID is the session id the round's stream announced, set
 	// once per round by drainStream from the harness's own event (#147).
@@ -174,6 +178,7 @@ type LiveFacts struct {
 	ExitCode       string       `json:"exit_code,omitempty"`
 	Tail           []string     `json:"tail,omitempty"`
 	Usage          *usage.Usage `json:"usage,omitempty"`
+	PriorTokens    usage.Tokens `json:"prior_tokens,omitzero"`
 	Diff           *DiffFacts   `json:"diff,omitempty"`
 	LastProgressAt time.Time    `json:"last_progress_at,omitzero"`
 	ExploringSince time.Time    `json:"exploring_since,omitzero"`

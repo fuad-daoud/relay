@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ type Source struct {
 	Model      string // the candidate's; "" for an adopted builder
 	Plan       bool   // the candidate's subscription flag
 	StreamPath string // headless: the round's NNN-builder.jsonl
+	StreamFrom int64  // parse only bytes at or after this offset; 0 means whole stream
 	// ReadFile, when set, reads a stream path that is no longer on disk: a
 	// sealed round's file, held in the store's database (P3c §4.5). nil keeps
 	// today's behaviour -- a path that is not on disk is "no stream".
@@ -194,6 +196,11 @@ func readSealed(src Source) ([]Sample, string) {
 	if !ok {
 		return nil, "no reader for " + src.Harness
 	}
+	if src.StreamFrom <= int64(len(data)) {
+		data = data[src.StreamFrom:]
+	} else {
+		data = nil
+	}
 	// Only whole lines are fed, exactly as parseCached does: a trailing
 	// partial line is not an event.
 	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
@@ -237,18 +244,17 @@ func (r reader) parseCached(src Source) ([]Sample, string) {
 	if err != nil {
 		return nil, "no stream"
 	}
-	// Keyed by path and harness: a different harness reading the same
-	// path must never pick up the previous harness's carry (a round's
-	// stream belongs to one builder, but a test -- and a mid-round
-	// builder switch -- can point two harnesses at one path).
-	key := src.StreamPath + "\x00" + src.Harness
+	// Keyed by path, harness and stream offset: a different harness reading
+	// the same path must never pick up the previous harness's carry, and a
+	// builder switch to a new segment with StreamFrom must start fresh.
+	key := src.StreamPath + "\x00" + src.Harness + "\x00" + strconv.FormatInt(src.StreamFrom, 10)
 	e := r.cache[key]
-	if e == nil || info.Size() < e.offset {
+	if e == nil || info.Size() < e.offset || info.Size() < src.StreamFrom {
 		c, ok := newSourceCarry(src)
 		if !ok {
 			return nil, "no reader for " + src.Harness
 		}
-		e = &streamCache{carry: c}
+		e = &streamCache{carry: c, offset: src.StreamFrom}
 		r.cache[key] = e
 	}
 	if info.Size() == e.size && info.ModTime().Equal(e.mtime) {

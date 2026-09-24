@@ -2748,6 +2748,7 @@ func TestObserveRemoteRunningStoresLive(t *testing.T) {
 		ExitCode:       "3",
 		Tail:           []string{"line1", "line2"},
 		Usage:          &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}},
+		PriorTokens:    usage.Tokens{In: 400, Out: 150},
 		Diff:           &remote.DiffStat{Files: 2, Added: 10, Removed: 3},
 		LastProgressAt: baseTime.Add(-2 * time.Minute),
 		ExploringSince: baseTime.Add(-5 * time.Minute),
@@ -2787,6 +2788,9 @@ func TestObserveRemoteRunningStoresLive(t *testing.T) {
 	}
 	if rl.Usage == nil || rl.Usage.Tokens != live.Usage.Tokens {
 		t.Errorf("Usage = %+v, want %+v", rl.Usage, live.Usage)
+	}
+	if rl.PriorTokens != live.PriorTokens {
+		t.Errorf("PriorTokens = %+v, want %+v", rl.PriorTokens, live.PriorTokens)
 	}
 	if rl.Diff == nil || rl.Diff.Files != live.Diff.Files || rl.Diff.Added != live.Diff.Added || rl.Diff.Removed != live.Diff.Removed {
 		t.Errorf("Diff = %+v, want %+v", rl.Diff, live.Diff)
@@ -4197,6 +4201,75 @@ func TestCatchUpKeepsServerUsage(t *testing.T) {
 	// otherwise.
 	if strings.Contains(reportEntry.Usage.Note, "shared cwd") {
 		t.Fatalf("Usage.Note = %q, must not mention a shared cwd", reportEntry.Usage.Note)
+	}
+}
+
+func TestCatchUpRecordsPriorTokens(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	prior := usage.Tokens{In: 4000, Out: 1500}
+	sent := usage.Usage{
+		Harness: "opencode",
+		Model:   "haiku",
+		Tokens:  usage.Tokens{In: 1000, Out: 200},
+		Cost:    usage.Cost{USD: 0.12, Basis: usage.Measured},
+	}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{
+			RoundState: remote.RoundClosed, ClosedRound: 1,
+			DiffNote: "1 file, +1 -0; 1 commit, clean", DiffCommits: 1, DiffTree: "clean",
+			Usage:       &sent,
+			PriorTokens: &prior,
+		},
+		roundFileFunc: func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
+			switch kind {
+			case "report":
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			case "diff":
+				return io.NopCloser(strings.NewReader("--- a/file\n+++ b/file\n")), nil
+			default:
+				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+			}
+		},
+	}
+	fg := &fakeGit{}
+	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2 after the round closed", got.Round)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reportEntry store.LogEntry
+	found := false
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reportEntry, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("no report entry written")
+	}
+	if reportEntry.PriorTokens == nil {
+		t.Fatal("report entry PriorTokens = nil, want the server's figure")
+	}
+	if *reportEntry.PriorTokens != prior {
+		t.Errorf("report entry PriorTokens = %+v, want %+v", *reportEntry.PriorTokens, prior)
+	}
+	clientPrior := priorTokensOf(entries, 1)
+	if clientPrior != prior {
+		t.Errorf("priorTokensOf(entries, 1) = %+v, want %+v", clientPrior, prior)
 	}
 }
 

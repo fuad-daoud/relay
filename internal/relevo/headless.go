@@ -236,6 +236,11 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// round) keeps rendering the file both processes append to.
 		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
 	}
+	if fi, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round)); err == nil {
+		b.Builder.StreamStart = fi.Size()
+	} else {
+		b.Builder.StreamStart = 0
+	}
 	// A new process announces its own session on its own stream (#147);
 	// drainStream fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
@@ -654,7 +659,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
 			note = joinNotes(note, escapeNote)
 		}
-		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil)
+		next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil)
 		if err != nil {
 			return b, err
 		}
@@ -754,6 +759,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// the fresh relaunch calls -- clears StreamSessionID, because a new
 		// process begins a new session.
 		sess := b.Builder.StreamSessionID
+		prior := peekUsage(ctx, rt, b, now)
 		var (
 			next store.Binding
 			err  error
@@ -791,6 +797,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		b.RoundStartedAt = keep
 		if err := tx.AppendLog(b.Name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindSwitch, Confirmed: true,
+			Usage: prior,
 			Note: fmt.Sprintf("%s builder (lost to a daemon restart at %s): picked %s for builder: same candidate, not counted",
 				how, rt.StartedAt.UTC().Format(time.RFC3339), b.BuilderCandidate),
 		}); err != nil {

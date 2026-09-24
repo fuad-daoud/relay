@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
@@ -51,11 +52,12 @@ func roundExclusionGates(b store.Binding) []ledger.Gate {
 // happened, and what ExplainResolution says about the pick that replaced
 // the builder (spec §3.3, §4.4). Always Confirmed and DirToPlanner, the same
 // reasoning as pickEntry: a switch is never a pending payload.
-func switchEntry(now time.Time, round int, reason string, res Resolution) store.LogEntry {
+func switchEntry(now time.Time, round int, reason string, res Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToPlanner,
 		Kind: store.KindSwitch, Confirmed: true,
-		Note: "switched builder (" + reason + "): " + ExplainResolution("builder", res),
+		Usage: u,
+		Note:  "switched builder (" + reason + "): " + ExplainResolution("builder", res),
 	}
 }
 
@@ -120,6 +122,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
+	prior := peekUsage(ctx, rt, b, now)
 
 	// The replacement inherits the mode (spec §5.4): a headless binding gets
 	// a headless endpoint, which startRound below fills in.
@@ -154,7 +157,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b.BuilderScreenAt = time.Time{}
 	b.State = store.StateActive
 
-	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res)); err != nil {
+	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
 		return b, err
 	}
 
