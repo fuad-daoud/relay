@@ -33,7 +33,7 @@ const (
 // server process is not evidence anything arrived.
 type OpencodeDeliverer struct {
 	Client        *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
-	StateFile     string       // $XDG_STATE_HOME/opencode/service.json
+	StateFile     string       // $XDG_CONFIG_HOME/opencode/service.json
 	DBPath        string       // $XDG_DATA_HOME/opencode/opencode.db
 	Exec          usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
 	Now           func() time.Time
@@ -41,7 +41,7 @@ type OpencodeDeliverer struct {
 	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
 }
 
-// opencodeService is $XDG_STATE_HOME/opencode/service.json. Verified shape
+// opencodeService is $XDG_CONFIG_HOME/opencode/service.json. Verified shape
 // on opencode 2.0.12: {"id","version","url","pid","password"}.
 type opencodeService struct {
 	URL      string `json:"url"`
@@ -161,7 +161,7 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 	}
 }
 
-// readOpencodeService reads and parses $XDG_STATE_HOME/opencode/service.json.
+// readOpencodeService reads and parses $XDG_CONFIG_HOME/opencode/service.json.
 func readOpencodeService(path string) (opencodeService, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -19,7 +19,7 @@ type Waiting struct {
 	Cause string    `json:"cause"`           // "blocked" | "halted" | "broken" | "needs you"
 	Line  string    `json:"line"`            // what it is waiting on, one line, <= 120 runes, never empty
 	Since time.Time `json:"since,omitempty"` // when it started waiting; zero when relevo does not know
-	Hint  string    `json:"hint"`            // the relevo verb that resolves it, e.g. `relevo answer --name api`
+	Hint  string    `json:"hint"`            // the relevo verb that resolves it, e.g. `relevo status --name api`
 }
 
 // switchable mirrors Reconcile's inline expression (reconcile.go): a
@@ -77,7 +77,7 @@ func WaitingOn(b store.Binding, entries []store.LogEntry, questionOf func(name s
 			return Waiting{
 				Name: b.Name, Round: b.Round, Cause: "blocked",
 				Line: capLine(line, 120), Since: e.TS,
-				Hint: "relevo answer --name " + b.Name,
+				Hint: "relevo status --name " + b.Name,
 			}, true
 		}
 		if b.Halt != "" {

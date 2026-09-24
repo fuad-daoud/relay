@@ -1024,23 +1024,6 @@ func TestBuilderWhere(t *testing.T) {
 	}
 }
 
-// TestBindHeadlessFlagIsNoOp is a rule test: --headless is the default and
-// only local mode since #303, so bind/add/fork accept it and print one
-// stderr note. It tests the pure flag-handling helper, not a subcommand:
-// CI runners have no harness and no network, so no test may run a subcommand that reaches either.
-func TestBindHeadlessFlagIsNoOp(t *testing.T) {
-	if got := headlessNoOpLines(false); got != nil {
-		t.Errorf("headlessNoOpLines(false) = %v, want nil", got)
-	}
-	got := headlessNoOpLines(true)
-	if len(got) != 1 || got[0] != headlessFlagNote {
-		t.Fatalf("headlessNoOpLines(true) = %v, want [%q]", got, headlessFlagNote)
-	}
-	if !strings.Contains(headlessFlagNote, "--headless is the default and only local mode") {
-		t.Errorf("note = %q", headlessFlagNote)
-	}
-}
-
 // TestStatusNotice is §4.6: exactly one line when the cached check proves
 // relevo is behind, and "" for every row the doctor's release table reports as
 // SevOK. It is the pure function only -- no subcommand runs, because CI

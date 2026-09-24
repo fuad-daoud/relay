@@ -45,9 +45,9 @@ func TestWaitingLine(t *testing.T) {
 		w := Waiting{
 			Name: "e2e-round", Round: 4, Cause: "blocked",
 			Line: "Do you want to proceed? > 1. Yes", Since: now.Add(-23 * time.Minute),
-			Hint: "relevo answer --name e2e-round",
+			Hint: "relevo status --name e2e-round",
 		}
-		want := "waiting on you: e2e-round round 4 blocked 23m -- Do you want to proceed? > 1. Yes  (relevo answer --name e2e-round)"
+		want := "waiting on you: e2e-round round 4 blocked 23m -- Do you want to proceed? > 1. Yes  (relevo status --name e2e-round)"
 		if got := WaitingLine(w, now); got != want {
 			t.Errorf("WaitingLine =\n%q\nwant\n%q", got, want)
 		}
@@ -127,8 +127,8 @@ func TestWaitingOnYou(t *testing.T) {
 	if !strings.Contains(lines[0], "Do you want to proceed?") {
 		t.Errorf("line = %q, want it to contain the question", lines[0])
 	}
-	if !strings.Contains(lines[0], "(relevo answer --name a)") {
-		t.Errorf("line = %q, want the answer hint", lines[0])
+	if !strings.Contains(lines[0], "(relevo status --name a)") {
+		t.Errorf("line = %q, want the status hint", lines[0])
 	}
 
 	all, err := WaitingOnYou(rt, "")
@@ -145,7 +145,7 @@ func TestWaitingOnYou(t *testing.T) {
 
 func TestWaitingOn(t *testing.T) {
 	const (
-		answerHint = "relevo answer --name api"
+		answerHint = "relevo status --name api"
 		statusHint = "relevo status --name api"
 		rebindHint = "relevo bind --resume --name api --rebind"
 		bindHint   = "relevo bind --resume --name api"

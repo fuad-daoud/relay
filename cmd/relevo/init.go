@@ -19,7 +19,10 @@ func cmdInit(args []string) error {
 	fs.SetOutput(os.Stderr)
 	force := fs.Bool("force", false, "overwrite existing candidates.json / policy.json")
 	noRoles := fs.Bool("no-roles", false, "do not install role definitions")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 

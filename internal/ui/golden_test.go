@@ -59,7 +59,7 @@ func allStatesRows() []relevo.BindingStatus {
 			LastUsage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 				Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, CacheWrite: 50_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1},
 			Spend:   &usage.Spend{Rounds: 3, Consults: 2, Measured: 9.40, Unknown: 1},
-			Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute), Hint: "relevo answer --name webshop"},
+			Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute), Hint: "relevo status --name webshop"},
 			Last:    &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 		},
 		{

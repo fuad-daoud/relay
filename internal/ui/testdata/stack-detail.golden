@@ -26,5 +26,5 @@ ok      github.com/fuad-daoud/relevo/internal/ui    1.2s
                                                                                 
                                                                                 
                                                                                 
-relevo: relevo answer --name webshop                                            
+relevo: relevo status --name webshop                                            
 esc back   tab next pane   [ ] round   1-5 pane   q quit        refreshed 0s ago

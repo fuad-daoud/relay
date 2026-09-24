@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,7 +49,10 @@ func cmdAgentPrint(args []string) error {
 	fs.SetOutput(os.Stderr)
 	kind := fs.String("kind", "", "harness kind to print plan-executor definition for")
 	role := fs.String("role", "plan-executor", "role definition to print (plan-executor, researcher, reviewer, architect)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -81,7 +85,10 @@ func cmdAgentInstall(args []string) error {
 	role := fs.String("role", "", "role name")
 	force := fs.Bool("force", false, "force overwrite")
 	dryRun := fs.Bool("dry-run", false, "dry run")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 

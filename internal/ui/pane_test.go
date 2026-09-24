@@ -193,10 +193,10 @@ func TestSourceLinePerTab(t *testing.T) {
 
 func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo answer --name webshop"}}
+		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	line, ok := m.hintLine(&b)
-	if !ok || stripANSI(line) != "relevo: relevo answer --name webshop" {
+	if !ok || stripANSI(line) != "relevo: relevo status --name webshop" {
 		t.Errorf("hint = %q ok=%v", stripANSI(line), ok)
 	}
 	m.detail.active = tabReport
@@ -216,7 +216,7 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 
 func TestPaneViewRowsAndWidth(t *testing.T) {
 	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo answer --name webshop"}}
+		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
 	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
 	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal], false))
@@ -230,7 +230,7 @@ func TestPaneViewRowsAndWidth(t *testing.T) {
 			t.Errorf("row %d is %d wide, pane is %d: %q", i, w, m.paneWidth(), stripANSI(l))
 		}
 	}
-	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relevo: relevo answer") {
+	if got := stripANSI(lines[len(lines)-1]); !strings.HasPrefix(got, "relevo: relevo status") {
 		t.Errorf("last pane row must be the hint, got %q", got)
 	}
 }

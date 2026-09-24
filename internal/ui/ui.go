@@ -13,7 +13,7 @@ import (
 // count is always the viewport height, so it is not one.
 type Options struct {
 	// Interval is the list poll period. Floored at minInterval, default 2s to
-	// match the daemon tick and `relevo watch`.
+	// match the daemon tick.
 	Interval time.Duration
 
 	// PrefsPath is the ui's own preference file (spec §6.0); "" keeps the
@@ -33,7 +33,7 @@ type Options struct {
 
 	// PipeHint is the full refusal line RunSource prints when stdout is
 	// not a terminal -- not a suffix. "" keeps the planner's own text,
-	// which names `relevo status` and `relevo watch`.
+	// which names `relevo status`.
 	PipeHint string
 
 	// Dashboard starts the reader on the dashboard screen instead of the
