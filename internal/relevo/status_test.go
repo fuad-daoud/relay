@@ -1980,6 +1980,17 @@ func TestRoundFacts(t *testing.T) {
 			wantEnd:   time.Time{},
 			wantUsage: nil,
 		},
+		{
+			name: "plan r1, plan r2, late report r1 with usage",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t2, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
+			},
+			wantStart: t1,
+			wantEnd:   time.Time{},
+			wantUsage: nil,
+		},
 	}
 
 	for _, tt := range tests {
