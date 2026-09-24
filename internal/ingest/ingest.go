@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -69,33 +67,7 @@ func (s Stats) Add(o Stats) Stats {
 // and filepath.Base rather than hard-coded (the plan's own instruction).
 var memberStore = store.New("/")
 
-func donePathBase(round int) string     { return filepath.Base(memberStore.DonePath("x", round)) }
-func planPathBase(round int) string     { return filepath.Base(memberStore.PlanPath("x", round)) }
-func reportPathBase(round int) string   { return filepath.Base(memberStore.ReportPath("x", round)) }
-func diffPathBase(round int) string     { return filepath.Base(memberStore.DiffPath("x", round)) }
-func driftPathBase(round int) string    { return filepath.Base(memberStore.DriftPath("x", round)) }
-func gateLogPathBase(round int) string  { return filepath.Base(memberStore.GateLogPath("x", round)) }
-func questionPathBase(round int) string { return filepath.Base(memberStore.QuestionPath("x", round)) }
-func builderLogPathBase(round int) string {
-	return filepath.Base(memberStore.BuilderLogPath("x", round))
-}
-func builderStreamPathBase(round int) string {
-	return filepath.Base(memberStore.BuilderStreamPath("x", round))
-}
-
-// roundArtifactMembers is every plain (non-consult) round file Ingest
-// captures as an artifact, in the order the plan lists them.
-var roundArtifactMembers = []struct {
-	base func(round int) string
-	kind string
-}{
-	{planPathBase, db.ArtifactPlan},
-	{reportPathBase, db.ArtifactReport},
-	{diffPathBase, db.ArtifactDiff},
-	{driftPathBase, db.ArtifactDrift},
-	{gateLogPathBase, db.ArtifactGateLog},
-	{questionPathBase, db.ArtifactQuestion},
-}
+func donePathBase(round int) string { return filepath.Base(memberStore.DonePath("x", round)) }
 
 // roundFromMember returns the round number encoded in a round-scoped
 // member's "NNN-" prefix -- the layout every roundFile and consultFile
@@ -110,21 +82,6 @@ func roundFromMember(name string) (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-// consultMemberID returns the consult id encoded in a member named
-// "NNN-<id>-ask.md" or "NNN-<id>-findings.md" for round, when name has
-// that suffix; false otherwise.
-func consultMemberID(name string, round int, suffix string) (string, bool) {
-	prefix := fmt.Sprintf("%03d-", round)
-	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
-		return "", false
-	}
-	id := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-	if id == "" {
-		return "", false
-	}
-	return id, true
 }
 
 func nonEmptyPtr(s string) *string {
@@ -452,45 +409,6 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 				stats.Rounds++
 			}
 
-			// -- plain round-file artifacts
-			for _, am := range roundArtifactMembers {
-				member := am.base(n)
-				if !members[member] {
-					continue
-				}
-				changed, aerr := upsertArtifactIfChanged(tx, src, member, roundID, am.kind, nil, now)
-				if aerr != nil {
-					return fmt.Errorf("artifact %s: %w", member, aerr)
-				}
-				if changed {
-					stats.Artifacts++
-				}
-			}
-
-			// -- consult ask/findings artifacts
-			for m := range members {
-				if id, ok := consultMemberID(m, n, "-ask.md"); ok {
-					cid := id
-					changed, aerr := upsertArtifactIfChanged(tx, src, m, roundID, db.ArtifactAsk, &cid, now)
-					if aerr != nil {
-						return fmt.Errorf("artifact %s: %w", m, aerr)
-					}
-					if changed {
-						stats.Artifacts++
-					}
-				}
-				if id, ok := consultMemberID(m, n, "-findings.md"); ok {
-					cid := id
-					changed, aerr := upsertArtifactIfChanged(tx, src, m, roundID, db.ArtifactFindings, &cid, now)
-					if aerr != nil {
-						return fmt.Errorf("artifact %s: %w", m, aerr)
-					}
-					if changed {
-						stats.Artifacts++
-					}
-				}
-			}
-
 			// -- answer artifact, from the log rather than a file
 			if text, ok := lastAnswerPayload(all, n); ok {
 				changed, aerr := upsertAnswerIfChanged(tx, roundID, text, now)
@@ -499,61 +417,6 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 				}
 				if changed {
 					stats.Artifacts++
-				}
-			}
-
-			// -- transcript
-			streamMember := builderStreamPathBase(n)
-			logMember := builderLogPathBase(n)
-			switch {
-			case members[streamMember]:
-				opener, key := sourceOpener(src, streamMember)
-				cur, found, cerr := tx.Cursor(key)
-				if cerr != nil {
-					return fmt.Errorf("transcript cursor %s: %w", streamMember, cerr)
-				}
-				lines, startSeq, next, reset, rerr := readAppendOnly(opener, key, cur, found)
-				if rerr != nil {
-					return fmt.Errorf("read %s: %w", streamMember, rerr)
-				}
-				if reset {
-					logger.Info("ingest: cursor reset", "binding", b.Name, "member", streamMember)
-				}
-				if len(lines) > 0 {
-					recs, skipped := streamTranscriptRecords(b.Builder.Kind, lines, startSeq)
-					added, terr := tx.AppendTranscript(db.OwnerRound, roundID, recs)
-					if terr != nil {
-						return fmt.Errorf("append transcript %s: %w", streamMember, terr)
-					}
-					stats.TranscriptRecords += added
-					stats.Skipped += skipped
-				}
-				if err := tx.SaveCursor(next); err != nil {
-					return fmt.Errorf("save transcript cursor %s: %w", streamMember, err)
-				}
-			case members[logMember]:
-				opener, key := sourceOpener(src, logMember)
-				cur, found, cerr := tx.Cursor(key)
-				if cerr != nil {
-					return fmt.Errorf("transcript cursor %s: %w", logMember, cerr)
-				}
-				lines, startSeq, next, reset, rerr := readAppendOnly(opener, key, cur, found)
-				if rerr != nil {
-					return fmt.Errorf("read %s: %w", logMember, rerr)
-				}
-				if reset {
-					logger.Info("ingest: cursor reset", "binding", b.Name, "member", logMember)
-				}
-				if len(lines) > 0 {
-					recs := logOnlyTranscriptRecords(lines, startSeq)
-					added, terr := tx.AppendTranscript(db.OwnerRound, roundID, recs)
-					if terr != nil {
-						return fmt.Errorf("append transcript %s: %w", logMember, terr)
-					}
-					stats.TranscriptRecords += added
-				}
-				if err := tx.SaveCursor(next); err != nil {
-					return fmt.Errorf("save transcript cursor %s: %w", logMember, err)
 				}
 			}
 		}
@@ -702,52 +565,6 @@ func lastAnswerPayload(events []store.LogEntry, n int) (string, bool) {
 		}
 	}
 	return text, found
-}
-
-// upsertArtifactIfChanged reads member from src and upserts it as an
-// artifact of kind (with consultID when non-nil) when its content differs
-// from what a saved whole-file cursor recorded, or when there is no such
-// cursor yet. It reports whether it wrote anything.
-func upsertArtifactIfChanged(tx *db.Tx, src Source, member, roundID, kind string, consultID *string, now time.Time) (bool, error) {
-	rc, _, err := src.Open(member)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return false, err
-	}
-	sha := sha256Hex(data)
-
-	key := cursorSourceKey(src, member)
-	cur, found, err := tx.Cursor(key)
-	if err != nil {
-		return false, err
-	}
-	if found && cur.WholeSHA != nil && *cur.WholeSHA == sha {
-		return false, nil
-	}
-
-	if err := tx.UpsertArtifact(db.Artifact{
-		RoundID:    roundID,
-		Kind:       kind,
-		ConsultID:  consultID,
-		Text:       string(data),
-		Bytes:      int64(len(data)),
-		SHA256:     sha,
-		CapturedAt: now,
-	}); err != nil {
-		return false, err
-	}
-	if err := tx.SaveCursor(db.Cursor{Source: key, WholeSHA: &sha, UpdatedAt: now}); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // upsertAnswerIfChanged upserts round roundID's answer artifact (built
