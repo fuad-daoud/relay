@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -166,11 +167,18 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	stRoot := t.TempDir()
 	st := store.New(stRoot)
 
+	// The machine database: the planner records live in it (P3b round 2
+	// §4.1), so it is opened before the record is created below.
+	mdb, err := st.DB()
+	if err != nil {
+		t.Fatalf("open store db: %v", err)
+	}
+
 	// `relevo add --server` resolves the caller's planner before it contacts
 	// the server and records it on the client binding. Export one the way a
 	// real planner session does, so the client runtime resolves a record
 	// instead of failing the add with ErrNoPlannerSession.
-	reg := &planner.FileRegistry{Root: st.PlannersDir(), Now: time.Now}
+	reg := &planner.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now, Root: st.PlannersDir()}
 	prec, err := reg.Create(planner.Record{
 		ID:          "pl_eeeeeeeeeeee",
 		Name:        "e2e-planner",
@@ -192,11 +200,6 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	cSet, err := candidate.Load(candPath)
 	if err != nil {
 		t.Fatalf("load candidates: %v", err)
-	}
-
-	mdb, err := st.DB()
-	if err != nil {
-		t.Fatalf("open store db: %v", err)
 	}
 
 	rt := relevo.Runtime{

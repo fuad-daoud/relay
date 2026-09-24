@@ -65,30 +65,27 @@ func (f *fakeEnvExec) lastArgs() []string {
 	return f.args[len(f.args)-1]
 }
 
-// writeAgyCredsFixture writes one credentials file the way CaptureAgyCreds
+// writeAgyCredsFixture stores one credentials secret the way CaptureAgyCreds
 // does, so a test can pin the address, token and exe directly.
-func writeAgyCredsFixture(t *testing.T, dir string, creds AgyCreds) {
+func writeAgyCredsFixture(t *testing.T, secrets SecretStore, creds AgyCreds) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
-	}
 	raw, err := json.Marshal(creds)
 	if err != nil {
 		t.Fatalf("marshal creds: %v", err)
 	}
-	if err := writeAgyCredsFile(filepath.Join(dir, creds.ConversationID+".json"), raw); err != nil {
+	if err := secrets.SecretPut(agySecretName(creds.ConversationID), raw, agyCredsNow); err != nil {
 		t.Fatalf("write creds: %v", err)
 	}
 }
 
-// newAgyRig builds a deliverer over a temp agy home and a temp credentials
-// directory holding a valid capture, plus the fake exec it will use.
+// newAgyRig builds a deliverer over a temp agy home and a machine database
+// holding a valid capture, plus the fake exec it will use.
 func newAgyRig(t *testing.T) (*AgyDeliverer, *fakeEnvExec, string) {
 	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "antigravity-cli")
-	credsDir := filepath.Join(root, "planners", ".agy")
-	writeAgyCredsFixture(t, credsDir, AgyCreds{
+	secrets := testSecrets(t)
+	writeAgyCredsFixture(t, secrets, AgyCreds{
 		ConversationID: agyTestConv,
 		LSAddress:      "localhost:42139",
 		CSRFToken:      agyTestToken,
@@ -99,7 +96,7 @@ func newAgyRig(t *testing.T) (*AgyDeliverer, *fakeEnvExec, string) {
 	fake := &fakeEnvExec{}
 	return &AgyDeliverer{
 		Exec:          fake,
-		CredsDir:      credsDir,
+		Creds:         secrets,
 		Home:          home,
 		ConfirmWindow: 5 * time.Millisecond,
 		ConfirmPoll:   time.Millisecond,
@@ -240,7 +237,7 @@ func TestAgyDeliverGaveUpAfterFallback(t *testing.T) {
 
 func TestAgyDeliverNoCredsIsUnavailable(t *testing.T) {
 	d, fake, _ := newAgyRig(t)
-	d.CredsDir = filepath.Join(t.TempDir(), "planners", ".agy")
+	d.Creds = testSecrets(t)
 
 	out, reason, err := d.Deliver(context.Background(),
 		store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, "/x/001-report.md", time.Time{})
@@ -260,7 +257,7 @@ func TestAgyDeliverNoCredsIsUnavailable(t *testing.T) {
 
 func TestAgyDeliverNonLoopbackIsUnavailable(t *testing.T) {
 	d, fake, _ := newAgyRig(t)
-	writeAgyCredsFixture(t, d.CredsDir, AgyCreds{
+	writeAgyCredsFixture(t, d.Creds, AgyCreds{
 		ConversationID: agyTestConv,
 		LSAddress:      "10.0.0.5:42139",
 		CSRFToken:      agyTestToken,
@@ -388,7 +385,7 @@ func TestAgyDeliverTokenOnlyInEnv(t *testing.T) {
 
 	t.Run("without AgentAPIExe it falls back to agy on PATH", func(t *testing.T) {
 		d, fake, home := newAgyRig(t)
-		writeAgyCredsFixture(t, d.CredsDir, AgyCreds{
+		writeAgyCredsFixture(t, d.Creds, AgyCreds{
 			ConversationID: agyTestConv,
 			LSAddress:      "localhost:42139",
 			CSRFToken:      agyTestToken,

@@ -19,8 +19,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -406,6 +408,16 @@ func cmdDoctor(args []string) error {
 	}
 
 	rep.Checks = append(rep.Checks, doctor.PlannerChecks(plannerCheckInput(rt, kinds))...)
+
+	// The hooks row: how many runs the machine database's run log holds, how
+	// many failed in the last day and what the last failure was (P3b round 2
+	// §4.4). A database relevo cannot read leaves the row off, as every other
+	// best-effort row does.
+	if d, derr := rt.Store.DB(); derr == nil {
+		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Dir(rt.Store.DBPath())).Runs(); rerr == nil {
+			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
+		}
+	}
 
 	renderReport(os.Stdout, rep)
 

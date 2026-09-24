@@ -5,9 +5,9 @@
 // does no I/O at all: a Record is a value, and the rules over it are pure.
 //
 // The design is #303 §3.1, §3.4, §3.5
-// and §4.1–§4.4. Records live under $XDG_STATE_HOME/relevo/planners, one JSON
-// file per record (registry.go), and are ingested into relevo's sqlite
-// `planner` table by id.
+// and §4.1–§4.4. Records live in $XDG_STATE_HOME/relevo/relevo.db, one
+// `planner/<id>` kv row per record (registry.go), and are ingested into
+// relevo's sqlite `planner` table by id.
 package planner
 
 import (
@@ -64,7 +64,7 @@ type SessionRef struct {
 }
 
 // Record is one relevo planner: the identity every binding, claim and db row
-// keys on (§3.1). Its JSON names are the file's field names and the db's
+// keys on (§3.1). Its JSON names are the row's field names and the db's
 // source.
 type Record struct {
 	// Format is the on-disk format this record was written at (#372): 0 (a
@@ -138,8 +138,8 @@ func NewID(rand io.Reader) (string, error) {
 // ValidID reports whether id names a planner record: §3.1's `pl_` plus 12
 // lowercase base32 characters, or the 26-character Crockford base32 ULID
 // internal/db/ulid.go mints. The second shape is §3.5's upgrade path -- every
-// id already in relevo.db is a ULID, and a record reusing one is
-// `<ULID>.json` on disk. Both shapes are path-safe (no separator, no dot), so
+// id already in relevo.db is a ULID, and a record reusing one is the
+// `planner/<ULID>` row. Both shapes are path-safe (no separator, no dot), so
 // an id can never become a path.
 func ValidID(id string) error {
 	if !idRe.MatchString(id) && !legacyIDRe.MatchString(id) {

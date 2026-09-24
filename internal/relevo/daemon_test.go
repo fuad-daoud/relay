@@ -118,7 +118,7 @@ func TestDaemonBackfillsPlannerID(t *testing.T) {
 
 	// A miss does nothing: no record for this session, no PlannerID.
 	rt2 := newRuntime(t)
-	rt2.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	rt2.Planners = testPlanners(t)
 	b2 := legacy(t, rt2, "sess-nobody")
 	if err := NewDaemon(rt2, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick (miss): %v", err)
@@ -744,16 +744,13 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 // backfillPlannerID: a finished binding is history, and a tick must not
 // rewrite it even when its planner session now has a record.
 func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
-	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
-	if _, err := reg.Create(planner.Record{
+	reg, _ := testPlannerRegistry(t, planner.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
 		HarnessKind: "claude",
 		SessionID:   "sess-done",
 		CWD:         "/repo",
-	}); err != nil {
-		t.Fatalf("create planner record: %v", err)
-	}
+	})
 	b := store.Binding{Name: "old", State: store.StateDone}
 	b.Planner.Kind, b.Planner.SessionID = "claude", "sess-done"
 
@@ -772,16 +769,13 @@ func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 // fix has -- names no session for the registry to look up, so a tick leaves it
 // exactly as it was. relevo never guesses a planner for it.
 func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
-	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
-	if _, err := reg.Create(planner.Record{
+	reg, _ := testPlannerRegistry(t, planner.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
 		HarnessKind: "claude",
 		SessionID:   "sess-remote",
 		CWD:         "/repo",
-	}); err != nil {
-		t.Fatalf("create planner record: %v", err)
-	}
+	})
 
 	b := store.Binding{Name: "api", State: store.StateActive}
 	if got := backfillPlannerID(Runtime{Planners: reg}, b); got.PlannerID != "" {

@@ -87,9 +87,10 @@ func runtimeWithPlanner(t *testing.T, sessionID, locator string) Runtime {
 
 // testPlannerRegistry seeds a registry holding rec and returns it with the
 // record as the registry stamped it (created_at and seen_at filled in).
-func testPlannerRegistry(t *testing.T, rec planner.Record) (*planner.FileRegistry, planner.Record) {
+func testPlannerRegistry(t *testing.T, rec planner.Record) (*planner.DBRegistry, planner.Record) {
 	t.Helper()
-	reg := &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	reg := testPlanners(t)
+	reg.Now = func() time.Time { return baseTime }
 	created, err := reg.Create(rec)
 	if err != nil {
 		t.Fatalf("create planner record: %v", err)
@@ -196,7 +197,7 @@ func TestBindNoPlannerIsHardError(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 
 	rt := newRuntime(t)
-	rt.Planners = &planner.FileRegistry{Root: t.TempDir(), Now: func() time.Time { return baseTime }}
+	rt.Planners = testPlanners(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testOpencodeRef, CWD: "/repo",

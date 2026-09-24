@@ -37,11 +37,32 @@ type Event struct {
 	Timestamp time.Time
 }
 
+// RunLog is where hook runs are recorded (P3b round 2 §4.4): OSExecutor
+// appends one entry per run, and WebhookSink appends a delivery failure. The
+// production implementation is KVLog, over the machine database's kv row. A
+// nil RunLog records nothing.
+type RunLog interface {
+	Append(HookRun) error
+}
+
+// HookRun is one recorded hook run (§3): the event that fired it, the argv it
+// ran, the exit code, the error when it failed and the run's combined output,
+// capped. Unknown keys survive a rewrite because the whole document is stored.
+type HookRun struct {
+	At       time.Time `json:"at"`
+	Event    string    `json:"event"`
+	Argv     []string  `json:"argv"`
+	ExitCode int       `json:"exit_code"`
+	Error    string    `json:"error"`
+	Output   string    `json:"output"`
+}
+
 // Config configures the hook dispatcher environment.
 type Config struct {
 	// Hooks maps an event type to the argv lists run for it, in order. It is
 	// stored in the config section, not scanned from a directory (#4.4).
 	Hooks map[string][][]string
-	// LogPath is where hook output and failures are appended.
-	LogPath string // Resolved to ~/.local/state/relevo/hooks.log
+	// Log is where hook runs are recorded: the machine database's kv row, or
+	// nil when no database is open (P3b round 2 §4.4).
+	Log RunLog
 }

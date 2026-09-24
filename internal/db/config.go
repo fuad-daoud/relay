@@ -177,6 +177,28 @@ func (d *DB) SecretNames() ([]string, error) {
 	return names, nil
 }
 
+// SecretStore adapts a *DB to the secret surface a caller with no transaction
+// handle needs (P3b round 2 §4.3): reads pass through, and a put or delete
+// opens its own short transaction. This is the store the agy credential
+// capture and the agy deliverer hold over the machine database.
+type SecretStore struct{ DB *DB }
+
+// SecretGet implements the secret store's read.
+func (s SecretStore) SecretGet(name string) ([]byte, bool, error) { return s.DB.SecretGet(name) }
+
+// SecretPut implements the secret store's write.
+func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
+	return s.DB.Tx(func(t *Tx) error { return t.SecretPut(name, value, now) })
+}
+
+// SecretDelete implements the secret store's delete.
+func (s SecretStore) SecretDelete(name string) error {
+	return s.DB.Tx(func(t *Tx) error { return t.SecretDelete(name) })
+}
+
+// SecretNames implements the secret store's list.
+func (s SecretStore) SecretNames() ([]string, error) { return s.DB.SecretNames() }
+
 // ConfigImportRecord appends one imported file to the audit trail: the file's
 // name and path and the raw bytes that were stored, so the import is
 // reconstructable after the file itself is deleted.

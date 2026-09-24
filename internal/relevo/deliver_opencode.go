@@ -37,7 +37,7 @@ type OpencodeDeliverer struct {
 	DBPath        string       // $XDG_DATA_HOME/opencode/opencode.db
 	Exec          usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
 	Now           func() time.Time
-	Alive         func(pid int) bool // nil -> the same rule FileClaims uses
+	Alive         func(pid int) bool // nil -> the same rule the claim store uses
 	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
 }
 

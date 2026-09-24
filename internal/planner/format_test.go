@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -177,21 +176,17 @@ func TestStoredFormat(t *testing.T) {
 
 // TestRegistryWriteRefusesANewerFormat pins the planner half of §4.1: a record
 // written by a newer relevo loads, and writing it back is refused with
-// ErrNewerFormat, leaving the file byte-for-byte as it was.
+// ErrNewerFormat, leaving the row byte-for-byte as it was.
 func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	reg := testRegistry(t)
 	rec := record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0)
 	rec.Format = PlannerFormat + 1
 
-	if err := os.MkdirAll(reg.Root, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	raw, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(reg.Root, rec.ID+".json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := reg.KV.KVPut(registryKey(rec.ID), raw); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,9 +214,9 @@ func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
 
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	after, ok, err := reg.KV.KVGet(registryKey(rec.ID))
+	if err != nil || !ok {
+		t.Fatalf("KVGet after a refused write = (_, %v, %v), want the untouched row", ok, err)
 	}
 	if !bytes.Equal(raw, after) {
 		t.Error("a refused write must leave the record byte-identical")

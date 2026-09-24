@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -636,19 +638,25 @@ func TestDefaultServeRoot(t *testing.T) {
 	}
 }
 
-func TestHooksConfigHome(t *testing.T) {
+func TestResolveHooksConfig(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tempHome, ".local", "state"))
 
+	d, err := db.Open(filepath.Join(tempHome, "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	log := hooks.NewKVLog(db.TxKV{DB: d}, filepath.Join(tempHome, ".local", "state", "relevo"))
+
 	hooksMap := map[string][][]string{"state_changed": {{"/bin/true"}}}
-	cfg, err := resolveHooksConfig(hooksMap)
+	cfg, err := resolveHooksConfig(hooksMap, log)
 	if err != nil {
 		t.Fatalf("resolveHooksConfig: %v", err)
 	}
-	wantLog := filepath.Join(tempHome, ".local", "state", "relevo", "hooks.log")
-	if cfg.LogPath != wantLog {
-		t.Fatalf("got LogPath %q, want %q", cfg.LogPath, wantLog)
+	if cfg.Log != hooks.RunLog(log) {
+		t.Fatalf("got Log %v, want the run log passed in", cfg.Log)
 	}
 	if !reflect.DeepEqual(cfg.Hooks, hooksMap) {
 		t.Fatalf("got Hooks %#v, want %#v", cfg.Hooks, hooksMap)

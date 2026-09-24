@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,6 +30,18 @@ func fullAgyEnv() map[string]string {
 	}
 }
 
+// countingSecrets wraps a SecretStore and counts its puts, so "identical values
+// do not write" is provable without a file's mtime.
+type countingSecrets struct {
+	SecretStore
+	puts int
+}
+
+func (c *countingSecrets) SecretPut(name string, value []byte, now time.Time) error {
+	c.puts++
+	return c.SecretStore.SecretPut(name, value, now)
+}
+
 // TestValidConversationID pins relevo's own copy of the agy conversation id
 // rule. planner.Detect carries the same pattern for the environment it reads.
 func TestValidConversationID(t *testing.T) {
@@ -52,14 +65,33 @@ func TestValidConversationID(t *testing.T) {
 	}
 }
 
-// TestAgyCaptureWritesRoundTrip is the happy path: a full environment writes
-// <conv>.json mode 0600 in a 0700 directory, and ReadAgyCreds gives back
-// exactly what was captured.
+// TestAgyEnvPresent pins the cheap check main.go makes before it opens the
+// machine database: a complete environment is present, and every incomplete
+// one is not.
+func TestAgyEnvPresent(t *testing.T) {
+	if !AgyEnvPresent(agyEnv(fullAgyEnv())) {
+		t.Error("AgyEnvPresent(full env) = false, want true")
+	}
+	for _, missing := range []string{agyConversationEnv, agyLSAddressEnv, agyCSRFTokenEnv} {
+		env := fullAgyEnv()
+		delete(env, missing)
+		if AgyEnvPresent(agyEnv(env)) {
+			t.Errorf("AgyEnvPresent without %s = true, want false", missing)
+		}
+	}
+	if AgyEnvPresent(nil) {
+		t.Error("AgyEnvPresent(nil) = true, want false")
+	}
+}
+
+// TestAgyCaptureWritesRoundTrip is the happy path: a full environment stores
+// the credentials secret, and ReadAgyCreds gives back exactly what was
+// captured.
 func TestAgyCaptureWritesRoundTrip(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "planners", ".agy")
+	secrets := testSecrets(t)
 	env := fullAgyEnv()
 
-	wrote, err := CaptureAgyCreds(agyEnv(env), dir, agyCredsNow)
+	wrote, err := CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow)
 	if err != nil {
 		t.Fatalf("CaptureAgyCreds: %v", err)
 	}
@@ -67,24 +99,11 @@ func TestAgyCaptureWritesRoundTrip(t *testing.T) {
 		t.Fatal("a full environment must write")
 	}
 
-	path := filepath.Join(dir, env[agyConversationEnv]+".json")
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("file mode = %o, want 600", got)
+	if _, ok, err := secrets.SecretGet(agySecretName(env[agyConversationEnv])); err != nil || !ok {
+		t.Fatalf("SecretGet = (_, %v, %v), want the captured secret", ok, err)
 	}
 
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat %s: %v", dir, err)
-	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Errorf("dir mode = %o, want 700", got)
-	}
-
-	got, err := ReadAgyCreds(dir, env[agyConversationEnv])
+	got, err := ReadAgyCreds(secrets, env[agyConversationEnv])
 	if err != nil {
 		t.Fatalf("ReadAgyCreds: %v", err)
 	}
@@ -123,66 +142,60 @@ func TestAgyCaptureWritesNothingWithoutAllThree(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := fullAgyEnv()
 			tc.mutate(env)
-			dir := filepath.Join(t.TempDir(), "planners", ".agy")
+			secrets := testSecrets(t)
 
-			wrote, err := CaptureAgyCreds(agyEnv(env), dir, agyCredsNow)
+			wrote, err := CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow)
 			if err != nil {
 				t.Fatalf("CaptureAgyCreds: %v", err)
 			}
 			if wrote {
 				t.Error("wrote, want nothing written")
 			}
-			entries, err := os.ReadDir(dir)
-			if err == nil && len(entries) != 0 {
-				t.Errorf("left %d entries in %s; want nothing", len(entries), dir)
+			names, err := secrets.SecretNames()
+			if err != nil {
+				t.Fatalf("SecretNames: %v", err)
+			}
+			if len(names) != 0 {
+				t.Errorf("stored %v; want nothing", names)
 			}
 		})
 	}
 }
 
 // TestAgyCaptureSkipsIdenticalAndRewritesChangedToken pins the two halves of
-// the write rule: identical values are not rewritten (the file's mtime is
-// untouched), and a changed token is.
+// the write rule: identical values are not rewritten, and a changed token is.
 func TestAgyCaptureSkipsIdenticalAndRewritesChangedToken(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "planners", ".agy")
+	secrets := &countingSecrets{SecretStore: testSecrets(t)}
 	env := fullAgyEnv()
 	conv := env[agyConversationEnv]
-	path := filepath.Join(dir, conv+".json")
 
-	if wrote, err := CaptureAgyCreds(agyEnv(env), dir, agyCredsNow); err != nil || !wrote {
+	if wrote, err := CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow); err != nil || !wrote {
 		t.Fatalf("first capture: wrote=%v err=%v", wrote, err)
 	}
-
-	// A pinned old mtime makes "was not rewritten" provable without a sleep.
-	past := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(path, past, past); err != nil {
-		t.Fatalf("Chtimes: %v", err)
+	if secrets.puts != 1 {
+		t.Fatalf("first capture put %d times, want 1", secrets.puts)
 	}
 
-	wrote, err := CaptureAgyCreds(agyEnv(env), dir, agyCredsNow)
+	wrote, err := CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow)
 	if err != nil {
 		t.Fatalf("second capture: %v", err)
 	}
 	if wrote {
 		t.Error("identical values must not write")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if !info.ModTime().Equal(past) {
-		t.Errorf("mtime = %v, want the pinned %v; the file was rewritten", info.ModTime(), past)
+	if secrets.puts != 1 {
+		t.Errorf("an identical capture put %d times, want it not to write again", secrets.puts)
 	}
 
 	env[agyCSRFTokenEnv] = "a-rotated-token"
-	wrote, err = CaptureAgyCreds(agyEnv(env), dir, agyCredsNow)
+	wrote, err = CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow)
 	if err != nil {
 		t.Fatalf("third capture: %v", err)
 	}
 	if !wrote {
 		t.Error("a changed token must write")
 	}
-	got, err := ReadAgyCreds(dir, conv)
+	got, err := ReadAgyCreds(secrets, conv)
 	if err != nil {
 		t.Fatalf("ReadAgyCreds: %v", err)
 	}
@@ -191,43 +204,45 @@ func TestAgyCaptureSkipsIdenticalAndRewritesChangedToken(t *testing.T) {
 	}
 }
 
-// TestAgyCapturePrunesOldSiblings pins the prune: a write drops credential
-// files whose capture is older than a week, and keeps last night's.
+// TestAgyCapturePrunesOldSiblings pins the prune: a write drops credentials
+// whose capture is older than a week, and keeps last night's.
 func TestAgyCapturePrunesOldSiblings(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "planners", ".agy")
+	secrets := testSecrets(t)
 	env := fullAgyEnv()
 
 	oldConv := "11111111-2222-3333-4444-555555555555"
 	youngConv := "99999999-8888-7777-6666-555555555555"
-	writeSibling := func(conv string, capturedAt time.Time) string {
+	writeSibling := func(conv string, capturedAt time.Time) {
 		t.Helper()
-		raw := fmt.Sprintf(`{"conversation_id":%q,"ls_address":"localhost:1","csrf_token":"t","agentapi_exe":"","captured_at":%q}`,
-			conv, capturedAt.Format(time.RFC3339Nano))
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
+		raw, err := json.Marshal(AgyCreds{
+			ConversationID: conv,
+			LSAddress:      "localhost:1",
+			CSRFToken:      "t",
+			CapturedAt:     capturedAt,
+		})
+		if err != nil {
+			t.Fatalf("marshal sibling: %v", err)
 		}
-		path := filepath.Join(dir, conv+".json")
-		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		if err := secrets.SecretPut(agySecretName(conv), raw, capturedAt); err != nil {
 			t.Fatalf("write sibling: %v", err)
 		}
-		return path
 	}
 
-	oldPath := writeSibling(oldConv, agyCredsNow.Add(-10*24*time.Hour))
-	youngPath := writeSibling(youngConv, agyCredsNow.Add(-24*time.Hour))
+	writeSibling(oldConv, agyCredsNow.Add(-10*24*time.Hour))
+	writeSibling(youngConv, agyCredsNow.Add(-24*time.Hour))
 
-	if wrote, err := CaptureAgyCreds(agyEnv(env), dir, agyCredsNow); err != nil || !wrote {
+	if wrote, err := CaptureAgyCreds(agyEnv(env), secrets, agyCredsNow); err != nil || !wrote {
 		t.Fatalf("capture: wrote=%v err=%v", wrote, err)
 	}
 
-	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-		t.Errorf("10-day-old sibling still present (err=%v), want it pruned", err)
+	if _, ok, err := secrets.SecretGet(agySecretName(oldConv)); err != nil || ok {
+		t.Errorf("10-day-old sibling = (_, %v, %v), want it pruned", ok, err)
 	}
-	if _, err := os.Stat(youngPath); err != nil {
-		t.Errorf("1-day-old sibling is gone (%v), want it kept", err)
+	if _, ok, err := secrets.SecretGet(agySecretName(youngConv)); err != nil || !ok {
+		t.Errorf("1-day-old sibling = (_, %v, %v), want it kept", ok, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, env[agyConversationEnv]+".json")); err != nil {
-		t.Errorf("the capture itself is gone: %v", err)
+	if _, ok, err := secrets.SecretGet(agySecretName(env[agyConversationEnv])); err != nil || !ok {
+		t.Errorf("the capture itself is gone: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -251,11 +266,54 @@ func TestAgyCredsNeverPrintsTheToken(t *testing.T) {
 	}
 }
 
-// TestReadAgyCredsMissingFileIsNotExist pins the error a caller keys on: a
-// conversation with no captured file reports os.ErrNotExist.
-func TestReadAgyCredsMissingFileIsNotExist(t *testing.T) {
-	_, err := ReadAgyCreds(t.TempDir(), "0f0e0d0c-0b0a-4998-8877-665544332211")
+// TestReadAgyCredsMissingSecretIsNotExist pins the error a caller keys on: a
+// conversation with no stored credentials reports os.ErrNotExist.
+func TestReadAgyCredsMissingSecretIsNotExist(t *testing.T) {
+	_, err := ReadAgyCreds(testSecrets(t), "0f0e0d0c-0b0a-4998-8877-665544332211")
 	if !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("ReadAgyCreds on a missing file = %v, want os.ErrNotExist", err)
+		t.Errorf("ReadAgyCreds on a missing secret = %v, want os.ErrNotExist", err)
+	}
+}
+
+// TestAgyCredsImportAdoptsFiles is §4.3's import: a present
+// planners/.agy/<conversation>.json is put to the secret agy/<conversation>
+// and removed, and the emptied .agy directory goes with it.
+func TestAgyCredsImportAdoptsFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "planners", ".agy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	conv := "0f0e0d0c-0b0a-4998-8877-665544332211"
+	raw, err := json.Marshal(AgyCreds{
+		ConversationID: conv,
+		LSAddress:      "localhost:42139",
+		CSRFToken:      "the-csrf-token",
+		CapturedAt:     agyCredsNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, conv+".json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write credentials file: %v", err)
+	}
+
+	secrets := testSecrets(t)
+	if err := ImportAgyCreds(secrets, dir); err != nil {
+		t.Fatalf("ImportAgyCreds: %v", err)
+	}
+
+	got, err := ReadAgyCreds(secrets, conv)
+	if err != nil {
+		t.Fatalf("ReadAgyCreds after the import: %v", err)
+	}
+	if got.CSRFToken != "the-csrf-token" || !got.CapturedAt.Equal(agyCredsNow) {
+		t.Errorf("imported credentials = %+v", got)
+	}
+	if _, serr := os.Stat(path); !os.IsNotExist(serr) {
+		t.Errorf("the imported file is still there: %v", serr)
+	}
+	if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+		t.Errorf("the emptied .agy directory is still there: %v", serr)
 	}
 }

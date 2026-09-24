@@ -46,8 +46,9 @@ type EnvExec interface {
 // inbox, and it confirms the receipt by finding the message read back out of
 // agy's own state directory.
 type AgyDeliverer struct {
-	Exec     EnvExec // nil -> OutcomeNotMine, "no exec"
-	CredsDir string  // Store.AgyCredsDir(); "" -> OutcomeNotMine
+	Exec EnvExec // nil -> OutcomeNotMine, "no exec"
+	// Creds is the machine database's secret store; nil -> OutcomeNotMine.
+	Creds SecretStore
 	// Home is agy's state root (the directory holding brain/). "" means
 	// ~/.gemini/antigravity-cli.
 	Home          string
@@ -128,7 +129,7 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 	if planner.Kind != "agy" {
 		return OutcomeNotMine, "", nil
 	}
-	if d.Exec == nil || d.CredsDir == "" {
+	if d.Exec == nil || d.Creds == nil {
 		return OutcomeNotMine, "no exec", nil
 	}
 
@@ -142,7 +143,7 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 		return OutcomeNotMine, reason, nil
 	}
 
-	creds, err := ReadAgyCreds(d.CredsDir, conv)
+	creds, err := ReadAgyCreds(d.Creds, conv)
 	if err != nil {
 		return OutcomeUnavailable, "no agy credentials for this conversation; run any relevo command inside the agy session", nil
 	}
