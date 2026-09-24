@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/history"
@@ -151,6 +152,117 @@ func TestRenderGolden(t *testing.T) {
 	}
 	if got != string(want) {
 		t.Errorf("Render =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// fitReport is F1's fixture: a 55-character candidate token, a repo URL longer
+// than the key column, and one short key of each kind.
+func fitReport() Report {
+	utc := func(day int) time.Time {
+		return time.Date(2026, time.September, day, 9, 0, 0, 0, time.UTC)
+	}
+	longRepo := stStr("https://example.com/org/group/subgroup/long-repository-name")
+	shortRepo := stStr("short-repo")
+	row := func(day int, tok string, repo *string) db.RoundRow {
+		return db.RoundRow{
+			BindingID: "b1", BindingName: "b1", Repo: repo, StartedAt: utc(day),
+			Outcome: db.OutcomeReported, ReportOutcome: stStr("done"),
+			BuilderCandidate: stStr(tok), BuilderProvider: stStr("cline-pass"),
+		}
+	}
+	rows := []db.RoundRow{
+		row(2, strings.Repeat("x", 55), longRepo),
+		row(3, "short-key", shortRepo),
+	}
+	return Build(Inputs{Rows: rows, Since: utc(1), Until: utc(24), Loc: time.UTC})
+}
+
+// renderSection returns the named section's header line and its data rows: the
+// "  " indented lines directly under the header.
+func renderSection(t *testing.T, out, heading string) (string, []string) {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	start := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, heading) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("section %q not found in:\n%s", heading, out)
+	}
+	var data []string
+	for _, ln := range lines[start+1:] {
+		if !strings.HasPrefix(ln, "  ") || strings.HasPrefix(ln, "  (*") {
+			break
+		}
+		data = append(data, ln)
+	}
+	return lines[start], data
+}
+
+// TestRenderKeyFitting is F1's alignment test: a 55-character token and a repo
+// URL longer than the key column must not push the numbers right, so every
+// data line's RNDS value ends in the same column as its header's RNDS. It also
+// asserts a repo key clips from the left, so the repo name stays at the end:
+// flipping the clip direction is the mutation check and must fail this.
+func TestRenderKeyFitting(t *testing.T) {
+	out := Render(fitReport(), nameIdentity)
+
+	for _, heading := range []string{"candidates", "repos"} {
+		header, data := renderSection(t, out, heading)
+		rnds := strings.Index(header, "RNDS")
+		if rnds < 0 {
+			t.Fatalf("%s: header %q has no RNDS column", heading, header)
+		}
+		end := rnds + len("RNDS")
+		if len(data) == 0 {
+			t.Fatalf("%s: no data rows in:\n%s", heading, out)
+		}
+		for _, ln := range data {
+			r := []rune(ln)
+			if len(r) < end || !unicode.IsDigit(r[end-1]) {
+				t.Errorf("%s: %q does not end its RNDS at column %d", heading, ln, end)
+			}
+		}
+	}
+
+	_, repos := renderSection(t, out, "repos")
+	var clipped string
+	for _, ln := range repos {
+		if strings.Contains(ln, "…") {
+			clipped = ln
+		}
+	}
+	if clipped == "" {
+		t.Fatalf("repos: no clipped key in:\n%s", out)
+	}
+	if strings.Contains(clipped, "https://") {
+		t.Errorf("repos: scheme not stripped from %q", clipped)
+	}
+	key := string([]rune(clipped)[2 : 2+keyWidth])
+	if !strings.HasSuffix(key, "long-repository-name") {
+		t.Errorf("repos: clipped key %q does not end with the repo name", key)
+	}
+}
+
+// TestShortTokens covers F2's k/M/B table, including the stripped ".0".
+func TestShortTokens(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{999, "999"},
+		{1500, "1.5k"},
+		{2_000_000, "2M"},
+		{1_195_000_000, "1.2B"},
+		{1_000_000_000, "1B"},
+	}
+	for _, c := range cases {
+		if got := shortTokens(c.n); got != c.want {
+			t.Errorf("shortTokens(%d) = %q, want %q", c.n, got, c.want)
+		}
 	}
 }
 

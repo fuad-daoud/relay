@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // Render is the report as text: the six sections the cockpit's stats view and
@@ -19,7 +18,7 @@ func Render(r Report, name func(token string) string) string {
 	sb.WriteString(fmt.Sprintf("relevo stats · %s → %s · %d rounds in %d bindings · %s + %d on plan · %s tok · median %s\n",
 		r.Since.Format("2006-01-02"), r.Until.Format("2006-01-02"),
 		r.Totals.Rounds, r.Totals.Bindings, money(r.Totals.CostUSD), r.Totals.PlanRounds,
-		usage.ShortTokens(r.Totals.Tokens), duration(r.Totals.MedianMS)))
+		shortTokens(r.Totals.Tokens), duration(r.Totals.MedianMS)))
 	if r.Totals.Rounds == 0 {
 		sb.WriteString("no rounds in this window\n")
 		return sb.String()
@@ -42,13 +41,38 @@ func Render(r Report, name func(token string) string) string {
 }
 
 // scorecardHeader and rowHeader are the two tables' column widths, in one
-// place so the labels stay over the values.
+// place so the labels stay over the values. keyWidth is the width of the
+// "  %-31s" key field both row formats carry: every key is fitted to exactly
+// this many runes, so a long key cannot push the numeric columns right
+// (C2a round-3 plan F1).
 const (
+	keyWidth        = 31
 	scorecardHeader = "%-33s%5s  %4s  %4s  %4s  %5s  %5s  %7s\n"
 	scorecardRow    = "  %-31s%5d  %4s  %4s  %4s  %5s  %5s  %7s\n"
 	groupHeader     = "%-33s%4s  %6s  %4s  %9s\n"
 	groupRowFmt     = "  %-31s%4d  %6s  %4d  %9s\n"
 )
+
+// fitKey fits s into exactly width runes. A key that fits is padded; a longer
+// key is clipped with a trailing "…", or with a leading "…" when clipLeft, so
+// the tail of a repo key stays visible. Widths are runes: "…" counts as one.
+func fitKey(s string, width int, clipLeft bool) string {
+	r := []rune(s)
+	if len(r) <= width {
+		return s + strings.Repeat(" ", width-len(r))
+	}
+	if clipLeft {
+		return "…" + string(r[len(r)-(width-1):])
+	}
+	return string(r[:width-1]) + "…"
+}
+
+// stripScheme drops an "https://" or "http://" prefix from a repo key, which is
+// a URL: github.com/fuad-daoud/relevo is what the table shows.
+func stripScheme(key string) string {
+	key = strings.TrimPrefix(key, "https://")
+	return strings.TrimPrefix(key, "http://")
+}
 
 // renderScorecard writes the per-candidate scorecard and the unrecorded
 // footnote.
@@ -56,9 +80,15 @@ func renderScorecard(sb *strings.Builder, r Report, name func(string) string) {
 	sb.WriteString(fmt.Sprintf(scorecardHeader,
 		"candidates", "RNDS", "DONE", "HALT", "MED", "TTFT", "$/RND", "COMMITS"))
 	for _, s := range r.Scorecard {
-		label := name(s.Token)
+		display := name(s.Token)
+		label := fitKey(display, keyWidth, false)
 		if s.Few {
-			label += " *"
+			// The " *" marker is always kept, so when the name cannot fit
+			// beside it only the name is clipped.
+			label = fitKey(display+" *", keyWidth, false)
+			if len([]rune(display)) > keyWidth-2 {
+				label = fitKey(display, keyWidth-2, false) + " *"
+			}
 		}
 		sb.WriteString(fmt.Sprintf(scorecardRow,
 			label, s.Rounds,
@@ -126,8 +156,12 @@ func renderReliability(sb *strings.Builder, r Report) {
 func renderGroups(sb *strings.Builder, label string, rows []GroupRow) {
 	sb.WriteString(fmt.Sprintf(groupHeader, label, "RNDS", "COST", "HALT", "RNDS/LAND"))
 	for _, g := range rows {
+		// Fit the key to the column, clipping from the left so the repo name
+		// at the end stays visible; a repo URL's scheme is dropped first so
+		// the name gets the room (C2a round-3 plan F1).
+		key := fitKey(stripScheme(g.Key), keyWidth, true)
 		sb.WriteString(fmt.Sprintf(groupRowFmt,
-			g.Key, g.Rounds, money(g.CostUSD), g.Halted, roundsPerLandText(g)))
+			key, g.Rounds, money(g.CostUSD), g.Halted, roundsPerLandText(g)))
 	}
 }
 
@@ -228,6 +262,27 @@ func money(v float64) string {
 		return "<$0.01"
 	}
 	return fmt.Sprintf("$%.2f", v)
+}
+
+// shortTokens is the report's token total: plain under 1,000, "%.1fk" under
+// 1e6, "%.1fM" under 1e9, else "%.1fB", with a trailing ".0" stripped from
+// the number, so 1.0B becomes 1B (C2a round-3 plan F2). It is local:
+// usage.ShortTokens stops at M and its other surfaces keep their goldens.
+func shortTokens(n int64) string {
+	if n < 1_000 {
+		return strconv.FormatInt(n, 10)
+	}
+	var value float64
+	var unit string
+	switch {
+	case n < 1_000_000:
+		value, unit = float64(n)/1_000, "k"
+	case n < 1_000_000_000:
+		value, unit = float64(n)/1_000_000, "M"
+	default:
+		value, unit = float64(n)/1_000_000_000, "B"
+	}
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", value), ".0") + unit
 }
 
 // duration renders milliseconds as minutes, or "%dh%02dm" at an hour and over.
