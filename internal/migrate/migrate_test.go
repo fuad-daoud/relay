@@ -177,15 +177,24 @@ func TestRunRefusalsAllAtOnce(t *testing.T) {
 	mustWrite(t, filepath.Join(stateTo, "keep.txt"), "x")
 
 	pid := 4242
-	if err := serve.WritePointer(filepath.Join(stateFrom, "serve"),
-		serve.DaemonPointer{Root: stateFrom, PID: pid}); err != nil {
+	// The daemon pointer is a kv row now (P5 §4.6); this writes the legacy
+	// file a pre-P5 daemon left, which migrate's detect step still reads (D1).
+	ptrDir := filepath.Join(stateFrom, "serve")
+	if err := os.MkdirAll(ptrDir, 0o755); err != nil {
+		t.Fatalf("mkdir pointer dir: %v", err)
+	}
+	ptr, err := json.Marshal(serve.DaemonPointer{Root: stateFrom, PID: pid})
+	if err != nil {
+		t.Fatalf("marshal pointer: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ptrDir, serve.PointerFileName), ptr, 0o644); err != nil {
 		t.Fatalf("write pointer: %v", err)
 	}
 
 	f := newFakes()
 	f.alive = map[int]bool{pid: true}
 	var out bytes.Buffer
-	_, err := Run(context.Background(), f.options(stateFrom, stateTo, "", "", &out))
+	_, err = Run(context.Background(), f.options(stateFrom, stateTo, "", "", &out))
 
 	var ref *Refusal
 	if !errors.As(err, &ref) {

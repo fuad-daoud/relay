@@ -123,6 +123,49 @@ func kvKeys(ctx context.Context, q queryer, prefix string) ([]string, error) {
 	return out, nil
 }
 
+// PrefixKV wraps a KV so every key is namespaced with Prefix (P5 §4.3). It is
+// how the serve-wide gate and availability records live in the one machine
+// database under `serve.` without colliding with this machine's own rows:
+// ledger.LoadKV(PrefixKV{...}, dir) reads and writes `serve.ledger`, while the
+// local planner's ledger stays `ledger`.
+type PrefixKV struct {
+	KV     KV
+	Prefix string
+}
+
+var _ KV = PrefixKV{}
+
+// KVGet implements KV: the key is read with Prefix prepended.
+func (p PrefixKV) KVGet(key string) ([]byte, bool, error) { return p.KV.KVGet(p.Prefix + key) }
+
+// KVPut implements KV: the key is written with Prefix prepended.
+func (p PrefixKV) KVPut(key string, value []byte) error { return p.KV.KVPut(p.Prefix+key, value) }
+
+// KVDelete implements KV: the prefixed key is removed.
+func (p PrefixKV) KVDelete(key string) error { return p.KV.KVDelete(p.Prefix + key) }
+
+// KVKeys returns every key whose full name starts with Prefix + prefix, with
+// Prefix stripped, so a caller sees the keys of its own namespace. The KV
+// interface carries no KVKeys, so the underlying store is asked through a
+// narrow assertion; a store that cannot list keys yields none.
+func (p PrefixKV) KVKeys(prefix string) ([]string, error) {
+	lister, ok := p.KV.(interface {
+		KVKeys(prefix string) ([]string, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	keys, err := lister.KVKeys(p.Prefix + prefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, strings.TrimPrefix(k, p.Prefix))
+	}
+	return out, nil
+}
+
 // KVTx is the kv surface inside one BEGIN IMMEDIATE transaction (P3b round 2
 // §4.1): the four calls a package needs to read, write and scan its rows
 // atomically. *Tx implements it; *DB implements it too, for the read paths

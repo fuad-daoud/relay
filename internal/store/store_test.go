@@ -36,7 +36,7 @@ func bindingRecordJSON(t *testing.T, s *Store, name string) []byte {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil || !ok {
 		t.Fatalf("RecordGet(%q): ok=%v err=%v", name, ok, err)
 	}
@@ -51,7 +51,7 @@ func bindingEvents(t *testing.T, s *Store, name string) []db.RecordEvent {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil || !ok {
 		t.Fatalf("RecordGet(%q): ok=%v err=%v", name, ok, err)
 	}
@@ -60,6 +60,65 @@ func bindingEvents(t *testing.T, s *Store, name string) []db.RecordEvent {
 		t.Fatalf("EventsOf: %v", err)
 	}
 	return evs
+}
+
+// TestSharedStoresScopeByOwner pins P5 step 1: two stores sharing one machine
+// database, one per owner, can each hold a live "api", and neither sees the
+// other's rows. It is a mutation guard for RecordList's owner filter: drop it
+// and each store's List grows the other owner's row.
+func TestSharedStoresScopeByOwner(t *testing.T) {
+	root := t.TempDir()
+	d, err := db.Open(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	storeA := NewShared(filepath.Join(root, "bindings", "a"), "owner-A", d)
+	storeB := NewShared(filepath.Join(root, "bindings", "b"), "owner-B", d)
+
+	if err := storeA.Save(newBinding("api", "/repo/a")); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+	if err := storeB.Save(newBinding("api", "/repo/b")); err != nil {
+		t.Fatalf("Save B: %v", err)
+	}
+
+	gotA, err := storeA.Load("api")
+	if err != nil {
+		t.Fatalf("Load A: %v", err)
+	}
+	if gotA.CWD != "/repo/a" {
+		t.Errorf("A's api CWD = %q, want /repo/a", gotA.CWD)
+	}
+	gotB, err := storeB.Load("api")
+	if err != nil {
+		t.Fatalf("Load B: %v", err)
+	}
+	if gotB.CWD != "/repo/b" {
+		t.Errorf("B's api CWD = %q, want /repo/b", gotB.CWD)
+	}
+
+	listA, err := storeA.List()
+	if err != nil {
+		t.Fatalf("List A: %v", err)
+	}
+	if len(listA) != 1 || listA[0].Name != "api" || listA[0].CWD != "/repo/a" {
+		t.Fatalf("A.List = %+v, want only A's api", listA)
+	}
+	listB, err := storeB.List()
+	if err != nil {
+		t.Fatalf("List B: %v", err)
+	}
+	if len(listB) != 1 || listB[0].Name != "api" || listB[0].CWD != "/repo/b" {
+		t.Fatalf("B.List = %+v, want only B's api", listB)
+	}
+
+	// A shared store opens no handle of its own: nothing appears under its root
+	// beyond the binding directories it writes.
+	if _, err := os.Stat(filepath.Join(root, "bindings", "a", "relevo.db")); !os.IsNotExist(err) {
+		t.Errorf("shared store A created a relevo.db under its root: %v", err)
+	}
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {

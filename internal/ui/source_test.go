@@ -2,14 +2,28 @@ package ui
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// serverTestDB opens a temp machine database for a serve.Server under test
+// (P5 §4.3: serve.New takes the machine database from its caller now).
+func serverTestDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("open test machine db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
 
 // TestPlannerSourceResolvesEveryKey: a planner source answers every key
 // with the one runtime and the key itself -- there is no branch on a
@@ -42,7 +56,7 @@ func TestPlannerSourceResolvesEveryKey(t *testing.T) {
 // cannot split or whose owner id is malformed.
 func TestServerSourceRuntimeSplitsKey(t *testing.T) {
 	root := t.TempDir()
-	srv, err := serve.New(serve.Config{Root: root, Now: time.Now})
+	srv, err := serve.New(serve.Config{Root: root, DB: serverTestDB(t), Now: time.Now})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -73,7 +87,7 @@ func TestServerSourceRuntimeSplitsKey(t *testing.T) {
 // a failure names the offending key.
 func TestServerSourceRuntimeRefusesBadKeys(t *testing.T) {
 	root := t.TempDir()
-	srv, err := serve.New(serve.Config{Root: root, Now: time.Now})
+	srv, err := serve.New(serve.Config{Root: root, DB: serverTestDB(t), Now: time.Now})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -107,7 +121,7 @@ func TestPlannerSourceBaseIsRuntime(t *testing.T) {
 // refused there with the existing "no database" notice (§2).
 func TestServerSourceBaseHasNoDB(t *testing.T) {
 	root := t.TempDir()
-	srv, err := serve.New(serve.Config{Root: root, Now: time.Now})
+	srv, err := serve.New(serve.Config{Root: root, DB: serverTestDB(t), Now: time.Now})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

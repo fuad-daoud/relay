@@ -67,7 +67,7 @@ func (s *Server) census() (census, error) {
 			continue
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
-		bindings, err := store.New(ownerPath).List()
+		bindings, err := s.ownerStore(ownerPath).List()
 		if err != nil {
 			slog.Warn("census: list owner bindings failed", "owner", id, "err", err)
 			if firstErr == nil {

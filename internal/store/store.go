@@ -70,12 +70,24 @@ const (
 type Store struct {
 	root string
 
+	// owner is the scope every record call is filtered to (P5 §4.2): "" for
+	// the local store (New), and the enrolled client id for a shared,
+	// server-owned store (NewShared). A Store never writes a row outside it.
+	owner string
+
+	// shared is the machine-database handle a NewShared store borrows: the
+	// caller opened it and owns its lifetime, and the store never opens or
+	// closes a handle. It is nil for a New store, which opens
+	// <root>/relevo.db lazily.
+	shared *db.DB
+
 	mu sync.Mutex // serialises WithLock within this process
 
 	// The database at <root>/relevo.db holds the bindings, their logs and the
 	// small records (config, the ledger/availability/latency kv rows, daemon
 	// info). It opens lazily on the first data-method call: path helpers and
-	// WithLock alone never open it (P3a plan §3.2, §4.2).
+	// WithLock alone never open it (P3a plan §3.2, §4.2). A shared store
+	// never uses this path -- it borrows shared above.
 	dbOnce sync.Once
 	dbh    *db.DB
 	dbErr  error
@@ -88,9 +100,18 @@ type Tx struct {
 	s *Store
 }
 
-// New returns a Store rooted at root.
+// New returns a Store rooted at root, scoped to the local owner "".
 func New(root string) *Store {
 	return &Store{root: root}
+}
+
+// NewShared returns a Store over root's bindings that reads and writes through
+// d, the machine database the caller opened and owns (P5 §4.2). owner scopes
+// every record call, so two shared stores over one database see only their own
+// owner's rows. The store never opens or closes a handle: dbForRead and
+// dbForWrite return d for its whole lifetime.
+func NewShared(root, owner string, d *db.DB) *Store {
+	return &Store{root: root, owner: owner, shared: d}
 }
 
 // DefaultRoot resolves $XDG_STATE_HOME/relevo, falling back to ~/.local/state/relevo.
@@ -221,14 +242,14 @@ func (s *Store) MarkViewed(name string, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, ok, err := d.RecordGet(name)
+	_, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
 	}
-	return d.RecordSetViewed(name, at)
+	return d.RecordSetViewed(s.owner, name, at)
 }
 
 // ViewedAt returns when name was last viewed and true, or the zero time and
@@ -241,7 +262,7 @@ func (s *Store) ViewedAt(name string) (time.Time, bool) {
 	if err != nil || d == nil {
 		return time.Time{}, false
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil || !ok || rec.ViewedAt == nil {
 		return time.Time{}, false
 	}
@@ -455,7 +476,7 @@ func (s *Store) save(b Binding) error {
 		return fmt.Errorf("marshal binding %q: %w", b.Name, err)
 	}
 	if _, err := d.RecordPut(db.Record{
-		Owner:     b.Owner,
+		Owner:     s.owner,
 		Name:      b.Name,
 		State:     string(b.State),
 		Round:     b.Round,
@@ -510,7 +531,7 @@ func (s *Store) load(name string) (Binding, error) {
 	if d == nil {
 		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
 	}
@@ -560,7 +581,7 @@ func (s *Store) list() ([]Binding, error) {
 	if d == nil {
 		return nil, nil
 	}
-	recs, err := d.RecordList()
+	recs, err := d.RecordList(s.owner)
 	if err != nil {
 		return nil, fmt.Errorf("read state root: %w", err)
 	}
@@ -708,7 +729,7 @@ func (t *Tx) archive(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := d.RecordArchive(name, time.Now().UTC()); err != nil {
+	if err := d.RecordArchive(s.owner, name, time.Now().UTC()); err != nil {
 		return "", err
 	}
 
@@ -736,7 +757,7 @@ func (t *Tx) remove(name string) error {
 	if err != nil {
 		return err
 	}
-	_, ok, err := d.RecordGet(name)
+	_, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
 	}
@@ -746,7 +767,7 @@ func (t *Tx) remove(name string) error {
 		}
 		// The events and sealed files go with the row, through ON DELETE
 		// CASCADE (§4.4).
-		if err := d.RecordDelete(name); err != nil {
+		if err := d.RecordDelete(s.owner, name); err != nil {
 			return err
 		}
 	}

@@ -5,25 +5,36 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
-// ServeChecks evaluates the health of a relevo serve installation.
-// If serveRoot/server.key is absent, no checks are returned (this machine is not a server).
-func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
-	keyPath := filepath.Join(serveRoot, "server.key")
-	if err := env.Stat(keyPath); err != nil {
+// ServeChecks evaluates the health of a relevo serve installation. It runs when
+// the machine database holds the serve.tls.key secret (P5 §4.7): the
+// certificate and the clients come from that database, and the state check
+// probes the root the running daemon's serve.daemon row names -- or serveRoot
+// when there is none. Reading the root from the row is what makes the serve
+// rows show on a box started with a non-default --state.
+func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time) []Check {
+	if d == nil {
 		return nil
+	}
+	if _, ok, err := d.SecretGet("serve.tls.key"); err != nil || !ok {
+		return nil
+	}
+
+	root := serveRoot
+	if p, ok, err := serve.ReadDaemonPointer(d); err == nil && ok && p.Root != "" {
+		root = p.Root
 	}
 
 	var checks []Check
 
 	// 1. Certificate check
-	crtPath := filepath.Join(serveRoot, "server.crt")
-	rawCrt, err := env.ReadFile(crtPath)
-	if err != nil {
+	if rawCrt, ok, err := d.SecretGet("serve.tls.cert"); err != nil || !ok {
 		checks = append(checks, Check{
 			Group:    "serve",
 			Name:     "certificate",
@@ -78,25 +89,22 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 	}
 
 	// 2. Clients check
-	clientsPath := filepath.Join(serveRoot, "clients.json")
-	rawClients, err := env.ReadFile(clientsPath)
+	rawClients, clientsOK, err := d.KVGet("serve.clients")
 	if err != nil {
-		if errorsIsNotExist(err) {
-			checks = append(checks, Check{
-				Group:    "serve",
-				Name:     "clients",
-				Severity: SevWarn,
-				Detail:   "none enrolled",
-				Fix:      "relevo serve enroll --label <name> --key <line>",
-			})
-		} else {
-			checks = append(checks, Check{
-				Group:    "serve",
-				Name:     "clients",
-				Severity: SevFail,
-				Detail:   err.Error(),
-			})
-		}
+		checks = append(checks, Check{
+			Group:    "serve",
+			Name:     "clients",
+			Severity: SevFail,
+			Detail:   err.Error(),
+		})
+	} else if !clientsOK {
+		checks = append(checks, Check{
+			Group:    "serve",
+			Name:     "clients",
+			Severity: SevWarn,
+			Detail:   "none enrolled",
+			Fix:      "relevo serve enroll --label <name> --key <line>",
+		})
 	} else {
 		var list []struct {
 			ID        string    `json:"id"`
@@ -108,7 +116,7 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 				Name:     "clients",
 				Severity: SevFail,
 				Detail:   "parse error",
-				Fix:      "fix JSON formatting in " + clientsPath,
+				Fix:      "fix the serve.clients row in the database",
 			})
 		} else {
 			active := 0
@@ -144,8 +152,8 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 	}
 
 	// 3. State check
-	bindingsDir := filepath.Join(serveRoot, "bindings")
-	if err := env.Stat(serveRoot); err != nil {
+	bindingsDir := filepath.Join(root, "bindings")
+	if err := env.Stat(root); err != nil {
 		checks = append(checks, Check{
 			Group:    "serve",
 			Name:     "state",
@@ -170,8 +178,4 @@ func ServeChecks(env Env, serveRoot string, now time.Time) []Check {
 	}
 
 	return checks
-}
-
-func errorsIsNotExist(err error) bool {
-	return os.IsNotExist(err)
 }

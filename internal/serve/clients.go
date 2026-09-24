@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
@@ -18,6 +17,10 @@ var (
 	ErrAlreadyEnrolled = errors.New("client already enrolled")
 	ErrNoSuchClient    = errors.New("no such client")
 )
+
+// clientsKVKey is the machine database's kv row holding the enrolled clients
+// (P5 §3). The document is the same JSON array clients.json held.
+const clientsKVKey = "serve.clients"
 
 type Client struct {
 	ID         remote.ClientID `json:"id"`
@@ -27,59 +30,36 @@ type Client struct {
 	RevokedAt  time.Time       `json:"revoked_at,omitempty"`
 }
 
-// fileStamp records the ModTime and Size of clients.json at the last successful read;
-// zero when the file was absent.
-//
-// Mtime resolution on some filesystems is one second; Size is in the stamp
-// so two writes inside one second with different content still differ.
-// Two writes inside one second with the same size would be missed, but
-// enroll and revoke are human-paced operations.
-type fileStamp struct {
-	modTime time.Time
-	size    int64
-}
-
+// Clients is the enrolled-client list, read from the machine database's
+// serve.clients kv row. Every public method re-reads the row, replacing the
+// file's mtime stamp (P5 §4.4): an enroll or revoke performed by another
+// process is seen live, because the row is the record.
 type Clients struct {
-	path       string
+	kv         db.KV
 	mu         sync.Mutex
 	list       []Client
-	stamp      fileStamp
 	warnLogged map[string]bool
 }
 
+// refresh reads the whole document from the kv row. An absent row is an empty
+// list, exactly as an absent clients.json was.
 func (c *Clients) refresh() error {
-	if c.path == "" {
+	if c.kv == nil {
 		return nil
 	}
-	st, err := os.Stat(c.path)
+	data, ok, err := c.kv.KVGet(clientsKVKey)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if c.stamp != (fileStamp{}) {
-				c.list = nil
-				c.stamp = fileStamp{}
-			}
-			return nil
-		}
 		return err
 	}
-
-	if c.stamp != (fileStamp{}) && st.ModTime().Equal(c.stamp.modTime) && st.Size() == c.stamp.size {
+	if !ok {
+		c.list = nil
 		return nil
-	}
-
-	data, err := os.ReadFile(c.path)
-	if err != nil {
-		return err
 	}
 	var parsed []Client
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return err
 	}
 	c.list = parsed
-	c.stamp = fileStamp{
-		modTime: st.ModTime(),
-		size:    st.Size(),
-	}
 	return nil
 }
 
@@ -93,12 +73,21 @@ func (c *Clients) warnOnceLocked(err error) {
 	}
 	if !c.warnLogged[msg] {
 		c.warnLogged[msg] = true
-		slog.Warn("refresh clients", "path", c.path, "err", err)
+		slog.Warn("refresh clients", "key", clientsKVKey, "err", err)
 	}
 }
 
-func LoadClients(path string) (*Clients, error) {
-	c := &Clients{path: path}
+// LoadClients returns the client list held in kv's serve.clients row. When the
+// row is absent and legacyPath is a clients.json that exists, its document is
+// imported into the row and the file is removed (P5 §4.4). A row that already
+// exists wins and leaves any file where it is.
+func LoadClients(kv db.KV, legacyPath string) (*Clients, error) {
+	c := &Clients{kv: kv}
+	if legacyPath != "" {
+		if _, _, err := db.KVImportFile(kv, clientsKVKey, legacyPath); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.refresh(); err != nil {
 		return nil, err
 	}
@@ -224,46 +213,15 @@ func (c *Clients) LabelOf(id remote.ClientID) string {
 	return s
 }
 
+// saveLocked writes the whole document to the kv row: the row is the record
+// now, so there is no temp file and no rename (P5 §4.4).
 func (c *Clients) saveLocked() error {
-	if c.path == "" {
+	if c.kv == nil {
 		return nil
-	}
-	dir := filepath.Dir(c.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
 	}
 	data, err := json.MarshalIndent(c.list, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "clients-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, c.path); err != nil {
-		return err
-	}
-	st, err := os.Stat(c.path)
-	if err != nil {
-		return err
-	}
-	c.stamp = fileStamp{
-		modTime: st.ModTime(),
-		size:    st.Size(),
-	}
-	return nil
+	return c.kv.KVPut(clientsKVKey, data)
 }

@@ -9,9 +9,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func makeTestCertPEM(t *testing.T, notBefore, notAfter time.Time) string {
@@ -39,15 +42,49 @@ func makeTestCertPEM(t *testing.T, notBefore, notAfter time.Time) string {
 	return string(pem.EncodeToMemory(block))
 }
 
+// serveTestDB opens a fresh machine database for the serve checks. keyOK sets
+// the serve.tls.key secret, which is what turns the checks on; certPEM seeds
+// serve.tls.cert; clients seeds the serve.clients row.
+func serveTestDB(t *testing.T, keyOK bool, certPEM, clients string) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if err := d.Tx(func(tx *db.Tx) error {
+		if keyOK {
+			if err := tx.SecretPut("serve.tls.key", []byte("test-key"), time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		if certPEM != "" {
+			if err := tx.SecretPut("serve.tls.cert", []byte(certPEM), time.Now().UTC()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed secrets: %v", err)
+	}
+	if clients != "" {
+		if err := d.KVPut("serve.clients", []byte(clients)); err != nil {
+			t.Fatalf("seed clients: %v", err)
+		}
+	}
+	return d
+}
+
 func TestServeChecksNoServerKey(t *testing.T) {
 	env := &fakeEnv{
 		existingFiles: map[string]bool{},
 		fileContents:  map[string]string{},
 	}
 	now := time.Now()
-	checks := ServeChecks(env, "/fake/serve", now)
+	checks := ServeChecks(env, serveTestDB(t, false, "", ""), "/fake/serve", now)
 	if len(checks) != 0 {
-		t.Fatalf("ServeChecks without server.key returned %d checks, want 0", len(checks))
+		t.Fatalf("ServeChecks without the serve.tls.key secret returned %d checks, want 0", len(checks))
 	}
 }
 
@@ -58,15 +95,9 @@ func TestServeChecksCertificate(t *testing.T) {
 	t.Run("valid certificate", func(t *testing.T) {
 		certPEM := makeTestCertPEM(t, now.Add(-time.Hour), now.Add(365*24*time.Hour))
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/server.crt": certPEM,
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "certificate")
 		if c == nil {
 			t.Fatal("missing serve: certificate check")
@@ -82,15 +113,9 @@ func TestServeChecksCertificate(t *testing.T) {
 	t.Run("expiring within 30d", func(t *testing.T) {
 		certPEM := makeTestCertPEM(t, now.Add(-time.Hour), now.Add(15*24*time.Hour))
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/server.crt": certPEM,
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "certificate")
 		if c == nil {
 			t.Fatal("missing serve: certificate check")
@@ -106,15 +131,9 @@ func TestServeChecksCertificate(t *testing.T) {
 	t.Run("expired certificate", func(t *testing.T) {
 		certPEM := makeTestCertPEM(t, now.Add(-48*time.Hour), now.Add(-24*time.Hour))
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/server.crt": certPEM,
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, certPEM, ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "certificate")
 		if c == nil {
 			t.Fatal("missing serve: certificate check")
@@ -129,15 +148,9 @@ func TestServeChecksCertificate(t *testing.T) {
 
 	t.Run("unreadable certificate", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/server.crt": "not a pem",
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "not a pem", ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "certificate")
 		if c == nil {
 			t.Fatal("missing serve: certificate check")
@@ -161,15 +174,9 @@ func TestServeChecksClients(t *testing.T) {
 			{"id": "id2", "label": "client2"}
 		]`
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/clients.json": clientsJSON,
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "", clientsJSON), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -184,15 +191,9 @@ func TestServeChecksClients(t *testing.T) {
 
 	t.Run("none enrolled", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/clients.json": "[]",
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "", "[]"), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -207,15 +208,11 @@ func TestServeChecksClients(t *testing.T) {
 
 	t.Run("parse error", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			fileContents: map[string]string{
-				serveRoot + "/clients.json": "{bad json",
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		// Valid JSON of the wrong shape: the kv row is validated on write, so
+		// a malformed document is one that is not the client array.
+		checks := ServeChecks(env, serveTestDB(t, true, "", `{"not":"a client list"}`), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "clients")
 		if c == nil {
 			t.Fatal("missing serve: clients check")
@@ -235,12 +232,9 @@ func TestServeChecksState(t *testing.T) {
 
 	t.Run("state writable", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
+			existingFiles: map[string]bool{serveRoot: true},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -255,12 +249,10 @@ func TestServeChecksState(t *testing.T) {
 
 	t.Run("serveRoot stat fails", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				// serveRoot missing
-			},
+			// serveRoot missing
+			existingFiles: map[string]bool{},
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")
@@ -272,13 +264,10 @@ func TestServeChecksState(t *testing.T) {
 
 	t.Run("probe fails", func(t *testing.T) {
 		env := &fakeEnv{
-			existingFiles: map[string]bool{
-				serveRoot + "/server.key": true,
-				serveRoot:                 true,
-			},
-			probeErr: errors.New("permission denied"),
+			existingFiles: map[string]bool{serveRoot: true},
+			probeErr:      errors.New("permission denied"),
 		}
-		checks := ServeChecks(env, serveRoot, now)
+		checks := ServeChecks(env, serveTestDB(t, true, "", ""), serveRoot, now)
 		c := findCheck(Report{Checks: checks}, "serve", "state")
 		if c == nil {
 			t.Fatal("missing serve: state check")

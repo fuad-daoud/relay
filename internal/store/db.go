@@ -25,6 +25,9 @@ import (
 // refused from every data method with db.ErrNewerSchema; path helpers keep
 // working.
 func (s *Store) dbForWrite() (*db.DB, error) {
+	if s.shared != nil {
+		return s.shared, nil
+	}
 	s.dbOnce.Do(func() {
 		if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
@@ -54,6 +57,9 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 // write -- or the import of a present legacy bind.json/log.jsonl -- creates
 // the file (P3a plan §B1).
 func (s *Store) dbForRead() (*db.DB, error) {
+	if s.shared != nil {
+		return s.shared, nil
+	}
 	if _, err := os.Stat(s.DBPath()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -125,7 +131,7 @@ func (s *Store) importPresent(name string) error {
 			return fmt.Errorf("marshal binding %q: %w", name, err)
 		}
 		if _, err := d.RecordPut(db.Record{
-			Owner:     b.Owner,
+			Owner:     s.owner,
 			Name:      b.Name,
 			State:     string(b.State),
 			Round:     b.Round,
@@ -143,7 +149,7 @@ func (s *Store) importPresent(name string) error {
 		if err != nil {
 			return fmt.Errorf("%q: %w", name, err)
 		}
-		rec, ok, err := d.RecordGet(name)
+		rec, ok, err := d.RecordGet(s.owner, name)
 		if err != nil {
 			return fmt.Errorf("import log %q: %w", name, err)
 		}

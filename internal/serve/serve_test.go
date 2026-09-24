@@ -60,8 +60,9 @@ func signedRequest(t *testing.T, kp remote.Keypair, method, target string, body 
 }
 
 func TestClientsAddRevokeLookup(t *testing.T) {
+	d := testServeDB(t)
 	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(clientsPath)
+	c, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -128,8 +129,8 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 		t.Fatalf("Lookup after re-add: got %v, want KeyActive", status)
 	}
 
-	// 5. File survives a reload
-	cLoaded, err := LoadClients(clientsPath)
+	// 5. The row survives a reload
+	cLoaded, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients reload: %v", err)
 	}
@@ -146,12 +147,13 @@ func TestClientsAddRevokeLookup(t *testing.T) {
 }
 
 func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
+	d := testServeDB(t)
 	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c1, err := LoadClients(clientsPath)
+	c1, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients 1: %v", err)
 	}
-	c2, err := LoadClients(clientsPath)
+	c2, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients 2: %v", err)
 	}
@@ -184,8 +186,9 @@ func TestClientsLookupSeesEnrollFromAnotherInstance(t *testing.T) {
 }
 
 func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
+	d := testServeDB(t)
 	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(clientsPath)
+	c, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -201,10 +204,10 @@ func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// Corrupt the file. Size will differ from the formatted JSON written by Add.
-	corrupted := []byte("{invalid json, not a client list")
-	if err := os.WriteFile(clientsPath, corrupted, 0o600); err != nil {
-		t.Fatalf("write corrupted clients.json: %v", err)
+	// Corrupt the row. KVPut refuses invalid JSON, so a document the reader
+	// cannot parse is one of the wrong shape.
+	if err := d.KVPut(clientsKVKey, []byte(`{"not":"a client list"}`)); err != nil {
+		t.Fatalf("corrupt serve.clients: %v", err)
 	}
 
 	// Lookup still answers from the old list
@@ -218,8 +221,9 @@ func TestClientsRefreshKeepsListOnParseError(t *testing.T) {
 }
 
 func TestClientsRefreshOnDelete(t *testing.T) {
+	d := testServeDB(t)
 	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(clientsPath)
+	c, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -243,9 +247,9 @@ func TestClientsRefreshOnDelete(t *testing.T) {
 		t.Fatalf("Lookup returned wrong public key")
 	}
 
-	// Remove the file
-	if err := os.Remove(clientsPath); err != nil {
-		t.Fatalf("Remove: %v", err)
+	// Remove the row
+	if err := d.KVDelete(clientsKVKey); err != nil {
+		t.Fatalf("KVDelete: %v", err)
 	}
 
 	// Lookup -> KeyUnknown
@@ -259,8 +263,9 @@ func TestClientsRefreshOnDelete(t *testing.T) {
 // enrolled caller's label, and "-" -- not "" -- for a request that never
 // authenticated at all (the zero ClientID an auth failure leaves behind).
 func TestOwnerLabel(t *testing.T) {
+	d := testServeDB(t)
 	clientsPath := filepath.Join(t.TempDir(), "clients.json")
-	c, err := LoadClients(clientsPath)
+	c, err := LoadClients(d, clientsPath)
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -287,6 +292,7 @@ func newTestServer(t *testing.T, maxBundleBytes int64) (*Server, string) {
 	t.Helper()
 	root := t.TempDir()
 	cfg := Config{
+		DB:             testServeDB(t),
 		Root:           root,
 		MaxBundleBytes: maxBundleBytes,
 		Now:            time.Now,
@@ -518,6 +524,7 @@ func TestWhoAmI(t *testing.T) {
 
 	// With a scope configured, WhoAmI carries its slice and CPU quota (#295).
 	scoped, err := New(Config{
+		DB:    testServeDB(t),
 		Root:  t.TempDir(),
 		Now:   time.Now,
 		Scope: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
@@ -717,9 +724,10 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 		t.Logf("  %s", sub.Name())
 	}
 
-	// The binding's record lives in the owner store's database now, so the
-	// assertion is that the owner store can load it (D1).
-	if _, err := store.New(ownerSubDir).Load("api"); err != nil {
+	// The binding's record lives in the machine database, scoped to the
+	// owner, so the assertion is that the server's owner store for this root
+	// can load it (P5 §8).
+	if _, err := s.ownerStore(ownerSubDir).Load("api"); err != nil {
 		t.Fatalf("owner store Load(api): %v", err)
 	}
 }
@@ -742,6 +750,7 @@ func newTierTestServer(t *testing.T, pol policy.Policy) (*Server, remote.Keypair
 	}
 
 	srv, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       root,
 		Candidates: cSet,
 		Policy:     pol,
@@ -811,6 +820,7 @@ func roleTestRegistry(t *testing.T, set *candidate.Set, pol policy.Policy) *role
 func newRoleTestServer(t *testing.T, set *candidate.Set, pol policy.Policy, reg *roles.Registry) (*Server, remote.Keypair) {
 	t.Helper()
 	srv, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       t.TempDir(),
 		Candidates: set,
 		Policy:     pol,
@@ -1214,6 +1224,7 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	}
 
 	s, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       root,
 		Candidates: cSet,
 		Now:        time.Now,
@@ -1244,27 +1255,23 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 		t.Fatalf("unavailable status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
 
-	// The server-wide gate lives in the serve root's database (P3b plan §4.5),
-	// not in any owner's.
-	if _, ok, err := s.DB().KVGet("ledger"); err != nil || !ok {
-		t.Fatalf("serve-root ledger row = (_, %v, %v), want it present", ok, err)
+	// The server-wide gate lives in the machine database under the serve.
+	// prefix (P5 §4.3), not under this machine's own ledger key.
+	if _, ok, err := s.DB().KVGet("serve.ledger"); err != nil || !ok {
+		t.Fatalf("serve.ledger row = (_, %v, %v), want it present", ok, err)
+	}
+	if _, ok, err := s.DB().KVGet("ledger"); err != nil || ok {
+		t.Fatalf("local ledger row = (_, %v, %v), want none", ok, err)
 	}
 
-	// No per-owner database carries the server-wide gate.
+	// No per-owner database exists at all (P5 §4.3).
 	idADir, ok := idA.Dir()
 	if !ok {
 		t.Fatalf("idA.Dir() failed for %s", idA)
 	}
 	ownerDB := filepath.Join(root, "bindings", idADir, "relevo.db")
-	if _, err := os.Stat(ownerDB); err == nil {
-		od, oerr := db.OpenReadOnly(ownerDB)
-		if oerr != nil {
-			t.Fatalf("OpenReadOnly(%s): %v", ownerDB, oerr)
-		}
-		defer od.Close()
-		if _, ok, err := od.KVGet("ledger"); err != nil || ok {
-			t.Fatalf("per-owner ledger row = (_, %v, %v), want none", ok, err)
-		}
+	if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
+		t.Fatalf("owner database at %s (err %v), want none", ownerDB, err)
 	}
 }
 
@@ -1286,6 +1293,7 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 	}
 
 	s, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       root,
 		Candidates: cSet,
 		Now:        time.Now,
@@ -1392,6 +1400,7 @@ func TestAvailableRefusesUnknownProvider(t *testing.T) {
 	}
 
 	s, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       root,
 		Candidates: cSet,
 		Now:        time.Now,
@@ -1676,6 +1685,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 	}
 	runner := newScriptRunner()
 	srvCfg := Config{
+		DB:         testServeDB(t),
 		Root:       serverRoot,
 		Candidates: cSet,
 		Runner:     runner,
@@ -3015,6 +3025,7 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	}
 	runner := newScriptRunner()
 	srv, err := New(Config{
+		DB:         testServeDB(t),
 		Root:       serverRoot,
 		Candidates: cSet,
 		Runner:     runner,
@@ -3131,12 +3142,29 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	if !seenA || !seenB {
 		t.Fatalf("seenA=%v, seenB=%v; want both true", seenA, seenB)
 	}
+
+	// P5 step 2: every owner's records live in the machine database, so a tick
+	// over several owners leaves no per-owner database behind.
+	if _, err := os.Stat(filepath.Join(serverRoot, "relevo.db")); !os.IsNotExist(err) {
+		t.Errorf("serve-root database exists (err %v), want none", err)
+	}
+	for _, id := range []remote.ClientID{idA, idB, remote.IDOf(kpC.Public)} {
+		dir, ok := id.Dir()
+		if !ok {
+			t.Fatalf("id.Dir() failed for %s", id)
+		}
+		ownerDB := filepath.Join(serverRoot, "bindings", dir, "relevo.db")
+		if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
+			t.Errorf("per-owner database at %s (err %v), want none", ownerDB, err)
+		}
+	}
 }
 
 func TestTickSkipsMissingBindingsDir(t *testing.T) {
 	ctx := context.Background()
 	serverRoot := t.TempDir()
 	srv, err := New(Config{
+		DB:   testServeDB(t),
 		Root: serverRoot,
 		Now:  time.Now,
 	})
@@ -3185,16 +3213,13 @@ func TestCandidatesView(t *testing.T) {
 			},
 		},
 	}
-	seedDB, serr := store.New(root).DB()
-	if serr != nil {
-		t.Fatal(serr)
-	}
-	defer seedDB.Close()
-	if err := ledger.SaveKV(seedDB, l); err != nil {
+	seedDB := testServeDB(t)
+	if err := ledger.SaveKV(db.PrefixKV{KV: seedDB, Prefix: "serve."}, l); err != nil {
 		t.Fatal(err)
 	}
 
 	srv, err := New(Config{
+		DB:         seedDB,
 		Root:       root,
 		Candidates: cSet,
 		Policy:     pol,

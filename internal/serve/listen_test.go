@@ -31,17 +31,19 @@ func TestListenTLSWhoAmI(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
 
-	fp, err := InitTLS(dir, []string{"127.0.0.1"}, now)
+	secrets := SecretStore{DB: testServeDB(t), Root: dir}
+	fp, err := InitTLS(secrets, []string{"127.0.0.1"}, now)
 	if err != nil {
 		t.Fatalf("InitTLS: %v", err)
 	}
 
-	cert, err := LoadTLS(dir)
+	cert, err := LoadTLS(secrets)
 	if err != nil {
 		t.Fatalf("LoadTLS: %v", err)
 	}
 
 	srv, err := New(Config{
+		DB:   testServeDB(t),
 		Root: dir,
 		Now:  func() time.Time { return now },
 	})
@@ -138,7 +140,7 @@ func TestListenTLSWhoAmI(t *testing.T) {
 
 func TestListenRefusesWithoutTLS(t *testing.T) {
 	dir := t.TempDir()
-	srv, err := New(Config{Root: dir, Now: time.Now})
+	srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func TestListenInsecureHTTP(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
 
-	srv, err := New(Config{Root: dir, Now: func() time.Time { return now }})
+	srv, err := New(Config{DB: testServeDB(t), Root: dir, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +255,7 @@ func TestListenInsecureHTTP(t *testing.T) {
 // Mutation check: take the `<-drained` wait out of ListenAndServe and this
 // fails: it returns before the held tick is released.
 func TestListenAndServeWaitsForRun(t *testing.T) {
-	srv, err := New(Config{Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

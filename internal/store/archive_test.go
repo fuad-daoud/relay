@@ -255,10 +255,10 @@ func TestImportTarballFailureKeepsTheTarball(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DB: %v", err)
 	}
-	if _, ok, err := d.RecordGet("webshop"); err != nil || ok {
+	if _, ok, err := d.RecordGet(s.owner, "webshop"); err != nil || ok {
 		t.Errorf("RecordGet(webshop) = %v, %v; want no live row after a failed import", ok, err)
 	}
-	if recs, err := d.RecordListArchived(); err != nil || len(recs) != 0 {
+	if recs, err := d.RecordListArchived(s.owner); err != nil || len(recs) != 0 {
 		t.Errorf("RecordListArchived = %+v, %v; want no archived row after a failed import", recs, err)
 	}
 }

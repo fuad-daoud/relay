@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -93,30 +94,56 @@ func pidAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-func adminRoot(fs *flag.FlagSet) (string, error) {
+// openMachineDB opens the machine database (store.DefaultRoot()/relevo.db),
+// which every serve verb reads clients, TLS, the daemon pointer and config
+// from (P5 §4.3). The caller closes it. It returns the state root too, because
+// the hook run log is keyed on it.
+func openMachineDB() (*db.DB, string, error) {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, "", err
+	}
+	d, err := openDB(filepath.Join(root, "relevo.db"))
+	if err != nil {
+		return nil, "", err
+	}
+	return d, root, nil
+}
+
+// adminRoot resolves the serve root an administrative verb should use, and
+// returns the machine database it read the daemon pointer and state markers
+// from. The caller closes the database.
+func adminRoot(fs *flag.FlagSet) (string, *db.DB, error) {
 	var state string
 	if f := fs.Lookup("state"); f != nil {
 		state = f.Value.String()
 	}
 	def, err := defaultServeRoot()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	root, note, err := serve.ResolveAdminRoot(state, def, pidAlive)
+	d, _, err := openMachineDB()
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	root, note, err := serve.ResolveAdminRoot(state, d, def, pidAlive)
+	if err != nil {
+		_ = d.Close()
+		return "", nil, err
 	}
 	if note != "" {
 		fmt.Fprintf(os.Stderr, "relevo serve: %s\n", note)
 	}
-	initialised, err := serve.Initialised(root)
+	initialised, err := serve.Initialised(root, d)
 	if err != nil {
-		return "", err
+		_ = d.Close()
+		return "", nil, err
 	}
 	if !initialised {
-		return "", fmt.Errorf("no serve state at %s: run relevo serve init, or pass --state <dir> matching the daemon's", root)
+		_ = d.Close()
+		return "", nil, fmt.Errorf("no serve state at %s: run relevo serve init, or pass --state <dir> matching the daemon's", root)
 	}
-	return root, nil
+	return root, d, nil
 }
 
 func cmdServe(args []string) error {
@@ -182,14 +209,12 @@ func cmdServe(args []string) error {
 
 // serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
 // tier at startup: candidates, policy, the server's gates and a clock.
-// Gates is the serve root's database (P3b plan §4.5), so a tier check that
-// reads the gate record sees the server-wide one. The open is best-effort: a
-// failure leaves Gates nil -- an empty record -- and the tier log never reads
-// it anyway.
-func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string) relevo.Runtime {
+// Gates is the `serve.`-prefixed view of the machine database (P5 §4.3), so a
+// tier check that reads the gate record sees the server-wide one.
+func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string, d *db.DB) relevo.Runtime {
 	var gates db.KV
-	if d, err := store.New(root).DB(); err == nil {
-		gates = d
+	if d != nil {
+		gates = db.PrefixKV{KV: d, Prefix: "serve."}
 	}
 	return relevo.Runtime{
 		Candidates: candidates,
@@ -254,28 +279,18 @@ func scopeStatusText(sc *relevo.ScopeSpec) string {
 	return "on (" + strings.Join(parts, ", ") + ")"
 }
 
-func serveAdminConfig(root string) serve.Config {
+func serveAdminConfig(root string, d *db.DB) serve.Config {
 	return serve.Config{
 		Root:   root,
+		DB:     d,
 		Runner: proc.New(),
 		Now:    time.Now,
 	}
 }
 
-// loadServeConfig opens the machine database exactly as newRuntime does
-// (store.DefaultRoot(), not --state), imports any config file present, and
-// returns the loaded config: the set every candidate-aware command needs. It
-// is the one copy of that loading: cmdServeRun starts a daemon with it, and
-// the gate verbs require it (§4.8).
-func loadServeConfig() (config.Loaded, error) {
-	root, err := store.DefaultRoot()
-	if err != nil {
-		return config.Loaded{}, err
-	}
-	d, err := openDB(filepath.Join(root, "relevo.db"))
-	if err != nil {
-		return config.Loaded{}, err
-	}
+// loadConfig imports any config file present into the open machine database
+// and returns the loaded config: the set every candidate-aware command needs.
+func loadConfig(d *db.DB) (config.Loaded, error) {
 	cs := config.Open(d)
 
 	configDir, err := userConfigRoot()
@@ -292,6 +307,25 @@ func loadServeConfig() (config.Loaded, error) {
 	return cs.Load()
 }
 
+// loadServeConfig opens the machine database exactly as newRuntime does
+// (store.DefaultRoot(), not --state), imports any config file present, and
+// returns the loaded config, the handle it read from and the state root; the
+// caller closes the handle. It is the one copy of that loading: cmdServeRun
+// starts a daemon with it. An admin verb that already holds the machine
+// database uses loadConfig directly.
+func loadServeConfig() (config.Loaded, *db.DB, string, error) {
+	d, root, err := openMachineDB()
+	if err != nil {
+		return config.Loaded{}, nil, "", err
+	}
+	L, err := loadConfig(d)
+	if err != nil {
+		_ = d.Close()
+		return config.Loaded{}, nil, "", err
+	}
+	return L, d, root, nil
+}
+
 // serveAdminConfigWithCandidates is serveAdminConfig plus the configured
 // candidates and policy, which the gate verbs need: `relevo serve gates`
 // projects the ledger onto the candidate set, and the two edit verbs refuse a
@@ -301,8 +335,8 @@ func loadServeConfig() (config.Loaded, error) {
 // candidate set to project onto, a ledger full of gates would render as
 // "no gates", which reads as "nothing is gated" -- the same false negative
 // this round exists to remove.
-func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
-	L, err := loadServeConfig()
+func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error) {
+	L, err := loadConfig(d)
 	if err != nil {
 		return serve.Config{}, err
 	}
@@ -310,7 +344,7 @@ func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
 		return serve.Config{}, errors.New("no candidates configured")
 	}
 
-	cfg := serveAdminConfig(root)
+	cfg := serveAdminConfig(root, d)
 	cfg.Candidates = L.Candidates
 	cfg.Policy = L.Policy
 	cfg.Registry = L.Registry
@@ -332,13 +366,15 @@ func cmdServeRun(args []string) error {
 		return err
 	}
 
-	L, err := loadServeConfig()
+	L, d, machineRoot, err := loadServeConfig()
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
+
 	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
-	builderTierRT := serveTierRuntime(candidates, pol, root)
+	builderTierRT := serveTierRuntime(candidates, pol, root, d)
 	if builderTier := relevo.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
 		slog.Warn(relevo.ServerTierWarning(relevo.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
 	} else {
@@ -371,7 +407,10 @@ func cmdServeRun(args []string) error {
 
 	reader, prices := newUsageReader(L.Prices)
 
-	hooksCfg, err := resolveHooksConfig(L.Hooks, nil)
+	// The hooks dispatcher runs on the machine database's run log, the same
+	// kv `hooks.log` the daemon writes (P5 §4.3), so a served round's hook
+	// runs are visible beside the local ones.
+	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}, machineRoot))
 	if err != nil {
 		return err
 	}
@@ -394,6 +433,7 @@ func cmdServeRun(args []string) error {
 
 	cfg := serve.Config{
 		Root:           root,
+		DB:             d,
 		Candidates:     candidates,
 		Policy:         pol,
 		Runner:         proc.New(),
@@ -426,8 +466,7 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	def, _ := defaultServeRoot()
-	if err := serve.WritePointer(def, serve.DaemonPointer{
+	if err := serve.WriteDaemonPointer(d, serve.DaemonPointer{
 		Root:      root,
 		PID:       os.Getpid(),
 		Listen:    sf.listen,
@@ -435,12 +474,12 @@ func cmdServeRun(args []string) error {
 	}); err != nil {
 		slog.Warn("daemon pointer not written", "err", err)
 	}
-	defer func() { _ = serve.RemovePointer(def) }()
+	defer func() { _ = serve.RemoveDaemonPointer(d) }()
 
 	var cert *tls.Certificate
 	var fp string
 	if !sf.insecureHTTP {
-		c, err := serve.LoadTLS(root)
+		c, err := serve.LoadTLS(serve.SecretStore{DB: d, Root: root})
 		if err != nil {
 			return err
 		}
@@ -490,10 +529,16 @@ func cmdServeInit(args []string) error {
 		return err
 	}
 
-	fp, err := serve.InitTLS(root, hosts, time.Now())
+	d, _, err := openMachineDB()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	secrets := serve.SecretStore{DB: d, Root: root}
+
+	fp, err := serve.InitTLS(secrets, hosts, time.Now())
 	if errors.Is(err, serve.ErrTLSExists) {
-		crtPath := filepath.Join(root, "server.crt")
-		existingFP, fpErr := serve.Fingerprint(crtPath)
+		existingFP, fpErr := serve.Fingerprint(secrets)
 		if fpErr != nil {
 			return fpErr
 		}
@@ -532,8 +577,13 @@ func cmdServeEnroll(args []string) error {
 		return err
 	}
 
-	clientsPath := filepath.Join(root, "clients.json")
-	clients, err := serve.LoadClients(clientsPath)
+	d, _, err := openMachineDB()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+
+	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
 	if err != nil {
 		return err
 	}
@@ -563,13 +613,13 @@ func cmdServeClients(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	clientsPath := filepath.Join(root, "clients.json")
-	clients, err := serve.LoadClients(clientsPath)
+	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
 	if err != nil {
 		return err
 	}
@@ -595,13 +645,13 @@ func cmdServeRevoke(args []string) error {
 	}
 
 	id := fs.Arg(0)
-	root, err := serveRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	clientsPath := filepath.Join(root, "clients.json")
-	clients, err := serve.LoadClients(clientsPath)
+	clients, err := serve.LoadClients(d, filepath.Join(root, "clients.json"))
 	if err != nil {
 		return err
 	}
@@ -627,13 +677,13 @@ func cmdServeFingerprint(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	crtPath := filepath.Join(root, "server.crt")
-	fp, err := serve.Fingerprint(crtPath)
+	fp, err := serve.Fingerprint(serve.SecretStore{DB: d, Root: root})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo serve fingerprint: %v\n", err)
 		return exitCodeErr{code: 1}
@@ -654,12 +704,13 @@ func cmdServeStatus(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -704,12 +755,13 @@ func cmdServeLog(args []string) error {
 	}
 	name := fs.Arg(0)
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -778,12 +830,13 @@ func cmdServeShow(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -844,12 +897,13 @@ func cmdServeTab(args []string) error {
 		return err
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -875,12 +929,13 @@ func cmdServeTab(args []string) error {
 // gates` was the answer to `relevo gate` printing "nothing was gating" on a
 // box whose gates live on the serve root's ledger, not the caller's (§4.3).
 func serveGateList(fs *flag.FlagSet) error {
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	cfg, err := serveAdminConfigWithCandidates(root)
+	cfg, err := serveAdminConfigWithCandidates(root, d)
 	if err != nil {
 		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
@@ -896,12 +951,13 @@ func serveGateList(fs *flag.FlagSet) error {
 // serveGateClear lifts the server-side gate on a provider, in place, with
 // no forwarding: the verb for the box that runs the daemon (§4.3).
 func serveGateClear(fs *flag.FlagSet, subject string) error {
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	cfg, err := serveAdminConfigWithCandidates(root)
+	cfg, err := serveAdminConfigWithCandidates(root, d)
 	if err != nil {
 		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
@@ -927,12 +983,13 @@ func serveGateClear(fs *flag.FlagSet, subject string) error {
 // counterpart to gateUnavailable, with no daemon-switch line and no forwarding
 // (the gate is already on the ledger the daemon reads) (§4.3).
 func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error {
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	cfg, err := serveAdminConfigWithCandidates(root)
+	cfg, err := serveAdminConfigWithCandidates(root, d)
 	if err != nil {
 		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
@@ -980,12 +1037,13 @@ func cmdServeUI(args []string) error {
 
 	// The root resolves before any tty check, so an uninitialised --state
 	// dir reads as a state error and not a terminal one.
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -1023,12 +1081,13 @@ func cmdServeUnbind(args []string) error {
 	}
 
 	name := fs.Arg(0)
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}
@@ -1070,12 +1129,13 @@ func cmdServeGC(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	root, err := adminRoot(fs)
+	root, d, err := adminRoot(fs)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root))
+	srv, err := serve.New(serveAdminConfig(root, d))
 	if err != nil {
 		return err
 	}

@@ -369,7 +369,14 @@ func cmdDoctor(args []string) error {
 
 	if stateRoot, err := store.DefaultRoot(); err == nil {
 		serveRoot := filepath.Join(stateRoot, "serve")
-		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveRoot, time.Now())...)
+		// The serve checks read the machine database (P5 §4.7). It is the same
+		// database rt.Store holds; a store whose open failed leaves the serve
+		// rows off, as every other best-effort row does.
+		var serveDB *db.DB
+		if d, derr := rt.Store.DB(); derr == nil {
+			serveDB = d
+		}
+		rep.Checks = append(rep.Checks, doctor.ServeChecks(env, serveDB, serveRoot, time.Now())...)
 	}
 
 	// #314: when a scope block asks for cpu pinning, doctor confirms the user

@@ -11,15 +11,108 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// ErrTLSExists is returned when server.key or server.crt is already present.
+// ErrTLSExists is returned when the server key or certificate secret is
+// already set.
 var ErrTLSExists = errors.New("server key or certificate already exists")
+
+// The machine database's secret names holding the server TLS material (P5
+// §3), replacing <serveRoot>/server.key and server.crt.
+const (
+	tlsKeySecret  = "serve.tls.key"
+	tlsCertSecret = "serve.tls.cert"
+)
+
+// SecretStore is the secret surface the TLS helpers read and write (P5 §4.5):
+// the machine database's secret table, plus the legacy serve root whose
+// server.key and server.crt are imported into the secrets and removed on first
+// use.
+type SecretStore struct {
+	DB   *db.DB
+	Root string
+}
+
+// SecretGet reads one secret. A nil database reports every secret absent.
+func (s SecretStore) SecretGet(name string) ([]byte, bool, error) {
+	if s.DB == nil {
+		return nil, false, nil
+	}
+	return s.DB.SecretGet(name)
+}
+
+// SecretPut writes one secret.
+func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
+	return s.DB.Tx(func(t *db.Tx) error { return t.SecretPut(name, value, now) })
+}
+
+// importLegacy adopts the legacy server.key and server.crt files into the
+// secrets and removes each file it imported (P5 §4.5): a secret that is
+// already set wins, and its file is left where it is. The write happens before
+// the delete, so a crash between them re-imports on the next read rather than
+// losing the material.
+func (s SecretStore) importLegacy() error {
+	if s.Root == "" || s.DB == nil {
+		return nil
+	}
+	keyPath := filepath.Join(s.Root, "server.key")
+	crtPath := filepath.Join(s.Root, "server.crt")
+
+	var importedKey, importedCert bool
+
+	if _, ok, err := s.DB.SecretGet(tlsKeySecret); err != nil {
+		return err
+	} else if !ok {
+		data, rerr := os.ReadFile(keyPath)
+		switch {
+		case rerr == nil:
+			if err := s.SecretPut(tlsKeySecret, data, time.Now().UTC()); err != nil {
+				return err
+			}
+			importedKey = true
+		case errors.Is(rerr, os.ErrNotExist):
+		default:
+			return rerr
+		}
+	}
+
+	if _, ok, err := s.DB.SecretGet(tlsCertSecret); err != nil {
+		return err
+	} else if !ok {
+		data, rerr := os.ReadFile(crtPath)
+		switch {
+		case rerr == nil:
+			if err := s.SecretPut(tlsCertSecret, data, time.Now().UTC()); err != nil {
+				return err
+			}
+			importedCert = true
+		case errors.Is(rerr, os.ErrNotExist):
+		default:
+			return rerr
+		}
+	}
+
+	// Both writes are committed: only now are the imported files removed.
+	if importedKey {
+		if rerr := os.Remove(keyPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("tls import: could not remove imported key file", "path", keyPath, "err", rerr)
+		}
+	}
+	if importedCert {
+		if rerr := os.Remove(crtPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("tls import: could not remove imported certificate file", "path", crtPath, "err", rerr)
+		}
+	}
+	return nil
+}
 
 // FingerprintOf returns "sha256:" + lower-case hex of sha256(der).
 func FingerprintOf(der []byte) string {
@@ -27,34 +120,41 @@ func FingerprintOf(der []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// Fingerprint reads the certificate PEM file at certPath and returns its sha256 fingerprint.
-func Fingerprint(certPath string) (string, error) {
-	data, err := os.ReadFile(certPath)
+// Fingerprint reads the certificate secret and returns its sha256 fingerprint.
+func Fingerprint(secrets SecretStore) (string, error) {
+	if err := secrets.importLegacy(); err != nil {
+		return "", err
+	}
+	data, ok, err := secrets.SecretGet(tlsCertSecret)
 	if err != nil {
 		return "", err
 	}
+	if !ok {
+		return "", errors.New("no server certificate")
+	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return "", errors.New("no PEM certificate found in file")
+		return "", errors.New("no PEM certificate found")
 	}
 	return FingerprintOf(block.Bytes), nil
 }
 
-// InitTLS generates a server private key and self-signed certificate under dir.
-// It writes server.key (0600) and server.crt (0644).
-// If either file already exists, it returns ErrTLSExists without modifying either file.
-func InitTLS(dir string, hosts []string, now time.Time) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// InitTLS generates a server private key and self-signed certificate into the
+// secrets serve.tls.key and serve.tls.cert (P5 §4.5).
+// If either secret is already set, it returns ErrTLSExists without modifying either.
+func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error) {
+	if err := secrets.importLegacy(); err != nil {
 		return "", err
 	}
 
-	keyPath := filepath.Join(dir, "server.key")
-	crtPath := filepath.Join(dir, "server.crt")
-
-	if _, err := os.Stat(keyPath); err == nil {
+	if _, ok, err := secrets.SecretGet(tlsKeySecret); err != nil {
+		return "", err
+	} else if ok {
 		return "", ErrTLSExists
 	}
-	if _, err := os.Stat(crtPath); err == nil {
+	if _, ok, err := secrets.SecretGet(tlsCertSecret); err != nil {
+		return "", err
+	} else if ok {
 		return "", ErrTLSExists
 	}
 
@@ -129,24 +229,39 @@ func InitTLS(dir string, hosts []string, now time.Time) (string, error) {
 		Bytes: certDER,
 	})
 
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+	if err := secrets.SecretPut(tlsKeySecret, keyPEM, now); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(crtPath, certPEM, 0o644); err != nil {
-		_ = os.Remove(keyPath)
+	if err := secrets.SecretPut(tlsCertSecret, certPEM, now); err != nil {
+		_ = secrets.DB.Tx(func(t *db.Tx) error { return t.SecretDelete(tlsKeySecret) })
 		return "", err
 	}
 
 	return FingerprintOf(certDER), nil
 }
 
-// LoadTLS loads the server TLS certificate and private key from dir.
+// LoadTLS loads the server TLS certificate and private key from the secrets.
 // The Leaf field is parsed and populated on the returned tls.Certificate.
-func LoadTLS(dir string) (tls.Certificate, error) {
-	crtPath := filepath.Join(dir, "server.crt")
-	keyPath := filepath.Join(dir, "server.key")
+func LoadTLS(secrets SecretStore) (tls.Certificate, error) {
+	if err := secrets.importLegacy(); err != nil {
+		return tls.Certificate{}, err
+	}
+	certPEM, ok, err := secrets.SecretGet(tlsCertSecret)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if !ok {
+		return tls.Certificate{}, errors.New("no server certificate")
+	}
+	keyPEM, ok, err := secrets.SecretGet(tlsKeySecret)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if !ok {
+		return tls.Certificate{}, errors.New("no server key")
+	}
 
-	cert, err := tls.LoadX509KeyPair(crtPath, keyPath)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return tls.Certificate{}, err
 	}

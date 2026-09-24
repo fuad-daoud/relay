@@ -307,7 +307,7 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	if err != nil {
 		return err
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return fmt.Errorf("append log for %q: %w", name, err)
 	}
@@ -352,7 +352,7 @@ func (s *Store) readLog(name string) ([]LogEntry, error) {
 	if d == nil {
 		return nil, nil
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return nil, fmt.Errorf("read log for %q: %w", name, err)
 	}
@@ -379,7 +379,7 @@ func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
 	if d == nil {
 		return nil, nil
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return nil, fmt.Errorf("read log for %q: %w", name, err)
 	}
@@ -479,7 +479,7 @@ func (s *Store) confirmIndex(name string, idx int, route string) error {
 	if err != nil {
 		return err
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return fmt.Errorf("read log for %q: %w", name, err)
 	}
