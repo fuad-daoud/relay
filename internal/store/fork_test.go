@@ -100,10 +100,15 @@ func TestForkStateCopiesRoundFilesAndLog(t *testing.T) {
 
 	dstDir := s.Dir(dstName)
 
-	// Postcondition: ForkState creates nothing on disk, so dst has no
-	// directory (deletion items 1 and 3).
-	if _, err := os.Stat(dstDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("dst directory %s must not exist after ForkState, got err: %v", dstDir, err)
+	// Postcondition: Save created dst's directory and the fork keeps it
+	// empty -- ReadDir finds no entries, or the directory is absent (R3b
+	// fence item 2).
+	entries, err := os.ReadDir(dstDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ReadDir dst %s: %v", dstDir, err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("dst directory %s must hold no files after ForkState, got %v", dstDir, entries)
 	}
 
 	// Postcondition: the record ForkState saved is what holds the log now.
@@ -349,9 +354,10 @@ func TestForkStateMidCopyFailureLeavesNoDst(t *testing.T) {
 
 // TestForkWritesNoFiles pins the R3 guarantee: a fork cut from a source whose
 // round 1 files are on disk and whose round 2 files are sealed gets every
-// copied file as its own round_file rows, and never creates its directory.
+// copied file as its own round_file rows, and never puts a file in its
+// directory.
 //
-// Mutation: restore the per-file WriteFile into dst/ and Dir(dst) exists.
+// Mutation: restore the per-file WriteFile into dst/ and Dir(dst) holds a file.
 func TestForkWritesNoFiles(t *testing.T) {
 	s := New(t.TempDir())
 	srcName := "webshop"
@@ -401,8 +407,14 @@ func TestForkWritesNoFiles(t *testing.T) {
 		t.Fatalf("ForkState: %v", err)
 	}
 
-	if _, err := os.Stat(s.Dir(dstName)); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("Dir(dst) must not exist after the fork, got err: %v", err)
+	// Dir(dst) is kept, empty: Save created it and nothing puts a file in it
+	// (R3b fence item 2).
+	dstEntries, err := os.ReadDir(s.Dir(dstName))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ReadDir Dir(dst): %v", err)
+	}
+	if len(dstEntries) != 0 {
+		t.Errorf("Dir(dst) must hold no files after the fork, got %v", dstEntries)
 	}
 
 	names, err := s.RoundFiles(dstName)

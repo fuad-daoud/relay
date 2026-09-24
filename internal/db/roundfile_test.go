@@ -118,3 +118,69 @@ func TestRoundFileListScopedToRecord(t *testing.T) {
 		t.Errorf("RoundFileGet(keep) = (ok %v, err %v), want (true, nil)", ok, err)
 	}
 }
+
+// TestRoundFileEmptyBodyRoundTrips pins the R3b contract: an existing empty
+// row reads back as a non-nil empty body, so a sealed empty file (NNN-done is
+// the common one) can be read and put again, and a nil body is stored as an
+// empty blob rather than NULL.
+//
+// Mutation: return the scanned body as-is and the first assertion fails (nil).
+func TestRoundFileEmptyBodyRoundTrips(t *testing.T) {
+	d := openTestDB(t)
+
+	id, err := d.RecordPut(testRecord("webshop"))
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+
+	now := time.Now().UTC()
+	mtime := time.Date(2026, 9, 24, 10, 11, 12, 0, time.UTC)
+
+	// Put an empty body; it reads back non-nil, with length 0, and found.
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.RoundFilePut(id, "001-done", 1, []byte{}, mtime, now)
+	}); err != nil {
+		t.Fatalf("RoundFilePut(empty): %v", err)
+	}
+	got, _, ok, err := d.RoundFileGet(id, "001-done")
+	if err != nil {
+		t.Fatalf("RoundFileGet(empty): %v", err)
+	}
+	if !ok {
+		t.Fatal("RoundFileGet(empty) found = false, want true")
+	}
+	if got == nil {
+		t.Fatal("RoundFileGet(empty) body = nil, want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("RoundFileGet(empty) len = %d, want 0", len(got))
+	}
+
+	// Putting the Get's result under another name is the fork's copy loop: it
+	// must not error.
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.RoundFilePut(id, "002-done", 2, got, mtime, now)
+	}); err != nil {
+		t.Fatalf("RoundFilePut(round-tripped): %v", err)
+	}
+
+	// A literal nil is stored as an empty blob, never NULL.
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.RoundFilePut(id, "003-done", 3, nil, mtime, now)
+	}); err != nil {
+		t.Fatalf("RoundFilePut(nil): %v", err)
+	}
+	got, _, ok, err = d.RoundFileGet(id, "003-done")
+	if err != nil {
+		t.Fatalf("RoundFileGet(nil): %v", err)
+	}
+	if !ok {
+		t.Fatal("RoundFileGet(nil) found = false, want true")
+	}
+	if got == nil {
+		t.Fatal("RoundFileGet(nil) body = nil, want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("RoundFileGet(nil) len = %d, want 0", len(got))
+	}
+}

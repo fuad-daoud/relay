@@ -50,8 +50,9 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 //
 // The history goes straight into the database: the record Save writes, the
 // copied entries as that record's events, and one round_file row per copied
-// file. No dst directory and no files are created, and src is never modified.
-// It does NOT write dst's bind.json -- the caller owns the new Binding.
+// file. Save creates dst's directory and the fork leaves it empty -- no files
+// are created in it -- and src is never modified. It does NOT write dst's
+// bind.json -- the caller owns the new Binding.
 //
 // Preconditions:  the lock is held; src exists; dst.Name has no record and no
 //
@@ -60,7 +61,7 @@ func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 // Postconditions: Load(dst.Name) works; ReadLog returns the copied entries
 //
 //	with rewritten paths; RoundFiles lists the copied names and ReadFile
-//	returns identical bytes; $STATE/<dst.Name> does not exist.
+//	returns identical bytes; $STATE/<dst.Name> holds no files.
 //
 // Errors: ErrNotFound (src), a wrapped copy error, or an error if dst.Name
 //
@@ -179,13 +180,6 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 			if err != nil {
 				return fmt.Errorf("copy %s: %w", base, err)
 			}
-			// A sealed empty file (NNN-done is the common one) reads back as
-			// a nil slice -- round_file's body scans a zero-length blob as
-			// nil -- and a nil body binds as SQL NULL, which the column
-			// refuses. The copied file's bytes are empty, not absent.
-			if body == nil {
-				body = []byte{}
-			}
 			// StatFile exposes the source's own mtime, on disk or sealed;
 			// without one the seal's stamp stands in.
 			mtime := now
@@ -199,12 +193,6 @@ func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
 		return nil
 	}); err != nil {
 		return err
-	}
-
-	// Save created the record's directory (save's own MkdirAll); the fork
-	// keeps its whole history in the database, so the empty directory goes.
-	if err := os.RemoveAll(dstDir); err != nil {
-		return fmt.Errorf("remove fork dir %q: %w", dst.Name, err)
 	}
 
 	success = true

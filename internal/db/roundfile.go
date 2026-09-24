@@ -26,6 +26,11 @@ func parseMTime(s string) (time.Time, error) { return time.Parse(rfc3339Nano, s)
 // second put of the same file is idempotent -- which is what lets a seal pass
 // that failed to remove the file retry with the same bytes (P3c §4.2, §6).
 func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, now time.Time) error {
+	// A nil body binds as SQL NULL, which round_file.body NOT NULL refuses.
+	// An empty file's bytes are empty, not absent.
+	if body == nil {
+		body = []byte{}
+	}
 	sum := sha256.Sum256(body)
 	sealedAt := now
 	if sealedAt.IsZero() {
@@ -58,6 +63,11 @@ func (d *DB) RoundFileGet(recordID, name string) (body []byte, mtime time.Time, 
 	mtime, err = parseMTime(mtimeText)
 	if err != nil {
 		return nil, time.Time{}, false, fmt.Errorf("db: round file get %s/%s: parse mtime: %w", recordID, name, err)
+	}
+	// A zero-length blob scans back as a nil slice. An existing empty row
+	// has an empty body, not an absent one.
+	if body == nil {
+		body = []byte{}
 	}
 	return body, mtime, true, nil
 }
