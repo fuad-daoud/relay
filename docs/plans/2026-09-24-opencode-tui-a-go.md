@@ -55,7 +55,7 @@ internal/relevo/
   statusline.go              MOD  StatusLineRow, StatusLineDoc, StatusLineRows
   statusline_test.go         MOD  new cases
 cmd/relevo/
-  main.go                    MOD  newRuntime wiring (~line 730); status --line --json (~1954-1966, runStatusline ~2049-2082)
+  main.go                    MOD  newRuntime wiring (ProcStart line ~763); status --line --json (flag + guard ~2003-2012, runStatusline ~2098)
   planner.go                 MOD  cmdPlannerInit --host-parent (~79-146); plannerFilter passes CWD + OpencodeSession (~517-535)
   planner_test.go / main_test.go  MOD  flag-parsing cases only (see §7 step 6)
 ```
@@ -101,12 +101,12 @@ nil when sqlite3 is not on PATH.
 | Name | `name` | `b.Name` |
 | Round | `round` | `b.Round` |
 | Display | `display` | `b.Display` |
-| Harness | `harness` | `harnessSegment(b.BuilderCandidate)` |
+| Harness | `harness` | `harnessSegment(b.BuilderCandidate)`, plus `"@" + b.Server` when `b.Server != ""` -- exactly the segment `RenderStatusLine` builds |
 | Candidate | `candidate` | `b.BuilderCandidate` |
 | Role | `role,omitempty` | `b.Role` |
 | Waiting | `waiting` | `waiting(b)` |
-| Age | `age` | `age(b, now)` |
-| Money | `money` | the same segment `RenderStatusLine` appends: `usage.LiveShort(*b.LiveUsage)` when non-empty, else `usage.MoneyShort(*b.Spend)` when non-empty, else "" |
+| Clock | `clock` | `roundClock(b, now)` ("--" when the round has no start) |
+| Tokens | `tokens` | `roundTokens(b)` ("" when none) |
 | LastKind | `last_kind` | `string(b.LastPayload.Kind)`, "" when nil |
 | LastTS | `last_ts` | `b.LastPayload.TS` RFC 3339 (UTC), "" when nil |
 | Route | `route` | `b.PlannerRoute` |
@@ -187,13 +187,15 @@ fix). Every other path is unchanged.
 func StatusLineRows(r Report, now time.Time) []StatusLineRow
 ```
 One row per `r.Bindings` entry, in order, fields per §3. Shares `waiting`,
-`age`, `harnessSegment` with `RenderStatusLine`; does not change them.
+`roundClock`, `roundTokens`, `harnessSegment` with `RenderStatusLine`
+(`internal/relevo/statusline.go`, ~l.140-180, as reshaped by #430); does not
+change them.
 
 ## 5. Pseudocode
 
 **`relevo status --line --json`** (`cmd/relevo/main.go`)
 ```
-status flag parsing (~1954-1966):
+status flag parsing (~2003-2012; today it refuses `--json/--all/--name` with --line):
   if --line:
      if --all or --name or positional args: refuse exactly as today (exit 2),
         message "relevo: --line cannot be combined with --all/--name"
@@ -223,10 +225,10 @@ in the --kind/--session branch, when hostParent:
 output unchanged (the "export RELEVO_PLANNER=…" line)
 ```
 
-**Wiring** (`cmd/relevo/main.go` newRuntime literal, ~line 730): set
+**Wiring** (`cmd/relevo/main.go` newRuntime literal, next to `ProcStart: procStartUnix` ~line 763): set
 `OpencodeSession` to `relevo.OpencodeSessionFinder{Exec: binExec{}, DBPath:
 opencodeDBPath()}.Find` only when `exec.LookPath("sqlite3")` succeeds (the same
-check `newDeliverers` makes at ~line 529); else leave nil.
+check `newDeliverers` makes at ~line 555; `opencodeDBPath` is at ~line 494); else leave nil.
 `plannerFilter` (`cmd/relevo/planner.go:517-535`): pass `CWD` (os.Getwd, "" on
 error) and `OpencodeSession: rt.OpencodeSession`. `resolveMCPPlanner`
 (`cmd/relevo/mcp.go:135`) and the doctor call (`cmd/relevo/doctor.go:705`) are
@@ -292,9 +294,11 @@ Each step: write the named tests first, watch them fail, implement, watch them p
    *Depends on 2.*
 5. **StatusLineRows** (`statusline.go`). Tests in `statusline_test.go`:
    `TestStatusLineRows` reusing the fixtures the RenderStatusLine tests build:
-   a NEEDS YOU row with a report LastPayload → waiting/age/last_kind/last_ts as
-   RenderStatusLine words them; a row with LiveUsage → money = LiveShort; with
-   only Spend → MoneyShort; no payload → age "--", last_kind "", last_ts "";
+   a NEEDS YOU row with a report LastPayload → waiting/clock/last_kind/last_ts as
+   RenderStatusLine words them; an open round with LiveUsage samples → tokens =
+   "<n> tok"; a closed round with RoundUsage → its tokens; a remote row
+   (Server set) → harness "<h>@<server>"; no RoundStart → clock "--";
+   no payload → last_kind "", last_ts "";
    empty report → `[]` (not nil) once wrapped in StatusLineDoc and marshalled.
 6. **cmd wiring** (`main.go`, `planner.go`). Tests, flag parsing only:
    `status --line --name x` still exits 2; `status --line --all` still exits 2;

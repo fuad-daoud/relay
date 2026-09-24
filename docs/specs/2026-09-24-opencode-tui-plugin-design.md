@@ -109,12 +109,12 @@ StatusLineRow {
   name        string   binding name
   round       int
   display     string   ACTIVE | NEEDS YOU   (DONE rows are excluded, as today)
-  harness     string   harnessSegment(builder_candidate)
+  harness     string   harnessSegment(builder_candidate), "@server" for a remote builder
   candidate   string   builder_candidate
   role        string   omitted for builder
   waiting     string   waiting(b): "plan sent", "report in (halted)", "question in", …
-  age         string   age(b, now): "4m", "1h 5m", "--"
-  money       string   the same LiveShort / MoneyShort segment the text row shows; "" if none
+  clock       string   roundClock(b, now): the round's running time, frozen at the report; "--"
+  tokens      string   roundTokens(b): "539k tok"; "" if none
   last_kind   string   plan | report | question | answer | ""  (LastPayload.Kind)
   last_ts     string   RFC 3339, "" when none
   route       string   planner_route: deliverer | channel | pull
@@ -122,7 +122,7 @@ StatusLineRow {
 ```
 
 Built by a new pure function `StatusLineRows(Report, now) []StatusLineRow` in
-`internal/relevo/statusline.go`, sharing `waiting`, `age` and `harnessSegment`
+`internal/relevo/statusline.go`, sharing `waiting`, `roundClock`, `roundTokens` and `harnessSegment` (as reshaped by #430)
 with `RenderStatusLine` so both front ends use the same words. Store-only, like
 `PlannerStatus`. Planner resolution is `plannerFilter` unchanged, so it honours
 `RELEVO_PLANNER`.
@@ -164,7 +164,7 @@ read the store.
 **Sidebar** (`sidebar.content`, append). Header `relevo · <planner name>`, then
 two lines per row, each cut to 37 columns with `…`:
 `● <name> … <display>` (dot and display in `theme…warning` + bold for NEEDS YOU,
-success colour for ACTIVE) and `  r<round> · <harness> · <waiting> · <age>`.
+success colour for ACTIVE) and `  r<round> · <harness> · <waiting> · <clock>`.
 Last line `/relevo · ctrl+x o`. When the data is older than 3 poll intervals:
 `(stale 40s)`. When `relevo` is not on PATH: one line `relevo not found`.
 
@@ -179,7 +179,7 @@ as the message; a new `last_ts` with `last_kind` `report` → info toast
 **Pages** (`ui.router`), each binding Escape to go back:
 - `relevo` (fleet): the cockpit's fleet columns without PLANNER/REPO: NAME,
   ACTOR (role or `builder`), ON (model from `candidate`), RND, STATE, NOW
-  (`waiting · age`), SPEND (`money`). Below it, `── recent`: the newest 8
+  (`waiting · clock`), TOKENS (`tokens`). Below it, `── recent`: the newest 8
   `relevo history --json --planner <session id> --limit 8` rows. Keys:
   ↑↓, enter (open), a (act), esc (back to chat).
 - `relevo/binding` (params: name): header `name · actor on model · round N ·
