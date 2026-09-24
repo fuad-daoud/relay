@@ -67,12 +67,13 @@ func seedShowDB(t *testing.T) *db.DB {
 	return d
 }
 
-// seedShowArchiveDB archives the golden fixture into a record and ingests it
-// as an archive source, so the binding it produces carries ArchivedAt.
-func seedShowArchiveDB(t *testing.T) *db.DB {
+// archiveShowFixture copies the golden fixture into a fresh store's
+// "fixture" directory -- writing one file per extra basename -> body -- and
+// archives it, so the returned store holds exactly one archived record with
+// every NNN-* file of the fixture sealed into it.
+func archiveShowFixture(t *testing.T, extra map[string]string) *store.Store {
 	t.Helper()
-	root := t.TempDir()
-	s := store.New(root)
+	s := store.New(t.TempDir())
 	if err := os.MkdirAll(s.Dir("fixture"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -92,9 +93,26 @@ func seedShowArchiveDB(t *testing.T) *db.DB {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
+	for base, body := range extra {
+		if err := os.WriteFile(filepath.Join(s.Dir("fixture"), base), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", base, err)
+		}
+	}
 	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
+	}
+	return s
+}
+
+// seedShowArchiveDB archives the golden fixture into a record and ingests it
+// as an archive source, so the binding it produces carries ArchivedAt.
+func seedShowArchiveDB(t *testing.T) *db.DB {
+	t.Helper()
+	s := archiveShowFixture(t, nil)
 	archived, err := s.ListArchived()
 	if err != nil || len(archived) != 1 {
 		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
@@ -466,5 +484,136 @@ func TestShowUnknownBinding(t *testing.T) {
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("err = %v, want it to wrap store.ErrNotFound", err)
+	}
+}
+
+// TestShowArchivedReadsSealedRoundFiles pins Show's archived step: an archived
+// binding is answered from its sealed round files and its record's log, with
+// no mirror at all. Mutation: drop Show's archived step and Show returns
+// not-found (DB is nil).
+func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
+	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
+	rt := Runtime{Store: s}
+
+	// Every expected text is the fixture file's own bytes.
+	fixture := func(name string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(showFixtureDir, name))
+		if err != nil {
+			t.Fatalf("read fixture %s: %v", name, err)
+		}
+		return string(data)
+	}
+
+	cases := []struct {
+		name    string
+		round   int
+		section ShowSection
+		want    string
+		missing bool
+	}{
+		{name: "plan round 1", round: 1, section: ShowPlan, want: fixture("001-plan.md")},
+		{name: "report round 2", round: 2, section: ShowReport, want: fixture("002-report.md")},
+		{name: "diff round 1", round: 1, section: ShowDiff, want: fixture("001-diff.patch")},
+		{name: "drift round 2", round: 2, section: ShowDrift, want: fixture("002-drift.patch")},
+		{name: "transcript round 2", round: 2, section: ShowTranscript, want: fixture("002-builder.log")},
+		{name: "gate round 1", round: 1, section: ShowGate, want: "gate output\n"},
+		{name: "diff round 2 is missing", round: 2, section: ShowDiff, want: "", missing: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: tc.round, Section: tc.section})
+			if err != nil {
+				t.Fatalf("Show: %v", err)
+			}
+			if res.Text != tc.want {
+				t.Errorf("Text = %q, want %q", res.Text, tc.want)
+			}
+			if res.Missing != tc.missing {
+				t.Errorf("Missing = %v, want %v", res.Missing, tc.missing)
+			}
+			if res.Live {
+				t.Error("Live = true, want false")
+			}
+			if !res.Archived {
+				t.Error("Archived = false, want true")
+			}
+			if res.ArchivedAt.IsZero() {
+				t.Error("ArchivedAt is zero, want the record's stamp")
+			}
+		})
+	}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowLog})
+	if err != nil {
+		t.Fatalf("Show log: %v", err)
+	}
+	if len(res.Events) == 0 {
+		t.Fatal("len(Events) = 0, want at least one round-1 event")
+	}
+	for _, e := range res.Events {
+		if e.Round != 1 {
+			t.Errorf("Events has round %d, want only round 1", e.Round)
+		}
+	}
+	if res.Live || !res.Archived || res.ArchivedAt.IsZero() {
+		t.Errorf("log result Live = %v, Archived = %v, ArchivedAt = %v, want false, true, non-zero",
+			res.Live, res.Archived, res.ArchivedAt)
+	}
+}
+
+// TestShowArchivedWinsOverTheMirror pins the precedence of Show's archived
+// step over the database: the record's sealed gate log answers where showDB
+// on its own reports Missing (it has no gate row).
+func TestShowArchivedWinsOverTheMirror(t *testing.T) {
+	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
+	}
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if _, err := ingest.Ingest(context.Background(), ingest.ArchivedSource(s, archived[0].RecordID), d, ingest.Deps{}); err != nil {
+		t.Fatalf("archive Ingest: %v", err)
+	}
+
+	rt := Runtime{Store: s, DB: d}
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowGate})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Missing {
+		t.Error("Missing = true, want the sealed gate log (showDB alone reports Missing)")
+	}
+	if res.Text != "gate output\n" {
+		t.Errorf("Text = %q, want %q", res.Text, "gate output\n")
+	}
+}
+
+// TestShowArchivedDefaultsToNewestCompletedRound pins Show's archived step to
+// showLive's default-round rule: with no --round, the newest completed round
+// is the highest KindReport entry round -- round 2 in the fixture -- not the
+// highest planned round (3).
+func TestShowArchivedDefaultsToNewestCompletedRound(t *testing.T) {
+	s := archiveShowFixture(t, nil)
+	rt := Runtime{Store: s}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Round != 2 {
+		t.Errorf("Round = %d, want 2 (highest round with a report entry)", res.Round)
+	}
+	want, err := os.ReadFile(filepath.Join(showFixtureDir, "002-plan.md"))
+	if err != nil {
+		t.Fatalf("read fixture 002-plan.md: %v", err)
+	}
+	if res.Text != string(want) {
+		t.Errorf("Text = %q, want %q", res.Text, string(want))
 	}
 }
