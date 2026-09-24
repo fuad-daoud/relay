@@ -108,23 +108,23 @@ func TestPrefsDashboardRoundTrip(t *testing.T) {
 	}
 }
 
-// TestChangesSaveWhenAStoreIsSet pins the shell's save path: the `s` sort
+// TestChangesSaveWhenAStoreIsSet pins the shell's save path: the `a` sort
 // key returns a save command when a store is set, and the prefMsg path
 // saves through the same store.
 func TestChangesSaveWhenAStoreIsSet(t *testing.T) {
 	ps := testPrefsStore(t)
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.opts.Prefs = ps
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = drain(t, m, cmd)
 	if got := loadPrefs(ps).Sort; got != "name" {
-		t.Errorf("s must persist the sort pref, got %q", got)
+		t.Errorf("a must persist the sort pref, got %q", got)
 	}
 
 	// No store: the change applies for the run but nothing is saved (and
 	// nothing panics).
 	m.opts.Prefs = PrefsStore{}
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = drain(t, m, cmd)
 	if !fleet(m).attention {
 		t.Error("no store: the sort must still have toggled back to attention")

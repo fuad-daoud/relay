@@ -6,6 +6,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// Pull is pullPending for the cockpit (cockpit B2 §4.5): the TUI's round view
+// calls it with route "tui" when it opens a binding whose report is ready for
+// the human planner, so the text it returns is shown and the entry is marked
+// delivered to the TUI rather than to `relevo wait`.
+func Pull(ctx context.Context, rt Runtime, name, route string) (text string, found bool, err error) {
+	return pullPending(ctx, rt, name, route)
+}
+
 // pullPending returns the oldest pending entry's text for name and marks it
 // delivered with route, WITHOUT pushing anything. It is what the removed pull
 // verb did, and the helper `relevo wait` calls once its round has ended

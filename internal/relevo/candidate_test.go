@@ -111,7 +111,7 @@ func TestResolveCandidate(t *testing.T) {
 			token:           "agy/test/m",
 			role:            "reviewer",
 			wantErr:         ErrRoleNotServed,
-			messageContains: []string{`does not serve role "reviewer"`, "[builder]"},
+			messageContains: []string{`does not serve actor "reviewer"`, "[builder]"},
 		},
 		{
 			name:            "named, unknown",
@@ -143,7 +143,7 @@ func TestResolveCandidate(t *testing.T) {
 			token:           "",
 			role:            "researcher",
 			wantErr:         ErrRoleNotServed,
-			messageContains: []string{`no configured candidate serves role "researcher"`},
+			messageContains: []string{`no configured candidate serves actor "researcher"`},
 		},
 		{
 			name:    "exactly one, no token",
@@ -621,7 +621,7 @@ func TestResolveRoleByName(t *testing.T) {
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Fatalf("resolveCandidate(agy-m, reviewer) err = %v, want ErrRoleNotServed", err)
 	}
-	if !strings.Contains(err.Error(), `candidate "agy-m" does not serve role "reviewer"`) {
+	if !strings.Contains(err.Error(), `candidate "agy-m" does not serve actor "reviewer"`) {
 		t.Errorf("err = %q, want it to name the candidate by its short name", err.Error())
 	}
 

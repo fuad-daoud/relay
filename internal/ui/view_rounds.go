@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -169,7 +170,9 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 	args := fields[1:]
 	switch name {
 	case "fleet":
-		return root(newFleetView(p.Sort != "name"))
+		return root(newFleetView(p.Sort != "name").withActions(env.Actions != nil))
+	case "log":
+		return func() tea.Msg { return logMsg{} }
 	case "rounds":
 		q := strings.Join(args, " ")
 		if q == "" {
@@ -200,7 +203,33 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return notice(fmt.Sprintf("unknown binding %q", key))
 		}
 		v, cmd := newRoundView(env, key, n)
-		return tea.Batch(root(newFleetView(p.Sort != "name"), v), cmd)
+		return tea.Batch(root(newFleetView(p.Sort != "name").withActions(env.Actions != nil), v), cmd)
+	case "stats":
+		window := "30d"
+		if len(args) > 0 {
+			window = args[0]
+		}
+		switch window {
+		case "7d", "30d", "90d", "all":
+		default:
+			return notice("stats: want 7d, 30d, 90d or all")
+		}
+		v, init, err := newStatsView(env, window)
+		if err != nil {
+			return notice("no database: " + err.Error())
+		}
+		return tea.Batch(root(v), init)
+	case "ungate":
+		if len(args) == 0 {
+			return notice("usage: ungate <provider|candidate>")
+		}
+		if env.Actions == nil {
+			return nil
+		}
+		subject := args[0]
+		return runAction(env.Ctx, "ungate", subject, func(ctx context.Context) Result {
+			return env.Actions.Ungate(ctx, subject)
+		})
 	case "help":
 		return func() tea.Msg { return helpMsg{} }
 	case "quit":

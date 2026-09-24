@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -148,7 +149,9 @@ func (m Model) headerView(env Env) string {
 	var right []string
 	n := 0
 	for _, b := range env.Report.Bindings {
-		if b.Display == "NEEDS YOU" {
+		// A report ready for the human planner needs them exactly as a
+		// NEEDS YOU question does, so it counts here too (§4.5).
+		if b.Display == "NEEDS YOU" || reportReady(b) {
 			n++
 		}
 	}
@@ -184,31 +187,62 @@ func (m Model) ruleView(env Env) string {
 	return ruleStyle.Render(strings.Repeat("─", env.Width))
 }
 
-// keysView is the last row: the top view's keys and the globals on the
-// left, notices and the refresh failure on the right, the right winning on
-// overlap (§5.3).
+// keysView is the last row: the global tail and as many of the top view's
+// keys as fit, the notices and the refresh failure on the right (§5.3,
+// §2.3b). The globals -- ':' command, '? help' and 'q quit'/'esc back' -- are
+// always laid out; the view's keys follow in their Keys() order and a key that
+// does not fit is dropped whole, never cut, so half a key is never shown. The
+// notice side wins as it always has, and '? help' lists every key that was
+// dropped.
 func (m Model) keysView(env Env) string {
 	key := func(k, v string) string { return fgStyle.Render(k) + " " + dimStyle.Render(v) }
-	var parts []string
-	for _, kh := range m.top().Keys() {
-		parts = append(parts, key(kh.Key, kh.Help))
-	}
-	parts = append(parts, key(":", "command"), key("?", "help"))
+	var tail []string
+	tail = append(tail, key(":", "command"), key("?", "help"))
 	if len(m.stack) > 1 {
-		parts = append(parts, key("esc", "back"))
+		tail = append(tail, key("esc", "back"))
 	} else {
-		parts = append(parts, key("q", "quit"))
+		tail = append(tail, key("q", "quit"))
 	}
-	left := strings.Join(parts, "   ")
+	tailText := strings.Join(tail, "   ")
 
 	var notes []string
+	if w := m.workingText(); w != "" {
+		notes = append(notes, dimStyle.Render(w))
+	}
 	if m.notice != "" {
-		notes = append(notes, stateNeedsYouStyle.Render(m.notice))
+		notes = append(notes, m.noticeStyle().Render(m.notice))
 	}
 	if m.err != nil {
 		notes = append(notes, errorStyle.Render("! refresh failed (retrying)"))
 	}
 	right := strings.Join(notes, "   ")
+
+	// The right side is laid out first: what is left belongs to the tail,
+	// and to the view's keys in their priority order.
+	room := env.Width - lipgloss.Width(right) - 1
+	if room < 0 {
+		room = 0
+	}
+	avail := room - lipgloss.Width(tailText) - 3 // 3 for the gap before the tail
+	var parts []string
+	used := 0
+	for _, kh := range m.top().Keys() {
+		p := key(kh.Key, kh.Help)
+		w := lipgloss.Width(p)
+		if len(parts) > 0 {
+			w += 3
+		}
+		if used+w > avail {
+			break
+		}
+		parts = append(parts, p)
+		used += w
+	}
+	left := tailText
+	if len(parts) > 0 {
+		left = strings.Join(parts, "   ") + "   " + tailText
+	}
+
 	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
 		room := env.Width - lipgloss.Width(right) - 1
 		if room < 0 {
@@ -219,8 +253,8 @@ func (m Model) keysView(env Env) string {
 	return fit(spread(left, right, env.Width), env.Width)
 }
 
-// body is row 4: the top view's body, or the command box or help overlay
-// when either is up (§5.3).
+// body is row 4: the top view's body, or the command box, help overlay or a
+// modal overlay when one is up (§5.3).
 func (m Model) body(env Env) string {
 	bh := bodyHeight(env)
 	if m.cmd.open {
@@ -234,7 +268,49 @@ func (m Model) body(env Env) string {
 	if m.help {
 		return m.helpBody(env, bh)
 	}
+	if m.overlay != nil {
+		box := m.overlay.view(env.Width)
+		lines := strings.Split(m.top().Body(env, env.Width, bh), "\n")
+		start := len(lines) - len(box)
+		if start < 0 {
+			start = 0
+		}
+		for i := 0; i < len(box) && start+i < len(lines); i++ {
+			lines[start+i] = box[i]
+		}
+		return strings.Join(fitLines(lines, env.Width, bh), "\n")
+	}
 	return m.top().Body(env, env.Width, bh)
+}
+
+// noticeStyle is the sticky notice's colour: red for an action's error, faint
+// for a captured stderr line, amber otherwise (§4.3, §4.4).
+func (m Model) noticeStyle() lipgloss.Style {
+	switch {
+	case m.noticeErr:
+		return errorStyle
+	case m.noticeFaint:
+		return faintStyle
+	}
+	return stateNeedsYouStyle
+}
+
+// workingText is the footer's action indicator: "working: <verb> <key>…" for
+// every action in flight, in key order so the line is stable (§4.3).
+func (m Model) workingText() string {
+	if len(m.running) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m.running))
+	for k := range m.running {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, m.running[k]+" "+k+"…")
+	}
+	return "working: " + strings.Join(parts, ", ")
 }
 
 // cmdBox is the command line's box: the input, then one line per match

@@ -225,15 +225,22 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		tailParts = append(tailParts, uniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")
 
-		// This combination cannot occur: a gated row is never picked.
-		if v.err == nil && tok == v.res.Token() {
+		// This combination cannot occur: a gated or off row is never picked.
+		if !r.Off && v.err == nil && tok == v.res.Token() {
 			if tail != "" {
 				tail += "  "
 			}
 			tail += "<- would pick"
 		}
 
-		row := fmt.Sprintf("  %d  %-*s  %-8s  %s", i+1, width, set.NameOf(tok), tag, tail)
+		// The status column is the tag, padded to 8. An off entry reads the
+		// plain word "off", padded like the other status words, and is never
+		// marked as the pick (A2 §4.4, round 2 R1: no escape codes).
+		tagField := fmt.Sprintf("%-8s", tag)
+		if r.Off {
+			tagField = fmt.Sprintf("%-8s", "off")
+		}
+		row := fmt.Sprintf("  %d  %-*s  %s  %s", i+1, width, set.NameOf(tok), tagField, tail)
 		sb.WriteString(strings.TrimRight(row, " ") + "\n")
 	}
 
@@ -309,7 +316,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 // names the file, a role with nothing to rank says so, and the "no policy
 // configured" line never prints -- roles.json is the policy.
 func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) string {
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		return FormatPolicy(set, pol, gates, hist, now, loc)
 	}
 	if set == nil || set.Len() == 0 {
@@ -328,11 +335,11 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 
 		v := policyRoleView{
 			role:    role,
-			header:  role + "  (config roles)",
+			header:  role + "  (" + roleSectionText(reg) + ")",
 			rows:    rows,
 			serving: serving,
 			sole:    len(rows) == 1,
-			noRows:  fmt.Sprintf("  no candidate listed in config roles %s.candidates", role),
+			noRows:  fmt.Sprintf("  no candidate listed in %s %s.candidates", roleSectionText(reg), role),
 		}
 		if len(rows) > 0 {
 			v.res, v.err = resolveRole(reg, set, gates, "", role)
@@ -360,7 +367,7 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 // "serves but not listed" finding -- a token that is not configured, or whose
 // kind has no definition for the role, is the whole story.
 func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []PolicyWarning {
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		return PolicyWarnings(set, pol)
 	}
 	if set == nil {
@@ -382,7 +389,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, entry),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q is not a configured candidate", roleSectionText(reg), role, i, entry),
 				})
 				continue
 			}
@@ -391,7 +398,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q: %s has no definition for %s", role, i, c.Name, role, c.Ref().Harness),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q: %s has no definition for %s", roleSectionText(reg), role, i, c.Name, role, c.Ref().Harness),
 				})
 			}
 		}
@@ -404,7 +411,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 // are unchanged; in file mode it walks reg.Names() and each role's ranked
 // candidates.
 func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []ledger.Gate) []RoleRefusal {
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		return RoleRefusals(set, pol, gates)
 	}
 	if set == nil || set.Len() == 0 {
@@ -434,7 +441,7 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 // and nil in legacy mode: without a roles.json those fields are the source,
 // not stale copies of it.
 func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []string {
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		return nil
 	}
 	if set == nil {

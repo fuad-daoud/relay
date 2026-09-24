@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -83,6 +84,21 @@ func allStatesRows() []relevo.BindingStatus {
 			Last: &relevo.LastEvent{TS: railNow.Add(-3 * time.Hour)},
 		},
 	}
+}
+
+// reportReadyRows is the fleet fixture for the report-ready golden: every
+// state row, plus a binding whose human planner is owed a report (§4.5). Its
+// display word is ACTIVE, so the header's count can only include it through
+// the report-ready rule.
+func reportReadyRows() []relevo.BindingStatus {
+	rows := append([]relevo.BindingStatus(nil), allStatesRows()...)
+	return append(rows, relevo.BindingStatus{
+		Name: "inbox", Round: 3, Display: "ACTIVE",
+		PlannerID: "pl_aaaaaaaabbbb", PlannerName: "you", PlannerKind: "human", PlannerRoute: "pull",
+		BuilderKind: "opencode", BuilderStatus: "exited", Branch: "relevo/inbox",
+		Last:    &relevo.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
+		Pending: &relevo.PendingInfo{Round: 3, Kind: store.KindReport},
+	})
 }
 
 // histRows is the archived fixture for the round-archived golden.
@@ -196,6 +212,31 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	return res.(Model)
 }
 
+// goldenStatsModel hosts the stats view, reached through the shell's start
+// command so the breadcrumb reads relevo › stats, and feeds it a report.
+func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	st := store.New(t.TempDir())
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+		Options{Interval: time.Second, Start: "stats"})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, cmd := m.Update(statusMsg{report: relevo.Report{}})
+	m = drain(t, res.(Model), cmd)
+	if _, ok := m.top().(statsView); !ok {
+		t.Fatalf("Start=stats must replace the stack, top is %T", m.top())
+	}
+	res, _ = m.Update(statsMsg{window: "30d", rep: rep})
+	return res.(Model)
+}
+
 func TestGoldenViews(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 
@@ -204,6 +245,18 @@ func TestGoldenViews(t *testing.T) {
 		width, height int
 		build         func(t *testing.T) Model
 	}{
+		{
+			name: "stats-wide", width: 160, height: 40,
+			build: func(t *testing.T) Model { return goldenStatsModel(t, 160, 40, statsFixture()) },
+		},
+		{
+			name: "stats-narrow", width: 100, height: 30,
+			build: func(t *testing.T) Model { return goldenStatsModel(t, 100, 30, statsFixture()) },
+		},
+		{
+			name: "stats-empty", width: 160, height: 40,
+			build: func(t *testing.T) Model { return goldenStatsModel(t, 160, 40, stats.Report{}) },
+		},
 		{
 			name: "fleet", width: 140, height: 40,
 			build: func(t *testing.T) Model {
@@ -278,6 +331,44 @@ func TestGoldenViews(t *testing.T) {
 				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
 				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 				return res.(Model)
+			},
+		},
+		{
+			name: "confirm-stop", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 140, 40, &fakeActions{},
+					relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				m = pointer(t, m, "atlas")
+				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
+			name: "prompt-gate", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 140, 40, &fakeActions{},
+					relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				m = pointer(t, m, "worker")
+				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
+			name: "prompt-send", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 140, 40, &fakeActions{},
+					relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				m = pointer(t, m, "atlas")
+				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
+			name: "report-ready", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 140, 40, &fakeActions{},
+					relevo.Report{Bindings: reportReadyRows(), Gated: gatedGates()})
+				return pointer(t, m, "inbox")
 			},
 		},
 	}

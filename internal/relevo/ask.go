@@ -16,13 +16,13 @@ import (
 // ErrNotAConsultRole reports an ask naming an alias that is a builder. A
 // builder is persistent and writes; handing one a prompt with no plan in it
 // would start a round that never was.
-var ErrNotAConsultRole = errors.New("that role is the builder role; bind it with relevo bind, not relevo ask")
+var ErrNotAConsultRole = errors.New("that actor is the builder actor; bind it with relevo bind, not relevo ask")
 
 // ErrTreelessUnsupported reports an ask for a role declaring tree "none".
 // The field is forward-declared for a future treeless explorer; no treeless
 // role ships yet, and silently running one in the binding's tree would put an
 // agent somewhere its role did not ask for.
-var ErrTreelessUnsupported = errors.New("treeless consult roles are not implemented")
+var ErrTreelessUnsupported = errors.New("treeless consult actors are not implemented")
 
 // ErrConsultCap reports an ask that would exceed the binding's running-consult
 // cap. An idle harness pane holds roughly 800 MB.
@@ -132,7 +132,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	reg := rt.RoleRegistry()
 	info, ok := reg.Role(opts.Role)
 	if !ok {
-		return AskResult{}, fmt.Errorf("unknown role %q (known: %v): %w", opts.Role, reg.Names(), ErrUnknownRole)
+		return AskResult{}, fmt.Errorf("unknown actor %q (known: %v): %w", opts.Role, reg.Names(), ErrUnknownRole)
 	}
 	if info.Shape != harness.ShapeConsult {
 		return AskResult{}, fmt.Errorf("%q: %w", opts.Role, ErrNotAConsultRole)

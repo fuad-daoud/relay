@@ -13,7 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
-	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
 )
@@ -377,9 +376,10 @@ func historyTab(since, by string, asJSON bool) error {
 }
 
 // historyStats is `relevo history --stats`: the stats report computed from
-// relevo.db's rounds, the availability history and the active gates (C2a plan
-// §4.5). The window is --since, which defaults to 30 days; the literal `all`
-// means every recorded round. No harness is spawned and no network is reached.
+// the inputs relevo.StatsInputs assembles -- relevo.db's rounds, the
+// availability history and the active gates (cockpit C2b §4.1). The window is
+// --since, which defaults to 30 days; the literal `all` means every recorded
+// round. No harness is spawned and no network is reached.
 func historyStats(since string, asJSON bool) error {
 	now := time.Now().UTC()
 
@@ -407,59 +407,15 @@ func historyStats(since string, asJSON bool) error {
 	defer d.Close()
 	rt.DB = d
 
-	rows, err := rt.DB.Query(db.Filter{Since: cut})
+	in, warnings, err := relevo.StatsInputs(rt, cut)
 	if err != nil {
 		return err
 	}
-	landed := map[string]bool{}
-	done, err := rt.DB.Bindings(db.Filter{State: "done"})
-	if err != nil {
-		return err
-	}
-	for _, b := range done {
-		landed[b.ID] = true
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "relevo: %s\n", w)
 	}
 
-	// Latency is read exactly as formatCandidates reads it: a failure warns
-	// and leaves the report without ttft values.
-	var lat latency.History
-	if rt.Latency != nil {
-		loaded, lerr := latency.LoadKV(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
-		if lerr != nil {
-			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", lerr)
-		} else {
-			lat = loaded
-		}
-	}
-	lat = lat.Prune(rt.Now())
-
-	rep := stats.Build(stats.Inputs{
-		Rows:    rows,
-		Landed:  landed,
-		History: loadHistory(rt),
-		Gates:   relevo.Gates(rt),
-		TTFT: func(token string) (int64, bool) {
-			s := lat.Summary(token)
-			return s.TTFTP50MS, s.N > 0
-		},
-		IsPlan: func(token string) bool {
-			if rt.Candidates == nil {
-				return false
-			}
-			ref, rerr := candidate.ParseRef(token)
-			if rerr != nil {
-				return false
-			}
-			c, lerr := rt.Candidates.Lookup(ref)
-			if lerr != nil {
-				return false
-			}
-			return c.Plan
-		},
-		Since: cut,
-		Until: now,
-		Loc:   time.Local,
-	})
+	rep := stats.Build(in)
 
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)

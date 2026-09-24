@@ -66,7 +66,7 @@ func Render(s Source, kind string) ([]byte, error) {
 
 // kindRendered reports whether kind is in the source's rendered kinds.
 func kindRendered(s Source, kind string) bool {
-	for _, k := range renderedKinds(s) {
+	for _, k := range RenderedKinds(s) {
 		if k == kind {
 			return true
 		}

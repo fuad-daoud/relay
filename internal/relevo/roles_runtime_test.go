@@ -46,6 +46,18 @@ func rolesFileRegistry(t *testing.T, set *candidate.Set, pol policy.Policy, rows
 	return reg
 }
 
+// actorsFileRegistry is rolesFileRegistry with the file's source set to the
+// actors section, so the views label the candidates' section "config actors"
+// (A2 round 2).
+func actorsFileRegistry(t *testing.T, set *candidate.Set, pol policy.Policy, rows map[string]roles.Row) *roles.Registry {
+	t.Helper()
+	reg, err := roles.Build(&roles.File{Rows: rows, Source: roles.SourceActors}, set, pol)
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	return reg
+}
+
 // rolesCandidate looks up one configured candidate by its token.
 func rolesCandidate(t *testing.T, set *candidate.Set, token string) candidate.Candidate {
 	t.Helper()

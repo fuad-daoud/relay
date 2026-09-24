@@ -36,6 +36,10 @@ type File struct {
 	// Rows is one entry per role the file names. A role the file omits
 	// keeps its built-in row.
 	Rows map[string]Row
+	// Source names where this File came from: empty means roles.json (the
+	// default), SourceActors means it was derived from the actors section
+	// (A2 round 2). It is not part of the JSON shape.
+	Source string `json:"-"`
 }
 
 // Row is one role's entry in roles.json. Every field is optional and
@@ -60,6 +64,12 @@ type Row struct {
 	// Candidates is the role's candidate tokens, most preferred first.
 	// nil is absent; an empty list is allowed and means no candidates.
 	Candidates []string `json:"candidates"`
+
+	// Off is the raw candidates that are off: each is kept in Candidates, at
+	// its position, but the pick skips it unless it is named explicitly (A2
+	// §3.4). Every entry must also appear in Candidates, as the same raw
+	// string.
+	Off []string `json:"off,omitempty"`
 
 	// Tier is the role's default permission tier.
 	Tier *string `json:"tier"`
@@ -200,6 +210,14 @@ func validate(path string, f *File) error {
 				return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("duplicate token %q", tok))
 			}
 			seen[tok] = true
+		}
+
+		// off: every off entry must also be a candidate, as the same raw
+		// string (A2 §3.4).
+		for i, tok := range row.Off {
+			if !seen[tok] {
+				return badField(fmt.Sprintf("off[%d]", i), fmt.Sprintf("%q is not in candidates", tok))
+			}
 		}
 
 		// tier

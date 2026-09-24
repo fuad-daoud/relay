@@ -67,6 +67,7 @@ Usage:
 
 Commands:
   bind      bind this planner pane to a builder over the current working tree [--tier]
+              (--role is now --actor)
               --worktree | --cwd DIR | --branch B | --server S
                         attach another builder to this planner, on its own worktree or tree
               --from SRC[@ROUND]
@@ -93,11 +94,11 @@ Commands:
             NEEDS YOU into the session instead of typing them into its pane
   doctor    preflight check: plugin, daemon, harness binaries, roles
   migrate   move ` + legacy.Name + `-era state, switch the client unit and remove the old binary [--dry-run] [--keep-old-binary]
-  config    show the roles, the current pick and the candidates
+  config    show the actors, the current pick and the candidates
   config edit|get|set|unset|export|import
             read and change the configuration document
-  config init|roles-init|agents
-            write starter configuration, roles, or agent definitions
+  config init|agents
+            write starter configuration or agent definitions
   config server add|rm|list|key
             this machine's remote-builder identity and server list
   config secret set|rm|list
@@ -600,6 +601,14 @@ func newRuntime() (relevo.Runtime, error) {
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
+		// A2 round 2's one-time migration: a pre-actors config becomes actors
+		// plus agents, as a "migration" revision. An error is a warning too,
+		// and the old config keeps working.
+		if migrated, err := cs.MigrateToActors(); err != nil {
+			slog.Warn("config: roles not migrated to actors", "err", err)
+		} else if migrated {
+			slog.Info("config: roles migrated to actors (relevo config log)")
+		}
 	}
 
 	L, err := cs.Load()
@@ -847,7 +856,7 @@ func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {
 }
 
 // roleOrBuilder is the role name a flag value means: "builder" for "", else
-// the value. The CLI's --role and the registry both spell the default builder
+// the value. The CLI's --actor and the registry both spell the default builder
 // as "".
 func roleOrBuilder(r string) string {
 	if r == "" {
@@ -958,30 +967,23 @@ func formatCandidates(rt relevo.Runtime) string {
 	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relevo.Gates(rt), lat)
 }
 
-// legacyGatesPath is <dir>/<name> for the pre-kv gate documents
-// (ledger.json, availability.json, latency.json), or "" when no gates
-// directory is configured -- so an import never reads a file out of the
-// process's working directory (P3b plan §4.5).
+// legacyGatesPath is <dir>/<name> for the pre-kv gate documents, moved to
+// internal/relevo (cockpit C2b §4.1) so the stats input assembly shares it.
 func legacyGatesPath(dir, name string) string {
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, name)
+	return relevo.LegacyGatesPath(dir, name)
 }
 
 // loadHistory reads the availability history for display, treating an
 // unreadable record as empty after one stderr line -- the same rule Gates
-// applies to the ledger.
+// applies to the ledger. The body moved to relevo.LoadHistory (cockpit C2b
+// §4.1); this keeps the stderr line for its other callers.
 func loadHistory(rt relevo.Runtime) history.History {
-	if rt.Gates == nil {
-		return history.History{}
-	}
-	h, err := history.LoadKV(rt.Gates, legacyGatesPath(rt.GatesDir, "availability.json"))
+	h, err := relevo.LoadHistory(rt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read history: %v\n", err)
 		return history.History{}
 	}
-	return h.Prune(rt.Now())
+	return h
 }
 
 // formatPolicy renders the per-role pick explanation the `pick` block of
@@ -1220,44 +1222,80 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 // bind, add and fork merged into (§4.1): the flags choose which of the three
 // bodies runs, and each body stays an unexported helper so none of its logic
 // is duplicated.
+// bindFlagValues holds the pointers bind's flags parse into. bindFlagSet
+// defines them on fs; cmdBind and TestBindFlagsHaveActorNotRole read the same
+// surface, so the flag names can never drift from what a test pins (A2 round 3
+// S1).
+type bindFlagValues struct {
+	name         *string
+	builderAlias *string
+	plannerFlag  *string
+	resume       *bool
+	rebind       *bool
+	timeout      *time.Duration
+	tier         *string
+	allowYolo    *bool
+	gate         *string
+	noGate       *bool
+	regate       *int
+	feature      *string
+	actor        *string
+	worktree     *bool
+	cwd          *string
+	branch       *string
+	server       *string
+	base         *string
+	from         *string
+	round        *int
+}
+
+// bindFlagSet defines bind's flags on fs and returns the values they parse
+// into. It is separate from cmdBind so a test can inspect the flag surface
+// without running a bind (A2 round 3 S1).
+func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
+	v := &bindFlagValues{}
+	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
+	v.builderAlias = fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
+	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
+	v.resume = fs.Bool("resume", false, "adopt an existing binding into this planner")
+	v.rebind = fs.Bool("rebind", false,
+		"with --resume: replace a gone builder, picking it by config policy order and the ledger (like bind with --builder omitted)")
+	v.timeout = fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
+	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	v.allowYolo = fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	v.gate = fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
+	v.noGate = fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
+	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
+	v.feature = fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
+	v.actor = fs.String("actor", "", "the writer actor this binding runs (default builder)")
+	v.worktree = fs.Bool("worktree", false, "attach an additional builder to this planner, on its own worktree")
+	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
+	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
+	v.base = fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	v.from = fs.String("from", "", "source binding to branch a new one from, as <source>[@<round>]")
+	v.round = fs.Int("round", 0, "with --from: source round to copy history through")
+	return v
+}
+
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
-	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
-	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
-	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
-	rebind := fs.Bool("rebind", false,
-		"with --resume: replace a gone builder, picking it by config policy order and the ledger (like bind with --builder omitted)")
-	timeout := fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
-	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
-	noGate := fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
-	feature := fs.String("feature", "", "label grouping this binding with others (fork inherits it)")
-	role := fs.String("role", "", "writer role this binding runs: a config roles writer row (default builder)")
-	worktree := fs.Bool("worktree", false, "attach an additional builder to this planner, on its own worktree")
-	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
-	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
-	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
-	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
-	from := fs.String("from", "", "source binding to branch a new one from, as <source>[@<round>]")
-	round := fs.Int("round", 0, "with --from: source round to copy history through")
+	v := bindFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	regateOpt, err := regateFlag(fs, regate)
+	regateOpt, err := regateFlag(fs, v.regate)
 	if err != nil {
 		return err
 	}
 
 	f := bindFlags{
-		name: *name, builder: *builderAlias, planner: *plannerFlag,
-		resume: *resume, rebind: *rebind, timeout: *timeout, tier: *tier,
-		allowYolo: *allowYolo, gate: *gate, noGate: *noGate, regate: regateOpt,
-		feature: *feature, role: *role, worktree: *worktree, cwd: *cwd,
-		branch: *branch, server: *server, base: *base, from: *from, round: *round,
+		name: *v.name, builder: *v.builderAlias, planner: *v.plannerFlag,
+		resume: *v.resume, rebind: *v.rebind, timeout: *v.timeout, tier: *v.tier,
+		allowYolo: *v.allowYolo, gate: *v.gate, noGate: *v.noGate, regate: regateOpt,
+		feature: *v.feature, role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
+		branch: *v.branch, server: *v.server, base: *v.base, from: *v.from, round: *v.round,
 	}
 
 	route, rerr := bindRouteFor(f)
@@ -1289,7 +1327,7 @@ func runBind(f bindFlags) error {
 		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
 	}
 	if f.role != "" && f.resume {
-		return fmt.Errorf("relevo bind --resume keeps the binding's role; drop --role")
+		return fmt.Errorf("relevo bind --resume keeps the binding's actor; drop --actor")
 	}
 
 	if f.feature != "" {
@@ -1333,7 +1371,7 @@ func runBind(f bindFlags) error {
 	switch {
 	case f.rebind:
 		// A rebind replaces the builder of an existing binding, so the
-		// definitions come from the stored binding's role -- --role is
+		// definitions come from the stored binding's actor -- --actor is
 		// refused with --resume, so roleName is "builder" here (#382 round 3).
 		// If the load fails, today's behaviour (roleName) stands.
 		if f.name != "" {
@@ -1794,31 +1832,53 @@ func cmdSend(args []string) error {
 	return nil
 }
 
+// askFlagValues holds the pointers ask's flags parse into. askFlagSet defines
+// them on fs; cmdAsk and TestAskFlagsHaveActorNotRole read the same surface
+// (A2 round 3 S1).
+type askFlagValues struct {
+	actor       *string
+	cand        *string
+	file        *string
+	question    *string
+	round       *int
+	nameFlag    *string
+	plannerFlag *string
+}
+
+// askFlagSet defines ask's flags on fs and returns the values they parse into.
+func askFlagSet(fs *flag.FlagSet) *askFlagValues {
+	v := &askFlagValues{}
+	v.actor = fs.String("actor", "", "the reader actor to consult: reviewer, researcher, or a reader actor in config actors")
+	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
+	v.file = fs.String("file", "", "file containing the question")
+	v.question = fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
+	fs.StringVar(v.question, "q", "", "the question itself (shorthand for --question)")
+	v.round = fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
+	v.nameFlag = fs.String("name", "", "binding name")
+	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
+	return v
+}
+
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in config roles")
-	cand := fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
-	file := fs.String("file", "", "file containing the question")
-	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
-	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
-	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
-	nameFlag := fs.String("name", "", "binding name")
-	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
+	v := askFlagSet(fs)
+	role, cand, file, question, round := v.actor, v.cand, v.file, v.question, v.round
+	nameFlag, plannerFlag := v.nameFlag, v.plannerFlag
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *round > 0 {
-		// The round's recorded session fixes the role and the candidate, so
-		// neither is required; --role is only worth a note.
+		// The round's recorded session fixes the actor and the candidate, so
+		// neither is required; --actor is only worth a note.
 		if *role != "" {
-			fmt.Fprintln(os.Stderr, "note: relevo ask --round ignores --role; the resumed session fixes the role")
+			fmt.Fprintln(os.Stderr, "note: relevo ask --round ignores --actor; the resumed session fixes the actor")
 		}
 		if (*file != "") == (*question != "") {
 			return fmt.Errorf("relevo ask --round needs --file or -q")
 		}
 	} else {
 		if *role == "" {
-			return fmt.Errorf("relevo ask needs --role ROLE")
+			return fmt.Errorf("relevo ask needs --actor ACTOR")
 		}
 		if *file == "" {
 			return fmt.Errorf("relevo ask needs --file PATH")

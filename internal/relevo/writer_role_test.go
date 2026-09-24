@@ -52,7 +52,7 @@ func TestBindingRole(t *testing.T) {
 
 // TestCheckWriterRole pins #382 §6: a writer role (or the builder default) is
 // accepted, a reader is refused with ErrNotAWriterRole naming `relevo ask
-// --role`, and an unknown name is refused with ErrUnknownRole.
+// --actor`, and an unknown name is refused with ErrUnknownRole.
 func TestCheckWriterRole(t *testing.T) {
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -70,8 +70,8 @@ func TestCheckWriterRole(t *testing.T) {
 	if !errors.Is(err, ErrNotAWriterRole) {
 		t.Fatalf("checkWriterRole(reviewer) err = %v, want ErrNotAWriterRole", err)
 	}
-	if !strings.Contains(err.Error(), "relevo ask --role reviewer") {
-		t.Errorf("err = %q, want it to name relevo ask --role reviewer", err.Error())
+	if !strings.Contains(err.Error(), "relevo ask --actor reviewer") {
+		t.Errorf("err = %q, want it to name relevo ask --actor reviewer", err.Error())
 	}
 
 	err = checkWriterRole(reg, "nope")
@@ -97,10 +97,10 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 		PlannerID: testPlannerName, CWD: "/nope-repo",
 	})
 	if err == nil {
-		t.Fatal("Bind(--role nope) = nil, want an error")
+		t.Fatal("Bind(--actor nope) = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), `unknown role "nope"`) {
-		t.Errorf("err = %q, want it to name unknown role \"nope\"", err.Error())
+	if !strings.Contains(err.Error(), `unknown actor "nope"`) {
+		t.Errorf("err = %q, want it to name unknown actor \"nope\"", err.Error())
 	}
 }
 

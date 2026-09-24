@@ -17,6 +17,9 @@ var commands = []command{
 	{"fleet", "", "bindings on this machine"},
 	{"rounds", "[query…]", "every round, filtered"},
 	{"round", "<binding> [N]", "open one binding's round"},
+	{"stats", "[7d|30d|90d|all]", "rounds, cost and health"},
+	{"log", "", "this session's action results"},
+	{"ungate", "<provider|candidate>", "clear a recorded rate limit"},
 	{"help", "", "keys"},
 	{"quit", "", "leave"},
 }
@@ -54,11 +57,22 @@ func (c cmdLine) typed() string { return strings.TrimSpace(c.input.Value()) }
 // alphabetical, capped at 8. Pure: the tests drive it directly.
 func (c cmdLine) matches(env Env) []command {
 	typed := strings.ToLower(c.typed())
-	cands := make([]command, 0, len(commands)+len(env.Report.Bindings))
+	cands := make([]command, 0, len(commands)+len(env.Report.Bindings)+len(env.Report.Gated))
 	cands = append(cands, commands...)
 	for i := range env.Report.Bindings {
 		key := env.Report.Bindings[i].Key()
 		cands = append(cands, command{name: "round " + key, help: "open " + key})
+	}
+	// `ungate` completes to the providers and names of the live gates
+	// (§4.3): the same subjects `relevo gate --clear` accepts.
+	for _, g := range env.Report.Gated {
+		subject := g.Token
+		if g.Name != "" {
+			subject = g.Name
+		}
+		help := "clear the rate limit on " + g.Token
+		cands = append(cands, command{name: "ungate " + subject, help: help})
+		cands = append(cands, command{name: "ungate " + g.Token, help: help})
 	}
 	var out []command
 	for _, cand := range cands {

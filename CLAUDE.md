@@ -12,9 +12,9 @@ stop rather than improvise -- is in the shipped `architect` definition
 (`internal/harness/agents/architect.*.md`, "Handing off"), not here. What
 follows is what is specific to this machine and this repo.
 
-- Candidates, roles and policy live in relevo.db; `relevo config` shows and
-  edits them. The builder order is `order.builder` in the policy section, and
-  `relevo config` shows the current pick.
+- Candidates, actors and policy live in relevo.db; `relevo config` shows and
+  edits them. A builder's order is its actor's candidate list
+  (`actors.builder.candidates`), and `relevo config` shows the current pick.
 - relevo stops a builder *process* in exactly four places: `relevo done` and
   `relevo unbind` on a binding whose round is running, a mid-round switch of a
   builder whose provider you gated with `relevo gate`, and `relevo stop`.

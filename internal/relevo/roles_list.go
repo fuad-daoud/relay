@@ -55,7 +55,7 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	// candidates no order names still shows them, marked (unlisted).
 	// A1 §4.4: both print each candidate's short name.
 	b.WriteString("\n  candidates  ")
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		b.WriteString(legacyCandidates(reg, role.Ranked))
 	} else {
 		b.WriteString(fileCandidates(reg, role))

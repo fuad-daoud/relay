@@ -955,7 +955,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 		{"bind", "--tab"},
 		{"bind", "--worktree", "--name", "x", "--tab"},
 		{"bind", "--from", "x", "--round", "1", "--name", "y", "--tab"},
-		{"ask", "--role", "reviewer", "--file", "q.md", "--new-tab"},
+		{"ask", "--actor", "reviewer", "--file", "q.md", "--new-tab"},
 	} {
 		err := run(args)
 		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
@@ -973,16 +973,41 @@ func TestBindRebindNeedsResume(t *testing.T) {
 	}
 }
 
-// TestBindRoleWithResumeRefused pins #382 §4: a resume keeps the binding's
-// stored role, so --role is refused. The check runs before newRuntime, so no
+// TestBindActorWithResumeRefused pins #382 §4: a resume keeps the binding's
+// stored actor, so --actor is refused. The check runs before newRuntime, so no
 // harness is reached and nothing is spawned.
-func TestBindRoleWithResumeRefused(t *testing.T) {
-	err := run([]string{"bind", "--resume", "--role", "x", "--name", "n"})
+func TestBindActorWithResumeRefused(t *testing.T) {
+	err := run([]string{"bind", "--resume", "--actor", "x", "--name", "n"})
 	if err == nil {
-		t.Fatal("bind --resume --role = nil, want the drop --role refusal")
+		t.Fatal("bind --resume --actor = nil, want the drop --actor refusal")
 	}
-	if !strings.Contains(err.Error(), "drop --role") {
-		t.Fatalf("got %v, want an error naming --role and the resume's stored role", err)
+	if !strings.Contains(err.Error(), "drop --actor") {
+		t.Fatalf("got %v, want an error naming --actor and the resume's stored actor", err)
+	}
+}
+
+// TestBindFlagsHaveActorNotRole pins A2 round 3 S1: bind's writer flag is
+// --actor, and the old --role is removed rather than aliased.
+func TestBindFlagsHaveActorNotRole(t *testing.T) {
+	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
+	bindFlagSet(fs)
+	if fs.Lookup("actor") == nil {
+		t.Error("bind does not define --actor")
+	}
+	if fs.Lookup("role") != nil {
+		t.Error("bind still defines --role; it must be removed, not aliased")
+	}
+}
+
+// TestAskFlagsHaveActorNotRole is TestBindFlagsHaveActorNotRole for ask.
+func TestAskFlagsHaveActorNotRole(t *testing.T) {
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	askFlagSet(fs)
+	if fs.Lookup("actor") == nil {
+		t.Error("ask does not define --actor")
+	}
+	if fs.Lookup("role") != nil {
+		t.Error("ask still defines --role; it must be removed, not aliased")
 	}
 }
 

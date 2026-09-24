@@ -56,7 +56,7 @@ type Candidate struct {
 	Harness       string   `json:"harness"`
 	Provider      string   `json:"provider"`
 	Model         string   `json:"model"`
-	Roles         []string `json:"roles"`
+	Roles         []string `json:"roles,omitempty"`
 	Tree          string   `json:"tree,omitempty"`
 	ExtraArgs     []string `json:"extra_args,omitempty"`
 	LimitPatterns []string `json:"limit_patterns,omitempty"`

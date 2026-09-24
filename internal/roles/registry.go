@@ -18,6 +18,9 @@ var ErrNoDefinition = errors.New("role has no definition for this harness kind")
 const (
 	// SourceFile is a registry built from roles.json.
 	SourceFile = "roles.json"
+	// SourceActors is a registry built from the actors and agents sections
+	// (A2 round 2).
+	SourceActors = "actors"
 	// SourceLegacy is a registry derived from candidates.json and policy.json.
 	SourceLegacy = "legacy"
 )
@@ -41,6 +44,10 @@ type Ranked struct {
 	// Position is the token's 1-based index in the list it came from, or 0
 	// for "unlisted, after order" (legacy mode only).
 	Position int
+	// Off is true when the entry is off: it keeps its position and Resolved
+	// still includes it, so an explicit `--builder <off one>` is served; only
+	// the pick with no explicit token skips it (A2 §3.4).
+	Off bool
 }
 
 // Role is one role the registry knows.
@@ -59,6 +66,8 @@ type Role struct {
 	Candidates []string
 	// Ranked is Candidates filtered to what this machine can run, in order.
 	Ranked []Ranked
+	// OffCount is how many of Ranked are off, for views (A2 §2).
+	OffCount int
 	// Resolved is Ranked's canonical tokens, in order: what Serves compares
 	// a reference against in file mode.
 	Resolved []string
@@ -165,6 +174,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 	byName := builtins()
 	names := append([]string(nil), harness.RoleNames()...)
 	tiers := make(map[string]harness.Tier)
+	offRaw := make(map[string][]string)
 	var newNames []string
 
 	for _, name := range sortedNames(f.Rows) {
@@ -202,6 +212,9 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		if row.Candidates != nil {
 			base.Candidates = append([]string(nil), row.Candidates...)
 		}
+		if len(row.Off) > 0 {
+			offRaw[name] = append([]string(nil), row.Off...)
+		}
 		if row.Tier != nil {
 			t, err := harness.ParseTier(*row.Tier)
 			if err != nil {
@@ -219,6 +232,17 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 	for name, role := range byName {
 		role.Ordered = true
 		role.Ranked = nil
+		role.OffCount = 0
+		// offTokens is the canonical token of every raw off entry, so an
+		// entry that stays in Ranked can be marked without re-resolving.
+		offTokens := make(map[string]bool, len(offRaw[name]))
+		for _, raw := range offRaw[name] {
+			c, err := set.Resolve(raw)
+			if err != nil {
+				continue
+			}
+			offTokens[c.Ref().String()] = true
+		}
 		seen := make(map[string]bool, len(role.Candidates))
 		for i, tok := range role.Candidates {
 			c, err := set.Resolve(tok)
@@ -234,7 +258,11 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 				continue
 			}
 			seen[key] = true
-			role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1})
+			off := offTokens[key]
+			role.Ranked = append(role.Ranked, Ranked{Token: key, Position: i + 1, Off: off})
+			if off {
+				role.OffCount++
+			}
 		}
 		role.Resolved = canonicalTokens(role.Ranked)
 		byName[name] = role
@@ -243,11 +271,20 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 	return &Registry{
 		roles:  byName,
 		names:  names,
-		source: SourceFile,
+		source: fileSource(f),
 		tiers:  tiers,
 		set:    set,
 		pol:    pol,
 	}, nil
+}
+
+// fileSource names where f came from: f.Source when it set one, else
+// SourceFile, which is what a roles.json parse leaves empty.
+func fileSource(f *File) string {
+	if f != nil && f.Source != "" {
+		return f.Source
+	}
+	return SourceFile
 }
 
 // canonicalTokens returns a ranked list's canonical tokens, in order.
@@ -319,7 +356,7 @@ func (r *Registry) Serves(name string, ref candidate.Ref) bool {
 	if _, err := r.Spec(name, ref.Harness); err != nil {
 		return false
 	}
-	if r.source == SourceFile {
+	if r.FileMode() {
 		for _, tok := range r.roles[name].Resolved {
 			if tok == ref.String() {
 				return true
@@ -340,7 +377,7 @@ func (r *Registry) Serves(name string, ref candidate.Ref) bool {
 //   - in legacy mode, exactly the middle of today's chain: the candidate's
 //     tier when set and valid, else policy's tier for the role, else false.
 func (r *Registry) TierFor(name string, c candidate.Candidate) (harness.Tier, bool) {
-	if r.source == SourceFile {
+	if r.FileMode() {
 		t, ok := r.tiers[name]
 		return t, ok
 	}
@@ -356,7 +393,7 @@ func (r *Registry) TierFor(name string, c candidate.Candidate) (harness.Tier, bo
 // mode, and policy's tier for the role in legacy mode (#374 §3.2). ok is false
 // when neither sets one.
 func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
-	if r.source == SourceFile {
+	if r.FileMode() {
 		t, ok := r.tiers[name]
 		return t, ok
 	}
@@ -374,10 +411,30 @@ func (r *Registry) NameOf(token string) string {
 	return r.set.NameOf(token)
 }
 
-// Source returns where the registry's roles came from: SourceFile or
-// SourceLegacy.
+// Source returns where the registry's roles came from: SourceFile,
+// SourceActors or SourceLegacy.
 func (r *Registry) Source() string {
 	return r.source
+}
+
+// FileMode reports whether the registry's roles were given in full by a file
+// or the actors section, rather than derived from the legacy candidates and
+// policy fields. Every source test goes through it, so a new file-like source
+// needs no caller changed (A2 round 2 R2).
+func (r *Registry) FileMode() bool { return r.source != SourceLegacy }
+
+// ListText names where role's candidates are listed, for embedding in error
+// texts: the file mode's `roles.json <role>.candidates`, the actors mode's
+// `actors <role>.candidates`, and legacy's `order.<role>` (A2 round 2 R2).
+func (r *Registry) ListText(role string) string {
+	switch r.source {
+	case SourceActors:
+		return "actors " + role + ".candidates"
+	case SourceLegacy:
+		return "order." + role
+	default:
+		return "roles.json " + role + ".candidates"
+	}
 }
 
 // copyRole returns a deep copy of role.

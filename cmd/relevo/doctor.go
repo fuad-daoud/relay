@@ -227,7 +227,7 @@ func renderReport(w io.Writer, rep doctor.Report) {
 // row is printed.
 func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
 	detail := "legacy: candidates.json roles, policy.json order and tier"
-	if reg.Source() == roles.SourceFile {
+	if reg.FileMode() {
 		detail = "roles.json"
 	}
 	out := []doctor.Check{{Name: "role source", Severity: doctor.SevOK, Detail: detail}}

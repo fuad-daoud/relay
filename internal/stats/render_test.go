@@ -260,8 +260,8 @@ func TestShortTokens(t *testing.T) {
 		{1_000_000_000, "1B"},
 	}
 	for _, c := range cases {
-		if got := shortTokens(c.n); got != c.want {
-			t.Errorf("shortTokens(%d) = %q, want %q", c.n, got, c.want)
+		if got := ShortTokens(c.n); got != c.want {
+			t.Errorf("ShortTokens(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
 }

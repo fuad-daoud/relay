@@ -892,8 +892,8 @@ func TestCreateBindingUnknownRoleRefused(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
 		t.Fatalf("decode error body: %v", err)
 	}
-	if !strings.Contains(errBody.Message, `unknown role "nope"`) {
-		t.Fatalf("message = %q, want it to contain unknown role \"nope\"", errBody.Message)
+	if !strings.Contains(errBody.Message, `unknown actor "nope"`) {
+		t.Fatalf("message = %q, want it to contain unknown actor \"nope\"", errBody.Message)
 	}
 
 	id := remote.IDOf(kp.Public)
@@ -926,7 +926,7 @@ func TestCreateBindingReaderRoleRefused(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "a reader role runs through relevo ask") {
+	if !strings.Contains(rec.Body.String(), "a reader actor runs through relevo ask") {
 		t.Fatalf("body = %s, want it to contain the reader-role refusal", rec.Body.String())
 	}
 }

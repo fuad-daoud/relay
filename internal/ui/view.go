@@ -35,6 +35,12 @@ type Env struct {
 	// ErrRows is the line count of the shell's error block this frame, so a
 	// view can compute the body height it will be given (bodyHeight).
 	ErrRows int
+	// Actions is the shell's write seam (§4.3). Nil (serve ui) means the
+	// action keys do nothing.
+	Actions Actions
+	// Running is the shell's in-flight actions, keyed by binding key (§4.3):
+	// a second action on the same binding is refused.
+	Running map[string]string
 }
 
 // Stack messages. A view returns these as commands; only the shell acts on
@@ -48,6 +54,10 @@ type prefMsg struct{ key, value string } // key is one of "sort", "dashboard", "
 // helpMsg opens the help overlay; the ':' command line returns it for the
 // `help` command, which cannot reach the shell's own field.
 type helpMsg struct{}
+
+// logMsg opens the ':log' view: the shell's own session scrollback of action
+// results, which the ':' command line cannot reach (§4.3).
+type logMsg struct{}
 
 // push returns a command that pushes v and then runs init.
 func push(v View, init tea.Cmd) tea.Cmd {
