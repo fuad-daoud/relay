@@ -137,7 +137,11 @@ New flag `--host-parent`, valid only with `--kind/--session`: record the
 calling process's **parent** (the OpenCode TUI process that spawned `relevo`)
 as `host_pid`, with its start time as `host_started_at`. On re-attach
 (`InitReattached`, `internal/planner/hook.go` `reattach`) the host is replaced
-with the new caller's parent. Effect: a record whose TUI has exited is `gone`,
+with the new caller's parent. A `--host-parent` init looks the record up **by
+session only**, never by host: one TUI process shows many sessions, and the
+usual host-first lookup (`findCaller` in `internal/planner/hook.go`) would find
+session A's record from session B's init and move it, merging two planners.
+Effect: a record whose TUI has exited is `gone`,
 and the hourly prune forgets it unless a binding still names it (the existing
 `inUse` guard). Output is unchanged: the last line is still
 `export RELEVO_PLANNER=pl_…`, which the plugin parses.
@@ -312,7 +316,8 @@ a guess.
 
 **Unregistered session.** When the match succeeds but no planner record names
 the session (the TUI has not opened it, e.g. a headless `opencode run`
-planner), commands that need a planner (`bind`, `send`) register it on the spot,
+planner), the verbs that need a planner (`bind`, `add`, `fork`, `ask`, through
+`resolveVerbPlanner` in `internal/relevo/bind.go`) register it on the spot,
 as `relevo planner init --kind opencode --session <id>` does today: a hostless,
 explicit record. Read-only commands (`status`) do not register.
 
