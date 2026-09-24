@@ -1253,3 +1253,31 @@ func TestAskScopesBothConsultPaths(t *testing.T) {
 		assertConsultScope(t, fr.specs[0], res.Consult)
 	})
 }
+
+// TestConsultStderrSharesTheStream pins R2: a consult's stderr goes into its
+// stream file, and NNN-<id>-consult.log is no longer written. FinalText and
+// the usage readers skip every non-JSON line, so a harness's stderr on the
+// stream costs a reader nothing.
+//
+// Mutation: set LogPath back to a separate path and this fails.
+func TestConsultStderrSharesTheStream(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t)
+	rt.Runner = fr
+
+	if _, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: writeQuestion(t, "review it"), Name: "webshop", PlannerID: testPlannerName,
+	}); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	if spec.LogPath != spec.StreamPath {
+		t.Errorf("LogPath = %q, StreamPath = %q; want the stderr on the stream file", spec.LogPath, spec.StreamPath)
+	}
+	if !strings.HasSuffix(spec.LogPath, "-consult.jsonl") {
+		t.Errorf("LogPath = %q, want it to end in -consult.jsonl", spec.LogPath)
+	}
+}

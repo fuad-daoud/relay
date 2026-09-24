@@ -642,9 +642,6 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	if got, want := s.ConsultStreamPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.jsonl"; got != want {
 		t.Errorf("ConsultStreamPath = %q, want %q", got, want)
 	}
-	if got, want := s.ConsultLogPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.log"; got != want {
-		t.Errorf("ConsultLogPath = %q, want %q", got, want)
-	}
 	// NNN-question.md belongs to the blocked-dialog capture. A consult being
 	// asked something is not a builder being blocked on something.
 	if s.AskPath("webshop", 3, "7f2a3c1d") == s.QuestionPath("webshop", 3) {
@@ -655,8 +652,8 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	if r, ok := roundOfFile(filepath.Base(s.ConsultStreamPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
 		t.Errorf("roundOfFile(consult.jsonl) = %d, %v; want 12, true", r, ok)
 	}
-	if r, ok := roundOfFile(filepath.Base(s.ConsultLogPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
-		t.Errorf("roundOfFile(consult.log) = %d, %v; want 12, true", r, ok)
+	if r, ok := roundOfFile(filepath.Base(s.ConsultStreamPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
+		t.Errorf("roundOfFile(consult.jsonl) = %d, %v; want 12, true", r, ok)
 	}
 }
 

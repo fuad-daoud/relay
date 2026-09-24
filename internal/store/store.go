@@ -295,13 +295,6 @@ func (s *Store) ConsultStreamPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "consult", ".jsonl")
 }
 
-// ConsultLogPath is where a headless consult's stderr is appended: what the
-// harness wrote outside its stream, for a human reading why a process died.
-// Layout: <binding dir>/NNN-<id>-consult.log
-func (s *Store) ConsultLogPath(name string, round int, id string) string {
-	return s.consultFile(name, round, id, "consult", ".log")
-}
-
 // consultFile is roundFile with a consult id folded in. roundFile takes no id,
 // and widening it would touch five call sites that will never have one.
 func (s *Store) consultFile(name string, round int, id, suffix, ext string) string {
