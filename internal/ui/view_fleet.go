@@ -46,10 +46,38 @@ func ago(since, now time.Time) string {
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
+// reportReady is the fleet's rule for a report waiting on the human at this
+// cockpit (§4.5): the binding's planner is `you`, and a payload is pending for
+// it. Such a row's NOW cell says so, and opening it pulls the report.
+func reportReady(b relevo.BindingStatus) bool {
+	return b.PlannerName == "you" && b.Pending != nil
+}
+
+// nowStyle colours the NOW cell: a pending report is what needs the human, so
+// it wears the same amber as a NEEDS YOU state (§4.5).
+func nowStyle(b relevo.BindingStatus) lipgloss.Style {
+	if reportReady(b) {
+		return stateNeedsYouStyle
+	}
+	return dimStyle
+}
+
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
 // from the fields Status has today. It moved into the fleet view in round 2
 // (X2).
 func whatAge(b relevo.BindingStatus, now time.Time) (what, age string) {
+	if reportReady(b) {
+		// The report the human planner is owed takes the cell over: it is
+		// why the row needs them (§4.5).
+		what = "report ready"
+		if b.Last != nil {
+			age = ago(b.Last.TS, now)
+		}
+		if age == "" && b.Waiting != nil {
+			age = ago(b.Waiting.Since, now)
+		}
+		return what, age
+	}
 	switch b.Display {
 	case "NEEDS YOU":
 		if b.Waiting != nil {
@@ -120,6 +148,7 @@ type fleetView struct {
 	sticky    string // the selected row's Key(), so the selection survives reordering
 	top       int    // first visible line index
 	attention bool   // sort order: attention (SortRows true) or name; from the sort pref
+	actions   bool   // Actions != nil at construction: the action keys are shown (r1)
 
 	filtering  bool            // the '/' filter input is open and owns every key (A4)
 	filter     textinput.Model // the filter input: the same widget as the cmdline (A4)
@@ -129,6 +158,13 @@ type fleetView struct {
 // newFleetView builds the table, sorted by attention or by name.
 func newFleetView(attention bool) fleetView {
 	return fleetView{attention: attention, filter: newFilterInput()}
+}
+
+// withActions marks whether the shell has an Actions seam, so Keys() shows
+// the action keys exactly when one exists (r1).
+func (f fleetView) withActions(a bool) fleetView {
+	f.actions = a
+	return f
 }
 
 // newFilterInput is the fleet's one-line filter input: the same textinput the
@@ -185,13 +221,33 @@ func (f fleetView) Crumbs() []string { return []string{"fleet"} }
 func (f fleetView) Capturing() bool { return f.filtering }
 
 func (f fleetView) Keys() []KeyHelp {
-	return []KeyHelp{
+	keys := []KeyHelp{
 		{"↑↓", "move"},
 		{"home/end", "first/last"},
 		{"enter", "open"},
-		{"s", "sort"},
-		{"/", "filter"},
+		// Sort is the fleet's own key, shown whether or not an Actions seam
+		// exists: `s` belongs to send once Actions is set (W2).
+		KeyHelp{"a", "sort"},
 	}
+	if f.actions {
+		// The keys the cockpit can act with, in priority order (§4.3, §4.5):
+		// the footer drops from the end when a row is too narrow.
+		keys = append(keys,
+			KeyHelp{"/", "filter"},
+			KeyHelp{"s", "send"},
+			KeyHelp{"b", "bind"},
+			KeyHelp{"x", "stop"},
+			KeyHelp{"D", "done"},
+			KeyHelp{"u", "unbind"},
+			KeyHelp{"g", "gate"},
+			KeyHelp{"r", "retry"},
+			KeyHelp{"o", "shell"},
+			KeyHelp{"E", "edit+send"},
+		)
+		return keys
+	}
+	keys = append(keys, KeyHelp{"/", "filter"})
+	return keys
 }
 
 // Context is the counts line on the left and the sort, filter and refresh
@@ -281,6 +337,13 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			return f.updateFilter(msg, env)
 		}
 		rows := f.rows(env)
+		sel := relevo.BindingStatus{}
+		if len(rows) > 0 {
+			sel = rows[clampCursor(f.cursor, len(rows))]
+		}
+		if cmd, ok := fleetActionKey(env, sel, msg.String()); ok {
+			return f, cmd
+		}
 		switch msg.String() {
 		case "/":
 			f.filtering = true
@@ -304,7 +367,10 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			f.moveCursor(rows, -len(rows))
 		case "end":
 			f.moveCursor(rows, len(rows))
-		case "s":
+		case "a":
+			// `a` ("attention") flips the sort order. `s` is send whenever an
+			// Actions seam exists and does nothing otherwise (W2): it never
+			// reaches this switch with Actions set, and has no case without.
 			f.attention = !f.attention
 			rows = f.rows(env)
 			f.resolveSticky(rows)
@@ -554,7 +620,7 @@ func fleetCells(b relevo.BindingStatus, now time.Time, width int) []string {
 		{colOnW, clipName(candidateText(b), colOnW), fgStyle},
 		{colRndW, fmt.Sprintf("r%d", b.Round), dimStyle},
 		{colStateW, b.Display, stateStyle(b.Display)},
-		{colNowW, nowCell(b, now), dimStyle},
+		{colNowW, nowCell(b, now), nowStyle(b)},
 		{colSpendW, spendCell(b), dimStyle},
 		{colPlannerW, plannerCell(b), dimStyle},
 	}

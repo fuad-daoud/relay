@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -30,15 +31,18 @@ type Files struct {
 	Kinds      []string // harness kinds found on PATH, in harness.All() order
 	Candidates []byte   // JSON, indented two spaces, trailing newline
 	Policy     []byte   // JSON, indented two spaces, trailing newline
+	Actors     []byte   // JSON, the builder actor over the plan's candidate names
 }
 
-// Plan builds starter candidates and a policy for every harness binary on PATH,
-// in harness.All() order. It is an error when none is found: relevo config init has
-// nothing to seed.
+// Plan builds starter candidates, a policy and a builder actor for every
+// harness binary on PATH, in harness.All() order. It is an error when none is
+// found: relevo config init has nothing to seed.
+//
+// The candidates carry no roles and no tier, and the policy is only max_tier:
+// the actors section decides who serves what (A2 round 2 R5).
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string
 	var candidates []candidate.Candidate
-	var order []string
 	for _, h := range harness.All() {
 		if _, err := env.LookPath(h.Binary); err != nil {
 			continue
@@ -49,14 +53,7 @@ func Plan(env harness.InstallEnv) (Files, error) {
 			Harness:  h.Kind,
 			Provider: d.Provider,
 			Model:    d.Model,
-			Roles:    []string{"builder"},
-			Tier:     "yolo",
 		})
-		order = append(order, candidate.Ref{
-			Harness:  h.Kind,
-			Provider: d.Provider,
-			Model:    d.Model,
-		}.String())
 	}
 	if len(kinds) == 0 {
 		return Files{}, errors.New("no harness binaries on PATH (agy, claude, codex, opencode); install one first")
@@ -68,16 +65,24 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	}
 	candJSON = append(candJSON, '\n')
 
-	pol := policy.Policy{
-		Order:   map[string][]string{"builder": order},
-		Tier:    map[string]string{"builder": "yolo"},
-		MaxTier: "yolo",
-	}
+	pol := policy.Policy{MaxTier: "yolo"}
 	polJSON, err := json.MarshalIndent(pol, "", "  ")
 	if err != nil {
 		return Files{}, fmt.Errorf("marshal policy: %w", err)
 	}
 	polJSON = append(polJSON, '\n')
 
-	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON}, nil
+	names := candidate.DeriveNames(candidates)
+	entries := make([]actors.Entry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, actors.Entry{Candidate: name})
+	}
+	actorsJSON, err := actors.EncodeActors(map[string]actors.Actor{
+		"builder": {Agent: "plan-executor", Candidates: entries, Tier: "yolo"},
+	})
+	if err != nil {
+		return Files{}, fmt.Errorf("marshal actors: %w", err)
+	}
+
+	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON}, nil
 }

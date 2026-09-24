@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
@@ -53,15 +55,20 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 		t.Fatalf("candidate.Load: %v", err)
 	}
 	builders := set.ForRole("builder")
-	if len(builders) != 2 {
-		t.Fatalf("builder candidates = %d, want 2", len(builders))
+	if len(builders) != 0 {
+		t.Errorf("ForRole(builder) = %v, want none: the candidates carry no roles (R5)", builders)
 	}
-	for _, c := range builders {
-		if c.Tier != "yolo" {
-			t.Errorf("candidate %s tier = %q, want yolo", c.Ref(), c.Tier)
-		}
-		if want := []string{"builder"}; !reflect.DeepEqual(c.Roles, want) {
-			t.Errorf("candidate %s roles = %v, want %v", c.Ref(), c.Roles, want)
+
+	var cands []candidate.Candidate
+	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
+		t.Fatalf("unmarshal candidates: %v", err)
+	}
+	if len(cands) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(cands))
+	}
+	for _, c := range cands {
+		if c.Roles != nil || c.Tier != "" {
+			t.Errorf("candidate %s carries roles %v / tier %q, want neither (R5)", c.Ref(), c.Roles, c.Tier)
 		}
 	}
 
@@ -73,15 +80,43 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("policy.Load: %v", err)
 	}
-	wantOrder := []string{
-		"claude/anthropic/sonnet",
-		"opencode/openrouter/z-ai/glm-5.3-flash",
-	}
-	if got := pol.OrderFor("builder"); !reflect.DeepEqual(got, wantOrder) {
-		t.Errorf("OrderFor(builder) = %v, want %v", got, wantOrder)
+	if len(pol.Order) != 0 || len(pol.Tier) != 0 {
+		t.Errorf("policy order/tier = %v/%v, want none (R5)", pol.Order, pol.Tier)
 	}
 	if pol.MaxTier != "yolo" {
 		t.Errorf("MaxTier = %q, want yolo", pol.MaxTier)
+	}
+
+	actorSet, _, err := actors.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("actors.ParseActors: %v", err)
+	}
+	builder, ok := actorSet["builder"]
+	if !ok {
+		t.Fatalf("actors = %v, want a builder", actorSet)
+	}
+	if builder.Agent != "plan-executor" || builder.Tier != "yolo" {
+		t.Errorf("builder actor = %+v, want plan-executor at tier yolo", builder)
+	}
+	var names []string
+	for _, e := range builder.Candidates {
+		names = append(names, e.Candidate)
+	}
+	if want := candidate.DeriveNames(cands); !reflect.DeepEqual(names, want) {
+		t.Errorf("builder candidates = %v, want the plan's names %v", names, want)
+	}
+}
+
+// TestPlanCandidatesHaveNoRolesKey pins W4: config init must not write a
+// "roles": null; the field is omitempty, so the encoded candidates carry no
+// roles key at all.
+func TestPlanCandidatesHaveNoRolesKey(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"opencode": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if strings.Contains(string(files.Candidates), `"roles"`) {
+		t.Errorf("candidates JSON must carry no roles key:\n%s", files.Candidates)
 	}
 }
 

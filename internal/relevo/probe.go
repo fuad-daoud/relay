@@ -10,7 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/latency"
-	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -83,7 +82,7 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 
 	var role harness.RoleSpec
 	known := false
-	if reg.Source() == roles.SourceFile {
+	if reg.FileMode() {
 		// File mode: the role is whichever role's candidate list names this
 		// candidate, in registry order (#374 §5).
 		for _, name := range reg.Names() {

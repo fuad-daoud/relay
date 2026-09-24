@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -39,6 +40,24 @@ type Model struct {
 	cmd  cmdLine // the command line; cmd.open shows it
 	help bool    // help overlay shown
 
+	// overlay is the one modal box the shell holds (§3): while it is set,
+	// every key goes to it first (rule 2.5, §5.2).
+	overlay overlay
+
+	// running is the actions in flight, keyed by the binding they act on
+	// (§4.3): the footer shows them, and a second action on the same binding
+	// is refused.
+	running map[string]string
+
+	// actionLog is ':log': every action result this session, newest last, no
+	// persistence (§4.3).
+	actionLog []string
+
+	// noticeErr and noticeFaint pick the notice's style: a red failure, a
+	// faint captured stderr line, or the amber default (§4.3, §4.4).
+	noticeErr   bool
+	noticeFaint bool
+
 	prefs prefs // the reduced prefs struct (§4.6); saved on every prefMsg
 }
 
@@ -51,9 +70,10 @@ func newModel(ctx context.Context, src Source, opts Options) Model {
 		statusInFlight: true,
 		now:            time.Now,
 		cmd:            newCmdLine(),
+		running:        map[string]string{},
 		prefs:          prefs{Sort: "attention"},
 	}
-	m.stack = []View{newFleetView(true)}
+	m.stack = []View{newFleetView(true).withActions(opts.Actions != nil)}
 	return m
 }
 
@@ -108,6 +128,8 @@ func (m Model) env() Env {
 		Width:    m.width,
 		Height:   m.height,
 		ErrRows:  errorRows(m.err, m.width),
+		Actions:  m.opts.Actions,
+		Running:  m.running,
 	}
 }
 
@@ -169,6 +191,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case noticeMsg:
 		m.notice = msg.text
+		m.noticeErr = false
+		m.noticeFaint = false
+		return m, nil
+
+	case openOverlayMsg:
+		m.overlay = msg.ov
+		return m, nil
+
+	case workingMsg:
+		if m.running == nil {
+			m.running = map[string]string{}
+		}
+		m.running[msg.key] = msg.verb
+		return m, nil
+
+	case actionMsg:
+		return m.finishAction(msg)
+
+	case stderrMsg:
+		m.notice = msg.line
+		m.noticeErr = false
+		m.noticeFaint = true
+		m.actionLog = append(m.actionLog, msg.line)
+		return m, nil
+
+	case logMsg:
+		m.stack = []View{
+			newFleetView(m.prefs.Sort != "name").withActions(m.opts.Actions != nil),
+			newLogView(m.actionLog),
+		}
 		return m, nil
 
 	case prefMsg:
@@ -205,6 +257,37 @@ func (m Model) updateStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, start)
 }
 
+// finishAction applies one actionMsg (§4.3, §6): the notice is the first
+// line of Text, or the error in errorStyle; the whole text -- or the error --
+// is appended to ':log'; and a Refresh refetches status immediately.
+func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
+	delete(m.running, msg.key)
+	m.noticeErr = false
+	m.noticeFaint = false
+	if msg.res.Err != nil {
+		m.notice = msg.res.Err.Error()
+		m.noticeErr = true
+		m.actionLog = append(m.actionLog, msg.res.Err.Error())
+	} else {
+		m.notice = firstLine(msg.res.Text)
+		m.actionLog = append(m.actionLog, msg.res.Text)
+	}
+	var cmd tea.Cmd
+	if msg.res.Refresh && !m.statusInFlight {
+		m.statusInFlight = true
+		cmd = fetchStatus(m.ctx, m.src)
+	}
+	return m, cmd
+}
+
+// firstLine is s up to its first newline.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // updateKey is §5.2's key routing, the first rule that applies.
 func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
@@ -214,6 +297,16 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.cmd.open {
 		var cmd tea.Cmd
 		m.cmd, cmd = m.cmd.update(k, m.env(), m.prefs)
+		return m, cmd
+	}
+	// Rule 2.5: a modal overlay owns every key while it is set (§3, §5.2).
+	if m.overlay != nil {
+		ov, cmd, closed := m.overlay.update(k)
+		if closed {
+			m.overlay = nil
+		} else {
+			m.overlay = ov
+		}
 		return m, cmd
 	}
 	if m.help {
@@ -301,4 +394,67 @@ func joinLines(rows []string) string {
 		out += r
 	}
 	return out
+}
+
+// logView is ':log': the shell's own scrollback of every action result this
+// session, newest last, with no persistence (§4.3).
+type logView struct {
+	lines  []string
+	scroll int
+}
+
+// newLogView builds the view over the shell's action log.
+func newLogView(lines []string) logView { return logView{lines: lines} }
+
+func (l logView) Crumbs() []string { return []string{"log"} }
+
+// Context is how many results the session has.
+func (l logView) Context(env Env) (string, string) {
+	return fmt.Sprintf("%d action results", len(l.lines)), ""
+}
+
+func (l logView) Keys() []KeyHelp {
+	return []KeyHelp{
+		{"↑↓", "scroll"},
+		{"esc", "back"},
+	}
+}
+
+func (l logView) Capturing() bool { return false }
+
+func (l logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok {
+		switch k.String() {
+		case "up", "k":
+			if l.scroll > 0 {
+				l.scroll--
+			}
+		case "down", "j":
+			l.scroll++
+		}
+	}
+	return l, nil
+}
+
+// Body is the log's tail, newest last, scrolled by ↑↓.
+func (l logView) Body(env Env, width, height int) string {
+	if len(l.lines) == 0 {
+		return strings.Join(blockLines([]string{"no action results yet"}, width, height), "\n")
+	}
+	var all []string
+	for _, line := range l.lines {
+		all = append(all, wrapLine(line, width)...)
+	}
+	end := len(all) - l.scroll
+	if end > len(all) {
+		end = len(all)
+	}
+	if end < 0 {
+		end = 0
+	}
+	start := end - height
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(fitLines(all[start:end], width, height), "\n")
 }

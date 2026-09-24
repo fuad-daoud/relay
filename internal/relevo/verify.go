@@ -9,7 +9,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -142,7 +141,7 @@ func parseVerdict(findings []byte) (verdict string, reasons []string) {
 // tree only.
 func verifyTier(rt Runtime, c candidate.Candidate) harness.Tier {
 	reg := rt.RoleRegistry()
-	if reg.Source() == roles.SourceFile {
+	if reg.FileMode() {
 		// roles.json is the only place a file-mode role's tier comes from,
 		// so the candidate's own tier is ignored here (#374 §4.6).
 		if t, ok := reg.TierFor("reviewer", c); ok {

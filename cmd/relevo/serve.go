@@ -318,6 +318,13 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
+		// A2 round 2's one-time migration: a pre-actors config becomes actors
+		// plus agents. An error is a warning; the old config keeps working.
+		if migrated, err := cs.MigrateToActors(); err != nil {
+			slog.Warn("config: roles not migrated to actors", "err", err)
+		} else if migrated {
+			slog.Info("config: roles migrated to actors (relevo config log)")
+		}
 	} else {
 		slog.Warn("relevo.db schema is newer; config import skipped")
 	}

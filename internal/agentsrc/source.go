@@ -229,12 +229,12 @@ func (s Source) Validate() error {
 		}
 		seenKind[k] = true
 	}
-	for _, k := range renderedKinds(s) {
+	for _, k := range RenderedKinds(s) {
 		if harness.IsShipped(k, s.Name) {
 			return fieldErr(s.Name, "name", fmt.Sprintf("name %q is a shipped agent; duplicate it under another name", s.Name))
 		}
 	}
-	if slices.Contains(renderedKinds(s), "codex") && strings.Contains(s.Body, "'''") {
+	if slices.Contains(RenderedKinds(s), "codex") && strings.Contains(s.Body, "'''") {
 		return fieldErr(s.Name, "body", "must not contain ''' when codex is rendered")
 	}
 	if strings.TrimSpace(s.Body) == "" {
@@ -243,9 +243,10 @@ func (s Source) Validate() error {
 	return nil
 }
 
-// renderedKinds is the kind list a source renders to: its own kinds, or every
-// known kind when Kinds is empty.
-func renderedKinds(s Source) []string {
+// RenderedKinds is the kind list a source renders to: its own kinds, or every
+// known kind when Kinds is empty. It is exported for internal/actors, which
+// needs a custom agent's kind list to build its roles.File definitions.
+func RenderedKinds(s Source) []string {
 	if len(s.Kinds) > 0 {
 		return s.Kinds
 	}

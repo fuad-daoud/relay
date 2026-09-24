@@ -64,8 +64,26 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	if L.Candidates.Len() != 2 {
 		t.Errorf("stored candidates = %v, want claude and opencode", L.Candidates.Refs())
 	}
-	if got := len(L.Policy.OrderFor("builder")); got != 2 {
-		t.Errorf("stored order.builder has %d tokens, want 2", got)
+	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
+	// builder actor over the candidates' names is what says who serves what.
+	if got := len(L.Policy.OrderFor("builder")); got != 0 {
+		t.Errorf("stored order.builder has %d tokens, want none", got)
+	}
+	if len(L.Policy.Order) != 0 || len(L.Policy.Tier) != 0 {
+		t.Errorf("stored policy order/tier = %v/%v, want none", L.Policy.Order, L.Policy.Tier)
+	}
+	if got := L.Candidates.ForRole("builder"); len(got) != 0 {
+		t.Errorf("candidates serving builder = %v, want none: actors decide now", got)
+	}
+	builder, ok := L.Actors["builder"]
+	if !ok {
+		t.Fatalf("stored actors = %v, want a builder", L.Actors)
+	}
+	if builder.Agent != "plan-executor" || builder.Tier != "yolo" {
+		t.Errorf("builder actor = %+v, want plan-executor at tier yolo", builder)
+	}
+	if len(builder.Candidates) != 2 {
+		t.Errorf("builder candidates = %v, want the two plan names", builder.Candidates)
 	}
 
 	for _, path := range []string{
@@ -83,6 +101,39 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 	if !strings.Contains(out, "next:") {
 		t.Errorf("output does not contain %q:\n%s", "next:", out)
+	}
+}
+
+// TestInitReportsActors pins A2 round 3 S2.2: config init reports the actor it
+// seeded and the names Plan derived, not the old policy order.
+func TestInitReportsActors(t *testing.T) {
+	initRoot(t)
+
+	bin := t.TempDir()
+	stubBinary(t, bin, "claude")
+	stubBinary(t, bin, "opencode")
+	t.Setenv("PATH", bin)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "init"})
+	})
+	if err != nil {
+		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
+	}
+
+	L := storedConfig(t)
+	builder, ok := L.Actors["builder"]
+	if !ok {
+		t.Fatalf("stored actors = %v, want a builder", L.Actors)
+	}
+	names := make([]string, 0, len(builder.Candidates))
+	for _, e := range builder.Candidates {
+		names = append(names, e.Candidate)
+	}
+	want := "wrote actors (builder: " + strings.Join(names, ", ") + ")"
+	out := string(stdout) + string(stderr)
+	if !strings.Contains(out, want) {
+		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
 }
 

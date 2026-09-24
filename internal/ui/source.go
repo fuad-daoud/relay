@@ -153,7 +153,17 @@ func RunSource(ctx context.Context, src Source, opts Options) error {
 	model.notice = opts.Notice
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
-	_, err := p.Run()
+
+	// Every internal write -- including slog's -- is captured into the
+	// footer and :log while the cockpit runs (§4.4), so nothing can corrupt
+	// the screen. restore runs on the way out, panic included.
+	restore, err := captureStderr(p.Send)
+	if err != nil {
+		return err
+	}
+	defer restore()
+
+	_, err = p.Run()
 	return runResult(ctx, err)
 }
 

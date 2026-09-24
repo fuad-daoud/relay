@@ -46,7 +46,13 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 			}
 		}
 	}
-	return roundView{pane: p}, cmd
+	// Opening a binding whose report is ready is what delivers it to the
+	// human at this cockpit (§4.5): one Pull, and the report tab shows what
+	// it returns.
+	if b := row(env.Report, key); b != nil && reportReady(*b) && env.Actions != nil {
+		cmd = tea.Batch(cmd, pullCmd(env.Ctx, env.Actions, key))
+	}
+	return roundView{pane: p, actions: env.Actions != nil}, cmd
 }
 
 // newHistRoundView targets an archived binding's round through
@@ -99,7 +105,8 @@ func paneRound(r relevo.BindingStatus) int {
 // roundView is the full-screen round detail: today's pane, hosted as a
 // view (§4.5).
 type roundView struct {
-	pane roundPane
+	pane    roundPane
+	actions bool // Actions != nil at construction: the action keys are shown (r1)
 }
 
 func (r roundView) Crumbs() []string {
@@ -112,12 +119,25 @@ func (r roundView) Context(env Env) (string, string) {
 }
 
 func (r roundView) Keys() []KeyHelp {
-	return []KeyHelp{
+	keys := []KeyHelp{
 		{"tab", "next tab"},
 		{"1-5", "tab"},
 		{"[ ]", "round"},
 		{"↑↓", "scroll"},
 	}
+	if r.actions {
+		keys = append(keys,
+			KeyHelp{"s", "send"},
+			KeyHelp{"x", "stop"},
+			KeyHelp{"D", "done"},
+			KeyHelp{"u", "unbind"},
+			KeyHelp{"g", "gate"},
+			KeyHelp{"o", "shell"},
+			KeyHelp{"E", "edit+send"},
+			KeyHelp{"r", "retry"},
+		)
+	}
+	return keys
 }
 
 func (r roundView) Capturing() bool { return false }
@@ -155,6 +175,26 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		r.pane = r.pane.onTab(msg)
 		return r, nil
 
+	case pullMsg:
+		// The report the human planner was owed (§4.5): shown in the report
+		// tab, with the fleet refetched so the binding stops reading "report
+		// ready". A reply for another binding is stale and dropped.
+		if msg.key != r.pane.detail.name {
+			return r, nil
+		}
+		if msg.err != nil {
+			return r, notice(msg.err.Error())
+		}
+		if !msg.ok {
+			return r, nil
+		}
+		r.pane.detail.cache[tabReport] = tabContent{
+			loaded: true, body: msg.text, round: r.pane.detail.round, at: env.Now,
+		}
+		r.pane.detail.active = tabReport
+		r.pane.fillViewport()
+		return r, fetchStatus(r.pane.ctx, r.pane.src)
+
 	case tea.WindowSizeMsg:
 		r.pane.width = env.Width
 		r.pane.rows = bodyHeight(env)
@@ -164,12 +204,17 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		return r, nil
 
 	case tea.KeyMsg:
-		return r.updateKey(msg)
+		return r.updateKey(msg, env)
 	}
 	return r, nil
 }
 
-func (r roundView) updateKey(msg tea.KeyMsg) (View, tea.Cmd) {
+func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
+	if b := row(r.pane.report, r.pane.detail.name); b != nil {
+		if cmd, ok := actionKey(env, *b, msg.String()); ok {
+			return r, cmd
+		}
+	}
 	switch msg.String() {
 	case "tab", "shift+tab", "back_tab":
 		var cmd tea.Cmd

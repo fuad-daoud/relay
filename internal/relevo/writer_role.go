@@ -10,8 +10,8 @@ import (
 )
 
 // ErrNotAWriterRole reports a role given to add/bind/fork that is a reader.
-// A reader runs through `relevo ask --role`, never as a binding's writer role.
-var ErrNotAWriterRole = errors.New("not a writer role")
+// A reader runs through `relevo ask --actor`, never as a binding's writer actor.
+var ErrNotAWriterRole = errors.New("not a writer actor")
 
 // BindingRole is the writer role b runs: b.Role, or "builder" when it is "".
 // It is exported for internal/serve, which has a store.Binding and needs the
@@ -51,10 +51,10 @@ func NormRole(role string) string {
 func checkWriterRole(reg *roles.Registry, role string) error {
 	r, ok := reg.Role(bindingRole(store.Binding{Role: normRole(role)}))
 	if !ok {
-		return fmt.Errorf("unknown role %q (known: %v): %w", role, reg.Names(), ErrUnknownRole)
+		return fmt.Errorf("unknown actor %q (known: %v): %w", role, reg.Names(), ErrUnknownRole)
 	}
 	if r.Shape != harness.ShapeBuilder {
-		return fmt.Errorf("--role %s: a reader role runs through relevo ask --role %s: %w", role, role, ErrNotAWriterRole)
+		return fmt.Errorf("--actor %s: a reader actor runs through relevo ask --actor %s: %w", role, role, ErrNotAWriterRole)
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func roleGates(reg *roles.Registry, role string) bool {
 func bindingSpec(rt Runtime, b store.Binding, kind string) (harness.RoleSpec, error) {
 	role := bindingRole(b)
 	if _, ok := rt.RoleRegistry().Role(role); !ok {
-		return harness.RoleSpec{}, fmt.Errorf("binding %s runs role %q, which config roles no longer defines: %w", b.Name, role, ErrUnknownRole)
+		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config roles no longer defines: %w", b.Name, role, ErrUnknownRole)
 	}
 	return rt.RoleRegistry().Spec(role, kind)
 }

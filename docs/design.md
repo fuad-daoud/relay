@@ -84,7 +84,7 @@ relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, 
                  relevo bind --resume <name>
                  relevo send --file <path>
                  relevo wait [<name>]
-                 relevo ask --role reviewer --file <path>
+                 relevo ask --actor reviewer --file <path>
                  relevo done <name>
                  relevo unbind <name>
                  relevo status [--json] [--line]

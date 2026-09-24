@@ -54,16 +54,44 @@ func TestRemovedVerbsNameReplacement(t *testing.T) {
 func TestConfigBareShowsThreeHeadings(t *testing.T) {
 	initRoot(t)
 
+	// An actors section (round 2's shape) is what makes the first block read
+	// "actors"; without one it keeps the legacy "roles" heading.
+	for _, args := range [][]string{
+		{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m"}]`},
+		{"config", "set", "actors", `{"builder":{"agent":"plan-executor","candidates":["m"]}}`},
+	} {
+		if _, stderr, err := captureOutput(t, func() error { return run(args) }); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+
 	stdout, stderr, err := captureOutput(t, func() error {
 		return run([]string{"config"})
 	})
 	if err != nil {
 		t.Fatalf("run config: %v (stderr: %s)", err, stderr)
 	}
-	for _, heading := range []string{"roles", "pick", "candidates"} {
+	for _, heading := range []string{"actors", "pick", "candidates"} {
 		if !strings.Contains(string(stdout), heading) {
 			t.Errorf("bare config output does not name the %q block:\n%s", heading, stdout)
 		}
+	}
+}
+
+// TestRolesInitIsGone pins R6: the verb prints one line and exits 2.
+func TestRolesInitIsGone(t *testing.T) {
+	initRoot(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "roles-init"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("roles-init: exit = %v, want exit code 2", err)
+	}
+	out := string(stdout) + string(stderr)
+	if !strings.Contains(out, "is gone") || !strings.Contains(out, "actors") {
+		t.Errorf("roles-init output = %q, want the gone message", out)
 	}
 }
 
@@ -143,15 +171,17 @@ func TestConfigSetRefusesInvalidPolicy(t *testing.T) {
 		t.Fatal("set of an invalid policy: want error, got nil")
 	}
 
-	// Nothing changed: the old policy stands, and the refused key is absent.
+	// Nothing changed: the invalid policy was refused, so the refused key is
+	// absent and the section is still there. (Round 2's migration may have
+	// rewritten the stored policy's shape first, since it carried an order.)
 	stdout, _, err := captureOutput(t, func() error {
 		return run([]string{"config", "get", "policy"})
 	})
 	if err != nil {
 		t.Fatalf("get policy: %v", err)
 	}
-	if !strings.Contains(string(stdout), "order") {
-		t.Errorf("get policy = %q, want the previous body", stdout)
+	if strings.Contains(string(stdout), "max_switches") {
+		t.Errorf("get policy = %q, want the refused key absent", stdout)
 	}
 	_, _, err = captureOutput(t, func() error {
 		return run([]string{"config", "get", "policy.max_switches"})
@@ -367,15 +397,18 @@ func TestConfigLogListsRevisions(t *testing.T) {
 		t.Fatalf("config log: %v (stderr: %s)", err, stderr)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("config log printed %d lines, want 2:\n%s", len(lines), stdout)
+	if len(lines) != 3 {
+		t.Fatalf("config log printed %d lines, want 3 (the third is round 2's migration):\n%s", len(lines), stdout)
 	}
-	if !strings.Contains(lines[0], "#2") || !strings.Contains(lines[0], "cli") ||
+	if !strings.Contains(lines[0], "#3") || !strings.Contains(lines[0], "cli") ||
 		!strings.Contains(lines[0], "config set policy.order.builder") {
-		t.Errorf("newest line = %q, want #2, cli and its message", lines[0])
+		t.Errorf("newest line = %q, want #3, cli and its message", lines[0])
 	}
-	if !strings.Contains(lines[1], "#1") || !strings.Contains(lines[1], "config set candidates") {
-		t.Errorf("oldest line = %q, want #1 and its message", lines[1])
+	if !strings.Contains(lines[1], "#2") || !strings.Contains(lines[1], "migration") {
+		t.Errorf("middle line = %q, want #2 and the migration source", lines[1])
+	}
+	if !strings.Contains(lines[2], "#1") || !strings.Contains(lines[2], "config set candidates") {
+		t.Errorf("oldest line = %q, want #1 and its message", lines[2])
 	}
 }
 
@@ -428,10 +461,16 @@ func TestConfigLogJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout, &list); err != nil {
 		t.Fatalf("log --json is not JSON: %v\n%s", err, stdout)
 	}
-	if len(list) != 1 || list[0].Rev != 1 || list[0].Source != "cli" || list[0].Message != "config set candidates" {
-		t.Fatalf("log --json = %+v, want one cli revision for config set candidates", list)
+	if len(list) != 2 {
+		t.Fatalf("log --json = %+v, want two revisions: the write then round 2's migration", list)
 	}
-	if list[0].Snapshot != nil {
+	if list[0].Rev != 2 || list[0].Source != "migration" {
+		t.Errorf("newest = %+v, want the migration revision #2", list[0])
+	}
+	if list[1].Rev != 1 || list[1].Source != "cli" || list[1].Message != "config set candidates" {
+		t.Fatalf("oldest = %+v, want one cli revision for config set candidates", list[1])
+	}
+	if list[0].Snapshot != nil || list[1].Snapshot != nil {
 		t.Errorf("list JSON carries a snapshot, want it omitted")
 	}
 
@@ -470,7 +509,7 @@ func TestConfigRollbackYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollback: %v (stderr: %s)", err, stderr)
 	}
-	if !strings.Contains(string(stdout), "rolled back to #1 as #3") {
+	if !strings.Contains(string(stdout), "rolled back to #1 as #4") {
 		t.Errorf("rollback output = %q, want the rolled-back line", stdout)
 	}
 
@@ -490,9 +529,14 @@ func TestConfigRollbackYes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("log: %v (stderr: %s)", err, stderr)
 	}
+	if !strings.Contains(string(logOut), "rollback") || !strings.Contains(string(logOut), "rollback to #1") {
+		t.Errorf("log =\n%s\nwant the rollback revision present", logOut)
+	}
+	// The rollback restored the pre-actors config, so the very next runtime
+	// migrates it again as a new revision (round 2 R4).
 	first := strings.SplitN(strings.TrimSuffix(string(logOut), "\n"), "\n", 2)[0]
-	if !strings.Contains(first, "rollback") || !strings.Contains(first, "rollback to #1") {
-		t.Errorf("newest log line = %q, want the rollback revision on top", first)
+	if !strings.Contains(first, "migration") {
+		t.Errorf("newest log line = %q, want the re-migration after the rollback", first)
 	}
 }
 

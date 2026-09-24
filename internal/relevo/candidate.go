@@ -17,17 +17,17 @@ import (
 var ErrNoCandidates = errors.New("no candidates configured")
 
 // ErrRoleNotServed reports that no configured candidate serves the requested role.
-var ErrRoleNotServed = errors.New("no candidate serves role")
+var ErrRoleNotServed = errors.New("no candidate serves actor")
 
 // ErrAmbiguousCandidate reports that multiple candidates serve the requested role and none was specified.
-var ErrAmbiguousCandidate = errors.New("more than one candidate serves role")
+var ErrAmbiguousCandidate = errors.New("more than one candidate serves actor")
 
 // ErrUnknownRole reports a role that is not in the known role table.
-var ErrUnknownRole = errors.New("unknown role")
+var ErrUnknownRole = errors.New("unknown actor")
 
 // ErrAllGated reports that every candidate serving the requested role is
 // currently gated by the ledger, and no token was named to bypass the check.
-var ErrAllGated = errors.New("every candidate serving the role is gated")
+var ErrAllGated = errors.New("every candidate serving the actor is gated")
 
 // How names the rule that picked a Resolution's candidate.
 type How string
@@ -47,11 +47,15 @@ const (
 	HowUnlisted How = "unlisted"
 )
 
-// Skip is one gate that caused a resolution to pass over a candidate.
+// Skip is one reason a resolution passed over a candidate: a gate, or an off
+// entry the pick must not take (A2 §4.3).
 type Skip struct {
 	Token string
 	Kind  ledger.Kind
 	Until time.Time // zero = until cleared
+	// Off marks an entry skipped because it is off, not because a gate holds
+	// it. It renders as "<name> (off)".
+	Off bool
 }
 
 // Resolution is what resolveCandidate picked and why. T3 records it in the
@@ -68,6 +72,10 @@ type Resolution struct {
 	// Gates is, for HowExplicit only, the live gates on the named candidate,
 	// so a bypass is recorded even though it did not affect the decision.
 	Gates []Skip
+	// OffNote is, for HowExplicit only, the advisory line for a candidate
+	// that is off for the role and was still named: it was run anyway.
+	// "" otherwise.
+	OffNote string
 	// InheritedFrom is, for a fork that inherited its source's
 	// BuilderCandidate, the source binding's name; "" otherwise.
 	InheritedFrom string
@@ -100,6 +108,7 @@ type rankedEntry struct {
 	Candidate candidate.Candidate
 	How       How // HowOrder or HowUnlisted
 	Position  int // 1-based index in order[role] for HowOrder; 0 for HowUnlisted
+	Off       bool
 }
 
 // rankedRole is one role's candidates in the registry's ranked order, as the
@@ -122,10 +131,10 @@ func rankedRole(reg *roles.Registry, set *candidate.Set, role string) []rankedEn
 			continue
 		}
 		if r.Position > 0 {
-			out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: r.Position})
+			out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: r.Position, Off: r.Off})
 			continue
 		}
-		out = append(out, rankedEntry{Candidate: c, How: HowUnlisted})
+		out = append(out, rankedEntry{Candidate: c, How: HowUnlisted, Off: r.Off})
 	}
 	return out
 }
@@ -168,10 +177,13 @@ func gatesForRole(gates []ledger.Gate, role string) []ledger.Gate {
 	return out
 }
 
-// skipText renders one Skip as "<token> (<kind> <until>)". name maps every
-// token before it is printed: identity for the stored pick note, Set.NameOf
-// for the line a human reads (A1 §4.4).
+// skipText renders one Skip as "<token> (<kind> <until>)". An off skip renders
+// as "<token> (off)". name maps every token before it is printed: identity for
+// the stored pick note, Set.NameOf for the line a human reads (A1 §4.4).
 func skipText(s Skip, name func(string) string) string {
+	if s.Off {
+		return name(s.Token) + " (off)"
+	}
 	return fmt.Sprintf("%s (%s %s)", name(s.Token), GateKindText(s.Kind), GateUntilText(s.Until))
 }
 
@@ -227,10 +239,10 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		}
 		tok := c.Ref().String()
 		if !reg.Serves(role, c.Ref()) {
-			if reg.Source() == roles.SourceFile {
-				return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (not in roles.json %s.candidates, or no definition for %s): %w", c.Name, role, role, c.Harness, ErrRoleNotServed)
+			if reg.FileMode() {
+				return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (not in %s, or no definition for %s): %w", c.Name, role, reg.ListText(role), c.Harness, ErrRoleNotServed)
 			}
-			return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (its roles: %v): %w", c.Name, role, c.Roles, ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (its roles: %v): %w", c.Name, role, c.Roles, ErrRoleNotServed)
 		}
 		// Unlike every other gate, roles_missing is refused even for an
 		// explicit pick: a candidate whose harness role files are not
@@ -242,7 +254,13 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 				return Resolution{}, fmt.Errorf("%s: %s", c.Name, g.Note)
 			}
 		}
-		return Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, tok)}, nil
+		// An off entry is served when named explicitly (A2 §4.3): the pick
+		// proceeds, and the resolution records the advisory note.
+		res := Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, tok)}
+		if roleOff(reg, role, tok) {
+			res.OffNote = fmt.Sprintf("note: %s is off for %s; running it because you named it", c.Name, role)
+		}
+		return res, nil
 	}
 
 	if set.Len() == 0 {
@@ -251,10 +269,10 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 
 	info, ok := reg.Role(role)
 	if !ok {
-		if reg.Source() == roles.SourceFile {
-			return Resolution{}, fmt.Errorf("no candidate in config roles %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		if reg.FileMode() {
+			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", roleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
 		}
-		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 
 	ranked := rankedRole(reg, set, role)
@@ -263,14 +281,19 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		serving = append(serving, r.Candidate)
 	}
 	if len(serving) == 0 {
-		if reg.Source() == roles.SourceFile {
-			return Resolution{}, fmt.Errorf("no candidate in config roles %s.candidates can run it (configured candidates: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		if reg.FileMode() {
+			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", roleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
 		}
-		return Resolution{}, fmt.Errorf("no configured candidate serves role %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
+		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 	if len(serving) == 1 {
-		if s := skipsFor(gates, serving[0].Ref().String()); len(s) > 0 {
-			return allGated(role, s)
+		var skipped []Skip
+		if ranked[0].Off {
+			skipped = append(skipped, offSkip(serving[0].Ref().String()))
+		}
+		skipped = append(skipped, skipsFor(gates, serving[0].Ref().String())...)
+		if len(skipped) > 0 {
+			return allGated(role, skipped)
 		}
 		return Resolution{Candidate: serving[0], How: HowSole}, nil
 	}
@@ -285,6 +308,12 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 
 	var skipped []Skip
 	for _, r := range ranked {
+		if r.Off {
+			// An off entry is skipped exactly as a gated one is, but with
+			// the reason "off" (A2 §4.3).
+			skipped = append(skipped, offSkip(r.Candidate.Ref().String()))
+			continue
+		}
 		s := skipsFor(gates, r.Candidate.Ref().String())
 		if len(s) == 0 {
 			return Resolution{Candidate: r.Candidate, How: r.How, Position: r.Position, Skipped: skipped}, nil
@@ -292,6 +321,36 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		skipped = append(skipped, s...)
 	}
 	return allGated(role, skipped)
+}
+
+// offSkip is the skip recorded for an off entry: it renders as "<token> (off)".
+func offSkip(token string) Skip { return Skip{Token: token, Off: true} }
+
+// roleSectionText names the config section a file-mode role's candidates live
+// in, for error and view texts: "config actors" when the registry came from
+// the actors section, "config roles" for a roles file (A2 round 2 R2). Legacy
+// mode never reaches it; its texts name the order directly.
+func roleSectionText(reg *roles.Registry) string {
+	if reg.Source() == roles.SourceActors {
+		return "config actors"
+	}
+	return "config roles"
+}
+
+// roleOff reports whether token is an off entry of role. It is false for a
+// role with no ranked entry for token, and in legacy mode, whose Ranked
+// entries are never off.
+func roleOff(reg *roles.Registry, role, token string) bool {
+	info, ok := reg.Role(role)
+	if !ok {
+		return false
+	}
+	for _, r := range info.Ranked {
+		if r.Token == token {
+			return r.Off
+		}
+	}
+	return false
 }
 
 // allGated builds the ErrAllGated resolution: every candidate serving role
@@ -348,6 +407,12 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 			texts = append(texts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
 		}
 		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
+	}
+
+	// An explicitly named candidate that is off runs anyway; the note says so
+	// (A2 §4.3), printed with the gated candidate's own note.
+	if res.OffNote != "" {
+		out += "; " + res.OffNote
 	}
 
 	return out

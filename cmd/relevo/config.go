@@ -33,7 +33,6 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config log [-n N] [--rev N] [--json]
        relevo config rollback <rev> [--yes] [-m <message>]
        relevo config init [--force] [--no-roles]
-       relevo config roles-init [--force] [--dry-run]
        relevo config agents [--kind <agy|claude|opencode>] [--role <name>] [--force] [--dry-run]
        relevo config server add <name> <url> [--fingerprint F] [--ca system] [--insecure]
        relevo config server rm <name>
@@ -72,7 +71,8 @@ func cmdConfig(args []string) error {
 	case "init":
 		return cmdInit(args[1:])
 	case "roles-init":
-		return cmdRolesInit(args[1:])
+		fmt.Fprintln(os.Stderr, "relevo config roles-init is gone: roles migrate to actors on their own (relevo config log)")
+		return exitCodeErr{code: 2}
 	case "agents":
 		return cmdAgentInstall(args[1:])
 	case "server":
@@ -89,9 +89,9 @@ func cmdConfig(args []string) error {
 	}
 }
 
-// configShow is the bare `relevo config`: the roles block, the pick block and
-// the candidates block, each under a one-line heading. `--probe` runs exactly
-// cmdCandidates --probe and prints nothing else.
+// configShow is the bare `relevo config`: the actors block, the current pick
+// and the candidates block, each under a one-line heading. `--probe` runs
+// exactly cmdCandidates --probe and prints nothing else.
 func configShow(args []string) error {
 	fs := flag.NewFlagSet("relevo config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -111,8 +111,20 @@ func configShow(args []string) error {
 		return err
 	}
 
-	fmt.Println("roles")
-	fmt.Print(relevo.FormatRoles(rt.RoleRegistry()))
+	// The first block is the actors section after round 2's migration; a
+	// config that still has no actors (a newer schema this binary did not
+	// migrate) keeps today's roles block under its own heading (R7).
+	L, err := rt.Config.Load()
+	if err != nil {
+		return err
+	}
+	if len(L.Actors) > 0 {
+		fmt.Println("actors")
+		fmt.Print(relevo.FormatActors(L, rt.RoleRegistry()))
+	} else {
+		fmt.Println("roles")
+		fmt.Print(relevo.FormatRoles(rt.RoleRegistry()))
+	}
 	fmt.Println("pick")
 	fmt.Print(formatPolicy(rt))
 	fmt.Println("candidates")

@@ -38,7 +38,7 @@ func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 // segment is omitted, because in file mode the tier belongs to the role, not
 // the candidate.
 func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
-	if reg.Source() == roles.SourceLegacy {
+	if !reg.FileMode() {
 		return FormatCandidatesLatency(set, gates, lat)
 	}
 	return formatCandidatesLatency(set, gates, lat, func(c candidate.Candidate) string {

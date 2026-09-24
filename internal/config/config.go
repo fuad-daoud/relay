@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -23,12 +24,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// Section names one config_doc row. Hooks is stored as a JSON map of event
-// type to argv lists rather than a file.
+// Section names one config_doc row. Hooks, Agents and Actors are stored as a
+// JSON body rather than a file.
 type Section string
 
 const (
 	Candidates Section = "candidates"
+	Agents     Section = "agents"
+	Actors     Section = "actors"
 	Policy     Section = "policy"
 	Roles      Section = "roles"
 	Prices     Section = "prices"
@@ -36,11 +39,13 @@ const (
 	Hooks      Section = "hooks"
 )
 
-// Sections lists every section in the order an import checks and stores them.
-var Sections = []Section{Candidates, Policy, Roles, Prices, Servers, Hooks}
+// Sections lists every section in the order an import checks and stores them,
+// and the order EncodeDoc and DiffDocs render them.
+var Sections = []Section{Candidates, Agents, Actors, Policy, Roles, Prices, Servers, Hooks}
 
 // sectionFile maps a section to the file it is imported from. Hooks has none:
-// it is a directory of argv lists.
+// it is a directory of argv lists. Agents and Actors have none either: they
+// are DB-only in round 1.
 var sectionFile = map[Section]string{
 	Candidates: "candidates.json",
 	Policy:     "policy.json",
@@ -49,8 +54,8 @@ var sectionFile = map[Section]string{
 	Servers:    "servers.json",
 }
 
-// FileName returns the on-disk file a section is imported from, or "" for
-// Hooks.
+// FileName returns the on-disk file a section is imported from, or "" for a
+// section with no file (Hooks, Agents, Actors).
 func FileName(sec Section) string { return sectionFile[sec] }
 
 // Secret names, and the files they are imported from.
@@ -102,6 +107,10 @@ type Loaded struct {
 	Typesafe   string
 	Warnings   []string
 	Version    int64
+	// Agents and Actors are the parsed agents and actors sections, for round
+	// 2's views. Each is nil when its section is absent.
+	Agents map[string]actors.AgentEntry
+	Actors map[string]actors.Actor
 }
 
 // Store reads and writes the config sections and secrets of one database. Its
@@ -122,9 +131,12 @@ func Open(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
 func (s *Store) Load() (Loaded, error) {
 	var L Loaded
 
+	var candBody []byte
+	candOK := false
 	if body, ok, err := s.db.ConfigGet(string(Candidates)); err != nil {
 		return Loaded{}, err
 	} else if ok {
+		candBody, candOK = body, true
 		set, warnings, err := candidate.Parse(FileName(Candidates), body)
 		if err != nil {
 			return Loaded{}, err
@@ -141,9 +153,12 @@ func (s *Store) Load() (Loaded, error) {
 		L.Candidates = set
 	}
 
+	var polBody []byte
+	polOK := false
 	if body, ok, err := s.db.ConfigGet(string(Policy)); err != nil {
 		return Loaded{}, err
 	} else if ok {
+		polBody, polOK = body, true
 		pol, warnings, err := policy.Parse(FileName(Policy), body)
 		if err != nil {
 			return Loaded{}, err
@@ -152,6 +167,7 @@ func (s *Store) Load() (Loaded, error) {
 		L.Warnings = append(L.Warnings, warnings...)
 	}
 
+	rolesPresent := false
 	if body, ok, err := s.db.ConfigGet(string(Roles)); err != nil {
 		return Loaded{}, err
 	} else if ok {
@@ -161,6 +177,46 @@ func (s *Store) Load() (Loaded, error) {
 		}
 		L.RolesFile = f
 		L.Warnings = append(L.Warnings, warnings...)
+		rolesPresent = true
+	}
+
+	// Agents and Actors are DB-only (A2 round 1). They exist to be converted
+	// into today's roles.File, which the registry is then built from; the
+	// conversion runs only when actors is present.
+	var agents map[string]actors.AgentEntry
+	if body, ok, err := s.db.ConfigGet(string(Agents)); err != nil {
+		return Loaded{}, err
+	} else if ok {
+		a, warnings, err := actors.ParseAgents(body)
+		if err != nil {
+			return Loaded{}, err
+		}
+		agents, L.Agents = a, a
+		L.Warnings = append(L.Warnings, warnings...)
+	}
+
+	if body, ok, err := s.db.ConfigGet(string(Actors)); err != nil {
+		return Loaded{}, err
+	} else if ok {
+		a, warnings, err := actors.ParseActors(body)
+		if err != nil {
+			return Loaded{}, err
+		}
+		L.Actors = a
+		L.Warnings = append(L.Warnings, warnings...)
+
+		rf, warnings, err := actors.ToRolesFile(agents, a)
+		if err != nil {
+			return Loaded{}, err
+		}
+		L.RolesFile = rf
+		L.Warnings = append(L.Warnings, warnings...)
+		if rolesPresent {
+			L.Warnings = append(L.Warnings, "config: actors is set, so the roles section is ignored")
+		}
+		// The other pre-actors keys stop being read the moment actors decide
+		// (A2 round 2 R4).
+		L.Warnings = append(L.Warnings, ignoredLegacyWarnings(candBody, candOK, polBody, polOK)...)
 	}
 
 	if body, ok, err := s.db.ConfigGet(string(Prices)); err != nil {
@@ -258,6 +314,12 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return warnings, err
 	case Roles:
 		_, warnings, err := roles.Parse(FileName(sec), body)
+		return warnings, err
+	case Agents:
+		_, warnings, err := actors.ParseAgents(body)
+		return warnings, err
+	case Actors:
+		_, warnings, err := actors.ParseActors(body)
 		return warnings, err
 	case Prices:
 		_, err := usage.ParsePrices(body)

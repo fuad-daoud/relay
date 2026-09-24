@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,8 +14,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
-// cmdInit seeds the candidates and policy sections from the harness binaries
-// on PATH, then installs the role definitions for those harnesses.
+// cmdInit seeds the candidates, policy and actors sections from the harness
+// binaries on PATH, then installs the role definitions for those harnesses.
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("relevo config init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -50,19 +51,30 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*force && (hasCandidates || hasPolicy) {
-		return errors.New("candidates or policy already configured; pass --force to overwrite")
-	}
-
-	if _, err := rt.Config.As("init", "config init").Put(config.Candidates, files.Candidates); err != nil {
+	hasActors, err := rt.Config.Has(config.Actors)
+	if err != nil {
 		return err
 	}
-	if _, err := rt.Config.As("init", "config init").Put(config.Policy, files.Policy); err != nil {
+	if !*force && (hasCandidates || hasPolicy || hasActors) {
+		return errors.New("candidates, policy or actors already configured; pass --force to overwrite")
+	}
+
+	// One PutDoc writes all three sections as one revision (A2 round 2 R5).
+	doc := map[config.Section]json.RawMessage{
+		config.Candidates: files.Candidates,
+		config.Policy:     files.Policy,
+		config.Actors:     files.Actors,
+	}
+	if _, err := rt.Config.As("init", "config init").PutDoc(doc); err != nil {
 		return err
 	}
 
 	fmt.Printf("wrote candidates (%d: %s)\n", len(files.Kinds), strings.Join(files.Kinds, ", "))
-	fmt.Printf("wrote policy (order.builder: %s)\n", strings.Join(orderTokens(files.Kinds), ", "))
+	names, err := actorNames(files.Candidates)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("wrote actors (builder: %s)\n", strings.Join(names, ", "))
 
 	if !*noRoles {
 		failed := false
@@ -87,16 +99,13 @@ func cmdInit(args []string) error {
 	return nil
 }
 
-// orderTokens renders the policy order.builder tokens for kinds, in order.
-func orderTokens(kinds []string) []string {
-	tokens := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		d := setup.Defaults[kind]
-		tokens = append(tokens, candidate.Ref{
-			Harness:  kind,
-			Provider: d.Provider,
-			Model:    d.Model,
-		}.String())
+// actorNames renders the candidate names setup.Plan's builder actor wrote, in
+// order. It is the same derivation Plan uses (candidate.DeriveNames), so init
+// reports the names a planner will see.
+func actorNames(candidates []byte) ([]string, error) {
+	var cs []candidate.Candidate
+	if err := json.Unmarshal(candidates, &cs); err != nil {
+		return nil, err
 	}
-	return tokens
+	return candidate.DeriveNames(cs), nil
 }

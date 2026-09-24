@@ -35,6 +35,11 @@ type Options struct {
 	// Start is the command line to run once the first status has arrived,
 	// e.g. `rounds harness:agy`. "" starts at :fleet.
 	Start string
+
+	// Actions is the cockpit's write seam (§1, §4.2). Nil hides every
+	// action key and makes one do nothing when pressed: `relevo serve ui`
+	// passes none, and `relevo ui` gets the planner adapter Run builds.
+	Actions Actions
 }
 
 const minInterval = 500 * time.Millisecond
@@ -45,7 +50,8 @@ const defaultInterval = 2 * time.Second
 var stdoutStat = os.Stdout.Stat
 
 // Run renders relevo's state until the user quits or ctx is cancelled.
-// It never mutates state.
+// It never mutates state on its own: every write goes through Actions, which
+// Run fills with the real planner adapter when the caller passed none (§1).
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.
 // Postconditions: the terminal is restored, including on panic.
@@ -57,5 +63,25 @@ func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 	if rt.Store == nil {
 		return errors.New("runtime requires Store")
 	}
+	if opts.Actions == nil {
+		opts.Actions = &plannerActions{rt: rt, repo: repoRoot(ctx, rt)}
+	}
 	return RunSource(ctx, plannerSource{rt}, opts)
+}
+
+// repoRoot is the directory bind would create a worktree of: os.Getwd(), or
+// "" when it cannot be read or is not inside a git repository (§4.2). A nil
+// Git can tell nothing, so it counts as not a repo.
+func repoRoot(ctx context.Context, rt relevo.Runtime) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if rt.Git == nil {
+		return ""
+	}
+	if _, err := rt.Git.HeadCommit(ctx, cwd); err != nil {
+		return ""
+	}
+	return cwd
 }

@@ -134,7 +134,7 @@ func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 	}
 }
 
-// TestSortToggleKeepsSelection pins §5.4's `s`: it flips the order, keeps
+// TestSortToggleKeepsSelection pins §5.4's `a`: it flips the order, keeps
 // the selection, and returns the sort pref.
 func TestSortToggleKeepsSelection(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
@@ -144,14 +144,14 @@ func TestSortToggleKeepsSelection(t *testing.T) {
 	if got := fv.rows(m.env())[fv.cursor].Name; got != "api" {
 		t.Fatalf("cursor on %q", got)
 	}
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = res.(Model)
 	if cmd == nil {
-		t.Fatal("s must return a command (the sort pref)")
+		t.Fatal("a must return a command (the sort pref)")
 	}
 	fv = fleet(m)
 	if fv.attention {
-		t.Error("s must switch to name order")
+		t.Error("a must switch to name order")
 	}
 	if got := fv.rows(m.env())[fv.cursor].Name; got != "api" {
 		t.Errorf("cursor moved to %q on re-sort", got)
@@ -160,9 +160,26 @@ func TestSortToggleKeepsSelection(t *testing.T) {
 	if rows[0].Name != "api" || rows[2].Name != "webshop" {
 		t.Errorf("name order = %v", rows)
 	}
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if !fleet(res.(Model)).attention {
-		t.Error("s twice is identity")
+		t.Error("a twice is identity")
+	}
+}
+
+// TestSendKeyDoesNotSortWithoutActions pins W2: with no Actions seam, `s` is
+// neither send nor sort. It does nothing: no command, and the sort order is
+// untouched.
+func TestSendKeyDoesNotSortWithoutActions(t *testing.T) {
+	m := splitModel(t, 140, 40, threeRows()...)
+	if !fleet(m).attention {
+		t.Fatal("the fleet must start in attention order")
+	}
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Errorf("s without Actions must return no command, got %v", cmd)
+	}
+	if !fleet(res.(Model)).attention {
+		t.Error("s without Actions must not sort")
 	}
 }
 
@@ -197,7 +214,8 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 
 	// The right side wins on overlap: at a narrow width the notice survives
-	// and the key list gives way.
+	// and the view's keys give way -- but never half a key, and the global
+	// tail stays (§2.3b).
 	m.width = 60
 	f := stripANSI(m.keysView(m.env()))
 	if lipgloss.Width(f) > 60 {
@@ -206,8 +224,11 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if !strings.Contains(f, "hello") {
 		t.Errorf("the notice must survive the squeeze: %q", f)
 	}
-	if strings.Contains(f, "q quit") {
-		t.Errorf("the key list must be the side that gives way: %q", f)
+	if strings.Contains(f, "[ ] round") {
+		t.Errorf("the view's keys must be the side that gives way: %q", f)
+	}
+	if !strings.Contains(f, "? help") || !strings.Contains(f, "esc back") {
+		t.Errorf("the global tail must survive the squeeze: %q", f)
 	}
 }
 
