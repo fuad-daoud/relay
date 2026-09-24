@@ -512,6 +512,9 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 	}
 
 	repaired := 0
+	// repairedPaths holds every worktree the binding pass repaired, or counted
+	// in a dry run, so the orphan pass never repairs one of them twice.
+	repairedPaths := map[string]bool{}
 	var warnings []string
 	for _, root := range storeRoots(base) {
 		bindings, err := store.New(root).List()
@@ -542,6 +545,7 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 			}
 			if r.opts.DryRun {
 				repaired++
+				repairedPaths[filepath.Clean(wt)] = true
 				continue
 			}
 			if err := r.opts.Repair(ctx, repo, wt); err != nil {
@@ -550,7 +554,37 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 				continue
 			}
 			repaired++
+			repairedPaths[filepath.Clean(wt)] = true
 		}
+	}
+
+	// Second pass: worktree directories no binding records, which the binding
+	// pass above never sees. A dry run has not moved anything, so the admin
+	// path maps from the old root onto itself.
+	from, to := r.opts.StateFrom, r.opts.StateTo
+	if r.opts.DryRun {
+		from = to
+	}
+	for _, wt := range orphanWorktrees(base) {
+		if repairedPaths[filepath.Clean(wt)] {
+			continue
+		}
+		repo, _, err := adminRepo(wt, from, to)
+		if err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("worktree %s: %v; run git worktree repair yourself", wt, err))
+			continue
+		}
+		if r.opts.DryRun {
+			repaired++
+			continue
+		}
+		if err := r.opts.Repair(ctx, repo, wt); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("worktree %s: git -C %s worktree repair %s failed: %v", wt, repo, wt, err))
+			continue
+		}
+		repaired++
 	}
 
 	switch {
