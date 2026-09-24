@@ -118,7 +118,11 @@ func TestIngestFixtureLive(t *testing.T) {
 		t.Fatalf("Ingest: %v", err)
 	}
 
-	wantStats := Stats{Bindings: 1, Rounds: 3, Events: 9, Artifacts: 7, TranscriptRecords: 9, Skipped: 1}
+	// D3b fence items 1 and 3: the fixture's log carries no answer entry, so
+	// no artifact row is written at all (Artifacts == 0); this test locates
+	// no planner transcript, so TranscriptRecords == 0, and the builder
+	// stream's one unparseable line no longer contributes to Skipped.
+	wantStats := Stats{Bindings: 1, Rounds: 3, Events: 9}
 	if stats != wantStats {
 		t.Errorf("Stats = %+v, want %+v", stats, wantStats)
 	}
@@ -127,7 +131,7 @@ func TestIngestFixtureLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Stats: %v", err)
 	}
-	wantRows := map[string]int{"repo": 1, "planner": 1, "binding": 1, "round": 3, "event": 9, "artifact": 7, "transcript": 9}
+	wantRows := map[string]int{"repo": 1, "planner": 1, "binding": 1, "round": 3, "event": 9, "artifact": 0, "transcript": 0}
 	for tbl, want := range wantRows {
 		if dbStats.Rows[tbl] != want {
 			t.Errorf("Rows[%s] = %d, want %d", tbl, dbStats.Rows[tbl], want)
@@ -179,42 +183,36 @@ func TestIngestFixtureLive(t *testing.T) {
 		t.Errorf("len(events) = %d, want 9", len(events))
 	}
 
-	// r1: plan/report/diff present; gate_log/question absent.
-	assertArtifact(t, d, rounds[0].ID, db.ArtifactPlan, true)
-	assertArtifact(t, d, rounds[0].ID, db.ArtifactReport, true)
-	assertArtifact(t, d, rounds[0].ID, db.ArtifactDiff, true)
+	// D3b fence item 1: the plain round-file artifacts are no longer mirrored,
+	// so plan/report/diff/drift are absent for every round.
+	// r1: plan/report/diff and gate_log/question absent.
+	assertArtifact(t, d, rounds[0].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[0].ID, db.ArtifactReport, false)
+	assertArtifact(t, d, rounds[0].ID, db.ArtifactDiff, false)
 	assertArtifact(t, d, rounds[0].ID, db.ArtifactGateLog, false)
-	// r2: plan/report/drift present.
-	assertArtifact(t, d, rounds[1].ID, db.ArtifactPlan, true)
-	assertArtifact(t, d, rounds[1].ID, db.ArtifactReport, true)
-	assertArtifact(t, d, rounds[1].ID, db.ArtifactDrift, true)
-	// r3: plan only.
-	assertArtifact(t, d, rounds[2].ID, db.ArtifactPlan, true)
+	// r2: plan/report/drift absent.
+	assertArtifact(t, d, rounds[1].ID, db.ArtifactPlan, false)
+	assertArtifact(t, d, rounds[1].ID, db.ArtifactReport, false)
+	assertArtifact(t, d, rounds[1].ID, db.ArtifactDrift, false)
+	// r3: plan and report absent.
+	assertArtifact(t, d, rounds[2].ID, db.ArtifactPlan, false)
 	assertArtifact(t, d, rounds[2].ID, db.ArtifactReport, false)
 
+	// D3b fence item 3: no round transcript row is mirrored any more.
 	r1t, err := d.Transcript(db.OwnerRound, rounds[0].ID, 0, 0)
 	if err != nil {
 		t.Fatalf("Transcript r1: %v", err)
 	}
-	if len(r1t) != 6 {
-		t.Errorf("len(r1 transcript) = %d, want 6 (5 rendered + 1 skipped)", len(r1t))
-	}
-	rendered := 0
-	for _, r := range r1t {
-		if r.Rendered != "" {
-			rendered++
-		}
-	}
-	if rendered != 5 {
-		t.Errorf("r1 rendered rows = %d, want 5", rendered)
+	if len(r1t) != 0 {
+		t.Errorf("len(r1 transcript) = %d, want 0", len(r1t))
 	}
 
 	r2t, err := d.Transcript(db.OwnerRound, rounds[1].ID, 0, 0)
 	if err != nil {
 		t.Fatalf("Transcript r2: %v", err)
 	}
-	if len(r2t) != 3 {
-		t.Errorf("len(r2 transcript) = %d, want 3", len(r2t))
+	if len(r2t) != 0 {
+		t.Errorf("len(r2 transcript) = %d, want 0", len(r2t))
 	}
 
 	r3t, err := d.Transcript(db.OwnerRound, rounds[2].ID, 0, 0)
@@ -539,7 +537,8 @@ func TestIngestAppendsAfterNewRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Ingest: %v", err)
 	}
-	want := Stats{Bindings: 1, Rounds: 1, Events: 1, Artifacts: 1}
+	// 004-plan.md is no longer mirrored into an artifact row (D3b fence item 1).
+	want := Stats{Bindings: 1, Rounds: 1, Events: 1}
 	if stats2 != want {
 		t.Errorf("second Ingest Stats = %+v, want %+v", stats2, want)
 	}
@@ -721,6 +720,86 @@ func TestIngestPlannerTranscript(t *testing.T) {
 	}
 	if recs[0].Rendered == "" {
 		t.Error("Rendered is empty, want transcript.RenderRecord's output")
+	}
+}
+
+// TestIngestWritesNoRoundFileMirror pins D3b's new behaviour: ingest no
+// longer mirrors round files into `artifact` rows or into round transcript
+// rows. Every artifact row that exists must be an answer, and no
+// `transcript` row may carry owner_kind='round'.
+//
+// Mutation: restore the plain round-file artifact loop and this fails.
+func TestIngestWritesNoRoundFileMirror(t *testing.T) {
+	dir := copyFixture(t)
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Now: func() time.Time { return now }}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	dbStats, err := d.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	b := mustBinding(t, d, "fixture")
+	rounds := mustRounds(t, d, b.ID)
+	if len(rounds) == 0 {
+		t.Fatal("no rounds ingested, cannot check the mirror")
+	}
+
+	// Every artifact kind except answer is a round-file mirror that D3b
+	// (fence items 1 and 2) must not write any more.
+	nonAnswerKinds := []string{
+		db.ArtifactPlan, db.ArtifactReport, db.ArtifactDiff, db.ArtifactDrift,
+		db.ArtifactGateLog, db.ArtifactQuestion, db.ArtifactAsk, db.ArtifactFindings,
+	}
+
+	answers := 0
+	for _, r := range rounds {
+		for _, kind := range nonAnswerKinds {
+			_, found, err := d.Artifact(r.ID, kind)
+			if err != nil {
+				t.Fatalf("Artifact(round %d, %s): %v", r.Number, kind, err)
+			}
+			if found {
+				t.Errorf("round %d has a %q artifact row, want only %q rows", r.Number, kind, db.ArtifactAnswer)
+			}
+		}
+		_, found, err := d.Artifact(r.ID, db.ArtifactAnswer)
+		if err != nil {
+			t.Fatalf("Artifact(round %d, %s): %v", r.Number, db.ArtifactAnswer, err)
+		}
+		if found {
+			answers++
+		}
+
+		recs, err := d.Transcript(db.OwnerRound, r.ID, 0, 0)
+		if err != nil {
+			t.Fatalf("Transcript(round %d): %v", r.Number, err)
+		}
+		if len(recs) != 0 {
+			t.Errorf("round %d has %d owner_kind=%q transcript rows, want 0", r.Number, len(recs), db.OwnerRound)
+		}
+	}
+
+	// The round-scoped checks miss nothing only if these totals agree: every
+	// artifact row is one of the answers just counted, and every transcript
+	// row belongs to a planner, not to a round.
+	if dbStats.Rows["artifact"] != answers {
+		t.Errorf("artifact rows = %d, want %d (one per answer artifact)", dbStats.Rows["artifact"], answers)
+	}
+	plannerRows := 0
+	if b.PlannerID != nil {
+		recs, err := d.Transcript(db.OwnerPlanner, *b.PlannerID, 0, 0)
+		if err != nil {
+			t.Fatalf("Transcript(planner): %v", err)
+		}
+		plannerRows = len(recs)
+	}
+	if dbStats.Rows["transcript"] != plannerRows {
+		t.Errorf("transcript rows = %d, want %d (planner-owned only)", dbStats.Rows["transcript"], plannerRows)
 	}
 }
 

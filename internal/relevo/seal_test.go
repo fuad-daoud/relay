@@ -145,24 +145,6 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("StoreSource.List = %v (err %v), want the sealed 001-report.md", names, err)
 	}
 
-	// The end-of-tick ingest ran after the seal and still recorded the
-	// round's report artifact from the database row.
-	row, found, err := d.Binding("webshop")
-	if err != nil || !found {
-		t.Fatalf("Binding(webshop): found=%v err=%v", found, err)
-	}
-	rounds, err := d.Rounds(row.ID)
-	if err != nil || len(rounds) == 0 {
-		t.Fatalf("Rounds: %v (err %v)", rounds, err)
-	}
-	art, found, err := d.Artifact(rounds[0].ID, db.ArtifactReport)
-	if err != nil || !found {
-		t.Fatalf("Artifact(report): found=%v err=%v", found, err)
-	}
-	if art.Text != string(report) {
-		t.Errorf("ingested report artifact = %q, want %q", art.Text, report)
-	}
-
 	// A fork cut through round 1 gets the sealed files as files.
 	if err := rt.Store.ForkState("webshop", "forked", 1); err != nil {
 		t.Fatalf("ForkState: %v", err)
