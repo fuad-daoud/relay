@@ -305,9 +305,10 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	// The consult's Dir is the throwaway worktree, not b.CWD: the reviewer
 	// reads the builder's tree without writing in it.
 	handle, err := rt.Runner.Start(ctx, ProcSpec{
-		Dir:        wt,
-		Argv:       argv,
-		LogPath:    rt.Store.ConsultLogPath(b.Name, round, id),
+		Dir:  wt,
+		Argv: argv,
+		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).
+		LogPath:    streamPath,
 		StreamPath: streamPath,
 		Scope:      scopeFor(rt, scopeVerify, scopeUnitNameFor(scopeVerify, b.Owner, b.Name, round, id), ""),
 	})

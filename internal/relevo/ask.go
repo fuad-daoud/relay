@@ -201,9 +201,10 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		consult.Note = "spawn failed: " + brief(err)
 		spawnErr = err
 	} else if h, err := rt.Runner.Start(ctx, ProcSpec{
-		Dir:        cwd,
-		Argv:       argv,
-		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
+		Dir:  cwd,
+		Argv: argv,
+		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).
+		LogPath:    streamPath,
 		StreamPath: streamPath,
 		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID), ""),
 	}); err != nil {
@@ -430,9 +431,10 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	var spawnErr error
 	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
 	if handle, err := rt.Runner.Start(ctx, ProcSpec{
-		Dir:        cwd,
-		Argv:       append([]string{h.Binary}, argv...),
-		LogPath:    rt.Store.ConsultLogPath(opts.Name, consult.Round, consult.ID),
+		Dir:  cwd,
+		Argv: append([]string{h.Binary}, argv...),
+		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).
+		LogPath:    streamPath,
 		StreamPath: streamPath,
 		Scope:      scopeFor(rt, scopeConsult, scopeUnitNameFor(scopeConsult, owner, opts.Name, consult.Round, consult.ID), ""),
 	}); err != nil {
