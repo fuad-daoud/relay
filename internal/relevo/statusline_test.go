@@ -134,7 +134,7 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				LastPayload:      nil,
 			},
 			expectMid:   "no plan yet",
-			expectRight: "-- · ",
+			expectRight: "--",
 		},
 		{
 			name: "empty candidate",
@@ -195,6 +195,7 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 			Round:            1,
 			Display:          "ACTIVE",
 			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-12 * time.Minute),
 			Last:             &LastEvent{Kind: store.KindDrift, TS: now.Add(-1 * time.Second)},
 			LastPayload:      &LastEvent{Kind: store.KindPlan, TS: now.Add(-12 * time.Minute)},
 		},
@@ -212,8 +213,11 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 	if strings.Contains(plain, "drift") {
 		t.Errorf("line %q must not mention drift: %q", plain, plain)
 	}
-	if !strings.HasSuffix(plain, " 12m · ACTIVE") {
-		t.Errorf("line %q does not have right cell beginning %q", plain, "12m · ")
+	if !strings.HasSuffix(plain, " 12m") {
+		t.Errorf("line %q does not have right cell ending in %q", plain, " 12m")
+	}
+	if strings.Contains(plain, "ACTIVE") {
+		t.Errorf("line %q must not contain ACTIVE", plain)
 	}
 }
 
@@ -226,33 +230,49 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 		Round:            1,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		RoundStart:       baseTime.Add(-12 * time.Minute),
 		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
-	if !strings.Contains(plain, "plan sent · live $0.02 · 41k tok") {
-		t.Errorf("no live segment: %q", plain)
+	if !strings.Contains(plain, "plan sent · 41k tok") {
+		t.Errorf("no live tokens segment: %q", plain)
 	}
-	if !strings.HasSuffix(plain, "ACTIVE") {
+	if strings.Contains(plain, "$") {
+		t.Errorf("must not contain dollar figure: %q", plain)
+	}
+	if strings.Contains(plain, "live") {
+		t.Errorf("must not contain 'live': %q", plain)
+	}
+	if !strings.HasSuffix(plain, " 12m") {
 		t.Errorf("the right cell must survive: %q", plain)
 	}
 }
 
-// TestRenderStatusLineSpendSegment pins the closed-round segment: a row
-// with a spend and no live figure shows the spend last.
-func TestRenderStatusLineSpendSegment(t *testing.T) {
+// TestRenderStatusLineClosedRoundTokens pins the closed-round segment: a row
+// with a closed round shows that round's tokens.
+func TestRenderStatusLineClosedRoundTokens(t *testing.T) {
 	b := BindingStatus{
 		Name:             "api",
 		Round:            3,
 		Display:          "NEEDS YOU",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
-		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
-		Spend:            &usage.Spend{Rounds: 2, Measured: 1.51, Tokens: usage.Tokens{In: 2_100_000}},
+		RoundStart:       baseTime.Add(-12 * time.Minute),
+		RoundEnd:         baseTime.Add(-2 * time.Minute),
+		LastPayload:      &LastEvent{TS: baseTime.Add(-2 * time.Minute), Kind: store.KindReport, Direction: store.DirToPlanner},
+		RoundUsage:       &usage.Usage{Tokens: usage.Tokens{In: 2_100_000}},
+		Spend:            &usage.Spend{Rounds: 2, Measured: 1.51, Tokens: usage.Tokens{In: 9_000_000}},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
-	if !strings.Contains(plain, "· $1.51 · 2.1M tok") {
-		t.Errorf("no spend segment: %q", plain)
+	if !strings.Contains(plain, "· 2.1M tok") {
+		t.Errorf("no round tokens segment: %q", plain)
+	}
+	if strings.Contains(plain, "9.0M") || strings.Contains(plain, "9M") {
+		t.Errorf("must not contain spend tokens: %q", plain)
+	}
+	if strings.Contains(plain, "$") {
+		t.Errorf("must not contain dollar figure: %q", plain)
 	}
 }
 
@@ -262,17 +282,21 @@ func TestRenderStatusLineLiveWinsOverSpend(t *testing.T) {
 		Round:            4,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		RoundStart:       baseTime.Add(-12 * time.Minute),
 		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 		Spend:            &usage.Spend{Rounds: 3, Measured: 1.51, Tokens: usage.Tokens{In: 2_100_000}},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
-	if !strings.Contains(plain, "live ") {
+	if !strings.Contains(plain, "41k tok") {
 		t.Errorf("the live figure must show: %q", plain)
 	}
-	if strings.Contains(plain, "$1.51") {
+	if strings.Contains(plain, "2.1M") {
 		t.Errorf("spend must yield to the live figure, never share a line: %q", plain)
+	}
+	if strings.Contains(plain, "$") {
+		t.Errorf("must not contain dollar figure: %q", plain)
 	}
 }
 
@@ -285,13 +309,14 @@ func TestRenderStatusLineNarrowDropsUsageFirst(t *testing.T) {
 		Round:            1,
 		Display:          "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		RoundStart:       baseTime.Add(-12 * time.Minute),
 		LastPayload:      &LastEvent{TS: baseTime.Add(-12 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash",
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
-	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 60))[0])
-	if !strings.HasSuffix(plain, "ACTIVE") {
-		t.Errorf("ACTIVE must survive the narrow row: %q", plain)
+	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 40))[0])
+	if !strings.HasSuffix(plain, " 12m") {
+		t.Errorf("12m must survive the narrow row: %q", plain)
 	}
 	if strings.Contains(plain, "tok") {
 		t.Errorf("the usage segment must be the part truncated: %q", plain)
@@ -388,6 +413,7 @@ func statuslineFixture(now time.Time) Report {
 				Round:            3,
 				Display:          "ACTIVE",
 				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+				RoundStart:       now.Add(-12 * time.Minute),
 				LastPayload: &LastEvent{
 					TS:        now.Add(-12 * time.Minute),
 					Kind:      store.KindPlan,
@@ -399,6 +425,7 @@ func statuslineFixture(now time.Time) Report {
 				Round:            1,
 				Display:          "NEEDS YOU",
 				BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+				RoundStart:       now.Add(-4 * time.Minute),
 				LastPayload: &LastEvent{
 					TS:   now.Add(-4 * time.Minute),
 					Kind: store.KindPlan,
@@ -409,6 +436,8 @@ func statuslineFixture(now time.Time) Report {
 				Round:            2,
 				Display:          "PAUSED",
 				BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+				RoundStart:       now.Add(-5 * time.Minute),
+				RoundEnd:         now.Add(-5*time.Minute + 23*time.Second),
 				LastPayload: &LastEvent{
 					TS:        now.Add(-23 * time.Second),
 					Kind:      store.KindReport,
@@ -435,8 +464,11 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	if !strings.HasPrefix(plain0, "○ api     r3 · agy · plan sent") {
 		t.Errorf("line 0 prefix mismatch: %q", plain0)
 	}
-	if !strings.HasSuffix(plain0, " 12m · ACTIVE") {
+	if !strings.HasSuffix(plain0, " 12m") {
 		t.Errorf("line 0 suffix mismatch: %q", plain0)
+	}
+	if strings.Contains(plain0, "ACTIVE") {
+		t.Errorf("line 0 must not contain ACTIVE: %q", plain0)
 	}
 
 	plain1 := stripSGR(lines[1])
@@ -473,7 +505,7 @@ func TestRenderStatusLineTruncatesAt40(t *testing.T) {
 		t.Errorf("line 2 expected to contain '…': %q", plain2)
 	}
 
-	suffixes := []string{" 12m · ACTIVE", " 4m · NEEDS YOU", " 23s · PAUSED"}
+	suffixes := []string{" 12m", " 4m · NEEDS YOU", " 23s · PAUSED"}
 	for i, line := range lines {
 		plain := stripSGR(line)
 		if !strings.HasSuffix(plain, suffixes[i]) {
@@ -497,7 +529,7 @@ func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 	plain0 := stripSGR(lines[0])
-	want := "○ api  r3 · agy · plan sent · 12m · ACTIVE"
+	want := "○ api  r3 · agy · plan sent · 12m"
 	if plain0 != want {
 		t.Errorf("line 0 = %q, want %q", plain0, want)
 	}
@@ -513,8 +545,11 @@ func TestRenderStatusLineColours(t *testing.T) {
 	if !strings.Contains(lines[0], "\x1b[38;5;245m○\x1b[0m") {
 		t.Errorf("line 0 missing dim dot: %q", lines[0])
 	}
-	if !strings.Contains(lines[0], "\x1b[38;5;42mACTIVE\x1b[0m") {
-		t.Errorf("line 0 missing active display colour: %q", lines[0])
+	if strings.Contains(lines[0], "\x1b[38;5;42m") {
+		t.Errorf("line 0 must not contain active display colour: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "ACTIVE") {
+		t.Errorf("line 0 must not contain ACTIVE: %q", lines[0])
 	}
 
 	if !strings.Contains(lines[1], "\x1b[1;38;5;214m●\x1b[0m") {
@@ -617,5 +652,67 @@ func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
 	}
 	if len(rep.Bindings) != 0 {
 		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
+	}
+}
+
+func TestRoundClock(t *testing.T) {
+	start := baseTime.Add(-10 * time.Minute)
+	end := baseTime.Add(-3 * time.Minute)
+
+	// Zero start -> "--"
+	zero := BindingStatus{}
+	if got := roundClock(zero, baseTime); got != "--" {
+		t.Errorf("roundClock(zero) = %q, want %q", got, "--")
+	}
+
+	// Open -> now - start, and advancing now advances it
+	open := BindingStatus{RoundStart: start}
+	now1 := baseTime
+	now2 := baseTime.Add(5 * time.Minute)
+	got1 := roundClock(open, now1)
+	got2 := roundClock(open, now2)
+	if got1 != "10m" {
+		t.Errorf("roundClock(open, now1) = %q, want '10m'", got1)
+	}
+	if got2 != "15m" {
+		t.Errorf("roundClock(open, now2) = %q, want '15m'", got2)
+	}
+	if got1 == got2 {
+		t.Errorf("advancing now must advance open round clock: %q vs %q", got1, got2)
+	}
+
+	// Closed -> end - start, and two different now values give the same string
+	closed := BindingStatus{RoundStart: start, RoundEnd: end}
+	c1 := roundClock(closed, now1)
+	c2 := roundClock(closed, now2)
+	if c1 != "7m" {
+		t.Errorf("roundClock(closed, now1) = %q, want '7m'", c1)
+	}
+	if c1 != c2 {
+		t.Errorf("different now values must give same string for closed round: %q vs %q", c1, c2)
+	}
+}
+
+func TestRenderStatusLineRemoteServer(t *testing.T) {
+	b := BindingStatus{
+		Name:             "api",
+		Round:            1,
+		Display:          "ACTIVE",
+		BuilderCandidate: "opencode/cline-pass/glm-5.3-flash",
+		Server:           "contabo",
+		RoundStart:       baseTime.Add(-10 * time.Minute),
+		LastPayload:      &LastEvent{TS: baseTime.Add(-10 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+	}
+	out := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
+	plain := stripSGR(splitLines(out)[0])
+	if !strings.Contains(plain, "r1 · opencode@contabo · plan sent") {
+		t.Errorf("expected opencode@contabo, got: %q", plain)
+	}
+
+	b.Server = ""
+	outLocal := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
+	plainLocal := stripSGR(splitLines(outLocal)[0])
+	if !strings.Contains(plainLocal, "r1 · opencode · plan sent") {
+		t.Errorf("expected opencode, got: %q", plainLocal)
 	}
 }

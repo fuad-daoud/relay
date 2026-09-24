@@ -1,4 +1,5 @@
-// Package relevo renders the status line per docs/specs/2026-09-13-statusline-design.md.
+// Package relevo renders the status line per docs/specs/2026-09-13-statusline-design.md
+// and docs/specs/2026-09-24-statusline-redesign-design.md.
 package relevo
 
 import (
@@ -21,7 +22,6 @@ const claudeCodeMargin = 4
 
 var (
 	ansiDim      = "\x1b[38;5;245m"
-	ansiActive   = "\x1b[38;5;42m"
 	ansiNeedsYou = "\x1b[1;38;5;214m"
 	ansiReset    = "\x1b[0m"
 )
@@ -45,7 +45,8 @@ func AgeText(d time.Duration) string {
 }
 
 // RenderStatusLine formats a Report into one row per live binding
-// for Claude Code's statusLine setting per spec §4.3 and §5.
+// for Claude Code's statusLine setting per spec §4.3 and §5, amended
+// by docs/specs/2026-09-24-statusline-redesign-design.md.
 func RenderStatusLine(r Report, now time.Time, columns int) string {
 	if len(r.Bindings) == 0 {
 		return ""
@@ -70,26 +71,30 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 
 		mid := "r" + strconv.Itoa(b.Round)
 		if b.BuilderCandidate != "" {
-			mid += " · " + harnessSegment(b.BuilderCandidate)
+			harness := harnessSegment(b.BuilderCandidate)
+			if b.Server != "" {
+				harness += "@" + b.Server
+			}
+			mid += " · " + harness
 		}
 		mid += " · " + waiting(b)
-		switch {
-		case b.LiveUsage != nil && usage.LiveShort(*b.LiveUsage) != "":
-			mid += " · " + usage.LiveShort(*b.LiveUsage)
-		case b.Spend != nil && usage.MoneyShort(*b.Spend) != "":
-			mid += " · " + usage.MoneyShort(*b.Spend)
+		if t := roundTokens(b); t != "" {
+			mid += " · " + t
 		}
 
-		displayWord := b.Display
-		switch b.Display {
-		case "ACTIVE":
-			displayWord = ansiActive + "ACTIVE" + ansiReset
-		case "NEEDS YOU":
-			displayWord = ansiNeedsYou + "NEEDS YOU" + ansiReset
+		clock := roundClock(b, now)
+		var rawRight, colouredRight string
+		if b.Display == "ACTIVE" || b.Display == "" {
+			rawRight = clock
+			colouredRight = clock
+		} else {
+			word := b.Display
+			if b.Display == "NEEDS YOU" {
+				word = ansiNeedsYou + "NEEDS YOU" + ansiReset
+			}
+			rawRight = clock + " · " + b.Display
+			colouredRight = clock + " · " + word
 		}
-
-		rawRight := age(b, now) + " · " + b.Display
-		colouredRight := age(b, now) + " · " + displayWord
 
 		leftW := 2 + nameW + 2
 		midW := columns - leftW - 1 - utf8.RuneCountInString(rawRight)
@@ -150,11 +155,27 @@ func waiting(b BindingStatus) string {
 	return ""
 }
 
-func age(b BindingStatus, now time.Time) string {
-	if b.LastPayload == nil {
+func roundClock(b BindingStatus, now time.Time) string {
+	if b.RoundStart.IsZero() {
 		return "--"
 	}
-	return AgeText(now.Sub(b.LastPayload.TS))
+	if !b.RoundEnd.IsZero() {
+		return AgeText(b.RoundEnd.Sub(b.RoundStart))
+	}
+	return AgeText(now.Sub(b.RoundStart))
+}
+
+func roundTokens(b BindingStatus) string {
+	if b.RoundEnd.IsZero() {
+		if b.LiveUsage != nil && b.LiveUsage.Samples > 0 && b.LiveUsage.Tokens.Total() > 0 {
+			return usage.ShortTokens(b.LiveUsage.Tokens.Total()) + " tok"
+		}
+		return ""
+	}
+	if b.RoundUsage != nil && b.RoundUsage.Tokens.Total() > 0 {
+		return usage.ShortTokens(b.RoundUsage.Tokens.Total()) + " tok"
+	}
+	return ""
 }
 
 // harnessSegment is the harness segment of a candidate token: the part

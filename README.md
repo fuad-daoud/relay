@@ -1245,6 +1245,9 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 the Claude Code prompt; it shows nothing on error and never probes a builder.
 The first line names the planner (`planner architect-14`), so each terminal
 shows which planner it is; `relevo planner list` maps that name to its chat.
+Each row shows the round's harness (`harness@server` for a remote builder),
+what it is waiting on, this round's tokens, and the round's length: ticking while
+it runs, frozen once the report is in.
 
 Add this to `~/.claude/settings.json`:
 
@@ -1257,11 +1260,11 @@ The planner session is identified by `RELEVO_PLANNER`, which the relevo plugin's
 hook exports.
 
 Claude Code renders a few cells less than `COLUMNS`; relevo subtracts 4 by
-default (measured on the fullscreen TUI). If the right-hand `age · STATE`
-cell is clipped or sits short of the edge, measure yours and set
-`RELEVO_STATUSLINE_MARGIN` in the environment Claude Code starts from. To
-measure, put this in `statusLine.command` for one refresh and count the
-cells before Claude Code's `…`:
+default (measured on the fullscreen TUI). If the right-hand round clock (with
+a state word only when it is not ACTIVE) is clipped or sits short of the edge,
+measure yours and set `RELEVO_STATUSLINE_MARGIN` in the environment Claude Code
+starts from. To measure, put this in `statusLine.command` for one refresh and
+count the cells before Claude Code's `…`:
 
     sh -c 'printf "%s" "$(seq -s . 1 $COLUMNS | cut -c1-$COLUMNS)"'
 
