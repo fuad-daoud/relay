@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -337,5 +338,194 @@ func TestConfigSecretUnknownNameExits2(t *testing.T) {
 	}
 	if !strings.Contains(string(stderr), "typesafe") || !strings.Contains(string(stderr), "client.key") {
 		t.Errorf("stderr = %q, want both allowed names", stderr)
+	}
+}
+
+// revCandidateA and revCandidateB differ in one model name, so a revision
+// between them carries exactly one change: candidates[0].model.
+const (
+	revCandidateA = `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`
+	revCandidateB = `[{"harness":"claude","provider":"p","model":"m2","roles":["builder"]}]`
+)
+
+func TestConfigLogListsRevisions(t *testing.T) {
+	initRoot(t)
+
+	for _, args := range [][]string{
+		{"config", "set", "candidates", revCandidateA},
+		{"config", "set", "policy.order.builder", `["claude/p/m"]`},
+	} {
+		if _, stderr, err := captureOutput(t, func() error { return run(args) }); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "log"})
+	})
+	if err != nil {
+		t.Fatalf("config log: %v (stderr: %s)", err, stderr)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("config log printed %d lines, want 2:\n%s", len(lines), stdout)
+	}
+	if !strings.Contains(lines[0], "#2") || !strings.Contains(lines[0], "cli") ||
+		!strings.Contains(lines[0], "config set policy.order.builder") {
+		t.Errorf("newest line = %q, want #2, cli and its message", lines[0])
+	}
+	if !strings.Contains(lines[1], "#1") || !strings.Contains(lines[1], "config set candidates") {
+		t.Errorf("oldest line = %q, want #1 and its message", lines[1])
+	}
+}
+
+func TestConfigLogRevShowsChanges(t *testing.T) {
+	initRoot(t)
+
+	for _, body := range []string{revCandidateA, revCandidateB} {
+		if _, stderr, err := captureOutput(t, func() error {
+			return run([]string{"config", "set", "candidates", body})
+		}); err != nil {
+			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"config", "log"},
+		{"config", "log", "--rev", "2"},
+	} {
+		stdout, stderr, err := captureOutput(t, func() error { return run(args) })
+		if err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+		t.Logf("relevo %s:\n%s", strings.Join(args, " "), stdout)
+	}
+}
+
+func TestConfigLogJSON(t *testing.T) {
+	initRoot(t)
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "candidates", revCandidateA})
+	}); err != nil {
+		t.Fatalf("set: %v (stderr: %s)", err, stderr)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "log", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("log --json: %v (stderr: %s)", err, stderr)
+	}
+	var list []struct {
+		Rev      int64           `json:"rev"`
+		Source   string          `json:"source"`
+		Message  string          `json:"message"`
+		Version  int64           `json:"version"`
+		Changes  json.RawMessage `json:"changes"`
+		Snapshot json.RawMessage `json:"snapshot"`
+	}
+	if err := json.Unmarshal(stdout, &list); err != nil {
+		t.Fatalf("log --json is not JSON: %v\n%s", err, stdout)
+	}
+	if len(list) != 1 || list[0].Rev != 1 || list[0].Source != "cli" || list[0].Message != "config set candidates" {
+		t.Fatalf("log --json = %+v, want one cli revision for config set candidates", list)
+	}
+	if list[0].Snapshot != nil {
+		t.Errorf("list JSON carries a snapshot, want it omitted")
+	}
+
+	stdout, stderr, err = captureOutput(t, func() error {
+		return run([]string{"config", "log", "--rev", "1", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("log --rev 1 --json: %v (stderr: %s)", err, stderr)
+	}
+	var one struct {
+		Rev      int64           `json:"rev"`
+		Snapshot json.RawMessage `json:"snapshot"`
+	}
+	if err := json.Unmarshal(stdout, &one); err != nil {
+		t.Fatalf("log --rev --json is not JSON: %v\n%s", err, stdout)
+	}
+	if one.Rev != 1 || len(one.Snapshot) == 0 {
+		t.Errorf("single JSON = %+v, want rev 1 carrying a snapshot", one)
+	}
+}
+
+func TestConfigRollbackYes(t *testing.T) {
+	initRoot(t)
+
+	for _, body := range []string{revCandidateA, revCandidateB} {
+		if _, stderr, err := captureOutput(t, func() error {
+			return run([]string{"config", "set", "candidates", body})
+		}); err != nil {
+			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
+		}
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "rollback", "1", "--yes"})
+	})
+	if err != nil {
+		t.Fatalf("rollback: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "rolled back to #1 as #3") {
+		t.Errorf("rollback output = %q, want the rolled-back line", stdout)
+	}
+
+	out, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "get", "candidates"})
+	})
+	if err != nil {
+		t.Fatalf("get after rollback: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(out), `"model": "m"`) || strings.Contains(string(out), "m2") {
+		t.Errorf("candidates after rollback = %q, want revision 1's body", out)
+	}
+
+	logOut, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "log"})
+	})
+	if err != nil {
+		t.Fatalf("log: %v (stderr: %s)", err, stderr)
+	}
+	first := strings.SplitN(strings.TrimSuffix(string(logOut), "\n"), "\n", 2)[0]
+	if !strings.Contains(first, "rollback") || !strings.Contains(first, "rollback to #1") {
+		t.Errorf("newest log line = %q, want the rollback revision on top", first)
+	}
+}
+
+func TestConfigRollbackRefusesWithoutTerminal(t *testing.T) {
+	initRoot(t)
+
+	for _, body := range []string{revCandidateA, revCandidateB} {
+		if _, stderr, err := captureOutput(t, func() error {
+			return run([]string{"config", "set", "candidates", body})
+		}); err != nil {
+			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
+		}
+	}
+
+	// stdinStat is bound to the process's own os.Stdin, so point the seam at a
+	// regular file: not a character device, hence not a terminal.
+	original := stdinStat
+	stdinStat = func() (os.FileInfo, error) {
+		f, err := os.CreateTemp(t.TempDir(), "stdin-*")
+		if err != nil {
+			t.Fatalf("CreateTemp: %v", err)
+		}
+		defer f.Close()
+		return f.Stat()
+	}
+	t.Cleanup(func() { stdinStat = original })
+
+	_, stderr, err := runWithStdin(t, "", "config", "rollback", "1")
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("rollback without a terminal: exit = %v, want exit code 2 (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(string(stderr), "config rollback needs a terminal to confirm; pass --yes") {
+		t.Errorf("stderr = %q, want the refusal line", stderr)
 	}
 }
