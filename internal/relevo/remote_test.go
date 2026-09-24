@@ -4414,3 +4414,77 @@ func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
 		t.Errorf("the refusal contacted the server: %v", fr.calls)
 	}
 }
+
+// TestAddRemoteMatchesCandidateByName pins A1 §4.2: --candidate may name a
+// server candidate by its short name, and the canonical token is what the
+// server is asked to run. An unknown value with no "/" is refused, naming the
+// server's candidates as `name (token)`.
+func TestAddRemoteMatchesCandidateByName(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	fg := &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{
+		candidatesResp: remote.CandidatesResponse{Candidates: []remote.CandidateView{
+			{Token: "claude/anthropic/haiku", Name: "haiku", Kind: "claude"},
+			{Token: "codex/openai/gpt-5.6-terra:high", Name: "gpt-5.6-terra", Kind: "codex"},
+		}},
+		createBindingResp: remote.BindingView{Name: "api", Candidate: "claude/anthropic/haiku"},
+	}
+	rt := Runtime{
+		Store:    st,
+		Planners: addRemotePlanner(t),
+		Git:      fg,
+		Remote:   fr,
+		Now:      time.Now,
+	}
+
+	if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Candidate: "haiku"}); err != nil {
+		t.Fatalf("Add(haiku): %v", err)
+	}
+	if fr.createBindingReq.Candidate != "claude/anthropic/haiku" {
+		t.Errorf("CreateBinding candidate = %q, want the canonical token", fr.createBindingReq.Candidate)
+	}
+
+	_, err := Add(ctx, rt, AddOptions{Name: "api2", Server: "zen", Repo: "/fake/repo", Candidate: "nope"})
+	if err == nil {
+		t.Fatal("Add(nope) = nil error, want a refusal")
+	}
+	want := `candidate "nope" not available on zen (available: haiku (claude/anthropic/haiku), gpt-5.6-terra (codex/openai/gpt-5.6-terra:high))`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Add(nope) err = %q, want it containing %q", err.Error(), want)
+	}
+}
+
+// TestForwardAvailableResolvesNameToToken pins A1 §4.2: a candidate name is
+// forwarded to every server as its canonical token.
+func TestForwardAvailableResolvesNameToToken(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+
+	b := remoteBinding("alpha")
+	b.Name = "open-alpha"
+	b.CWD = "/fake/open-alpha"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{availableResp: remote.AvailableResponse{Provider: "test", Removed: 1}}
+	rt := Runtime{
+		Store:      st,
+		Remote:     fr,
+		Candidates: candidateSet(t, testCandidatesJSON),
+		Now:        func() time.Time { return baseTime },
+	}
+
+	ForwardAvailable(ctx, rt, "claude-m")
+
+	for _, c := range fr.calls {
+		if c == "Available:alpha:"+testClaudeRef {
+			return
+		}
+	}
+	t.Errorf("calls = %v, want one Available:alpha:%s", fr.calls, testClaudeRef)
+}

@@ -395,3 +395,17 @@ func TestFormatProbe(t *testing.T) {
 		t.Errorf("FormatProbe(failure) = %q, want %q", got, want)
 	}
 }
+
+// TestProbeUnknownNameRunsNothing pins A1 §4.2: an unknown candidate name is
+// refused before anything runs.
+func TestProbeUnknownNameRunsNothing(t *testing.T) {
+	rt, now := probeRuntime(t, testCandidatesJSON)
+	fake := &fakeExec{now: now}
+
+	if _, err := Probe(context.Background(), rt, fake, []string{"nope"}, "box", nil); err == nil {
+		t.Fatalf("Probe(unknown name) error = nil, want an error")
+	}
+	if fake.calls != 0 {
+		t.Errorf("fake was called %d times, want 0", fake.calls)
+	}
+}

@@ -725,8 +725,11 @@ func Parse(name string, raw []byte) (Policy, []string, error) {
 
 		seen := make(map[string]bool, len(tokens))
 		for i, tok := range tokens {
-			if _, err := candidate.ParseRef(tok); err != nil {
-				return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: %v: %w", path, role, i, err, ErrBadPolicy)
+			// An entry is a candidate name or a canonical token (A1 §4.2).
+			if !candidate.IsName(tok) {
+				if _, err := candidate.ParseRef(tok); err != nil {
+					return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: %q: want a candidate name or harness/provider/model: %w", path, role, i, tok, ErrBadPolicy)
+				}
 			}
 			if seen[tok] {
 				return Policy{}, warnings, fmt.Errorf("%s: order.%s[%d]: duplicate token %q: %w", path, role, i, tok, ErrBadPolicy)

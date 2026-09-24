@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/histq"
@@ -112,6 +113,10 @@ type HistoryOptions struct {
 	Limit int
 	// Query is the -q text; Filter parses it before applying the flags.
 	Query string
+	// Names resolves a candidate filter given as a name to its canonical
+	// token, so `history --candidate <name>` matches stored rounds (A1 §4.2).
+	// A nil set leaves a name filter as typed.
+	Names *candidate.Set
 	// By is the --by axis; it overrides a by: in Query the same way every
 	// other flag does.
 	By string
@@ -224,6 +229,15 @@ func (o *HistoryOptions) Filter(ctx context.Context, rt Runtime, now time.Time) 
 			f.Repo = normalised
 		} else {
 			f.Repo = commonDir
+		}
+	}
+
+	// A candidate filter given as a name resolves to its canonical token, so
+	// the stored rounds match; an unresolved value is left as typed, and
+	// matches no rounds, as today (A1 §4.2).
+	if o.Names != nil && f.Candidate != "" && !strings.Contains(f.Candidate, "/") {
+		if c, err := o.Names.Resolve(f.Candidate); err == nil {
+			f.Candidate = c.Ref().String()
 		}
 	}
 

@@ -568,6 +568,15 @@ func newRuntime() (relevo.Runtime, error) {
 		slog.Warn("relevo.db schema is newer; config import skipped")
 	}
 
+	if !d.Newer() {
+		// A1's migration: write a name for every stored candidate. Names are
+		// derived in memory by candidate.Parse either way, so a failure here
+		// is a warning, never a refusal to start.
+		if _, err := cs.EnsureCandidateNames(); err != nil {
+			slog.Warn("candidate names not written to config", "err", err)
+		}
+	}
+
 	L, err := cs.Load()
 	if err != nil {
 		return relevo.Runtime{}, err
@@ -871,9 +880,14 @@ func cmdCandidates(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "probing %d candidate(s) from %s, one at a time\n", n, host)
 
+		// The column is sized from the resolved canonical tokens, not argv:
+		// FormatProbe prints the token Probe resolved (A1 §4.2).
 		width := 0
 		if len(tokens) > 0 {
 			for _, tok := range tokens {
+				if c, err := rt.Candidates.Resolve(tok); err == nil {
+					tok = c.Ref().String()
+				}
 				if len(tok) > width {
 					width = len(tok)
 				}
@@ -1012,7 +1026,16 @@ func gateUnavailable(token, forFlag, reason string) error {
 		return err
 	}
 
-	provider, err := relevo.Unavailable(rt, token, until, reason)
+	// The argument may be a candidate name or a token. It is resolved here,
+	// first, so the ledger and every server the bindings name see the
+	// canonical token, never the raw argument (A1 §4.2).
+	c, err := rt.Candidates.Resolve(token)
+	if err != nil {
+		return err
+	}
+	canonical := c.Ref().String()
+
+	provider, err := relevo.Unavailable(rt, canonical, until, reason)
 	if err != nil {
 		return err
 	}
@@ -1036,7 +1059,7 @@ func gateUnavailable(token, forFlag, reason string) error {
 		}
 	}
 
-	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, token, reason) {
+	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, canonical, reason) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 
@@ -1174,7 +1197,7 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 func cmdBind(args []string) error {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	name := fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in config policy order[builder]")
+	builderAlias := fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	resume := fs.Bool("resume", false, "adopt an existing binding into this planner")
 	rebind := fs.Bool("rebind", false,
@@ -1673,7 +1696,7 @@ func cmdSend(args []string) error {
 	file := fs.String("file", "", "path to the plan file to hand the builder")
 	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	builder := fs.String("builder", "", "candidate harness/provider/model to run this round and later ones on; refused while a round is open")
+	builder := fs.String("builder", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a round is open")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
 	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
@@ -1748,7 +1771,7 @@ func cmdSend(args []string) error {
 func cmdAsk(args []string) error {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	role := fs.String("role", "", "reader role to consult: reviewer, researcher, or a reader row in config roles")
-	cand := fs.String("candidate", "", "candidate harness/provider/model; omit to take the first ungated in config policy order[<role>]")
+	cand := fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
 	file := fs.String("file", "", "file containing the question")
 	question := fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")

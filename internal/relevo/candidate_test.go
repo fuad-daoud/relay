@@ -546,3 +546,33 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo config agents --kind")
 	}
 }
+
+// TestResolveRoleByName pins A1 §4.2: an explicit candidate may be named by
+// its short name, and the refusals name the candidate by that name.
+func TestResolveRoleByName(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+
+	res, err := resolveCandidate(set, policy.Policy{}, nil, "claude-m", "builder")
+	if err != nil {
+		t.Fatalf("resolveCandidate(claude-m): %v", err)
+	}
+	if got := res.Token(); got != testClaudeRef {
+		t.Errorf("Token() = %q, want %q", got, testClaudeRef)
+	}
+	if res.How != HowExplicit {
+		t.Errorf("How = %q, want %q", res.How, HowExplicit)
+	}
+
+	_, err = resolveCandidate(set, policy.Policy{}, nil, "agy-m", "reviewer")
+	if !errors.Is(err, ErrRoleNotServed) {
+		t.Fatalf("resolveCandidate(agy-m, reviewer) err = %v, want ErrRoleNotServed", err)
+	}
+	if !strings.Contains(err.Error(), `candidate "agy-m" does not serve role "reviewer"`) {
+		t.Errorf("err = %q, want it to name the candidate by its short name", err.Error())
+	}
+
+	_, err = resolveCandidate(set, policy.Policy{}, nil, "nope", "builder")
+	if !errors.Is(err, candidate.ErrUnknownCandidate) {
+		t.Errorf("resolveCandidate(nope) err = %v, want ErrUnknownCandidate", err)
+	}
+}

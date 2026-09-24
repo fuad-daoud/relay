@@ -223,11 +223,9 @@ func Probe(ctx context.Context, rt Runtime, x LineExec, tokens []string, host st
 		}
 	} else {
 		for _, token := range tokens {
-			parsed, err := candidate.ParseRef(token)
-			if err != nil {
-				return nil, err
-			}
-			c, err := rt.Candidates.Lookup(parsed)
+			// The argument may be a candidate name or a canonical token
+			// (A1 §4.2).
+			c, err := rt.Candidates.Resolve(token)
 			if err != nil {
 				return nil, err
 			}

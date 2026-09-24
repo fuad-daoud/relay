@@ -499,3 +499,184 @@ func TestSetProviders(t *testing.T) {
 		t.Errorf("(*Set)(nil).Providers() = %v, want nil", got)
 	}
 }
+
+// TestParseNames pins §4.1's name rules: derived names are filled, an explicit
+// name is kept, the three Parse errors fire, and a skipped entry still takes
+// part in DeriveNames so a later name does not shift when it is fixed.
+func TestParseNames(t *testing.T) {
+	t.Run("derived names are filled", func(t *testing.T) {
+		body := `[
+			{"harness":"claude","provider":"anthropic","model":"sonnet"},
+			{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high"}
+		]`
+		set, _, err := Parse("candidates.json", []byte(body))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if got, want := set.Names(), []string{"gemini-3.8-flash-high", "sonnet"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("Names() = %v, want %v", got, want)
+		}
+		c, err := set.Lookup(Ref{"claude", "anthropic", "sonnet"})
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+		if c.Name != "sonnet" {
+			t.Errorf("candidate Name = %q, want %q", c.Name, "sonnet")
+		}
+	})
+
+	t.Run("an explicit name is kept", func(t *testing.T) {
+		body := `[{"name":"haiku","harness":"claude","provider":"anthropic","model":"claude-3-5-haiku"}]`
+		set, _, err := Parse("candidates.json", []byte(body))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if got, want := set.Names(), []string{"haiku"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("Names() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("bad shape", func(t *testing.T) {
+		body := `[{"name":"Bad","harness":"claude","provider":"anthropic","model":"sonnet"}]`
+		_, _, err := Parse("candidates.json", []byte(body))
+		if err == nil {
+			t.Fatal("Parse succeeded for a bad name, want an error")
+		}
+		want := `name "Bad": want ^[a-z0-9][a-z0-9.-]{0,23}$`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
+		}
+	})
+
+	t.Run("duplicate name", func(t *testing.T) {
+		body := `[
+			{"name":"x","harness":"claude","provider":"anthropic","model":"a"},
+			{"name":"x","harness":"claude","provider":"other","model":"b"}
+		]`
+		_, _, err := Parse("candidates.json", []byte(body))
+		if err == nil {
+			t.Fatal("Parse succeeded for a duplicate name, want an error")
+		}
+		want := `candidate 1: duplicate name "x" at index 0 and 1`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
+		}
+	})
+
+	t.Run("provider clash", func(t *testing.T) {
+		body := `[
+			{"harness":"claude","provider":"anthropic","model":"a"},
+			{"name":"anthropic","harness":"claude","provider":"other","model":"b"}
+		]`
+		_, _, err := Parse("candidates.json", []byte(body))
+		if err == nil {
+			t.Fatal("Parse succeeded for a name equal to a provider, want an error")
+		}
+		want := `candidate 1: name "anthropic" is also a provider name`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse err = %q, want it containing %q", err.Error(), want)
+		}
+	})
+
+	t.Run("a skipped entry still takes part in DeriveNames", func(t *testing.T) {
+		body := `[
+			{"harness":"nope","provider":"p","model":"m"},
+			{"harness":"claude","provider":"anthropic","model":"m"}
+		]`
+		set, warnings, err := Parse("candidates.json", []byte(body))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		if len(warnings) != 1 {
+			t.Fatalf("warnings = %v, want one for the unknown harness", warnings)
+		}
+		// The skipped entry still reserved "m", so the surviving candidate
+		// keeps the name DeriveNames gave it in the full list.
+		if got, want := set.Names(), []string{"claude-m"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("Names() = %v, want %v", got, want)
+		}
+	})
+}
+
+// TestResolve pins §4.1's Resolve: a name, a token, a bad token, an unknown
+// string that lists the known names, and a nil set.
+func TestResolve(t *testing.T) {
+	body := `[
+		{"harness":"claude","provider":"anthropic","model":"sonnet"},
+		{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high"}
+	]`
+	set, _, err := Parse("candidates.json", []byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	t.Run("by name", func(t *testing.T) {
+		c, err := set.Resolve("sonnet")
+		if err != nil {
+			t.Fatalf("Resolve(sonnet): %v", err)
+		}
+		if got := c.Ref().String(); got != "claude/anthropic/sonnet" {
+			t.Errorf("Resolve(sonnet) = %q, want claude/anthropic/sonnet", got)
+		}
+	})
+
+	t.Run("by token", func(t *testing.T) {
+		c, err := set.Resolve("claude/anthropic/sonnet")
+		if err != nil {
+			t.Fatalf("Resolve(token): %v", err)
+		}
+		if got := c.Ref().String(); got != "claude/anthropic/sonnet" {
+			t.Errorf("Resolve(token) = %q, want claude/anthropic/sonnet", got)
+		}
+	})
+
+	t.Run("bad token", func(t *testing.T) {
+		if _, err := set.Resolve("claude/anthropic"); !errors.Is(err, ErrBadRef) {
+			t.Errorf("Resolve(claude/anthropic) err = %v, want ErrBadRef", err)
+		}
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		_, err := set.Resolve("nope")
+		if !errors.Is(err, ErrUnknownCandidate) {
+			t.Fatalf("Resolve(nope) err = %v, want ErrUnknownCandidate", err)
+		}
+		want := `unknown candidate "nope" (known: gemini-3.8-flash-high, sonnet)`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Resolve(nope) err = %q, want it containing %q", err.Error(), want)
+		}
+	})
+
+	t.Run("nil set", func(t *testing.T) {
+		var nilSet *Set
+		_, err := nilSet.Resolve("sonnet")
+		if !errors.Is(err, ErrUnknownCandidate) {
+			t.Fatalf("(*Set)(nil).Resolve err = %v, want ErrUnknownCandidate", err)
+		}
+		if !strings.Contains(err.Error(), "(no candidates configured)") {
+			t.Errorf("(*Set)(nil).Resolve err = %q, want it to say no candidates are configured", err.Error())
+		}
+	})
+}
+
+// TestNameOf pins §4.1's NameOf: a known token resolves, an unknown one is
+// returned unchanged, and a nil set returns its argument.
+func TestNameOf(t *testing.T) {
+	body := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
+	set, _, err := Parse("candidates.json", []byte(body))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if got := set.NameOf("claude/anthropic/sonnet"); got != "sonnet" {
+		t.Errorf("NameOf(known) = %q, want sonnet", got)
+	}
+	if got := set.NameOf("claude/anthropic/opus"); got != "claude/anthropic/opus" {
+		t.Errorf("NameOf(unknown) = %q, want the token back", got)
+	}
+
+	var nilSet *Set
+	if got := nilSet.NameOf("claude/anthropic/sonnet"); got != "claude/anthropic/sonnet" {
+		t.Errorf("(*Set)(nil).NameOf = %q, want the token back", got)
+	}
+}

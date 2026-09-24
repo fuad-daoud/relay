@@ -151,7 +151,7 @@ func cmdHistory(args []string) error {
 	harness := fs.String("harness", "", "filter to this builder harness")
 	provider := fs.String("provider", "", "filter to this builder provider")
 	model := fs.String("model", "", "filter to this builder model")
-	candidateTok := fs.String("candidate", "", "filter to this harness/provider/model candidate token")
+	candidateTok := fs.String("candidate", "", "filter to this candidate name or harness/provider/model token")
 	outcome := fs.String("outcome", "", "filter to this round outcome: "+strings.Join(historyOutcomeValues, ", "))
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	until := fs.String("until", "", "only rounds started before this: 24h, 7d, or YYYY-MM-DD")
@@ -261,6 +261,7 @@ func cmdHistory(args []string) error {
 		Provider:  *provider,
 		Model:     *model,
 		Candidate: *candidateTok,
+		Names:     rt.Candidates,
 		Outcome:   *outcome,
 		Since:     *since,
 		Until:     *until,

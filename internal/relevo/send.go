@@ -98,6 +98,10 @@ type preflight struct {
 	prompt                         string // composePrompt(...) -- computed, never sent
 
 	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
+	// remoteBuilder is the value Send hands sendRemote for a remote binding:
+	// --builder's canonical token when the argument resolved to one, or the
+	// argument unchanged ("" included) when it did not.
+	remoteBuilder string
 }
 
 // sendPreflight runs Send's read-only preconditions in Send's exact order and
@@ -141,6 +145,10 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// A remote binding's candidates decide on the server, so only the token's
 	// shape is checked here (§5.1).
 	var pick *Resolution
+	// remoteBuilder is what a remote binding's sendRemote is handed: the
+	// canonical token when --builder resolved to one, else the argument as
+	// typed (A1 §4.2).
+	remoteBuilder := opts.Builder
 	if opts.Builder != "" {
 		entries, err := rt.Store.ReadLog(name)
 		if err != nil {
@@ -150,8 +158,20 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
 		}
 		if b.Builder.Remote() {
-			if _, err := candidate.ParseRef(opts.Builder); err != nil {
-				return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
+			// A remote binding's candidates decide on the server, so a
+			// value with "/" is only shape-checked here. A value with no
+			// "/" is a name, resolved locally to its canonical token: a
+			// candidate only the server has must be named by its token.
+			if strings.Contains(opts.Builder, "/") {
+				if _, err := candidate.ParseRef(opts.Builder); err != nil {
+					return preflight{}, fmt.Errorf("%w %s: %w", ErrBadBuilder, opts.Builder, err)
+				}
+			} else {
+				c, err := rt.Candidates.Resolve(opts.Builder)
+				if err != nil {
+					return preflight{}, fmt.Errorf("%w %s: unknown candidate %q; a candidate only the server has must be named by its harness/provider/model token", ErrBadBuilder, opts.Builder, opts.Builder)
+				}
+				remoteBuilder = c.Ref().String()
 			}
 		} else {
 			p, err := ResolveSendBuilderFor(rt, bindingRole(b), b.BuilderCandidate, opts.Builder)
@@ -182,6 +202,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		b: b, body: body, tier: tier,
 		planPath: planPath, reportPath: reportPath, donePath: donePath,
 		prompt: prompt, pick: pick,
+		remoteBuilder: remoteBuilder,
 	}
 
 	// A remote binding's read-only prefix: the client and transport must be
@@ -281,7 +302,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// A remote binding's preflight stops at the read-only checks; the round
 	// itself is still shipped by sendRemote, which contacts the server.
 	if pf.b.Builder.Remote() {
-		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, opts.Builder)
+		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, pf.remoteBuilder)
 	}
 
 	// The baseline snapshot adds git objects, so it stays out of the

@@ -1233,3 +1233,29 @@ func TestServeUnknownKeyWarns(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadAcceptsNameOrder pins A1 §4.2 for policy.json's order: an entry is a
+// candidate name or a harness/provider/model token.
+func TestLoadAcceptsNameOrder(t *testing.T) {
+	for _, body := range []string{
+		`{"order":{"builder":["sonnet"]}}`,
+		`{"order":{"builder":["a"]}}`,
+		`{"order":{"builder":["claude/anthropic/sonnet"]}}`,
+	} {
+		if _, err := load(t, body); err != nil {
+			t.Errorf("Load(%s) = %v, want no error", body, err)
+		}
+	}
+
+	_, err := load(t, `{"order":{"builder":["A/b"]}}`)
+	if err == nil {
+		t.Fatal("Load accepted A/b, want the bad-policy error")
+	}
+	want := `order.builder[0]: "A/b": want a candidate name or harness/provider/model`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Load(A/b) err = %q, want it containing %q", err.Error(), want)
+	}
+	if !errors.Is(err, ErrBadPolicy) {
+		t.Errorf("Load(A/b) err = %v, want ErrBadPolicy", err)
+	}
+}

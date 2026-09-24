@@ -216,19 +216,19 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, token, role string) (Resolution, error) {
 	gates = gatesForRole(gates, role)
 	if token != "" {
-		ref, err := candidate.ParseRef(token)
+		// The argument may be a candidate name or a canonical token (A1
+		// §4.2): Resolve accepts both. From here on tok is the canonical
+		// token, and every refusal names the candidate by its short name.
+		c, err := set.Resolve(token)
 		if err != nil {
 			return Resolution{}, err
 		}
-		c, err := set.Lookup(ref)
-		if err != nil {
-			return Resolution{}, err
-		}
-		if !reg.Serves(role, ref) {
+		tok := c.Ref().String()
+		if !reg.Serves(role, c.Ref()) {
 			if reg.Source() == roles.SourceFile {
-				return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (not in roles.json %s.candidates, or no definition for %s): %w", token, role, role, c.Harness, ErrRoleNotServed)
+				return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (not in roles.json %s.candidates, or no definition for %s): %w", c.Name, role, role, c.Harness, ErrRoleNotServed)
 			}
-			return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (its roles: %v): %w", token, role, c.Roles, ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("candidate %q does not serve role %q (its roles: %v): %w", c.Name, role, c.Roles, ErrRoleNotServed)
 		}
 		// Unlike every other gate, roles_missing is refused even for an
 		// explicit pick: a candidate whose harness role files are not
@@ -236,11 +236,11 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		// every other explicit-pick gate does) would only spawn it to die
 		// within seconds (#238).
 		for _, g := range gates {
-			if g.Token == c.Ref().String() && g.Kind == ledger.RolesMissing {
-				return Resolution{}, fmt.Errorf("%s: %s", token, g.Note)
+			if g.Token == tok && g.Kind == ledger.RolesMissing {
+				return Resolution{}, fmt.Errorf("%s: %s", c.Name, g.Note)
 			}
 		}
-		return Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, c.Ref().String())}, nil
+		return Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, tok)}, nil
 	}
 
 	if set.Len() == 0 {

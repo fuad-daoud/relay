@@ -153,16 +153,15 @@ func recordSpawnFailureLocked(rt Runtime, token, binding string, cause error) {
 
 // Unavailable records that token's provider is rate-limited, so every
 // candidate sharing that provider shows as gated -- a quota is enforced per
-// subscription or key, not per model (spec §1). token must resolve to a
-// configured candidate: a typo is refused rather than recorded.
+// subscription or key, not per model (spec §1). token (a candidate name or a
+// canonical token) must resolve to a configured candidate: a typo is refused
+// rather than recorded.
 func Unavailable(rt Runtime, token string, until time.Time, reason string) (provider string, err error) {
-	ref, err := candidate.ParseRef(token)
+	c, err := rt.Candidates.Resolve(token)
 	if err != nil {
 		return "", err
 	}
-	if _, err := rt.Candidates.Lookup(ref); err != nil {
-		return "", err
-	}
+	ref := c.Ref()
 
 	now := rt.Now()
 	entry := ledger.Entry{

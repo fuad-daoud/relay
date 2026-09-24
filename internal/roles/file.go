@@ -190,8 +190,11 @@ func validate(path string, f *File) error {
 		// candidates
 		seen := make(map[string]bool, len(row.Candidates))
 		for i, tok := range row.Candidates {
-			if _, err := candidate.ParseRef(tok); err != nil {
-				return badField(fmt.Sprintf("candidates[%d]", i), err.Error())
+			// An entry is a candidate name or a canonical token (A1 §4.2).
+			if !candidate.IsName(tok) {
+				if _, err := candidate.ParseRef(tok); err != nil {
+					return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("%q: want a candidate name or harness/provider/model", tok))
+				}
 			}
 			if seen[tok] {
 				return badField(fmt.Sprintf("candidates[%d]", i), fmt.Sprintf("duplicate token %q", tok))

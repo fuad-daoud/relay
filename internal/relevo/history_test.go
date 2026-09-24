@@ -426,3 +426,27 @@ func TestFormatGroupsColumns(t *testing.T) {
 		t.Errorf("FormatGroups(long key) = %q, want a “…” truncation", long)
 	}
 }
+
+// TestHistoryFilterResolvesName pins A1 §4.2: a --candidate value with no "/"
+// resolves to its canonical token, and an unresolved value is left as typed.
+func TestHistoryFilterResolvesName(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+
+	o := HistoryOptions{Candidate: "claude-m", Names: set}
+	f, _, err := o.Filter(context.Background(), Runtime{}, baseTime)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Candidate != testClaudeRef {
+		t.Errorf("Candidate = %q, want %q", f.Candidate, testClaudeRef)
+	}
+
+	unresolved := HistoryOptions{Candidate: "nope", Names: set}
+	f, _, err = unresolved.Filter(context.Background(), Runtime{}, baseTime)
+	if err != nil {
+		t.Fatalf("Filter: %v", err)
+	}
+	if f.Candidate != "nope" {
+		t.Errorf("Candidate = %q, want it left as typed", f.Candidate)
+	}
+}

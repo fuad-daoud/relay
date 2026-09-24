@@ -680,3 +680,25 @@ func TestBindingsOnProvider(t *testing.T) {
 		t.Errorf("BindingsOnProvider() = %v, want %v", got, want)
 	}
 }
+
+// TestUnavailableByName pins A1 §4.2: a candidate name is accepted, and the
+// canonical candidate's provider is what the ledger records.
+func TestUnavailableByName(t *testing.T) {
+	rt := newRuntime(t)
+
+	provider, err := Unavailable(rt, "claude-m", time.Time{}, "quota")
+	if err != nil {
+		t.Fatalf("Unavailable(claude-m): %v", err)
+	}
+	if provider != "test" {
+		t.Errorf("provider = %q, want test", provider)
+	}
+
+	l := loadLedger(t, rt)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1", len(l.Entries))
+	}
+	if l.Entries[0].Subject != "test" {
+		t.Errorf("Subject = %q, want test", l.Entries[0].Subject)
+	}
+}
