@@ -186,9 +186,13 @@ check_assertion_6() {
 }
 assert 6 "04-binding shows relevo › fleet › webshop and tab row" check_assertion_6
 
-# 7. log has show webshop … --report after step 05
-assert 7 "log has show webshop … --report after step 05" \
-  grep -qE "show webshop.*--report" "$LOG"
+# 7. log has show webshop … --report after step 05, and 05-binding-report
+#    draws the report body the fake served
+check_assertion_7() {
+  grep -qE "show webshop.*--report" "$LOG" && \
+  grep -q "checkout flow implementation is ready" "$OUT/05-binding-report.txt"
+}
+assert 7 "log has show webshop … --report and 05-binding-report draws it" check_assertion_7
 
 # 8. 06-dialog shows tell the planner (or, with the fallback, Tell the planner…)
 assert 8 "06-dialog shows tell the planner" \
@@ -210,6 +214,32 @@ check_assertion_11() {
 }
 assert 11 "no line in fake log starts with anything but a relevo verb" check_assertion_11
 
+# 12. 03-fleet shows a recent row below ── recent. history.json lists webshop
+#     r4, webshop r3, ledger r2, landing r1, so the third-newest row is
+#     ledger r2 (the plan's literal, webshop r3, is the fourth).
+check_assertion_12() {
+  awk '/── recent/{after = 1; next} after' "$OUT/03-fleet.txt" | grep -qE "ledger +r2"
+}
+assert 12 "03-fleet shows the third recent row (ledger r2)" check_assertion_12
+
+# 13. the §2 item 3 grep prints nothing. -r because that grep names a
+#     directory, which plain grep refuses to descend into.
+check_assertion_13() {
+  ! grep -rn -E "oc-smoke|pl_smoke|webshop|ledger|landing" \
+    "$REPO/internal/harness/opencodeplugin/" >/dev/null 2>&1
+}
+assert 13 "no fixture names in internal/harness/opencodeplugin/" check_assertion_13
+
+# 14. in 03-fleet the NEEDS YOU of the first two rows starts at one column.
+#     LC_ALL makes awk count characters, so the › marker counts as one column.
+check_assertion_14() {
+  local c1 c2
+  c1="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{print index($0, "NEEDS YOU"); exit}' "$OUT/03-fleet.txt")"
+  c2="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{n++; if (n == 2) {print index($0, "NEEDS YOU"); exit}}' "$OUT/03-fleet.txt")"
+  [ -n "$c1" ] && [ "$c1" = "$c2" ]
+}
+assert 14 "03-fleet first two rows share the NEEDS YOU column" check_assertion_14
+
 echo "Captures written to: $OUT"
 
 if [ "$FAILED" -ne 0 ]; then
@@ -217,5 +247,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 11 assertions passed)"
+echo "Smoke test PASSED (all 14 assertions passed)"
 exit 0

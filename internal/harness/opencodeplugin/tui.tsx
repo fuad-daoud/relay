@@ -122,6 +122,8 @@ async function pollStatus(api: any) {
   if (plannerBySession.get(currentSessionID) === "pending" && !isRelevoRoute) return;
 
   inFlight = true;
+  // A failed fetch is retried on the next poll tick, not on the next render.
+  resetFailedFetches();
   const plannerEntry = plannerBySession.get(currentSessionID);
   const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
 
@@ -223,50 +225,86 @@ function parseModel(candidate: string): string {
   return last.split("#")[0];
 }
 
+// One marker column for the fleet rows: the selected row's marker and the
+// blank prefix of an unselected row are the same width, so every column lines
+// up -- with the NAME...TOKENS header, which carries the same blank prefix.
+const ROW_MARKER = "› ";
+const ROW_PREFIX = "  ";
+
+// Fetch storms: at most one spawn per cache key may be in flight, a key that
+// is already cached or in flight starts nothing, and a key whose fetch failed
+// is retried on the next poll tick rather than on the next render.
+const inflightFetches = new Set<string>();
+const failedFetches = new Set<string>();
+
+function resetFailedFetches() {
+  failedFetches.clear();
+}
+
 async function fetchShow(name: string, round?: number, tab = "report", force = false): Promise<string> {
   const r = round !== undefined && round > 0 ? round : 0;
   const key = `${name}:${r}:${tab}`;
+  const fetcher = `show:${key}`;
+  const cached = showCache.get(key) ?? "";
   if (!force && showCache.has(key)) {
-    return showCache.get(key)!;
+    return cached;
   }
-  const plannerEntry = plannerBySession.get(currentSessionID);
-  const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
-  const argv = ["show", name, "--json", `--${tab}`];
-  if (r > 0) argv.push("--round", String(r));
-  const res = await spawnRelevo(argv, plannerID);
-  if (res.ok) {
-    try {
-      const data = JSON.parse(res.stdout);
-      const text = data.Text || "";
-      showCache.set(key, text);
-      updateStore();
-      return text;
-    } catch {}
+  if (inflightFetches.has(fetcher) || failedFetches.has(fetcher)) {
+    return cached;
   }
-  return "";
+  inflightFetches.add(fetcher);
+  try {
+    const plannerEntry = plannerBySession.get(currentSessionID);
+    const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
+    const argv = ["show", name, "--json", `--${tab}`];
+    if (r > 0) argv.push("--round", String(r));
+    const res = await spawnRelevo(argv, plannerID);
+    if (res.ok) {
+      try {
+        const data = JSON.parse(res.stdout);
+        const text = data.Text || "";
+        showCache.set(key, text);
+        updateStore();
+        return text;
+      } catch {}
+    }
+    failedFetches.add(fetcher);
+    return cached;
+  } finally {
+    inflightFetches.delete(fetcher);
+  }
 }
 
 async function fetchHistory(name?: string, plannerSes?: string): Promise<any[]> {
   const key = name ? `b:${name}` : `p:${plannerSes}`;
-  if (historyCache.has(key)) return historyCache.get(key)!;
-  const argv = ["history", "--json"];
-  if (name) {
-    argv.push("--binding", name, "--limit", "20");
-  } else if (plannerSes) {
-    argv.push("--planner", plannerSes, "--limit", "8");
+  const fetcher = `history:${key}`;
+  const cached = historyCache.get(key);
+  if (cached) return cached;
+  if (inflightFetches.has(fetcher) || failedFetches.has(fetcher)) return [];
+  inflightFetches.add(fetcher);
+  try {
+    const argv = ["history", "--json"];
+    if (name) {
+      argv.push("--binding", name, "--limit", "20");
+    } else if (plannerSes) {
+      argv.push("--planner", plannerSes, "--limit", "8");
+    }
+    const res = await spawnRelevo(argv);
+    if (res.ok) {
+      try {
+        const data = JSON.parse(res.stdout);
+        if (Array.isArray(data)) {
+          historyCache.set(key, data);
+          updateStore();
+          return data;
+        }
+      } catch {}
+    }
+    failedFetches.add(fetcher);
+    return [];
+  } finally {
+    inflightFetches.delete(fetcher);
   }
-  const res = await spawnRelevo(argv);
-  if (res.ok) {
-    try {
-      const data = JSON.parse(res.stdout);
-      if (Array.isArray(data)) {
-        historyCache.set(key, data);
-        updateStore();
-        return data;
-      }
-    } catch {}
-  }
-  return [];
 }
 
 const paint = (api: any, token: string): any => {
@@ -601,6 +639,8 @@ export default {
     api.ui.router.register({
       name: "relevo",
       render: () => {
+        // read the reactive store so a fetch's updateStore() re-renders this route
+        void store.rev;
         currentRoute = "relevo";
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
@@ -610,7 +650,7 @@ export default {
 
         const rows: any[] = currentDoc?.rows || [];
         const plannerEntry = plannerBySession.get(currentSessionID);
-        const plannerName = (plannerEntry && typeof plannerEntry === "object" ? plannerEntry.name : null) || currentDoc?.planner?.name || "oc-smoke";
+        const plannerName = (plannerEntry && typeof plannerEntry === "object" ? plannerEntry.name : null) || currentDoc?.planner?.name || "";
         const needYouCount = rows.filter((r) => r.display === "NEEDS YOU").length;
         const totalCount = rows.length;
 
@@ -663,7 +703,11 @@ export default {
                 <b>relevo › fleet</b>
               </text>
               <text fg={needYouCount > 0 ? warningColor : mutedColor}>
-                <b>{`● ${needYouCount} need you · planner ${plannerName}`}</b>
+                <b>
+                  {plannerName
+                    ? `● ${needYouCount} need you · planner ${plannerName}`
+                    : `● ${needYouCount} need you`}
+                </b>
               </text>
             </box>
 
@@ -674,7 +718,7 @@ export default {
             <box marginTop={1}>
               <text fg={mutedColor}>
                 {padLine(
-                  "NAME           ACTOR     ON                   RND  STATE      NOW",
+                  `${ROW_PREFIX}NAME           ACTOR     ON                   RND  STATE      NOW`,
                   "TOKENS",
                   96,
                 )}
@@ -703,7 +747,7 @@ export default {
                   <text
                     fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : baseColor}
                   >
-                    {isSelected ? <b>{`› ${line}`}</b> : `  ${line}`}
+                    {isSelected ? <b>{`${ROW_MARKER}${line}`}</b> : `${ROW_PREFIX}${line}`}
                   </text>
                 </box>
               );
@@ -733,18 +777,34 @@ export default {
     api.ui.router.register({
       name: "relevo.binding",
       render: (props: any) => {
+        // read the reactive store so a fetch's updateStore() re-renders this route
+        void store.rev;
         currentRoute = "relevo.binding";
-        const params = props?.params || props || {};
-        const name = params.name || (currentDoc?.rows?.[0]?.name) || "webshop";
-        const row = (currentDoc?.rows || []).find((r: any) => r.name === name) || {};
-        const round = params.round !== undefined ? params.round : (row.round || 1);
-        currentRouteParams = { name, round };
+        // The render props carry the host's data half; the params this plugin
+        // navigates with stay on the current route. B1's `props?.params || props`
+        // saw neither, so only its fixture fallback ever supplied the name.
+        const params = props?.params || props?.data || api.ui.router.current?.()?.params || {};
+        const name = params.name || "";
 
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
+
+        // No binding in the route params: one line, and start no fetch.
+        if (!name) {
+          currentRouteParams = {};
+          return (
+            <box focusable focused flexDirection="column" height="100%" paddingLeft={1} paddingRight={1}>
+              <text fg={mutedColor}>relevo: no binding selected (esc)</text>
+            </box>
+          );
+        }
+
+        const row = (currentDoc?.rows || []).find((r: any) => r.name === name) || {};
+        const round = params.round !== undefined ? params.round : (row.round || 1);
+        currentRouteParams = { name, round };
 
         const tabs = ["plan", "report", "diff", "log", "transcript"];
         const currentTab = store.bindingTab || "plan";
